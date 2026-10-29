@@ -95,7 +95,7 @@ func bindableWorkRoot(t *testing.T) string {
 		candidates = append(candidates, filepath.Join(home, ".orkstack-test-work"))
 	}
 
-	runtime := orker.NewDockerRuntime()
+	prober := &orker.OCIDispatcher{Runtime: orker.NewDockerRuntime(), Policy: orker.DefaultSecurityPolicy()}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -105,7 +105,7 @@ func bindableWorkRoot(t *testing.T) string {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}
-		if err := runtime.ProbeBindable(ctx, candidate); err != nil {
+		if err := prober.ProbeRuntime(ctx, candidate); err != nil {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}

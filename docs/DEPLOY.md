@@ -329,12 +329,12 @@ then the variable it becomes.
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
 | `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI |
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
-| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal in the daemon's own words, or a container that exits non-zero, is still `WORKDIR_NOT_BINDABLE`. A daemon that never answers holds boot for up to three times this plus a minute (7 minutes at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
+| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. A daemon that never answers holds boot for up to three times this plus a minute (7 minutes at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
-| `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable |
+| `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable. An Orker whose boot probe finds that user does not land as the Orker (a rootless or user-namespaced daemon) refuses to start with it set, as `RUN_AS_ORKER_UNAVAILABLE` |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme. A namespace's `allowed_secrets` can only narrow this, never widen it (§5, "Secrets on a shared pool"). Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
@@ -1615,8 +1615,9 @@ engine boot, no Temporal connection, no store.
   `start_period` is the boot: a check that fails inside it does not count
   against `retries`. The check itself gives up after 3 seconds.
 - **How long an Orker's boot can take.** An Orker is not ready until its boot
-  checks pass, and one of them runs a container to prove the work root can be
-  bound. On a healthy daemon that takes seconds. On a daemon that is
+  checks pass, and one of them runs a container, built as a task's is, to
+  prove the work root can be bound and that the runtime gives a task its
+  posture. On a healthy daemon that takes seconds. On a daemon that is
   overloaded or wedged it can take up to three times
   `orker.docker.bind_probe_timeout` plus a minute for removing what it gave up
   on (7 minutes at the default), and longer by `orker.docker.pull_timeout`
@@ -2913,6 +2914,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
+| `ork.orker.workspace_cleanup_failures` | — | Orker, once per attempt whose own directory or secrets could not be removed when it ended and are left on disk (typically files a workload wrote as a uid the Orker cannot remove); the Orker logs the path and the error |
 | `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold, `max_running` or enforced budget refused (`namespace_held`, `max_running_reached`, `budget_exceeded`, `budget_unmeasurable`); not a run, not counted on `ork.runs` |
 | `ork.run.continuations` | `ork.namespace`, `outcome` | engine, once per run carried on into a fresh history: `written` (its saved state written), `write_failed` (object storage refused it; the run tries again after more growth), `over_cap` (its saved state is over `engine.continuation.bytes`; it never carries on), `restored` (the next history read it back), or a `RUN_STATE_*` code (the next history could not) |
 | `ork.run.continuation.state.bytes` | `ork.namespace`, `kind` | engine, the stored size of what a switch wrote: `checkpoint` (the saved state), `events` (the earlier history's events), `snapshot` (the full state at the switch) |

@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -404,4 +405,37 @@ func onlySumPoint(t *testing.T, rm metricdata.ResourceMetrics, name string) metr
 	}
 	t.Fatalf("no data point recorded for %s", name)
 	return metricdata.DataPoint[int64]{}
+}
+
+// TestOrkerObserver_CountsAnAttemptWhoseDirectoryWasLeftOnDisk: an attempt
+// whose own directory, or its secrets, could not be removed is counted on
+// ork.orker.workspace_cleanup_failures, so a disk filling with leftovers is a
+// number an operator can alert on, not a log line to go looking for. An
+// attempt that cleaned up after itself records no point.
+func TestOrkerObserver_CountsAnAttemptWhoseDirectoryWasLeftOnDisk(t *testing.T) {
+	providers, _, reader := newObserverProviders(t)
+	obs := NewOrkerObserverForSinks(newSinksForTest(providers, nil), nil)
+
+	_, clean := obs.Begin(context.Background(), inputForSink("", nil), 1)
+	clean.End(orker.AttemptOutcome{})
+	var rm metricdata.ResourceMetrics
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name == "ork.orker.workspace_cleanup_failures" {
+				t.Fatalf("an attempt that removed its directory recorded %s", m.Name)
+			}
+		}
+	}
+
+	_, leaked := obs.Begin(context.Background(), inputForSink("", nil), 1)
+	leaked.End(orker.AttemptOutcome{Reason: orker.ReasonContainerExitNonzero, CleanupErr: errors.New("permission denied")})
+	if err := reader.Collect(context.Background(), &rm); err != nil {
+		t.Fatalf("Collect: %v", err)
+	}
+	if dp := onlySumPoint(t, rm, "ork.orker.workspace_cleanup_failures"); dp.Value != 1 {
+		t.Fatalf("ork.orker.workspace_cleanup_failures = %d; want 1", dp.Value)
+	}
 }

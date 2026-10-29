@@ -443,23 +443,34 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("%s: create the workspace root %s: %w", ReasonWorkdirFailed, root, err)
 	}
-	if prober, ok := a.dispatcher.Runtime.(interface {
-		ProbeBindable(context.Context, string) error
-	}); ok {
-		if err := prober.ProbeBindable(ctx, root); err != nil {
-			switch {
-			case ctx.Err() != nil:
-				// An Orker told to stop while it probes has found nothing
-				// wrong with its work root or its daemon.
-				return fmt.Errorf("boot interrupted during the bind probe: %w (%v)", ctx.Err(), err)
-			case errors.Is(err, ErrProbeImageUnavailable):
-				return fmt.Errorf("%s: %w", ReasonBindProbeImageUnavailable, err)
-			case errors.Is(err, ErrProbeTimedOut):
-				return fmt.Errorf("%s: %w", ReasonBindProbeTimedOut, err)
-			default:
-				return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
-			}
+	// The boot probe: one container built as a task's is, judged from inside
+	// and from the host (boot_probe.go).
+	if err := a.dispatcher.ProbeRuntime(ctx, root); err != nil {
+		switch {
+		case ctx.Err() != nil:
+			// An Orker told to stop while it probes has found nothing
+			// wrong with its work root or its daemon.
+			return fmt.Errorf("boot interrupted during the bind probe: %w (%v)", ctx.Err(), err)
+		case errors.Is(err, ErrProbeImageUnavailable):
+			return fmt.Errorf("%s: %w", ReasonBindProbeImageUnavailable, err)
+		case errors.Is(err, ErrProbeTimedOut):
+			return fmt.Errorf("%s: %w", ReasonBindProbeTimedOut, err)
+		case errors.Is(err, ErrPostureRefused):
+			return fmt.Errorf("%s: %w", ReasonRuntimePostureRefused, err)
+		default:
+			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
+	}
+	// An escape hatch that does not land as the Orker is a boot refusal only
+	// where every task would use it; elsewhere it fails only the tasks that
+	// ask for it, and says so here first.
+	if err := a.dispatcher.runAsOrkerUnavailable(); err != nil {
+		if a.dispatcher.Policy.ForceUser {
+			return fmt.Errorf("%s: %s is set, so every task runs as the Orker's user, and %w",
+				ReasonRunAsOrkerUnavailable, ForceUserVar, err)
+		}
+		a.dispatcher.logger().Warn("boot probe: running a task as the Orker's user does not work on this host; "+
+			"a task that sets runAsOrkerUser fails "+ReasonRunAsOrkerUnavailable, "error", err)
 	}
 	// Claim the identity before reaping by it.
 	//

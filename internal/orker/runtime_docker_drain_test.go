@@ -24,11 +24,11 @@ func TestRunWithin_AnOutputPipeHeldPastExitIsStillASuccess(t *testing.T) {
 		t.Fatal(err)
 	}
 	d := &DockerRuntime{Bin: bin}
-	code, out, overran, err := d.runWithin(context.Background(), time.Minute, "create", "busybox")
-	if err != nil || code != 0 || overran {
-		t.Fatalf("runWithin = code %d, overran %v, err %v: a CLI that exited 0 failed", code, overran, err)
+	answer, overran, err := d.runWithin(context.Background(), time.Minute, "create", "busybox")
+	if err != nil || answer.code != 0 || overran {
+		t.Fatalf("runWithin = code %d, overran %v, err %v: a CLI that exited 0 failed", answer.code, overran, err)
 	}
-	if got := strings.TrimSpace(out); got != "c0ffee" {
+	if got := strings.TrimSpace(answer.stdout); got != "c0ffee" {
 		t.Fatalf("output = %q, want the CLI's whole answer", got)
 	}
 }

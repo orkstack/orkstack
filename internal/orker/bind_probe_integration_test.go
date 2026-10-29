@@ -27,8 +27,11 @@ import (
 // invocations never answer, and the shim waits to be killed), timeouterr (its
 // content N: the first N `run`s answer at once with the daemon's own deadline
 // error), delay (seconds every later `run` waits before it reaches the
-// daemon), answer (every `run` that is not hung answers success itself, as a
-// daemon that has recovered does, and never reaches the real daemon), fail (a
+// daemon), answer (every `run` that is not hung answers itself, as a daemon
+// that has recovered does, and never reaches the real daemon: it does what the
+// probe's container does on a runtime that gives it a task's posture, reading
+// the Orker's nonce from the input bind, writing its own into the output bind
+// and printing the facts file), fail (a
 // `run` that the daemon refuses, as it refuses an unshared path), inspecthang
 // (`image inspect` never answers). `calls` records every invocation and `runs`
 // counts the `run`s.
@@ -58,7 +61,20 @@ if [ "$1" = run ]; then
   if [ -e "$S/timeouterr" ] && [ "$n" -le "$(cat "$S/timeouterr")" ]; then
     echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
   fi
-  if [ -e "$S/answer" ]; then exit 0; fi
+  if [ -e "$S/answer" ]; then
+    in=""; out=""; last=""
+    for a in "$@"; do
+      case "$a" in
+        type=bind,source=*,destination=/orkstack/input,readonly) in=${a#type=bind,source=}; in=${in%%,destination=*} ;;
+        type=bind,source=*,destination=/orkstack/output) out=${a#type=bind,source=}; out=${out%%,destination=*} ;;
+      esac
+      last=$a
+    done
+    echo '@@nonce'; cat "$in/probe-nonce"; echo
+    printf '%s' "$last" > "$out/probe-nonce"; printf '%s' "$last" > "$out/probe-as-orker"
+    cat "$S/facts"
+    exit 0
+  fi
   if [ -e "$S/delay" ]; then sleep "$(cat "$S/delay")"; fi
   if [ -e "$S/fail" ]; then echo "docker: Error response from daemon: bind source path does not exist" >&2; exit 125; fi
 fi
@@ -68,7 +84,9 @@ exec '` + realDocker + `' "$@"
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &slowDockerShim{t: t, dir: dir, bin: bin}
+	shim := &slowDockerShim{t: t, dir: dir, bin: bin}
+	shim.set("facts", orker.GoodBootProbeFacts(orker.SecurityPolicyFromEnv()))
+	return shim
 }
 
 func (s *slowDockerShim) set(flag, content string) {
@@ -132,6 +150,17 @@ func (s *slowDockerShim) probeContainers() (ran, removed []string) {
 	return ran, removed
 }
 
+// requireProbeImage makes the boot probe's pinned image local, or reports the
+// missing prerequisite.
+func requireProbeImage(ctx context.Context, t *testing.T, realDocker string) {
+	t.Helper()
+	if err := exec.CommandContext(ctx, realDocker, "image", "inspect", orker.BindProbeImage).Run(); err != nil {
+		if out, pullErr := exec.CommandContext(ctx, realDocker, "pull", "--quiet", orker.BindProbeImage).CombinedOutput(); pullErr != nil {
+			infraAbsent(t, "the bind probe image %s is not local and cannot be pulled: %v: %s", orker.BindProbeImage, pullErr, out)
+		}
+	}
+}
+
 // TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot boots
 // a real Orker (real Activities.Boot, real DockerRuntime, real daemon and a
 // real bind mount) behind a docker CLI that is slow to start containers.
@@ -168,11 +197,7 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 	// slow is the run and no case waits on a registry.
 	setup, cancelSetup := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancelSetup()
-	if err := exec.CommandContext(setup, realDocker, "image", "inspect", "alpine:3.20").Run(); err != nil {
-		if out, pullErr := exec.CommandContext(setup, realDocker, "pull", "--quiet", "alpine:3.20").CombinedOutput(); pullErr != nil {
-			infraAbsent(t, "the bind probe image alpine:3.20 is not local and cannot be pulled: %v: %s", pullErr, out)
-		}
-	}
+	requireProbeImage(setup, t, realDocker)
 	workParent := "../../.data/work"
 	if err := os.MkdirAll(workParent, 0o755); err != nil {
 		t.Fatal(err)

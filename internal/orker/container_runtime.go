@@ -100,11 +100,15 @@ type ContainerSpec struct {
 	TmpfsBytes int64
 	// Network is "none" or "default", always explicit, never implicit.
 	Network string
-	// User is "<uid>:<gid>" when the Orker overrides the image's own USER for
-	// the §3.1 readability escape hatch, and empty otherwise. Empty is the
-	// default: forcing a user breaks images that need their baked-in identity,
-	// which would violate "any OCI image can become an activity".
-	User string
+	// RunAsOrker is the §3.1 readability escape hatch: run the workload as
+	// the Orker's own user, so the Orker can read every file it writes
+	// whatever its umask. It is an intent, not a uid: the runtime renders it
+	// in its own spelling, and the boot probe checks that the rendering lands
+	// as the Orker, because under a user namespace the Orker's uid inside the
+	// container is another user on the host. False is the default: forcing a
+	// user breaks images that need their baked-in identity, which would
+	// violate "any OCI image can become an activity".
+	RunAsOrker bool
 	// CPUs and Memory are the effective resources after Orker policy. Both are
 	// ALWAYS set: no workload ever receives unlimited resources, including one
 	// that requested nothing (§9.3).
@@ -119,7 +123,9 @@ type ContainerSpec struct {
 	// ReadOnlyRootfs, DropAllCapabilities, NoNewPrivileges, SeccompProfile and
 	// Init are the §9.2 constants. They are fields rather than implicit so a
 	// reader of a spec sees the whole security posture, and the runtime
-	// refuses a spec that weakens any of them.
+	// refuses a spec that weakens any of them. A read-only root filesystem
+	// includes /run and /var/tmp, which some runtimes leave writable: the
+	// writable paths are the spec's binds and its TmpfsPath, and nothing else.
 	ReadOnlyRootfs      bool
 	DropAllCapabilities bool
 	NoNewPrivileges     bool
@@ -131,6 +137,12 @@ type ContainerSpec struct {
 	// the containers of an Orker that never comes back.
 	StopTimeoutSeconds int
 }
+
+// readOnlyRootfsPaths are the paths of a read-only root filesystem that some
+// runtimes leave writable on their own — Podman's --read-only keeps /run and
+// /var/tmp as writable tmpfs, bounded only by the memory limit — so the boot
+// probe checks each by name rather than trusting "/" to stand for them.
+var readOnlyRootfsPaths = []string{"/run", "/var/tmp"}
 
 // ContainerRuntime is the portability boundary between OrkStack and an OCI
 // runtime. It is a boundary, not a framework: exactly one implementation
@@ -210,6 +222,20 @@ var ErrNotBindable = errors.New("path is not bind-mountable by the container run
 // that is slow, unreachable or rate-limited says nothing about whether the
 // work root can be bound.
 var ErrProbeImageUnavailable = errors.New("the bind probe image is unavailable")
+
+// ErrPostureRefused reports that the container runtime did not give the boot
+// probe's container the posture every task's container is owed (§9.2): it
+// refused to run that container, which is built exactly as a task's is, or it
+// ran it and what the container saw from inside was weaker. Either way every
+// task would be refused, or would run weaker than the contract says, so the
+// Orker does not start.
+var ErrPostureRefused = errors.New("the container runtime does not give a task's container its posture")
+
+// ErrRunAsOrkerUnavailable reports that the §3.1 escape hatch does not land as
+// the Orker on this host: a file the boot probe's container wrote as the
+// Orker's user is not one the Orker can read. A task that asks for the hatch
+// fails with it rather than running as a user that would not help.
+var ErrRunAsOrkerUnavailable = errors.New("running a container as the Orker's user does not land as the Orker on this host")
 
 // ErrProbeTimedOut reports that the container daemon was too slow for the
 // boot-time bind probe: it did not answer the probe's image inspect within the

@@ -76,9 +76,10 @@ Nothing in an Orkflow can name a host path.
 | `/orkstack/output` | the attempt's values and artifacts | read-write |
 | `/orkstack/tmp` | the attempt's scratch | read-write |
 | `/orkstack/shared` | the pin's shared directory | read-write, pinned tasks only |
-| `/tmp` | a tmpfs, 64 MiB by default | read-write, `nosuid`, `nodev` |
+| `/tmp` | a tmpfs, 64 MiB by default | read-write, `nosuid`, `nodev`, `noexec` |
 
-- The root file system is read-only, and the working directory is `/orkstack`.
+- The root file system is read-only, `/run` and `/var/tmp` included, and the
+  working directory is `/orkstack`.
 - The environment is the image's own `ENV`, overridden by the task's `env:`
   map, plus what the container runtime adds (`HOSTNAME` under Docker). The
   platform adds no variable: required platform state travels as files
@@ -88,6 +89,12 @@ Nothing in an Orkflow can name a host path.
   only when the task sets `run_as_orker_user: true`, or when the deployment sets
   `ORK_ORKER_FORCE_USER=true`, which defaults to off
   (`internal/orker/oci_dispatcher.go`; `internal/orker/security_profile.go`).
+  The boot probe checks that this user lands as the Orker; where it does not,
+  such a task fails `RUN_AS_ORKER_UNAVAILABLE` (`internal/orker/boot_probe.go`).
+- Before it takes work, the Orker runs one container built as a task's is and
+  checks from inside it that the runtime applied this posture; an Orker whose
+  runtime does not refuses to start with `RUNTIME_POSTURE_REFUSED`
+  ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md) §3.1).
 
 ## What the Orker refuses
 

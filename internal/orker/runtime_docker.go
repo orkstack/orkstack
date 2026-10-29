@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -116,16 +117,40 @@ func (d *DockerRuntime) bin() (string, error) {
 	return resolved, nil
 }
 
+// cliAnswer is what one CLI invocation reported: its exit status and its two
+// streams, kept apart.
+//
+// They are kept apart because only stdout is the command's answer. A CLI may
+// write lines of its own on stderr while succeeding — the podman-docker shim's
+// "Emulate Docker CLI using podman" on every command, a rootless runtime's
+// WARN lines — and a merged buffer handed those to every parser: the image
+// inspect no longer decoded, so every task failed IMAGE_PULL_FAILED, and the
+// created container's id carried the warning with it.
+type cliAnswer struct {
+	code   int
+	stdout string
+	stderr string
+}
+
+// said is what the CLI told an operator: its stderr, or its stdout when it
+// wrote nothing on stderr. It is for messages only, never for parsing.
+func (a cliAnswer) said() string {
+	if text := strings.TrimSpace(a.stderr); text != "" {
+		return text
+	}
+	return strings.TrimSpace(a.stdout)
+}
+
 // control runs a short bookkeeping command on a context of its own. Only a
 // failure to START the CLI is an error; a non-zero exit is data the caller
 // interprets.
-func (d *DockerRuntime) control(ctx context.Context, args ...string) (int, string, error) {
+func (d *DockerRuntime) control(ctx context.Context, args ...string) (cliAnswer, error) {
 	return d.controlWithin(ctx, controlTimeout, args...)
 }
 
-func (d *DockerRuntime) controlWithin(ctx context.Context, within time.Duration, args ...string) (int, string, error) {
-	code, out, _, err := d.runWithin(ctx, within, args...)
-	return code, out, err
+func (d *DockerRuntime) controlWithin(ctx context.Context, within time.Duration, args ...string) (cliAnswer, error) {
+	answer, _, err := d.runWithin(ctx, within, args...)
+	return answer, err
 }
 
 // runWithin is controlWithin that also reports whether the command overran
@@ -139,30 +164,32 @@ func (d *DockerRuntime) controlWithin(ctx context.Context, within time.Duration,
 // itself ended is not an overrun: that is its caller's own stop.
 func (d *DockerRuntime) runWithin(
 	ctx context.Context, within time.Duration, args ...string,
-) (code int, out string, overran bool, err error) {
+) (answer cliAnswer, overran bool, err error) {
 	bin, err := d.bin()
 	if err != nil {
-		return 0, "", false, err
+		return cliAnswer{}, false, err
 	}
 	cmdCtx, cancel := context.WithTimeout(ctx, within)
 	defer cancel()
 
-	var combined bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd := exec.CommandContext(cmdCtx, bin, args...)
-	cmd.Stdout = &combined
-	cmd.Stderr = &combined
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
 	cmd.WaitDelay = pipeDrainDelay
 	runErr := cmd.Run()
 	overran = runErr != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
+	answer = cliAnswer{stdout: stdout.String(), stderr: stderr.String()}
 	switch {
 	case runErr == nil:
-		return 0, combined.String(), false, nil
+		return answer, false, nil
 	case isExitErr(runErr):
-		return exitCodeOf(runErr), combined.String(), overran, nil
+		answer.code = exitCodeOf(runErr)
+		return answer, overran, nil
 	case cmdCtx.Err() != nil:
-		return 0, combined.String(), overran, fmt.Errorf("docker %s: %w", args[0], cmdCtx.Err())
+		return answer, overran, fmt.Errorf("docker %s: %w", args[0], cmdCtx.Err())
 	default:
-		return 0, combined.String(), false, fmt.Errorf("docker %s: %w", args[0], runErr)
+		return answer, false, fmt.Errorf("docker %s: %w", args[0], runErr)
 	}
 }
 
@@ -184,12 +211,12 @@ func (d *DockerRuntime) Pull(ctx context.Context, pinned string) (PullInfo, erro
 		return PullInfo{}, err
 	}
 	if !present {
-		code, out, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", pinned)
+		answer, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", pinned)
 		if err != nil {
 			return PullInfo{}, fmt.Errorf("pull %s: %w", pinned, err)
 		}
-		if code != 0 {
-			return PullInfo{}, fmt.Errorf("pull %s: docker exited %d: %s", pinned, code, strings.TrimSpace(out))
+		if answer.code != 0 {
+			return PullInfo{}, fmt.Errorf("pull %s: docker exited %d: %s", pinned, answer.code, answer.said())
 		}
 		// Re-inspected only after an actual pull, for the facts of what was
 		// pulled.
@@ -214,13 +241,13 @@ func (d *DockerRuntime) LoadLayout(ctx context.Context, layoutPath, digest strin
 	if _, err := os.Stat(layoutPath); err != nil {
 		return PullInfo{}, fmt.Errorf("%w: layout %s: %w", ErrNotInLayout, layoutPath, err)
 	}
-	code, out, err := d.controlWithin(ctx, d.pullTimeout(), "load", "--quiet", "--input", layoutPath)
+	answer, err := d.controlWithin(ctx, d.pullTimeout(), "load", "--quiet", "--input", layoutPath)
 	if err != nil {
 		return PullInfo{}, fmt.Errorf("load layout %s: %w", layoutPath, err)
 	}
-	if code != 0 {
+	if answer.code != 0 {
 		return PullInfo{}, fmt.Errorf("%w: load %s: docker exited %d: %s",
-			ErrNotInLayout, layoutPath, code, strings.TrimSpace(out))
+			ErrNotInLayout, layoutPath, answer.code, answer.said())
 	}
 	info, err := d.inspectImage(ctx, digest)
 	if err != nil {
@@ -236,11 +263,11 @@ func (d *DockerRuntime) LoadLayout(ctx context.Context, layoutPath, digest strin
 // answer. overran reports that it did not: a daemon that is silent has not
 // said the image is absent, and the caller must not read it as saying so.
 func (d *DockerRuntime) imagePresent(ctx context.Context, within time.Duration, ref string) (present, overran bool, err error) {
-	code, _, overran, err := d.runWithin(ctx, within, "image", "inspect", "--format", "{{.Id}}", ref)
+	answer, overran, err := d.runWithin(ctx, within, "image", "inspect", "--format", "{{.Id}}", ref)
 	if overran || err != nil {
 		return false, overran, err
 	}
-	return code == 0, false, nil
+	return answer.code == 0, false, nil
 }
 
 // inspectImage reads the platform facts the commit records as audit data. An
@@ -260,11 +287,11 @@ func (d *DockerRuntime) inspectImage(ctx context.Context, ref string) (PullInfo,
 // platform facts. A non-zero exit means absent; only a CLI that could not run,
 // or output that does not decode, is an error.
 func (d *DockerRuntime) lookupImage(ctx context.Context, ref string) (PullInfo, bool, error) {
-	code, out, err := d.control(ctx, "image", "inspect", "--format", "{{json .}}", ref)
+	answer, err := d.control(ctx, "image", "inspect", "--format", "{{json .}}", ref)
 	if err != nil {
 		return PullInfo{}, false, err
 	}
-	if code != 0 {
+	if answer.code != 0 {
 		return PullInfo{}, false, nil
 	}
 	var raw struct {
@@ -274,7 +301,7 @@ func (d *DockerRuntime) lookupImage(ctx context.Context, ref string) (PullInfo, 
 		Architecture string   `json:"Architecture"`
 		Variant      string   `json:"Variant"`
 	}
-	if err := json.Unmarshal([]byte(out), &raw); err != nil {
+	if err := json.Unmarshal([]byte(answer.stdout), &raw); err != nil {
 		return PullInfo{}, false, fmt.Errorf("image inspect %s: decode: %w", ref, err)
 	}
 	platform := raw.Os + "/" + raw.Architecture
@@ -320,18 +347,18 @@ func (d *DockerRuntime) Create(ctx context.Context, spec ContainerSpec) (Contain
 	if err != nil {
 		return "", err
 	}
-	code, out, err := d.control(ctx, args...)
+	answer, err := d.control(ctx, args...)
 	if err != nil {
 		return "", err
 	}
-	if code != 0 {
-		trimmed := strings.TrimSpace(out)
-		if isUnbindable(trimmed) {
-			return "", fmt.Errorf("%w: %s", ErrNotBindable, trimmed)
+	if answer.code != 0 {
+		said := answer.said()
+		if isUnbindable(said) {
+			return "", fmt.Errorf("%w: %s", ErrNotBindable, said)
 		}
-		return "", fmt.Errorf("create container: docker exited %d: %s", code, trimmed)
+		return "", fmt.Errorf("create container: docker exited %d: %s", answer.code, said)
 	}
-	id := strings.TrimSpace(out)
+	id := strings.TrimSpace(answer.stdout)
 	if id == "" {
 		return "", errors.New("create container: docker returned no container id")
 	}
@@ -341,6 +368,17 @@ func (d *DockerRuntime) Create(ctx context.Context, spec ContainerSpec) (Contain
 // dockerCreateArgs renders a spec to argv. It is a pure function so a test can
 // assert the whole security posture without a daemon.
 func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
+	flags, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]))
+	if err != nil {
+		return nil, err
+	}
+	return append([]string{"create"}, flags...), nil
+}
+
+// dockerContainerFlags is everything after the verb: the flags, the image and
+// the command of a container named name. `create` and the boot probe's `run`
+// take the same list, which is what makes the probe's container a task's.
+func dockerContainerFlags(spec ContainerSpec, name string) ([]string, error) {
 	switch {
 	case spec.Image == "":
 		return nil, errors.New("create container: image is required")
@@ -371,8 +409,7 @@ func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
 	}
 
 	args := []string{
-		"create",
-		"--name", containerName(spec.Labels["ork.task"]),
+		"--name", name,
 		"--read-only",
 		"--cap-drop=ALL",
 		"--security-opt", "no-new-privileges",
@@ -387,13 +424,25 @@ func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
 	if spec.StopTimeoutSeconds > 0 {
 		args = append(args, "--stop-timeout", strconv.Itoa(spec.StopTimeoutSeconds))
 	}
-	if spec.User != "" {
-		args = append(args, "--user", spec.User)
+	if spec.RunAsOrker {
+		// The §3.1 escape hatch in this CLI's spelling: the Orker's own uid
+		// and gid. Under a user namespace (a rootless daemon, userns-remap)
+		// that uid is another host user, which the boot probe finds.
+		args = append(args, "--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()))
 	}
 	if spec.TmpfsPath != "" {
+		// noexec is spelled rather than left to the runtime: Docker adds it to
+		// a --tmpfs by itself and Podman does not.
 		args = append(args, "--tmpfs",
-			fmt.Sprintf("%s:rw,nosuid,nodev,size=%d", spec.TmpfsPath, spec.TmpfsBytes))
+			fmt.Sprintf("%s:rw,nosuid,nodev,noexec,size=%d", spec.TmpfsPath, spec.TmpfsBytes))
 	}
+	// /run and /var/tmp are NOT given a read-only tmpfs of their own, though
+	// that spelling reads alike on every runtime measured: this CLI's
+	// --read-only already covers both, and a mount target follows the image's
+	// own symlinks, so an image whose /var/tmp links to /tmp had its writable
+	// /tmp turned read-only by it. A runtime whose --read-only leaves either
+	// writable (Podman's) is refused at boot by the probe instead, which
+	// checks both (readOnlyRootfsPaths).
 
 	for _, key := range sortedKeys(spec.Labels) {
 		args = append(args, "--label", key+"="+spec.Labels[key])
@@ -661,14 +710,14 @@ func (d *DockerRuntime) startedDespiteCancel(ctx context.Context, id ContainerID
 // leftCreated reports whether the daemon has moved the container out of the
 // created state.
 func (d *DockerRuntime) leftCreated(ctx context.Context, id ContainerID) (bool, error) {
-	code, out, err := d.control(ctx, "inspect", "--format", "{{.State.Status}}", string(id))
+	answer, err := d.control(ctx, "inspect", "--format", "{{.State.Status}}", string(id))
 	if err != nil {
 		return false, fmt.Errorf("start container %s: observe its state: %w", id, err)
 	}
-	if code != 0 {
+	if answer.code != 0 {
 		return false, nil
 	}
-	switch status := strings.TrimSpace(out); status {
+	switch status := strings.TrimSpace(answer.stdout); status {
 	case "created":
 		return false, nil
 	case "":
@@ -719,19 +768,19 @@ const (
 
 // Signal delivers sig to the container's PID 1.
 func (d *DockerRuntime) Signal(ctx context.Context, id ContainerID, sig Signal) error {
-	code, out, err := d.control(ctx, "kill", "--signal", string(sig), string(id))
+	answer, err := d.control(ctx, "kill", "--signal", string(sig), string(id))
 	if err != nil {
 		return err
 	}
-	if code != 0 {
-		trimmed := strings.TrimSpace(out)
-		if strings.Contains(trimmed, "is not running") || strings.Contains(trimmed, "No such container") {
+	if answer.code != 0 {
+		said := answer.said()
+		if strings.Contains(said, "is not running") || strings.Contains(said, "No such container") {
 			// Signalling a container that already exited is the normal race
 			// between the grace timer and a well-behaved workload, not a
 			// failure.
 			return nil
 		}
-		return fmt.Errorf("signal %s %s: docker exited %d: %s", sig, id, code, trimmed)
+		return fmt.Errorf("signal %s %s: docker exited %d: %s", sig, id, answer.code, said)
 	}
 	return nil
 }
@@ -752,11 +801,12 @@ func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, e
 		return ExitStatus{}, err
 	}
 	var out bytes.Buffer
+	said := &boundedBuffer{limit: 4096}
 	cmd := exec.CommandContext(ctx, bin, "wait", string(id))
 	cmd.Stdout = &out
-	cmd.Stderr = io.Discard
+	cmd.Stderr = said
 	if err := cmd.Run(); err != nil {
-		return ExitStatus{}, fmt.Errorf("wait for container %s: %w", id, err)
+		return ExitStatus{}, fmt.Errorf("wait for container %s: %w: %s", id, err, strings.TrimSpace(said.String()))
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(out.String()))
 	if err != nil {
@@ -791,22 +841,40 @@ func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, e
 }
 
 func (d *DockerRuntime) oomKilled(ctx context.Context, id ContainerID) bool {
-	code, out, err := d.control(ctx, "inspect", "--format", "{{.State.OOMKilled}}", string(id))
-	if err != nil || code != 0 {
+	answer, err := d.control(ctx, "inspect", "--format", "{{.State.OOMKilled}}", string(id))
+	if err != nil || answer.code != 0 {
 		return false
 	}
-	return strings.TrimSpace(out) == "true"
+	return strings.TrimSpace(answer.stdout) == "true"
 }
 
 // Remove force-removes the container. Callers pass a DETACHED context: cleanup
 // must survive the cancellation that caused it.
+//
+// It kills the container before it removes it. `rm --force` on a running
+// container is not a kill on every runtime: Podman's, behind its CLI and its
+// Docker-compatible socket alike, stops the container and waits out its stop
+// timeout first — 30 s for a workload that ignores SIGTERM, which is the
+// whole of controlTimeout — so a removal could time out, and a boot reap of
+// such an orphan cost 30 s each. The kill's own answer decides nothing: a
+// container that is not running, or already gone, is what most removals
+// meet, and whatever the kill said, the removal's answer is the one reported.
+//
+// The kill and the removal share one controlTimeout, the bound a removal had
+// before it killed first: a daemon that never answers holds a reap or a boot
+// probe no longer than it did.
 func (d *DockerRuntime) Remove(ctx context.Context, id ContainerID) error {
-	code, out, err := d.control(ctx, "rm", "--force", "--volumes", string(id))
+	ctx, cancel := context.WithTimeout(ctx, controlTimeout)
+	defer cancel()
+	if _, err := d.control(ctx, "kill", "--signal", string(SIGKILL), string(id)); err != nil && ctx.Err() != nil {
+		return err
+	}
+	answer, err := d.control(ctx, "rm", "--force", "--volumes", string(id))
 	if err != nil {
 		return err
 	}
-	if code != 0 && !strings.Contains(out, "No such container") {
-		return fmt.Errorf("remove container %s: docker exited %d: %s", id, code, strings.TrimSpace(out))
+	if answer.code != 0 && !strings.Contains(answer.said(), "No such container") {
+		return fmt.Errorf("remove container %s: docker exited %d: %s", id, answer.code, answer.said())
 	}
 	return nil
 }
@@ -822,19 +890,19 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 	if orkerID == "" {
 		return 0, nil
 	}
-	code, out, err := d.control(ctx, "ps", "--all", "--quiet",
+	answer, err := d.control(ctx, "ps", "--all", "--quiet",
 		"--filter", "label=ork.orker="+orkerID)
 	if err != nil {
 		return 0, err
 	}
-	if code != 0 {
-		return 0, fmt.Errorf("reap: list containers: docker exited %d: %s", code, strings.TrimSpace(out))
+	if answer.code != 0 {
+		return 0, fmt.Errorf("reap: list containers: docker exited %d: %s", answer.code, answer.said())
 	}
 	var (
 		removed  int
 		failures []error
 	)
-	for _, id := range strings.Fields(out) {
+	for _, id := range strings.Fields(answer.stdout) {
 		// One container that cannot be removed (a removal already in
 		// progress, a daemon hiccup) must not leave every other orphan
 		// running, so every one is tried and the failures are reported
@@ -869,18 +937,18 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 	d.mu.Unlock()
 
 	info := RuntimeInfo{Name: "docker"}
-	code, out, err := d.control(ctx, "version", "--format", "{{.Server.Version}}")
+	answer, err := d.control(ctx, "version", "--format", "{{.Server.Version}}")
 	if err != nil {
 		return info, err
 	}
-	if code != 0 {
-		return info, fmt.Errorf("docker version: exited %d: %s", code, strings.TrimSpace(out))
+	if answer.code != 0 {
+		return info, fmt.Errorf("docker version: exited %d: %s", answer.code, answer.said())
 	}
-	info.Version = strings.TrimSpace(out)
+	info.Version = strings.TrimSpace(answer.stdout)
 
 	// Rootless is a daemon fact, not a flag: the security context reports it.
-	if code, out, err := d.control(ctx, "info", "--format", "{{.SecurityOptions}}"); err == nil && code == 0 {
-		info.Rootless = strings.Contains(out, "rootless")
+	if answer, err := d.control(ctx, "info", "--format", "{{.SecurityOptions}}"); err == nil && answer.code == 0 {
+		info.Rootless = strings.Contains(answer.stdout, "rootless")
 	}
 	d.mu.Lock()
 	kept := info
@@ -889,28 +957,28 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 	return info, nil
 }
 
-// ProbeBindable verifies the daemon can bind-mount a host path, by doing it.
+// RunBootProbe runs the boot probe's container once, to its end, and returns
+// what it wrote on stdout. The spec is built by the dispatcher exactly as a
+// task's is (bootProbeSpec), and its flags are rendered by the same function
+// a task's `create` is, so what the daemon refuses or weakens here it would
+// refuse or weaken for every task. What the output says is judged by the
+// caller, not here: that judgement is about Linux, not about this CLI.
 //
-// §3.1 requires this at BOOT rather than at first task: on macOS with a
-// VM-hosted daemon $HOME is shared and /var/folders is not, so an Orker
-// pointed at the wrong workdir root fails every task later with an error that
-// names the container and not the cause.
-//
-// The probe has three distinct ways to fail, and each is reported as its own
-// thing: the root cannot be bound (ErrNotBindable: the daemon refused the
-// probe's run, or its container exited non-zero, within the probe's budget and
-// for a reason that is not a deadline; or no probe directory could be made),
-// the probe's image is not available (ErrProbeImageUnavailable), and the
-// daemon was too slow (ErrProbeTimedOut): it did not answer the image inspect
-// within the probe's budget, or did not start the probe container within it
-// on either of two attempts, whether it said nothing or said its own deadline
-// had passed. An Orker that is stopped meanwhile gets the context's own error.
-func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
-	probe, err := os.MkdirTemp(root, "ork-bindprobe-*")
-	if err != nil {
-		return fmt.Errorf("%w: cannot create a probe directory under %s: %w", ErrNotBindable, root, err)
+// It has four ways to fail, each its own thing: the probe's image is not
+// available (ErrProbeImageUnavailable); the daemon was too slow
+// (ErrProbeTimedOut): it did not answer the image inspect within the probe's
+// budget, or did not start the container within it on either of two
+// attempts, whether it said nothing or said its own deadline had passed; the
+// daemon refused a bind in its own words (ErrNotBindable); and the daemon
+// refused the container for any other reason within the budget, or the
+// container exited non-zero (ErrPostureRefused). An Orker that is stopped
+// meanwhile gets the context's own error.
+func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (string, error) {
+	// A spec this CLI cannot render is refused before anything waits on the
+	// daemon: no retry changes it.
+	if _, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"])); err != nil {
+		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
-	defer func() { _ = os.RemoveAll(probe) }()
 
 	// Every step of the probe that waits on the daemon is bounded by the
 	// probe's budget and not by controlTimeout, which is meant for
@@ -918,31 +986,40 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 	// even the cheapest question, and a daemon that is silent has told the
 	// probe nothing about the image or the root.
 	budget := d.bindProbeTimeout()
+	image := spec.Image
 
 	// The probe image is fetched first, under the PULL timeout rather than the
 	// probe run's budget an implicit pull would spend, and a failure to fetch
 	// it is its own error: a slow or rate-limited registry is not a work
 	// root the daemon cannot bind, and naming it as one sends an operator to
 	// the wrong fix.
-	present, overran, err := d.imagePresent(ctx, budget, bindProbeImage)
+	present, overran, err := d.imagePresent(ctx, budget, image)
 	switch {
 	case ctx.Err() != nil:
-		return fmt.Errorf("probe bind of %s interrupted: %w", root, ctx.Err())
+		return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	case overran:
-		return probeTimedOut(root, fmt.Sprintf("answer `docker image inspect %s` within %s", bindProbeImage, budget), nil, nil)
+		return "", probeTimedOut(fmt.Sprintf("answer `docker image inspect %s` within %s", image, budget), nil, nil)
 	case err != nil:
-		return fmt.Errorf("%w: the bind probe image %s: %w", ErrProbeImageUnavailable, bindProbeImage, err)
+		return "", fmt.Errorf("%w: the bind probe image %s: %w", ErrProbeImageUnavailable, image, err)
 	}
 	if !present {
-		code, out, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", bindProbeImage)
+		answer, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", image)
 		if err != nil {
-			return fmt.Errorf("%w: the bind probe image %s could not be pulled: %w",
-				ErrProbeImageUnavailable, bindProbeImage, err)
+			return "", fmt.Errorf("%w: the bind probe image %s could not be pulled: %w",
+				ErrProbeImageUnavailable, image, err)
 		}
-		if code != 0 {
-			return fmt.Errorf("%w: the bind probe image %s could not be pulled: docker exited %d: %s",
-				ErrProbeImageUnavailable, bindProbeImage, code, strings.TrimSpace(out))
+		if answer.code != 0 {
+			return "", fmt.Errorf("%w: the bind probe image %s could not be pulled: docker exited %d: %s",
+				ErrProbeImageUnavailable, image, answer.code, answer.said())
 		}
+	}
+
+	// The daemon quotes the paths it was given, and none of them is a word
+	// about the daemon's own deadlines: neither a bind's source nor the probe
+	// directory and the work root it lies in.
+	var sources []string
+	for _, m := range spec.Mounts {
+		sources = append(sources, m.Source, filepath.Dir(m.Source), filepath.Dir(filepath.Dir(m.Source)))
 	}
 
 	// The run is the one step of the probe that waits on the daemon to create,
@@ -950,35 +1027,31 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 	// that the daemon ends with a deadline error of its own, is tried once
 	// more: whether the daemon is slow is a fact about the moment, and whether
 	// the root binds is not. Any other failure within the budget is the
-	// daemon's answer about the root, and it is final.
+	// daemon's answer, and it is final.
 	var attempts, leftovers []string
 	for attempt := 1; attempt <= bindProbeAttempts; attempt++ {
-		name := containerName("bindprobe")
-		code, out, overran, err := d.runWithin(ctx, budget, "run", "--rm",
-			"--name", name,
-			"--network", "none",
-			"--read-only",
-			"--cap-drop=ALL",
-			"--security-opt", "no-new-privileges",
-			"--mount", fmt.Sprintf("type=bind,source=%s,destination=/probe,readonly", probe),
-			"--entrypoint", "/bin/true",
-			bindProbeImage)
-		answer := strings.TrimSpace(out)
+		name := containerName(spec.Labels["ork.task"])
+		flags, _ := dockerContainerFlags(spec, name)
+		answer, overran, err := d.runWithin(ctx, budget, append([]string{"run", "--rm"}, flags...)...)
+		said := truncateString(answer.said(), 2000)
 		switch {
-		case err == nil && code == 0:
-			return nil
+		case err == nil && answer.code == 0:
+			return answer.stdout, nil
 		case ctx.Err() != nil:
 			// The Orker is stopping, which is neither a slow daemon nor an
 			// unbindable root; Boot reports it as the interruption it is.
-			return fmt.Errorf("probe bind of %s interrupted: %w", root, ctx.Err())
+			return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 		case overran:
 			attempts = append(attempts, fmt.Sprintf("attempt %d: no answer within %s", attempt, budget))
 		case err != nil:
-			return fmt.Errorf("%w: probe bind of %s: %w", ErrNotBindable, root, err)
-		case !isUnbindable(answer) && saysDeadline(answer, probe, root):
-			attempts = append(attempts, fmt.Sprintf("attempt %d: the daemon answered %q", attempt, truncateString(answer, 300)))
+			return "", fmt.Errorf("%w: run the boot probe's container: %w", ErrPostureRefused, err)
+		case isUnbindable(said):
+			return "", fmt.Errorf("%w: docker exited %d: %s", ErrNotBindable, answer.code, said)
+		case saysDeadline(said, sources...):
+			attempts = append(attempts, fmt.Sprintf("attempt %d: the daemon answered %q", attempt, truncateString(said, 300)))
 		default:
-			return fmt.Errorf("%w: probe bind of %s: docker exited %d: %s", ErrNotBindable, root, code, answer)
+			return "", fmt.Errorf("%w: the runtime would not run the boot probe's container, which is built as a task's is: "+
+				"docker exited %d: %s", ErrPostureRefused, answer.code, said)
 		}
 		// The attempt may have left its container half-made, or the daemon may
 		// still be starting it. Removing it is best effort, on a context of
@@ -988,7 +1061,7 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 			leftovers = append(leftovers, err.Error())
 		}
 	}
-	return probeTimedOut(root, fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, bindProbeAttempts),
+	return "", probeTimedOut(fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, bindProbeAttempts),
 		attempts, leftovers)
 }
 
@@ -996,14 +1069,14 @@ func (d *DockerRuntime) ProbeBindable(ctx context.Context, root string) error {
 // do, what each attempt saw, and any container that could not be removed. It
 // says in the same breath that the work root is not the finding, and names the
 // setting that raises the budget.
-func probeTimedOut(root, didNot string, attempts, leftovers []string) error {
+func probeTimedOut(didNot string, attempts, leftovers []string) error {
 	var msg strings.Builder
 	fmt.Fprintf(&msg, "the container daemon did not %s", didNot)
 	if len(attempts) > 0 {
 		fmt.Fprintf(&msg, " (%s)", strings.Join(attempts, "; "))
 	}
-	fmt.Fprintf(&msg, ". That does not show that %s cannot be bound, only that the daemon is slow or unresponsive; "+
-		"raise %s if it is only slow", root, BindProbeTimeoutVar)
+	fmt.Fprintf(&msg, ". That does not show that the work root cannot be bound, only that the daemon is slow or unresponsive; "+
+		"raise %s if it is only slow", BindProbeTimeoutVar)
 	if len(leftovers) > 0 {
 		fmt.Fprintf(&msg, ". A probe container could not be removed and may remain: %s", strings.Join(leftovers, "; "))
 	}
@@ -1013,12 +1086,15 @@ func probeTimedOut(root, didNot string, attempts, leftovers []string) error {
 // saysDeadline reports whether the daemon's answer to the probe's run says that
 // a deadline of its own passed (its containerd could not start the shim in
 // time, a socket timed out), which is a slow daemon and not a finding about
-// the root. The daemon quotes the paths it was given, so the probe's
-// directory and the root are cut out before the words are looked for: a work
-// root named "timeouts" is not a daemon that timed out.
-func saysDeadline(answer, probe, root string) bool {
-	answer = strings.ReplaceAll(answer, probe, "")
-	answer = strings.ReplaceAll(answer, root, "")
+// the root. The daemon quotes the paths it was given, so they are cut out
+// before the words are looked for: a work root named "timeouts" is not a
+// daemon that timed out.
+func saysDeadline(answer string, paths ...string) bool {
+	for _, path := range paths {
+		if path != "" {
+			answer = strings.ReplaceAll(answer, path, "")
+		}
+	}
 	lowered := strings.ToLower(answer)
 	for _, words := range []string{"deadline exceeded", "timed out", "timeout"} {
 		if strings.Contains(lowered, words) {
@@ -1032,11 +1108,16 @@ func saysDeadline(answer, probe, root string) bool {
 // when the daemon overruns the probe's budget: the first try and one retry.
 const bindProbeAttempts = 2
 
-// bindProbeImage is the image the boot-time bind probe runs. It is pinned to a
-// tag rather than a digest deliberately: it is Orker-local infrastructure that
-// runs no workload code and produces no commit, so the immutability rule that
-// governs activity images (AGENTS.md §5) does not apply to it.
-const bindProbeImage = "alpine:3.20"
+// BindProbeImage is the image the boot probe runs: alpine 3.20, the base of
+// the first-party images, at the index digest they pin.
+//
+// It is qualified with its registry because a short name is resolved by the
+// runtime's own search list, and Podman's enforcing short-name mode with more
+// than one search registry refuses one, which refused boot. It is pinned to a
+// digest because it is what the probe's checks were measured with: the probe
+// needs a POSIX shell, cat, sed and env, and a tag that moved could take any
+// of them away. It runs no workload code and produces no commit.
+const BindProbeImage = "docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
 
 func containerName(taskID string) string {
 	var suffix [4]byte
@@ -1075,7 +1156,10 @@ func isUnbindable(message string) bool {
 	lowered := strings.ToLower(message)
 	return strings.Contains(lowered, "bind source path does not exist") ||
 		strings.Contains(lowered, "mounts denied") ||
-		strings.Contains(lowered, "is not shared from the host")
+		strings.Contains(lowered, "is not shared from the host") ||
+		// The daemon could not see the Orker's directory and tried to make
+		// it on its own side, which is the same unshared path.
+		strings.Contains(lowered, "error while creating mount source path")
 }
 
 func isExitErr(err error) bool {

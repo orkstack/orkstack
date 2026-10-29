@@ -10,6 +10,18 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- The Orker counts an attempt whose own directory, or its secrets, could not
+  be removed when it ended, on `ork.orker.workspace_cleanup_failures`, and
+  logs the path and the error. The error was discarded, so a workload that
+  left a file or directory as a uid the Orker cannot remove filled the disk
+  with no sign of why.
+- `RUNTIME_POSTURE_REFUSED` and `RUN_AS_ORKER_UNAVAILABLE`, two new reasons
+  (docs/REASONS.md). The first is a boot refusal: the Orker's boot probe found
+  that its runtime does not give a task's container the §9.2 posture. The
+  second fails a task that runs as the Orker's own user (`run_as_orker_user`)
+  on an Orker whose boot probe found that user does not land as the Orker,
+  as on a rootless or user-namespaced daemon; it is not retried, and with
+  `ORK_ORKER_FORCE_USER` it refuses boot instead.
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
   panics: the list-filter grammar, compiler and matcher (a compiled set is a
@@ -177,6 +189,43 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- **BREAKING:** The Orker's boot probe runs one container built exactly as a
+  task's is, and judges it. It used to run a weaker argument vector (no
+  seccomp option, no `--init`, no limits, no tmpfs), so a runtime that refused
+  or weakened the posture was found by every task and never at boot. It now
+  runs a task's argument vector with a task's mounts and checks from inside
+  the container that `NoNewPrivs` is 1, `Seccomp` is 2, no capability is held,
+  the root, `/run`, `/var/tmp` and input are read-only, `/tmp` is `noexec`, no
+  proxy variable was added to the environment, and on cgroup v2 the cpu,
+  memory and pids limits are the ones it asked for; it proves the bind is the
+  Orker's own directory with a nonce written each way. An Orker whose runtime
+  fails any of these refuses to start, `RUNTIME_POSTURE_REFUSED` naming each
+  fact, or `WORKDIR_NOT_BINDABLE` for a bind that is another directory (as
+  Podman's Docker-compatible socket makes of a missing source). A deployment
+  whose docker CLI configuration adds `proxies` to every container, or whose
+  rootless daemon silently drops the cpu or memory limit, now refuses to
+  start where it started before. A probe refusal that is neither a bind nor a
+  deadline, which was `WORKDIR_NOT_BINDABLE`, is `RUNTIME_POSTURE_REFUSED`.
+- **BREAKING:** An Orker that runs every task as its own user
+  (`ORK_ORKER_FORCE_USER`) on a rootless or user-namespaced daemon refuses to
+  start as `RUN_AS_ORKER_UNAVAILABLE`, and on such a daemon a task that sets
+  `run_as_orker_user: true` fails with it, not retried, even where its image
+  writes files the Orker could read. That user lands as another host user
+  there, so the escape hatch did not do what it says.
+- `/tmp` is mounted `noexec` explicitly. Docker adds `noexec` to a `--tmpfs`
+  by itself and Podman does not. `/run` and `/var/tmp` get no tmpfs of their
+  own: Docker's `--read-only` already keeps them read-only, and a mount there
+  follows an image's symlink (an image whose `/var/tmp` links to `/tmp` lost
+  its writable `/tmp`); the boot probe refuses a runtime that leaves either
+  writable.
+- The boot probe's image is
+  `docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc`,
+  qualified and pinned, rather than `alpine:3.20`: a short name is resolved by
+  the runtime's own search list, and Podman's enforcing short-name mode with
+  more than one search registry refused it.
+- `ContainerSpec` says "run as the Orker" (`RunAsOrker`) instead of carrying
+  a `--user` value, and the runtime renders it; the docker CLI renders it as
+  `--user <orker-uid>:<orker-gid>` as before.
 - The pre-release gate excuses a runner-size miss exactly as the merge gate
   and the nightly do: on a CI runner below a row's reference CPUs, under a row
   of `scripts/proof-host-speed.tsv` the base carries, a wall-clock miss is a
@@ -251,6 +300,17 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- The Orker reads a docker CLI's answer from its stdout alone and quotes its
+  stderr in errors. Both streams were read as one, so a CLI that wrote a line
+  of its own on stderr (the `podman-docker` shim's "Emulate Docker CLI using
+  podman" on every command, a rootless runtime's warnings) broke every parse:
+  the image inspect no longer decoded and every task failed
+  `IMAGE_PULL_FAILED`, and a created container's id carried the warning.
+- The Orker kills a container before it removes it. Podman's `rm --force`,
+  behind its CLI and its Docker-compatible socket, waits out a running
+  container's stop timeout first: 30 s for a workload that ignores SIGTERM,
+  the whole of the removal's own time limit, so a removal could time out and
+  a boot reap cost 30 s per orphan.
 - The unit gate gives each package's test binary a 15-minute `-timeout`
   instead of `go test`'s default ten. `internal/engine`'s unit suite took
   460 s on a 4-vCPU CI runner and passed ten minutes on a slower one (CI run

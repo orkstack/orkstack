@@ -381,3 +381,46 @@ func FuzzQuantities_ARenderedLimitIsTheQuantityTheCapsWereCheckedWith(f *testing
 		}
 	})
 }
+
+// FuzzBootProbeFacts parses what the boot probe's container printed, which
+// the container, not OrkStack, decides. The claims: no output panics the
+// parser or the judgement, and output the judgement passes really does say
+// the posture §9.2 requires — no privilege gain, a seccomp filter, no
+// capability, and a read-only root, /run, /var/tmp and input.
+func FuzzBootProbeFacts(f *testing.F) {
+	good := GoodBootProbeFacts(DefaultSecurityPolicy())
+	f.Add("@@nonce\nn\n" + good)
+	f.Add("@@nonce\nn\n" + strings.Replace(good, "Seccomp:\t2", "Seccomp:\t0", 1))
+	f.Add("@@nonce\nn\n" + strings.Replace(good, "tmpfs /run tmpfs ro,", "tmpfs /run tmpfs rw,", 1))
+	f.Add("@@nonce\nn\n" + strings.Replace(good, "@@cgroup\n0::/\n", "@@cgroup\n12:pids:/x\n0::/\n", 1))
+	f.Add("@@status\nCapBnd:\tzz\n@@mounts\n/ / x ro 0 0\n\\0777 \\ x ro\n@@cpu.max\n1 0")
+	f.Add("")
+	want := postureWant{cpus: 1, memoryBytes: 1 << 30, pids: DefaultPidsLimit, tmp: ContainerScratchTmp}
+	f.Fuzz(func(t *testing.T, stdout string) {
+		facts := parseProbeFacts(stdout)
+		violations, _ := facts.postureViolations(want)
+		if len(violations) > 0 {
+			return
+		}
+		status := map[string]string{}
+		for _, line := range facts["status"] {
+			if key, value, ok := strings.Cut(line, ":"); ok {
+				status[key] = strings.TrimSpace(value)
+			}
+		}
+		if status["NoNewPrivs"] != "1" || status["Seccomp"] != "2" {
+			t.Fatalf("passed a posture with NoNewPrivs %q and Seccomp %q", status["NoNewPrivs"], status["Seccomp"])
+		}
+		for _, set := range []string{"CapEff", "CapPrm", "CapBnd"} {
+			if strings.Trim(status[set], "0") != "" || status[set] == "" {
+				t.Fatalf("passed a posture whose %s is %q", set, status[set])
+			}
+		}
+		mounts := parseMounts(facts["mounts"])
+		for _, path := range []string{"/", "/run", "/var/tmp", ContainerInput} {
+			if options, ok := mounts.effective(path); !ok || !options["ro"] {
+				t.Fatalf("passed a posture where %s is not read-only", path)
+			}
+		}
+	})
+}
