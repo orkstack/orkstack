@@ -624,7 +624,7 @@ repository is private, carries the `ci:proof` label.
 | `proof.yml` › `integration` | one matrix entry per shard: its own Temporal, store, registry and images | one part per shard |
 | `proof.yml` › `ui-e2e` | one matrix entry per UI shard: its own stack and file list; the pinned browser image pulled, the host's Chromium installed only where the shard's files drive it (§2.1) | one part per shard |
 | `proof.yml` › `activity-fixture` | one matrix entry per activity: `make -C images contract` | one part per activity |
-| `proof.yml` › `observability` | when the plan says it is due, or always for release | one part |
+| `proof.yml` › `observability` | when the plan says it is due, or always for release; its `observability stack` step starts the profile and waits up to 3 minutes until the Collector, Loki, Tempo and Prometheus answer ready, the readiness `proof.sh` requires | one part |
 | `proof.yml` › `proof` | `if: always()`; downloads every part and GitHub's job records; runs `proofrun merge`; writes the summary | the merged `proof.json` and ledgers |
 
 `proof` is the single required check. Its last step judges each tier by its
