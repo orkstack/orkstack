@@ -105,7 +105,12 @@ skip_run() {
     exit 77
 }
 
-command -v docker >/dev/null 2>&1 || skip_run "docker is not installed"
+# The container CLI: docker, or any CLI that speaks its grammar, such as the
+# podman CLI (ORK_DOCKER_BIN=podman). Every `docker` below is this one.
+DOCKER_CLI=${ORK_DOCKER_BIN:-docker}
+docker() { command "$DOCKER_CLI" "$@"; }
+
+command -v "$DOCKER_CLI" >/dev/null 2>&1 || skip_run "$DOCKER_CLI is not installed"
 docker version --format '{{.Server.Version}}' >/dev/null 2>&1 ||
     skip_run "the docker daemon is not reachable"
 command -v jq >/dev/null 2>&1 || skip_run "jq is not installed"
@@ -121,7 +126,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 ||
 bindable() {   # bindable <dir> — can the daemon actually bind-mount this?
     docker run --rm \
         --mount "type=bind,source=$1,destination=/probe,readonly" \
-        alpine:3.20 true >/dev/null 2>&1
+        docker.io/library/alpine:3.20 true >/dev/null 2>&1
 }
 
 ROOT=
@@ -158,7 +163,7 @@ cleanup() {
     # (a git repository in tmp/, a checkout in shared/); a root container
     # opens them up so the host user can remove the whole root.
     docker run --rm --mount "type=bind,source=$ROOT,destination=/w" \
-        alpine:3.20 chmod -R a+rwX /w >/dev/null 2>&1
+        docker.io/library/alpine:3.20 chmod -R a+rwX /w >/dev/null 2>&1
     chmod -R u+rwX "$ROOT" 2>/dev/null
     rm -rf "$ROOT"
 }

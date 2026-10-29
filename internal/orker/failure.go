@@ -78,6 +78,14 @@ const (
 	// the per-task cap does not fit within it.
 	ReasonCapacityInvalid    = "ORKER_CAPACITY_INVALID"
 	ReasonNetworkModeRefused = "NETWORK_MODE_REFUSED"
+	// ReasonRunAsOrkerUnavailable is a task that asks to run as the Orker's
+	// own user (runAsOrkerUser, or ORK_ORKER_FORCE_USER) on an Orker whose
+	// boot probe found that doing so does not land as the Orker: a user
+	// namespace maps the uid to another host user, so the hatch would not
+	// make the workload's files readable. A host fact a retry on the same
+	// Orker cannot change, so it is not retried; under ORK_ORKER_FORCE_USER
+	// it is a boot refusal instead.
+	ReasonRunAsOrkerUnavailable = "RUN_AS_ORKER_UNAVAILABLE"
 	// ReasonEachItemUnavailable is a fan-out item whose array no longer
 	// resolves to the one the engine counted:
 	// unreachable while the store honours its digests, stated rather than
@@ -116,6 +124,16 @@ const ReasonBindProbeImageUnavailable = "BIND_PROBE_IMAGE_UNAVAILABLE"
 // root can be bound (WORKDIR_NOT_BINDABLE), and naming it as unbindable sends
 // an operator to the wrong fix.
 const ReasonBindProbeTimedOut = "BIND_PROBE_TIMED_OUT"
+
+// ReasonRuntimePostureRefused is a boot refusal: the container runtime did not
+// give the boot probe's container, which is built exactly as a task's is, the
+// posture §9.2 enforces. It refused to run it for a reason that is neither an
+// unbindable path nor a deadline, or the container exited non-zero, or what
+// the container saw from inside was weaker: privileges it could gain,
+// capabilities, no seccomp filter, a writable /run, /var/tmp or root, a /tmp
+// it could execute from, a proxy variable it was never given, or cgroup
+// limits other than the ones it asked for.
+const ReasonRuntimePostureRefused = "RUNTIME_POSTURE_REFUSED"
 
 // reasonCategory is the §8.2 table, as data.
 //
@@ -164,26 +182,31 @@ var reasonCategory = map[string]string{
 	ReasonNetworkModeRefused:        CategoryContractViolation,
 	ReasonEachItemUnavailable:       CategoryContractViolation,
 
+	ReasonRunAsOrkerUnavailable: CategoryInfrastructureError,
+
 	ReasonImageNotPermitted:         CategoryContractViolation,
 	ReasonImageNotSigned:            CategoryContractViolation,
 	ReasonImageSignatureInvalid:     CategoryContractViolation,
 	ReasonImageSignatureUnavailable: CategoryInfrastructureError,
 	ReasonBindProbeImageUnavailable: CategoryInfrastructureError,
 	ReasonBindProbeTimedOut:         CategoryInfrastructureError,
+	ReasonRuntimePostureRefused:     CategoryInfrastructureError,
 }
 
-// retryableReason overrides the category's own default for the three codes
+// retryableReason overrides the category's own default for the four codes
 // where they differ (§8.2).
 //
-// WORKSPACE_NOT_BINDABLE, WORKDIR_NOT_BINDABLE, and
-// COMMIT_STORE_NOT_CONDITIONAL are InfrastructureError — the category whose
-// default is "retry" — but all three are host misconfigurations that retrying
+// WORKSPACE_NOT_BINDABLE, WORKDIR_NOT_BINDABLE, COMMIT_STORE_NOT_CONDITIONAL
+// and RUN_AS_ORKER_UNAVAILABLE are InfrastructureError — the category whose
+// default is "retry" — but all four are host misconfigurations that retrying
 // cannot fix. Retrying them would loop against a deterministic fact, which
 // AGENTS.md §11 forbids as loudly as it forbids a stuck state.
 var retryableReason = map[string]bool{
 	ReasonWorkspaceNotBindable: false,
 	ReasonWorkdirNotBindable:   false,
 	ReasonCommitNotConditional: false,
+	// The boot probe's finding, which is the host's and not the moment's.
+	ReasonRunAsOrkerUnavailable: false,
 }
 
 // CategoryFor answers which of the five categories a reason code belongs to.
@@ -196,7 +219,7 @@ func CategoryFor(reason string) string {
 
 // RetryableReason answers whether Temporal should try a reason code again.
 //
-// The category supplies the default and the override table supplies the three
+// The category supplies the default and the override table supplies the four
 // exceptions. ContractViolation and TimedOut are never retryable (the same
 // statement task.NonRetryableCategories makes); the answer becomes the
 // non-retryable flag on the ApplicationError, which wins over any policy.

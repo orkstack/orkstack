@@ -76,7 +76,7 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 | Temporal Cloud | The engine takes an address and a namespace. It has no TLS or credential setting for the connection. |
 | Engine TLS | The API serves plain HTTP. Terminate TLS in front of it. |
 | Caller authentication | None in OrkStack. A gateway authenticates callers. |
-| Container runtimes other than Docker | Docker is the only runtime. |
+| Container runtimes other than Docker and Podman | containerd and the others are not supported. |
 | Network profiles | Only `default` and `none` exist. |
 | Progress reports from a container | Use stdout and stderr. Containers send no heartbeats. |
 | Reclaiming artifact bytes | Cleanup does not remove them. A bucket lifecycle rule does. |

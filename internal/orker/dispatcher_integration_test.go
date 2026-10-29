@@ -31,20 +31,56 @@ import (
 // execution must never silently switch images because a tag moved
 // (AGENTS.md §5). The digest is resolved once, at the start of the run, from
 // whatever alpine:3.20 the host has — so the test pins what it actually ran
-// rather than hardcoding a digest that will rot.
-const referenceTag = "alpine:3.20"
+// rather than hardcoding a digest that will rot. It is qualified, because
+// Podman's enforcing short-name mode refuses a short name.
+const referenceTag = "docker.io/library/alpine:3.20"
+
+// containerCLI is the container CLI these suites drive and inspect with: the
+// one the runtime under test is pointed at, ORK_DOCKER_BIN, then podman for
+// ORK_DOCKER_CLI=podman, then docker, on PATH. The suites run unchanged on
+// Docker, on the podman CLI, and on the docker CLI against Podman's socket.
+func containerCLI(t *testing.T) string {
+	t.Helper()
+	name := strings.TrimSpace(os.Getenv(orker.DockerBinVar))
+	if name == "" {
+		name = orker.DefaultDockerBin
+		if strings.EqualFold(strings.TrimSpace(os.Getenv(orker.CLIVar)), orker.CLIPodman) {
+			name = orker.CLIPodman
+		}
+	}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		infraAbsent(t, "the container CLI %q is not on PATH: %v", name, err)
+	}
+	return path
+}
+
+// runtimeInfo is what the runtime under test says it is: the engine, the CLI
+// and whether the engine is rootless, for the few expectations whose spelling
+// differs by shape.
+func runtimeInfo(t *testing.T) orker.RuntimeInfo {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	info, err := orker.NewDockerRuntime().Describe(ctx)
+	if err != nil {
+		infraAbsent(t, "the container runtime cannot describe itself: %v", err)
+	}
+	return info
+}
+
+// onPodman reports whether the engine behind that CLI is Podman.
+func onPodman(t *testing.T) bool { return runtimeInfo(t).Name == orker.CLIPodman }
 
 // requireDocker skips (or fails under ORK_REQUIRE_INFRA) when there is no
 // daemon to talk to.
 func requireDocker(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("docker"); err != nil {
-		infraAbsent(t, "the docker CLI is not on PATH: %v", err)
-	}
+	cli := containerCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput(); err != nil {
-		infraAbsent(t, "the docker daemon is not reachable: %v: %s", err, out)
+	if out, err := exec.CommandContext(ctx, cli, "version", "--format", "{{.Server.Version}}").CombinedOutput(); err != nil {
+		infraAbsent(t, "the container engine is not reachable through %s: %v: %s", cli, err, out)
 	}
 }
 
@@ -55,19 +91,20 @@ func pinnedReference(t *testing.T) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	if out, err := exec.CommandContext(ctx, "docker", "image", "inspect", referenceTag).CombinedOutput(); err != nil {
-		if pullOut, pullErr := exec.CommandContext(ctx, "docker", "pull", "--quiet", referenceTag).CombinedOutput(); pullErr != nil {
+	cli := containerCLI(t)
+	if out, err := exec.CommandContext(ctx, cli, "image", "inspect", referenceTag).CombinedOutput(); err != nil {
+		if pullOut, pullErr := exec.CommandContext(ctx, cli, "pull", "--quiet", referenceTag).CombinedOutput(); pullErr != nil {
 			infraAbsent(t, "cannot pull %s: %v: %s (inspect said %s)",
 				referenceTag, pullErr, pullOut, out)
 		}
 	}
-	out, err := exec.CommandContext(ctx, "docker", "image", "inspect",
+	out, err := exec.CommandContext(ctx, cli, "image", "inspect",
 		"--format", "{{index .RepoDigests 0}}", referenceTag).Output()
 	if err != nil {
 		// An image built or loaded locally has no RepoDigest. Fall back to
 		// the image ID, which is digest-shaped and is what the runtime will
 		// resolve against.
-		id, idErr := exec.CommandContext(ctx, "docker", "image", "inspect",
+		id, idErr := exec.CommandContext(ctx, cli, "image", "inspect",
 			"--format", "{{.Id}}", referenceTag).Output()
 		if idErr != nil {
 			infraAbsent(t, "cannot resolve a digest for %s: %v", referenceTag, idErr)
@@ -95,7 +132,7 @@ func bindableWorkRoot(t *testing.T) string {
 		candidates = append(candidates, filepath.Join(home, ".orkstack-test-work"))
 	}
 
-	runtime := orker.NewDockerRuntime()
+	prober := &orker.OCIDispatcher{Runtime: orker.NewDockerRuntime(), Policy: orker.DefaultSecurityPolicy()}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -105,7 +142,7 @@ func bindableWorkRoot(t *testing.T) string {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}
-		if err := runtime.ProbeBindable(ctx, candidate); err != nil {
+		if err := prober.ProbeRuntime(ctx, candidate); err != nil {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}

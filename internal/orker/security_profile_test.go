@@ -244,12 +244,21 @@ func TestSecurityPolicy_RefusesAnUnknownSecretScheme(t *testing.T) {
 }
 
 // TestSecurityPolicy_ProfileIDNamesTheEnforcedPosture keeps DescribeOrker
-// honest: an operator reads this string to know what a pool's Orkers enforce.
+// honest: an operator reads this string to know what a pool's Orkers enforce,
+// and its seccomp part is what the runtime actually spelled (G1): `builtin`
+// by name on Docker, nothing on the Podman engine, which applies its own
+// default, and "unknown" for a runtime that could not say.
 func TestSecurityPolicy_ProfileIDNamesTheEnforcedPosture(t *testing.T) {
-	id := DefaultSecurityPolicy().ProfileID()
-	for _, want := range []string{"readonly", "cap-drop-all", "no-new-privileges", "seccomp=" + SeccompBuiltin} {
-		if !strings.Contains(id, want) {
-			t.Errorf("profile id %q does not name %q", id, want)
+	for spelled, want := range map[string]string{
+		SeccompBuiltin:       "seccomp=" + SeccompBuiltin,
+		SeccompEngineDefault: "seccomp=" + SeccompEngineDefault,
+		"":                   "seccomp=unknown",
+	} {
+		id := DefaultSecurityPolicy().ProfileID(spelled)
+		for _, part := range []string{"readonly", "cap-drop-all", "no-new-privileges", want} {
+			if !strings.Contains(id, part) {
+				t.Errorf("profile id %q does not name %q", id, part)
+			}
 		}
 	}
 }

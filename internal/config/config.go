@@ -240,6 +240,7 @@ var Schema = []Var{
 	// the "on PATH" resolution note; the constant itself is what bin()
 	// falls back to.
 	{Path: "orker.docker.bin", Env: "ORK_DOCKER_BIN", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultDockerBin + " on PATH"},
+	{Path: "orker.docker.cli", Env: "ORK_DOCKER_CLI", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultDockerCLI},
 	{Path: "orker.docker.pull_timeout", Env: "ORK_DOCKER_PULL_TIMEOUT", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultPullTimeout)},
 	{Path: "orker.docker.bind_probe_timeout", Env: "ORK_DOCKER_BIND_PROBE_TIMEOUT", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultBindProbeTimeout)},
 

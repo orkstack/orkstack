@@ -679,7 +679,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// Every Orker boots ready; a cordon is process-local and does not
 		// survive a restart.
 		"cordon", false,
-		"security_profile", activities.Dispatcher().Policy.ProfileID(),
+		"security_profile", activities.SecurityProfile(ctx),
 		// Whether this Orker is a pin host, and for how many pins at once. 0 is
 		// said out loud rather than omitted: it is the answer to "why was my
 		// pinned run refused at submit".

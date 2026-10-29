@@ -124,6 +124,13 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 			"log. A local run is a new logical activity with its own run id and idempotency\n" +
 			"key, and any external side effect it performs is real. Every secret the task\n" +
 			"declares must be supplied with --secret or skipped with --omit-secret.\n\n" +
+			"Each run labels its container ork.orker=orkctl-task-run-<hex>, from its own local\n" +
+			"run id, and holds a lock file for that identity in its work directory\n" +
+			"(ORK_ORKER_WORKDIR, else ~/.orkstack/task-run, else the temporary directory) while\n" +
+			"it lives. A run that removed its container deletes the file. A second interrupt\n" +
+			"abandons the container instead; the next task run on the same host, work\n" +
+			"directory and container engine removes it, and any container a killed run left,\n" +
+			"but never one of a run that is still alive. --render-only removes none.\n\n" +
 			"Exit status: 0 succeeded (or rendered), 2 the task failed, 3 interrupted, 1 the\n" +
 			"command could not run the task.",
 		Args: cobra.NoArgs,
@@ -504,7 +511,7 @@ func (r *taskRunner) interruptNotice() string {
 		id = "local-…"
 	}
 	return fmt.Sprintf("interrupted: stopping the container (SIGTERM, then SIGKILL after %ds); "+
-		"interrupt again to abandon it — it stays labelled ork.run=%s", grace, id)
+		"interrupt again to abandon it — it stays labelled ork.run=%s until the next task run in this work directory removes it", grace, id)
 }
 
 // rpcContext bounds one unary request with --timeout, under the signal
@@ -975,6 +982,22 @@ func (r *taskRunner) dispatch() (err error) {
 	if root == "" {
 		root = os.TempDir()
 	}
+	// This run's identity, and the containers of runs that are gone
+	// (task_run_owner.go). The claim is released last, after the dispatcher
+	// removed this run's own container.
+	fingerprint := taskRunFingerprint(r.rt)
+	owner, err := claimTaskRunOwner(root, r.localID, fingerprint)
+	if err != nil {
+		return err
+	}
+	defer func() { owner.release(r.observed.settled()) }()
+	switch {
+	case owner.unlocked != nil:
+		r.t.printf("warning: this run's identity cannot be locked (%v); if the run is killed, "+
+			"no later run removes its container\n", owner.unlocked)
+	case !r.opts.renderOnly:
+		r.reapGone(root, fingerprint, owner)
+	}
 	r.session = filepath.Join(root, "ork-task-run-"+strings.TrimPrefix(r.localID, "local-"))
 	for _, dir := range []string{r.session, filepath.Join(r.session, "logs"), filepath.Join(r.session, ".fetched"), filepath.Join(r.session, ".work")} {
 		if mkErr := os.MkdirAll(dir, 0o700); mkErr != nil {
@@ -1007,7 +1030,7 @@ func (r *taskRunner) dispatch() (err error) {
 		Runtime:  r.observed,
 		Refs:     store.local,
 		Policy:   &policy,
-		OrkerID:  "orkctl-task-run",
+		OrkerID:  owner.id,
 		Phases:   r.t,
 		Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 		// Commits, Attempts, Logs, TaskLogs, TraceContext: nil — deliberately.

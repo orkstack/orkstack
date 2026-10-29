@@ -297,10 +297,21 @@ fine (§14.8). No mount configuration fixes this, so three measures apply:
    do the same thing on every attempt; classifying it as a retryable upload
    failure would loop forever against deterministic behaviour.
 2. **An explicit escape hatch.** A task may set `runAsOrkerUser: true`, or an
-   Orker `ORK_ORKER_FORCE_USER=1`, which adds `--user <orker-uid>:<orker-gid>`
-   so the Orker owns every written file whatever the umask; `task.json` then
-   reports `task.runAsOrkerUser: true`. It is opt-in because it overrides the
-   image's own `USER` and breaks images that need their baked-in identity.
+   Orker `ORK_ORKER_FORCE_USER=1`, which runs the container as the Orker's own
+   user so the Orker owns every written file whatever the umask; `task.json`
+   then reports `task.runAsOrkerUser: true`. The dispatcher asks for the
+   intent (`ContainerSpec.RunAsOrker`) and the runtime renders it: the docker
+   CLI as `--user <orker-uid>:<orker-gid>`, and the podman CLI on a rootless
+   engine as `--userns=keep-id --user <orker-uid>:<orker-gid>`, measured to
+   land as the Orker. Under a user namespace the CLI cannot keep (a rootless
+   Docker daemon, `userns-remap`, the docker CLI against a rootless Podman
+   socket) that uid is another user on the host, so the boot probe checks the
+   rendering: its container writes a `0600` file as the
+   Orker's user, and when the Orker cannot read it back, a task that asks for
+   the hatch fails `InfrastructureError/RUN_AS_ORKER_UNAVAILABLE`, which is not
+   retried, and an Orker with `ORK_ORKER_FORCE_USER` refuses to start with
+   that reason. It is opt-in because it overrides the image's own `USER` and
+   breaks images that need their baked-in identity.
 3. **First-party images set `umask 022`** before writing anything (§10.1).
 
 Rejected alternatives: `--group-add` plus a setgid directory propagates group
@@ -315,17 +326,46 @@ even that.
 which is why `make up` uses `.data/work`) and whose path holds no comma or
 control character, which a container mount cannot carry. The Orker probes this
 at boot and refuses to start with `InfrastructureError/WORKDIR_NOT_BINDABLE`
-rather than failing every task later. The probe runs a container, so each step
-of it that waits on the daemon (asking whether the probe's image is local, and
-each of two attempts to run its container) has a budget of its own
-(`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes). An attempt that overruns it, or
-that the daemon ends with a deadline error of its own, is tried once more. A
-daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`, which says
-the daemon is slow and nothing about the work root. `WORKDIR_NOT_BINDABLE` is
-kept for a work root whose path holds a comma or control character, a probe the
-daemon refused within its budget, in its own words or otherwise, a probe
-container that exited non-zero, and a probe directory that cannot be made; none
-of those is tried again.
+rather than failing every task later.
+
+The boot probe runs one container built exactly as a task's is: the same spec
+builder and the same §9.2 argument vector, a task's four mounts from a probe
+directory under the work root, the policy's default resources, network `none`,
+the escape hatch's user, and the image
+`docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc`
+(`orker.BindProbeImage`, qualified and pinned, so no short-name search list or
+moved tag decides what runs). It judges what the daemon gave that container,
+from the host and from inside it (`internal/orker/boot_probe.go`):
+
+- **The bind is the Orker's directory.** The container reads back a nonce the
+  Orker wrote into `input/`, and the Orker reads back one the container wrote
+  into `output/`. A daemon that satisfies a bind with a directory of its own,
+  as Podman's Docker-compatible socket does with a missing source, fails it,
+  as `WORKDIR_NOT_BINDABLE`.
+- **The posture is a task's.** `NoNewPrivs` is 1; `Seccomp` is 2; `CapEff`,
+  `CapPrm` and `CapBnd` are zero; `/`, `/run`, `/var/tmp`, `/orkstack/input`
+  and its secrets are read-only; `/tmp` is `nosuid,nodev,noexec`; no
+  `*_proxy` variable is in the environment (printed by name only, never by
+  value); and on cgroup v2 `memory.max`, `pids.max` and `cpu.max` are what the
+  container asked for. Anything weaker refuses boot as
+  `InfrastructureError/RUNTIME_POSTURE_REFUSED`, naming each fact, and so
+  does a refusal of the container that is neither a bind nor a deadline, and
+  a non-zero exit (the probe's script always exits 0). Two limits: `Seccomp:
+  2` shows that a filter is active, not that it is the default profile, which
+  the spelling `seccomp=builtin` decides; and on a host whose cgroup is not v2
+  alone the limits are not read, and the Orker logs that it did not read them.
+- **The escape hatch lands as the Orker** (measure 2 above).
+
+The probe runs a container, so each step of it that waits on the daemon
+(identifying the engine, asking whether the probe's image is local, and each of
+two attempts to run its container) has a budget of its own
+(`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes). An attempt that overruns it, or that the daemon ends with a deadline
+error of its own, is tried once more. A daemon that is still too slow refuses
+boot as `BIND_PROBE_TIMED_OUT`, which says the daemon is slow and nothing about
+the work root. `WORKDIR_NOT_BINDABLE` is kept for a work root whose path holds
+a comma or control character, a bind the daemon refused within its budget in
+its own words, a bind that is not the Orker's directory, and a probe directory
+that cannot be made; none of those is tried again.
 
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt
 directory the Orker creates, populates, mounts read-only, and removes on every
@@ -1250,10 +1290,17 @@ One implementation runs every activity: `internal/orker.OCIDispatcher`, over a
 stores, the security policy, and the work root. `orkctl activity test` and
 `orkctl task run` drive the same dispatcher, built by the same constructor.
 
-Exactly one runtime ships: `DockerRuntime`, shelling out to `docker`. The
-interface exists so Podman, containerd, Kubernetes Jobs, ECS or Nomad remain
-*possible*, not because any is planned. **No Docker-specific detail may
-appear outside `internal/orker/runtime_docker.go`.**
+One runtime ships: `DockerRuntime`, shelling out to a Docker-compatible CLI —
+the docker CLI, against Docker or against Podman's Docker-compatible socket,
+or the podman CLI. What differs between them is a dialect, a value of
+spellings on two axes: the CLI's flag grammar, which is configured
+(`orker.docker.cli`, `ORK_DOCKER_CLI`: `docker` or `podman`), and the engine
+behind it, which is asked (`version`; Podman's socket reports a `Podman
+Engine` component), logged at boot and verified by the boot probe (§3.1).
+DescribeOrker reports the engine, not the CLI. The interface exists so
+containerd, Kubernetes Jobs, ECS or Nomad remain *possible*, not because any
+is planned. **No Docker- or Podman-specific detail may appear outside the
+runtime files, `internal/orker/runtime_docker.go` and `runtime_dialect.go`.**
 
 **The interface split is also the failure classification.** `Create` and
 `Start` return `error`; `Wait` returns `(ExitStatus, error)`. A container that
@@ -1571,9 +1618,11 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `CONTAINER_TIMEOUT` | TimedOut | **no** (§8.1) | Orker killed the container at `timeout_seconds` |
 | `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | **no** | the daemon cannot bind the workspace path — a host misconfiguration retrying will not fix |
-| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | `ORK_ORKER_WORKDIR`'s path holds a comma or control character, or the daemon refused the boot probe's run within its budget, or the probe's container exited non-zero, and not for a deadline (or no probe directory could be made): `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
+| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | `ORK_ORKER_WORKDIR`'s path holds a comma or control character, or the daemon refused the boot probe's bind within its budget in its own words, or the probe's container and the Orker did not read back each other's nonce (the daemon bound a directory of its own), or no probe directory could be made: `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
+| `RUNTIME_POSTURE_REFUSED` | InfrastructureError | — | the boot probe's container, built as a task's is, was refused for a reason that is neither a bind nor a deadline, exited non-zero, or saw a weaker posture than §9.2 from inside (privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable it was never given, cgroup v2 limits other than it asked for); the Orker refuses to start, naming each |
 | `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start the probe's container within it, or ended it with a deadline error of its own; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
-| `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`alpine:3.20`) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
+| `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`orker.BindProbeImage`, alpine 3.20 by digest) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
+| `RUN_AS_ORKER_UNAVAILABLE` | InfrastructureError | **no** | the task runs as the Orker's own user (`runAsOrkerUser`, or `ORK_ORKER_FORCE_USER`), and the boot probe found that user does not land as the Orker on this host: a `0600` file its container wrote as that user is one the Orker cannot read. Refused before a container is created; under `ORK_ORKER_FORCE_USER` the Orker refuses to start instead |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |
 | `IMAGE_DIGEST_MISMATCH` | ContractViolation | no | pulled or embedded content does not match `image.pinned` |
@@ -1711,7 +1760,8 @@ socket.
 --read-only                                   root filesystem
 --cap-drop=ALL
 --security-opt no-new-privileges
---security-opt seccomp=builtin                default profile, named explicitly
+--security-opt seccomp=builtin                default profile, named explicitly; omitted on the Podman engine, which has no name for its default and reads builtin as a file
+--http-proxy=false                            podman CLI only: it forwards its own process's proxy variables otherwise
 --pids-limit <policy>                         default 512
 --memory <request or policy default>          always set; never unlimited
 --cpus <request or policy default>            always set; never unlimited
@@ -1726,15 +1776,29 @@ socket.
 --mount type=bind,source=<attempt>/output,destination=/orkstack/output
 --mount type=bind,source=<attempt>/tmp,destination=/orkstack/tmp
 --mount type=bind,source=<pin>/shared,destination=/orkstack/shared   pinned tasks only
---tmpfs /tmp:rw,nosuid,nodev,size=<policy>    default 64 MiB
---user <orker-uid>:<orker-gid>                only with runAsOrkerUser / ORK_ORKER_FORCE_USER
+--tmpfs /tmp:rw,nosuid,nodev,noexec,size=<policy>   default 64 MiB; noexec spelled, not left to the runtime
+--tmpfs /run:ro,size=1m --tmpfs /var/tmp:ro,size=1m   Podman engine only, below
+--user <orker-uid>:<orker-gid>                only with runAsOrkerUser / ORK_ORKER_FORCE_USER, as the runtime renders "as the Orker"
+--userns=keep-id                              with that --user, on a rootless podman CLI only
 --env <task env:>                             the task's own, nothing else
 ```
 
+`--read-only` makes the whole root read-only, `/run` and `/var/tmp` included,
+on Docker. The Podman engine's leaves those two writable tmpfs, behind its CLI
+and its socket alike, and its `containers.conf` setting for it had no effect,
+so on that engine alone each gets an empty read-only tmpfs. Docker does not:
+a mount target follows the image's own symlinks, so on an image whose
+`/var/tmp` links to `/tmp` the tmpfs turns `/tmp` read-only, which on Podman
+is the price of a read-only `/run` and `/var/tmp`. The boot probe runs this
+argument vector and checks from inside its container that the engine applied
+it, `/run` and `/var/tmp` by name, so a runtime that leaves either writable is
+refused at boot (§3.1).
+
 Rootless execution is used when the runtime supports it. Per-container user
-namespace remapping is not implementable (`--userns=host` is the only valid
-`docker run` value and it *reduces* isolation); deployments wanting it
-configure the daemon.
+namespace remapping is not implementable on the docker CLI (`--userns=host` is
+the only valid `docker run` value and it *reduces* isolation); deployments
+wanting it configure the daemon. The podman CLI's `--userns=keep-id` is used
+for the escape hatch alone (§3.1).
 
 ### 9.3 Resource policy
 

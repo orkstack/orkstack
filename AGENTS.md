@@ -314,10 +314,14 @@ process-local, exactly as a cordon is: never stored, never shared, gone
 with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task, and OrkStack never chooses a host.
 
-Do not spread Docker-specific details through unrelated OrkStack components.
-Keep the OCI runtime boundary clean enough for future Podman, containerd,
-Kubernetes Jobs, ECS Tasks, or Nomad implementations. Do not implement all of
-those runtimes now; portability is a boundary, not a mandate for a framework.
+Docker- and Podman-specific details live in the runtime files
+(`internal/orker/runtime_docker.go` and `runtime_dialect.go`) and nowhere else:
+do not spread them through unrelated OrkStack components. Podman is a dialect
+of the one runtime, a value of spellings chosen by the CLI setting and the
+engine it answers, never an interface or a plugin. Keep the OCI runtime
+boundary clean enough for future containerd, Kubernetes Jobs, ECS Tasks, or
+Nomad implementations. Do not implement all of those runtimes now; portability
+is a boundary, not a mandate for a framework.
 
 ## 6. Security and resource controls
 
@@ -1457,7 +1461,8 @@ cmd/orkctl/            CLI entrypoint
 internal/engine/       Temporal workflows and activities
 internal/api/          Connect services and WebSocket bridge
 internal/dsl/          YAML parse, validation, and Orkflow compilation
-internal/orker/        Orker runtime and OCI activity dispatch
+internal/orker/        Orker runtime and OCI activity dispatch; the runtime files
+                       (runtime_docker.go, runtime_dialect.go) alone name Docker or Podman
 internal/task/         Temporal namespace, pool routing, and deployment identity
 internal/config/       Configuration file schema and loader
 internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation

@@ -72,13 +72,23 @@ func TestDockerCreateArgs_AppliesTheWholeEnforcedProfile(t *testing.T) {
 		"--label ork.orker=orker-1",
 		"--label ork.run=run-1",
 		"--label ork.task=build",
-		"--tmpfs /tmp:rw,nosuid,nodev,size=1048576",
+		// noexec spelled, not left to the runtime's default: Docker adds it
+		// to a --tmpfs and Podman does not.
+		"--tmpfs /tmp:rw,nosuid,nodev,noexec,size=1048576",
 		"type=bind,source=/work/attempt/input,destination=" + ContainerInput + ",readonly",
 		"type=bind,source=/work/attempt/output,destination=" + ContainerOutput,
 	}
 	for _, want := range required {
 		if !strings.Contains(rendered, want) {
 			t.Errorf("the enforced profile is missing %q:\n%s", want, rendered)
+		}
+	}
+	// --read-only already makes /run and /var/tmp read-only here, and a tmpfs
+	// over either follows the image's symlinks: an image whose /var/tmp links
+	// to /tmp lost its writable /tmp to one.
+	for _, path := range readOnlyRootfsPaths {
+		if strings.Contains(rendered, "--tmpfs "+path+":") {
+			t.Errorf("a tmpfs is mounted at %s, which follows an image's symlink there:\n%s", path, rendered)
 		}
 	}
 }
@@ -92,7 +102,7 @@ func TestDockerCreateArgs_AppliesTheWholeEnforcedProfile(t *testing.T) {
 // validation, and this test is what keeps it true as the spec grows.
 func TestDockerCreateArgs_CannotExpressAnythingForbidden(t *testing.T) {
 	spec := validSpec()
-	spec.User = "1000:1000"
+	spec.RunAsOrker = true
 	spec.Command = []string{"/bin/sh", "-c", "echo hi"}
 	spec.Env = map[string]string{"GREETING": "hello"}
 	spec.StopTimeoutSeconds = 30
@@ -253,10 +263,13 @@ func TestIsUnbindable_RecognizesTheDaemonsOwnWords(t *testing.T) {
 	unbindable := []string{
 		"docker: Error response from daemon: bind source path does not exist: /var/folders/x/y",
 		"Mounts denied: The path /var/folders/x is not shared from the host",
+		// The daemon could not see the Orker's directory and tried to make it
+		// on its own side: the path is not shared with it.
+		"docker: Error response from daemon: error while creating mount source path '/work/x': mkdir /work: permission denied",
 	}
 	for _, message := range unbindable {
-		if !isUnbindable(message) {
-			t.Errorf("isUnbindable(%q) = false; this is the WORKSPACE_NOT_BINDABLE case", message)
+		if !dockerDialect.unbindable(message) {
+			t.Errorf("unbindable(%q) = false; this is the WORKSPACE_NOT_BINDABLE case", message)
 		}
 	}
 	ordinary := []string{
@@ -264,8 +277,8 @@ func TestIsUnbindable_RecognizesTheDaemonsOwnWords(t *testing.T) {
 		"failed to create task for container: OCI runtime create failed",
 	}
 	for _, message := range ordinary {
-		if isUnbindable(message) {
-			t.Errorf("isUnbindable(%q) = true; this is an ordinary RUNTIME_REFUSED", message)
+		if dockerDialect.unbindable(message) {
+			t.Errorf("unbindable(%q) = true; this is an ordinary RUNTIME_REFUSED", message)
 		}
 	}
 }
@@ -491,5 +504,21 @@ func awaitFile(t *testing.T, path string, within time.Duration) {
 			t.Fatalf("%s did not appear within %s", path, within)
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// TestBindProbeImage_IsQualifiedAndPinned: the boot probe's image reaches the
+// runtime as a fully qualified, digest-pinned reference. A short name is
+// resolved by the runtime's own search list, and under Podman's enforcing
+// short-name mode with more than one search registry that refuses boot; a tag
+// alone lets the probe run a different image than the one it was reviewed
+// with.
+func TestBindProbeImage_IsQualifiedAndPinned(t *testing.T) {
+	name, digest, ok := strings.Cut(BindProbeImage, "@sha256:")
+	if !ok || len(digest) != 64 || strings.Trim(digest, "0123456789abcdef") != "" {
+		t.Fatalf("BindProbeImage = %q; want a reference pinned to a sha256 digest", BindProbeImage)
+	}
+	if !strings.HasPrefix(name, "docker.io/library/") {
+		t.Fatalf("BindProbeImage = %q; want it qualified with its registry and repository", BindProbeImage)
 	}
 }

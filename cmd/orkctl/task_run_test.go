@@ -281,6 +281,9 @@ type fakeTaskRuntime struct {
 	starts      int
 	signals     []orker.Signal
 	removes     int
+	removeErr   error
+	reaped      map[string]int
+	reapAsked   []string
 	exit        int32
 	block       bool
 	term        chan struct{}
@@ -359,10 +362,15 @@ func (r *fakeTaskRuntime) Remove(context.Context, orker.ContainerID) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.removes++
-	return nil
+	return r.removeErr
 }
 
-func (r *fakeTaskRuntime) Reap(context.Context, string) (int, error) { return 0, nil }
+func (r *fakeTaskRuntime) Reap(_ context.Context, orkerID string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.reapAsked = append(r.reapAsked, orkerID)
+	return r.reaped[orkerID], nil
+}
 
 func (r *fakeTaskRuntime) Describe(context.Context) (orker.RuntimeInfo, error) {
 	if r.describeErr != nil {
