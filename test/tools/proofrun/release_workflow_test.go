@@ -358,9 +358,11 @@ func TestWorkflows_PublishRunsNoRepositoryCodeAndHoldsTheOnlyPackageWrite(t *tes
 }
 
 // TestWorkflows_TheSkopeoPinIsTheRepositorysPin: the image that copies the
-// layouts is one exact release pinned by digest (deploy/skopeo-image.txt),
-// the smoke and publish read that file, and publish's check refuses a
-// floating one.
+// layouts is one exact release's -immutable tag pinned by digest
+// (deploy/skopeo-image.txt), the smoke and publish read that file, and
+// publish's check refuses a floating one. quay.io rebuilds a release's plain
+// vX.Y.Z tag and prunes the index it replaced, so only the -immutable tag's
+// digest keeps resolving.
 func TestWorkflows_TheSkopeoPinIsTheRepositorysPin(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "skopeo-image.txt"))
 	if err != nil {
@@ -373,8 +375,8 @@ func TestWorkflows_TheSkopeoPinIsTheRepositorysPin(t *testing.T) {
 			break
 		}
 	}
-	if !regexp.MustCompile(`^quay\.io/skopeo/stable:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$`).MatchString(pin) {
-		t.Errorf("deploy/skopeo-image.txt names %q, not quay.io/skopeo/stable:vX.Y.Z@sha256:<64 hex>", pin)
+	if !regexp.MustCompile(`^quay\.io/skopeo/stable:v[0-9]+\.[0-9]+\.[0-9]+-immutable@sha256:[0-9a-f]{64}$`).MatchString(pin) {
+		t.Errorf("deploy/skopeo-image.txt names %q, not quay.io/skopeo/stable:vX.Y.Z-immutable@sha256:<64 hex>", pin)
 	}
 	w := loadWorkflow(t, "release.yml")
 	publish, ok := w.Jobs["publish"]
@@ -393,7 +395,14 @@ func TestWorkflows_TheSkopeoPinIsTheRepositorysPin(t *testing.T) {
 	if !re.MatchString(pin) {
 		t.Errorf("publish's check refuses the repository's own pin %q", pin)
 	}
-	for _, bad := range []string{"quay.io/skopeo/stable:latest", "quay.io/skopeo/stable:v1.22.3", "evil.example/skopeo:v1.0.0@sha256:" + strings.Repeat("a", 64)} {
+	digest := "@sha256:" + strings.Repeat("a", 64)
+	for _, bad := range []string{
+		"quay.io/skopeo/stable:latest",
+		"quay.io/skopeo/stable:v1.22.3-immutable",
+		"quay.io/skopeo/stable:v1.22.3" + digest,
+		"quay.io/skopeo/stable:v1.22-immutable" + digest,
+		"evil.example/skopeo:v1.0.0-immutable" + digest,
+	} {
 		if re.MatchString(bad) {
 			t.Errorf("publish's check accepts %q", bad)
 		}

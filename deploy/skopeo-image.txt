@@ -1,4 +1,6 @@
 # The skopeo image that copies a release's OCI layouts to a registry byte for
 # byte (scripts/release-smoke.sh, .github/workflows/release.yml), pinned by its
-# multi-arch index digest. A bump is a pull request that proves it.
-quay.io/skopeo/stable:v1.22.3@sha256:16feeb1662ca2d221d3d5c4d2e972e3a47fcfc211b49b4b484a51ac35b594b11
+# multi-arch index digest. It is a release's -immutable tag: quay.io rebuilds
+# the plain vX.Y.Z tag and prunes the index it replaced, so only an -immutable
+# digest keeps resolving. A bump is a pull request that proves it.
+quay.io/skopeo/stable:v1.22.3-immutable@sha256:c0ee1f4edca5c01cb8d5611124f92f3cc47196ecab68aee5d0f90834e00574d5
