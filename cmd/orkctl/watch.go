@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -18,6 +19,10 @@ func newRunWatchCommand(g *globalFlags) *cobra.Command {
 		Long: "watch consumes RunService.StreamEvents and prints each event as it arrives,\n" +
 			"exiting when the run reaches a terminal state. The exit code reflects the\n" +
 			"final status: 0 succeeded, 2 failed, 3 canceled.\n\n" +
+			"A stream the engine ends as unavailable is opened again after the last\n" +
+			"event printed, so no event is printed twice or skipped; each resume is\n" +
+			fmt.Sprintf("said on stderr. After %d resumes in a row that deliver no event, watch\n", watchResumeLimit) +
+			"gives up with the engine's error.\n\n" +
 			"The run is addressed inside the namespace this command acts in; a run of\n" +
 			"another namespace is not found here.",
 		Args: cobra.ExactArgs(1),
@@ -30,9 +35,27 @@ func newRunWatchCommand(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
+// watchResumeLimit bounds the resumes in a row whose stream delivered no
+// event — ui/src/lib/runEvents.ts' rule, for its reason: an engine that keeps
+// dropping the stream is reported, not retried for ever. A delivered event
+// resets the count.
+const watchResumeLimit = 6
+
+// watchResumeDelay is the first resume's wait; each one after doubles it, up
+// to watchResumeMaxDelay. They are variables so a test need not wait.
+var (
+	watchResumeDelay    = time.Second
+	watchResumeMaxDelay = 8 * time.Second
+)
+
 // watchRun streams a run's events live, then reports the run's final state.
 // The stream can end without a terminal event (for example when resuming past
 // one), so the final status always comes from GetRun.
+//
+// A stream the engine ends as unavailable is opened again after the last
+// event printed, as the UI's run page does: any replica can serve it, and the
+// sequence makes the resume exact, so no event is printed twice or skipped.
+// Each resume is said on stderr; stdout carries only the watch's output.
 func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int64) error {
 	out := cmd.OutOrStdout()
 	client := g.runClient()
@@ -45,35 +68,63 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 	streamCtx, cancelStream := g.streamContext(cmd)
 	defer cancelStream()
 
-	stream, err := client.StreamEvents(streamCtx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
-		RunId:        runID,
-		FromSequence: fromSequence,
-		Namespace:    g.namespace,
-	}))
-	if err != nil {
-		return rpcError("watch run", err)
-	}
-	defer func() { _ = stream.Close() }()
-
-	if err := sink.start(); err != nil {
-		return err
-	}
-	// closed guards the JSON document: it must be terminated even when the
-	// stream or the final lookup fails, so stdout stays parseable.
-	closed := false
+	// closed guards the JSON document: once started it must be terminated
+	// even when the stream or the final lookup fails, so stdout stays
+	// parseable.
+	started, closed := false, false
 	defer func() {
-		if !closed {
+		if started && !closed {
 			_ = sink.finish(nil)
 		}
 	}()
 
-	for stream.Receive() {
-		if err := sink.event(stream.Msg()); err != nil {
-			return err
+	lastSequence := fromSequence
+	resumes := 0 // resumes in a row that delivered no event
+	for {
+		stream, err := client.StreamEvents(streamCtx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
+			RunId:        runID,
+			FromSequence: lastSequence,
+			Namespace:    g.namespace,
+		}))
+		if err == nil {
+			if !started {
+				if err := sink.start(); err != nil {
+					_ = stream.Close()
+					return err
+				}
+				started = true
+			}
+			for stream.Receive() {
+				event := stream.Msg()
+				if event.GetSequence() <= lastSequence {
+					continue
+				}
+				lastSequence, resumes = event.GetSequence(), 0
+				if err := sink.event(event); err != nil {
+					_ = stream.Close()
+					return err
+				}
+			}
+			err = stream.Err()
+			_ = stream.Close()
 		}
-	}
-	if err := stream.Err(); err != nil {
-		return rpcError("watch run", err)
+		if err == nil {
+			break
+		}
+		if connect.CodeOf(err) != connect.CodeUnavailable || resumes >= watchResumeLimit {
+			return rpcError("watch run", err)
+		}
+		delay := min(watchResumeDelay<<resumes, watchResumeMaxDelay)
+		resumes++
+		fmt.Fprintf(cmd.ErrOrStderr(), "watch run: the event stream was interrupted (%s); resuming after event %d in %s (%d of %d)\n",
+			stepError(err), lastSequence, delay, resumes, watchResumeLimit)
+		wait := time.NewTimer(delay)
+		select {
+		case <-streamCtx.Done():
+			wait.Stop()
+			return fmt.Errorf("watch run: %w", streamCtx.Err())
+		case <-wait.C:
+		}
 	}
 	cancelStream()
 

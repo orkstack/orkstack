@@ -752,7 +752,10 @@ from the last event it applied after a dropped connection. Six reconnects in
 a row that deliver nothing end it: the badge reads `STOPPED`, the page says
 `Live updates stopped: <reason>` (the socket never opened, or opened and
 delivered nothing), and **Retry live updates** resumes from the last event.
-A composed task's child roll-up says the same.
+A composed task's child roll-up says the same. `orkctl run watch` keeps the
+same rule: a stream the engine ends as `unavailable` is opened again after
+the last event printed, each resume said on stderr, and six resumes in a row
+that deliver nothing end the watch with the engine's error.
 
 ### Task pins
 
