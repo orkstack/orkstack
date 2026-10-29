@@ -21,6 +21,12 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
+// testDeadlockDetectionTimeout is the deadlock detector's budget in this
+// package's mocked-environment tests, as in internal/engine's harnesses: left
+// unset, the SDK applies its production 1 s to every workflow task, so a
+// loaded host, not the code under test, could fail an assertion.
+const testDeadlockDetectionTimeout = 60 * time.Second
+
 // retryingRuntime fails the FIRST container it runs and succeeds on every one
 // after it — the shape of the `flaky` fixture, without a daemon. It is the
 // smallest thing that produces two Temporal attempts of one activity, which is
@@ -149,6 +155,7 @@ func TestAttemptRecords_OneRecordPerAttemptOfARetriedTask(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(60 * time.Second)
+	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
 	env.RegisterWorkflow(attemptProbeWorkflow)
 	env.RegisterActivityWithOptions(dispatcher.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
 
