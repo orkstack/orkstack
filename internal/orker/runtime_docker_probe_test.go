@@ -314,6 +314,46 @@ func TestDockerRuntime_RunBootProbeSlowImageInspectIsTheDaemonsNotTheImages(t *t
 	}
 }
 
+// TestDockerRuntime_RunBootProbeSlowEngineIsTheDaemonsNotThePostures: the
+// probe first asks the engine which it is and whether it is rootless, inside
+// its own budget. An engine that does not answer within it is a slow daemon,
+// refused as one, never as a runtime that weakens a task's posture nor as a
+// work root it cannot bind, and nothing is pulled or run.
+func TestDockerRuntime_RunBootProbeSlowEngineIsTheDaemonsNotThePostures(t *testing.T) {
+	for _, tt := range []struct{ name, cli, flag string }{
+		{name: "docker version", cli: CLIDocker, flag: "versionhang"},
+		{name: "docker info", cli: CLIDocker, flag: "infohang"},
+		{name: "podman info", cli: CLIPodman, flag: "infohang"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newCountingDocker(t)
+			fake.set("present", "")
+			fake.set(tt.flag, "")
+			runtime := &DockerRuntime{Bin: fake.bin, CLI: tt.cli, BindProbeTimeout: probeBudget}
+
+			_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+
+			if !errors.Is(err, ErrProbeTimedOut) {
+				t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
+			}
+			for name, sentinel := range map[string]error{"ErrPostureRefused": ErrPostureRefused, "ErrNotBindable": ErrNotBindable} {
+				if errors.Is(err, sentinel) {
+					t.Errorf("an engine that did not answer in time is classified %s: %v", name, err)
+				}
+			}
+			for _, want := range []string{"which engine", probeBudget.String(), BindProbeTimeoutVar, "daemon"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("the refusal %q does not contain %q", err, want)
+				}
+			}
+			calls := fake.calls()
+			if n := countPrefix(calls, "pull") + countPrefix(calls, "run"); n != 0 {
+				t.Errorf("calls = %q; an engine that did not say what it is is neither asked to pull nor to run", calls)
+			}
+		})
+	}
+}
+
 // TestDockerRuntime_RunBootProbeStopsWhenTheContextEndsDuringTheInspect: an
 // Orker told to stop while the daemon is silent on image inspect returns the
 // context's own error, not an image or a slow-daemon finding.

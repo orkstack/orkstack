@@ -31,8 +31,9 @@ import (
 // the podman-docker shim does) and killnotrunning (`kill` answers that the
 // container is not running). For the Podman dialects: podmanengine
 // (`version`'s components name the Podman engine), rootless (the content
-// `info {{.Host.Security.Rootless}}` answers), infofail (`info` fails) and
-// state (the content `inspect {{.State.Status}}` answers). `run` also counts
+// `info {{.Host.Security.Rootless}}` answers), infofail (`info` fails),
+// versionhang and infohang (`version` or `info` hangs for 30 s) and state
+// (the content `inspect {{.State.Status}}` answers). `run` also counts
 // itself into the runs file and, once counted, touches runstarted.
 //
 // A `run` that succeeds behaves as the boot probe's container does on a
@@ -91,12 +92,14 @@ case "$1" in
     if [ -e "$S/rmfail-$4" ]; then echo "removal of $4 is already in progress" >&2; exit 1; fi
     exit 0 ;;
   version)
+    if [ -e "$S/versionhang" ]; then exec sleep 30; fi
     if [ -e "$S/versionfail" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
     case "$3" in
       *Components*) if [ -e "$S/podmanengine" ]; then echo '[{"Name":"Podman Engine","Version":"5.8.8"}]'; else echo '[{"Name":"Engine","Version":"27.0.1"}]'; fi ;;
       *) echo 27.0.1 ;;
     esac ;;
   info)
+    if [ -e "$S/infohang" ]; then exec sleep 30; fi
     if [ -e "$S/infofail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
     case "$3" in
       *Host.Security.Rootless*) if [ -e "$S/rootless" ]; then cat "$S/rootless"; else echo false; fi ;;
