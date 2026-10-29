@@ -237,6 +237,15 @@ include breaking changes, and each is marked **BREAKING**.
   OrkStack code reaches, in `google.golang.org/grpc` v1.83.1 and
   `golang.org/x/net` v0.61.0; both are raised to the patch releases that fix
   them (v1.83.2 and v0.62.0).
+- `nightly.yml` › `quickstart` runs the README's Quickstart as written on a
+  clone of `main` every night (`scripts/quickstart-smoke.sh`, as
+  `make quickstart-smoke` does), beside the nightly tier and whatever its
+  result. No proof runs the getting-started path, and `release.yml` runs it
+  only before a release, so a directory `deploy/source/Dockerfile.dockerignore`
+  does not admit, a build break in `deploy/source/Dockerfile`, a
+  `compose.yaml` key the runner's Compose refuses or a stack that never turns
+  healthy now fails the next nightly, a regression on `main`, instead of
+  waiting for the next release attempt (docs/PROOFS.md §5, §10).
 
 ### Changed
 

@@ -959,7 +959,12 @@ commit is a later run. The same workflow runs the vulnerability scan
 (`make vuln`) as a job of its own, because it needs the network and so is in
 no proof: a vulnerability whose vulnerable code the module reaches fails that
 run like any other nightly failure, and the fix is to bump the module to the
-version the report names.
+version the report names. It runs the README's Quickstart on a clone of the
+commit (`scripts/quickstart-smoke.sh`) as a job of its own too, because no
+proof runs the getting-started path: a stack that no longer builds or starts
+from a clone fails that run like any other nightly failure. `release.yml`
+runs the same smoke itself before it publishes anything, so for a release
+that one is a check, not a rule.
 
 A failing nightly (the latest completed `nightly.yml` run on `main`) is a
 regression on `main`, not a merge freeze (decided 2026-10-28): fixing it, or
