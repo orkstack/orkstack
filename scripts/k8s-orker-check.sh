@@ -36,16 +36,18 @@
 # runs tasks with no network and one on the default network, and gives each
 # task its own limits and the Orker's security profile; that each task's
 # cgroup is inside the engine container's; that a cancel reaches each task's
-# container as SIGTERM, then SIGKILL after that task's own grace; that a task
-# cannot be given more than ORK_ORKER_MAX_MEMORY, and one that uses more than
-# it asked for is killed in its own cgroup; and that deleting the pod stops
-# the Orker first while the engine delivers the signals. Then that the Orker
+# container as SIGTERM, then SIGKILL after that task's own grace; that the
+# Orker declares the capacity its pod gives it; that a task may ask for up to
+# ORK_ORKER_MAX_MEMORY, one that asks for more is refused at submit, and one
+# that uses more than it asked for is killed in its own cgroup; and that
+# deleting the pod stops the Orker first while the engine delivers the
+# signals. Then that the Orker
 # refuses to boot when the engine sees the work root at another path, and
 # that the user-namespaced engine does not start without its RuntimeClass.
 #
 # What it creates, and what it leaves: in the cluster, the namespace and
 # everything in it, deleted at the end (KEEP=1 leaves it); nothing
-# cluster-wide. In OrkStack: the three check Orkflows in --ork-namespace,
+# cluster-wide. In OrkStack: the four check Orkflows in --ork-namespace,
 # applied once and left (an identical apply changes nothing), their runs,
 # kept as that namespace's retention says, and Orkers of the pool k8s-check
 # while the check runs, which that namespace must allow. Exit 0: every check
@@ -141,6 +143,7 @@ namespace_state() {
 	done
 }
 fail() {
+	trap - ERR
 	log "FAIL: $*"
 	if $created; then
 		namespace_state >"$out/namespace-state.txt" 2>&1 || :
@@ -165,6 +168,11 @@ cleanup() {
 	fi
 }
 trap cleanup EXIT
+# A command that fails where no check expected it fails the check by name,
+# with the namespace's state, rather than ending it with no reason. A
+# command substitution leaves it to the command that holds it.
+set -E
+trap 'exit_status=$?; [ "$BASH_SUBSHELL" -gt 0 ] || fail "line $LINENO: \`$BASH_COMMAND\` exited $exit_status"' ERR
 
 log "== prerequisites"
 for tool in "${kubectl[0]}" jq; do
@@ -415,6 +423,7 @@ check_shape() { # check_shape SHAPE
 	k -n "$ns" get pod "$pod" -o yaml >"$dir/pod.yaml"
 	orkctl orker list | tee "$dir/orker-list.txt"
 	expect "$dir/orker-list.txt" "^$pod\\.$ns +$POOL .* ready " "$shape: the Orker is ready in pool $POOL under its pod's id"
+	expect "$dir/orker-list.txt" "^$pod\\.$ns .* ready .* 1\\.5 cpu, 1536Mi " "$shape: the Orker admits tasks within the capacity its pod declares"
 	k -n "$ns" logs "$pod" -c orker >"$dir/orker-boot.log"
 	expect "$dir/orker-boot.log" 'msg="orker started"' "$shape: the Orker booted (its bind probe passed)"
 	k -n "$ns" exec "$pod" -c engine -- cat /proc/self/uid_map | tee "$dir/engine-uid-map.txt"
@@ -492,16 +501,24 @@ check_shape() { # check_shape SHAPE
 	expect "$dir/cancel-logs.txt" '^\[graceful\] graceful: SIGTERM at ' "$shape: graceful's trap ran"
 	expect "$dir/cancel-logs.txt" '^\[stubborn\] stubborn: SIGTERM at .*ignoring it' "$shape: stubborn's trap ran"
 
-	log "$shape: the per-task ceiling and a task's own limit"
+	log "$shape: the per-task cap and a task's own limit"
+	if orkctl run submit k8s-orker-too-big --json >"$dir/too-big-submit.json" 2>"$dir/too-big-submit.err"; then
+		fail "$shape: a task asking for more than the per-task cap was accepted as run $(jq -r .run.id "$dir/too-big-submit.json"), so the submit did not ask the pool's Orkers for their caps"
+	fi
+	cat "$dir/too-big-submit.err"
+	expect "$dir/too-big-submit.err" 'failed_precondition: RESOURCES_UNSATISFIABLE: task "too-big" requests memory 512Mi, which no Orker of pool "k8s-check" .* caps are 0\.5 cpu and 402653184 bytes' \
+		"$shape: a task asking for more than the 384Mi cap is refused at submit, by the cap its Orker reported"
+	orkctl run list --filter orkflow_name=k8s-orker-too-big --json >"$dir/too-big-runs.json"
+	[ "$(jq '.runs // [] | length' "$dir/too-big-runs.json")" = 0 ] || fail "$shape: the refused submit left a run of k8s-orker-too-big"
+	log "ok: $shape: and left no run behind"
 	run=$(orkctl run submit k8s-orker-limits --json | jq -r .run.id)
 	wait_terminal "$run"
 	orkctl run get "$run" --json >"$dir/limits-run.json"
 	orkctl run logs "$run" >"$dir/limits-logs.txt"
 	jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-") \(.error.message // "-")"' "$dir/limits-run.json" | tee "$dir/limits-tasks.txt"
-	expect "$dir/limits-tasks.txt" '^within SUCCEEDED ' "$shape: a task at the 384Mi ceiling runs"
-	expect "$dir/limits-logs.txt" '^\[within\] memory.max: 402653184$' "$shape: with the ceiling as its limit"
+	expect "$dir/limits-tasks.txt" '^within SUCCEEDED ' "$shape: a task at the 384Mi cap runs"
+	expect "$dir/limits-logs.txt" '^\[within\] memory.max: 402653184$' "$shape: with the cap as its limit"
 	expect "$dir/limits-tasks.txt" '^hog FAILED CONTAINER_EXIT_NONZERO .*exceeding its memory limit of 64Mi' "$shape: a task over its own 64Mi is killed by the kernel"
-	expect "$dir/limits-tasks.txt" '^too-big FAILED RESOURCE_REQUEST_REFUSED ' "$shape: a task asking for more than the ceiling is refused"
 
 	log "$shape: deleting the pod while two tasks run"
 	run=$(orkctl run submit k8s-orker-cancel --json | jq -r .run.id)

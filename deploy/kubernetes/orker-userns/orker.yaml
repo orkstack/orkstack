@@ -81,9 +81,9 @@ spec:
             periodSeconds: 2
             failureThreshold: 60
           # Every task runs inside this container's cgroup, so these limits
-          # bound all of them together: at least ORK_ORKER_MAX_CONCURRENT
-          # times ORK_ORKER_MAX_MEMORY, and ORK_ORKER_MAX_CPU, plus the
-          # daemon's own share.
+          # bound all of them together: the Orker's capacity
+          # (ORK_ORKER_CAPACITY_CPU and ORK_ORKER_CAPACITY_MEMORY), plus the
+          # daemon's own share. Change them together.
           resources:
             requests:
               cpu: "5"
@@ -133,6 +133,14 @@ spec:
               value: "1"
             - name: ORK_ORKER_MAX_MEMORY
               value: 2Gi
+            # What the engine container gives its tasks, less the daemon's
+            # share: the Orker admits no task that would take what it has
+            # reserved above it, whatever ORK_ORKER_MAX_CONCURRENT allows,
+            # and a task's reservation is its limit.
+            - name: ORK_ORKER_CAPACITY_CPU
+              value: "4"
+            - name: ORK_ORKER_CAPACITY_MEMORY
+              value: 8Gi
             - name: ORK_ADMIN_ADDR
               value: 127.0.0.1:9464
           startupProbe:

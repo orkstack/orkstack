@@ -1,0 +1,21 @@
+# A task that asks for more than every Orker of its pool runs: the submit
+# refuses it with RESOURCES_UNSATISFIABLE, before a run exists
+# (scripts/k8s-orker-check.sh submits it against an Orker whose
+# ORK_ORKER_MAX_MEMORY is 384Mi, deploy/kubernetes/check/common).
+apiVersion: orkstack/v1
+kind: Orkflow
+name: k8s-orker-too-big
+version: "1"
+description: A task above the per-task cap of every Orker of its pool, refused at submit.
+tasks:
+  - id: too-big
+    uses: shell
+    pool: k8s-check
+    network: none
+    resources:
+      memory: 512Mi
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        echo "this never runs"

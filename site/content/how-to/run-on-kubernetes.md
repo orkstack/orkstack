@@ -72,12 +72,13 @@ kubectl rollout status deployment/orker
 orkctl orker list
 ```
 
-`kubectl rollout status` returns once the pods are ready. Both bases start two replicas, so `orkctl orker list` should show two Orkers. Each one is named `<pod>.<namespace>`, with STATE `ready`.
+`kubectl rollout status` returns once the pods are ready. Both bases start two replicas, so `orkctl orker list` should show two Orkers. Each one is named `<pod>.<namespace>`, with STATE `ready` and CAPACITY `4 cpu, 8Gi`.
 
 ## Keep in mind
 
 - The work root is one volume at one path in both containers. If the engine sees it at another path, the Orker refuses to start with `WORKDIR_NOT_BINDABLE`, and the pod never becomes ready.
-- Every task runs inside the pod's cgroup. Size the engine container to hold `ORK_ORKER_MAX_CONCURRENT` tasks at `ORK_ORKER_MAX_MEMORY`, plus the daemon. Its cpu must be at least `ORK_ORKER_MAX_CPU`. The bases size it for four tasks of 1 cpu and 2Gi each.
+- Every task runs inside the pod's cgroup. The bases declare the Orker's capacity, 4 cpu and 8Gi, and give the engine container that plus room for the daemon: 5 cpu and 9Gi. The Orker admits no more tasks than fit in its capacity, so change the capacity and the engine's resources together.
+- A task may ask for at most 1 cpu and 2Gi, the bases' per-task cap. A run with a task that asks for more is refused when it is submitted, with `RESOURCES_UNSATISFIABLE`.
 - `network: none` and `network: default` both work. The default network reaches what the pod reaches, cluster Services included. If the cluster routes `172.17.0.0/16`, give the engine's bridge a free range with `--bip`, as [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes) describes.
 - Drain an Orker before you delete its pod: `orkctl orker drain <orker-id>`. Deleting a pod cancels its in-flight work with `SIGTERM`. A task of a deleted pod ends `ORKER_HEARTBEAT_TIMEOUT`, unless its `retry:` runs it again on another Orker.
 - Docker's rootless engine image (`docker:dind-rootless`) is not supported, because it applies none of the container limits.
