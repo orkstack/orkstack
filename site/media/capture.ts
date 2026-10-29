@@ -25,10 +25,11 @@
 // with the host's loopback exposed.
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from '@playwright/test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import sharp from 'sharp';
 import { startBrowserServer, stopBrowserServer } from '../../ui/e2e/browser-server';
+import { ffmpeg, READ, stage, Take } from './demo';
 
 const repo = path.resolve(import.meta.dirname, '..', '..');
 const assets = path.join(repo, 'site', 'src', 'assets', 'media');
@@ -40,6 +41,10 @@ const ENGINE = process.env.ORK_SERVER ?? 'http://127.0.0.1:8080';
 const NS = 'examples';
 const FANOUT = 'examples/each-fan-out.ork.yaml';
 const AWAIT = 'examples/awaited-approval.ork.yaml';
+const BRANCH = 'examples/branch-and-recover.ork.yaml';
+// SITE_MEDIA_TAKES=e2e-demo,ui-editor redoes those recordings alone, keeping
+// every screenshot and the other recordings as they are.
+const partial = Boolean(process.env.SITE_MEDIA_TAKES?.trim());
 
 const LANDING = { width: 1616, height: 1010 };
 const DOCS = { width: 1280, height: 900 };
@@ -82,7 +87,7 @@ function submit(name: string): string {
 }
 
 const shots: Record<string, Record<string, string | number>> = {};
-const items: Record<string, Record<string, string>> = {};
+const items: Record<string, Record<string, string | number>> = {};
 
 const all = (views: Views, fn: (p: Page) => Promise<unknown>) => Promise.all(views.map((v) => fn(v.page)));
 
@@ -203,12 +208,152 @@ async function catchLive(views: Views, capture: () => Promise<void>): Promise<st
 	throw new Error('could not capture the fan-out running in every view at once');
 }
 
+/**
+ * The screenshots: the landing page's, of the run page one to one in its
+ * frames, and the docs', of parts of the UI one to one in the docs column.
+ */
+async function screenshots(browser: Browser): Promise<void> {
+	// ---- The landing page: the run page, one to one in its frames.
+	const landing = await contexts(browser, LANDING);
+	const lv = landing.views;
+	// The run page compiles a route on its first visit in some setups; a
+	// first run, opened once, keeps that out of the live capture's window.
+	const warm = submit('each-fan-out');
+	await all(lv, (p) => p.goto(`${UI}/runs/${warm}?ns=${NS}`));
+	await all(lv, (p) => p.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 }));
+
+	// The first viewport's view: the run page's top, while its fan-out runs,
+	// cut under its heading, its drawing and the aside's timing register.
+	await catchLive(lv, () =>
+		shoot(
+			'ui-run-hero',
+			'A run of each-fan-out in the OrkStack UI while it runs: the DAG of list, convert and merge, with list done, convert running and merge waiting, beside the run’s version and timing.',
+			'A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.',
+			lv,
+			async (p) => {
+				const drawing = await p.getByTestId('run-drawing').boundingBox();
+				const timing = await p.getByTestId('task-summary').boundingBox();
+				if (!drawing || !timing) throw new Error('the run page has no drawing or timing register to cut under');
+				const bottom = Math.max(drawing.y + drawing.height, timing.y + timing.height);
+				return { x: 0, y: 0, width: LANDING.width, height: Math.round(bottom + PAD * 2) };
+			},
+		),
+	);
+
+	// The same run, finished: the whole viewport, as a visitor sees it.
+	await all(lv, (p) => p.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 }));
+	await all(lv, (p) => p.reload());
+	await all(lv, (p) => p.getByTestId('run-status').waitFor());
+	await all(lv, settled);
+	await shoot(
+		'ui-run-page',
+		'The finished run of each-fan-out in the OrkStack UI: list, convert and merge all SUCCEEDED, the leaf task’s values, and the run’s versions, timing and reproduce commands in the aside.',
+		'The same Orkflow’s run, finished.',
+		lv,
+	);
+	for (const c of landing.contexts) await c.close();
+
+	// ---- The docs: parts of the run page, one to one in the docs column.
+	const docs = await contexts(browser, DOCS);
+	const dv = docs.views;
+
+	// The Orkflow's own page once it is applied: its graph, its versions, and
+	// its tasks with each image pinned to a digest.
+	await all(dv, (p) => p.goto(`${UI}/orkflows/each-fan-out?ns=${NS}`));
+	await all(dv, (p) => p.getByTestId('orkflow-outputs').waitFor());
+	await all(dv, settled);
+	await shoot(
+		'ui-orkflow',
+		'The each-fan-out Orkflow’s page in the OrkStack UI after an apply: its graph of list, convert and merge, its stored version, and its three tasks with their image digests.',
+		'An applied Orkflow: an immutable version, every image pinned to a digest.',
+		dv,
+		async (p) => {
+			const outputs = await p.getByTestId('orkflow-outputs').boundingBox();
+			if (!outputs) throw new Error('the Orkflow page has no outputs section to cut above');
+			return { x: 0, y: 0, width: DOCS.width, height: Math.round(outputs.y - PAD) };
+		},
+	);
+
+	// The run as a graph, while its fan-out runs.
+	await catchLive(dv, () =>
+		shoot(
+			'ui-run-live',
+			'The run’s graph in the OrkStack UI while it runs: list done, convert running its items, merge waiting.',
+			'A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.',
+			dv,
+			(p) => columnCut(p, p.getByTestId('run-drawing')),
+		),
+	);
+	await all(dv, (p) => p.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 }));
+	await all(dv, (p) => p.reload());
+	await all(dv, (p) => p.getByTestId('run-status').waitFor());
+
+	// The finished run's last task, inspected: its attempt, its timing,
+	// its log and its artifacts.
+	await all(dv, (p) => p.getByTestId('task-inspect-toggle-merge').click());
+	await all(dv, (p) => p.getByTestId('task-artifacts-merge').waitFor());
+	await shoot(
+		'ui-run-finished',
+		'The merge task of a finished each-fan-out run, inspected in the run page: SUCCEEDED, its attempt and timing, its log and its artifacts, merged.txt among them.',
+		'The same Orkflow’s run, finished: a task’s attempts, timing, log and artifacts.',
+		dv,
+		(p) => columnCut(p, p.getByTestId('task-merge')),
+	);
+
+	// One fan-out item: its attempts and its logs.
+	await all(dv, (p) => p.getByTestId('task-convert-item-2').click());
+	await all(dv, (p) => p.getByTestId('task-convert-item-panel').waitFor());
+	await all(dv, (p) => p.getByTestId('task-log-toggle-convert').click());
+	await all(dv, (p) => p.getByTestId('task-log-convert').getByText('converted').first().waitFor({ timeout: 30_000 }));
+	await shoot(
+		'ui-fanout',
+		'The convert task’s fan-out in the run page: four items, item 2 opened with its attempt, its timing, its log line and its artifacts.',
+		'Each fan-out item is its own durable activity, with its own attempts and logs.',
+		dv,
+		(p) => columnCut(p, p.getByTestId('task-convert')),
+	);
+
+	// An awaited task, being approved: the dialog, with the page around it.
+	const awaiting = submit('awaited-approval');
+	await all(dv, (p) => p.goto(`${UI}/runs/${awaiting}?ns=${NS}`));
+	await all(dv, (p) => p.getByTestId('task-approval-status').filter({ hasText: 'AWAITING' }).waitFor({ timeout: 120_000 }));
+	await all(dv, (p) => p.getByTestId('task-approval-resolve').click());
+	await all(dv, (p) => p.getByTestId('await-resolve-dialog').waitFor());
+	await all(dv, (p) => p.getByTestId('declared-input-approved').check());
+	await all(dv, (p) => p.getByTestId('declared-input-approver').fill('example-approver'));
+	await all(dv, settled);
+	await shoot(
+		'ui-await',
+		'An awaited task in the run page, with the dialog that resolves it: approved checked, the approver filled in, ready to complete.',
+		'An awaited task waits for a person or a system; resolving it starts the next task.',
+		dv,
+		async (p) => {
+			// A band of the dimmed page around it says it is a dialog; a wider
+			// one only shows the page's words cut off at the edges.
+			const box = await p.getByTestId('await-resolve-dialog').boundingBox();
+			if (!box) throw new Error('the resolve dialog has no box');
+			const x = Math.max(0, Math.round(box.x - PAD));
+			const y = Math.max(0, Math.round(box.y - PAD));
+			return {
+				x,
+				y,
+				width: Math.min(DOCS.width - x, Math.round(box.width + PAD * 2)),
+				height: Math.min(DOCS.height - y, Math.round(box.height + PAD * 2)),
+			};
+		},
+	);
+	const resolver = dv[0].page;
+	await resolver.getByTestId('await-resolve-submit').click();
+	await resolver.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 120_000 });
+	for (const c of docs.contexts) await c.close();
+}
+
 async function main() {
 	mkdirSync(assets, { recursive: true });
 	mkdirSync(publicMedia, { recursive: true });
 	mkdirSync(work, { recursive: true });
 
-	// The namespace and the two Orkflows. An apply of bytes already stored,
+	// The namespace and the Orkflows. An apply of bytes already stored,
 	// against the same image builds, is a no-op. After the images are rebuilt
 	// it is refused (a version is immutable and pins its images), and the
 	// capture stops with the server's error: capture on a fresh stack then.
@@ -219,180 +364,41 @@ async function main() {
 	}
 	orkctl('apply', FANOUT);
 	orkctl('apply', AWAIT);
+	orkctl('apply', BRANCH);
 
 	const server = startBrowserServer(`site-media-${process.pid}`);
 	let browser: Browser | undefined;
 	try {
 		browser = await chromium.connect(server.wsEndpoint, { exposeNetwork: '<loopback>' });
 
-		// ---- The landing page: the run page, one to one in its frames.
-		const landing = await contexts(browser, LANDING);
-		const lv = landing.views;
-		// The run page compiles a route on its first visit in some setups; a
-		// first run, opened once, keeps that out of the live capture's window.
-		const warm = submit('each-fan-out');
-		await all(lv, (p) => p.goto(`${UI}/runs/${warm}?ns=${NS}`));
-		await all(lv, (p) => p.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 }));
+		if (!partial) await screenshots(browser);
 
-		// The first viewport's view: the run page's top, while its fan-out runs,
-		// cut under its heading, its drawing and the aside's timing register.
-		await catchLive(lv, () =>
-			shoot(
-				'ui-run-hero',
-				'A run of each-fan-out in the OrkStack UI while it runs: the DAG of list, convert and merge, with list done, convert running and merge waiting, beside the run’s version and timing.',
-				'A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.',
-				lv,
-				async (p) => {
-					const drawing = await p.getByTestId('run-drawing').boundingBox();
-					const timing = await p.getByTestId('task-summary').boundingBox();
-					if (!drawing || !timing) throw new Error('the run page has no drawing or timing register to cut under');
-					const bottom = Math.max(drawing.y + drawing.height, timing.y + timing.height);
-					return { x: 0, y: 0, width: LANDING.width, height: Math.round(bottom + PAD * 2) };
-				},
-			),
-		);
-
-		// The same run, finished: the whole viewport, as a visitor sees it.
-		await all(lv, (p) => p.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 }));
-		await all(lv, (p) => p.reload());
-		await all(lv, (p) => p.getByTestId('run-status').waitFor());
-		await all(lv, settled);
-		await shoot(
-			'ui-run-page',
-			'The finished run of each-fan-out in the OrkStack UI: list, convert and merge all SUCCEEDED, the leaf task’s values, and the run’s versions, timing and reproduce commands in the aside.',
-			'The same Orkflow’s run, finished.',
-			lv,
-		);
-		for (const c of landing.contexts) await c.close();
-
-		// ---- The docs: parts of the run page, one to one in the docs column.
-		const docs = await contexts(browser, DOCS);
-		const dv = docs.views;
-
-		// The run as a graph, while its fan-out runs.
-		await catchLive(dv, () =>
-			shoot(
-				'ui-run-live',
-				'The run’s graph in the OrkStack UI while it runs: list done, convert running its items, merge waiting.',
-				'A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.',
-				dv,
-				(p) => columnCut(p, p.getByTestId('run-drawing')),
-			),
-		);
-		await all(dv, (p) => p.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 }));
-		await all(dv, (p) => p.reload());
-		await all(dv, (p) => p.getByTestId('run-status').waitFor());
-
-		// The finished run's last task, inspected: its attempt, its timing,
-		// its log and its artifacts.
-		await all(dv, (p) => p.getByTestId('task-inspect-toggle-merge').click());
-		await all(dv, (p) => p.getByTestId('task-artifacts-merge').waitFor());
-		await shoot(
-			'ui-run-finished',
-			'The merge task of a finished each-fan-out run, inspected in the run page: SUCCEEDED, its attempt and timing, its log and its artifacts, merged.txt among them.',
-			'The same Orkflow’s run, finished: a task’s attempts, timing, log and artifacts.',
-			dv,
-			(p) => columnCut(p, p.getByTestId('task-merge')),
-		);
-
-		// One fan-out item: its attempts and its logs.
-		await all(dv, (p) => p.getByTestId('task-convert-item-2').click());
-		await all(dv, (p) => p.getByTestId('task-convert-item-panel').waitFor());
-		await all(dv, (p) => p.getByTestId('task-log-toggle-convert').click());
-		await all(dv, (p) => p.getByTestId('task-log-convert').getByText('converted').first().waitFor({ timeout: 30_000 }));
-		await shoot(
-			'ui-fanout',
-			'The convert task’s fan-out in the run page: four items, item 2 opened with its attempt, its timing, its log line and its artifacts.',
-			'Each fan-out item is its own durable activity, with its own attempts and logs.',
-			dv,
-			(p) => columnCut(p, p.getByTestId('task-convert')),
-		);
-
-		// An awaited task, being approved: the dialog, with the page around it.
-		const awaiting = submit('awaited-approval');
-		await all(dv, (p) => p.goto(`${UI}/runs/${awaiting}?ns=${NS}`));
-		await all(dv, (p) => p.getByTestId('task-approval-status').filter({ hasText: 'AWAITING' }).waitFor({ timeout: 120_000 }));
-		await all(dv, (p) => p.getByTestId('task-approval-resolve').click());
-		await all(dv, (p) => p.getByTestId('await-resolve-dialog').waitFor());
-		await all(dv, (p) => p.getByTestId('declared-input-approved').check());
-		await all(dv, (p) => p.getByTestId('declared-input-approver').fill('example-approver'));
-		await all(dv, settled);
-		await shoot(
-			'ui-await',
-			'An awaited task in the run page, with the dialog that resolves it: approved checked, the approver filled in, ready to complete.',
-			'An awaited task waits for a person or a system; resolving it starts the next task.',
-			dv,
-			async (p) => {
-				// A band of the dimmed page around it says it is a dialog; a wider
-				// one only shows the page's words cut off at the edges.
-				const box = await p.getByTestId('await-resolve-dialog').boundingBox();
-				if (!box) throw new Error('the resolve dialog has no box');
-				const x = Math.max(0, Math.round(box.x - PAD));
-				const y = Math.max(0, Math.round(box.y - PAD));
-				return {
-					x,
-					y,
-					width: Math.min(DOCS.width - x, Math.round(box.width + PAD * 2)),
-					height: Math.min(DOCS.height - y, Math.round(box.height + PAD * 2)),
-				};
-			},
-		);
-		const resolver = dv[0].page;
-		await resolver.getByTestId('await-resolve-submit').click();
-		await resolver.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 120_000 });
-		for (const c of docs.contexts) await c.close();
-
-		// The end-to-end recording, in each theme: apply from the UI, submit,
-		// watch the run, open the merged artifact's provenance. It feeds the
-		// README's animation (media/run.sh).
-		for (const theme of themes) {
-			const dir = path.join(work, `video-${theme}`);
-			const rec = await browser.newContext({
-				viewport: { width: 1280, height: 800 },
-				colorScheme: theme,
-				recordVideo: { dir, size: { width: 1280, height: 800 } },
-			});
-			const p = await rec.newPage();
-			await p.goto(`${UI}/apply?ns=${NS}`);
-			await p.getByTestId('apply-example-use-each-fan-out').click();
-			await p.waitForTimeout(800);
-			await p.getByTestId('apply-submit').click();
-			await p.getByTestId('orkflow-name').waitFor();
-			await p.waitForTimeout(800);
-			await p.getByTestId('orkflow-submit-run').click();
-			await p.getByTestId('run-submit-submit').click();
-			await p.getByTestId('run-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 });
-			await p.waitForTimeout(1000);
-			await p.getByTestId('task-inspect-toggle-merge').click();
-			await p.getByTestId('task-artifacts-merge').scrollIntoViewIfNeeded();
-			await p.waitForTimeout(600);
-			await p.getByTestId('artifact-provenance-toggle-merge-merged.txt').click();
-			await p.waitForTimeout(2500);
-			const video = p.video();
-			await rec.close();
-			// Over a browser-server connection the recording lives on the
-			// server; saveAs copies it here (path() is local-only).
-			const raw = path.join(work, `video-${theme}.webm`);
-			await video!.saveAs(raw);
-			encode(raw, `e2e-demo-${theme}`);
+		// The recordings, each in both themes (takes, below).
+		const only = process.env.SITE_MEDIA_TAKES?.split(',').map((n) => n.trim()).filter(Boolean);
+		const unknown = only?.filter((n) => !takes.some((t) => t.name === n));
+		if (unknown?.length) throw new Error(`SITE_MEDIA_TAKES names no recording ${unknown.join(', ')}; there are ${takes.map((t) => t.name).join(', ')}`);
+		for (const take of takes) {
+			if (only && !only.includes(take.name)) continue;
+			for (const theme of themes) await record(browser, take, theme);
+			items[take.name] = {
+				alt: take.alt,
+				caption: take.caption,
+				width: REC.width,
+				height: REC.height,
+				mp4: `${take.name}-light.mp4`,
+				poster: `${take.name}-light.webp`,
+				mp4Dark: `${take.name}-dark.mp4`,
+				posterDark: `${take.name}-dark.webp`,
+			};
 		}
-		items['e2e-demo'] = {
-			alt: 'A screen recording: the each-fan-out example applied from the UI’s Apply page, a run submitted and watched to the end, and its merged artifact opened.',
-			caption: 'Apply, submit, watch, open the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.',
-			webm: 'e2e-demo-light.webm',
-			mp4: 'e2e-demo-light.mp4',
-			poster: 'e2e-demo-light.webp',
-			webmDark: 'e2e-demo-dark.webm',
-			mp4Dark: 'e2e-demo-dark.mp4',
-			posterDark: 'e2e-demo-dark.webp',
-		};
 	} finally {
 		await browser?.close().catch(() => {});
 		stopBrowserServer(server.container);
 	}
 
 	// The terminal recordings (cli-*) are media/finish.mjs's and stay; every
-	// other item is this script's, so one it no longer takes goes.
+	// other item is this script's, so one it no longer takes goes (unless
+	// this run redid only some recordings, which keeps everything else).
 	const previous = (() => {
 		try {
 			return JSON.parse(readFileSync(path.join(assets, 'manifest.json'), 'utf8'));
@@ -400,15 +406,16 @@ async function main() {
 			return { items: {} };
 		}
 	})();
-	const kept = Object.fromEntries(Object.entries(previous.items ?? {}).filter(([name]) => name.startsWith('cli-')));
+	const kept = Object.fromEntries(Object.entries(previous.items ?? {}).filter(([name]) => partial || name.startsWith('cli-')));
 	const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
 	writeFileSync(
 		path.join(assets, 'manifest.json'),
 		JSON.stringify(
 			{
 				$comment: 'Written by make site-media (site/media/). Do not edit.',
-				sourceCommit: commit,
-				orkflows: [FANOUT, AWAIT],
+				// A partial run redoes some recordings of an earlier full one.
+				sourceCommit: partial ? (previous.sourceCommit ?? commit) : commit,
+				orkflows: [FANOUT, AWAIT, BRANCH],
 				browserImage: server.image,
 				items: { ...kept, ...items, ...shots },
 				...(previous.vhsImage ? { vhsImage: previous.vhsImage } : {}),
@@ -419,19 +426,249 @@ async function main() {
 	);
 }
 
-/** Re-encode a recording to VP9 WebM and H.264 MP4, and a poster frame. */
-function encode(raw: string, base: string): void {
-	const out = (ext: string) => path.join(publicMedia, `${base}.${ext}`);
-	const ff = (...args: string[]) => execFileSync('ffmpeg', ['-y', '-loglevel', 'error', ...args]);
-	ff('-i', raw, '-c:v', 'libvpx-vp9', '-b:v', '0', '-crf', '40', '-row-mt', '1', '-an', out('webm'));
-	ff('-i', raw, '-c:v', 'libx264', '-crf', '28', '-preset', 'slow', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', out('mp4'));
-	const posterPng = path.join(work, `${base}.png`);
-	ff('-sseof', '-1.5', '-i', raw, '-frames:v', '1', posterPng);
-	execFileSync('node', ['-e', `require('sharp')(${JSON.stringify(posterPng)}).webp({quality:82}).toFile(${JSON.stringify(out('webp'))})`], {
-		cwd: path.join(repo, 'site'),
+// ---- The recordings: the UI driven by a stagehand (media/demo.ts) at
+// 1280×800 CSS pixels, the UI's narrowest two-column layout, captured at two
+// device pixels per CSS pixel, and paced for a reader: each screen that
+// matters is held about three seconds, every click is announced by the
+// cursor gliding to it, and a caption names each step.
+const REC = { width: 1280, height: 800 };
+
+interface Script {
+	name: string;
+	alt: string;
+	caption: string;
+	/** Load the first page; the camera starts after it. */
+	open: (p: Page) => Promise<void>;
+	act: (t: Take, p: Page) => Promise<void>;
+}
+
+const status = (p: Page, want: string, timeout = 180_000) =>
+	p.getByTestId('run-status').filter({ hasText: want }).waitFor({ timeout });
+
+/** The run page's drawing scrolls inside its frame: scroll it smoothly to its end. */
+async function scrollDrawing(p: Page): Promise<void> {
+	await p.getByTestId('run-drawing').evaluate((root) => {
+		const box = [root, ...root.querySelectorAll<HTMLElement>('*')].find((e) => e.scrollHeight > e.clientHeight + 4 && getComputedStyle(e).overflowY !== 'visible');
+		box?.scrollTo({ top: box.scrollHeight, behavior: 'smooth' });
 	});
-	renameSync(raw, raw + '.done');
-	console.log(`  ${base}`);
+	await p.waitForTimeout(1200);
+}
+
+/** The line of the editor that reads exactly `text` (leading spaces and all). */
+const editorLine = (p: Page, text: string) =>
+	p.locator('.cm-line').filter({ hasText: new RegExp(`^${text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`) });
+
+const takes: Script[] = [
+	{
+		name: 'e2e-demo',
+		alt: 'A screen recording of the OrkStack UI: the each-fan-out example is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task’s merged.txt artifact is opened with its provenance.',
+		caption: 'Apply, plan and submit, watch, open the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.',
+		open: async (p) => {
+			await p.goto(`${UI}/apply?ns=${NS}`);
+			await p.getByTestId('apply-examples').waitFor();
+		},
+		act: async (t, p) => {
+			await t.say('1', 'Apply an Orkflow');
+			await t.hold(1200);
+			await t.scrollTo(p.getByTestId('apply-examples'), 160);
+			await t.press(p.getByTestId('apply-example-use-each-fan-out'));
+			await t.scrollWindow(0);
+			await t.hold(READ);
+			await t.press(p.getByTestId('apply-submit'));
+			await p.getByTestId('orkflow-submit-run').waitFor();
+			await t.hold(READ);
+			await t.say('2', 'Plan it, then submit a run');
+			await t.press(p.getByTestId('orkflow-submit-run'));
+			await t.press(p.getByTestId('run-submit-plan'));
+			await p.getByText('Nothing was started').waitFor();
+			await t.hold(READ + 400);
+			await t.press(p.getByTestId('run-submit-submit'));
+			await t.say('3', 'Watch it run, live');
+			await status(p, 'SUCCEEDED');
+			await t.hold(2600);
+			await t.say('4', 'Open what it wrote');
+			await t.press(p.getByTestId('task-inspect-toggle-merge'));
+			await t.scrollTo(p.getByTestId('task-artifacts-merge'), 260);
+			await t.press(p.getByTestId('artifact-provenance-toggle-merge-merged.txt'));
+			await t.hold(READ + 1000);
+		},
+	},
+	{
+		name: 'ui-editor',
+		alt: 'A screen recording of the Apply page’s YAML editor: a task’s needs is changed to name a task that does not exist, the engine’s diagnostic appears at that line and in the problems list, and the fix clears it.',
+		caption: 'The editor asks the engine as you type: an unknown task in needs is flagged at its line, and fixing it clears the problem.',
+		open: async (p) => {
+			await p.goto(`${UI}/apply?ns=${NS}`);
+			await p.getByTestId('apply-examples').waitFor();
+		},
+		act: async (t, p) => {
+			await t.say('1', 'Start from an example');
+			await t.scrollTo(p.getByTestId('apply-examples'), 160);
+			await t.press(p.getByTestId('apply-example-use-each-fan-out'));
+			await t.scrollWindow(0);
+			const needs = editorLine(p, '      - list');
+			await t.say('2', 'Name a task that does not exist');
+			await t.press(needs, 200);
+			await p.keyboard.press('End');
+			await t.type('s');
+			const issue = p.getByTestId('apply-validation-issue').first();
+			await issue.waitFor({ timeout: 30_000 });
+			await t.say('3', 'The engine flags it, at its line');
+			await t.hold(READ);
+			await t.glide(issue, true);
+			await t.hold(READ);
+			await t.say('4', 'Fix it, and the problem clears');
+			await t.press(editorLine(p, '      - lists'), 200);
+			await p.keyboard.press('End');
+			await p.keyboard.press('Backspace');
+			await issue.waitFor({ state: 'detached', timeout: 30_000 });
+			await t.hold(READ);
+		},
+	},
+	{
+		name: 'ui-fanout-run',
+		alt: 'A screen recording of a run of each-fan-out: list finishes, convert runs its four items two at a time, merge follows, and one item is opened to show its attempt, timing and log.',
+		caption: 'A fan-out runs one durable item per element, two at a time here; each item has its own attempts and log.',
+		open: async (p) => {
+			await p.goto(`${UI}/orkflows/each-fan-out?ns=${NS}`);
+			await p.getByTestId('orkflow-submit-run').waitFor();
+		},
+		act: async (t, p) => {
+			await t.say('', 'One task, fanned out over a list');
+			await t.press(p.getByTestId('orkflow-submit-run'));
+			await t.press(p.getByTestId('run-submit-submit'));
+			// The convert task's place is known once list has ended and its
+			// values have taken their room above it; the page is barely taller
+			// than the window then, so the scroll stops where the page ends,
+			// with the items in view.
+			await p.getByTestId('task-convert-status').filter({ hasText: 'RUNNING' }).waitFor({ timeout: 120_000 });
+			await p.getByTestId('task-values-list').waitFor({ timeout: 30_000 });
+			await t.hold(400);
+			await t.say('', 'Each item is its own durable activity, two at a time');
+			await t.scrollTo(p.getByTestId('task-convert'), 120);
+			await p.getByTestId('task-convert-status').filter({ hasText: 'SUCCEEDED' }).waitFor({ timeout: 180_000 });
+			// Once the run has ended its page stops redrawing the items.
+			await status(p, 'SUCCEEDED');
+			await t.hold(1600);
+			await t.say('', 'Open one: its attempts, its timing, its log');
+			await t.press(p.getByTestId('task-convert-item-2'));
+			await p.getByTestId('task-convert-item-panel').waitFor();
+			await t.press(p.getByTestId('task-log-toggle-convert'));
+			await p.getByTestId('task-log-convert').getByText('converted').first().waitFor({ timeout: 30_000 });
+			await t.hold(READ + 800);
+		},
+	},
+	{
+		name: 'ui-await-run',
+		alt: 'A screen recording of an awaited task: the run is submitted and its callback token shown once, the run waits at approval, the resolve dialog is opened, approved is checked and an approver typed, and once it is completed the next task runs and the run succeeds.',
+		caption: 'An awaited task holds the run until a person or a system resolves it; completing it starts the next task. Its callback token is shown once, at submit.',
+		open: async (p) => {
+			await p.goto(`${UI}/orkflows/awaited-approval?ns=${NS}`);
+			await p.getByTestId('orkflow-submit-run').waitFor();
+		},
+		act: async (t, p) => {
+			await t.say('1', 'Submit a run that needs an approval');
+			await t.press(p.getByTestId('orkflow-submit-run'));
+			await t.press(p.getByTestId('run-submit-submit'));
+			await p.getByTestId('await-callbacks-continue').waitFor();
+			await t.say('2', 'Its callback token is shown once');
+			await t.hold(READ);
+			await t.press(p.getByTestId('await-callbacks-continue'));
+			await p.getByTestId('task-approval-status').filter({ hasText: 'AWAITING' }).waitFor({ timeout: 120_000 });
+			await t.say('3', 'It waits, with no container, until resolved');
+			await t.scrollTo(p.getByTestId('task-approval'), 120);
+			await t.hold(READ);
+			await t.say('4', 'Resolve it with the values it asks for');
+			await t.press(p.getByTestId('task-approval-resolve'));
+			await p.getByTestId('await-resolve-dialog').waitFor();
+			await t.press(p.getByTestId('declared-input-approved'));
+			await t.press(p.getByTestId('declared-input-approver'), 200);
+			await t.type('example-approver');
+			await t.hold(1800);
+			await t.press(p.getByTestId('await-resolve-submit'));
+			await t.say('5', 'The next task starts');
+			await status(p, 'SUCCEEDED', 120_000);
+			await t.hold(READ);
+		},
+	},
+	{
+		name: 'ui-failure',
+		alt: 'A screen recording of branch-and-recover submitted with fail_deploy checked in its input form: deploy fails on both of its attempts, the rollback and notify failure handlers run, and the run ends FAILED with deploy’s reason, whose two attempts are then inspected.',
+		caption: 'Submitted with fail_deploy set: deploy fails twice, the failure handlers run, and the run still ends FAILED with deploy’s reason.',
+		open: async (p) => {
+			await p.goto(`${UI}/orkflows/branch-and-recover?ns=${NS}`);
+			await p.getByTestId('orkflow-submit-run').waitFor();
+		},
+		act: async (t, p) => {
+			await t.say('1', 'Typed inputs, as a form');
+			await t.press(p.getByTestId('orkflow-submit-run'));
+			await t.hold(1400);
+			await t.press(p.getByTestId('declared-input-fail_deploy'));
+			await t.hold(1200);
+			await t.press(p.getByTestId('run-submit-submit'));
+			await t.say('2', 'deploy fails, and is retried');
+			await p.getByTestId('task-deploy').waitFor();
+			await t.glide(p.getByTestId('run-drawing'));
+			await p.getByTestId('task-deploy-status').filter({ hasText: 'RUNNING' }).waitFor({ timeout: 120_000 });
+			await scrollDrawing(p);
+			await p.getByTestId('task-deploy-status').filter({ hasText: 'FAILED' }).waitFor({ timeout: 120_000 });
+			await t.say('3', 'Failure handlers run, and the run still fails');
+			await status(p, 'FAILED', 120_000);
+			await t.hold(READ + 400);
+			await t.say('4', 'Every attempt, with its error');
+			await t.press(p.getByTestId('task-inspect-toggle-deploy'));
+			await t.scrollTo(p.getByTestId('task-deploy-attempts'), 200);
+			await t.hold(READ + 800);
+		},
+	},
+];
+
+/** One take of a script in one theme, encoded into public/media. */
+async function record(browser: Browser, script: Script, theme: Theme): Promise<void> {
+	const ctx = await browser.newContext({ viewport: REC, deviceScaleFactor: 2, colorScheme: theme });
+	await stage(ctx);
+	const p = await ctx.newPage();
+	await script.open(p);
+	const base = `${script.name}-${theme}`;
+	const take = new Take(p, path.join(work, base), REC);
+	try {
+		await take.roll();
+		try {
+			await script.act(take, p);
+		} finally {
+			// The script's own failure is the one to report; the camera's
+			// comes second.
+			await take.cut().catch((err) => console.error(`  ${base}: the camera failed too:`, err));
+		}
+	} finally {
+		await ctx.close();
+	}
+	encode(take, base);
+}
+
+/**
+ * A take, encoded: a lossless master, then H.264 MP4 at the capture's own
+ * size (two device pixels per CSS pixel), and its last frame as the poster.
+ * (A VP9 WebM of these takes is no smaller and takes twice as long.)
+ */
+function encode(take: Take, base: string): void {
+	const out = (ext: string) => path.join(publicMedia, `${base}.${ext}`);
+	const film = take.film();
+	rmSync(out('webm'), { force: true });
+	const master = path.join(work, `${base}.mkv`);
+	ffmpeg(...film.inputs, '-filter_complex', film.filter, '-map', '[v]', '-t', film.seconds.toFixed(3), '-c:v', 'libx264rgb', '-qp', '0', '-preset', 'ultrafast', master);
+	// A screen recording is mostly still frames: a keyframe every 30 s, and
+	// none at a page change. CRF 24 keeps text sharp; a take that comes out
+	// over the site's video budget (scripts/check-tokens.mjs, 2.5 MiB) is
+	// encoded again a step coarser, until it fits.
+	for (let crf = 24; ; crf++) {
+		ffmpeg('-i', master, '-c:v', 'libx264', '-crf', String(crf), '-preset', 'medium', '-tune', 'animation', '-x264-params', 'keyint=900:scenecut=0', '-pix_fmt', 'yuv420p', '-movflags', '+faststart', '-an', out('mp4'));
+		const size = statSync(out('mp4')).size;
+		if (size <= 2.4 * 1024 * 1024) break;
+		if (crf >= 30) throw new Error(`${base}.mp4 is ${(size / 1048576).toFixed(1)} MiB even at CRF 30: shorten the take`);
+	}
+	ffmpeg('-sseof', '-0.2', '-i', master, '-frames:v', '1', '-c:v', 'libwebp', '-quality', '82', out('webp'));
+	console.log(`  ${base} (${film.seconds.toFixed(1)} s)`);
 }
 
 // Screenshots used to live in src/assets/media, where Astro re-encoded them;

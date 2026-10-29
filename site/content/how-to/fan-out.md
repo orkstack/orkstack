@@ -82,6 +82,10 @@ orkctl run get <run-id> --expand convert          # a row per item
 orkctl run logs <run-id> --task convert --item 2  # one item's log
 ```
 
+The run page shows the items as they run, and opens one with a click:
+
+<!-- site-media: ui-fanout-run -->
+
 ## When an item fails
 
 An item retries on its own, under the task's `retry:`. If it still fails, the

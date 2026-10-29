@@ -10,9 +10,18 @@ interface Props {
 }
 const { clip, class: className } = Astro.props;
 const views = [clip.light, clip.dark];
+// A recording is drawn at twice the size it is shown at. A terminal
+// recording's last line sits on its bottom row, so its box is 110 CSS pixels
+// (220 of its own) taller, drawn in the terminal's own background (the VHS
+// theme's is --color-paper-sunken too), and the recording sits at its top: a
+// paused video's controls band falls on that strip, below the last line, at
+// every width. A recording of the UI ends in the UI's title block, which the
+// band may cover.
+const strip = clip.terminal ? 110 : 0;
+const aspect = `${clip.width} / ${clip.height + strip}`;
 ---
 
-<figure class:list={['clip', className]}>
+<figure class:list={['clip', className]} style={`--clip-aspect: ${aspect}`}>
 	<div class="theme-pair">
 		{
 			views.map((v) =>
@@ -34,18 +43,12 @@ const views = [clip.light, clip.dark];
 	.clip {
 		margin: 0;
 	}
-	/* The recording is 2400×1720, twice the size it is shown at, and its last
-	   line sits on its bottom row. The box is 220 of its pixels taller, drawn
-	   in the terminal's own background (the VHS theme's is
-	   --color-paper-sunken too), and the recording sits at its top: a paused
-	   video's controls band falls on that strip, below the last line, at
-	   every width. */
 	video,
 	.clip-missing {
 		display: block;
 		width: 100%;
 		height: auto;
-		aspect-ratio: 1200 / 970;
+		aspect-ratio: var(--clip-aspect);
 		object-fit: contain;
 		object-position: top;
 		border: var(--rule-region) solid var(--color-ink);

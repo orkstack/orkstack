@@ -46,6 +46,10 @@ orkctl apply examples/each-fan-out.ork.yaml
 
 The output names the Orkflow and its version, `0.3.0`. Applying checks the document, resolves each image to a digest, and stores an immutable version. Nothing runs yet.
 
+The UI's Apply page does the same, and from there a run is planned, submitted and followed to its artifacts:
+
+<!-- site-media: e2e-demo -->
+
 ## 5. Plan the run, then start it
 
 ```bash

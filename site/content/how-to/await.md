@@ -49,6 +49,10 @@ orkctl run resolve <run-id> --task approval --values '{"approved":true,"approver
 
 <!-- site-media: ui-await -->
 
+The same in motion, with [`examples/awaited-approval.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/awaited-approval.ork.yaml), from submit to the next task:
+
+<!-- site-media: ui-await-run -->
+
 ## Set the deadline
 
 `timeout_seconds` is required. It is 1 second to 30 days, and it starts when the task starts waiting. A task that nobody resolves by then fails with `AWAIT_TIMED_OUT`, and the run fails. For a longer wait, use two runs.

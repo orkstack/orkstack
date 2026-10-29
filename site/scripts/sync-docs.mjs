@@ -368,10 +368,15 @@ function mediaFigure(name) {
 	if (item.webm || item.mp4) {
 		// A recording: plain <video> elements, one per theme, served from
 		// public/media as they are. No autoplay; nothing loads until played.
+		// Its box keeps the recording's shape before anything loads; a
+		// terminal recording's is 110 CSS pixels taller, so a paused video's
+		// controls fall below its last line (ThemeClip.astro).
 		const src = (f) => `${BASE_PATH}/media/${f}`;
+		if (!item.width || !item.height) fail(`media ${name} has no width and height in src/assets/media/manifest.json (run make site-media)`);
+		const aspect = `${item.width} / ${item.height + (name.startsWith('cli-') ? 110 : 0)}`;
 		const video = (webm, mp4, poster) =>
 			[
-				`<video controls muted playsinline preload="none"${poster ? ` poster="${src(poster)}"` : ''} aria-label="${escapeHtml(item.alt)}">`,
+				`<video controls muted playsinline preload="none"${poster ? ` poster="${src(poster)}"` : ''} style="aspect-ratio: ${aspect}" aria-label="${escapeHtml(item.alt)}">`,
 				webm ? `<source src="${src(webm)}" type="video/webm" />` : '',
 				mp4 ? `<source src="${src(mp4)}" type="video/mp4" />` : '',
 				`</video>`,

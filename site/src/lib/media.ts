@@ -78,6 +78,11 @@ export interface ClipTheme {
 export interface Clip {
 	alt: string;
 	caption: string;
+	/** Its size in CSS pixels: half the recording's, which is drawn at two device pixels per CSS pixel. */
+	width: number;
+	height: number;
+	/** A terminal recording (VHS), as against one of the UI. */
+	terminal: boolean;
 	light: ClipTheme;
 	dark: ClipTheme;
 }
@@ -99,12 +104,17 @@ function served(name: string | undefined, item: string): string | undefined {
 export function clip(name: string): Clip {
 	const item = items[name];
 	if (!item) {
-		if (allowMissing) return { alt: `${name} (not generated yet)`, caption: name, light: {}, dark: {} };
+		if (allowMissing) return { alt: `${name} (not generated yet)`, caption: name, width: 1280, height: 800, terminal: name.startsWith('cli-'), light: {}, dark: {} };
 		throw new Error(`media ${name} has no entry in src/assets/media/manifest.json (run make site-media)`);
 	}
+	const { width, height } = item;
+	if (!width || !height) throw new Error(`media ${name} has no width and height in src/assets/media/manifest.json (run make site-media)`);
 	return {
 		alt: item.alt,
 		caption: item.caption,
+		width,
+		height,
+		terminal: name.startsWith('cli-'),
 		light: { webm: served(item.webm, name), mp4: served(item.mp4, name), poster: served(item.poster, name) },
 		dark: { webm: served(item.webmDark, name), mp4: served(item.mp4Dark, name), poster: served(item.posterDark, name) },
 	};

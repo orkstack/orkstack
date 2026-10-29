@@ -42,6 +42,17 @@ include breaking changes, and each is marked **BREAKING**.
 - `go run ./internal/schemas/cmd/genschemas` also writes the Orkflow and
   automation schemas to `ui/src/lib/schemas/`, the UI's copy of
   `docs/schemas/`.
+- Recordings of core features, on the landing page and the docs pages they
+  illustrate: the YAML editor flagging an unknown `needs:` as you type
+  (reference, "Check a document as you write it"), a fan-out's items running
+  two at a time (fan-out how-to), an awaited task resolved from the run page
+  (await how-to), a failing `deploy` retried while its failure handlers run
+  (handle-failure how-to), `orkctl activity test` passing its six checks
+  (test-an-activity-image how-to), and a schedule fired and a trigger called
+  with `curl` (schedules and triggers how-tos). The landing page's "See it
+  run" section lists the six beside one player; without JavaScript it lists
+  every recording in turn. The tutorial "Your first Orkflow" shows the UI
+  applying, planning, running and opening the example's artifact.
 
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
@@ -210,6 +221,19 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Changed
 
+- Every recording is sharp on a high-density screen and paced to be read.
+  `make site-media` records the UI at two device pixels per CSS pixel,
+  losslessly (Chrome's own capture at scale 2, not Playwright's 1 Mbit/s
+  video), draws the cursor over it afterwards, names each step in a caption
+  drawn with the UI's tokens, holds each screen that matters about three
+  seconds, and encodes it once to H.264 (`site/media/demo.ts`). The README's
+  UI animation is 1760 pixels wide, twice the 880 it is shown at (was 960),
+  ten frames a second with held frames stored as no change; the README's
+  terminal GIF is 1760 wide too (was 1200). The demo runs about 50 s (was
+  19 s), so the run-submission screen and each result can be read. The
+  site serves every recording as MP4 only (a WebM of it was no smaller),
+  within its media budget of 2.5 MiB a recording: `make site-media` encodes
+  a take a step coarser until it fits.
 - The first-party images and the example images declare their interfaces in
   an `interface.ork.yaml` each, and their Dockerfiles' interface `LABEL` line
   is generated from it by `go run ./internal/schemas/cmd/genschemas`. The
