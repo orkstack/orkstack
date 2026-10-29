@@ -450,7 +450,8 @@ file is the reference, not something to copy and edit by hand.
 
 ### Sizing an Orker's task ceiling
 
-`orker.max_concurrent` is how many task containers one Orker runs at once.
+`orker.max_concurrent` is how many task containers one Orker runs at once,
+pinned members aside (they run in their pin's own slots).
 Past it the Orker stops polling: further tasks wait in its pool for this Orker
 or another to free a slot, which is the right place for them to wait — a
 container the host cannot afford to run is a task that fails `OOMKilled` or
@@ -475,14 +476,16 @@ reported by Admin → Activities.
 **The ceiling counts tasks, not their size.** Each slot can be taken by a task
 of any request up to the per-task caps, `orker.resources.max_cpu` (`8`) and
 `orker.resources.max_memory` (`16Gi`), so with the defaults one Orker can
-reserve `16 × 8 = 128` cpus. To make over-commit impossible, size the ceiling
-by the caps rather than the defaults:
+reserve `16 × 8 = 128` cpus. To rule out over-commit by unpinned tasks, size
+the ceiling by the caps rather than the defaults:
 
 ```
 max_concurrent ≤ min(host cpus ÷ max_cpu, host memory ÷ max_memory)
 ```
 
-That bound is safe and needs no other setting, but it is pessimistic: a 16-CPU
+A pin's members do not take these slots: they run in the pin's own, beside
+the ceiling, so a pin host also needs room for `ORK_ORKER_MAX_PINS` pins'
+members running at once, each up to the caps. The bound is pessimistic: a 16-CPU
 host with the default 8-cpu cap runs 2 tasks at once, however small they are.
 Recover concurrency by lowering the caps to what the pool's tasks really ask
 for, and give the rare large task a pool of its own whose Orkers set larger

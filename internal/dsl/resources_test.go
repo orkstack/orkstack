@@ -32,6 +32,7 @@ tasks:
 		{"2", "4Gi", ""},
 		{"500m", "512Mi", ""},
 		{"0.25", "1000000", ""},
+		{"  ", "\t", ""}, // blank is absent, as the Orker reads it
 		{"banana", "4Gi", "tasks[0].resources.cpu"},
 		{"8 cores", "4Gi", "tasks[0].resources.cpu"},
 		{"0", "4Gi", "tasks[0].resources.cpu"},

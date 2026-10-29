@@ -291,7 +291,7 @@ func TestParseMemory_UnderstandsTheKubernetesSpelling(t *testing.T) {
 //
 // Both cap comparisons were guarded with `if parseErr == nil && requested >
 // cap`, so a cap the parser cannot read simply skipped the comparison. The
-// obvious typo — "16GB", a spelling this package's own parseMemory test
+// obvious typo — "16GB", a spelling this package's own quantity.ParseMemory test
 // already asserts is unreadable — therefore granted a workload any size it
 // asked for, contradicting AGENTS.md §6 ("Workflows must not receive
 // unlimited resources by default") and this file's own "None of them is

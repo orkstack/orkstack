@@ -7,13 +7,13 @@ import (
 	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/quantity"
 	// taskpool is imported for ONE constant: the name of the default pool.
 	// Rule 10 has to know that an absent pool and "main" are one pool, and
 	// QueueForPool (internal/task/pool.go:82) is where that is already true.
 	// Reading the name from there rather than writing "main" here is what
 	// keeps the compiler's idea of "the same pool" from drifting from the
 	// router's.
-	"github.com/orkstack/orkstack/internal/quantity"
 	taskpool "github.com/orkstack/orkstack/internal/task"
 )
 
@@ -195,18 +195,18 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 			}
 		}
 		// Rule 6d: a resource request is a quantity the Orker can read, in
-		// the one grammar both sides share (internal/quantity). The cap is
-		// not checked here: it is Orker policy, and the server holds a
-		// request to its pool's at submit.
+		// the one grammar both sides share (internal/quantity). Blank is
+		// absent, as the Orker reads it. The cap is not checked here: it is
+		// Orker policy, checked at dispatch.
 		if res := task.GetResources(); res != nil {
-			if cpu := res.GetCpu(); cpu != "" {
+			if cpu := strings.TrimSpace(res.GetCpu()); cpu != "" {
 				if _, err := quantity.CPU(cpu); err != nil {
 					return validationError(fmt.Sprintf("tasks[%d].resources.cpu", taskIndex),
 						fmt.Errorf("task %q: cpu %q is not a number of cpus (%v); write it as "+
 							"\"2\", \"0.5\" or \"500m\"", task.GetId(), cpu, err))
 				}
 			}
-			if memory := res.GetMemory(); memory != "" {
+			if memory := strings.TrimSpace(res.GetMemory()); memory != "" {
 				if _, err := quantity.Memory(memory); err != nil {
 					return validationError(fmt.Sprintf("tasks[%d].resources.memory", taskIndex),
 						fmt.Errorf("task %q: memory %q is not a quantity of memory (%v); write it as "+

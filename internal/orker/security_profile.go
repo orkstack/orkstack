@@ -248,7 +248,7 @@ func (p SecurityPolicy) validateSecretAllow() error {
 //
 // It exists because an unreadable cap must never pass for an absent one: were
 // ResolveResources to skip a comparison whose cap failed to parse, "16GB" —
-// the obvious typo for "16Gi", and a spelling parseMemory rejects — would not
+// the obvious typo for "16Gi", and a spelling quantity.ParseMemory rejects — would not
 // refuse the request, it would REMOVE the ceiling. A workload could then ask
 // for 1024Ti and get it.
 //
@@ -387,7 +387,7 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 
 // ReservedResources is what an attempt of req is granted on this Orker, as
 // numbers: the effective values ResolveResources returns as the strings
-// task.json carries, parsed by the same parseCPU and parseMemory the caps
+// task.json carries, parsed by the same quantity.ParseCPU and quantity.ParseMemory the caps
 // were checked with. Nil when the policy refuses the request — an attempt
 // refused RESOURCE_REFUSED reserved nothing. Pure: it reads the policy and
 // the request and nothing else, so it agrees with the value execute()

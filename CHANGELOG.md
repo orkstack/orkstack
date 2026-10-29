@@ -269,8 +269,8 @@ include breaking changes, and each is marked **BREAKING**.
   `TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes`, which
   failed on the empty-pool refusal and, with only presence fixed, on the
   skipped pin-host probe.
-- A task's `resources.cpu` and `resources.memory` are refused at validate
-  and apply, with their path, when they do not read as a limit in the
+- **BREAKING:** A task's `resources.cpu` and `resources.memory` are refused
+  at validate and apply, with their path, when they do not read as a limit in the
   Kubernetes spelling (`docs/DSL.md` rule 6d): `cpu: "banana"` or
   `memory: 4GB` used to be accepted and stored, then fail every attempt
   `RESOURCE_REQUEST_REFUSED` at dispatch. The DSL and the Orker now read a

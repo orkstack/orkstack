@@ -13,7 +13,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/orkstack/orkstack/internal/quantity"
 	"io"
 	"os"
 	"os/exec"
@@ -22,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/quantity"
 )
 
 // DockerBinVar names the environment variable that overrides the docker CLI to
