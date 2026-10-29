@@ -307,8 +307,26 @@ await_process() {
     return 1
 }
 
-# sigterm_case starts a workspace detached, waits for <process> to run, stops
-# the container with the grace period, and checks it exited 1 inside it.
+# cancel_like_the_orker cancels a container the way the Orker does (AGENTS.md
+# §3.3): SIGTERM through the runtime's `kill`, the grace period on a timer,
+# then SIGKILL, and returns once the container has exited. The timer is the
+# grace period itself, as the Orker's is, and it is called off the moment the
+# container exits. The Orker never asks a runtime to `stop` a container, so
+# neither does the fixture: whatever a runtime's own stop sequence does, an
+# image is judged by the cancellation it will actually get.
+cancel_like_the_orker() {
+    local cid=$1 timer
+    docker kill --signal TERM "$cid" >/dev/null 2>&1
+    ( sleep "$GRACE"; docker kill --signal KILL "$cid" ) >/dev/null 2>&1 &
+    timer=$!
+    docker wait "$cid" >/dev/null 2>&1
+    kill "$timer" 2>/dev/null
+    wait "$timer" 2>/dev/null
+}
+
+# sigterm_case starts a workspace detached, waits for <process> to run,
+# cancels the container as the Orker does, and checks it exited 1 inside the
+# grace period.
 sigterm_case() {
     local label=$1 w=$2 process=$3 cid started elapsed status
     cid=$(run_detached "$w")
@@ -323,7 +341,7 @@ sigterm_case() {
         return
     fi
     started=$SECONDS
-    docker stop --timeout "$GRACE" "$cid" >/dev/null 2>&1
+    cancel_like_the_orker "$cid"
     elapsed=$((SECONDS - started))
     status=$(docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null)
     docker rm -f "$cid" >/dev/null 2>&1

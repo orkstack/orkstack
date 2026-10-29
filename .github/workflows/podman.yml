@@ -129,6 +129,9 @@ jobs:
               echo "bin=$(command -v podman)" >>"$GITHUB_OUTPUT"
               ;;
             rootful-cli)
+              # The rootful CLI runs through sudo, whose implementation decides
+              # what a command inherits; the summary names it.
+              echo "sudo: $(sudo --version 2>&1 | head -n 1)" | tee -a "$GITHUB_STEP_SUMMARY"
               sudo mkdir -p /etc/containers/registries.conf.d
               printf '%s\n' "$conf" | sed 's/^ *//' | sudo tee /etc/containers/registries.conf.d/50-orkstack.conf >/dev/null
               # The Orker runs the podman CLI as root; its own uid stays the
@@ -202,8 +205,16 @@ jobs:
         if: failure()
         timeout-minutes: 2
         shell: bash
+        env:
+          SHAPE: ${{ matrix.shape }}
         run: |
           for f in .data/integration/*/integration/*.log; do
             [ -f "$f" ] || continue
             grep -l -- '--- FAIL' "$f" >/dev/null 2>&1 && { echo "== $f"; grep -B2 -A12 -- '--- FAIL' "$f" | head -80; }
           done || true
+          # A rootful engine confines each container with AppArmor; what it
+          # refused (a signal, a mount) is only in the kernel's log.
+          if [ "$SHAPE" != rootless-cli ]; then
+            echo "== AppArmor denials"
+            sudo journalctl -k --no-pager 2>/dev/null | grep 'apparmor="DENIED"' | tail -n 40 || true
+          fi
