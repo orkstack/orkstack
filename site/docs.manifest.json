@@ -256,6 +256,16 @@
 					]
 				},
 				{
+					"route": "docs/how-to/run-on-kubernetes",
+					"title": "Run Orkers on Kubernetes",
+					"description": "Run each Orker in a Kubernetes pod with a Docker engine of its own.",
+					"parts": [
+						{
+							"source": "site/content/how-to/run-on-kubernetes.md"
+						}
+					]
+				},
+				{
 					"route": "docs/how-to/namespaces",
 					"title": "Configure namespaces",
 					"description": "Set retention, admission, budgets and policies for a namespace.",
