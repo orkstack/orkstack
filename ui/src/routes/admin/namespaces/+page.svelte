@@ -612,8 +612,9 @@
 	// while replaying `editLabels` captured at the ORIGINAL open, so a
 	// concurrent label change made underneath this edit (the same kind of
 	// out-of-band write the conflict itself proves happened) was silently
-	// overwritten by the retry. Labels are the one such field this page
-	// carries today; a future hidden field belongs here too.
+	// overwritten by the retry. Labels and the fair-share weight are the
+	// fields this page carries without showing; a future hidden field
+	// belongs here too.
 	async function reloadEtagAndRetry() {
 		editBusy = true;
 		editServerError = '';
@@ -621,6 +622,7 @@
 			const res = await namespaceClient(fetch).getNamespace({ name: editingName });
 			editEtag = res.namespace?.etag ?? '';
 			editLabels = { ...res.namespace?.labels };
+			editFairShareWeight = res.namespace?.fairShareWeight ?? 0;
 			editConflict = false;
 			await submitEdit();
 		} catch (err) {

@@ -50,6 +50,9 @@ const BUCKET = ownBucket('admission');
 //   7. a save from the edit form keeps the fair-share weight the form does
 //      not edit: the form replaces the whole document, so a weight it did not
 //      carry through would be reset to the default by any edit.
+//   8. a stale-etag retry re-reads the fair-share weight too: a weight
+//      changed by the write that caused the conflict survives the form's
+//      "reload and re-apply", never reverted to the one the form opened with.
 //
 // Isolation (AGENTS.md §11.1): this spec's own Temporal namespace and its own
 // OrkStack namespace, on ports no other spec here uses.
@@ -352,4 +355,41 @@ test('7: a save from the edit form keeps the fair-share weight it does not edit'
 	expect(saved.namespace.maxRunning).toBe(3);
 	expect(saved.namespace.fairShareWeight).toBe(WEIGHT);
 	note(`after the form's save: max_running ${saved.namespace.maxRunning}, weight ${saved.namespace.fairShareWeight}`);
+});
+
+test('8: a stale-etag retry re-reads the fair-share weight, so a concurrent change survives it', async ({ page }) => {
+	type Wire = { namespace: { maxRunning?: number; fairShareWeight?: number; etag?: string } };
+	const OPENED = 1.5;
+	const CONCURRENT = 5;
+	const before = await rpc<Wire>('NamespaceService/GetNamespace', { name: NS });
+	await rpc('NamespaceService/UpdateNamespace', {
+		namespace: { ...before.namespace, fairShareWeight: OPENED }
+	});
+
+	await openAdmin(page);
+	await openNamespaceEdit(page, NS);
+	// The form has now captured weight OPENED: the value the retry must not
+	// replay.
+
+	const current = await rpc<Wire>('NamespaceService/GetNamespace', { name: NS });
+	expect(current.namespace.fairShareWeight).toBe(OPENED);
+	expect(current.namespace.maxRunning ?? 0).not.toBe(4);
+	await rpc('NamespaceService/UpdateNamespace', {
+		namespace: { ...current.namespace, fairShareWeight: CONCURRENT }
+	});
+	note(`weight ${OPENED} when the form opened, then ${CONCURRENT} written underneath it`);
+
+	await page.getByTestId(`ns-edit-max-running-${NS}`).fill('4');
+	await page.getByTestId(`ns-edit-save-${NS}`).click();
+	await expect(page.getByTestId(`namespace-edit-conflict-${NS}`)).toBeVisible();
+	await page.getByTestId(`namespace-edit-conflict-retry-${NS}`).click();
+	await expect(page.getByTestId(`namespace-edit-form-${NS}`)).toHaveCount(0);
+	await expect(page.getByTestId(`namespace-max-running-${NS}`)).toHaveText('4');
+	await page.screenshot({ path: out('screenshot-retry-keeps-concurrent-weight.png'), fullPage: true });
+
+	const saved = await rpc<Wire>('NamespaceService/GetNamespace', { name: NS });
+	// The positive control: the retried save reached the registry.
+	expect(saved.namespace.maxRunning).toBe(4);
+	expect(saved.namespace.fairShareWeight).toBe(CONCURRENT);
+	note(`after the conflict retry: max_running ${saved.namespace.maxRunning}, weight ${saved.namespace.fairShareWeight}`);
 });
