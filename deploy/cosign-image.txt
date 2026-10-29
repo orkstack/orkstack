@@ -1,0 +1,10 @@
+# The cosign image that signs what a release publishes
+# (.github/workflows/release.yml) and signs the release smoke's images with a
+# throwaway key (scripts/quickstart-smoke.sh --release), pinned by its
+# multi-arch index digest. cosign 3 writes a new bundle format by default,
+# which OrkStack's verifier does not read; both callers pass
+# --new-bundle-format=false --use-signing-config=false --tlog-upload=false so
+# it writes the key-based `sha256-<hex>.sig` layout (docs/DEPLOY.md, "Image
+# supply-chain policy"). A bump is a pull request that proves it with the
+# release smoke.
+ghcr.io/sigstore/cosign/cosign:v3.1.4@sha256:0f06154836d2de34f887a5c273506d52ca43edaa1d9e53e6510fa78a48f69c2d

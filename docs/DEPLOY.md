@@ -2493,14 +2493,49 @@ be asked is never a pass: `unavailable` at apply and submit, and a retried
 `IMAGE_SIGNATURE_INVALID`, an image outside the floor `IMAGE_NOT_PERMITTED`
 — all three `ContractViolation`, never retried.
 
-Signing an image, with the `cosign` CLI and default settings:
+Signing an image with the `cosign` CLI. cosign 2 writes the layout OrkStack
+reads by default. cosign 3 writes a newer bundle format unless told not to,
+and OrkStack would find no signature (`IMAGE_NOT_SIGNED`), so pass it the
+flags below, as OrkStack's own release does; cosign 3.1 warns that they are
+deprecated. `--tlog-upload=false` keeps the signature out of the public
+transparency log, which OrkStack never reads; leave it out to record one.
 
 ```bash
 cosign generate-key-pair                                  # cosign.key, cosign.pub
-cosign sign --key cosign.key ghcr.io/acme/migrate@sha256:<digest>
+cosign sign --key cosign.key --new-bundle-format=false --use-signing-config=false \
+  --tlog-upload=false ghcr.io/acme/migrate@sha256:<digest>
 orkctl admin image-policy set --signing-key release=cosign.pub
 orkctl namespace update prod-payments --require-signed-by cosign:release
 ```
+
+**OrkStack's own images.** Each release signs every image it publishes to
+`ghcr.io/orkstack`, by digest, and its `SHA256SUMS`, with one key. Its public
+half is [`deploy/cosign.pub`](../deploy/cosign.pub), and each GitHub release
+attaches the same file as `cosign.pub`; take it from the repository at the
+release's tag rather than from the release it vouches for. Register it like
+any other key:
+
+```bash
+orkctl admin image-policy set --signing-key orkstack=cosign.pub
+orkctl namespace update ops --require-signed-by cosign:orkstack
+```
+
+A namespace names one signer, so `cosign:orkstack` suits a namespace whose
+tasks use only the first-party activities. A namespace that also runs your own
+images needs every image signed by one key: verify the first-party images you
+use, copy them into your registry, and sign them with yours. To check an image
+or the binaries by hand:
+
+```bash
+cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
+cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true --signature SHA256SUMS.sig SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+The release records nothing in a public transparency log: the key is the
+trust root, and `--insecure-ignore-tlog=true` tells cosign so (it prints a
+warning). Without cosign, `openssl dgst -sha256 -verify cosign.pub -signature
+<(base64 -d SHA256SUMS.sig) SHA256SUMS` checks the same signature.
 
 To rotate a key without a gap, add the new key under a new name, re-sign,
 move each namespace's `--require-signed-by`, then `--remove-signing-key` the

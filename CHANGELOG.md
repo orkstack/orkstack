@@ -10,6 +10,27 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- Releases are signed. `release.yml`'s `publish` signs every image it pushes
+  to `ghcr.io/orkstack` by its index digest, in the key-based cosign layout
+  OrkStack's own image policy verifies (`sha256-<hex>.sig` in the same
+  repository), and signs `SHA256SUMS` (`SHA256SUMS.sig`); each GitHub release
+  attaches the key's public half as `cosign.pub`, the same file as
+  `deploy/cosign.pub`. Register it with `orkctl admin image-policy set
+  --signing-key orkstack=cosign.pub`, and a namespace that runs only the
+  first-party activities can require it (docs/DEPLOY.md, "Image supply-chain
+  policy"). The private key is a secret of the `release` environment, which
+  only `publish` names; `validate` refuses a dispatch until `deploy/cosign.pub`
+  is committed, and `publish` refuses to push before the key is present and
+  verifies against it (docs/PROOFS.md §10, "Set up release signing");
+  `scripts/release-signing-setup.sh` generates and proves the key pair,
+  configures the environment and its secrets, and copies the public half to
+  `deploy/cosign.pub`, with `--dry-run` and `--rotate`. cosign
+  runs as the image `deploy/cosign-image.txt` pins (v3.1.4), with the flags
+  that make it write that layout, and records nothing in a public
+  transparency log. The release smoke signs each image with a throwaway key
+  by the same image and flags, runs each-fan-out to SUCCEEDED in a namespace
+  that requires that key, and sees it refused under a key that signed
+  nothing.
 - An activity image's `with:` interface can be written as a readable YAML
   document, `kind: ActivityInterface` (by convention `interface.ork.yaml`
   beside the Dockerfile), instead of one line of JSON. `orkctl activity
