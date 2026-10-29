@@ -2,9 +2,7 @@
 
 This guide is the procedure for moving OrkStack forward and back. It starts with the rule for breaking changes, then covers Orkflow versions and the deployment itself. Each step names the reference that holds the detail, and the commands are the ones the references give.
 
-## The pre-1.0 promise
-
-OrkStack has not reached 1.0: until it does, any release may include breaking changes.
+## Breaking changes
 
 - Every breaking change is listed in [CHANGELOG.md](../CHANGELOG.md), in the **Changed** or **Removed** section, and marked **BREAKING**. The changelog follows the Keep a Changelog 1.1.0 format named in its header.
 - OrkStack makes no promise of deprecation windows beyond that listing.

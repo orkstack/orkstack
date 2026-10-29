@@ -16,10 +16,6 @@
   <a href="./CHANGELOG.md">Changelog</a>
 </p>
 
-> **Status: before 1.0.** v0.1.0 is the first release. Until 1.0, any release
-> may include breaking changes. Each one is listed in
-> [CHANGELOG.md](./CHANGELOG.md), marked **BREAKING**.
-
 - [What it is](#what-it-is)
 - [Quickstart](#quickstart)
 - [See it run](#see-it-run)

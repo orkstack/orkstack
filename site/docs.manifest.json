@@ -421,7 +421,7 @@
 				{
 					"route": "docs/reference/changelog",
 					"title": "Changelog",
-					"description": "Every notable change; until 1.0 a breaking change is marked BREAKING.",
+					"description": "Every notable change; a breaking change is marked BREAKING.",
 					"parts": [
 						{
 							"source": "CHANGELOG.md"

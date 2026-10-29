@@ -11,8 +11,7 @@ import { route, REPO } from '../../../site.config.mjs';
 import { example } from '../../lib/example';
 
 const hero = shot('ui-run-hero');
-const facts: { label: string; value: string; stamp?: boolean }[] = [
-	{ label: 'Status', value: 'Before 1.0', stamp: true },
+const facts: { label: string; value: string }[] = [
 	{ label: 'Runs on', value: 'A Temporal cluster' },
 	{ label: 'Activities', value: 'Any OCI image' },
 	{ label: 'Storage', value: 'S3-compatible' },
@@ -41,7 +40,7 @@ const facts: { label: string; value: string; stamp?: boolean }[] = [
 			facts.map((f) => (
 				<div class="hero-fact">
 					<dt class="caps">{f.label}</dt>
-					<dd>{f.stamp ? <span class="stamp">{f.value}</span> : f.value}</dd>
+					<dd>{f.value}</dd>
 				</div>
 			))
 		}
@@ -102,6 +101,13 @@ const facts: { label: string; value: string; stamp?: boolean }[] = [
 	.hero-fact:nth-child(odd) {
 		border-right: var(--rule-hair) solid var(--color-ink);
 	}
+	/* On two columns an odd fact out takes the whole last row. */
+	@media (max-width: 1023.98px) {
+		.hero-fact:last-child:nth-child(odd) {
+			grid-column: 1 / -1;
+			border-right: 0;
+		}
+	}
 	.hero-fact .caps {
 		color: var(--color-ink-muted);
 	}
@@ -114,7 +120,8 @@ const facts: { label: string; value: string; stamp?: boolean }[] = [
 
 	/* From 1024 px the sheet is drawn as one: the view across the top, and the
 	   title block along the bottom edge, the title cell first and twice as
-	   wide, the facts in two rows of three beside it. */
+	   wide, the facts beside it in two rows: three above, and two below
+	   that share their row's width. */
 	@media (min-width: 1024px) {
 		.hero {
 			grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
@@ -138,17 +145,20 @@ const facts: { label: string; value: string; stamp?: boolean }[] = [
 			margin-top: calc(var(--spacing) * 3);
 		}
 		.hero-facts {
-			grid-template-columns: repeat(3, minmax(0, 1fr));
+			grid-template-columns: repeat(6, minmax(0, 1fr));
 			align-content: stretch;
 		}
 		.hero-fact {
+			grid-column: span 2;
 			justify-content: center;
 			border-right: var(--rule-hair) solid var(--color-ink);
 		}
-		.hero-fact:nth-child(3n) {
+		.hero-fact:nth-child(3n),
+		.hero-fact:last-child {
 			border-right: 0;
 		}
 		.hero-fact:nth-child(n + 4) {
+			grid-column: span 3;
 			border-bottom: 0;
 		}
 		.hero-fact:nth-child(-n + 3) {

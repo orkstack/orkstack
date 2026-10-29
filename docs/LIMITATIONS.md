@@ -2,11 +2,7 @@
 
 Each limit on this page is deliberate: the engineering contract fixes it, or it is a default a deployment may move, and the row says which, and names the setting where there is one. The reasoning is in [AGENTS.md](../AGENTS.md), and each row links the section that gives the bound and why it is there.
 
-Deployment settings are the configuration keys of [DEPLOY.md](./DEPLOY.md), "1. Configuration", with their environment variables in capitals. Task settings, such as `retry:` and `timeout_seconds`, are written in the Orkflow. [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) is the generated reference for every default.
-
-## Before 1.0
-
-OrkStack has not reached 1.0. Its releases are on the [releases page](https://github.com/orkstack/orkstack/releases), the first of them v0.1.0, and until 1.0 any release may include breaking changes. Each breaking change is marked **BREAKING** in [CHANGELOG.md](../CHANGELOG.md), and [UPGRADING.md](./UPGRADING.md) says what that means for an upgrade. This page is not a claim that OrkStack is production-ready; [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) says what that would take.
+Deployment settings are the configuration keys of [DEPLOY.md](./DEPLOY.md), "1. Configuration", with their environment variables in capitals. Task settings, such as `retry:` and `timeout_seconds`, are written in the Orkflow. [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) is the generated reference for every default. This page is not a claim that OrkStack is production-ready; [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) says what that would take.
 
 ## Payloads and artifacts
 

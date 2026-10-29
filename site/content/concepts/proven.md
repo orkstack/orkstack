@@ -2,7 +2,7 @@
 
 Learn what the test suite covers, how each change is checked before it lands, and why you can trust a result. Read this before you trust OrkStack with work that matters.
 
-OrkStack has not reached 1.0, and until it does any release may include breaking changes. The repository calls its checks **proofs**.
+The repository calls its checks **proofs**.
 
 ## What the tests cover
 

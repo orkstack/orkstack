@@ -106,7 +106,7 @@ On a host, an Orker with no `ORK_ORKER_ID` derives a unique id from its host and
 
 ## Before you depend on it
 
-OrkStack has not reached 1.0, and until it does any release may include breaking changes. The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md) lists what to take care of. It is a list of care items, not a certification. Start with these:
+The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md) lists what to take care of. It is a list of care items, not a certification. Start with these:
 
 - Rehearse a rollout, a rollback, an Orker drain and a cleanup pass in a deployment that runs no real work.
 - Give each environment its own Temporal namespace.
