@@ -104,6 +104,10 @@ type proofRecord struct {
 	// install step before its proof step started (setupStepNames), whether or
 	// not the part ran again: such an attempt ran no test, and may run again.
 	SetupFailures []setupFailure `json:"setup_failures,omitempty"`
+	// CarriedForward is every part attempt whose job "Re-run failed jobs"
+	// did not run again (carriedForward): the attempt is not one of the
+	// part's, and its result is the attempt the job ran in.
+	CarriedForward []carriedJob `json:"carried_forward,omitempty"`
 	// QuarantineWarnings are the entries within seven days of their date.
 	QuarantineWarnings []string  `json:"quarantine_warnings,omitempty"`
 	PR                 *prRecord `json:"pr,omitempty"`

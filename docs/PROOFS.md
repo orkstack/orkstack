@@ -1032,6 +1032,9 @@ were still 921 MB (run 40388322907).
   `reruns` entry has `reason` `lost-runner`, `runner-degraded` or
   `setup-failed`, and its `lost_attempt` describes the earlier attempt
   whichever it was (conclusion, annotations, failed step);
+- `carried_forward`, every part attempt whose job "Re-run failed jobs" did
+  not run again (§7.1), with the part, the attempt and the attempt that ran
+  the job (`from`);
 - `pr` and `ci`.
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
@@ -1132,6 +1135,23 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   no result, and the proof fails naming it. Two tests pin the names to
   `proof.yml` in both directions, with rename mutations: the proof step names
   (`proofStepNames`) and the allowlist (`setupStepNames`).
+- **Carried-forward jobs.** "Re-run failed jobs" lists every job of the run
+  again in the new attempt, each under a new id and that attempt's number,
+  and a job it did not run keeps the earlier attempt's start, end,
+  conclusion, runner and steps, to the second, while its artifact exists only
+  as `part-<name>-a<earlier>` (run 40934338667). The proof job's job records
+  keep those fields, and the merger reads such a job as the attempt that ran
+  it, not as an attempt of the part (`carriedForward` in `merge.go`): only
+  when its record and the one of the attempt just before it each name their
+  own attempt, were read whole, have a start, an end, a conclusion and steps,
+  and agree in all of them. A job that ran again started later, so it stays an
+  attempt of its own, and every rule above judges it as before: a part that
+  recorded a result and ran again is still ineligible. A record missing any of
+  those fields (one a proof job wrote before it kept them, or one it could not
+  read) is an attempt of its own too, so it fails closed. A part that left an
+  artifact of an attempt its record says was carried forward is ineligible.
+  `proof.json` lists every carried-forward attempt in `carried_forward`
+  (`part`, `attempt`, `from`), and the README under "Carried forward".
 
 `make merge-check PROOF=…` refuses a proof whose quarantine `checked_on` is
 more than 30 days old (the merged artifact's private retention). A `NIGHTLY=` proof it is given is
@@ -1171,7 +1191,10 @@ job failed in a fetch or install step before its proof step started
 (**setup-failed**, §7.1), may run again. "Re-run job" on that one job is the
 way, and "Re-run failed jobs" is permitted when every failed part is one of
 these three, because it then gives no part that recorded a result a second
-attempt (the `proof` job runs again with them, and merges every attempt).
+attempt (the `proof` job runs again with them, and merges every attempt). The
+jobs it does not run appear in the new attempt's record as carried forward,
+and the merger takes their result from the attempt that ran them (§7.1), so
+the proof is merge-eligible once the parts it ran again pass.
 "Re-run all jobs" gives every part a second attempt after a result, so its
 proof is ineligible. A test failure is never answered by a rerun, and a part
 that runs again runs whole, as a new part of the same tree, never a failed
@@ -1361,8 +1384,12 @@ annotations, the logs of failed jobs), and `gh run rerun --failed` runs only if
 every failed job is the `proof` job or a part that is lost, setup-failed or
 degraded. A part with a result, a cancel, a failed `base`, `plan` or `build`,
 a job it cannot read and a job whose name is not a part of the workflow all
-mean no rerun, so a run that can never become merge-eligible is not rerun. At
-most two automatic reruns follow the first attempt. It is off until the
+mean no rerun, so a run that can never become merge-eligible is not rerun. The
+planner reads only the failed jobs of the attempt that just completed: a job
+"Re-run failed jobs" carried forward (§7.1) succeeded, so it never decides a
+rerun, and a failed job a single "Re-run job" carried forward is classified
+from its record in that attempt, while the merger still judges it by the
+attempt that ran it. At most two automatic reruns follow the first attempt. It is off until the
 repository variable `PROOF_AUTO_RERUN` is `true`, a setting only the
 maintainer makes. Its planner prints three words it validated (`rerun`,
 `reason`, `parts`) and never an annotation or a log line. The merger remains
