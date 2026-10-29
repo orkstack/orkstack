@@ -49,6 +49,11 @@ const (
 	// drain read as a failure of a CLI that had exited 0: a successful
 	// `docker create` became RUNTIME_REFUSED.
 	pipeDrainDelay = 5 * time.Second
+	// removeKillTimeout bounds the kill Remove sends before it removes. It
+	// is short because its answer decides nothing: a kill that does not
+	// finish in time leaves the removal to stop the container, as it did
+	// before the kill came first.
+	removeKillTimeout = 5 * time.Second
 	// DefaultPullTimeout bounds one image pull. Exported so
 	// internal/config's Schema can bind ORK_DOCKER_PULL_TIMEOUT's
 	// documented default to the same constant pullTimeout falls back to.
@@ -860,13 +865,16 @@ func (d *DockerRuntime) oomKilled(ctx context.Context, id ContainerID) bool {
 // container that is not running, or already gone, is what most removals
 // meet, and whatever the kill said, the removal's answer is the one reported.
 //
-// The kill and the removal share one controlTimeout, the bound a removal had
-// before it killed first: a daemon that never answers holds a reap or a boot
-// probe no longer than it did.
+// The kill has a short budget of its own (removeKillTimeout) and the removal
+// keeps the whole controlTimeout it had before the kill came first: under
+// load a kill that ate into a shared budget left the removal too little, and
+// a removal cut off at its deadline leaves the daemon removing a container its
+// caller has already given up on.
 func (d *DockerRuntime) Remove(ctx context.Context, id ContainerID) error {
-	ctx, cancel := context.WithTimeout(ctx, controlTimeout)
-	defer cancel()
-	if _, err := d.control(ctx, "kill", "--signal", string(SIGKILL), string(id)); err != nil && ctx.Err() != nil {
+	killCtx, cancel := context.WithTimeout(ctx, removeKillTimeout)
+	_, _ = d.control(killCtx, "kill", "--signal", string(SIGKILL), string(id))
+	cancel()
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	answer, err := d.control(ctx, "rm", "--force", "--volumes", string(id))
