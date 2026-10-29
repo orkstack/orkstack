@@ -9,12 +9,12 @@ name: kind-orker
 # Orker, the source build it uses, the release Dockerfile whose docker CLI
 # the engine matches, the two activities), every day, and by dispatch. Both
 # shapes, user-namespaced and privileged, run artifacts, both network modes,
-# a cancel, the per-task ceiling and a pod deletion; the Orker refuses a
-# mismatched work root; the user-namespaced engine refuses to start without
-# its RuntimeClass; and Docker's rootless engine is shown to drop a
-# container's limits. Every tool is pinned in the script: kind's and
-# kubectl's release binaries by SHA-256, the node image and crane's image by
-# digest.
+# a cancel, the per-task cap (a task above it refused at submit) and a pod
+# deletion; the Orker refuses a mismatched work root; the user-namespaced
+# engine refuses to start without its RuntimeClass; and Docker's rootless
+# engine is shown to drop a container's limits. Every tool is pinned in the
+# script: kind's and kubectl's release binaries by SHA-256, the node image
+# and crane's image by digest.
 
 on:
   push:

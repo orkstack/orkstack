@@ -2028,16 +2028,23 @@ daemon starts. Without them, the daemon warns about swap limits on every
 `docker create --memory`, and today's Orker reads that warning as part of the
 container's id and fails the task (`InfrastructureError`).
 
-**Size the engine to the Orker's ceiling.** Every task's container is inside
-the engine container, so its limits cover them all. Set its memory to at least
-`ORK_ORKER_MAX_CONCURRENT` × `ORK_ORKER_MAX_MEMORY` plus the daemon's own share,
-and its cpu to at least `ORK_ORKER_MAX_CPU`. Make its requests equal its
-limits. The bases do this for 4 tasks of at most 1 cpu and 2Gi each, and a
-test refuses a base that breaks the rule
-(`internal/dist/kubernetes_test.go`). Within that, the Orker enforces each
-task's own limit as it does on a host. A task that asks for more than the
-ceiling fails `RESOURCE_REQUEST_REFUSED`. A task that uses more memory than it
-asked for is killed by the kernel in its own cgroup and fails
+**Size the engine to the Orker's capacity.** Every task's container is inside
+the engine container, so its limits cover them all. The bases declare the
+Orker's capacity ([Declaring an Orker's capacity](#declaring-an-orkers-capacity)),
+`ORK_ORKER_CAPACITY_CPU=4` and `ORK_ORKER_CAPACITY_MEMORY=8Gi`, and give the
+engine that plus the daemon's own share: 5 cpu and 9Gi, with its requests
+equal to its limits. A task's reservation is its limit, and the Orker admits
+no task that would take its reservations above its capacity, so its tasks
+together stay within the engine's limits whatever `ORK_ORKER_MAX_CONCURRENT`
+allows. Change the capacity and the engine's resources together; a test
+refuses a base whose engine does not cover its capacity, or whose capacity
+does not hold one task at the per-task cap (`internal/dist/kubernetes_test.go`).
+The bases' cap is 1 cpu and 2Gi (`ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY`),
+and `orkctl orker list` shows each Orker's `CAPACITY` and `RESERVED`. Within
+that, the Orker enforces each task's own limit as it does on a host. A submit
+whose task asks for more than the cap of every Orker of its pool is refused
+with `RESOURCES_UNSATISFIABLE`, before a run exists. A task that uses more
+memory than it asked for is killed by the kernel in its own cgroup and fails
 `CONTAINER_EXIT_NONZERO`, naming its limit; the rest of the pod carries on.
 The `emptyDir` volumes have `sizeLimit`s and the engine an `ephemeral-storage`
 limit. A pod that exceeds either is evicted, and its running tasks end as any
@@ -2124,8 +2131,9 @@ prerequisite:
 Then it deploys each base as it ships into a namespace of its own
 (`orkstack-check` unless `--namespace` names another). It changes only what
 [`deploy/kubernetes/check/common`](../deploy/kubernetes/check/common/)
-changes: one replica in the pool `k8s-check`, the per-task ceiling its limits
-run measures, and a smaller pod. For each shape it checks:
+changes: one replica in the pool `k8s-check`, the per-task cap its limits run
+measures, and a smaller pod with a capacity to match. For each shape it
+checks:
 
 - a run that passes artifacts between tasks;
 - tasks with no network, and one on the default network, which must reach
@@ -2135,13 +2143,17 @@ run measures, and a smaller pod. For each shape it checks:
   privileged shape, that the engine's is under its pod's;
 - that the engine's root is a user-namespace range, or the node's root for
   the fallback;
-- a cancel, the per-task ceiling, an out-of-memory task, and a pod deletion.
+- that the Orker reports the capacity its pod declares;
+- a cancel; a task above the per-task cap, refused at submit by the cap the
+  Orker reported, with no run left behind; a task at the cap, with the cap as
+  its limit; an out-of-memory task; and a pod deletion.
 
 Then it checks that the Orker refuses a mismatched work root, and that the
 user-namespaced engine does not start without its RuntimeClass. It deletes its
 namespace at the end (`KEEP=1` leaves it) and creates nothing cluster-wide:
-the RuntimeClass must exist already. In OrkStack it leaves three Orkflows
-(`k8s-orker-proof`, `k8s-orker-cancel`, `k8s-orker-limits`) in
+the RuntimeClass must exist already. In OrkStack it leaves four Orkflows
+(`k8s-orker-proof`, `k8s-orker-cancel`, `k8s-orker-limits`,
+`k8s-orker-too-big`) in
 `--ork-namespace` (`default` unless named) and their runs, kept by that
 namespace's retention. Its Orkers serve only the pool `k8s-check`, which that
 namespace must allow, so they take no other run's tasks. Exit `0` means every

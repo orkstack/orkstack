@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"math"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -19,7 +20,7 @@ import (
 // manifests to what that section promises: the work root and the engine's
 // socket are one volume at one path in both containers, the engine is a
 // native sidecar that outlives the Orker, every image is pinned, the engine's
-// limits cover the Orker's ceiling, and the two shapes differ in privilege
+// limits cover the Orker's capacity, and the two shapes differ in privilege
 // and nothing else; and they hold the check (deploy/kubernetes/check) to
 // what it says it does to a cluster. scripts/k8s-orker-check.sh, which
 // scripts/kind-orker.sh runs on kind, is the proof that they also run.
@@ -372,43 +373,106 @@ func imagesIn(t *testing.T, rel string) []string {
 	return images
 }
 
-// TestKubernetesOrker_TheEnginesLimitsCoverTheOrkersCeiling: every task runs
+// TestKubernetesOrker_TheEnginesLimitsCoverTheOrkersCapacity: every task runs
 // inside the engine container's cgroup, so its limits bound them all
-// together. They hold ORK_ORKER_MAX_CONCURRENT tasks at ORK_ORKER_MAX_MEMORY
-// with room for the daemon, and one task at ORK_ORKER_MAX_CPU, and the
-// requests equal the limits, so the pod is given what it may use.
-func TestKubernetesOrker_TheEnginesLimitsCoverTheOrkersCeiling(t *testing.T) {
+// together. The Orker declares a capacity in both dimensions, admits no task
+// that would take what it has reserved above it, and reserves each task's
+// limit, so the engine's limits hold that capacity with room for the daemon;
+// the capacity holds one task at the per-task cap, or the Orker refuses to
+// boot; and the requests equal the limits, so the pod is given what it may
+// use. The check's component resizes the pod, and keeps the same rule.
+func TestKubernetesOrker_TheEnginesLimitsCoverTheOrkersCapacity(t *testing.T) {
 	t.Parallel()
 	for _, shape := range kubernetesShapes {
 		_, engine, orker := orkerDeployment(t, shape)
-		value := func(name string) string {
-			e, ok := envOf(orker, name)
-			if !ok {
-				t.Fatalf("%s: the orker sets no %s", shape, name)
-			}
-			return e.Value
+		checkSizing(t, shape, engine, orker)
+		engine, orker = withCheckComponent(t, engine, orker)
+		checkSizing(t, shape+" under deploy/kubernetes/check/common", engine, orker)
+	}
+}
+
+func checkSizing(t *testing.T, what string, engine, orker k8sContainer) {
+	t.Helper()
+	value := func(name string) float64 {
+		e, ok := envOf(orker, name)
+		if !ok {
+			t.Fatalf("%s: the orker sets no %s", what, name)
 		}
-		concurrent, err := strconv.Atoi(value("ORK_ORKER_MAX_CONCURRENT"))
-		if err != nil {
-			t.Fatalf("%s: ORK_ORKER_MAX_CONCURRENT: %v", shape, err)
-		}
-		maxMemory := k8sQuantity(t, value("ORK_ORKER_MAX_MEMORY"))
-		maxCPU := k8sQuantity(t, value("ORK_ORKER_MAX_CPU"))
-		for _, resource := range []string{"cpu", "memory", "ephemeral-storage"} {
-			if engine.Resources.Requests[resource] != engine.Resources.Limits[resource] || engine.Resources.Limits[resource] == "" {
-				t.Errorf("%s: the engine requests %s %q and is limited to %q, want both set and equal", shape, resource,
-					engine.Resources.Requests[resource], engine.Resources.Limits[resource])
-			}
-		}
-		if memory := k8sQuantity(t, engine.Resources.Limits["memory"]); memory <= float64(concurrent)*maxMemory {
-			t.Errorf("%s: the engine's memory %s holds no more than %d tasks at %s, with nothing left for the daemon", shape,
-				engine.Resources.Limits["memory"], concurrent, value("ORK_ORKER_MAX_MEMORY"))
-		}
-		if cpu := k8sQuantity(t, engine.Resources.Limits["cpu"]); cpu < maxCPU {
-			t.Errorf("%s: the engine's cpu %s is less than one task's ORK_ORKER_MAX_CPU %s", shape,
-				engine.Resources.Limits["cpu"], value("ORK_ORKER_MAX_CPU"))
+		return k8sQuantity(t, e.Value)
+	}
+	for _, resource := range []string{"cpu", "memory", "ephemeral-storage"} {
+		if engine.Resources.Requests[resource] != engine.Resources.Limits[resource] || engine.Resources.Limits[resource] == "" {
+			t.Errorf("%s: the engine requests %s %q and is limited to %q, want both set and equal", what, resource,
+				engine.Resources.Requests[resource], engine.Resources.Limits[resource])
 		}
 	}
+	capCPU, capMemory := value("ORK_ORKER_CAPACITY_CPU"), value("ORK_ORKER_CAPACITY_MEMORY")
+	if maxCPU := value("ORK_ORKER_MAX_CPU"); capCPU < maxCPU {
+		t.Errorf("%s: ORK_ORKER_CAPACITY_CPU %g is less than one task at ORK_ORKER_MAX_CPU %g", what, capCPU, maxCPU)
+	}
+	if maxMemory := value("ORK_ORKER_MAX_MEMORY"); capMemory < maxMemory {
+		t.Errorf("%s: ORK_ORKER_CAPACITY_MEMORY %.0f bytes is less than one task at ORK_ORKER_MAX_MEMORY %.0f", what, capMemory, maxMemory)
+	}
+	if cpu := k8sQuantity(t, engine.Resources.Limits["cpu"]); cpu < capCPU {
+		t.Errorf("%s: the engine's cpu %s is less than the Orker's capacity, %g", what, engine.Resources.Limits["cpu"], capCPU)
+	}
+	if memory := k8sQuantity(t, engine.Resources.Limits["memory"]); memory <= capMemory {
+		t.Errorf("%s: the engine's memory %s holds no more than the Orker's capacity, %.0f bytes, with nothing left for the daemon",
+			what, engine.Resources.Limits["memory"], capMemory)
+	}
+}
+
+// withCheckComponent applies deploy/kubernetes/check/common's patch of the
+// Deployment to one base's engine and Orker, as kustomize merges it: the
+// engine's resources replaced, and the Orker's env merged by name.
+func withCheckComponent(t *testing.T, engine, orker k8sContainer) (k8sContainer, k8sContainer) {
+	t.Helper()
+	const rel = "deploy/kubernetes/check/common/kustomization.yaml"
+	var component struct {
+		Patches []struct {
+			Target struct {
+				Kind string `yaml:"kind"`
+			} `yaml:"target"`
+			Patch string `yaml:"patch"`
+		} `yaml:"patches"`
+	}
+	if err := yaml.Unmarshal(readRepoFile(t, rel), &component); err != nil {
+		t.Fatalf("%s: %v", rel, err)
+	}
+	for _, p := range component.Patches {
+		if p.Target.Kind != "Deployment" {
+			continue
+		}
+		var d k8sDeployment
+		if err := yaml.Unmarshal([]byte(p.Patch), &d); err != nil {
+			t.Fatalf("%s: the Deployment patch: %v", rel, err)
+		}
+		for _, c := range d.Spec.Template.Spec.InitContainers {
+			if c.Name == "engine" && c.Resources.Limits != nil {
+				engine.Resources = c.Resources
+			}
+		}
+		for _, c := range d.Spec.Template.Spec.Containers {
+			if c.Name != "orker" {
+				continue
+			}
+			env := append([]k8sEnv(nil), orker.Env...)
+		patched:
+			for _, e := range c.Env {
+				for i := range env {
+					if env[i].Name == e.Name {
+						env[i] = e
+						continue patched
+					}
+				}
+				env = append(env, e)
+			}
+			orker.Env = env
+		}
+		return engine, orker
+	}
+	t.Fatalf("%s patches no Deployment", rel)
+	return engine, orker
 }
 
 // k8sQuantity reads the Kubernetes quantity forms these manifests use: a
@@ -451,8 +515,12 @@ func TestKubernetesOrkerCheck_CreatesNothingClusterWideAndKeepsToItsPool(t *test
 	if pool[1] == "main" || pool[1] == "" {
 		t.Errorf("the check's Orkers join the pool %q, which real Orkers serve", pool[1])
 	}
-	for _, flow := range []string{"k8s-orker-proof", "k8s-orker-cancel", "k8s-orker-limits"} {
-		rel := "deploy/kubernetes/check/orkflows/" + flow + ".ork.yaml"
+	flows, err := filepath.Glob(filepath.Join(repoRoot(t), "deploy", "kubernetes", "check", "orkflows", "*.ork.yaml"))
+	if err != nil || len(flows) == 0 {
+		t.Fatalf("deploy/kubernetes/check/orkflows holds no Orkflow (%v)", err)
+	}
+	for _, path := range flows {
+		rel := "deploy/kubernetes/check/orkflows/" + filepath.Base(path)
 		var doc struct {
 			Tasks []struct {
 				ID   string `yaml:"id"`

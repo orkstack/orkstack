@@ -1,14 +1,15 @@
-# A task cannot take more than the Orker was told it may give, and cannot
-# use more than it asked for (scripts/k8s-orker-check.sh runs it against an
-# Orker whose ORK_ORKER_MAX_MEMORY is 384Mi, deploy/kubernetes/check/common).
-# The run ends FAILED by design.
+# A task may ask for up to the Orker's per-task cap, and cannot use more than
+# it asked for (scripts/k8s-orker-check.sh runs it against an Orker whose
+# ORK_ORKER_MAX_MEMORY is 384Mi, deploy/kubernetes/check/common). The run
+# ends FAILED by design. A task that asks for more than the cap is refused at
+# submit, so it has an Orkflow of its own, k8s-orker-too-big.
 apiVersion: orkstack/v1
 kind: Orkflow
 name: k8s-orker-limits
-version: "1"
-description: The Orker's per-task ceiling and each task's own limit, through an Orker on Kubernetes.
+version: "2"
+description: A task at the Orker's per-task cap, and one over its own limit, through an Orker on Kubernetes.
 tasks:
-  # Exactly the ceiling: runs, with that limit.
+  # Exactly the cap: runs, with the cap as its limit.
   - id: within
     uses: shell
     pool: k8s-check
@@ -34,19 +35,3 @@ tasks:
       script: |
         held=$(head -c 200000000 /dev/zero | tr '\0' x)
         echo "held ${#held} bytes"
-  # Asks for more than the ceiling: refused, after the others have ended.
-  - id: too-big
-    uses: shell
-    pool: k8s-check
-    network: none
-    needs:
-      - within
-      - hog
-    join: all_done
-    resources:
-      memory: 512Mi
-    with:
-      op: script
-      interpreter: sh
-      script: |
-        echo "this never runs"

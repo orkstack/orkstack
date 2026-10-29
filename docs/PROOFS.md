@@ -686,7 +686,7 @@ Orker bases ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes"):
 
 | Job | Runs |
 |---|---|
-| `kind-orker.yml` › `kind-orker` | on a push or pull request that touches `deploy/kubernetes/`, either script, `internal/orker/`, `cmd/orker/`, the source build (`deploy/source/`), the release `deploy/Dockerfile`, the shell or file activity, or the workflow, at 06:29 UTC every day, and by dispatch. It first lifts the runner's AppArmor restriction on unprivileged user namespaces, which the rootless engine the script measures needs, and records the kernel and that setting in its summary. The script pins every tool: kind's and kubectl's release binaries by SHA-256, the node image and crane's image by digest. The check refuses a missing prerequisite with exit 77 before it deploys anything, so on kind a refusal fails the lane like a failed check. Both shapes run artifacts, both network modes, a cancel, the per-task ceiling and a pod deletion; the Orker must refuse a mismatched work root, the user-namespaced engine must refuse to start without its RuntimeClass, and Docker's rootless engine must be seen to drop a container's limits. Its summary names the check that failed and the last of the namespace's and the cluster's state then; the artifact `kind-orker-<run>-a<attempt>` holds both scripts' logs, the check's evidence and that state in full, without the throwaway cluster's kubeconfig or the registry's keys |
+| `kind-orker.yml` › `kind-orker` | on a push or pull request that touches `deploy/kubernetes/`, either script, `internal/orker/`, `cmd/orker/`, the source build (`deploy/source/`), the release `deploy/Dockerfile`, the shell or file activity, or the workflow, at 06:29 UTC every day, and by dispatch. It first lifts the runner's AppArmor restriction on unprivileged user namespaces, which the rootless engine the script measures needs, and records the kernel and that setting in its summary. The script pins every tool: kind's and kubectl's release binaries by SHA-256, the node image and crane's image by digest. The check refuses a missing prerequisite with exit 77 before it deploys anything, so on kind a refusal fails the lane like a failed check. Both shapes run artifacts, both network modes, a cancel, the Orker's declared capacity, the per-task cap (a task above it refused at submit, one at it run with it as its limit), an out-of-memory task and a pod deletion; the Orker must refuse a mismatched work root, the user-namespaced engine must refuse to start without its RuntimeClass, and Docker's rootless engine must be seen to drop a container's limits. Its summary names the check that failed and the last of the namespace's and the cluster's state then; the artifact `kind-orker-<run>-a<attempt>` holds both scripts' logs, the check's evidence and that state in full, without the throwaway cluster's kubeconfig or the registry's keys |
 
 `nightly.yml` holds four jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
@@ -2013,15 +2013,21 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   its `fuzz` part ran its whole 105-minute budget in nightly 40706217000 and
   found a real crasher (`pkg/artifacts`, a run-index status the writer never
   spells), kept as a seed.
-- **`kind-orker.yml` has not run on GitHub yet.** `scripts/kind-orker.sh`,
+- **`kind-orker.yml` has not passed on GitHub yet.** `scripts/kind-orker.sh`,
   and through it `scripts/k8s-orker-check.sh`, passed on a developer's host
   (kind v0.33.0, Kubernetes 1.37.0, containerd 2.3.4, Linux 7.2), and the
-  workflow rules in `test/tools/proofrun` hold the lane's shape. The check has
-  run against kind clusters only; a cluster of another make is checked by its
-  operator. Only a run on the hosted runner shows the rest: that
-  user-namespaced pods start on its kernel inside kind, that lifting its
-  AppArmor restriction is enough for the rootless engine, that the images
-  pull within the job's limits, and how long the lane takes there.
+  workflow rules in `test/tools/proofrun` hold the lane's shape. Its first run
+  on GitHub (40965501413, of `2d95c0f3` on 2026-10-29) built the cluster and
+  the images, and on the hosted runner's kernel (7.0, inside kind) every
+  prerequisite held and the user-namespaced shape passed its run with
+  artifacts and both network modes, its cgroups and its cancel, in under four
+  minutes. It
+  then failed at the limits check, which still expected a task above the
+  per-task cap to fail at dispatch after resource placement had moved that
+  refusal to submit. The rest of the check, the privileged shape and the
+  rootless measurement, after lifting the runner's AppArmor restriction, have
+  not run there. The check has run against kind clusters only; a cluster of
+  another make is checked by its operator.
 - **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
   `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
   planner is proven against fakes of `gh api`, and its workflow shape by the
