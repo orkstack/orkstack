@@ -1,12 +1,16 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // ---- the release's artifacts and its publication ---------------------------------
@@ -204,7 +208,7 @@ func publishProblems(w *wfFile) []string {
 			p = append(p, fmt.Sprintf("jobs.%s writes packages; only publish may", name))
 		}
 	}
-	download, check, push, release := -1, -1, -1, -1
+	download, check, push, sign, release := -1, -1, -1, -1, -1
 	for i, s := range job.Steps {
 		if isCheckout(s) || strings.HasPrefix(s.Uses, "./") {
 			p = append(p, fmt.Sprintf("jobs.publish %s checks out or runs repository code", s.label(i)))
@@ -221,15 +225,18 @@ func publishProblems(w *wfFile) []string {
 			check = i
 		case push < 0 && strings.Contains(s.Run, "copy --all --preserve-digests"):
 			push = i
+		case sign < 0 && strings.Contains(s.Run, imageSignCommand):
+			sign = i
 		case release < 0 && strings.Contains(s.Run, "gh release create"):
 			release = i
 		}
-		if holdsToken(s) && i != push && i != release {
-			p = append(p, fmt.Sprintf("jobs.publish %s is handed a token and neither pushes nor releases", s.label(i)))
+		if holdsToken(s) && i != push && i != sign && i != release {
+			p = append(p, fmt.Sprintf("jobs.publish %s is handed a token and neither pushes, signs nor releases", s.label(i)))
 		}
 	}
-	if download < 0 || check <= download || push <= check || release <= push {
-		p = append(p, fmt.Sprintf("jobs.publish runs download %d, checksums %d, push %d, release %d: want each, in that order", download, check, push, release))
+	if download < 0 || check <= download || push <= check || sign <= push || release <= sign {
+		p = append(p, fmt.Sprintf("jobs.publish runs download %d, checksums %d, push %d, signing %d, release %d: want each, in that order",
+			download, check, push, sign, release))
 	}
 	if release >= 0 {
 		r := job.Steps[release].Run
@@ -334,8 +341,9 @@ func TestWorkflows_PublishRunsNoRepositoryCodeAndHoldsTheOnlyPackageWrite(t *tes
 		{"no --verify-tag", func(w *wfFile) { edit(w, "--verify-tag ", "") }},
 		{"the release before the push", func(w *wfFile) {
 			s := steps(w)
-			n := len(s)
-			s[n-1], s[n-2] = s[n-2], s[n-1]
+			push := stepIndex(s, func(s wfStep) bool { return strings.Contains(s.Run, "copy --all --preserve-digests") })
+			release := stepIndex(s, func(s wfStep) bool { return strings.Contains(s.Run, "gh release create") })
+			s[push], s[release] = s[release], s[push]
 		}},
 		{"no checksum check", func(w *wfFile) { edit(w, "sha256sum -c SHA256SUMS", "true") }},
 		{"publish on any ref", func(w *wfFile) { w.Jobs["publish"].If = "${{ inputs.tag }}" }},
@@ -419,6 +427,271 @@ func TestWorkflows_TheSkopeoPinIsTheRepositorysPin(t *testing.T) {
 	}
 	if !strings.Contains(string(smoke), "deploy/skopeo-image.txt") {
 		t.Error("scripts/quickstart-smoke.sh does not read deploy/skopeo-image.txt")
+	}
+}
+
+// ---- what a release signs -----------------------------------------------------------
+//
+// publish signs each image by its index digest, and SHA256SUMS, with the key
+// the `release` environment holds, in the layout OrkStack's own verifier reads
+// (internal/dsl/signature.go). cosign 3 writes a new bundle format by default,
+// so every signing command names the flags that make it write the key-based
+// `sha256-<hex>.sig` layout, and the release smoke signs with the same image
+// and flags and runs an Orkflow under require_signed_by.
+
+// cosignLegacyLayout makes cosign 3 write the `.sig` layout and record nothing
+// in a transparency log.
+const cosignLegacyLayout = "--new-bundle-format=false --use-signing-config=false --tlog-upload=false"
+
+// The signing commands, each reading the key from the environment, never a file.
+const (
+	imageSignCommand = "cos sign --key env://COSIGN_PRIVATE_KEY " + cosignLegacyLayout
+	blobSignCommand  = "cos sign-blob --key env://COSIGN_PRIVATE_KEY " + cosignLegacyLayout
+)
+
+// keyCheck refuses to sign without the key or its password.
+const keyCheck = `[ -n "$COSIGN_PRIVATE_KEY" ] && [ -n "$COSIGN_PASSWORD" ] ||`
+
+// keyUse is every way a signing step's script may name the private key:
+// testing it, handing it to docker by name, or cosign reading it from the
+// environment. Anything else could put it on the disk or in the log.
+var keyUse = regexp.MustCompile(`\[ -n "\$COSIGN_PRIVATE_KEY" \]|-e COSIGN_PRIVATE_KEY\b|env://COSIGN_PRIVATE_KEY\b`)
+
+// signedAfter is the line that verifies one image's signature by digest with
+// the committed key, after it was signed.
+const signedAfter = `cos verify --key /meta/cosign.pub --insecure-ignore-tlog=true "$ref" >/dev/null` + "\n"
+
+func releaseSigningProblems(w *wfFile) []string {
+	var p []string
+	if job, ok := w.Jobs["validate"]; !ok || stepIndex(job.Steps, func(s wfStep) bool {
+		return strings.Contains(s.Run, "[ -s deploy/cosign.pub ]")
+	}) < 0 {
+		p = append(p, "jobs.validate does not refuse a release whose deploy/cosign.pub is not committed")
+	}
+	if job, ok := w.Jobs["artifacts"]; ok {
+		for _, f := range []string{"deploy/cosign-image.txt", "deploy/cosign.pub"} {
+			if stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "cp "+f+" dist/meta/") }) < 0 {
+				p = append(p, "jobs.artifacts does not hand publish "+f)
+			}
+		}
+	}
+	job, ok := w.Jobs["publish"]
+	if !ok {
+		return append(p, "release.yml has no publish job")
+	}
+	if job.environment() != "release" {
+		p = append(p, fmt.Sprintf("jobs.publish runs in environment %q, not release, which alone holds the signing key", job.environment()))
+	}
+	runs := func(text string) int {
+		return stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, text) })
+	}
+	blob, push, sign, release := runs(blobSignCommand), runs("copy --all --preserve-digests"), runs(imageSignCommand), runs("gh release create")
+	switch {
+	case blob < 0:
+		p = append(p, "jobs.publish never signs SHA256SUMS with: "+blobSignCommand)
+	case push < 0 || blob > push:
+		p = append(p, "jobs.publish signs SHA256SUMS after the push: a missing or wrong key would be found once the images are out")
+	}
+	switch {
+	case sign < 0:
+		p = append(p, "jobs.publish never signs the images with: "+imageSignCommand)
+	case push < 0 || sign < push:
+		p = append(p, "jobs.publish signs the images before it pushes them")
+	case release < 0 || release < sign:
+		p = append(p, "jobs.publish creates the release before the images are signed")
+	}
+	for i, s := range job.Steps {
+		if i != blob && i != sign {
+			if strings.Contains(s.Run, "COSIGN_PRIVATE_KEY") || envString(s, "COSIGN_PRIVATE_KEY") != "" || envString(s, "COSIGN_PASSWORD") != "" {
+				p = append(p, fmt.Sprintf("jobs.publish %s is handed the signing key and signs nothing", s.label(i)))
+			}
+			continue
+		}
+		if envString(s, "COSIGN_PRIVATE_KEY") != "${{ secrets.COSIGN_PRIVATE_KEY }}" || envString(s, "COSIGN_PASSWORD") != "${{ secrets.COSIGN_PASSWORD }}" {
+			p = append(p, fmt.Sprintf("jobs.publish %s does not read the key and its password from the release environment's secrets", s.label(i)))
+		}
+		if at := strings.Index(s.Run, keyCheck); at < 0 || at > strings.Index(s.Run, "docker run") {
+			p = append(p, fmt.Sprintf("jobs.publish %s runs cosign without first refusing a missing key or password", s.label(i)))
+		}
+		if used, safe := strings.Count(s.Run, "COSIGN_PRIVATE_KEY"), len(keyUse.FindAllString(s.Run, -1)); used != safe {
+			p = append(p, fmt.Sprintf("jobs.publish %s names COSIGN_PRIVATE_KEY %d times, %d of them by env:// or docker -e", s.label(i), used, safe))
+		}
+	}
+	if blob >= 0 {
+		r := job.Steps[blob].Run
+		if !strings.Contains(r, "--output-signature SHA256SUMS.sig SHA256SUMS") {
+			p = append(p, "the checksum signing does not write SHA256SUMS.sig over SHA256SUMS")
+		}
+		if !strings.Contains(r, "verify-blob --key meta/cosign.pub") {
+			p = append(p, "the checksum signing never verifies with the committed key, so a key that is not deploy/cosign.pub's would sign")
+		}
+	}
+	if sign >= 0 {
+		r := job.Steps[sign].Run
+		after := strings.Index(r, imageSignCommand)
+		if !strings.Contains(r[after:], signedAfter) {
+			p = append(p, "the image signing never verifies each signature by digest with the committed key after signing")
+		}
+		for _, want := range []struct{ text, says string }{
+			{`ref="ghcr.io/orkstack/$name@$digest"`, "names each image by its digest"},
+			{`--yes "$ref"`, "signs the digest reference"},
+			{`sha256-${digest#sha256:}.sig`, "reads the .sig tag OrkStack's verifier reads"},
+			{dslSimpleSigning, "checks that the .sig manifest carries a simple-signing layer"},
+			{dslSignatureAnnotation, "checks that the layer carries its signature"},
+			{"done <meta/images.tsv", "signs every image the list names"},
+		} {
+			if !strings.Contains(r, want.text) {
+				p = append(p, "the image signing never "+want.says+" ("+want.text+")")
+			}
+		}
+		trap := strings.Index(r, `trap 'rm -f "$RUNNER_TEMP/auth.json"' EXIT`)
+		if write := strings.Index(r, `>"$RUNNER_TEMP/auth.json"`); trap < 0 || write < 0 || trap > write {
+			p = append(p, "the image signing writes auth.json without first trapping its removal on every exit")
+		}
+	}
+	if release >= 0 && !strings.Contains(job.Steps[release].Run, "SHA256SUMS SHA256SUMS.sig meta/cosign.pub") {
+		p = append(p, "the GitHub release does not attach SHA256SUMS.sig and cosign.pub beside SHA256SUMS")
+	}
+	return p
+}
+
+// The layout internal/dsl/signature.go reads, spelled as the publish check
+// spells it.
+const (
+	dslSimpleSigning       = "application/vnd.dev.cosign.simplesigning.v1+json"
+	dslSignatureAnnotation = "dev.cosignproject.cosign/signature"
+)
+
+func TestWorkflows_ReleaseSignsWhatItPublishes(t *testing.T) {
+	expectNoProblems(t, "release.yml", releaseSigningProblems(loadWorkflow(t, "release.yml")))
+	steps := func(w *wfFile) []wfStep { return w.Jobs["publish"].Steps }
+	edit := func(w *wfFile, find, replace string) {
+		for _, job := range w.Jobs {
+			for i := range job.Steps {
+				job.Steps[i].Run = strings.ReplaceAll(job.Steps[i].Run, find, replace)
+			}
+		}
+	}
+	at := func(w *wfFile, text string) int {
+		return stepIndex(steps(w), func(s wfStep) bool { return strings.Contains(s.Run, text) })
+	}
+	swap := func(w *wfFile, a, b string) {
+		s := steps(w)
+		i, j := at(w, a), at(w, b)
+		s[i], s[j] = s[j], s[i]
+	}
+	expectEachMutationRefused(t, "release.yml", releaseSigningProblems, []mutation{
+		{"no release environment", func(w *wfFile) { w.Jobs["publish"].Environment = nil }},
+		{"another environment", func(w *wfFile) { w.Jobs["publish"].Environment = map[string]any{"name": "staging"} }},
+		{"no committed key required", func(w *wfFile) { edit(w, "[ -s deploy/cosign.pub ]", "true") }},
+		{"no public key handed on", func(w *wfFile) { edit(w, "cp deploy/cosign.pub dist/meta/", "true ") }},
+		{"no cosign pin handed on", func(w *wfFile) { edit(w, "cp deploy/cosign-image.txt dist/meta/", "true ") }},
+		{"SHA256SUMS unsigned", func(w *wfFile) { edit(w, blobSignCommand, "true") }},
+		{"SHA256SUMS signed after the push", func(w *wfFile) { swap(w, blobSignCommand, "copy --all --preserve-digests") }},
+		{"the images unsigned", func(w *wfFile) { edit(w, imageSignCommand, "true") }},
+		{"the images signed before the push", func(w *wfFile) { swap(w, imageSignCommand, "copy --all --preserve-digests") }},
+		{"the release before the signing", func(w *wfFile) { swap(w, imageSignCommand, "gh release create") }},
+		{"cosign's default bundle format", func(w *wfFile) { edit(w, "--new-bundle-format=false ", "") }},
+		{"a transparency-log upload", func(w *wfFile) { edit(w, " --tlog-upload=false", "") }},
+		{"a tag signed, not the digest", func(w *wfFile) {
+			edit(w, `ref="ghcr.io/orkstack/$name@$digest"`, `ref="ghcr.io/orkstack/$name:${VERSION#v}"`)
+		}},
+		{"no verify after signing", func(w *wfFile) { edit(w, signedAfter, strings.TrimSuffix(signedAfter, "\n")+" || true\n") }},
+		{"no .sig layout check", func(w *wfFile) { edit(w, dslSimpleSigning, "application/json") }},
+		{"no verify-blob with the committed key", func(w *wfFile) { edit(w, "verify-blob --key meta/cosign.pub", "version") }},
+		{"a missing key not refused", func(w *wfFile) { edit(w, keyCheck, "true ||") }},
+		{"the key written to disk", func(w *wfFile) {
+			edit(w, "set -euo pipefail\n", "set -euo pipefail\nprintf '%s' \"$COSIGN_PRIVATE_KEY\" >\"$RUNNER_TEMP/cosign.key\"\n")
+		}},
+		{"the key from a repository variable", func(w *wfFile) {
+			steps(w)[at(w, imageSignCommand)].Env["COSIGN_PRIVATE_KEY"] = "${{ vars.COSIGN_PRIVATE_KEY }}"
+		}},
+		{"the push handed the key", func(w *wfFile) {
+			steps(w)[at(w, "copy --all --preserve-digests")].Env["COSIGN_PRIVATE_KEY"] = "${{ secrets.COSIGN_PRIVATE_KEY }}"
+		}},
+		{"the signing credential not trapped", func(w *wfFile) {
+			s := &steps(w)[at(w, imageSignCommand)]
+			s.Run = strings.ReplaceAll(s.Run, `trap 'rm -f "$RUNNER_TEMP/auth.json"' EXIT`, ":")
+		}},
+		{"a release without the signature", func(w *wfFile) { edit(w, "SHA256SUMS SHA256SUMS.sig meta/cosign.pub", "SHA256SUMS") }},
+	})
+
+	// The key's two secrets are named only where publish signs: four
+	// references in the whole file, at any level a job or step could set env.
+	raw := workflowFile(t, "release.yml")
+	secrets := regexp.MustCompile(`secrets\.[A-Za-z0-9_]+`).FindAllString(raw, -1)
+	if strings.Join(secrets, " ") != "secrets.COSIGN_PRIVATE_KEY secrets.COSIGN_PASSWORD secrets.COSIGN_PRIVATE_KEY secrets.COSIGN_PASSWORD" {
+		t.Errorf("release.yml names secrets %v; want the key and its password once in each of publish's two signing steps", secrets)
+	}
+}
+
+// TestWorkflows_TheCosignPinIsTheRepositorysPin: the image that signs is one
+// exact cosign release pinned by digest (deploy/cosign-image.txt); publish's
+// check refuses a floating one; the release smoke reads the same pin and signs
+// with the same command and flags publish does, then runs an Orkflow under
+// require_signed_by; and a committed deploy/cosign.pub is a key the engine
+// accepts as a signing key.
+func TestWorkflows_TheCosignPinIsTheRepositorysPin(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "cosign-image.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pin string
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			pin = line
+			break
+		}
+	}
+	if !regexp.MustCompile(`^ghcr\.io/sigstore/cosign/cosign:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$`).MatchString(pin) {
+		t.Errorf("deploy/cosign-image.txt names %q, not ghcr.io/sigstore/cosign/cosign:vX.Y.Z@sha256:<64 hex>", pin)
+	}
+	w := loadWorkflow(t, "release.yml")
+	publish, ok := w.Jobs["publish"]
+	if !ok {
+		t.Fatal("release.yml has no publish job")
+	}
+	at := stepIndex(publish.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "sha256sum -c SHA256SUMS") })
+	if at < 0 {
+		t.Fatal("jobs.publish has no step that runs sha256sum -c SHA256SUMS")
+	}
+	re, err := extractRegex(publish.Steps[at].Run, "cosign")
+	if err != nil {
+		t.Fatalf("publish's check: %v", err)
+	}
+	if !re.MatchString(pin) {
+		t.Errorf("publish's check refuses the repository's own pin %q", pin)
+	}
+	for _, bad := range []string{
+		"ghcr.io/sigstore/cosign/cosign:latest",
+		"ghcr.io/sigstore/cosign/cosign:v3.1.4",
+		"ghcr.io/sigstore/cosign/cosign:v3.1@sha256:" + strings.Repeat("a", 64),
+		"evil.example/cosign:v3.1.4@sha256:" + strings.Repeat("a", 64),
+	} {
+		if re.MatchString(bad) {
+			t.Errorf("publish's check accepts %q", bad)
+		}
+	}
+	smoke, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "quickstart-smoke.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"deploy/cosign-image.txt", imageSignCommand, "--require-signed-by cosign:"} {
+		if !strings.Contains(string(smoke), want) {
+			t.Errorf("scripts/quickstart-smoke.sh never says %q: the smoke would not prove what publish signs", want)
+		}
+	}
+	key, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "cosign.pub"))
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		// Not committed yet: release.yml's validate refuses every dispatch
+		// until it is (docs/PROOFS.md §10, "Set up release signing").
+	case err != nil:
+		t.Fatal(err)
+	default:
+		if _, err := task.ParseSigningKey(key); err != nil {
+			t.Errorf("deploy/cosign.pub: %v", err)
+		}
 	}
 }
 

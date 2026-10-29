@@ -708,18 +708,33 @@ only with `tag: true` on `main`, verifies before anything is pushed that the
 assets are exactly what the artifact's `SHA256SUMS` sums and match it, that
 the image list names each of the ten images once, that each layout's index
 names that digest, and that its bytes hash to it and list linux/amd64 and
-linux/arm64; it then pushes each layout to `ghcr.io/orkstack/<image>` byte for byte
+linux/arm64; it signs `SHA256SUMS` with the release key and verifies that
+signature with the committed `deploy/cosign.pub`, so a missing key, a wrong
+password or a key that is not that file's pair stops it before anything is
+pushed; it then pushes each layout to `ghcr.io/orkstack/<image>` byte for byte
 (`skopeo copy --all --preserve-digests`, from the image
 `deploy/skopeo-image.txt` pins) under `X.Y.Z` and `X.Y`, checks each digest
-after the push, refuses to move an `X.Y.Z` that holds another digest, and only
-then creates the GitHub release (`gh release create --verify-tag`, marked the
-latest when `validate` said so, never a draft or a pre-release, so
-`releases/latest/download/` names the newest release). `tag` and `publish`
+after the push, refuses to move an `X.Y.Z` that holds another digest, signs
+each image by its digest (cosign, from the image `deploy/cosign-image.txt`
+pins, with `--new-bundle-format=false --use-signing-config=false
+--tlog-upload=false`, so it writes the `sha256-<hex>.sig` layout OrkStack's
+verifier reads and nothing in a public transparency log), verifies each
+signature by digest with `deploy/cosign.pub` and reads the `.sig` manifest
+back, and only then creates the GitHub release (`gh release create
+--verify-tag`, marked the latest when `validate` said so, never a draft or a
+pre-release, so `releases/latest/download/` names the newest release), with
+`SHA256SUMS.sig` and `cosign.pub` beside the archives. `validate` refuses a
+dispatch whose `deploy/cosign.pub` is not committed, and the `--release`
+smoke signs every image with a throwaway key by the same image and flags and
+runs an Orkflow in a namespace that requires that key. `tag` and `publish`
 download what `gate` and `artifacts` uploaded by the names those jobs output,
 so a re-run of either finds the first attempt's artifact.
 `publish` checks out nothing and runs no repository code; it holds the only
-`packages: write`. The tag job's checkout keeps no credential, and only the
-step that pushes is given the token. Every one takes a concurrency group named
+`packages: write`, and runs in the `release` environment, which alone holds
+the signing key. The tag job's checkout keeps no credential, only the steps
+that push, sign images and release are given the token, and only the two
+signing steps the key, which cosign reads from the environment
+(`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a concurrency group named
 from the validated version, so two dispatches of one version run one after the
 other. A dispatch with `tag: false` builds, smokes and proves, and publishes
 nothing.
@@ -1452,9 +1467,25 @@ person with write access from pushing a `v*` tag by hand (§12). Before
 dispatching, add the version's `## [X.Y.Z]` section to CHANGELOG.md: it
 becomes the release notes, and `validate` refuses a version without one.
 
+**Set up release signing.** Once, before the first release: a release signs
+what it publishes, so `validate` refuses every dispatch until
+`deploy/cosign.pub` is committed, and `publish` pushes nothing until the
+`release` environment holds the private half. Generate the pair with `cosign
+generate-key-pair` and a strong password, commit the `.pub` file as
+`deploy/cosign.pub` through a pull request, and in the repository's settings
+create the environment `release`, limited to the `main` branch (Deployment
+branches and tags → Selected branches), with two secrets:
+`COSIGN_PRIVATE_KEY`, the whole `.key` file, and `COSIGN_PASSWORD`. A
+required reviewer on the environment makes `publish` wait for an approval.
+Keep the `.key` file and its password offline, and never in the repository.
+To rotate, commit the new `deploy/cosign.pub` and replace both secrets
+together; a release already published stays signed by the key its own tag
+carries.
+
 **Recover a failed publish.** `publish` is safe to re-run: an image tag that
-already holds this release's digest is left alone, and the release itself is
-created last. Re-run the failed job from the run's page while the
+already holds this release's digest is left alone, an image whose signature
+already verifies is not signed again, and the release itself is created
+last. Re-run the failed job from the run's page while the
 `artifacts` job's upload is kept (7 days); after that, dispatch again with a
 new patch version.
 

@@ -20,6 +20,24 @@ services:
   orker:
     build: !reset null
     image: ${SMOKE_ORKER_IMAGE:?}
+
+  # The Orker verifies a signature itself, with its own registry client
+  # (docs/DEPLOY.md, "Image supply-chain policy"), so the smoke's run under
+  # require_signed_by needs the registry on the Orker's 127.0.0.1 as well,
+  # served exactly as registry-forward serves it on the engine's, by
+  # compose.yaml's own pinned forwarder.
+  registry-forward-orker:
+    image: ${SMOKE_FORWARD_IMAGE:?}
+    network_mode: service:orker
+    command:
+      - TCP4-LISTEN:${ORKSTACK_REGISTRY_PORT-5002},bind=127.0.0.1,fork,reuseaddr
+      - TCP:registry:5000
+    depends_on:
+      registry:
+        condition: service_healthy
+      orker:
+        condition: service_started
+        restart: true
   ui:
     build: !reset null
     image: ${SMOKE_UI_IMAGE:?}

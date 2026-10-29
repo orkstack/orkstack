@@ -58,7 +58,20 @@ Point `orkctl` at any replica with `--server` or `ORK_SERVER`.
 
 Each release publishes `ork`, `orker`, `orkctl`, `ui` and six first-party activity images to `ghcr.io/orkstack`, for linux/amd64 and linux/arm64. Deploy by digest, or by the `X.Y.Z` tag, which never moves.
 
-No release is published yet, so there are no images to pull. The [release notes](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts) describe what a release publishes. The images are not signed yet. Activity images you build yourself can be signed, and a namespace can require that.
+No release is published yet, so there are no images to pull. The [release notes](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts) describe what a release publishes.
+
+Each release signs its images and its `SHA256SUMS` with one cosign key. The public half is `deploy/cosign.pub` in the repository, and each release attaches it as `cosign.pub`. Register it as a signing key. A namespace whose tasks use only the first-party activities can then require it:
+
+```bash
+orkctl admin image-policy set --signing-key orkstack=cosign.pub
+orkctl namespace update ops --require-signed-by cosign:orkstack
+```
+
+A namespace requires one key. To mix your own images with the first-party ones, copy the ones you use into your registry and sign everything with your key. To check an image by hand:
+
+```bash
+cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
+```
 
 The `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it.
 
@@ -103,5 +116,6 @@ OrkStack is pre-release. Breaking changes can land until 1.0. The [production ch
 - [DEPLOY.md, “1. Configuration”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration): every key and its variable
 - [PRODUCTION_CHECKLIST.md](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md): the full list of care items
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack keeps in the bucket, and where
+- [DEPLOY.md, “Image supply-chain policy”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#image-supply-chain-policy): trusting the release's signatures, and checking the binaries
 - [LIMITATIONS.md](https://github.com/orkstack/orkstack/blob/main/docs/LIMITATIONS.md): what is not built yet
 - Next: [Roll out a release](/docs/how-to/roll-out-a-release/), [Manage namespaces](/docs/how-to/namespaces/), [Observe a deployment](/docs/how-to/observe/)

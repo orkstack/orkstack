@@ -89,7 +89,11 @@ builds the release images (`ork`, `orker`, `orkctl`, `ui` and the six
 activities) as OCI layouts from those binaries, for this machine unless
 `PLATFORMS` says otherwise. `make release-smoke VERSION=vX.Y.Z` builds both
 for this machine and runs the quickstart's `compose.yaml` on those images end
-to end, by digest, in a compose project, registry and ports of its own.
+to end, by digest, in a compose project, registry and ports of its own. It
+signs each image with a throwaway key, by the cosign image and flags the
+release signs with (`deploy/cosign-image.txt`), and runs an Orkflow in a
+namespace that requires that key, so OrkStack's own verifier accepts what a
+release signs.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
 runs both before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).

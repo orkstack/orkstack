@@ -149,4 +149,5 @@ These are deferred. Nothing on this list is promised by a date.
 - Named, Orker-defined network profiles. Only `default` and `none` exist ([AGENTS.md](../AGENTS.md) §6).
 - Container runtimes other than Docker ([ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)").
 - A structured progress channel from a container. Plain stdout and stderr are the required interface, and the container implements no heartbeat ([AGENTS.md](../AGENTS.md) §3.3).
+- Reading cosign's newer signature bundle format. OrkStack reads the key-based `sha256-<hex>.sig` layout only. cosign 3 writes the bundle by default, and cosign 3.1 marks the flags that still write the `.sig` layout (and that the release signs with) deprecated ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy").
 - Automatic reclamation of workload artifact bytes by the cleanup worker. It would mean a scan of the whole reference index, so the cleanup worker does not do it, and a bucket lifecycle rule is the current answer ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").

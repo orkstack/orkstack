@@ -9,10 +9,12 @@ name: release
 # compose file on those images end to end, and runs the README's Quickstart
 # as written on a clone of the commit. `tag` creates the release tag only
 # after `proofrun verify -release` accepts that proof for the exact commit,
-# and `publish` then pushes the images to ghcr.io byte for byte and creates
-# the GitHub release, running no repository code (docs/PROOFS.md §10).
-# `tag: false` is a full dry run that publishes nothing. Nothing here
-# dispatches itself; the user runs it.
+# and `publish` then pushes the images to ghcr.io byte for byte, signs each by
+# digest and SHA256SUMS with the release's cosign key, and creates the GitHub
+# release, running no repository code (docs/PROOFS.md §10). The private key is
+# a secret of the `release` environment, which only `publish` names; its
+# public half is deploy/cosign.pub. `tag: false` is a full dry run that
+# publishes nothing. Nothing here dispatches itself; the user runs it.
 #
 # `gate` runs on the hosted ubuntu-24.04 runners (4 vCPUs). A wall-clock
 # budget calibrated on the 16-CPU reference host that one of them misses is
@@ -48,7 +50,7 @@ jobs:
   # version that is not vMAJOR.MINOR.PATCH.
   validate:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 30
     permissions:
       contents: read
     outputs:
@@ -101,6 +103,16 @@ jobs:
           set -euo pipefail
           go run ./internal/dist/cmd/dist check -version "$VERSION"
           go run ./internal/dist/cmd/dist notes -version "$VERSION" >/dev/null
+      # Everything a release publishes is signed, so nothing runs before the
+      # key that verifies it is committed (docs/PROOFS.md §10, "Set up release
+      # signing").
+      - name: the release's public signing key is committed
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          [ -s deploy/cosign.pub ] || { echo "deploy/cosign.pub is not committed: a release signs what it publishes (docs/PROOFS.md §10, \"Set up release signing\")" >&2; exit 1; }
+          openssl pkey -pubin -in deploy/cosign.pub -noout -text | grep -q 'ASN1 OID: prime256v1' || { echo "deploy/cosign.pub is not an ECDSA P-256 public key" >&2; exit 1; }
       # The release is the latest unless a higher release exists, so a backport
       # never takes releases/latest/download from the newer series; one below
       # a released tag of its own series is refused here, before it is built.
@@ -145,7 +157,7 @@ jobs:
       group: release-artifacts-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 235
+    timeout-minutes: 240
     permissions:
       contents: read
     # The name publish downloads, so a re-run of publish finds this upload.
@@ -188,8 +200,12 @@ jobs:
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: make release-images VERSION="$VERSION" OUT=dist/layouts PLATFORMS=linux/amd64,linux/arm64
+      # The smoke also signs each image with a throwaway key, by the cosign
+      # image and flags publish signs with, and runs an Orkflow in a namespace
+      # that requires that key: OrkStack's own verifier accepts what the
+      # release writes.
       - name: smoke the release before anything is published
-        timeout-minutes: 25
+        timeout-minutes: 30
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
@@ -210,6 +226,8 @@ jobs:
           go run ./internal/dist/cmd/dist sums dist
           go run ./internal/dist/cmd/dist notes -version "$VERSION" >dist/meta/notes.md
           cp deploy/skopeo-image.txt dist/meta/skopeo-image.txt
+          cp deploy/cosign-image.txt dist/meta/cosign-image.txt
+          cp deploy/cosign.pub dist/meta/cosign.pub
       - uses: actions/upload-artifact@v7.0.2
         timeout-minutes: 30
         with:
@@ -288,21 +306,24 @@ jobs:
           export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
           git push origin "refs/tags/$VERSION"
 
-  # The release: the images to ghcr.io, then the GitHub release with its
-  # assets. It runs no repository code and checks out nothing: it holds the
-  # only package write and the only contents write that touch a release, so
-  # every step is a fixed command over the artifacts job's output, which it
-  # verifies first.
+  # The release: the images to ghcr.io, each signed by digest, then the GitHub
+  # release with its assets, SHA256SUMS signed. It runs no repository code and
+  # checks out nothing: it holds the only package write, the only contents
+  # write that touch a release and the only signing key, so every step is a
+  # fixed command over the artifacts job's output, which it verifies first.
   publish:
     needs: [validate, artifacts, tag]
     # Named results, not the implicit success(), which would also read the
     # gate's colour through tag (above).
     if: ${{ !cancelled() && inputs.tag && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.tag.result == 'success' }}
+    # The signing key's secrets live in this environment and reach no other
+    # job; protect it to main (docs/PROOFS.md §10, "Set up release signing").
+    environment: release
     concurrency:
       group: release-publish-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 95
+    timeout-minutes: 130
     permissions:
       contents: write
       packages: write
@@ -329,6 +350,9 @@ jobs:
           cmp -s "$RUNNER_TEMP/assets" "$RUNNER_TEMP/summed" || { echo "the release assets are not exactly the files SHA256SUMS sums" >&2; diff "$RUNNER_TEMP/assets" "$RUNNER_TEMP/summed" >&2 || true; exit 1; }
           skopeo="$(grep -v '^#' meta/skopeo-image.txt | head -1)"
           [[ "$skopeo" =~ ^quay\.io/skopeo/stable:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]] || { echo "skopeo image: $skopeo" >&2; exit 1; }
+          cosign="$(grep -v '^#' meta/cosign-image.txt | head -1)"
+          [[ "$cosign" =~ ^ghcr\.io/sigstore/cosign/cosign:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]] || { echo "cosign image: $cosign" >&2; exit 1; }
+          grep -q '^-----BEGIN PUBLIC KEY-----$' meta/cosign.pub || { echo "meta/cosign.pub is not a public key" >&2; exit 1; }
           dups="$(cut -f1 meta/images.tsv | sort | uniq -d)"
           [ -z "$dups" ] || { echo "listed more than once: $dups" >&2; exit 1; }
           n=0
@@ -347,6 +371,24 @@ jobs:
             n=$((n + 1))
           done <meta/images.tsv
           [ "$n" -eq 10 ] || { echo "$n images, want 10" >&2; exit 1; }
+      # Before anything is pushed: the key is present, opens with its
+      # password, and is the private half of the committed deploy/cosign.pub,
+      # because what it signs verifies with that file. cosign reads the key
+      # from the environment (env://), so it never reaches the disk.
+      - name: sign SHA256SUMS with the release key
+        timeout-minutes: 5
+        shell: bash
+        env:
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          [ -n "$COSIGN_PRIVATE_KEY" ] && [ -n "$COSIGN_PASSWORD" ] || { echo "the release environment holds no signing key and password: nothing is published unsigned (docs/PROOFS.md §10, \"Set up release signing\")" >&2; exit 1; }
+          cosign="$(grep -v '^#' meta/cosign-image.txt | head -1)"
+          cos() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e COSIGN_PRIVATE_KEY -e COSIGN_PASSWORD -v "$PWD:/release" -w /release "$cosign" "$@"; }
+          cos sign-blob --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes --output-signature SHA256SUMS.sig SHA256SUMS
+          cos verify-blob --key meta/cosign.pub --insecure-ignore-tlog=true --signature SHA256SUMS.sig SHA256SUMS
       - name: push the images to ghcr.io, byte for byte
         timeout-minutes: 60
         shell: bash
@@ -389,6 +431,48 @@ jobs:
             done
             echo "$ref:$full and :$minor = $digest"
           done <meta/images.tsv
+      # Each image's index digest, signed in the layout OrkStack's verifier
+      # reads: a cosign signature manifest at sha256-<hex>.sig in the same
+      # repository (docs/DEPLOY.md, "Image supply-chain policy"). The flags
+      # make cosign 3 write that layout and nothing else, exactly as the
+      # release smoke signed and ran it, and record nothing in a public
+      # transparency log: the committed key is the trust root.
+      - name: sign each image by digest and verify the signature
+        timeout-minutes: 30
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ github.token }}
+          COSIGN_PRIVATE_KEY: ${{ secrets.COSIGN_PRIVATE_KEY }}
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/release"
+          [ -n "$COSIGN_PRIVATE_KEY" ] && [ -n "$COSIGN_PASSWORD" ] || { echo "the release environment holds no signing key and password" >&2; exit 1; }
+          skopeo="$(grep -v '^#' meta/skopeo-image.txt | head -1)"
+          cosign="$(grep -v '^#' meta/cosign-image.txt | head -1)"
+          umask 077
+          auth="$(printf '%s:%s' "$ACTOR" "$GH_TOKEN" | base64 -w0)"
+          echo "::add-mask::$auth"
+          # The credential leaves the disk however this step ends.
+          trap 'rm -f "$RUNNER_TEMP/auth.json"' EXIT
+          printf '{"auths":{"ghcr.io":{"auth":"%s"}}}' "$auth" >"$RUNNER_TEMP/auth.json"
+          sk() { docker run --rm -v "$RUNNER_TEMP/auth.json:/auth.json:ro" "$skopeo" "$@"; }
+          cos() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e DOCKER_CONFIG=/docker -e COSIGN_PRIVATE_KEY -e COSIGN_PASSWORD -v "$RUNNER_TEMP/auth.json:/docker/config.json:ro" -v "$PWD/meta:/meta:ro" "$cosign" "$@"; }
+          while IFS=$'\t' read -r name digest; do
+            ref="ghcr.io/orkstack/$name@$digest"
+            # A re-run of this job finds the signature it wrote and adds none.
+            if ! cos verify --key /meta/cosign.pub --insecure-ignore-tlog=true "$ref" >/dev/null 2>&1; then
+              cos sign --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes "$ref"
+            fi
+            cos verify --key /meta/cosign.pub --insecure-ignore-tlog=true "$ref" >/dev/null
+            # cosign verify also reads the new bundle format; OrkStack reads
+            # only the .sig tag, so that is checked as such.
+            sig="ghcr.io/orkstack/$name:sha256-${digest#sha256:}.sig"
+            sk inspect --raw --authfile /auth.json "docker://$sig" >"$RUNNER_TEMP/sig.json"
+            jq -e '[.layers[]? | select(.mediaType == "application/vnd.dev.cosign.simplesigning.v1+json" and (.annotations["dev.cosignproject.cosign/signature"] // "") != "")] | length > 0' "$RUNNER_TEMP/sig.json" >/dev/null || { echo "$sig holds no cosign simple-signing signature" >&2; exit 1; }
+            echo "$ref signed: $sig"
+          done <meta/images.tsv
       - name: create the GitHub release
         timeout-minutes: 10
         shell: bash
@@ -402,4 +486,4 @@ jobs:
           cd "$RUNNER_TEMP/release"
           gh release create "$VERSION" --repo "$REPO" --verify-tag --latest="$LATEST" \
             --title "OrkStack $VERSION" --notes-file meta/notes.md \
-            ./*.tar.gz ./*.zip SHA256SUMS
+            ./*.tar.gz ./*.zip SHA256SUMS SHA256SUMS.sig meta/cosign.pub

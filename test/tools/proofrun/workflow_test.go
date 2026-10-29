@@ -59,8 +59,21 @@ type wfJob struct {
 	Concurrency map[string]any    `yaml:"concurrency"`
 	Outputs     map[string]string `yaml:"outputs"`
 	Steps       []wfStep          `yaml:"steps"`
+	// Environment is a name, or a mapping with a `name:`.
+	Environment any `yaml:"environment"`
 	// ContinueOnError is read only so that a rule can refuse it.
 	ContinueOnError any `yaml:"continue-on-error"`
+}
+
+// environment is the name of the deployment environment the job runs in, or "".
+func (j *wfJob) environment() string {
+	switch v := j.Environment.(type) {
+	case string:
+		return v
+	case map[string]any:
+		return fmt.Sprint(v["name"])
+	}
+	return ""
 }
 
 func (j *wfJob) needs() []string {
