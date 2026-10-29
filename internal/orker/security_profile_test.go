@@ -7,6 +7,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/quantity"
 )
 
 func TestSecurityPolicyFromEnvRefusesInvalidProcessLimits(t *testing.T) {
@@ -270,17 +271,17 @@ func TestParseMemory_UnderstandsTheKubernetesSpelling(t *testing.T) {
 		{"2G", 2e9},
 	}
 	for _, tc := range tests {
-		got, err := parseMemory(tc.raw)
+		got, err := quantity.ParseMemory(tc.raw)
 		if err != nil {
-			t.Errorf("parseMemory(%q): %v", tc.raw, err)
+			t.Errorf("quantity.ParseMemory(%q): %v", tc.raw, err)
 			continue
 		}
 		if got != tc.want {
-			t.Errorf("parseMemory(%q) = %v, want %v", tc.raw, got, tc.want)
+			t.Errorf("quantity.ParseMemory(%q) = %v, want %v", tc.raw, got, tc.want)
 		}
 	}
-	if _, err := parseMemory("4GB"); err == nil {
-		t.Error("parseMemory(\"4GB\") succeeded; GB is not the Kubernetes spelling and " +
+	if _, err := quantity.ParseMemory("4GB"); err == nil {
+		t.Error("quantity.ParseMemory(\"4GB\") succeeded; GB is not the Kubernetes spelling and " +
 			"guessing at it would silently change a cap")
 	}
 }
@@ -516,11 +517,11 @@ func TestReservedResources_AgreesWithResolveResources(t *testing.T) {
 			if failure != nil {
 				t.Fatalf("ResolveResources refused what ReservedResources admitted: %v", failure)
 			}
-			cores, err := parseCPU(cpu)
+			cores, err := quantity.ParseCPU(cpu)
 			if err != nil || cores != got.GetCpu() {
 				t.Errorf("task.json cpu %q parses to %v (%v), the record says %v", cpu, cores, err, got.GetCpu())
 			}
-			bytes, err := parseMemory(memory)
+			bytes, err := quantity.ParseMemory(memory)
 			if err != nil || int64(bytes) != got.GetMemoryBytes() {
 				t.Errorf("task.json memory %q parses to %v (%v), the record says %d", memory, bytes, err, got.GetMemoryBytes())
 			}

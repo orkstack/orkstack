@@ -3,13 +3,13 @@ package orker
 import (
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"strconv"
 	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/quantity"
 )
 
 // Network modes. Exactly two exist, and named Orker-defined profiles are
@@ -266,32 +266,32 @@ func (p SecurityPolicy) Validate() error {
 	// A quantity that parses is still not a limit unless it is positive and
 	// finite: NaN is above and below nothing, so a NaN cap removes the
 	// ceiling, and zero is what the runtime reads as unlimited.
-	capCPU, err := parseCPU(p.MaxCPU)
-	if err == nil && !isPositiveFinite(capCPU) {
-		err = errNotPositiveCPU
+	capCPU, err := quantity.ParseCPU(p.MaxCPU)
+	if err == nil && !quantity.PositiveFinite(capCPU) {
+		err = quantity.ErrNotPositiveCPU
 	}
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid cpu quantity (%v); use the Kubernetes "+
 			"spelling, e.g. \"8\" or \"500m\"", MaxCPUVar, p.MaxCPU, err)
 	}
-	capMem, err := parseMemory(p.MaxMemory)
-	if err == nil && !isByteCount(capMem) {
-		err = errNotByteCount
+	capMem, err := quantity.ParseMemory(p.MaxMemory)
+	if err == nil && !quantity.ByteCount(capMem) {
+		err = quantity.ErrNotByteCount
 	}
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid memory quantity (%v); use the Kubernetes "+
 			"spelling, e.g. \"16Gi\" — note Gi, not GB", MaxMemoryVar, p.MaxMemory, err)
 	}
-	defCPU, err := parseCPU(p.DefaultCPU)
-	if err == nil && !isPositiveFinite(defCPU) {
-		err = errNotPositiveCPU
+	defCPU, err := quantity.ParseCPU(p.DefaultCPU)
+	if err == nil && !quantity.PositiveFinite(defCPU) {
+		err = quantity.ErrNotPositiveCPU
 	}
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid cpu quantity (%v)", DefaultCPUVar, p.DefaultCPU, err)
 	}
-	defMem, err := parseMemory(p.DefaultMemory)
-	if err == nil && !isByteCount(defMem) {
-		err = errNotByteCount
+	defMem, err := quantity.ParseMemory(p.DefaultMemory)
+	if err == nil && !quantity.ByteCount(defMem) {
+		err = quantity.ErrNotByteCount
 	}
 	if err != nil {
 		return fmt.Errorf("%s=%q is not a valid memory quantity (%v)", DefaultMemoryVar, p.DefaultMemory, err)
@@ -323,20 +323,20 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 		memory = p.DefaultMemory
 	}
 
-	requestedCPU, cpuErr := parseCPU(cpu)
+	requestedCPU, cpuErr := quantity.ParseCPU(cpu)
 	if cpuErr != nil {
 		return "", "", Fail(ReasonResourceRefused, "cpu %q is not a valid quantity: %v", cpu, cpuErr)
 	}
-	if !isPositiveFinite(requestedCPU) {
+	if !quantity.PositiveFinite(requestedCPU) {
 		// Docker reads `--cpus 0` as NO limit, so a non-positive or non-finite
 		// request is an unlimited container, not a small one (§9.2, §9.3).
 		return "", "", Fail(ReasonResourceRefused,
 			"cpu request %q is not a positive, finite quantity; it is refused rather than passed to the "+
 				"runtime, because a zero or negative limit means UNLIMITED there", cpu)
 	}
-	capCPU, cpuErr := parseCPU(p.MaxCPU)
-	if cpuErr == nil && !isPositiveFinite(capCPU) {
-		cpuErr = errNotPositiveCPU
+	capCPU, cpuErr := quantity.ParseCPU(p.MaxCPU)
+	if cpuErr == nil && !quantity.PositiveFinite(capCPU) {
+		cpuErr = quantity.ErrNotPositiveCPU
 	}
 	if cpuErr != nil {
 		// An unreadable cap is a refusal, NOT an absent ceiling. Skipping the
@@ -353,20 +353,20 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 			cpu, p.MaxCPU, MaxCPUVar)
 	}
 
-	requestedMem, memErr := parseMemory(memory)
+	requestedMem, memErr := quantity.ParseMemory(memory)
 	if memErr != nil {
 		return "", "", Fail(ReasonResourceRefused, "memory %q is not a valid quantity: %v", memory, memErr)
 	}
-	if !isByteCount(requestedMem) {
+	if !quantity.ByteCount(requestedMem) {
 		// The memory half of the same trap: `--memory 0` is no limit, and a
 		// fraction of a byte renders as 0.
 		return "", "", Fail(ReasonResourceRefused,
 			"memory request %q is not a quantity of at least one byte; it is refused rather than passed to the "+
 				"runtime, because a zero or negative limit means UNLIMITED there", memory)
 	}
-	capMem, memErr := parseMemory(p.MaxMemory)
-	if memErr == nil && !isByteCount(capMem) {
-		memErr = errNotByteCount
+	capMem, memErr := quantity.ParseMemory(p.MaxMemory)
+	if memErr == nil && !quantity.ByteCount(capMem) {
+		memErr = quantity.ErrNotByteCount
 	}
 	if memErr != nil {
 		// Same rule, memory half: "16GB" is the obvious typo for "16Gi" and
@@ -399,8 +399,8 @@ func (p SecurityPolicy) ReservedResources(req *orkstackv1.ResourceRequest) *orks
 	}
 	// Both parses already succeeded inside ResolveResources, so the discarded
 	// errors are unreachable.
-	cores, _ := parseCPU(cpu)
-	bytes, _ := parseMemory(memory)
+	cores, _ := quantity.ParseCPU(cpu)
+	bytes, _ := quantity.ParseMemory(memory)
 	return &orkstackv1.ReservedResources{Cpu: cores, MemoryBytes: int64(bytes)}
 }
 
@@ -417,67 +417,4 @@ func (p SecurityPolicy) ResolveNetwork(mode orkstackv1.NetworkMode) (string, *Fa
 			"network mode %q is not %q or %q; named orker-defined network profiles are deliberately absent",
 			mode.String(), NetworkDefault, NetworkNone)
 	}
-}
-
-// isPositiveFinite reports whether a resource quantity is safe to pass to a
-// runtime that interprets zero as unlimited.
-func isPositiveFinite(value float64) bool {
-	return value > 0 && !math.IsNaN(value) && !math.IsInf(value, 0)
-}
-
-// isByteCount reports whether a memory quantity, in bytes, is a limit: at
-// least one whole byte, because the runtime is handed the byte count as an
-// integer and reads 0 as unlimited, and below 2^63, because the attempt
-// record carries it as an int64. NaN and both infinities fail it.
-func isByteCount(bytes float64) bool {
-	return bytes >= 1 && bytes < 1<<63
-}
-
-var (
-	errNotPositiveCPU = errors.New("not a positive, finite number of cpus")
-	errNotByteCount   = errors.New("not between one byte and what an int64 holds")
-)
-
-// parseCPU reads the Kubernetes CPU spelling: "2", "0.5", "500m".
-func parseCPU(raw string) (float64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, fmt.Errorf("empty cpu quantity")
-	}
-	if milli, ok := strings.CutSuffix(raw, "m"); ok {
-		value, err := strconv.ParseFloat(milli, 64)
-		if err != nil {
-			return 0, err
-		}
-		return value / 1000, nil
-	}
-	return strconv.ParseFloat(raw, 64)
-}
-
-// memorySuffixes is the Kubernetes memory spelling, binary and decimal.
-var memorySuffixes = []struct {
-	suffix string
-	factor float64
-}{
-	{"Ki", 1 << 10}, {"Mi", 1 << 20}, {"Gi", 1 << 30}, {"Ti", 1 << 40},
-	{"K", 1e3}, {"M", 1e6}, {"G", 1e9}, {"T", 1e12},
-	{"k", 1e3},
-}
-
-// parseMemory reads the Kubernetes memory spelling: "4Gi", "512Mi", "1000000".
-func parseMemory(raw string) (float64, error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return 0, fmt.Errorf("empty memory quantity")
-	}
-	for _, unit := range memorySuffixes {
-		if trimmed, ok := strings.CutSuffix(raw, unit.suffix); ok {
-			value, err := strconv.ParseFloat(strings.TrimSpace(trimmed), 64)
-			if err != nil {
-				return 0, err
-			}
-			return value * unit.factor, nil
-		}
-	}
-	return strconv.ParseFloat(raw, 64)
 }

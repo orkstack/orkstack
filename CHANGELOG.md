@@ -269,6 +269,16 @@ include breaking changes, and each is marked **BREAKING**.
   `TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes`, which
   failed on the empty-pool refusal and, with only presence fixed, on the
   skipped pin-host probe.
+- A task's `resources.cpu` and `resources.memory` are refused at validate
+  and apply, with their path, when they do not read as a limit in the
+  Kubernetes spelling (`docs/DSL.md` rule 6d): `cpu: "banana"` or
+  `memory: 4GB` used to be accepted and stored, then fail every attempt
+  `RESOURCE_REQUEST_REFUSED` at dispatch. The DSL and the Orker now read a
+  request with one grammar (`internal/quantity`).
+- The Orker's task worker sets its poller count explicitly (2, the SDK's
+  default). Left at the default, a Temporal namespace that advertises poller
+  autoscaling auto-enrolled it, and a pin host's session worker with it, so
+  how many polls an Orker held was a server setting.
 - `docs/TROUBLESHOOTING.md` no longer says a task waiting for a busy pool
   stays `PENDING`. It is `RUNNING` from dispatch, with `waiting for an orker`
   in `orkctl run inspect` and on the run page; `PENDING` is only the engine's

@@ -1750,6 +1750,9 @@ refuses rather than running uncapped, and a cap or default that is not a
 positive, finite quantity stops the Orker at boot. **No workload ever
 receives unlimited resources**, including one that requested nothing. The
 effective values reach the workload in `task.json` and the attempt record.
+The grammar is one package (`internal/quantity`) that the DSL also reads a
+request with at validate and apply (`docs/DSL.md` rule 6d), so a spelling
+apply accepts is never one the Orker cannot read.
 
 ### 9.4 Secrets
 

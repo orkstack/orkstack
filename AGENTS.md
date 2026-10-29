@@ -1432,6 +1432,7 @@ internal/schemas/      JSON Schemas of the authored documents, generated from th
 internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
+internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker
 internal/docscheck/    Documentation drift checks (test-only)
 internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
 internal/dist/         Release artifacts: binaries, archives, checksums, the quickstart bundle, release guards

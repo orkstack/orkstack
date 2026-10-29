@@ -13,6 +13,7 @@ import (
 	// Reading the name from there rather than writing "main" here is what
 	// keeps the compiler's idea of "the same pool" from drifting from the
 	// router's.
+	"github.com/orkstack/orkstack/internal/quantity"
 	taskpool "github.com/orkstack/orkstack/internal/task"
 )
 
@@ -191,6 +192,26 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 			if secret.GetSource() == "" {
 				return validationError(fmt.Sprintf("tasks[%d].secrets[%d].source", taskIndex, secretIndex),
 					fmt.Errorf("task %q: secret %q needs a `source:` (e.g. \"env:DB_PASSWORD\")", task.GetId(), secret.GetName()))
+			}
+		}
+		// Rule 6d: a resource request is a quantity the Orker can read, in
+		// the one grammar both sides share (internal/quantity). The cap is
+		// not checked here: it is Orker policy, and the server holds a
+		// request to its pool's at submit.
+		if res := task.GetResources(); res != nil {
+			if cpu := res.GetCpu(); cpu != "" {
+				if _, err := quantity.CPU(cpu); err != nil {
+					return validationError(fmt.Sprintf("tasks[%d].resources.cpu", taskIndex),
+						fmt.Errorf("task %q: cpu %q is not a number of cpus (%v); write it as "+
+							"\"2\", \"0.5\" or \"500m\"", task.GetId(), cpu, err))
+				}
+			}
+			if memory := res.GetMemory(); memory != "" {
+				if _, err := quantity.Memory(memory); err != nil {
+					return validationError(fmt.Sprintf("tasks[%d].resources.memory", taskIndex),
+						fmt.Errorf("task %q: memory %q is not a quantity of memory (%v); write it as "+
+							"\"512Mi\" or \"4Gi\" (Gi, not GB)", task.GetId(), memory, err))
+				}
 			}
 		}
 		// Rule 7: an explicit pool is a slug. The compiler checks the shape

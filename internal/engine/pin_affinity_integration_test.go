@@ -1249,6 +1249,8 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		// batch window capped to the same tick the dispatcher runs at, or a
 		// cancellation waits out the SDK's 24s default.
 		MaxHeartbeatThrottleInterval: tick,
+		// cmd/orker's explicit poller count (orker.TaskPollers).
+		MaxConcurrentActivityTaskPollers: orker.TaskPollers,
 		// The pin host's two extra pollers: the session creation worker on
 		// <queue>__internal_session_creation and the session activity worker on
 		// <uuid>@<hostname>. Without this the process is not a pin host and no

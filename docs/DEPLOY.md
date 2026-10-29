@@ -472,6 +472,25 @@ every item is dispatched at once, and only this ceiling decides how many of
 them one Orker takes. The value is logged at boot (`max_concurrent`) and
 reported by Admin → Activities.
 
+**The ceiling counts tasks, not their size.** Each slot can be taken by a task
+of any request up to the per-task caps, `orker.resources.max_cpu` (`8`) and
+`orker.resources.max_memory` (`16Gi`), so with the defaults one Orker can
+reserve `16 × 8 = 128` cpus. To make over-commit impossible, size the ceiling
+by the caps rather than the defaults:
+
+```
+max_concurrent ≤ min(host cpus ÷ max_cpu, host memory ÷ max_memory)
+```
+
+That bound is safe and needs no other setting, but it is pessimistic: a 16-CPU
+host with the default 8-cpu cap runs 2 tasks at once, however small they are.
+Recover concurrency by lowering the caps to what the pool's tasks really ask
+for, and give the rare large task a pool of its own whose Orkers set larger
+caps and a smaller ceiling. Set the same caps on every Orker of a pool: a task
+above the cap of the Orker that takes it fails `RESOURCE_REQUEST_REFUSED`, so a
+pool whose Orkers disagree runs a task or fails it depending on which one
+polled first.
+
 ### Pin hosting is a pool-wide setting
 
 Pin hosting is a property of a **pool**, not of a process: set the same

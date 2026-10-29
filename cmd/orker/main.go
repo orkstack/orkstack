@@ -397,6 +397,9 @@ func workerOptions(cfg config) worker.Options {
 		DisableRegistrationAliasing:  true,
 		DisableWorkflowWorker:        true,
 		MaxHeartbeatThrottleInterval: cfg.tick(),
+		// Explicit, so a namespace's poller autoscaling cannot enrol this
+		// worker and its session worker (orker.TaskPollers).
+		MaxConcurrentActivityTaskPollers: orker.TaskPollers,
 
 		EnableSessionWorker:               cfg.maxPins > 0,
 		MaxConcurrentSessionExecutionSize: int(cfg.maxPins),

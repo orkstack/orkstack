@@ -119,6 +119,16 @@ const DefaultMaxConcurrent = 16
 // MaxConcurrentVar is orker.max_concurrent's environment variable.
 const MaxConcurrentVar = "ORK_ORKER_MAX_CONCURRENT"
 
+// TaskPollers is how many polls the task worker keeps outstanding on its
+// pool's channel: the SDK's own default, set explicitly because a count left
+// at the default is the SDK's signal to auto-enrol the worker in poller
+// autoscaling when the Temporal namespace advertises it (go.temporal.io/sdk
+// internal_worker.go, v1.47.0). An autoscaled worker decides for itself how
+// many polls to hold, and every poll reserves a slot before it is sent, so an
+// Orker's reservations would follow a server setting nobody chose for them. A
+// pin host's session activity worker takes the same poller behaviour.
+const TaskPollers = 2
+
 // sdkDefaultSlots is the SDK's own default for every other supplier the tuner
 // must name (go.temporal.io/sdk/internal/internal_worker.go, v1.47.0).
 const sdkDefaultSlots = 1000
