@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/orkstack/orkstack/internal/quantity"
 )
@@ -53,4 +54,10 @@ func GoodBootProbeFacts(policy SecurityPolicy) string {
 		"@@cpu.max",
 		fmt.Sprintf("%d 100000", int64(math.Round(cpus*100000))),
 	}, "\n") + "\n"
+}
+
+// SetSignalProbeGrace shortens the boot probe's SIGTERM grace for the
+// integration tests' Orkers, which live in package orker_test.
+func SetSignalProbeGrace(a *Activities, grace time.Duration) {
+	a.dispatcher.signalProbeGrace = grace
 }

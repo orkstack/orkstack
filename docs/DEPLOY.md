@@ -362,7 +362,7 @@ then the variable it becomes.
 | `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI; `podman` on `PATH` when `orker.docker.cli` is `podman` |
 | `orker.docker.cli` | `ORK_DOCKER_CLI` | `docker` | `orker` | the grammar that CLI speaks: `docker` (the docker CLI, against Docker or against Podman's Docker-compatible socket) or `podman` (the podman CLI); any other value fails every container command, naming the setting. The engine behind the CLI is asked at boot, logged, and verified by the boot probe ([Running on Podman](#running-on-podman)). `orkctl activity test` and `orkctl task run` read it too |
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
-| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. A daemon that never answers holds boot for up to four times this (identifying the engine, the image inspect and the two attempts) plus 70 seconds for removing what it gave up on (9 minutes 10 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
+| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 195 seconds for removing what it gave up on and for that cancellation (17 minutes 15 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
 | `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, as before. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
@@ -1740,10 +1740,11 @@ engine boot, no Temporal connection, no store.
 - **How long an Orker's boot can take.** An Orker is not ready until its boot
   checks pass, and one of them runs a container, built as a task's is, to
   prove the work root can be bound and that the runtime gives a task its
-  posture. On a healthy daemon that takes seconds. On a daemon that is
-  overloaded or wedged it can take up to four times
-  `orker.docker.bind_probe_timeout` plus 70 seconds for removing what it gave
-  up on (9 minutes 10 seconds at the default), and longer by `orker.docker.pull_timeout`
+  posture, then cancels a second one as a task is cancelled. On a healthy
+  daemon that takes seconds. On a daemon that is overloaded or wedged it can
+  take up to seven times `orker.docker.bind_probe_timeout` plus 195 seconds
+  for removing what it gave up on and for that cancellation (17 minutes 15
+  seconds at the default), and longer by `orker.docker.pull_timeout`
   when the probe image is not local, before the Orker refuses to start with
   `BIND_PROBE_TIMED_OUT` ([REASONS.md](REASONS.md)). A supervisor that gives
   up sooner (a Compose check whose `start_period` plus `interval` times
@@ -1822,8 +1823,10 @@ supported, each with the Orker as root inside the runtime:
 Either way the Orker asks the engine at boot, logs it (`container runtime
 engine=podman cli=… rootless=… seccomp=engine-default`), and runs its boot
 probe, which refuses to start with `RUNTIME_POSTURE_REFUSED` on a host that
-does not give a task's container its posture. The probe is what makes the
-host requirements below checked rather than assumed.
+does not give a task's container its posture, or whose cancelled workload
+never hears SIGTERM ([Rootful Podman under AppArmor](#rootful-podman-under-apparmor)).
+The probe is what makes the host requirements below checked rather than
+assumed.
 
 What differs from Docker, by design:
 
@@ -1871,6 +1874,73 @@ missing:
 - **No SELinux or AppArmor relabelling yet.** Binds carry no relabel option,
   so on an enforcing SELinux host the boot probe's container cannot read its
   bind and boot refuses `WORKDIR_NOT_BINDABLE`; this has not been measured.
+- **Rootful Podman under AppArmor 5 needs one rule added**, below.
+
+#### Rootful Podman under AppArmor
+
+On a host whose AppArmor stacks a container's processes with the OCI
+runtime's own profile (AppArmor 5, Ubuntu 25.10 and later), rootful Podman
+runs a container's init under its generated profile,
+`containers-default-<version>`, and the workload the init starts under the
+stacked label `containers-default-<version>//&crun`. That profile lets a
+process signal only its own exact label, so the init cannot pass SIGTERM on
+to the workload: a cancelled task is killed at the end of its grace without
+its cleanup. The kernel log has one denial per cancelled container (measured
+on ubuntu-26.04, Podman 5.7.0, `containers-default-0.66.0`):
+
+```text
+apparmor="DENIED" operation="signal" class="signal" profile="containers-default-0.66.0" comm="podman-init" requested_mask="send" denied_mask="send" signal=term peer="containers-default-0.66.0//&crun"
+```
+
+The boot probe finds it: its second container traps SIGTERM and is cancelled
+as a task is, and an Orker whose workload never hears it refuses to start
+with `RUNTIME_POSTURE_REFUSED`, quoting the stacked label. Rootless Podman
+applies no AppArmor profile to its containers and is not affected.
+
+Podman generates that profile and loads it into the kernel itself, so a file
+under `/etc/apparmor.d/local/` does not reach it: those extend the `crun` and
+`podman` profiles, and the denial is the container profile's. The rule
+upstream proposes for the profile's template
+([container-libs#919](https://github.com/podman-container-tools/container-libs/pull/919),
+open as of 2026-10-29) can be added through the base abstraction, which the
+generated profile includes:
+
+1. Write the rule. Every profile that includes `abstractions/base` gets it,
+   and in each it lets the profile signal only its own label stacked with
+   another, so it allows nothing between two profiles:
+
+   ```bash
+   sudo mkdir -p /etc/apparmor.d/abstractions/base.d
+   printf '%s\n' 'signal (send, receive) peer=@{profile_name}//&*,' | sudo tee /etc/apparmor.d/abstractions/base.d/orkstack-stacked-signals
+   ```
+
+2. Check that a profile that includes it still compiles. If it does not,
+   remove the file: every profile that includes the base abstraction would
+   fail to load, Podman's among them.
+
+   ```bash
+   printf 'include <tunables/global>\nprofile orkstack-check {\n  include <abstractions/base>\n}\n' | sudo apparmor_parser -QK
+   ```
+
+3. With no container of the engine running (stop the Orker first), unload the
+   copy of the profile Podman loaded without the rule. Podman loads it again,
+   with the rule, for its next container. A reboot does the same.
+
+   ```bash
+   sudo grep -o '^containers-default[^ ]*' /sys/kernel/security/apparmor/profiles |
+     while read -r profile; do printf '%s' "$profile" | sudo tee /sys/kernel/security/apparmor/.remove >/dev/null; done
+   ```
+
+4. Start the Orker. Its boot probe checks that SIGTERM now reaches the
+   workload.
+
+Running Podman rootless avoids the denial altogether. Remove the file once a
+containers-common whose profile carries the rule is installed. Neither
+passing `--security-opt apparmor=unconfined` nor dropping `--init` is a fix:
+the first removes the container's confinement, and without an init a shell
+as PID 1 never hears SIGTERM at all. `podman.yml`'s rootful jobs show the
+probe refusing the unfixed profile, then apply these steps and run every
+suite on the fixed one.
 
 `podman system reset` writes under `~/.config/containers` and
 `~/.local/share/containers` even with storage configured elsewhere.

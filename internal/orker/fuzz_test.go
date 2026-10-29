@@ -473,6 +473,47 @@ func FuzzBootProbeFacts(f *testing.F) {
 	})
 }
 
+// FuzzSignalCauses reads the ready file the boot probe's SIGTERM workload
+// wrote, which the container, not OrkStack, decides. The claims: no file
+// panics it; it always names at least one cause; its first cause is SIGTERM
+// ignored exactly when the SigIgn mask it was given parses with SIGTERM's bit
+// set; and
+// a stacked label is quoted, so what the workload printed reaches an operator
+// as data.
+func FuzzSignalCauses(f *testing.F) {
+	f.Add("@@label\nunconfined\n@@signals\nSigBlk:\t0000000000000000\nSigIgn:\t0000000000000000\nSigCgt:\t0000000000004000\n")
+	f.Add("@@label\ncontainers-default-0.66.0//&crun (enforce)\n@@signals\nSigIgn:\t0000000000004004\n")
+	f.Add("@@label\ncat: can't open '/proc/7/attr/current': Invalid argument\n@@signals\nSigBlk:\t0000000000004000\n")
+	f.Add("@@label\nsystem_u:system_r:container_t:s0:c1,c2\n@@signals\nSigCgt:\tzz\n")
+	f.Add("@@signals\nSigIgn:\t\"//&\"\n@@label\n\"x//&y\n")
+	f.Add("@@label\nSIGTERM ignored (SigIgn 1)//&x\n@@signals\nSigIgn:\t0\n")
+	f.Add("")
+	f.Fuzz(func(t *testing.T, ready string) {
+		facts := parseProbeFacts(ready)
+		causes := signalCauses(facts)
+		if len(causes) == 0 {
+			t.Fatal("named no cause")
+		}
+		joined := strings.Join(causes, "; ")
+		ignored := false
+		for _, line := range facts["signals"] {
+			if key, value, ok := strings.Cut(line, ":"); ok && key == "SigIgn" {
+				parsed, err := strconv.ParseUint(strings.TrimSpace(value), 16, 64)
+				ignored = err == nil && parsed&sigtermBit != 0
+			}
+		}
+		// The masks' cause comes first, before anything quoted from the
+		// workload's label.
+		if got := strings.HasPrefix(causes[0], "its workload started with SIGTERM ignored (SigIgn "); got != ignored {
+			t.Fatalf("named SIGTERM ignored %t for masks %q; want %t: %s", got, facts["signals"], ignored, joined)
+		}
+		label := strings.TrimSpace(strings.Join(facts["label"], " "))
+		if strings.Contains(label, "//&") && !strings.Contains(joined, strconv.Quote(label)) {
+			t.Fatalf("did not quote the stacked label %q: %s", label, joined)
+		}
+	})
+}
+
 // FuzzEngineFromComponents reads `version --format {{json .Server.Components}}`,
 // which the engine behind the docker CLI decides. The claims: an answer that
 // is not a JSON array of components is an error, never an engine; one that

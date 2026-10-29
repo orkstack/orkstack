@@ -64,6 +64,23 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	if got, want := posture(probe), posture(task); !slices.Equal(got, want) {
 		t.Fatalf("the probe's container is not a task's:\n probe %q\n  task %q", got, want)
 	}
+	// The SIGTERM probe's container too: what it shows about a cancelled
+	// task's workload holds only for a container built as a task's is.
+	probeWS, err := NewWorkspace(filepath.Join(t.TempDir(), "sigprobe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	signalProbe, err := d.signalProbeSpec(probeWS)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := posture(signalProbe), posture(task); !slices.Equal(got, want) {
+		t.Fatalf("the SIGTERM probe's container is not a task's:\n probe %q\n  task %q", got, want)
+	}
+	if signalProbe.Image != BindProbeImage || signalProbe.Labels["ork.task"] != signalProbeTaskID || len(signalProbe.Labels) != 1 {
+		t.Errorf("the SIGTERM probe runs %q labelled %v; want %q labelled ork.task=%s alone",
+			signalProbe.Image, signalProbe.Labels, BindProbeImage, signalProbeTaskID)
+	}
 	rendered := strings.Join(posture(probe), " ")
 	for _, want := range []string{
 		"--security-opt seccomp=" + SeccompBuiltin, "--init", "--cap-drop=ALL", "--read-only",

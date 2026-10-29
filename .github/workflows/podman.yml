@@ -11,6 +11,11 @@ name: podman
 #   rootful-socket  the docker CLI against the rootful Podman socket: the shape
 #                   of the release image on a Podman host
 #
+# The rootful jobs first boot the orker on the runner's AppArmor profile,
+# which its boot probe must refuse (a container's init cannot signal its
+# workload), then apply docs/DEPLOY.md's "Rootful Podman under AppArmor" fix
+# and boot it again before the suites run.
+#
 # Each runs internal/orker's integration suite, cmd/orker's, `orkctl task
 # run`'s, and the Bash activity contract fixture. The socket shape runs the
 # runtime's own tests of internal/orker only: the image-policy tests start a
@@ -46,7 +51,7 @@ jobs:
     # A private repository spends none of its metered minutes on a schedule.
     if: ${{ github.event.repository.visibility == 'public' || github.event_name != 'schedule' }}
     runs-on: ubuntu-26.04
-    timeout-minutes: 115
+    timeout-minutes: 130
     permissions:
       contents: read
     strategy:
@@ -156,6 +161,77 @@ jobs:
               echo "cli=docker" >>"$GITHUB_OUTPUT"
               ;;
           esac
+
+      # docs/DEPLOY.md "Rootful Podman under AppArmor": the runner's own
+      # profile does not let a container's init signal its workload, so the
+      # boot probe must refuse it as shipped and accept it once the documented
+      # rule is in place. Each boot is the real orker binary, judged by what it
+      # logs, and stopped by its PID if it boots.
+      - name: boot probe refuses the runner's AppArmor profile
+        if: matrix.shape != 'rootless-cli'
+        timeout-minutes: 10
+        shell: bash
+        env:
+          ORK_DOCKER_CLI: ${{ steps.podman.outputs.cli }}
+          ORK_DOCKER_BIN: ${{ steps.podman.outputs.bin }}
+          DOCKER_HOST: ${{ steps.podman.outputs.docker_host }}
+        run: |
+          set -euo pipefail
+          go build -o "$RUNNER_TEMP/orker" ./cmd/orker
+          cat > "$RUNNER_TEMP/boot-orker.sh" <<'EOF'
+          # boot-orker.sh NAME: boot the orker once, print booted, refused or
+          # silent, and leave its log at $RUNNER_TEMP/NAME.log.
+          set -u
+          [ -n "${ORK_DOCKER_BIN:-}" ] || unset ORK_DOCKER_BIN
+          [ -n "${DOCKER_HOST:-}" ] || unset DOCKER_HOST
+          log="$RUNNER_TEMP/$1.log"; root="$RUNNER_TEMP/$1-work"; mkdir -p "$root"
+          ORK_TEMPORAL_NAMESPACE="ork-$1" ORK_ORKER_WORKDIR="$root" ORK_ORKER_ID="$1" \
+            "$RUNNER_TEMP/orker" >"$log" 2>&1 &
+          pid=$!
+          verdict=silent
+          for _ in $(seq 180); do
+            if grep -q 'msg="container runtime" engine=' "$log"; then verdict=booted; break; fi
+            if ! kill -0 "$pid" 2>/dev/null; then verdict=refused; break; fi
+            sleep 1
+          done
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          echo "$verdict"
+          EOF
+          verdict=$(bash "$RUNNER_TEMP/boot-orker.sh" apparmor-unfixed)
+          log="$RUNNER_TEMP/apparmor-unfixed.log"
+          {
+            echo "boot probe on the runner's AppArmor profile, unfixed: $verdict"
+            echo '```'; grep -o 'RUNTIME_POSTURE_REFUSED.*' "$log" | cut -c1-1500 || true; echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$verdict" != refused ] || ! grep -q 'never heard SIGTERM' "$log"; then
+            echo "the boot probe did not refuse the unfixed profile. If this runner's containers-common now lets a container's init signal its workload, the host fix in docs/DEPLOY.md is no longer needed here."
+            cat "$log"
+            exit 1
+          fi
+
+      - name: AppArmor host fix
+        if: matrix.shape != 'rootless-cli'
+        timeout-minutes: 5
+        shell: bash
+        env:
+          ORK_DOCKER_CLI: ${{ steps.podman.outputs.cli }}
+          ORK_DOCKER_BIN: ${{ steps.podman.outputs.bin }}
+          DOCKER_HOST: ${{ steps.podman.outputs.docker_host }}
+        run: |
+          set -euo pipefail
+          # The steps of docs/DEPLOY.md "Rootful Podman under AppArmor", as written there.
+          sudo mkdir -p /etc/apparmor.d/abstractions/base.d
+          printf '%s\n' 'signal (send, receive) peer=@{profile_name}//&*,' | sudo tee /etc/apparmor.d/abstractions/base.d/orkstack-stacked-signals
+          printf 'include <tunables/global>\nprofile orkstack-check {\n  include <abstractions/base>\n}\n' | sudo apparmor_parser -QK
+          { sudo grep -o '^containers-default[^ ]*' /sys/kernel/security/apparmor/profiles || true; } |
+            while read -r profile; do printf '%s' "$profile" | sudo tee /sys/kernel/security/apparmor/.remove >/dev/null; done
+          verdict=$(bash "$RUNNER_TEMP/boot-orker.sh" apparmor-fixed)
+          echo "boot probe on the runner's AppArmor profile, with the rule: $verdict" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$verdict" != booted ]; then
+            cat "$RUNNER_TEMP/apparmor-fixed.log"
+            exit 1
+          fi
 
       - name: internal/orker
         timeout-minutes: 30

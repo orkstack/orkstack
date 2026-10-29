@@ -45,6 +45,17 @@ import (
 // an input directory with nothing in it), nowrite (its writes do not reach the
 // Orker's output directory) and asorkerwrong (the file it writes as the
 // Orker's user does not hold what it wrote).
+//
+// A `run --detach` of the boot probe's SIGTERM container (label
+// ork.task=sigprobe) is not counted with the other runs and behaves as its
+// workload does where SIGTERM is delivered: it writes the ready file into the
+// output bind, with the label file's content (unconfined by default) and the
+// signals file's (a shell that traps SIGTERM), and a later `kill --signal
+// TERM` writes the file its trap writes. deaf makes the workload never hear
+// SIGTERM, neverready makes it never say it is ready, termrefused makes the
+// runtime refuse SIGTERM itself, and sigrunslow, sigruntimeout and sigrunother
+// make that run hang for 30 s, answer the daemon's own deadline error, or be
+// refused for another reason. Every `kill --signal TERM` touches termsent.
 type countingDocker struct {
 	t   *testing.T
 	dir string
@@ -81,6 +92,9 @@ case "$1" in
   create) echo cid-0123 ;;
   kill)
     if [ -e "$S/killnotrunning" ]; then echo "Error response from daemon: container $4 is not running" >&2; exit 1; fi
+    if [ "$3" = TERM ]; then touch "$S/termsent"; fi
+    if [ "$3" = TERM ] && [ -e "$S/termrefused" ]; then echo "Error response from daemon: cannot kill container: permission denied" >&2; exit 1; fi
+    if [ "$3" = TERM ] && [ -e "$S/sigout" ] && [ ! -e "$S/deaf" ]; then echo heard > "$(cat "$S/sigout")/probe-heard-term"; fi
     exit 0 ;;
   start) sleep 5 ;;
   wait) if [ -e "$S/exitcode" ]; then cat "$S/exitcode"; else echo 0; fi ;;
@@ -106,6 +120,25 @@ case "$1" in
       *) echo "[name=seccomp,profile=builtin]" ;;
     esac ;;
   run)
+    case "$*" in
+      *ork.task=sigprobe*)
+        if [ -e "$S/sigrunslow" ]; then exec sleep 30; fi
+        if [ -e "$S/sigruntimeout" ]; then
+          echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
+        fi
+        if [ -e "$S/sigrunother" ]; then echo "docker: Error response from daemon: no space left on device" >&2; exit 125; fi
+        out=""
+        for a in "$@"; do
+          case "$a" in type=bind,source=*,destination=/orkstack/output) out=${a#type=bind,source=}; out=${out%%,destination=*} ;; esac
+        done
+        printf '%s' "$out" > "$S/sigout"
+        if [ ! -e "$S/neverready" ]; then
+          { echo '@@label'; if [ -e "$S/label" ]; then cat "$S/label"; else echo unconfined; fi
+            echo '@@signals'; if [ -e "$S/signals" ]; then cat "$S/signals"; else printf 'SigBlk:\t0000000000000000\nSigIgn:\t0000000000000000\nSigCgt:\t0000000000004000\n'; fi
+          } > "$out/probe-ready"
+        fi
+        echo 0123456789ab; exit 0 ;;
+    esac
     n=0; if [ -e "$S/runs" ]; then n=$(cat "$S/runs"); fi
     n=$((n+1)); echo "$n" > "$S/runs"
     touch "$S/runstarted"

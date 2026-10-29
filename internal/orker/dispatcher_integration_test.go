@@ -143,6 +143,12 @@ func bindableWorkRoot(t *testing.T) string {
 			continue
 		}
 		if err := prober.ProbeRuntime(ctx, candidate); err != nil {
+			// A runtime that does not give a task's container its posture
+			// refuses every root alike: that is a failure of the host's
+			// runtime, not a root to try another for.
+			if errors.Is(err, orker.ErrPostureRefused) {
+				t.Fatalf("the boot probe refused this host's container runtime under %s: %v", candidate, err)
+			}
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}

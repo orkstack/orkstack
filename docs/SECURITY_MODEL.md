@@ -93,9 +93,10 @@ Nothing in an Orkflow can name a host path.
   The boot probe checks that this user lands as the Orker; where it does not,
   such a task fails `RUN_AS_ORKER_UNAVAILABLE` (`internal/orker/boot_probe.go`).
 - Before it takes work, the Orker runs one container built as a task's is and
-  checks from inside it that the runtime applied this posture; an Orker whose
-  runtime does not refuses to start with `RUNTIME_POSTURE_REFUSED`
-  ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md) §3.1).
+  checks from inside it that the runtime applied this posture, and cancels a
+  second one as a task is cancelled to check that its workload hears
+  SIGTERM; an Orker whose runtime does not refuses to start with
+  `RUNTIME_POSTURE_REFUSED` ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md) §3.1).
 
 ## What the Orker refuses
 

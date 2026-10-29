@@ -141,6 +141,10 @@ type OCIDispatcher struct {
 	// this host: nil until a probe ran (`orkctl activity test` and `task run`
 	// run none, and render the hatch as before), then what the probe found.
 	runAsOrker atomic.Pointer[runAsOrkerFinding]
+	// signalProbeGrace is the boot probe's grace between SIGTERM and SIGKILL;
+	// zero is DefaultCancellationGrace, the grace a task that sets none gets.
+	// Tests shorten it.
+	signalProbeGrace time.Duration
 }
 
 // transferLimit is the per-phase bound on concurrent object-store requests.

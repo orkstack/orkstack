@@ -88,7 +88,8 @@ func (s *argvShim) set(flag, content string) {
 	}
 }
 
-// probeRuns returns every `docker run` the shim saw, before its rewrites.
+// probeRuns returns every `docker run` of the boot probe's first container
+// the shim saw, before its rewrites.
 func (s *argvShim) probeRuns() []string {
 	s.t.Helper()
 	raw, err := os.ReadFile(filepath.Join(s.dir, "calls"))
@@ -97,7 +98,7 @@ func (s *argvShim) probeRuns() []string {
 	}
 	var runs []string
 	for _, line := range strings.Split(string(raw), "\n") {
-		if strings.HasPrefix(line, "run ") {
+		if strings.HasPrefix(line, "run ") && strings.Contains(line, "ork.task=bindprobe") {
 			runs = append(runs, line)
 		}
 	}

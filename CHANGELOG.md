@@ -107,6 +107,19 @@ include breaking changes, and each is marked **BREAKING**.
   rootless podman CLI; and `/run` and `/var/tmp` get a read-only tmpfs, which
   that engine's `--read-only` leaves writable. `podman.yml` runs the
   runtime-facing suites on Podman, rootless and rootful.
+- The Orker's boot probe checks that a cancelled task's workload hears
+  SIGTERM. A second container, built as a task's is and started once the
+  first has passed, traps SIGTERM and is cancelled as a task is; an Orker
+  whose workload never hears it refuses to start with
+  `RUNTIME_POSTURE_REFUSED`, quoting the security label and the signal masks
+  the workload ran with. Rootful Podman
+  under AppArmor 5 (ubuntu-26.04, `containers-default-0.66.0`) was such a
+  runtime: its generated profile does not let the container's init signal a
+  workload under the stacked label `containers-default-<version>//&crun`, so
+  every cancelled task was killed at the end of its grace without its
+  cleanup, and the Orker booted. docs/DEPLOY.md, "Rootful Podman under
+  AppArmor", gives the host's fix, which `podman.yml`'s rootful jobs apply
+  after showing the probe refuse the unfixed profile.
 - The Orker counts an attempt whose own directory, or its secrets, could not
   be removed when it ended, on `ork.orker.workspace_cleanup_failures`, and
   logs the path and the error. The error was discarded, so a workload that
