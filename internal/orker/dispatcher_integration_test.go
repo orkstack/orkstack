@@ -594,6 +594,69 @@ func TestIntegration_CancellationSignalsThenKills(t *testing.T) {
 	}
 }
 
+// TestIntegration_CancellationDeliversSIGTERMToTheWorkload is the first half
+// of §3.3 on a real daemon: cancelling the activity reaches a running
+// workload as SIGTERM, through the runtime's init, and a workload that
+// handles it ends inside its grace period rather than being killed at the
+// end of it. TestIntegration_CancellationSignalsThenKills proves the second
+// half, and passes whether or not SIGTERM arrives, because its workload
+// ignores SIGTERM.
+func TestIntegration_CancellationDeliversSIGTERMToTheWorkload(t *testing.T) {
+	requireDocker(t)
+	dispatcher, _ := newDispatcher(t)
+	in := baseInput(t, "hears", "/bin/sh", "-c",
+		`trap 'echo got-TERM; exit 0' TERM; touch /orkstack/tmp/`+trapInstalled+`; echo ready; while true; do sleep 1; done`)
+	const grace = 30 * time.Second
+	in.CancellationGracePeriodSeconds = int32(grace / time.Second)
+	in.TimeoutSeconds = 300
+	var (
+		mu    sync.Mutex
+		lines []string
+	)
+	dispatcher.LogSinkObserver = func(_ *orkstackv1.ExecuteTaskInput, line string) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var execErr error
+	go func() {
+		defer close(done)
+		_, execErr = dispatcher.Execute(ctx, in)
+	}()
+	awaitWorkspaceMarker(t, dispatcher.WorkRoot, trapInstalled, 2*time.Minute)
+	started := time.Now()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(grace + time.Minute):
+		t.Fatal("cancellation never ended the container; it was still running past its grace period")
+	}
+	elapsed := time.Since(started)
+	if !errors.Is(execErr, context.Canceled) {
+		t.Errorf("Execute returned %v, want a context cancellation", execErr)
+	}
+	mu.Lock()
+	heard := false
+	for _, line := range lines {
+		heard = heard || strings.Contains(line, "got-TERM")
+	}
+	seen := strings.Join(lines, " | ")
+	mu.Unlock()
+	if !heard {
+		t.Errorf("the workload never said got-TERM: SIGTERM did not reach it (its lines: %s)", seen)
+	}
+	if elapsed >= grace {
+		t.Errorf("the container ended %s after cancellation, at or past its %s grace period: "+
+			"it was killed, not stopped by SIGTERM", elapsed.Round(time.Millisecond), grace)
+	}
+	t.Logf("§3.3: the workload heard SIGTERM and ended %s after cancellation (grace period %s)",
+		elapsed.Round(time.Millisecond), grace)
+}
+
 // trapInstalled is the marker the SIGTERM-ignoring workload writes once its
 // trap is in place.
 const trapInstalled = "trap-installed"
