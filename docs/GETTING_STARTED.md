@@ -7,9 +7,6 @@ Everything here is a local setup; [DEPLOY.md](./DEPLOY.md) is the reference
 for a real deployment, and [CONTRIBUTING.md](../CONTRIBUTING.md) runs
 OrkStack's processes on the host for working on them.
 
-OrkStack has not reached 1.0: until it does, any release may include breaking
-changes, and each is listed in [CHANGELOG.md](../CHANGELOG.md).
-
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/ui-demo-dark.webp">
