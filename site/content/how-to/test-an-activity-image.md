@@ -67,6 +67,8 @@ Add `--keep` to keep the task's files on disk. `orkctl task run` prints the path
 | `3` | You interrupted it. |
 | `1` | The command could not run the task. This includes problems on your machine. |
 
+The first interrupt stops the container and waits for it. A second one leaves the container running. The next `orkctl task run` on the same machine, with the same work directory and container engine, removes it. It never removes the container of another run that is still going.
+
 A local run is a new activity with its own idempotency key. It never reuses the source run's key. Any external side effect the task performs is real, so take care with a task that writes to a live system.
 
 ## Limits

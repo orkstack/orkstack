@@ -2,6 +2,7 @@ package automation
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -13,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // settingRow is one managed key of the `settings` section: the document key,
@@ -138,6 +140,49 @@ var namespaceSettings = []settingRow{
 		equal:  func(a, b *orkstackv1.Namespace) bool { return a.GetMaxRunning() == b.GetMaxRunning() },
 		export: func(ns *orkstackv1.Namespace) *yaml.Node {
 			return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(int(ns.GetMaxRunning()))}
+		},
+	},
+	{
+		key: "fair_share_weight", field: "fair_share_weight",
+		parse: func(node *yaml.Node, ns *orkstackv1.Namespace) error {
+			refusal := fmt.Errorf("fair_share_weight must be a number from %g to %g, or 0 for the default, got %s",
+				artifacts.MinFairShareWeight, artifacts.MaxFairShareWeight, node.Value)
+			if node.Kind != yaml.ScalarNode || (node.Tag != "!!int" && node.Tag != "!!float") {
+				return refusal
+			}
+			var w float64
+			if node.Tag == "!!int" {
+				// An integer reads as max_running's does, octal and hex
+				// spellings included.
+				n, err := strconv.ParseInt(node.Value, 0, 64)
+				if err != nil {
+					return refusal
+				}
+				w = float64(n)
+			} else {
+				parsed, err := strconv.ParseFloat(node.Value, 64)
+				if err != nil {
+					return refusal
+				}
+				w = parsed
+			}
+			if w != 0 && (math.IsNaN(w) || w < artifacts.MinFairShareWeight || w > artifacts.MaxFairShareWeight) {
+				return refusal
+			}
+			ns.FairShareWeight = w
+			return nil
+		},
+		render: func(ns *orkstackv1.Namespace) string {
+			return strconv.FormatFloat(ns.GetFairShareWeight(), 'f', -1, 64)
+		},
+		equal: func(a, b *orkstackv1.Namespace) bool { return a.GetFairShareWeight() == b.GetFairShareWeight() },
+		export: func(ns *orkstackv1.Namespace) *yaml.Node {
+			value := strconv.FormatFloat(ns.GetFairShareWeight(), 'f', -1, 64)
+			tag := "!!float"
+			if ns.GetFairShareWeight() == float64(int64(ns.GetFairShareWeight())) {
+				tag = "!!int"
+			}
+			return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value}
 		},
 	},
 	{

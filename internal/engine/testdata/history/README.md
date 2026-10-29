@@ -445,6 +445,36 @@ build before it, and must keep replaying through the `DefaultVersion` branch.
   committed, so the replay tests above fail, never skip, when one is missing;
   only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).
 
+### `run-fairness-keys-v1.json` and `run-fairness-keys-legacy-v1.json` — task activities scheduled with the plan's fairness key
+
+`linearDocument` run to completion under a plan that carries a fairness
+selection (`fairness: {key: fixture, weight: 2}`). The gated fixture is
+recorded by today's code: it carries the lazy `fairness-keys` marker once
+(`priorityFor`, `fairness.go`, asked where the first task activity is
+scheduled), and every ExecuteTask was scheduled with fairness key `fixture`
+and weight 2. The `legacy` fixture is recorded from the same plan with the
+gate switched off (`DisableFairnessKeysGateForTest`), which is the command
+sequence of every build before the gate: no marker, and no priority on any
+task, whatever the plan says. It must keep replaying through the
+`DefaultVersion` branch.
+
+Temporal's replayer compares no priority, so the replay tests replay with an
+interceptor and compare the priority current code sends on replay with the
+one the history recorded, and the version it is answered with the recorded
+marker.
+
+- command: `TestRunWorkflow_ReplaysCommittedFairnessKeysHistories`
+- negative: `TestFairnessKeysHistories_CatchTheGateRemoved` (the gated
+  fixture replayed with the gate skipped sends no priority where it recorded
+  one)
+- behaviour: `TestRunWorkflow_SchedulesEveryTaskWithThePlansFairness`,
+  `TestRunWorkflow_APlanWithoutFairnessAsksNothingAndSetsNoPriority`,
+  `TestRunWorkflow_AGateOffRunSetsNoPriority`
+- recorder: `TestIntegration_RecordFairnessKeysHistories`
+  (`fairness_keys_integration_test.go`). It never skips. The fixtures are
+  committed, so the replay tests above fail, never skip, when one is missing;
+  only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).
+
 ### `run-pin-creation-timeout-v1.json` and `run-pin-creation-timeout-legacy-v1.json` — a pin opened under a plan's creation timeout
 
 An Orkflow that opens two pins, one after the other with an unpinned task

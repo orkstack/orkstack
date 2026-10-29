@@ -154,8 +154,8 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
-	// A real Orker answers the liveness probe on its own channel too
-	// (cmd/orker registers this), which is what ListPools asks a served pool.
+	// A real Orker's task worker registers the liveness probe too (cmd/orker
+	// does); nothing here asks it on this channel any more.
 	orkerWorker.RegisterActivityWithOptions(
 		func(context.Context) (*orkstackv1.DescribeOrkerResult, error) {
 			return &orkstackv1.DescribeOrkerResult{
@@ -197,12 +197,12 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		// field that puts the private channel into it. `cmd/ork` sets the
 		// same value from ORK_ORKER_QUEUE (or ORK_ORKER_POOL).
 		RawQueue: orkerQueue,
-		// The real probe and the real Orker describer, as `cmd/ork` wires them.
+		// The real probe and the real Orker inventory, as `cmd/ork` wires them.
 		// With RawQueue set they are the pair that can disagree: the submit
 		// below is checked against the private channel, and ListPools at the
 		// end has to report the same pool from the same channel.
-		Pools:      engine.NewTemporalPoolProbe(temporalClient),
-		PoolOrkers: starter,
+		Pools: engine.NewTemporalPoolProbe(temporalClient),
+		Fleet: starter,
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

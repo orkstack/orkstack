@@ -886,6 +886,50 @@ func smokeVariable(image string) string {
 	return "SMOKE_" + strings.ToUpper(strings.ReplaceAll(image, "-", "_")) + "_IMAGE"
 }
 
+// smokeOrkerForward is the one service the release smoke adds to compose.yaml:
+// the registry on the Orker's 127.0.0.1, because the Orker verifies a
+// signature with its own registry client and the smoke runs an Orkflow under
+// require_signed_by.
+const smokeOrkerForward = "registry-forward-orker"
+
+// checkSmokeOrkerForward holds that service to compose.yaml's own
+// registry-forward: the same command and pinned image (which the smoke reads
+// from compose.yaml), in the Orker's network namespace instead of the
+// engine's, and restarted with it.
+func checkSmokeOrkerForward(t *testing.T, doc composeFile, path string, node *yaml.Node) {
+	t.Helper()
+	if node == nil {
+		t.Errorf("%s does not forward the registry into the Orker's network namespace (%s), so the Orker could not verify a signature",
+			path, smokeOrkerForward)
+		return
+	}
+	var got composeService
+	if err := node.Decode(&got); err != nil {
+		t.Fatalf("%s: %s: %v", path, smokeOrkerForward, err)
+	}
+	engine := doc.service(t, "registry-forward")
+	if got.Image != "${SMOKE_FORWARD_IMAGE:?}" {
+		t.Errorf("%s: %s runs %q, want ${SMOKE_FORWARD_IMAGE:?}, the forwarder compose.yaml pins", path, smokeOrkerForward, got.Image)
+	}
+	if !slices.Equal(got.Command, engine.Command) {
+		t.Errorf("%s: %s runs %v, want registry-forward's own %v", path, smokeOrkerForward, got.Command, engine.Command)
+	}
+	if mode, _ := got.Other["network_mode"].(string); mode != "service:orker" {
+		t.Errorf("%s: %s has network_mode %q, want service:orker", path, smokeOrkerForward, mode)
+	}
+	if delete(got.Other, "network_mode"); len(got.Other) != 0 || len(got.Ports) != 0 || len(got.Volumes) != 0 || len(got.Environment) != 0 {
+		t.Errorf("%s: %s carries more than an image, a command, a network mode and its dependencies: %+v", path, smokeOrkerForward, got)
+	}
+	if !got.DependsOn["orker"].Restart || got.DependsOn["registry"].Condition != "service_healthy" {
+		t.Errorf("%s: %s does not wait for a healthy registry and restart with orker", path, smokeOrkerForward)
+	}
+	pin := regexp.MustCompile(`alpine/socat:[^ @]+@sha256:[0-9a-f]{64}`).FindString(engine.Image)
+	smoke := string(readRepoFile(t, "scripts/quickstart-smoke.sh"))
+	if pin == "" || !strings.Contains(smoke, `SMOKE_FORWARD_IMAGE="$(grep -m1 -oE 'alpine/socat:[^ @]+@sha256:[0-9a-f]{64}' "$REPO/compose.yaml")"`) {
+		t.Errorf("scripts/quickstart-smoke.sh does not take SMOKE_FORWARD_IMAGE from compose.yaml's pinned forwarder (%q)", engine.Image)
+	}
+}
+
 // TestReleaseSmokeOverride_RunsOnlyTheReleasesImages: the release smoke's
 // override turns every service compose.yaml builds into the release image the
 // smoke pushed, so `up --no-build` runs the release's own bytes, the engine
@@ -905,10 +949,11 @@ func TestReleaseSmokeOverride_RunsOnlyTheReleasesImages(t *testing.T) {
 	named := map[string]bool{}
 	for i := 0; i+1 < len(services.Content); i += 2 {
 		name := services.Content[i].Value
-		if _, ok := doc.Services[name]; !ok {
+		if _, ok := doc.Services[name]; !ok && name != smokeOrkerForward {
 			t.Errorf("%s overrides %s, which compose.yaml does not declare", path, name)
 		}
 	}
+	checkSmokeOrkerForward(t, doc, path, mappingValue(services, smokeOrkerForward))
 	for _, name := range doc.serviceNames() {
 		if doc.Services[name].Build == nil {
 			continue

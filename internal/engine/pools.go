@@ -14,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/quantity"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -48,9 +49,10 @@ var ErrNoNamespaceRegistry = fmt.Errorf("no namespace registry is configured")
 // TestIntegration_AnIdleOrkerStaysLiveAcrossItsPollingCycle).
 const DefaultPollerFreshness = 90 * time.Second
 
-// poolDescribeTimeout bounds one DescribeOrker probe. It is short: a pool with
-// live Orkers answers immediately, and a report is not worth holding a request
-// open for.
+// poolDescribeTimeout bounds one census read (poolCensus): the presence read
+// and every live Orker's answer on its own channel. It is short: a live Orker
+// answers immediately, and neither a submit nor a report is worth holding a
+// request open for.
 const poolDescribeTimeout = 10 * time.Second
 
 // PoolLiveness is what the cluster says about the Orkers serving one pool.
@@ -96,15 +98,6 @@ func (l PoolLiveness) Fresh(now time.Time, within time.Duration) bool {
 // by it.
 type PoolProbe interface {
 	ObservePool(ctx context.Context, queue string) (PoolLiveness, error)
-}
-
-// PoolOrkerDescriber reports the identity of an Orker serving one pool. It is
-// asked only of a pool that has live Orkers — a pool with none has nobody to
-// answer, and asking would only time out.
-//
-// Answering at all is the liveness evidence the inventory wants (§6.5).
-type PoolOrkerDescriber interface {
-	OrkerOnPool(ctx context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error)
 }
 
 // NamespaceReader is the engine's view of the namespace registry: the one
@@ -326,6 +319,42 @@ func (e *PoolNoJoinSupportError) Error() string {
 		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
 }
 
+// ReasonResourcesUnsatisfiable refuses a submit whose task asks for more than
+// any Orker of its pool runs (PoolResourcesUnsatisfiableError).
+const ReasonResourcesUnsatisfiable = "RESOURCES_UNSATISFIABLE"
+
+// PoolResourcesUnsatisfiableError refuses a submit whose task requests more
+// cpu or memory than the per-task cap of every Orker of its pool that
+// answered (DescribeOrkerResult.max_request). Such a task could never run
+// there: an Orker refuses a request above its cap with
+// RESOURCE_REQUEST_REFUSED after dispatch, terminally, so the run would fail
+// on its first attempt. The cap is a pool-wide setting (docs/DEPLOY.md), so
+// the refusal names the largest cap the pool reported. allow_empty_pool does
+// not downgrade it: the Orkers are present, and none of them can hold it.
+type PoolResourcesUnsatisfiableError struct {
+	Namespace string
+	Pool      string
+	Task      string
+	CPU       string // as the task wrote it; empty when it asked for none
+	Memory    string
+	Largest   *orkstackv1.ResourceQuantity
+}
+
+func (e *PoolResourcesUnsatisfiableError) Error() string {
+	var asked []string
+	if e.CPU != "" {
+		asked = append(asked, fmt.Sprintf("cpu %s", e.CPU))
+	}
+	if e.Memory != "" {
+		asked = append(asked, fmt.Sprintf("memory %s", e.Memory))
+	}
+	return fmt.Sprintf("%s: task %q requests %s, which no Orker of pool %q (namespace %q) runs: its largest "+
+		"per-task caps are %g cpu and %d bytes of memory, not always on one Orker. Ask for less, or run the task "+
+		"on a pool whose Orkers set larger caps (orker.resources.max_cpu, orker.resources.max_memory)",
+		ReasonResourcesUnsatisfiable, e.Task, strings.Join(asked, " and "), e.Pool, e.Namespace,
+		e.Largest.GetCpu(), e.Largest.GetMemoryBytes())
+}
+
 // PoolUnreachableError reports that the cluster could not be asked whether a
 // pool has Orkers.
 //
@@ -365,8 +394,12 @@ type PoolResolver struct {
 	// refuse every submit or vouch for every pool.
 	Probe PoolProbe
 
-	// Orkers describes a pool's Orkers, for reporting only.
-	Orkers PoolOrkerDescriber
+	// Fleet is the Orker inventory (ReadFleet), read as a poolCensus: asked
+	// whether a pool whose channel shows no poller is busy rather than empty,
+	// for each capability probe a submit needs, and for the busy Orkers a pool
+	// report counts. Nil asks nothing, the same reason a nil Probe asks
+	// nothing: there is no authority to ask.
+	Fleet FleetReader
 
 	// RawQueue is the operator escape hatch (ORK_ORKER_QUEUE): the channel a
 	// task that names no pool is dispatched to. Empty means the pool's own.
@@ -604,6 +637,11 @@ func (r *PoolResolver) Plan(
 	// pools whose Orker must read ExecuteTaskInput.join. An awaited or
 	// composed handler never reaches this loop's routing, so is never counted.
 	handlerTasksByPool := map[string][]string{}
+	// The sizing view: every task that declares a resource request, per
+	// resolved pool — the requests a pool's per-task cap must hold. A task
+	// that declares none gets its Orker's default, which every Orker's boot
+	// holds within its cap, so it is never asked about.
+	sizedTasksByPool := map[string][]*orkstackv1.Task{}
 
 	for _, t := range planned.GetTasks() {
 		// An awaited task is never routed: no route, no allow-list check, no
@@ -643,6 +681,9 @@ func (r *PoolResolver) Plan(
 		if isFailureHandler(t) {
 			handlerTasksByPool[route.Pool] = append(handlerTasksByPool[route.Pool], t.GetId())
 		}
+		if res := t.GetResources(); strings.TrimSpace(res.GetCpu()) != "" || strings.TrimSpace(res.GetMemory()) != "" {
+			sizedTasksByPool[route.Pool] = append(sizedTasksByPool[route.Pool], t)
+		}
 		if eachRelated[t.GetId()] {
 			eachTasksByPool[route.Pool] = append(eachTasksByPool[route.Pool], t.GetId())
 			if dependents[t.GetId()] && eachDependentByPool[route.Pool] == "" {
@@ -676,7 +717,7 @@ func (r *PoolResolver) Plan(
 		pinnedTasksByPool[route.Pool] = append(pinnedTasksByPool[route.Pool], t.GetId())
 	}
 
-	plan := RunPlan{Namespace: namespaceName(ns), Routes: routes}
+	plan := RunPlan{Namespace: namespaceName(ns), Routes: routes, Fairness: fairnessFor(ns)}
 	telemetry, err := telemetryFor(ns, wf)
 	if err != nil {
 		return nil, RunPlan{}, err
@@ -685,6 +726,10 @@ func (r *PoolResolver) Plan(
 	if r.Probe == nil {
 		return planned, plan, nil
 	}
+	// One census for the whole submit, read only if a question below needs
+	// it, so a submit whose pools' channels are polled and that needs no
+	// capability probe asks the inventory nothing.
+	census := newPoolCensus(r.Fleet)
 	for _, pool := range order {
 		live, err := r.Probe.ObservePool(ctx, routes[pool])
 		if err != nil {
@@ -693,18 +738,32 @@ func (r *PoolResolver) Plan(
 			// between "start an Orker" and "try again".
 			return nil, RunPlan{}, &PoolUnreachableError{Pool: pool, Err: err}
 		}
-		if live.Fresh(r.now(), r.freshness()) {
+		present, err := r.present(ctx, census, pool, live)
+		if err != nil {
+			if !allowEmpty {
+				return nil, RunPlan{}, &PoolUnreachableError{Pool: pool, Err: err}
+			}
+			// The channel WAS measured, and is empty; only whether its
+			// Orkers are busy is unknown, and the override accepts the pool
+			// either way. The gap goes on the record beside the override.
+			r.logger().Warn("submit: whether a pool with no poller is busy is unknown, "+
+				"and allow_empty_pool accepts it either way",
+				"namespace", namespaceName(ns),
+				"pool", pool,
+				"orkflow", wf.GetName(),
+				"error", err)
+		}
+		if present {
 			// A live pool that carries a pinned task is asked one more
 			// question: can anything here OPEN a pin. Asked only of a
 			// live pool with a pinned task, so an unpinned submit runs no
 			// describe call it did not run before pins existed, and a deserted pool
 			// has already failed below with PoolEmptyError — what its Orkers
 			// host is moot when it has none.
-			if err := r.checkPinHost(ctx, checkPinHostRequest{
+			if err := r.checkPinHost(ctx, census, checkPinHostRequest{
 				namespace:  namespaceName(ns),
 				orkflow:    wf.GetName(),
 				pool:       pool,
-				queue:      routes[pool],
 				pins:       pinsByPool[pool],
 				tasks:      pinnedTasksByPool[pool],
 				allowEmpty: allowEmpty,
@@ -713,20 +772,26 @@ func (r *PoolResolver) Plan(
 			}
 			// And, for a pool that carries a fan-out or a direct dependent of
 			// one: does its Orker implement fan-out at all.
-			if err := r.checkEachSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
+			if err := r.checkEachSupport(ctx, census, namespaceName(ns), wf.GetName(), pool,
 				eachTasksByPool[pool], eachDependentByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
 			// And, for a pool that carries a cached task: does its Orker
 			// implement the memo step at all.
-			if err := r.checkCacheSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
+			if err := r.checkCacheSupport(ctx, census, namespaceName(ns), wf.GetName(), pool,
 				cachedTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
 			// And, for a pool that carries a container failure handler: does
 			// its Orker read join policies at all.
-			if err := r.checkJoinSupport(ctx, namespaceName(ns), wf.GetName(), pool, routes[pool],
+			if err := r.checkJoinSupport(ctx, census, namespaceName(ns), wf.GetName(), pool,
 				handlerTasksByPool[pool]); err != nil {
+				return nil, RunPlan{}, err
+			}
+			// And, for a pool that carries a task declaring a request: can
+			// any of its Orkers hold it.
+			if err := r.checkResourcesFit(ctx, census, namespaceName(ns), wf.GetName(), pool,
+				sizedTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
 			continue
@@ -735,6 +800,16 @@ func (r *PoolResolver) Plan(
 			Namespace: namespaceName(ns),
 			Pool:      pool,
 			Tasks:     tasksByPool[pool],
+		}
+		if unanswered := census.unansweredCount(); unanswered > 0 {
+			// An Orker that did not answer said nothing about its pool, so
+			// it is not counted; the decision is recorded with that gap.
+			r.logger().Warn("submit: a pool reads empty while some live Orkers did not "+
+				"answer when asked, so they were not counted",
+				"namespace", empty.Namespace,
+				"pool", empty.Pool,
+				"orkflow", wf.GetName(),
+				"unanswered", unanswered)
 		}
 		if !allowEmpty {
 			return nil, RunPlan{}, empty
@@ -752,6 +827,88 @@ func (r *PoolResolver) Plan(
 	return planned, plan, nil
 }
 
+// present decides whether a pool has an Orker that would pick its work up.
+//
+// The pool's own channel answers first: a poller inside the freshness window
+// is an Orker with a free slot, and that is the whole of the question for an
+// idle pool, so such a submit asks nothing more. A channel with no poller is
+// also what a pool whose every Orker is busy looks like (poolCensus), so it is
+// asked of the inventory before the pool is called empty: an Orker of the pool
+// that answered on its own channel and is not cordoned keeps it live.
+//
+// Only a failed presence read is an error — nothing was measured, the same
+// verdict a failed channel read gets. An Orker that does not answer says
+// nothing about which pool it serves, so it is not counted, and Plan records
+// that gap when the pool then reads empty. Calling such a pool "cannot tell"
+// instead would be wrong far more often than right: a stopped Orker's
+// presence record stays fresh for DefaultPollerFreshness and never answers,
+// so every restart or scale-down anywhere in the deployment would turn a
+// genuinely empty pool's "start an Orker" into "ask again" for that long. A
+// busy Orker answers on its own channel within milliseconds on a healthy
+// cluster, so the case it would cover is a busy pool on a cluster too slow to
+// answer a describe in orkerDescribeTimeout, which reads empty exactly as it
+// did before the census existed.
+func (r *PoolResolver) present(ctx context.Context, census *poolCensus, pool string, live PoolLiveness) (bool, error) {
+	if live.Fresh(r.now(), r.freshness()) {
+		return true, nil
+	}
+	if r.Fleet == nil {
+		return false, nil
+	}
+	orkers, err := census.taking(ctx, pool)
+	if err != nil {
+		return false, err
+	}
+	return len(orkers) > 0, nil
+}
+
+// probeOrkers is a live pool's Orkers for one capability probe: the census's
+// Orkers of the pool that would take a new task, each of which answered on
+// its own channel. That channel has its own slots, so a pool whose every task
+// slot is taken still answers.
+//
+// Nil means there is nothing to judge, and the probe declines to refuse:
+// nothing was measured. Either the inventory could not be read, or no Orker
+// of the pool answered — it did not answer in time, it is cordoned, or the
+// pool's only pollers are not Orkers the inventory lists. Each is logged with
+// what the probe could not learn, because a narrowed answer that says nothing
+// is indistinguishable from a complete one.
+func (r *PoolResolver) probeOrkers(ctx context.Context, census *poolCensus, probe capabilityProbe) []*orkstackv1.DescribeOrkerResult {
+	orkers, err := census.taking(ctx, probe.pool)
+	if err == nil && len(orkers) > 0 {
+		described := make([]*orkstackv1.DescribeOrkerResult, len(orkers))
+		for i, orker := range orkers {
+			described[i] = orker.Described
+		}
+		return described
+	}
+	attrs := []any{
+		"namespace", probe.namespace,
+		"pool", probe.pool,
+		"orkflow", probe.orkflow,
+		"tasks", strings.Join(probe.tasks, ","),
+		"unanswered", census.unansweredCount(),
+	}
+	if err != nil {
+		attrs = append(attrs, "error", err)
+	}
+	r.logger().Warn("submit: no uncordoned Orker of a live pool with "+probe.carrying+
+		" answered on its own channel, so whether "+probe.question+" is unknown", attrs...)
+	return nil
+}
+
+// capabilityProbe is one capability question asked of one live pool: who
+// asked, for which tasks, and the words its log line uses when nothing could
+// answer it.
+type capabilityProbe struct {
+	namespace string
+	orkflow   string
+	pool      string
+	tasks     []string
+	carrying  string
+	question  string
+}
+
 // checkPinHostRequest is one pool's pin question, gathered while Plan walked
 // the tasks. It is a struct rather than seven parameters because every field
 // is a coordinate of the same refusal message.
@@ -759,7 +916,6 @@ type checkPinHostRequest struct {
 	namespace  string
 	orkflow    string
 	pool       string
-	queue      string
 	pins       []string
 	tasks      []string
 	allowEmpty bool
@@ -767,51 +923,45 @@ type checkPinHostRequest struct {
 
 // checkPinHost refuses a live pool that hosts no pins but was asked to.
 //
-// It asks the pool's own Orker, through the same OrkerOnPool seam the
-// inventory uses, and reads DescribeOrkerResult.max_concurrent_pins — the
-// Orker's ORK_ORKER_MAX_PINS. Zero means the process starts no session
-// pollers at all, so the pin's session could never be created there.
+// It asks the pool's Orkers, each on its own control channel (probeOrkers),
+// and reads DescribeOrkerResult.max_concurrent_pins — each Orker's
+// ORK_ORKER_MAX_PINS. Zero means the process starts no session pollers at
+// all, so the pin's session could never be created there; one Orker above
+// zero is a host the pin can open on.
 //
 // Three ways it declines to refuse, and each is a different fact:
 //
 //   - No pinned task on this pool: there is no question to ask, and asking
-//     would add a describe call to an unpinned submit.
-//   - No describer wired (r.Orkers == nil): no authority to ask, the same
-//     reason a nil Probe disables the liveness check rather than inventing an
-//     answer. A process with no seam must not refuse every pinned submit.
-//   - The describe call failed: nothing was MEASURED. The pool's liveness was,
-//     and stands; only the Orker's self-description was lost, which is how
-//     Pools() treats the same failure. Turning a describe blip into a refused
-//     submit would invent a new failure, and the in-workflow backstop already
-//     covers a pool that genuinely cannot open a pin: the session's creation
-//     activity times out at the run's pin creation timeout and the task fails
-//     with PIN_UNAVAILABLE.
+//     would add a census read to an unpinned submit.
+//   - No fleet wired (r.Fleet == nil): no authority to ask, the same reason a
+//     nil Probe disables the liveness check rather than inventing an answer.
+//     A process with no seam must not refuse every pinned submit.
+//   - No Orker of the pool answered: nothing was MEASURED. The pool's
+//     liveness was, and stands; only the Orkers' self-descriptions were lost,
+//     which is how Pools() treats the same failure. Turning that into a
+//     refused submit would invent a new failure, and the in-workflow backstop
+//     already covers a pool that genuinely cannot open a pin: the session's
+//     creation activity times out at the run's pin creation timeout and the
+//     task fails with PIN_UNAVAILABLE.
 //
 // allowEmpty downgrades a real refusal to a warning exactly as it does for an
 // empty pool: the operator who overrides has been told what they are waiting
 // for.
-func (r *PoolResolver) checkPinHost(ctx context.Context, req checkPinHostRequest) error {
-	if len(req.pins) == 0 || r.Orkers == nil {
+func (r *PoolResolver) checkPinHost(ctx context.Context, census *poolCensus, req checkPinHostRequest) error {
+	if len(req.pins) == 0 || r.Fleet == nil {
 		return nil
 	}
-	// Bounded here as well as inside the production seam: a hand-wired
-	// describer is not obliged to bound itself, and a submit must not be held
-	// open by one.
-	describeCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
-	defer cancel()
-	described, err := r.Orkers.OrkerOnPool(describeCtx, req.queue)
-	if err != nil {
-		r.logger().Warn("submit: a live pool with a pinned task did not answer the "+
-			"describe-orker probe, so whether it hosts pins is unknown",
-			"namespace", req.namespace,
-			"pool", req.pool,
-			"orkflow", req.orkflow,
-			"pins", strings.Join(req.pins, ","),
-			"error", err)
+	orkers := r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: req.namespace, orkflow: req.orkflow, pool: req.pool, tasks: req.tasks,
+		carrying: "a pinned task", question: "it hosts pins",
+	})
+	if orkers == nil {
 		return nil
 	}
-	if described.GetMaxConcurrentPins() > 0 {
-		return nil
+	for _, described := range orkers {
+		if described.GetMaxConcurrentPins() > 0 {
+			return nil
+		}
 	}
 	noHost := &PoolNoPinHostError{
 		Namespace: req.namespace,
@@ -862,97 +1012,158 @@ func eachRelatedTasks(wf *orkstackv1.Orkflow) (related, dependents map[string]bo
 	return related, dependents
 }
 
-// checkEachSupport refuses a live pool whose Orker predates fan-out when a
-// fan-out, or a direct dependent of one, would run there. Asked only of such a
-// pool, so a submit with no fan-out runs no describe call it did not run
-// before. A describe failure is logged and not refused — nothing was measured
-// — on checkPinHost's precedent; allow_empty_pool never downgrades it.
-func (r *PoolResolver) checkEachSupport(ctx context.Context, namespace, orkflow, pool, queue string, tasks []string, dependent string) error {
-	if len(tasks) == 0 || r.Orkers == nil {
+// lacking is the first of a pool's Orkers, in identity order, that does not
+// have a capability: any one of them may take the task, so every one must
+// have it. Nil when all of them do.
+func lacking(orkers []*orkstackv1.DescribeOrkerResult, has func(*orkstackv1.DescribeOrkerResult) bool) *orkstackv1.DescribeOrkerResult {
+	for _, described := range orkers {
+		if !has(described) {
+			return described
+		}
+	}
+	return nil
+}
+
+// checkEachSupport refuses a live pool with an Orker that predates fan-out
+// when a fan-out, or a direct dependent of one, would run there. Asked only
+// of such a pool, so a submit with no fan-out reads no census for it. No
+// Orker answering is logged and not refused — nothing was measured — on
+// checkPinHost's precedent; allow_empty_pool never downgrades it.
+func (r *PoolResolver) checkEachSupport(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []string, dependent string) error {
+	if len(tasks) == 0 || r.Fleet == nil {
 		return nil
 	}
-	describeCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
-	defer cancel()
-	described, err := r.Orkers.OrkerOnPool(describeCtx, queue)
-	if err != nil {
-		r.logger().Warn("submit: a live pool with a fan-out did not answer the describe-orker "+
-			"probe, so whether it supports fan-out is unknown",
-			"namespace", namespace, "pool", pool, "orkflow", orkflow,
-			"tasks", strings.Join(tasks, ","), "error", err)
-		return nil
-	}
-	if described.GetEachSupported() {
+	old := lacking(r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: tasks,
+		carrying: "a fan-out", question: "it supports fan-out",
+	}), (*orkstackv1.DescribeOrkerResult).GetEachSupported)
+	if old == nil {
 		return nil
 	}
 	return &PoolNoEachSupportError{
 		Namespace: namespace,
 		Pool:      pool,
 		Tasks:     tasks,
-		OrkerID:   described.GetOrkerId(),
-		BuildID:   described.GetBuildId(),
+		OrkerID:   old.GetOrkerId(),
+		BuildID:   old.GetBuildId(),
 		Dependent: dependent,
 	}
 }
 
-// checkCacheSupport refuses a live pool whose Orker predates task caching
-// when a cached task would run there. Asked only of such a pool, so a submit
-// with no cached task runs no describe call it did not run before. A describe
-// failure is logged and not refused — nothing was measured — on
-// checkPinHost's precedent; allow_empty_pool never downgrades it.
-func (r *PoolResolver) checkCacheSupport(ctx context.Context, namespace, orkflow, pool, queue string, tasks []string) error {
-	if len(tasks) == 0 || r.Orkers == nil {
+// checkCacheSupport refuses a live pool with an Orker that predates task
+// caching when a cached task would run there. Asked only of such a pool, so a
+// submit with no cached task reads no census for it. No Orker answering is
+// logged and not refused — nothing was measured — on checkPinHost's
+// precedent; allow_empty_pool never downgrades it.
+func (r *PoolResolver) checkCacheSupport(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []string) error {
+	if len(tasks) == 0 || r.Fleet == nil {
 		return nil
 	}
-	describeCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
-	defer cancel()
-	described, err := r.Orkers.OrkerOnPool(describeCtx, queue)
-	if err != nil {
-		r.logger().Warn("submit: a live pool with a cached task did not answer the describe-orker "+
-			"probe, so whether it supports caching is unknown",
-			"namespace", namespace, "pool", pool, "orkflow", orkflow,
-			"tasks", strings.Join(tasks, ","), "error", err)
-		return nil
-	}
-	if described.GetCacheSupported() {
+	old := lacking(r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: tasks,
+		carrying: "a cached task", question: "it supports caching",
+	}), (*orkstackv1.DescribeOrkerResult).GetCacheSupported)
+	if old == nil {
 		return nil
 	}
 	return &PoolNoCacheSupportError{
 		Namespace: namespace,
 		Pool:      pool,
 		Tasks:     tasks,
-		OrkerID:   described.GetOrkerId(),
-		BuildID:   described.GetBuildId(),
+		OrkerID:   old.GetOrkerId(),
+		BuildID:   old.GetBuildId(),
 	}
 }
 
 // checkJoinSupport is checkCacheSupport for failure handlers: asked only of a
 // live pool that hosts a container failure handler, so a submit without one
-// runs no describe call it did not run before. A describe failure is logged
-// and not refused — nothing was measured.
-func (r *PoolResolver) checkJoinSupport(ctx context.Context, namespace, orkflow, pool, queue string, tasks []string) error {
-	if len(tasks) == 0 || r.Orkers == nil {
+// reads no census for it. No Orker answering is logged and not refused —
+// nothing was measured.
+func (r *PoolResolver) checkJoinSupport(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []string) error {
+	if len(tasks) == 0 || r.Fleet == nil {
 		return nil
 	}
-	describeCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
-	defer cancel()
-	described, err := r.Orkers.OrkerOnPool(describeCtx, queue)
-	if err != nil {
-		r.logger().Warn("submit: a live pool with a failure handler did not answer the describe-orker "+
-			"probe, so whether it reads join policies is unknown",
-			"namespace", namespace, "pool", pool, "orkflow", orkflow,
-			"tasks", strings.Join(tasks, ","), "error", err)
-		return nil
-	}
-	if described.GetJoinSupported() {
+	old := lacking(r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: tasks,
+		carrying: "a failure handler", question: "it reads join policies",
+	}), (*orkstackv1.DescribeOrkerResult).GetJoinSupported)
+	if old == nil {
 		return nil
 	}
 	return &PoolNoJoinSupportError{
 		Namespace: namespace,
 		Pool:      pool,
 		Tasks:     tasks,
-		OrkerID:   described.GetOrkerId(),
-		BuildID:   described.GetBuildId(),
+		OrkerID:   old.GetOrkerId(),
+		BuildID:   old.GetBuildId(),
 	}
+}
+
+// checkResourcesFit refuses a live pool none of whose Orkers could hold a
+// task's request: each declared dimension above every answering Orker's
+// per-task cap (DescribeOrkerResult.max_request). Asked only of a pool that
+// carries a task declaring a request, so any other submit reads no census for
+// it. No Orker answering, and an Orker built before it reported its cap, are
+// logged and not refused — nothing was measured — on checkPinHost's
+// precedent; allow_empty_pool never downgrades it.
+func (r *PoolResolver) checkResourcesFit(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []*orkstackv1.Task) error {
+	if len(tasks) == 0 || r.Fleet == nil {
+		return nil
+	}
+	ids := make([]string, len(tasks))
+	for i, t := range tasks {
+		ids[i] = t.GetId()
+	}
+	orkers := r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: ids,
+		carrying: "a sized task", question: "it can hold the request",
+	})
+	var caps []*orkstackv1.ResourceQuantity
+	for _, described := range orkers {
+		if c := described.GetMaxRequest(); c != nil {
+			caps = append(caps, c)
+		}
+	}
+	if len(caps) == 0 {
+		if len(orkers) > 0 {
+			r.logger().Warn("submit: no Orker of a live pool with a sized task reports its per-task cap, "+
+				"so whether it can hold the request is unknown",
+				"namespace", namespace, "pool", pool, "orkflow", orkflow, "tasks", strings.Join(ids, ","))
+		}
+		return nil
+	}
+	largest := &orkstackv1.ResourceQuantity{}
+	for _, c := range caps {
+		largest.Cpu = max(largest.Cpu, c.GetCpu())
+		largest.MemoryBytes = max(largest.MemoryBytes, c.GetMemoryBytes())
+	}
+	for _, t := range tasks {
+		cpu := strings.TrimSpace(t.GetResources().GetCpu())
+		memory := strings.TrimSpace(t.GetResources().GetMemory())
+		if requestFitsOne(cpu, memory, caps) {
+			continue
+		}
+		return &PoolResourcesUnsatisfiableError{
+			Namespace: namespace, Pool: pool, Task: t.GetId(), CPU: cpu, Memory: memory, Largest: largest,
+		}
+	}
+	return nil
+}
+
+// requestFitsOne reports whether some cap holds every declared dimension of a
+// request. A dimension that does not read is left to the Orker, which refuses
+// it at dispatch by name; validate already refused it for an applied document.
+func requestFitsOne(cpu, memory string, caps []*orkstackv1.ResourceQuantity) bool {
+	cores, cpuErr := quantity.CPU(cpu)
+	bytes, memErr := quantity.Memory(memory)
+	for _, c := range caps {
+		cpuFits := cpu == "" || cpuErr != nil || cores <= c.GetCpu()
+		memFits := memory == "" || memErr != nil || bytes <= float64(c.GetMemoryBytes())
+		if cpuFits && memFits {
+			return true
+		}
+	}
+	return false
 }
 
 // routeFor resolves one pool against the channel this deployment bound as its
@@ -997,10 +1208,10 @@ func (r *PoolResolver) routeFor(pool string) (task.Route, error) {
 // pools to drain, one set of machines.
 //
 // IT NARROWS RATHER THAN REFUSING. A pool the cluster does not answer for
-// keeps its row and carries UnavailableReason instead of a count; a pool whose
-// Orkers do not answer keeps its count and loses its Orker description. Both are
-// logged with the pool and the cause, because a narrowed answer that says
-// nothing is indistinguishable from a complete one.
+// keeps its row and carries UnavailableReason instead of a count; an inventory
+// that cannot be read, or an Orker that does not answer in it, narrows a
+// pool's count to its channel's. Both are logged with the cause, because a
+// narrowed answer that says nothing is indistinguishable from a complete one.
 //
 // The alternative was one error for the whole call, and it was wrong twice
 // over. An operator opens pool health BECAUSE part of the deployment is
@@ -1051,22 +1262,33 @@ func (r *PoolResolver) Pools(
 	sort.Strings(ordered)
 
 	// One cluster round-trip per pool, in flight together and bounded (see
-	// poolProbeFanout). Each call writes only its own slot, so the report is
-	// in name order whatever order the answers arrive in.
+	// poolProbeFanout), and one census for the whole report. Each call writes
+	// only its own slot, so the report is in name order whatever order the
+	// answers arrive in.
+	census := newPoolCensus(r.Fleet)
 	pools := make([]*orkstackv1.Pool, len(ordered))
 	probeTogether(len(ordered), func(i int) {
 		name := ordered[i]
-		pools[i] = r.observedPool(ctx, ns, name, queues[name], name == defaultRoute.Pool)
+		pools[i] = r.observedPool(ctx, ns, census, name, queues[name], name == defaultRoute.Pool)
 	})
+	// Once for the report, not once per pool: the gap is the inventory's.
+	if census.err != nil {
+		r.logger().Warn("list pools: the orker inventory could not be read, so busy "+
+			"Orkers are not counted", "namespace", namespaceName(ns), "error", census.err)
+	} else if unanswered := census.unansweredCount(); unanswered > 0 {
+		r.logger().Warn("list pools: some live Orkers did not answer on their own "+
+			"channels, so they are not counted", "namespace", namespaceName(ns), "unanswered", unanswered)
+	}
 	return pools, nil
 }
 
 // observedPool is one row of Pools: the pool, asked of the cluster on its
-// channel. A pool with no channel (a name this engine cannot route) is
-// reported as it is, unasked.
+// channel and of the census. A pool with no channel (a name this engine cannot
+// route) is reported as it is, unasked.
 func (r *PoolResolver) observedPool(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
+	census *poolCensus,
 	name, queue string,
 	isDefault bool,
 ) *orkstackv1.Pool {
@@ -1089,6 +1311,7 @@ func (r *PoolResolver) observedPool(
 				"namespace", namespaceName(ns),
 				"pool", name,
 				"error", err)
+			return pool
 		case live.Fresh(r.now(), r.freshness()):
 			pool.LiveOrkerCount = int32(live.Orkers)
 			if !live.LastSeen.IsZero() {
@@ -1096,19 +1319,24 @@ func (r *PoolResolver) observedPool(
 			}
 		}
 	}
-	if pool.GetLiveOrkerCount() > 0 && r.Orkers != nil {
-		// The probe is asked for liveness evidence only: which images
-		// exist is engine configuration (§4.2). The call is kept because
-		// answering at all is the evidence a probe nobody makes cannot
-		// give.
-		if _, err := r.Orkers.OrkerOnPool(ctx, queue); err != nil {
-			// The pool's liveness was measured from the cluster and
-			// stands; only the Orker's self-description was lost.
-			r.logger().Warn("list pools: a live pool did not answer the "+
-				"describe-orker probe",
-				"namespace", namespaceName(ns),
-				"pool", name,
-				"error", err)
+	if r.Fleet == nil {
+		return pool
+	}
+	// The channel counts the Orkers with a free slot; the census also counts
+	// the busy ones (poolCensus), the same Orkers a submit counts. The larger
+	// count is reported, because each source misses Orkers the other sees: a
+	// channel's poller that is not an Orker the inventory lists, a busy Orker
+	// the channel no longer shows. A census that could not be read narrows the
+	// row to the channel's count, and Pools logs it once.
+	orkers, err := census.taking(ctx, name)
+	if err != nil || len(orkers) <= int(pool.GetLiveOrkerCount()) {
+		return pool
+	}
+	pool.LiveOrkerCount = int32(len(orkers))
+	for _, orker := range orkers {
+		if seen := orker.Presence.LastSeen; !seen.IsZero() &&
+			(pool.LastSeen == nil || seen.After(pool.GetLastSeen().AsTime())) {
+			pool.LastSeen = timestamppb.New(seen.UTC())
 		}
 	}
 	return pool

@@ -89,6 +89,16 @@ type Options struct {
 	// at submit rather than left waiting for a slot that does not exist
 	// (docs/DEPLOY.md "Pin hosting is a pool-wide setting").
 	MaxPins int32
+	// CapacityCPU and CapacityMemory are orker.capacity.cpu and
+	// orker.capacity.memory, in the Kubernetes spelling: what this Orker
+	// admits tasks within (capacity.go). Both empty — the default — declare
+	// no capacity, and the Orker admits by MaxConcurrent alone.
+	CapacityCPU    string
+	CapacityMemory string
+	// TaskQueue is the pool channel the task worker polls. A declared
+	// capacity needs it to tell a task polled there, which holds a permit's
+	// reservation, from a pinned member, which does not.
+	TaskQueue string
 	// LayoutRoot is where embedded OCI image layouts live (§4.6).
 	LayoutRoot string
 	// Signatures verifies a task's cosign signature when its image policy
@@ -137,6 +147,15 @@ type Activities struct {
 	// pins is the set of sessions this Orker accepted and has not completed
 	// (open_pins), maintained by the same interceptor.
 	pins *openPins
+	// capacity is the admission ledger (capacity.go), nil when this Orker
+	// declares no capacity; capacityErr is a capacity Boot refuses, and
+	// taskQueue the pool channel whose polls hold its permits.
+	capacity    *Capacity
+	capacityErr error
+	taskQueue   string
+	// stopReap ends the capacity's periodic reap of containers it could not
+	// remove; nil until Boot starts one.
+	stopReap context.CancelFunc
 }
 
 // NewActivitiesWithOptions builds the activity set with explicit options.
@@ -173,6 +192,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	if maxConc <= 0 {
 		maxConc = DefaultMaxConcurrent
 	}
+	capacity, capacityErr := newCapacityFor(policy, opts, int(maxConc))
 
 	return &Activities{
 		dispatcher: &OCIDispatcher{
@@ -197,12 +217,41 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			TraceContext:      opts.TraceContext,
 			Logger:            opts.Logger,
 		},
-		pool:    opts.Pool,
-		maxConc: maxConc,
-		maxPins: opts.MaxPins,
-		cordon:  NewCordon(),
-		pins:    newOpenPins(),
+		pool:        opts.Pool,
+		maxConc:     maxConc,
+		maxPins:     opts.MaxPins,
+		cordon:      NewCordon(),
+		pins:        newOpenPins(),
+		capacity:    capacity,
+		capacityErr: capacityErr,
+		taskQueue:   opts.TaskQueue,
 	}
+}
+
+// newCapacityFor builds the admission ledger an Orker declaring a capacity
+// runs with: the capacity as its limit, and the per-task cap as what each poll
+// reserves. No capacity declared is (nil, nil). An unreadable cap is left to
+// SecurityPolicy.Validate, which Boot runs first.
+func newCapacityFor(policy SecurityPolicy, opts Options, slots int) (*Capacity, error) {
+	limit, declared, err := parseCapacity(opts.CapacityCPU, opts.CapacityMemory)
+	if err != nil || !declared {
+		return nil, err
+	}
+	ceiling, err := policy.ceiling()
+	if err != nil {
+		return nil, nil
+	}
+	if !ceiling.within(limit) {
+		return nil, fmt.Errorf("the per-task cap (%s=%s, %s=%s) does not fit within the declared capacity "+
+			"(%s=%q, %s=%q), so no poll could ever be granted; lower the cap or raise the capacity",
+			MaxCPUVar, policy.MaxCPU, MaxMemoryVar, policy.MaxMemory,
+			CapacityCPUVar, opts.CapacityCPU, CapacityMemoryVar, opts.CapacityMemory)
+	}
+	if opts.TaskQueue == "" {
+		return nil, fmt.Errorf("a declared capacity needs the task worker's channel (Options.TaskQueue) " +
+			"to tell a polled task from a pinned member")
+	}
+	return newCapacity(limit, ceiling, slots), nil
 }
 
 // Dispatcher exposes the dispatcher for boot-time work — the container reaper
@@ -235,7 +284,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		OrkerId:           a.dispatcher.OrkerID,
 		BuildId:           a.dispatcher.BuildID,
 		Pool:              a.pool,
-		SecurityProfile:   a.dispatcher.Policy.ProfileID(),
+		SecurityProfile:   a.dispatcher.Policy.ProfileID(""),
 		MaxConcurrent:     a.maxConc,
 		MaxConcurrentPins: a.maxPins,
 		RunningTasks:      a.running.Load(),
@@ -250,6 +299,16 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		// ExecuteTaskInput.join, so submit may send a failure handler to its
 		// pool.
 		JoinSupported: true,
+	}
+	if ceiling, err := a.dispatcher.Policy.ceiling(); err == nil {
+		result.MaxRequest = ceiling.proto()
+	}
+	if defaults, err := a.dispatcher.Policy.defaults(); err == nil {
+		result.DefaultRequest = defaults.proto()
+	}
+	if a.capacity != nil {
+		limit, reserved := a.capacity.snapshot()
+		result.Capacity, result.Reserved = limit.proto(), reserved.proto()
 	}
 	// The cordon and the load: one lock read, one atomic load and — only when
 	// a pin is open — one ReadDir of the work root.
@@ -268,13 +327,26 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 			// answer, so the identity is returned with the runtime fields it
 			// could not fill rather than failing the pool.
 			result.RuntimeName = info.Name
+			result.SecurityProfile = a.dispatcher.Policy.ProfileID(info.Seccomp)
 			return result, nil
 		}
 		result.RuntimeName = info.Name
 		result.RuntimeVersion = info.Version
 		result.Rootless = info.Rootless
+		result.SecurityProfile = a.dispatcher.Policy.ProfileID(info.Seccomp)
 	}
 	return result, nil
+}
+
+// SecurityProfile names the posture this Orker enforces, with the seccomp
+// profile as its runtime spells it (SecurityPolicy.ProfileID).
+func (a *Activities) SecurityProfile(ctx context.Context) string {
+	if a.dispatcher.Runtime == nil {
+		return a.dispatcher.Policy.ProfileID("")
+	}
+	// A runtime that could not describe itself still says what it spells.
+	info, _ := a.dispatcher.Runtime.Describe(ctx)
+	return a.dispatcher.Policy.ProfileID(info.Seccomp)
 }
 
 // ReleasePin removes one pin's shared directory (§6.4).
@@ -402,6 +474,14 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 		for _, failure := range partial.Failures {
 			a.dispatcher.logger().Warn("orphan container reap", "error", failure)
 		}
+		// Each orphan that stayed was admitted within the cap by this
+		// Orker's previous life and still holds the host, so a declared
+		// capacity starts with it reserved, until a later reap removes it.
+		if a.capacity != nil {
+			for _, id := range partial.Containers {
+				a.capacity.seed(id)
+			}
+		}
 		return nil
 	default:
 		return fmt.Errorf("reap orphaned containers: %w", err)
@@ -423,6 +503,12 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if err := a.dispatcher.Policy.Validate(); err != nil {
 		return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
 	}
+	// A capacity that cannot be read, or that the per-task cap does not fit
+	// in, would be an Orker that admits nothing or admits blindly; either
+	// refuses here, naming the setting.
+	if a.capacityErr != nil {
+		return fmt.Errorf("%s: %w", ReasonCapacityInvalid, a.capacityErr)
+	}
 	// An id is what names this Orker's control channel (task.QueueForOrker),
 	// so an id that cannot name one refuses boot here, naming the variable,
 	// rather than leaving an Orker nobody can cordon.
@@ -443,23 +529,43 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return fmt.Errorf("%s: create the workspace root %s: %w", ReasonWorkdirFailed, root, err)
 	}
-	if prober, ok := a.dispatcher.Runtime.(interface {
-		ProbeBindable(context.Context, string) error
-	}); ok {
-		if err := prober.ProbeBindable(ctx, root); err != nil {
-			switch {
-			case ctx.Err() != nil:
-				// An Orker told to stop while it probes has found nothing
-				// wrong with its work root or its daemon.
-				return fmt.Errorf("boot interrupted during the bind probe: %w (%v)", ctx.Err(), err)
-			case errors.Is(err, ErrProbeImageUnavailable):
-				return fmt.Errorf("%s: %w", ReasonBindProbeImageUnavailable, err)
-			case errors.Is(err, ErrProbeTimedOut):
-				return fmt.Errorf("%s: %w", ReasonBindProbeTimedOut, err)
-			default:
-				return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
-			}
+	// The boot probe: one container built as a task's is, judged from inside
+	// and from the host (boot_probe.go).
+	if err := a.dispatcher.ProbeRuntime(ctx, root); err != nil {
+		switch {
+		case ctx.Err() != nil:
+			// An Orker told to stop while it probes has found nothing
+			// wrong with its work root or its daemon.
+			return fmt.Errorf("boot interrupted during the bind probe: %w (%v)", ctx.Err(), err)
+		case errors.Is(err, ErrProbeImageUnavailable):
+			return fmt.Errorf("%s: %w", ReasonBindProbeImageUnavailable, err)
+		case errors.Is(err, ErrProbeTimedOut):
+			return fmt.Errorf("%s: %w", ReasonBindProbeTimedOut, err)
+		case errors.Is(err, ErrPostureRefused):
+			return fmt.Errorf("%s: %w", ReasonRuntimePostureRefused, err)
+		default:
+			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
+	}
+	// Which engine the probe ran on, said out loud: the CLI is configured, the
+	// engine behind it is asked, and the probe above is what verified the
+	// two agree on a task's posture.
+	if info, err := a.dispatcher.Runtime.Describe(ctx); err != nil {
+		a.dispatcher.logger().Warn("container runtime could not describe itself", "error", err)
+	} else {
+		a.dispatcher.logger().Info("container runtime", "engine", info.Name, "cli", info.CLI,
+			"version", info.Version, "rootless", info.Rootless, "seccomp", info.Seccomp)
+	}
+	// An escape hatch that does not land as the Orker is a boot refusal only
+	// where every task would use it; elsewhere it fails only the tasks that
+	// ask for it, and says so here first.
+	if err := a.dispatcher.runAsOrkerUnavailable(); err != nil {
+		if a.dispatcher.Policy.ForceUser {
+			return fmt.Errorf("%s: %s is set, so every task runs as the Orker's user, and %w",
+				ReasonRunAsOrkerUnavailable, ForceUserVar, err)
+		}
+		a.dispatcher.logger().Warn("boot probe: running a task as the Orker's user does not work on this host; "+
+			"a task that sets runAsOrkerUser fails "+ReasonRunAsOrkerUnavailable, "error", err)
 	}
 	// Claim the identity before reaping by it.
 	//
@@ -486,6 +592,13 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// account for any of them.
 	if err := a.reapContainers(ctx); err != nil {
 		return err
+	}
+	a.startCapacityReap()
+	if a.capacity != nil {
+		limit, reserved := a.capacity.snapshot()
+		a.dispatcher.logger().Info("capacity declared",
+			"capacity", limit.String(), "per_task_cap", a.capacity.ceiling.String(),
+			"reserved_by_orphans", reserved.String(), "orphans_pending_removal", a.capacity.pendingRemovals())
 	}
 	// And its own previous life's pin directories, beside the containers, for
 	// the same reason and with a stronger guarantee: a pin cannot outlive the
@@ -550,11 +663,49 @@ func (a *Activities) claimIdentity() error {
 // that is the point of a lock rather than a pid file — so this exists for tests
 // and for an embedded Orker that outlives one Activities.
 func (a *Activities) Close() {
+	if a.stopReap != nil {
+		a.stopReap()
+		a.stopReap = nil
+	}
 	if a.identityLock != nil {
 		unlockIdentity(a.identityLock)
 		_ = a.identityLock.Close()
 		a.identityLock = nil
 	}
+}
+
+// startCapacityReap tries again, every capacityReapInterval, to remove the
+// containers a declared capacity still holds a reservation for (capacity.go):
+// orphans seeded at boot and attempts whose removal failed. Nothing runs when
+// no capacity is declared.
+func (a *Activities) startCapacityReap() {
+	if a.capacity == nil || a.stopReap != nil {
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	a.stopReap = cancel
+	go func() {
+		ticker := time.NewTicker(capacityReapInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if a.capacity.pendingRemovals() == 0 {
+					continue
+				}
+				reapCtx, done := context.WithTimeout(ctx, controlTimeout)
+				for _, err := range a.capacity.reap(reapCtx, a.dispatcher.Runtime.Remove) {
+					// Each still holds its reservation, and so still keeps
+					// this Orker from polling for that much work.
+					a.dispatcher.logger().Warn("capacity: a container could not be removed, so it "+
+						"keeps its reservation", "error", err, "pending", a.capacity.pendingRemovals())
+				}
+				done()
+			}
+		}
+	}()
 }
 
 // defaultOrkerID derives an identity that is STABLE across a restart on the

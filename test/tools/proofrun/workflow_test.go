@@ -59,8 +59,21 @@ type wfJob struct {
 	Concurrency map[string]any    `yaml:"concurrency"`
 	Outputs     map[string]string `yaml:"outputs"`
 	Steps       []wfStep          `yaml:"steps"`
+	// Environment is a name, or a mapping with a `name:`.
+	Environment any `yaml:"environment"`
 	// ContinueOnError is read only so that a rule can refuse it.
 	ContinueOnError any `yaml:"continue-on-error"`
+}
+
+// environment is the name of the deployment environment the job runs in, or "".
+func (j *wfJob) environment() string {
+	switch v := j.Environment.(type) {
+	case string:
+		return v
+	case map[string]any:
+		return fmt.Sprint(v["name"])
+	}
+	return ""
 }
 
 func (j *wfJob) needs() []string {
@@ -109,7 +122,7 @@ func (w *wfFile) onTypes(event string) ([]string, bool) {
 	return out, true
 }
 
-var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml", "proof-rerun.yml"}
+var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml", "proof-rerun.yml", "podman.yml"}
 
 func workflowPath(name string) string {
 	return filepath.Join("..", "..", "..", ".github", "workflows", name)
@@ -1559,6 +1572,69 @@ func TestWorkflows_TheFlakesJobReadsTonightsProof(t *testing.T) {
 	expectEachMutationRefused(t, "nightly.yml", rule, []mutation{
 		{"no needs", func(w *wfFile) { w.Jobs["flakes"].Needs = nil }},
 		{"no always()", func(w *wfFile) { w.Jobs["flakes"].If = "${{ github.event_name == 'workflow_dispatch' }}" }},
+	})
+}
+
+// isQuickstartSmoke reports whether a step runs the README's Quickstart as
+// written on a clone of the commit: the getting-started path, which no proof
+// runs.
+func isQuickstartSmoke(s wfStep) bool {
+	return strings.TrimSpace(s.Run) == "scripts/quickstart-smoke.sh"
+}
+
+// TestWorkflows_TheNightlyRunsTheQuickstart: `quickstart` runs the README's
+// Quickstart on every night the nightly runs, beside the proof and whatever
+// its result, with nothing that lets a broken getting-started path pass.
+// Without it only release.yml would run it, before a release.
+func TestWorkflows_TheNightlyRunsTheQuickstart(t *testing.T) {
+	rule := func(w *wfFile) []string {
+		job, ok := w.Jobs["quickstart"]
+		if !ok {
+			return []string{"nightly.yml has no quickstart job"}
+		}
+		var p []string
+		if job.ContinueOnError != nil {
+			p = append(p, "jobs.quickstart continues on error, so a broken quickstart would not fail the nightly")
+		}
+		if len(job.needs()) > 0 {
+			p = append(p, fmt.Sprintf("jobs.quickstart.needs = %v; it runs beside the proof, whatever the proof's result", job.needs()))
+		}
+		if nightly, ok := w.Jobs["nightly"]; !ok || normalizeIf(job.If) != normalizeIf(nightly.If) {
+			p = append(p, fmt.Sprintf("jobs.quickstart.if = %q, want the nightly's own, so it runs every night the nightly does", job.If))
+		}
+		ran := false
+		for i, s := range job.Steps {
+			if s.ContinueOnError != nil {
+				p = append(p, fmt.Sprintf("jobs.quickstart %s continues on error", s.label(i)))
+			}
+			if isQuickstartSmoke(s) {
+				ran = true
+				if s.If != "" {
+					p = append(p, fmt.Sprintf("jobs.quickstart %s is conditional, so the smoke can be skipped", s.label(i)))
+				}
+			}
+		}
+		if !ran {
+			p = append(p, "jobs.quickstart never runs the README's Quickstart (scripts/quickstart-smoke.sh)")
+		}
+		return p
+	}
+	smoke := func(w *wfFile) *wfStep {
+		for i := range w.Jobs["quickstart"].Steps {
+			if isQuickstartSmoke(w.Jobs["quickstart"].Steps[i]) {
+				return &w.Jobs["quickstart"].Steps[i]
+			}
+		}
+		return &wfStep{}
+	}
+	expectEachMutationRefused(t, "nightly.yml", rule, []mutation{
+		{"no quickstart job", func(w *wfFile) { delete(w.Jobs, "quickstart") }},
+		{"a job that continues on error", func(w *wfFile) { w.Jobs["quickstart"].ContinueOnError = true }},
+		{"a smoke that continues on error", func(w *wfFile) { smoke(w).ContinueOnError = true }},
+		{"a skippable smoke", func(w *wfFile) { smoke(w).If = "false" }},
+		{"the release smoke instead", func(w *wfFile) { smoke(w).Run = "scripts/quickstart-smoke.sh --release v0.0.0" }},
+		{"waiting for the proof", func(w *wfFile) { w.Jobs["quickstart"].Needs = "nightly" }},
+		{"by dispatch only", func(w *wfFile) { w.Jobs["quickstart"].If = "${{ github.event_name == 'workflow_dispatch' }}" }},
 	})
 }
 

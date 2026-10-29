@@ -89,10 +89,15 @@ builds the release images (`ork`, `orker`, `orkctl`, `ui` and the six
 activities) as OCI layouts from those binaries, for this machine unless
 `PLATFORMS` says otherwise. `make release-smoke VERSION=vX.Y.Z` builds both
 for this machine and runs the quickstart's `compose.yaml` on those images end
-to end, by digest, in a compose project, registry and ports of its own.
+to end, by digest, in a compose project, registry and ports of its own. It
+signs each image with a throwaway key, by the cosign image and flags the
+release signs with (`deploy/cosign-image.txt`), and runs an Orkflow in a
+namespace that requires that key, so OrkStack's own verifier accepts what a
+release signs.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
-runs both before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
+runs both before it publishes anything, and `nightly.yml` runs the quickstart
+smoke on `main` every night ([docs/PROOFS.md](./docs/PROOFS.md)).
 
 ## Fast checks (no Docker, under two minutes warm)
 
@@ -137,6 +142,17 @@ Linux host, do the one-time `host.docker.internal` setup in "Linux hosts"
 below first.
 
 ## Linux hosts
+
+The runtime-facing suites (`internal/orker`, `cmd/orker`, `orkctl task run`
+and `test/fixtures/bash_activity_contract.sh`) run on whichever CLI the
+environment names, so they can be run on Podman as well as Docker: set
+`ORK_DOCKER_CLI=podman` for the podman CLI (and `ORK_DOCKER_BIN` if it is not
+`podman` on `PATH`), or `DOCKER_HOST` to Podman's socket for the docker CLI
+against it. Podman needs `insecure = true` for `localhost:5001` in
+`registries.conf` and the host requirements of docs/DEPLOY.md, "Running on
+Podman". Podman may write under `~/.config/containers` and
+`~/.local/share/containers`; restore them when done. CI runs them on Podman in
+`podman.yml`.
 
 Docker Desktop (macOS, Windows) provides `host.docker.internal` inside
 containers; plain Docker Engine on Linux does not. Several integration and

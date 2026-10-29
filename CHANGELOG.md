@@ -10,6 +10,27 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- Releases are signed. `release.yml`'s `publish` signs every image it pushes
+  to `ghcr.io/orkstack` by its index digest, in the key-based cosign layout
+  OrkStack's own image policy verifies (`sha256-<hex>.sig` in the same
+  repository), and signs `SHA256SUMS` (`SHA256SUMS.sig`); each GitHub release
+  attaches the key's public half as `cosign.pub`, the same file as
+  `deploy/cosign.pub`. Register it with `orkctl admin image-policy set
+  --signing-key orkstack=cosign.pub`, and a namespace that runs only the
+  first-party activities can require it (docs/DEPLOY.md, "Image supply-chain
+  policy"). The private key is a secret of the `release` environment, which
+  only `publish` names; `validate` refuses a dispatch until `deploy/cosign.pub`
+  is committed, and `publish` refuses to push before the key is present and
+  verifies against it (docs/PROOFS.md §10, "Set up release signing");
+  `scripts/release-signing-setup.sh` generates and proves the key pair,
+  configures the environment and its secrets, and copies the public half to
+  `deploy/cosign.pub`, with `--dry-run` and `--rotate`. cosign
+  runs as the image `deploy/cosign-image.txt` pins (v3.1.4), with the flags
+  that make it write that layout, and records nothing in a public
+  transparency log. The release smoke signs each image with a throwaway key
+  by the same image and flags, runs each-fan-out to SUCCEEDED in a namespace
+  that requires that key, and sees it refused under a key that signed
+  nothing.
 - An activity image's `with:` interface can be written as a readable YAML
   document, `kind: ActivityInterface` (by convention `interface.ork.yaml`
   beside the Dockerfile), instead of one line of JSON. `orkctl activity
@@ -42,7 +63,62 @@ include breaking changes, and each is marked **BREAKING**.
 - `go run ./internal/schemas/cmd/genschemas` also writes the Orkflow and
   automation schemas to `ui/src/lib/schemas/`, the UI's copy of
   `docs/schemas/`.
-
+- Fair dispatch across namespaces: when tasks of several namespaces wait for
+  one pool, each namespace is served in proportion to its new
+  `fair_share_weight` (`orkctl namespace update --fair-share-weight`, the
+  `fair_share_weight` setting of an automation document; 0 is the default
+  weight of 1, otherwise from 0.001 to 1000), pinned in each run at submit. It
+  takes effect where the operator enables fair dispatch on the cluster;
+  without it dispatch stays first in, first out (docs/DEPLOY.md, "Fair
+  dispatch across namespaces").
+- An Orker can declare a capacity, `orker.capacity.cpu` and
+  `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`, `_MEMORY`), and then
+  admits no task that would take its reservations above it: every poll
+  reserves the per-task cap, the reservation is trimmed to the task's
+  effective request once it arrives, and it is freed when the container is
+  removed. A pinned member is counted but never made to wait, so a pin host
+  can exceed its capacity by what its pins run at once, and polls for no new
+  task until the overshoot drains. A container that could not be removed,
+  including an orphan a restart could not reap, keeps its reservation until a
+  later removal succeeds. Unset keeps today's behaviour. `DescribeOrkerResult`
+  gains `capacity`, `reserved`, `max_request` and `default_request`, the
+  `Orker` row `capacity` and `reserved`, and `orkctl orker list` the
+  `CAPACITY` and `RESERVED` columns. New reasons: `RESOURCE_ADMISSION_MISMATCH`
+  (a guard that cannot fire while caps are honoured) and the boot refusal
+  `ORKER_CAPACITY_INVALID` (docs/DEPLOY.md, "Declaring an Orker's capacity").
+- **BREAKING:** A submit refuses a task whose `resources:` request is above
+  the per-task cap of every answering Orker of its pool, with
+  `RESOURCES_UNSATISFIABLE` (`failed_precondition`), before a run id is
+  minted. It used to be accepted and fail when that task was dispatched,
+  `RESOURCE_REQUEST_REFUSED`, so a run whose oversized task never ran (a
+  failure handler of a run that succeeded) used to succeed and is now
+  refused. Such a submit reads the Orker inventory, one describe per live
+  Orker.
+- Podman as a second engine of the Orker's one runtime: the podman CLI
+  (`orker.docker.cli: podman`, `ORK_DOCKER_CLI`, read by `orkctl activity
+  test` and `orkctl task run` too), or the docker CLI against Podman's
+  Docker-compatible socket, each with the Orker as root inside the runtime
+  (docs/DEPLOY.md, "Running on Podman"). The engine is asked at boot, logged,
+  and verified by the boot probe. On the Podman engine the default seccomp
+  profile is spelled by omitting `seccomp=builtin`, which that engine reads as
+  a file, and DescribeOrker's security profile says `seccomp=engine-default`;
+  the podman CLI is told `--http-proxy=false`, so its own proxy variables
+  never reach a container; the escape hatch uses `--userns=keep-id` on a
+  rootless podman CLI; and `/run` and `/var/tmp` get a read-only tmpfs, which
+  that engine's `--read-only` leaves writable. `podman.yml` runs the
+  runtime-facing suites on Podman, rootless and rootful.
+- The Orker counts an attempt whose own directory, or its secrets, could not
+  be removed when it ended, on `ork.orker.workspace_cleanup_failures`, and
+  logs the path and the error. The error was discarded, so a workload that
+  left a file or directory as a uid the Orker cannot remove filled the disk
+  with no sign of why.
+- `RUNTIME_POSTURE_REFUSED` and `RUN_AS_ORKER_UNAVAILABLE`, two new reasons
+  (docs/REASONS.md). The first is a boot refusal: the Orker's boot probe found
+  that its runtime does not give a task's container the §9.2 posture. The
+  second fails a task that runs as the Orker's own user (`run_as_orker_user`)
+  on an Orker whose boot probe found that user does not land as the Orker,
+  as on a rootless or user-namespaced daemon; it is not retried, and with
+  `ORK_ORKER_FORCE_USER` it refuses boot instead.
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
   panics: the list-filter grammar, compiler and matcher (a compiled set is a
@@ -207,6 +283,15 @@ include breaking changes, and each is marked **BREAKING**.
   OrkStack code reaches, in `google.golang.org/grpc` v1.83.1 and
   `golang.org/x/net` v0.61.0; both are raised to the patch releases that fix
   them (v1.83.2 and v0.62.0).
+- `nightly.yml` › `quickstart` runs the README's Quickstart as written on a
+  clone of `main` every night (`scripts/quickstart-smoke.sh`, as
+  `make quickstart-smoke` does), beside the nightly tier and whatever its
+  result. No proof runs the getting-started path, and `release.yml` runs it
+  only before a release, so a directory `deploy/source/Dockerfile.dockerignore`
+  does not admit, a build break in `deploy/source/Dockerfile`, a
+  `compose.yaml` key the runner's Compose refuses or a stack that never turns
+  healthy now fails the next nightly, a regression on `main`, instead of
+  waiting for the next release attempt (docs/PROOFS.md §5, §10).
 
 ### Changed
 
@@ -217,6 +302,53 @@ include breaking changes, and each is marked **BREAKING**.
   keys, so each image's config digest changes once, at its next build. Each
   image's README links its interface document instead of copying the label.
 
+- DescribeOrker's runtime name is the engine that runs the containers
+  (`docker` or `podman`), not the CLI, and its rootless flag is read from the
+  CLI's own field: the podman CLI has no `SecurityOptions`, and a failed
+  detection was reported as not rootless. A detection that fails is now an
+  error.
+- The Orker reads a container as started only from a state it names as
+  started, and keeps waiting on one it does not know (Podman's `configured`
+  and `initialized` are not started), and it reads the runtime's refusals in
+  any case, including Podman's own words for a container that already
+  stopped and for a bind source it cannot see.
+- **BREAKING:** The Orker's boot probe runs one container built exactly as a
+  task's is, and judges it. It used to run a weaker argument vector (no
+  seccomp option, no `--init`, no limits, no tmpfs), so a runtime that refused
+  or weakened the posture was found by every task and never at boot. It now
+  runs a task's argument vector with a task's mounts and checks from inside
+  the container that `NoNewPrivs` is 1, `Seccomp` is 2, no capability is held,
+  the root, `/run`, `/var/tmp` and input are read-only, `/tmp` is `noexec`, no
+  proxy variable was added to the environment, and on cgroup v2 the cpu,
+  memory and pids limits are the ones it asked for; it proves the bind is the
+  Orker's own directory with a nonce written each way. An Orker whose runtime
+  fails any of these refuses to start, `RUNTIME_POSTURE_REFUSED` naming each
+  fact, or `WORKDIR_NOT_BINDABLE` for a bind that is another directory (as
+  Podman's Docker-compatible socket makes of a missing source). A deployment
+  whose docker CLI configuration adds `proxies` to every container, or whose
+  rootless daemon silently drops the cpu or memory limit, now refuses to
+  start where it started before. A probe refusal that is neither a bind nor a
+  deadline, which was `WORKDIR_NOT_BINDABLE`, is `RUNTIME_POSTURE_REFUSED`.
+- **BREAKING:** An Orker that runs every task as its own user
+  (`ORK_ORKER_FORCE_USER`) on a rootless or user-namespaced daemon refuses to
+  start as `RUN_AS_ORKER_UNAVAILABLE`, and on such a daemon a task that sets
+  `run_as_orker_user: true` fails with it, not retried, even where its image
+  writes files the Orker could read. That user lands as another host user
+  there, so the escape hatch did not do what it says.
+- `/tmp` is mounted `noexec` explicitly. Docker adds `noexec` to a `--tmpfs`
+  by itself and Podman does not. `/run` and `/var/tmp` get no tmpfs of their
+  own: Docker's `--read-only` already keeps them read-only, and a mount there
+  follows an image's symlink (an image whose `/var/tmp` links to `/tmp` lost
+  its writable `/tmp`); the boot probe refuses a runtime that leaves either
+  writable.
+- The boot probe's image is
+  `docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc`,
+  qualified and pinned, rather than `alpine:3.20`: a short name is resolved by
+  the runtime's own search list, and Podman's enforcing short-name mode with
+  more than one search registry refused it.
+- `ContainerSpec` says "run as the Orker" (`RunAsOrker`) instead of carrying
+  a `--user` value, and the runtime renders it; the docker CLI renders it as
+  `--user <orker-uid>:<orker-gid>` as before.
 - The pre-release gate excuses a runner-size miss exactly as the merge gate
   and the nightly do: on a CI runner below a row's reference CPUs, under a row
   of `scripts/proof-host-speed.tsv` the base carries, a wall-clock miss is a
@@ -291,6 +423,72 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- Admin → Namespaces' **Reload latest and re-apply my edit**, offered when a
+  save loses to a change made underneath the open form, now re-applies only
+  the fields the reader changed, onto the namespace as it is stored now. It
+  used to re-send every field the form shows as it had loaded it, so the
+  retry silently reverted whatever the concurrent change had set in a field
+  the reader never touched: a hold placed from another tab was released by
+  the retry. A field both sides changed keeps the reader's value. Proven by
+  `ui/e2e/admission.spec.ts` (test 6, which now carries the two-tab
+  conflict through the retry).
+- A pool whose every Orker is busy is no longer refused at submit as empty,
+  and submit's capability probes no longer skip it. An Orker polls its pool's
+  channel only while it has a free task slot, so once every Orker of a pool
+  had run `ORK_ORKER_MAX_CONCURRENT` tasks for 90 seconds the channel showed
+  no poller: a submit was refused `has no live Orkers` while the Orkers were
+  doing the pool's work, and the pin-host, fan-out, caching and failure
+  handler probes, sent as activities on that same channel, waited behind the
+  busy slots and were skipped with a warning. When a pool's channel shows no
+  poller, submit now asks the Orker inventory (the presence channel, and each
+  Orker on its own control channel, the read `orkctl orker list` makes), and
+  every probe asks each uncordoned Orker of the pool on its own control
+  channel. A probe now judges every such Orker, so one Orker of an older
+  release refuses its pool rather than only when it happened to answer, and
+  one pin host is enough to open a pin. `ListPools` counts a busy pool's
+  Orkers the same way. Found by reading the code; reproduced by
+  `TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes`, which
+  failed on the empty-pool refusal and, with only presence fixed, on the
+  skipped pin-host probe.
+- **BREAKING:** A task's `resources.cpu` and `resources.memory` are refused
+  at validate and apply, with their path, when they do not read as a limit in the
+  Kubernetes spelling (`docs/DSL.md` rule 6d): `cpu: "banana"` or
+  `memory: 4GB` used to be accepted and stored, then fail every attempt
+  `RESOURCE_REQUEST_REFUSED` at dispatch. The DSL and the Orker now read a
+  request with one grammar (`internal/quantity`).
+- The Orker's task worker sets its poller count explicitly (2, the SDK's
+  default). Left at the default, a Temporal namespace that advertises poller
+  autoscaling auto-enrolled it, and a pin host's session worker with it, so
+  how many polls an Orker held was a server setting.
+- `docs/TROUBLESHOOTING.md` no longer says a task waiting for a busy pool
+  stays `PENDING`. It is `RUNNING` from dispatch, with `waiting for an orker`
+  in `orkctl run inspect` and on the run page; `PENDING` is only the engine's
+  own hold (the in-flight cap, the history hold line, a pin opening).
+- `orkctl task run` gives each run an identity of its own,
+  `ork.orker=orkctl-task-run-<hex>` from its local run id, in place of the one
+  `orkctl-task-run` every run shared, so one run's label never names another
+  run's container. Each run holds a lock file for its identity in its work
+  directory while it lives, naming its host and container engine, and deletes
+  it once its container is removed. The next task run in the same work
+  directory, on the same host and engine, removes the containers of every
+  identity whose lock is free: a container a run abandoned on a second
+  interrupt, or left when it was killed. A live run's container is never
+  touched, and `--render-only` removes none. Before, nothing removed such a
+  container; one an earlier release left under the shared
+  `ork.orker=orkctl-task-run` label is not collected and is removed by that
+  label by hand.
+
+- The Orker reads a docker CLI's answer from its stdout alone and quotes its
+  stderr in errors. Both streams were read as one, so a CLI that wrote a line
+  of its own on stderr (the `podman-docker` shim's "Emulate Docker CLI using
+  podman" on every command, a rootless runtime's warnings) broke every parse:
+  the image inspect no longer decoded and every task failed
+  `IMAGE_PULL_FAILED`, and a created container's id carried the warning.
+- The Orker kills a container before it removes it. Podman's `rm --force`,
+  behind its CLI and its Docker-compatible socket, waits out a running
+  container's stop timeout first: 30 s for a workload that ignores SIGTERM,
+  the whole of the removal's own time limit, so a removal could time out and
+  a boot reap cost 30 s per orphan.
 - The unit gate gives each package's test binary a 15-minute `-timeout`
   instead of `go test`'s default ten. `internal/engine`'s unit suite took
   460 s on a 4-vCPU CI runner and passed ten minutes on a slower one (CI run

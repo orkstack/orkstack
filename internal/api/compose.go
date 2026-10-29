@@ -578,6 +578,10 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		if err != nil {
 			return childRefusal(poolPlanError(err), ref, t.GetId())
 		}
+		// Fairness is a run-tree value: the child inherits the parent's at
+		// start (childStartPlan), so the nested plan carries none of its
+		// bytes inside the 256 KiB plan.
+		childPlan.Fairness = nil
 		// 4. The image policy: one selection for the whole tree.
 		if err := s.checkImagePolicy(ctx, r.ns, r.sel, childPlanned); err != nil {
 			return childRefusal(submitPolicyError(err), ref, t.GetId())

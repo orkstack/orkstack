@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/quantity"
 )
 
 // FuzzRenderer_ARenderedValueIsTheValue: a value reaches a rendered string
@@ -162,7 +163,10 @@ func FuzzDockerCreateArgs(f *testing.F) {
 	allowed := map[string]int{ // flag -> how many values it takes
 		"--name": 1, "--read-only": 0, "--cap-drop=ALL": 0, "--security-opt": 1, "--init": 0, "--workdir": 1, "--network": 1,
 		"--cpus": 1, "--memory": 1, "--pids-limit": 1, "--stop-timeout": 1, "--user": 1, "--tmpfs": 1, "--label": 1, "--env": 1, "--mount": 1,
+		"--http-proxy=false": 0, "--userns=keep-id": 0,
 	}
+	// Docker, the rootless podman CLI, and the docker CLI on the Podman socket.
+	dialects := []dialect{dockerDialect, {cli: CLIPodman, engine: CLIPodman, rootless: true}, {cli: CLIDocker, engine: CLIPodman}}
 	f.Fuzz(func(t *testing.T, image, labelKey, labelValue, source, destination, command string) {
 		spec := validSpec()
 		spec.Image = image
@@ -170,47 +174,91 @@ func FuzzDockerCreateArgs(f *testing.F) {
 		spec.Env = map[string]string{labelKey: labelValue}
 		spec.Mounts = []Mount{{Source: source, Destination: destination, ReadOnly: true}}
 		spec.Command = []string{command, "-c", "--privileged"}
-		args, err := dockerCreateArgs(spec)
-		if err != nil {
-			if err.Error() == "" {
-				t.Fatalf("dockerCreateArgs refused with no reason")
+		for _, spoken := range dialects {
+			args, err := createArgs(spec, spoken)
+			if err != nil {
+				if err.Error() == "" {
+					t.Fatalf("createArgs refused with no reason")
+				}
+				continue
 			}
-			return
-		}
-		imageAt := len(args) - len(spec.Command) - 1
-		if imageAt < 1 || args[imageAt] != image || args[0] != "create" {
-			t.Fatalf("the image %q is not where the runtime reads it in %q", image, args)
-		}
-		if image == "" || image[0] == '-' || strings.ContainsAny(image, " \t\r\n\x00") {
-			t.Fatalf("an image %q reached the argument vector %q", image, args)
-		}
-		seen := map[string]int{}
-		for i := 1; i < imageAt; {
-			values, known := allowed[args[i]]
-			if !known {
-				t.Fatalf("argument %d, %q, is not a flag of the security profile: %q", i, args[i], args)
+			imageAt := len(args) - len(spec.Command) - 1
+			if imageAt < 1 || args[imageAt] != image || args[0] != "create" {
+				t.Fatalf("the image %q is not where the runtime reads it in %q", image, args)
 			}
-			seen[args[i]]++
-			i += 1 + values
-			if i > imageAt {
-				t.Fatalf("flag %q is missing its value in %q", args[i-1-values], args)
+			if image == "" || image[0] == '-' || strings.ContainsAny(image, " \t\r\n\x00") {
+				t.Fatalf("an image %q reached the argument vector %q", image, args)
 			}
-		}
-		for _, once := range []string{"--name", "--read-only", "--cap-drop=ALL", "--init", "--workdir", "--network", "--cpus", "--memory", "--pids-limit", "--tmpfs"} {
-			if seen[once] != 1 {
-				t.Fatalf("%s appears %d times in %q", once, seen[once], args)
-			}
-		}
-		if seen["--security-opt"] != 2 || seen["--mount"] != 1 {
-			t.Fatalf("security-opt %d, mount %d in %q", seen["--security-opt"], seen["--mount"], args)
-		}
-		for i, arg := range args[:imageAt] {
-			if arg == "--mount" {
-				mount := args[i+1]
-				if strings.Count(mount, ",") != 3 || !strings.HasPrefix(mount, "type=bind,source=") {
-					t.Fatalf("the mount %q holds options the Orker did not write", mount)
+			seen := map[string]int{}
+			for i := 1; i < imageAt; {
+				values, known := allowed[args[i]]
+				if !known {
+					t.Fatalf("%+v: argument %d, %q, is not a flag of the security profile: %q", spoken, i, args[i], args)
+				}
+				seen[args[i]]++
+				i += 1 + values
+				if i > imageAt {
+					t.Fatalf("flag %q is missing its value in %q", args[i-1-values], args)
 				}
 			}
+			for _, once := range []string{"--name", "--read-only", "--cap-drop=ALL", "--init", "--workdir", "--network", "--cpus", "--memory", "--pids-limit"} {
+				if seen[once] != 1 {
+					t.Fatalf("%s appears %d times in %q", once, seen[once], args)
+				}
+			}
+			// The engine's spellings: /tmp, and on Podman a read-only tmpfs over
+			// each root path its --read-only leaves writable; no-new-privileges,
+			// and on Docker the seccomp profile by name.
+			wantTmpfs, wantSecurity := 1, 2
+			if spoken.engine == CLIPodman {
+				wantTmpfs, wantSecurity = 1+len(readOnlyRootfsPaths), 1
+			}
+			if seen["--tmpfs"] != wantTmpfs || seen["--security-opt"] != wantSecurity || seen["--mount"] != 1 {
+				t.Fatalf("%+v: tmpfs %d, security-opt %d, mount %d in %q", spoken, seen["--tmpfs"], seen["--security-opt"], seen["--mount"], args)
+			}
+			if (seen["--http-proxy=false"] == 1) != (spoken.cli == CLIPodman) {
+				t.Fatalf("%+v: --http-proxy=false appears %d times in %q", spoken, seen["--http-proxy=false"], args)
+			}
+			for i, arg := range args[:imageAt] {
+				if arg == "--mount" {
+					mount := args[i+1]
+					if strings.Count(mount, ",") != 3 || !strings.HasPrefix(mount, "type=bind,source=") {
+						t.Fatalf("the mount %q holds options the Orker did not write", mount)
+					}
+				}
+			}
+		}
+	})
+}
+
+// FuzzIsRootless reads the engine's answer to "is it rootless", which the
+// engine decides. The claims: the podman CLI's answer is true or false only
+// when it says exactly that, and anything else is an error, never "not
+// rootless"; the docker CLI's is rootless exactly when its security options
+// name it.
+func FuzzIsRootless(f *testing.F) {
+	for _, seed := range []string{"true\n", "false", " true ", "<no value>", "", "[name=seccomp,profile=builtin name=rootless]", "[name=seccomp,profile=default]"} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, answer string) {
+		got, err := dialect{cli: CLIPodman}.isRootless(answer)
+		switch strings.TrimSpace(answer) {
+		case "true":
+			if err != nil || !got {
+				t.Fatalf("podman isRootless(%q) = %t, %v; want true", answer, got, err)
+			}
+		case "false":
+			if err != nil || got {
+				t.Fatalf("podman isRootless(%q) = %t, %v; want false", answer, got, err)
+			}
+		default:
+			if err == nil {
+				t.Fatalf("podman isRootless(%q) = %t, nil; an answer that is not true or false is an error", answer, got)
+			}
+		}
+		got, err = dockerDialect.isRootless(answer)
+		if err != nil || got != strings.Contains(answer, "name=rootless") {
+			t.Fatalf("docker isRootless(%q) = %t, %v", answer, got, err)
 		}
 	})
 }
@@ -289,17 +337,17 @@ func FuzzResolveResources_AnAcceptedRequestIsALimitWithinTheCap(f *testing.F) {
 			return
 		}
 
-		capCPU, err := parseCPU(policy.MaxCPU)
-		if err != nil || !isPositiveFinite(capCPU) {
+		capCPU, err := quantity.ParseCPU(policy.MaxCPU)
+		if err != nil || !quantity.PositiveFinite(capCPU) {
 			t.Fatalf("accepted cpu %q under the cap %q, which is not a limit (%v)", gotCPU, policy.MaxCPU, err)
 		}
-		capBytes, err := parseMemory(policy.MaxMemory)
+		capBytes, err := quantity.ParseMemory(policy.MaxMemory)
 		if err != nil || capBytes < 1 {
 			t.Fatalf("accepted memory %q under the cap %q, which is not a limit (%v)", gotMemory, policy.MaxMemory, err)
 		}
 
 		renderedCPU, err := strconv.ParseFloat(dockerCPUs(gotCPU), 64)
-		if err != nil || !isPositiveFinite(renderedCPU) || renderedCPU > capCPU {
+		if err != nil || !quantity.PositiveFinite(renderedCPU) || renderedCPU > capCPU {
 			t.Fatalf("cpu %q renders as %q, not a positive limit within %q (%v)", gotCPU, dockerCPUs(gotCPU), policy.MaxCPU, err)
 		}
 		renderedBytes, err := strconv.ParseInt(dockerMemory(gotMemory), 10, 64)
@@ -343,41 +391,121 @@ func FuzzQuantities_ARenderedLimitIsTheQuantityTheCapsWereCheckedWith(f *testing
 	} {
 		f.Add(seed)
 	}
-	f.Fuzz(func(t *testing.T, quantity string) {
-		cpus, cpuErr := parseCPU(quantity)
-		bytes, memErr := parseMemory(quantity)
+	f.Fuzz(func(t *testing.T, raw string) {
+		cpus, cpuErr := quantity.ParseCPU(raw)
+		bytes, memErr := quantity.ParseMemory(raw)
 
 		if cpuErr == nil {
-			rendered := dockerCPUs(quantity)
-			if isPositiveFinite(cpus) {
+			rendered := dockerCPUs(raw)
+			if quantity.PositiveFinite(cpus) {
 				if back, err := strconv.ParseFloat(rendered, 64); err != nil || back != cpus {
-					t.Fatalf("cpu %q is %v and renders as %q (%v)", quantity, cpus, rendered, err)
+					t.Fatalf("cpu %q is %v and renders as %q (%v)", raw, cpus, rendered, err)
 				}
-			} else if rendered != quantity {
-				t.Fatalf("cpu %q is %v, no limit, yet renders as %q", quantity, cpus, rendered)
+			} else if rendered != raw {
+				t.Fatalf("cpu %q is %v, no limit, yet renders as %q", raw, cpus, rendered)
 			}
-			if cpuReadsAsUnlimited(quantity) == isPositiveFinite(cpus) {
-				t.Fatalf("cpuReadsAsUnlimited(%q) disagrees with the number %v", quantity, cpus)
+			if cpuReadsAsUnlimited(raw) == quantity.PositiveFinite(cpus) {
+				t.Fatalf("cpuReadsAsUnlimited(%q) disagrees with the number %v", raw, cpus)
 			}
 		}
 		if memErr == nil {
-			rendered := dockerMemory(quantity)
-			if isByteCount(bytes) {
+			rendered := dockerMemory(raw)
+			if quantity.ByteCount(bytes) {
 				if n, err := strconv.ParseInt(rendered, 10, 64); err != nil || n < 1 || float64(n) > bytes || bytes-float64(n) >= 1 {
-					t.Fatalf("memory %q is %v bytes and renders as %q (%v)", quantity, bytes, rendered, err)
+					t.Fatalf("memory %q is %v bytes and renders as %q (%v)", raw, bytes, rendered, err)
 				}
-			} else if rendered != quantity {
-				t.Fatalf("memory %q is %v bytes, no limit, yet renders as %q", quantity, bytes, rendered)
+			} else if rendered != raw {
+				t.Fatalf("memory %q is %v bytes, no limit, yet renders as %q", raw, bytes, rendered)
 			}
-			if memoryReadsAsUnlimited(quantity) == isByteCount(bytes) {
-				t.Fatalf("memoryReadsAsUnlimited(%q) disagrees with the number %v", quantity, bytes)
+			if memoryReadsAsUnlimited(raw) == quantity.ByteCount(bytes) {
+				t.Fatalf("memoryReadsAsUnlimited(%q) disagrees with the number %v", raw, bytes)
 			}
 		}
 
 		spec := validSpec()
-		spec.CPUs, spec.Memory = quantity, quantity
-		if _, err := dockerCreateArgs(spec); err == nil && (cpuErr == nil && !isPositiveFinite(cpus) || memErr == nil && !isByteCount(bytes)) {
-			t.Fatalf("dockerCreateArgs rendered cpus and memory %q, which the runtime reads as unlimited", quantity)
+		spec.CPUs, spec.Memory = raw, raw
+		if _, err := dockerCreateArgs(spec); err == nil && (cpuErr == nil && !quantity.PositiveFinite(cpus) || memErr == nil && !quantity.ByteCount(bytes)) {
+			t.Fatalf("dockerCreateArgs rendered cpus and memory %q, which the runtime reads as unlimited", raw)
+		}
+	})
+}
+
+// FuzzBootProbeFacts parses what the boot probe's container printed, which
+// the container, not OrkStack, decides. The claims: no output panics the
+// parser or the judgement, and output the judgement passes really does say
+// the posture §9.2 requires — no privilege gain, a seccomp filter, no
+// capability, and a read-only root, /run, /var/tmp and input.
+func FuzzBootProbeFacts(f *testing.F) {
+	good := GoodBootProbeFacts(DefaultSecurityPolicy())
+	f.Add("@@nonce\nn\n" + good)
+	f.Add("@@nonce\nn\n" + strings.Replace(good, "Seccomp:\t2", "Seccomp:\t0", 1))
+	f.Add("@@nonce\nn\n" + strings.Replace(good, "tmpfs /run tmpfs ro,", "tmpfs /run tmpfs rw,", 1))
+	f.Add("@@nonce\nn\n" + strings.Replace(good, "@@cgroup\n0::/\n", "@@cgroup\n12:pids:/x\n0::/\n", 1))
+	f.Add("@@status\nCapBnd:\tzz\n@@mounts\n/ / x ro 0 0\n\\0777 \\ x ro\n@@cpu.max\n1 0")
+	f.Add("")
+	want := postureWant{cpus: 1, memoryBytes: 1 << 30, pids: DefaultPidsLimit, tmp: ContainerScratchTmp}
+	f.Fuzz(func(t *testing.T, stdout string) {
+		facts := parseProbeFacts(stdout)
+		violations, _ := facts.postureViolations(want)
+		if len(violations) > 0 {
+			return
+		}
+		status := map[string]string{}
+		for _, line := range facts["status"] {
+			if key, value, ok := strings.Cut(line, ":"); ok {
+				status[key] = strings.TrimSpace(value)
+			}
+		}
+		if status["NoNewPrivs"] != "1" || status["Seccomp"] != "2" {
+			t.Fatalf("passed a posture with NoNewPrivs %q and Seccomp %q", status["NoNewPrivs"], status["Seccomp"])
+		}
+		for _, set := range []string{"CapEff", "CapPrm", "CapBnd"} {
+			if strings.Trim(status[set], "0") != "" || status[set] == "" {
+				t.Fatalf("passed a posture whose %s is %q", set, status[set])
+			}
+		}
+		mounts := parseMounts(facts["mounts"])
+		for _, path := range []string{"/", "/run", "/var/tmp", ContainerInput} {
+			if options, ok := mounts.effective(path); !ok || !options["ro"] {
+				t.Fatalf("passed a posture where %s is not read-only", path)
+			}
+		}
+	})
+}
+
+// FuzzEngineFromComponents reads `version --format {{json .Server.Components}}`,
+// which the engine behind the docker CLI decides. The claims: an answer that
+// is not a JSON array of components is an error, never an engine; one that
+// decodes names Podman exactly when a component's name says Podman, in any
+// case, and Docker otherwise.
+func FuzzEngineFromComponents(f *testing.F) {
+	f.Add(`[{"Name":"Engine","Version":"29.9.2"},{"Name":"containerd"}]`)
+	f.Add(`[{"Name":"Podman Engine","Version":"5.8.8"},{"Name":"Conmon"}]`)
+	f.Add(`[{"Name":"PODMAN"}]`)
+	f.Add(`null`)
+	f.Add(`Cannot connect to the Docker daemon`)
+	f.Add(`[{"Name":1}]`)
+	f.Fuzz(func(t *testing.T, raw string) {
+		engine, err := engineFromComponents(raw)
+		var components []struct {
+			Name string `json:"Name"`
+		}
+		decodes := json.Unmarshal([]byte(strings.TrimSpace(raw)), &components) == nil
+		if !decodes {
+			if err == nil {
+				t.Fatalf("engineFromComponents(%q) = %q; an answer that does not decode is not an engine", raw, engine)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatalf("engineFromComponents(%q) = %v; it decodes", raw, err)
+		}
+		saysPodman := false
+		for _, c := range components {
+			saysPodman = saysPodman || strings.Contains(strings.ToLower(c.Name), "podman")
+		}
+		if want := map[bool]string{true: CLIPodman, false: CLIDocker}[saysPodman]; engine != want {
+			t.Fatalf("engineFromComponents(%q) = %q; want %q", raw, engine, want)
 		}
 	})
 }

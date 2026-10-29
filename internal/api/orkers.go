@@ -74,8 +74,8 @@ func (s *Service) ListOrkers(
 	return connect.NewResponse(&orkstackv1.ListOrkersResponse{Orkers: kept}), nil
 }
 
-// orkerInventory is ListOrkers' body for the whole fleet: the presence list,
-// one describe per Orker, rows sorted by pool then orker_id. ListOrkers keeps
+// orkerInventory is ListOrkers' body for the whole fleet: engine.ReadFleet's
+// presence list and one describe per Orker, rows sorted by pool then orker_id. ListOrkers keeps
 // its own orker_id pushdown and applies its filters on top of it; ListReleases
 // attributes the same rows to releases, so the release view and the Orker list
 // are one inventory, not two (docs/DEPLOY.md §3).
@@ -83,23 +83,14 @@ func (s *Service) orkerInventory(ctx context.Context) ([]*orkstackv1.Orker, erro
 	if s.fleet == nil {
 		return nil, errNoFleet
 	}
-	presence, err := s.fleet.ObserveOrkers(ctx)
+	orkers, err := engine.ReadFleet(ctx, s.fleet)
 	if err != nil {
 		return nil, err
 	}
-	rows := make([]*orkstackv1.Orker, len(presence))
-	errs := make([]error, len(presence))
-	inParallel(len(presence), func(i int) {
-		// Each Orker is bounded on its own, so one that is down costs the
-		// reader one wave rather than the request.
-		describeCtx, cancel := context.WithTimeout(ctx, engine.OrkerDescribeTimeout)
-		defer cancel()
-		described, err := s.fleet.DescribeOrkerByID(describeCtx, presence[i].Identity)
-		rows[i] = orkerRow(presence[i], described, err)
-		errs[i] = err
-	})
-	for i, row := range rows {
-		s.logUnavailableOrker(row, errs[i])
+	rows := make([]*orkstackv1.Orker, len(orkers))
+	for i, orker := range orkers {
+		rows[i] = orkerRow(orker.Presence, orker.Described, orker.Err)
+		s.logUnavailableOrker(rows[i], orker.Err)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].GetPool() != rows[j].GetPool() {
@@ -192,5 +183,8 @@ func orkerRow(presence engine.OrkerPresence, described *orkstackv1.DescribeOrker
 	row.CordonReason = described.GetCordonReason()
 	row.CordonedAt = described.GetCordonedAt()
 	row.Pins = described.GetPins()
+	row.Capacity = described.GetCapacity()
+	row.Reserved = described.GetReserved()
+	row.MaxRequest = described.GetMaxRequest()
 	return row
 }

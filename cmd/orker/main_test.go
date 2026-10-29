@@ -31,6 +31,19 @@ func TestWorkerOptions_StayActivityOnly(t *testing.T) {
 	}
 }
 
+// TestWorkerOptions_SetAnExplicitPollerCount: a count left at the SDK default
+// opts the task worker, and a pin host's session worker with it, into poller
+// autoscaling whenever the Temporal namespace advertises it (orker.TaskPollers).
+func TestWorkerOptions_SetAnExplicitPollerCount(t *testing.T) {
+	for _, maxPins := range []int32{0, 2} {
+		options := workerOptions(config{maxPins: maxPins})
+		if options.MaxConcurrentActivityTaskPollers != orker.TaskPollers || options.ActivityTaskPollerBehavior != nil {
+			t.Errorf("max_pins=%d: pollers = %d, behavior = %v; want exactly %d and no behavior",
+				maxPins, options.MaxConcurrentActivityTaskPollers, options.ActivityTaskPollerBehavior, orker.TaskPollers)
+		}
+	}
+}
+
 // TestWorkerOptions_CarryTheConfiguredDeploymentVersion: an Orker that does
 // not carry the engine's deployment version is not in a pinned run's version
 // at all. Temporal's exception clause then routes that run's tasks to whatever

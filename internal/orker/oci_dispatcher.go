@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -136,6 +137,10 @@ type OCIDispatcher struct {
 	// work root.
 	stageOnce sync.Once
 	stage     *stagingCache
+	// runAsOrker is the boot probe's finding about the §3.1 escape hatch on
+	// this host: nil until a probe ran (`orkctl activity test` and `task run`
+	// run none, and render the hatch as before), then what the probe found.
+	runAsOrker atomic.Pointer[runAsOrkerFinding]
 }
 
 // transferLimit is the per-phase bound on concurrent object-store requests.
@@ -186,6 +191,32 @@ type AttemptOutcome struct {
 	// Cache is the attempt's memo decision (key_components included), for an
 	// attempt of a cached task that reached the memo step; nil otherwise.
 	Cache *orkstackv1.CacheResult
+	// CleanupErr is why the attempt's own directory, or its secrets, could
+	// not be removed after it ended; nil when both were. It changes nothing
+	// about the outcome: the attempt's result is already decided, and what
+	// is left behind is a disk to reclaim, not a task to fail.
+	CleanupErr error
+}
+
+// attemptCleanup collects what removing one attempt's own directories left
+// behind. The removals are deferred inside execute; Execute's end hands the
+// result to the observer.
+type attemptCleanup struct {
+	err error
+}
+
+// record logs a removal that failed and keeps it for the observer. A removal
+// that succeeded records nothing.
+func (c *attemptCleanup) record(
+	logger *slog.Logger, in *orkstackv1.ExecuteTaskInput, attempt int32, what, path string, err error,
+) {
+	if err == nil {
+		return
+	}
+	logger.Warn("attempt cleanup: a directory could not be removed and is left on disk",
+		"run", in.GetRunId(), "task", in.GetTaskId(), "attempt", attempt,
+		"directory", what, "path", path, "error", err)
+	c.err = errors.Join(c.err, fmt.Errorf("remove the attempt's %s %s: %w", what, path, err))
 }
 
 // TaskLogExporter receives every framed line of one attempt, beside the
@@ -305,6 +336,10 @@ func (d *OCIDispatcher) Execute(
 		// so the attempt record and the observer see it on every exit path —
 		// a miss whose container then failed still records its miss.
 		trace = &memoTrace{emit: emit}
+		// cleanup is what removing the attempt's own directories left
+		// behind. execute's deferred removals have run by the time end
+		// reads it, on every exit path, a panic's included.
+		cleanup = &attemptCleanup{}
 	)
 
 	// end is the ONLY thing in Execute allowed to call attemptObs.End, and it
@@ -326,6 +361,7 @@ func (d *OCIDispatcher) Execute(
 		}
 		ended = true
 		outcome.Cache = trace.result
+		outcome.CleanupErr = cleanup.err
 		if attemptObs != nil {
 			attemptObs.End(outcome)
 		}
@@ -361,7 +397,7 @@ func (d *OCIDispatcher) Execute(
 	defer beat.Stop()
 	beat.Phase("start")
 
-	result, failure = d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink, trace)
+	result, failure = d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink, trace, cleanup)
 
 	// The line writers are flushed before the sink closes, so a workload's
 	// last unterminated line is not lost.
@@ -502,6 +538,7 @@ func (d *OCIDispatcher) execute(
 	stdoutLine, stderrLine io.Writer,
 	sink *logChunkSink,
 	trace *memoTrace,
+	cleanup *attemptCleanup,
 ) (*orkstackv1.ExecuteTaskResult, *Failure) {
 	if failure := d.Validate(in); failure != nil {
 		return nil, failure
@@ -547,10 +584,15 @@ func (d *OCIDispatcher) execute(
 	// Workspace.Remove, not os.RemoveAll: Seal leaves input/ at 0555 and
 	// unlinking needs write on the DIRECTORY, so a plain RemoveAll would fail
 	// and leave the attempt's tree — staged secrets included — on disk.
-	defer func() { _ = ws.Remove() }()
+	//
+	// A removal that fails anyway is reported, never discarded: a workload
+	// running as a uid other than the Orker's can leave a directory or a file
+	// the Orker cannot remove, and a tree left behind is a disk that fills
+	// with no sign of why.
+	defer func() { cleanup.record(d.logger(), in, attempt, "workspace", ws.Root, ws.Remove()) }()
 	// Secret bytes must not outlive the attempt that needed them, on ANY exit
 	// path (§9.4).
-	defer func() { _ = ws.RemoveSecrets() }()
+	defer func() { cleanup.record(d.logger(), in, attempt, "secrets", ws.Secrets, ws.RemoveSecrets()) }()
 
 	// STEP 4b. The pin's shared directory, for a pinned attempt only (§3.1).
 	//
@@ -671,6 +713,16 @@ func (d *OCIDispatcher) execute(
 		return nil, netFailure
 	}
 	runAsOrkerUser := in.GetRunAsOrkerUser() || d.Policy.ForceUser
+	// The hatch is refused here, after the memo step and the commit check,
+	// so a task that runs no container is never refused for it, and before
+	// anything is rendered for a container that will not run.
+	if runAsOrkerUser {
+		if err := d.runAsOrkerUnavailable(); err != nil {
+			return nil, FailCause(ReasonRunAsOrkerUnavailable, err,
+				"task %q runs as the Orker's own user (runAsOrkerUser or %s), which does not work on this Orker: %v",
+				in.GetTaskId(), ForceUserVar, err)
+		}
+	}
 
 	// An item of a fan-out resolves its own element of the array the engine
 	// counted, after staging (a task source is read from the staged
@@ -742,14 +794,20 @@ func (d *OCIDispatcher) execute(
 		return nil, d.runtimeFailure(err, "create the container")
 	}
 	beat.Container(id)
+	// A declared capacity frees this attempt's reservation when the
+	// container is removed, never before (capacity.go).
+	admission := admissionFrom(ctx)
+	admission.ContainerCreated(id)
 	// Remove runs on a DETACHED context: cleanup must survive the
 	// cancellation that caused it (§6.3).
 	defer func() {
 		removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
 		defer cancel()
-		if err := d.Runtime.Remove(removeCtx, id); err != nil {
+		err := d.Runtime.Remove(removeCtx, id)
+		if err != nil {
 			sink.Write(fmt.Sprintf("[ork] container %s could not be removed: %v", id, err))
 		}
+		admission.ContainerRemoved(err)
 	}()
 
 	// STEP 9-10. Run, stream, and wait for exit, cancellation or the task
@@ -1512,9 +1570,9 @@ func (d *OCIDispatcher) containerSpec(
 	if each := in.GetEach(); each != nil {
 		spec.Labels["ork.item"] = fmt.Sprintf("%d", each.GetIndex())
 	}
-	if runAsOrkerUser {
-		spec.User = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
-	}
+	// The intent, not a uid: the runtime renders "as the Orker" in its own
+	// spelling, and the boot probe checked that rendering on this host.
+	spec.RunAsOrker = runAsOrkerUser
 	return spec, nil
 }
 

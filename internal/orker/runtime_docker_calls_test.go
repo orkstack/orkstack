@@ -26,9 +26,25 @@ import (
 // error, as a daemon whose containerd cannot start the shim does), runother (a
 // refusal that is neither a bind nor a deadline), runexit (the container ran
 // and exited 3), runfailsrc (a refusal that quotes the bind source path),
-// inspecthang (`image inspect` hangs for 30 s) and rmfailall (every `rm` is
-// refused). `run` also counts itself into the runs file and, once counted,
-// touches runstarted.
+// inspecthang (`image inspect` hangs for 30 s), rmfailall (every `rm` is
+// refused), noise (every command first writes a line of its own on stderr, as
+// the podman-docker shim does) and killnotrunning (`kill` answers that the
+// container is not running). For the Podman dialects: podmanengine
+// (`version`'s components name the Podman engine), rootless (the content
+// `info {{.Host.Security.Rootless}}` answers), infofail (`info` fails),
+// versionhang and infohang (`version` or `info` hangs for 30 s) and state
+// (the content `inspect {{.State.Status}}` answers). `run` also counts
+// itself into the runs file and, once counted, touches runstarted.
+//
+// A `run` that succeeds behaves as the boot probe's container does on a
+// runtime that gives it a task's posture: it reads the nonce the Orker wrote
+// into the input bind and prints it, writes its own nonce (its last argument)
+// into the output bind, and prints the facts file, which newCountingDocker
+// fills with a posture that passes for SecurityPolicyFromEnv. Three more flags
+// make it the probe of a runtime that does not: wrongdir (the container sees
+// an input directory with nothing in it), nowrite (its writes do not reach the
+// Orker's output directory) and asorkerwrong (the file it writes as the
+// Orker's user does not hold what it wrote).
 type countingDocker struct {
 	t   *testing.T
 	dir string
@@ -37,10 +53,15 @@ type countingDocker struct {
 
 func newCountingDocker(t *testing.T) *countingDocker {
 	t.Helper()
+	// A stand-in of the docker CLI, whatever CLI the environment points the
+	// suite's real runtime at (ORK_DOCKER_CLI=podman in the Podman lane): a
+	// test that wants the podman CLI's grammar says so on the runtime.
+	t.Setenv(CLIVar, "")
 	dir := t.TempDir()
 	script := `#!/bin/sh
 S=` + shellQuote(dir) + `
 echo "$*" >> "$S/calls"
+if [ -e "$S/noise" ]; then echo "Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg." >&2; fi
 case "$1" in
   image)
     if [ -e "$S/inspecthang" ]; then exec sleep 30; fi
@@ -55,8 +76,12 @@ case "$1" in
   inspect)
     case "$3" in
       *OOMKilled*) if [ -e "$S/oom" ]; then echo true; else echo false; fi ;;
-      *) if [ -e "$S/created" ]; then echo created; else echo running; fi ;;
+      *) if [ -e "$S/state" ]; then cat "$S/state"; elif [ -e "$S/created" ]; then echo created; else echo running; fi ;;
     esac ;;
+  create) echo cid-0123 ;;
+  kill)
+    if [ -e "$S/killnotrunning" ]; then echo "Error response from daemon: container $4 is not running" >&2; exit 1; fi
+    exit 0 ;;
   start) sleep 5 ;;
   wait) if [ -e "$S/exitcode" ]; then cat "$S/exitcode"; else echo 0; fi ;;
   ps)
@@ -67,9 +92,19 @@ case "$1" in
     if [ -e "$S/rmfail-$4" ]; then echo "removal of $4 is already in progress" >&2; exit 1; fi
     exit 0 ;;
   version)
+    if [ -e "$S/versionhang" ]; then exec sleep 30; fi
     if [ -e "$S/versionfail" ]; then echo "Cannot connect to the Docker daemon" >&2; exit 1; fi
-    echo 27.0.1 ;;
-  info) echo "[name=seccomp,profile=builtin]" ;;
+    case "$3" in
+      *Components*) if [ -e "$S/podmanengine" ]; then echo '[{"Name":"Podman Engine","Version":"5.8.8"}]'; else echo '[{"Name":"Engine","Version":"27.0.1"}]'; fi ;;
+      *) echo 27.0.1 ;;
+    esac ;;
+  info)
+    if [ -e "$S/infohang" ]; then exec sleep 30; fi
+    if [ -e "$S/infofail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
+    case "$3" in
+      *Host.Security.Rootless*) if [ -e "$S/rootless" ]; then cat "$S/rootless"; else echo false; fi ;;
+      *) echo "[name=seccomp,profile=builtin]" ;;
+    esac ;;
   run)
     n=0; if [ -e "$S/runs" ]; then n=$(cat "$S/runs"); fi
     n=$((n+1)); echo "$n" > "$S/runs"
@@ -86,6 +121,22 @@ case "$1" in
       echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
     fi
     if [ -e "$S/slowruns" ] && [ "$n" -le "$(cat "$S/slowruns")" ]; then exec sleep 30; fi
+    in=""; out=""; last=""
+    for a in "$@"; do
+      case "$a" in
+        type=bind,source=*,destination=/orkstack/input,readonly) in=${a#type=bind,source=}; in=${in%%,destination=*} ;;
+        type=bind,source=*,destination=/orkstack/output) out=${a#type=bind,source=}; out=${out%%,destination=*} ;;
+      esac
+      last=$a
+    done
+    echo '@@nonce'
+    if [ -n "$in" ] && [ ! -e "$S/wrongdir" ]; then cat "$in/probe-nonce"; fi
+    echo
+    if [ -n "$out" ] && [ ! -e "$S/nowrite" ]; then
+      printf '%s' "$last" > "$out/probe-nonce"
+      if [ -e "$S/asorkerwrong" ]; then printf 'other' > "$out/probe-as-orker"; else printf '%s' "$last" > "$out/probe-as-orker"; fi
+    fi
+    if [ -e "$S/facts" ]; then cat "$S/facts"; fi
     exit 0 ;;
   *) exit 1 ;;
 esac
@@ -94,7 +145,9 @@ esac
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	return &countingDocker{t: t, dir: dir, bin: bin}
+	fake := &countingDocker{t: t, dir: dir, bin: bin}
+	fake.set("facts", GoodBootProbeFacts(SecurityPolicyFromEnv()))
+	return fake
 }
 
 func (c *countingDocker) set(flag, content string) {
@@ -239,8 +292,8 @@ func TestDockerRuntime_DescribeCachesOnlyASuccess(t *testing.T) {
 			t.Fatalf("Describe #%d = %+v, %v", i, info, err)
 		}
 	}
-	if calls := fake.calls(); len(calls) != 2 {
-		t.Fatalf("two Describes after a success spawned %d processes: %q; want 2 (version, info) in total", len(calls), calls)
+	if calls := fake.calls(); len(calls) != 3 {
+		t.Fatalf("two Describes after a success spawned %d processes: %q; want 3 (the engine, version, info) in total", len(calls), calls)
 	}
 }
 
@@ -294,23 +347,23 @@ func TestBoot_APartialReapIsLoggedNotFatal(t *testing.T) {
 // F-orker-storage-perf-9 (b): the probe image is pulled under the pull
 // timeout when absent, and a pull failure is its own error rather than a
 // claim that the work root is unbindable.
-func TestDockerRuntime_ProbeBindableSeparatesTheImageFromTheBind(t *testing.T) {
+func TestDockerRuntime_RunBootProbeSeparatesTheImageFromTheBind(t *testing.T) {
 	fake := newCountingDocker(t)
 	runtime := &DockerRuntime{Bin: fake.bin}
-	root := t.TempDir()
+	spec := probeSpecUnder(t, t.TempDir())
 
 	fake.set("pullfail", "")
-	err := runtime.ProbeBindable(context.Background(), root)
+	_, err := runtime.RunBootProbe(context.Background(), spec)
 	if !errors.Is(err, ErrProbeImageUnavailable) || errors.Is(err, ErrNotBindable) {
 		t.Fatalf("pull failure = %v; want ErrProbeImageUnavailable and not ErrNotBindable", err)
 	}
-	if !strings.Contains(err.Error(), bindProbeImage) {
+	if !strings.Contains(err.Error(), BindProbeImage) {
 		t.Fatalf("the refusal %q does not name the probe image", err)
 	}
 
 	fake.clear("pullfail")
 	fake.calls()
-	if err := runtime.ProbeBindable(context.Background(), root); err != nil {
+	if _, err := runtime.RunBootProbe(context.Background(), spec); err != nil {
 		t.Fatalf("probe after a successful pull: %v", err)
 	}
 	calls := fake.calls()
@@ -319,11 +372,76 @@ func TestDockerRuntime_ProbeBindableSeparatesTheImageFromTheBind(t *testing.T) {
 	}
 
 	fake.set("runfail", "")
-	err = runtime.ProbeBindable(context.Background(), root)
+	_, err = runtime.RunBootProbe(context.Background(), spec)
 	if !errors.Is(err, ErrNotBindable) || errors.Is(err, ErrProbeImageUnavailable) {
 		t.Fatalf("bind failure = %v; want ErrNotBindable", err)
 	}
 	if calls := fake.calls(); countPrefix(calls, "pull") != 0 {
 		t.Fatalf("a present probe image was pulled again: %q", calls)
+	}
+}
+
+// TestDockerRuntime_ParsesStdoutAndQuotesStderr is G21: a CLI that writes a
+// line of its own on stderr for every command — the podman-docker shim's
+// "Emulate Docker CLI using podman" is the common one — must not change what
+// the runtime reads. Every command's answer is read from stdout only, and a
+// failure quotes what the CLI said on stderr.
+func TestDockerRuntime_ParsesStdoutAndQuotesStderr(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("noise", "")
+	fake.set("present", "")
+	runtime := &DockerRuntime{Bin: fake.bin}
+	ctx := context.Background()
+
+	info, err := runtime.Pull(ctx, countingPinned)
+	if err != nil || info.PlatformDigest != "sha256:abc" || info.Platform != "linux/amd64" {
+		t.Errorf("Pull = %+v, %v; want the image's facts read from stdout alone", info, err)
+	}
+	id, err := runtime.Create(ctx, validSpec())
+	if err != nil || id != "cid-0123" {
+		t.Errorf("Create = %q, %v; want the container id read from stdout alone", id, err)
+	}
+	removed, err := runtime.Reap(ctx, "orker-x")
+	if err != nil || removed != 3 {
+		t.Errorf("Reap = %d, %v; want the three listed containers and nothing else", removed, err)
+	}
+	described, err := runtime.Describe(ctx)
+	if err != nil || described.Version != "27.0.1" {
+		t.Errorf("Describe = %+v, %v; want the version read from stdout alone", described, err)
+	}
+
+	fake.clear("present")
+	fake.set("pullfail", "")
+	_, err = runtime.Pull(ctx, countingPinned)
+	if err == nil || !strings.Contains(err.Error(), "pull access denied") {
+		t.Errorf("a refused pull = %v; want it to quote what the CLI said on stderr", err)
+	}
+}
+
+// TestDockerRuntime_RemoveKillsBeforeItRemoves is G23: `rm --force` on a
+// running container waits out the container's stop timeout on some runtimes
+// (30 s on Podman, which is the whole control timeout), so Remove kills the
+// container first. A kill the runtime answers with "not running", or with
+// anything else, does not stop the removal: only the removal's own answer
+// decides Remove's.
+func TestDockerRuntime_RemoveKillsBeforeItRemoves(t *testing.T) {
+	fake := newCountingDocker(t)
+	runtime := &DockerRuntime{Bin: fake.bin}
+
+	if err := runtime.Remove(context.Background(), "c-running"); err != nil {
+		t.Fatalf("Remove = %v", err)
+	}
+	calls := fake.calls()
+	want := []string{"kill --signal KILL c-running", "rm --force --volumes c-running"}
+	if strings.Join(calls, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("calls = %q; want %q", calls, want)
+	}
+
+	fake.set("killnotrunning", "")
+	if err := runtime.Remove(context.Background(), "c-exited"); err != nil {
+		t.Fatalf("Remove of a container that is not running = %v; a kill's refusal must not stop the removal", err)
+	}
+	if got := countPrefix(fake.calls(), "rm --force --volumes c-exited"); got != 1 {
+		t.Fatalf("the container was removed %d times; want once", got)
 	}
 }

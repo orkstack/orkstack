@@ -95,7 +95,12 @@ skip_run() {
     exit 77
 }
 
-command -v docker >/dev/null 2>&1 || skip_run "docker is not installed"
+# The container CLI: docker, or any CLI that speaks its grammar, such as the
+# podman CLI (ORK_DOCKER_BIN=podman). Every `docker` below is this one.
+DOCKER_CLI=${ORK_DOCKER_BIN:-docker}
+docker() { command "$DOCKER_CLI" "$@"; }
+
+command -v "$DOCKER_CLI" >/dev/null 2>&1 || skip_run "$DOCKER_CLI is not installed"
 docker version --format '{{.Server.Version}}' >/dev/null 2>&1 ||
     skip_run "the docker daemon is not reachable"
 command -v jq >/dev/null 2>&1 || skip_run "jq is not installed"
@@ -117,7 +122,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 ||
 bindable() {   # bindable <dir> — can the daemon actually bind-mount this?
     docker run --rm \
         --mount "type=bind,source=$1,destination=/probe,readonly" \
-        alpine:3.20 true >/dev/null 2>&1
+        docker.io/library/alpine:3.20 true >/dev/null 2>&1
 }
 
 ROOT=
@@ -150,6 +155,12 @@ cleanup() {
     for c in "${CONTAINERS[@]:-}"; do
         [[ -n "$c" ]] && docker rm -f "$c" >/dev/null 2>&1
     done
+    # The image runs as its own USER, and on a runtime that maps that user to
+    # another host uid (a rootful engine, or a rootless one's subordinate
+    # uids) the files it wrote are not the host user's to remove; a root
+    # container opens them up first, as first_party_contract.sh does.
+    docker run --rm --mount "type=bind,source=$ROOT,destination=/w" \
+        docker.io/library/alpine:3.20 chmod -R a+rwX /w >/dev/null 2>&1
     chmod -R u+rwX "$ROOT" 2>/dev/null
     rm -rf "$ROOT"
 }
@@ -259,6 +270,23 @@ run_detached() {
     cid=$(docker run -d "${args[@]}" "$image" 2>"$w/run.err")
     CONTAINERS+=("$cid")
     printf '%s' "$cid"
+}
+
+# cancel_like_the_orker cancels a container the way the Orker does (AGENTS.md
+# §3.3): SIGTERM through the runtime's `kill`, the grace period on a timer,
+# then SIGKILL, and returns once the container has exited. The timer is the
+# grace period itself, as the Orker's is, and it is called off the moment the
+# container exits. The Orker never asks a runtime to `stop` a container, so
+# neither does the fixture: whatever a runtime's own stop sequence does, an
+# image is judged by the cancellation it will actually get.
+cancel_like_the_orker() {
+    local cid=$1 timer
+    docker kill --signal TERM "$cid" >/dev/null 2>&1
+    ( sleep "$GRACE"; docker kill --signal KILL "$cid" ) >/dev/null 2>&1 &
+    timer=$!
+    docker wait "$cid" >/dev/null 2>&1
+    kill "$timer" 2>/dev/null
+    wait "$timer" 2>/dev/null
 }
 
 # await_ready blocks until the workload has signalled readiness, or the
@@ -399,14 +427,26 @@ for op in $OPS; do
     fi
     pass "op=$op: container started and the workload began running"
 
+    # What each process in the container holds for SIGTERM, read before the
+    # cancellation and shown only if the workload never sees it. A signal the
+    # runtime hands a container blocked (SigBlk) or ignored (SigIgn, bit 15 is
+    # 0x4000) reaches no trap: a shell cannot trap a signal it was started
+    # with ignored. The profile is the runtime's MAC confinement, if any.
+    sigstate=$(docker exec "$cid" sh -c 'grep -E "^(Name|Uid|SigBlk|SigIgn|SigCgt):" /proc/[0-9]*/status' 2>&1)
+    confinement=$(docker inspect -f '{{.AppArmorProfile}}' "$cid" 2>/dev/null)
+
     started=$SECONDS
-    docker stop --timeout "$GRACE" "$cid" >/dev/null 2>&1
+    cancel_like_the_orker "$cid"
     elapsed=$((SECONDS - started))
     status=$(docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null)
     logs=$(docker logs "$cid" 2>&1)
     docker rm -f "$cid" >/dev/null 2>&1
 
     contains "op=$op: the WORKLOAD observed SIGTERM" "WORKLOAD-GOT-SIGTERM" "$logs"
+    if [[ "$logs" != *WORKLOAD-GOT-SIGTERM* ]]; then
+        info "before the cancellation (AppArmor profile: ${confinement:-none}):"
+        while IFS= read -r line; do info "  $line"; done <<<"$sigstate"
+    fi
     contains "op=$op: workload stdout reached the log stream" "WORKLOAD-UP" "$logs"
     check    "op=$op: exited cleanly on the signal, not 143 (128+SIGTERM)" "0" "$status"
     if (( elapsed < GRACE )); then
@@ -528,12 +568,12 @@ contains "workload stdout reached the container log stream" "HELLO-ON-STDOUT" "$
 # silently accepted — otherwise every later assertion is vacuous. Run a bare
 # base image so this falsifies the CHECKER, not the image under test.
 w=$(mkws '{}' "novalues")
-rc=$(run_sync "$w" "alpine:3.20")
+rc=$(run_sync "$w" "docker.io/library/alpine:3.20")
 check "exit 0 with no values.json is caught as VALUES_MISSING" \
     "VALUES_MISSING" "$(validate_values "$w")"
 
 w=$(mkws '{}' "badvalues")
-rc=$(run_sync "$w" "alpine:3.20")
+rc=$(run_sync "$w" "docker.io/library/alpine:3.20")
 printf '[1,2,3]' > "$w/output/values.json"
 check "a top-level array is caught as VALUES_MALFORMED" \
     "VALUES_MALFORMED" "$(validate_values "$w")"
@@ -643,7 +683,7 @@ if ! await_ready "$w" "$cid"; then
     fail "the SIGTERM-ignoring workload started"
 else
     started=$SECONDS
-    docker stop --timeout "$GRACE" "$cid" >/dev/null 2>&1
+    cancel_like_the_orker "$cid"
     elapsed=$((SECONDS - started))
     status=$(docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null)
     docker rm -f "$cid" >/dev/null 2>&1

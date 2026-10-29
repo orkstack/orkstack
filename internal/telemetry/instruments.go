@@ -92,6 +92,10 @@ type OrkerInstruments struct {
 	// CommitAdopted counts attempts that found an existing durable commit and
 	// returned it without running the container (§5.4).
 	CommitAdopted metric.Int64Counter
+	// WorkspaceCleanupFailures counts attempts whose own directory, or its
+	// secrets, could not be removed when they ended and is left on disk —
+	// typically files a workload wrote as a uid the Orker cannot remove.
+	WorkspaceCleanupFailures metric.Int64Counter
 }
 
 // meterFor returns p's meter, or the no-op meter when p is nil — the one
@@ -139,12 +143,19 @@ func NewOrkerInstruments(p *Providers) (*OrkerInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	cleanupFailures, err := meter.Int64Counter("ork.orker.workspace_cleanup_failures",
+		metric.WithDescription("Attempts whose own directory could not be removed and is left on disk."),
+		metric.WithUnit("{attempt}"))
+	if err != nil {
+		return nil, err
+	}
 	return &OrkerInstruments{
-		TaskLogRecords:    records,
-		TaskPhaseDuration: phaseDuration,
-		Tasks:             tasks,
-		TaskDuration:      taskDuration,
-		CommitAdopted:     commitAdopted,
+		TaskLogRecords:           records,
+		TaskPhaseDuration:        phaseDuration,
+		Tasks:                    tasks,
+		TaskDuration:             taskDuration,
+		CommitAdopted:            commitAdopted,
+		WorkspaceCleanupFailures: cleanupFailures,
 	}, nil
 }
 

@@ -105,7 +105,12 @@ skip_run() {
     exit 77
 }
 
-command -v docker >/dev/null 2>&1 || skip_run "docker is not installed"
+# The container CLI: docker, or any CLI that speaks its grammar, such as the
+# podman CLI (ORK_DOCKER_BIN=podman). Every `docker` below is this one.
+DOCKER_CLI=${ORK_DOCKER_BIN:-docker}
+docker() { command "$DOCKER_CLI" "$@"; }
+
+command -v "$DOCKER_CLI" >/dev/null 2>&1 || skip_run "$DOCKER_CLI is not installed"
 docker version --format '{{.Server.Version}}' >/dev/null 2>&1 ||
     skip_run "the docker daemon is not reachable"
 command -v jq >/dev/null 2>&1 || skip_run "jq is not installed"
@@ -121,7 +126,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 ||
 bindable() {   # bindable <dir> — can the daemon actually bind-mount this?
     docker run --rm \
         --mount "type=bind,source=$1,destination=/probe,readonly" \
-        alpine:3.20 true >/dev/null 2>&1
+        docker.io/library/alpine:3.20 true >/dev/null 2>&1
 }
 
 ROOT=
@@ -158,7 +163,7 @@ cleanup() {
     # (a git repository in tmp/, a checkout in shared/); a root container
     # opens them up so the host user can remove the whole root.
     docker run --rm --mount "type=bind,source=$ROOT,destination=/w" \
-        alpine:3.20 chmod -R a+rwX /w >/dev/null 2>&1
+        docker.io/library/alpine:3.20 chmod -R a+rwX /w >/dev/null 2>&1
     chmod -R u+rwX "$ROOT" 2>/dev/null
     rm -rf "$ROOT"
 }
@@ -302,8 +307,26 @@ await_process() {
     return 1
 }
 
-# sigterm_case starts a workspace detached, waits for <process> to run, stops
-# the container with the grace period, and checks it exited 1 inside it.
+# cancel_like_the_orker cancels a container the way the Orker does (AGENTS.md
+# §3.3): SIGTERM through the runtime's `kill`, the grace period on a timer,
+# then SIGKILL, and returns once the container has exited. The timer is the
+# grace period itself, as the Orker's is, and it is called off the moment the
+# container exits. The Orker never asks a runtime to `stop` a container, so
+# neither does the fixture: whatever a runtime's own stop sequence does, an
+# image is judged by the cancellation it will actually get.
+cancel_like_the_orker() {
+    local cid=$1 timer
+    docker kill --signal TERM "$cid" >/dev/null 2>&1
+    ( sleep "$GRACE"; docker kill --signal KILL "$cid" ) >/dev/null 2>&1 &
+    timer=$!
+    docker wait "$cid" >/dev/null 2>&1
+    kill "$timer" 2>/dev/null
+    wait "$timer" 2>/dev/null
+}
+
+# sigterm_case starts a workspace detached, waits for <process> to run,
+# cancels the container as the Orker does, and checks it exited 1 inside the
+# grace period.
 sigterm_case() {
     local label=$1 w=$2 process=$3 cid started elapsed status
     cid=$(run_detached "$w")
@@ -318,7 +341,7 @@ sigterm_case() {
         return
     fi
     started=$SECONDS
-    docker stop --timeout "$GRACE" "$cid" >/dev/null 2>&1
+    cancel_like_the_orker "$cid"
     elapsed=$((SECONDS - started))
     status=$(docker inspect -f '{{.State.ExitCode}}' "$cid" 2>/dev/null)
     docker rm -f "$cid" >/dev/null 2>&1

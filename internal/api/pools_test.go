@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -97,19 +96,25 @@ func (p observedPools) ObservePool(_ context.Context, queue string) (engine.Pool
 	return p[queue], nil
 }
 
-// poolOrkers answers the DescribeOrker probe for a set of channels: a channel
-// present in the set has an Orker that answers, one absent does not. Presence
-// is the whole content of the probe (§6.5).
-type poolOrkers map[string]struct{}
-
-func (p poolOrkers) OrkerOnPool(
-	_ context.Context,
-	queue string,
-) (*orkstackv1.DescribeOrkerResult, error) {
-	if _, serving := p[queue]; !serving {
-		return nil, fmt.Errorf("no orker is polling %q", queue)
+// fleetOf is an Orker inventory (stubFleet) whose Orkers all poll the
+// presence channel and answer on their own channels, keyed by orker_id.
+func fleetOf(orkers ...*orkstackv1.DescribeOrkerResult) *stubFleet {
+	fleet := &stubFleet{described: map[string]*orkstackv1.DescribeOrkerResult{}}
+	for _, orker := range orkers {
+		fleet.presence = append(fleet.presence,
+			engine.OrkerPresence{Identity: orker.GetOrkerId(), LastSeen: time.Now()})
+		fleet.described[orker.GetOrkerId()] = orker
 	}
-	return &orkstackv1.DescribeOrkerResult{OrkerId: "orker-" + queue, RuntimeName: "docker"}, nil
+	return fleet
+}
+
+// currentOrker is one Orker of pool built with every capability submit asks
+// about; maxPins is its ORK_ORKER_MAX_PINS.
+func currentOrker(id, pool string, maxPins int32) *orkstackv1.DescribeOrkerResult {
+	return &orkstackv1.DescribeOrkerResult{
+		OrkerId: id, Pool: pool, RuntimeName: "docker", MaxConcurrentPins: maxPins,
+		EachSupported: true, CacheSupported: true, JoinSupported: true,
+	}
 }
 
 // gpuOrkflow names a pool on one of its two tasks.
@@ -493,8 +498,7 @@ func TestListPools_ReportsEveryPoolWithItsOrkers(t *testing.T) {
 			Name:         "default",
 			AllowedPools: []string{"main", "gpu", "cold"},
 		}},
-		Pools:      livePools{task.DefaultQueue: 2, gpu: 1},
-		PoolOrkers: poolOrkers{task.DefaultQueue: {}, gpu: {}},
+		Pools: livePools{task.DefaultQueue: 2, gpu: 1},
 	})
 
 	resp, err := svc.ListPools(context.Background(),
@@ -577,9 +581,8 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 	mainVersion := strings.Replace(gpuOrkflow, "version: 0.1.0", "version: 0.2.0", 1)
 	mainVersion = strings.Replace(mainVersion, "    pool: gpu\n", "", 1)
 	svc := api.NewService(api.Config{
-		Orkflows:   store,
-		Pools:      livePools{task.DefaultQueue: 1, gpu: 1},
-		PoolOrkers: poolOrkers{task.DefaultQueue: {}, gpu: {}},
+		Orkflows: store,
+		Pools:    livePools{task.DefaultQueue: 1, gpu: 1},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: gpuOrkflow})); err != nil {
@@ -595,7 +598,6 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 		Orkflows:   store,
 		Namespaces: registry{"default": {Name: "default"}},
 		Pools:      livePools{task.DefaultQueue: 1, gpu: 1},
-		PoolOrkers: poolOrkers{task.DefaultQueue: {}, gpu: {}},
 	})
 	resp, err := reader.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
@@ -622,10 +624,9 @@ func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
 	const raw = "ork-tasks-agent"
 	starter := &fakeStarter{}
 	svc := api.NewService(api.Config{
-		Starter:    starter,
-		RawQueue:   raw,
-		Pools:      livePools{raw: 3},
-		PoolOrkers: poolOrkers{raw: {}},
+		Starter:  starter,
+		RawQueue: raw,
+		Pools:    livePools{raw: 3},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -679,10 +680,9 @@ func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 	}
 	starter := &fakeStarter{}
 	svc := api.NewService(api.Config{
-		Starter:    starter,
-		RawQueue:   gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
-		Pools:      livePools{gpuQueue: 2},
-		PoolOrkers: poolOrkers{gpuQueue: {}},
+		Starter:  starter,
+		RawQueue: gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
+		Pools:    livePools{gpuQueue: 2},
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
@@ -772,7 +772,6 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 	gpu := poolQueue(t, "gpu")
 	payments := registry{"payments": {Name: "payments", DefaultPool: "batch"}}
 	live := livePools{batch: 2, gpu: 1}
-	serving := poolOrkers{batch: {}, gpu: {}}
 
 	// The control: with the store up, the pool an orkflow names is in scope.
 	healthy := engine.NewMemoryOrkflowStore()
@@ -780,7 +779,6 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 		Orkflows:   healthy,
 		Namespaces: payments,
 		Pools:      live,
-		PoolOrkers: serving,
 	})
 	if _, err := up.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
@@ -806,7 +804,6 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 		Orkflows:   downOrkflowStore{err: refused},
 		Namespaces: payments,
 		Pools:      live,
-		PoolOrkers: serving,
 		Logger:     slog.New(slog.NewTextHandler(logs, nil)),
 	})
 
@@ -889,22 +886,6 @@ tasks:
     with: {command: "echo compile"}
 `
 
-// pinHostPools answers the DescribeOrker probe with each channel's
-// ORK_ORKER_MAX_PINS. A channel it does not map has nobody to answer.
-type pinHostPools map[string]int32
-
-func (p pinHostPools) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	maxPins, serving := p[queue]
-	if !serving {
-		return nil, fmt.Errorf("no orker is polling %q", queue)
-	}
-	return &orkstackv1.DescribeOrkerResult{
-		OrkerId:           "orker-" + queue,
-		RuntimeName:       "docker",
-		MaxConcurrentPins: maxPins,
-	}, nil
-}
-
 // TestSubmitRun_RefusesAPinnedRunWhosePoolHostsNoPins is PoolNoPinHostError
 // reaching a client, in the code that tells them what to do about it.
 //
@@ -920,8 +901,8 @@ func TestSubmitRun_RefusesAPinnedRunWhosePoolHostsNoPins(t *testing.T) {
 		Starter: starter,
 		// The pool is LIVE — this is not the empty-pool refusal — but the
 		// Orker serving it hosts no pins.
-		Pools:      livePools{gpuQueue: 1},
-		PoolOrkers: pinHostPools{gpuQueue: 0},
+		Pools: livePools{gpuQueue: 1},
+		Fleet: fleetOf(currentOrker("gpu-1", "gpu", 0)),
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: pinnedGpuOrkflow})); err != nil {
@@ -954,9 +935,9 @@ func TestSubmitRun_AcceptsAPinnedRunWhosePoolHostsPins(t *testing.T) {
 	starter := &fakeStarter{}
 	gpuQueue := poolQueue(t, "gpu")
 	svc := api.NewService(api.Config{
-		Starter:    starter,
-		Pools:      livePools{gpuQueue: 1},
-		PoolOrkers: pinHostPools{gpuQueue: 2},
+		Starter: starter,
+		Pools:   livePools{gpuQueue: 1},
+		Fleet:   fleetOf(currentOrker("gpu-1", "gpu", 2)),
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: pinnedGpuOrkflow})); err != nil {
@@ -1009,7 +990,7 @@ tasks:
 		Starter:    starter,
 		Namespaces: registry{"ci": {Name: "ci", DefaultPool: "gpu"}},
 		Pools:      livePools{gpuQueue: 1, task.DefaultQueue: 1},
-		PoolOrkers: pinHostPools{gpuQueue: 1, task.DefaultQueue: 1},
+		Fleet:      fleetOf(currentOrker("gpu-1", "gpu", 1), currentOrker("main-1", "main", 1)),
 	})
 	if _, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
@@ -1032,5 +1013,47 @@ tasks:
 	}
 	if len(starter.startedRuns()) != 0 {
 		t.Errorf("a refused submission still started %v", starter.startedRuns())
+	}
+}
+
+// TestSubmitRun_RefusesATaskNoOrkerOfItsPoolCanHold: RESOURCES_UNSATISFIABLE
+// is FailedPrecondition and refuses before a run id is minted.
+func TestSubmitRun_RefusesATaskNoOrkerOfItsPoolCanHold(t *testing.T) {
+	starter := &fakeStarter{}
+	gpuQueue := poolQueue(t, "gpu")
+	orker := currentOrker("gpu-1", "gpu", 0)
+	orker.MaxRequest = &orkstackv1.ResourceQuantity{Cpu: 8, MemoryBytes: 16 << 30}
+	minted := 0
+	svc := api.NewService(api.Config{
+		Starter: starter,
+		Pools:   livePools{gpuQueue: 1},
+		Fleet:   fleetOf(orker),
+		NewRunID: func() string {
+			minted++
+			return "run-sized"
+		},
+	})
+	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: train
+version: 0.1.0
+tasks:
+  - id: train
+    uses: shell
+    pool: gpu
+    with: {command: "echo train"}
+    resources: {cpu: "16"}
+`
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: document})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	_, err := svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "train"}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "RESOURCES_UNSATISFIABLE") {
+		t.Fatalf("SubmitRun = %v, want FailedPrecondition with RESOURCES_UNSATISFIABLE", err)
+	}
+	if minted != 0 || len(starter.startedRuns()) != 0 {
+		t.Fatalf("a refused submit minted %d ids and started %v", minted, starter.startedRuns())
 	}
 }

@@ -18,14 +18,22 @@
 #      --layouts DIR names layouts already built (release.yml builds them);
 #   2. the stack's own registry takes every image, copied byte for byte from
 #      its layout by the pinned skopeo image, and each pushed digest is
-#      checked against the layout's;
+#      checked against the layout's; each is then signed by digest with a
+#      throwaway key, by the pinned cosign image and the command and flags
+#      release.yml's publish signs with, and verified with `cosign verify`,
+#      and a file is signed as publish signs SHA256SUMS and verified with
+#      `cosign verify-blob` and with openssl;
 #   3. compose.yaml, with deploy/release-smoke.yaml naming those images by tag
 #      and digest instead of building any, starts with `up -d --wait`;
 #      orkctl's image reports VERSION and applies each-fan-out, and the
 #      archive's orkctl submits it and watches it to the end.
-# Then, either way: the run SUCCEEDED and merge logged a to d; the UI answers,
-# lists the example, and the engine accepts its WebSocket; and the script
-# removes what it started, by its own names and labels, whatever happened.
+# Then, either way: the run SUCCEEDED and merge logged a to d; for a release,
+# OrkStack's own verifier accepts those signatures: with the throwaway key in
+# the image policy, each-fan-out runs to SUCCEEDED in a namespace that
+# requires it, and is refused in one that requires a key that signed nothing;
+# the UI answers, lists the example, and the engine accepts its WebSocket; and
+# the script removes what it started, by its own names and labels, whatever
+# happened.
 #
 # Everything it creates carries its token: the compose project, the images it
 # builds or pulls, the Orker's id and work directory, and free ports (set
@@ -75,6 +83,14 @@ if [ -n "$VERSION" ]; then
 	command -v go >/dev/null || need "go is not installed (the dist tool reads the layouts)"
 	SKOPEO="$(grep -v '^#' "$REPO/deploy/skopeo-image.txt" | head -1)"
 	[ -n "$SKOPEO" ] || need "deploy/skopeo-image.txt names no image"
+	COSIGN="$(grep -v '^#' "$REPO/deploy/cosign-image.txt" | head -1)"
+	[ -n "$COSIGN" ] || need "deploy/cosign-image.txt names no image"
+	command -v openssl >/dev/null || need "openssl is not installed (it checks the checksum signature as the docs do)"
+	# deploy/release-smoke.yaml forwards the registry into the Orker's network
+	# namespace with compose.yaml's own pinned forwarder.
+	export SMOKE_FORWARD_IMAGE
+	SMOKE_FORWARD_IMAGE="$(grep -m1 -oE 'alpine/socat:[^ @]+@sha256:[0-9a-f]{64}' "$REPO/compose.yaml")"
+	[ -n "$SMOKE_FORWARD_IMAGE" ] || need "compose.yaml names no pinned socat image"
 fi
 # The image that clears the Orker's root-owned work directory: the pinned
 # docker CLI compose.yaml already runs.
@@ -203,6 +219,37 @@ else
 		say "  $name $digest"
 	done <"$WORK/images.tsv"
 
+	say "== sign: each image by digest, with a throwaway key, as publish signs"
+	# publish's command and flags (.github/workflows/release.yml); only the key,
+	# the registry, and --allow-insecure-registry for its plain HTTP differ.
+	# `other` signs nothing: the namespace that requires it is the refusal.
+	export COSIGN_PASSWORD="$TOKEN"
+	cos() { docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e COSIGN_PRIVATE_KEY -e COSIGN_PASSWORD -v "$WORK/keys:/keys" "$COSIGN" "$@"; }
+	for key in release other; do
+		mkdir -p "$WORK/keys/$key"
+		cos generate-key-pair --output-key-prefix "/keys/$key/cosign" >"$WORK/keys.log" 2>&1 || { cat "$WORK/keys.log" >&2; fail "cosign generate-key-pair"; }
+	done
+	export COSIGN_PRIVATE_KEY
+	COSIGN_PRIVATE_KEY="$(cat "$WORK/keys/release/cosign.key")"
+	while IFS=$'\t' read -r name digest; do
+		ref="$REGISTRY/orkstack/$name@$digest"
+		cos sign --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false --use-signing-config=false --tlog-upload=false --allow-insecure-registry --yes "$ref" >"$WORK/sign.log" 2>&1 ||
+			{ cat "$WORK/sign.log" >&2; fail "cosign sign $ref"; }
+		cos verify --key /keys/release/cosign.pub --insecure-ignore-tlog=true --allow-insecure-registry "$ref" >"$WORK/sign.log" 2>&1 ||
+			{ cat "$WORK/sign.log" >&2; fail "cosign verify $ref"; }
+		say "  $name signed, and cosign verify accepts it"
+	done <"$WORK/images.tsv"
+	# SHA256SUMS's signing, on a file of the smoke's own: the docs' two checks.
+	cp "$WORK/images.tsv" "$WORK/keys/SUMS"
+	cos sign-blob --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes --output-signature /keys/SUMS.sig /keys/SUMS >"$WORK/sign.log" 2>&1 ||
+		{ cat "$WORK/sign.log" >&2; fail "cosign sign-blob"; }
+	cos verify-blob --key /keys/release/cosign.pub --insecure-ignore-tlog=true --signature /keys/SUMS.sig /keys/SUMS >"$WORK/sign.log" 2>&1 ||
+		{ cat "$WORK/sign.log" >&2; fail "cosign verify-blob"; }
+	openssl dgst -sha256 -verify "$WORK/keys/release/cosign.pub" -signature <(base64 -d "$WORK/keys/SUMS.sig") "$WORK/keys/SUMS" >/dev/null ||
+		fail "openssl does not verify the blob signature"
+	unset COSIGN_PRIVATE_KEY
+	say "  a blob signed, and cosign verify-blob and openssl accept it"
+
 	say "== up: the release's images"
 	dc up -d --wait --no-build --quiet-pull
 
@@ -232,6 +279,26 @@ say "  $run SUCCEEDED"
 orkctl run logs "$run" --task merge >"$WORK/merge.log"
 [ "$(tr -d '\r' <"$WORK/merge.log" | grep -xE '[abcd]' | tr -d '\n')" = "abcd" ] || fail "merge's log is: $(cat "$WORK/merge.log")"
 say "  merge logged a b c d"
+
+if [ -n "$VERSION" ]; then
+	say "== signatures: OrkStack's own verifier, at apply, submit and dispatch"
+	"$ORKCTL" admin image-policy set --signing-key "release=$WORK/keys/release/cosign.pub" \
+		--signing-key "other=$WORK/keys/other/cosign.pub" >"$WORK/policy.log" 2>&1 || { cat "$WORK/policy.log" >&2; fail "admin image-policy set"; }
+	"$ORKCTL" namespace create signed --require-signed-by cosign:release >"$WORK/policy.log" 2>&1 || { cat "$WORK/policy.log" >&2; fail "namespace create signed"; }
+	"$ORKCTL" namespace create other-signer --require-signed-by cosign:other >"$WORK/policy.log" 2>&1 || { cat "$WORK/policy.log" >&2; fail "namespace create other-signer"; }
+	# The refusal shows the policy is judged, not waved through: the key
+	# `other` signed nothing.
+	if "$ORKCTL" -n other-signer apply "$REPO/examples/each-fan-out.ork.yaml" >"$WORK/refused.log" 2>&1; then
+		fail "a namespace that requires a key that signed nothing accepted each-fan-out"
+	fi
+	grep -q 'none verifies with key "other"' "$WORK/refused.log" || fail "the refusal is not the signature's: $(cat "$WORK/refused.log")"
+	say "  refused under cosign:other: $(grep -m1 -o 'none verifies with key "other"' "$WORK/refused.log")"
+	"$ORKCTL" -n signed apply "$REPO/examples/each-fan-out.ork.yaml" >"$WORK/signed.log" 2>&1 || { cat "$WORK/signed.log" >&2; fail "apply under cosign:release"; }
+	"$ORKCTL" -n signed run submit each-fan-out --watch >"$WORK/signed.log" 2>&1 || { cat "$WORK/signed.log" >&2; fail "run submit --watch under cosign:release"; }
+	signed_run="$(grep -oE '^Submitted run ork-[0-9]+-[0-9]+' "$WORK/signed.log" | head -1 | cut -d' ' -f3)"
+	grep -q "finished with status SUCCEEDED" "$WORK/signed.log" || fail "the signed run did not finish SUCCEEDED: $(tail -3 "$WORK/signed.log")"
+	say "  $signed_run SUCCEEDED in a namespace that requires cosign:release"
+fi
 
 say "== ui"
 UI="http://127.0.0.1:$ORKSTACK_UI_PORT"

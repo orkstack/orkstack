@@ -5,15 +5,14 @@
 //		ORK_DEAF_QUEUE=ork-pool-deaf go run ./test/tools/deaf-poller
 //
 // WHY THIS EXISTS. internal/engine/pools.go reports a pool's live Orker
-// count from Temporal's OWN poller records (TemporalPoolProbe.ObservePool —
-// DescribeTaskQueueEnhanced), entirely independent of whether that poller
-// can run the DescribeOrker activity OrkerOnPool then asks of it
-// (internal/engine/pool_probe.go OrkerOnPool). Production can genuinely
-// reach the state "the pool has a live poller, and the probe to it fails" —
-// an Orker that is up and answering Temporal's own poll but cannot run
-// DescribeOrker for whatever reason — and the admin Playwright suite
-// (ui/e2e/admin.spec.ts) needs to produce that state for REAL, not merely
-// name it, to prove how the Admin UI draws it
+// count from Temporal's OWN poller records (TemporalPoolProbe.ObservePool),
+// entirely independent of whether that poller can run anything, and adds the
+// Orkers the inventory finds — each asked on its own control channel, which
+// this tool never polls. Production can genuinely reach the state "the pool
+// has a live poller, and nothing it is asked answers" — a worker that is up
+// and answering Temporal's own poll but is not an Orker the inventory lists —
+// and the admin Playwright suite (ui/e2e/admin.spec.ts) needs to produce that
+// state for REAL, not merely name it, to prove how the Admin UI draws it
 // (ui/src/routes/admin/pools/+page.svelte: a live `pool-orker-count-*` with
 // no `pool-unavailable-*` banner). Killing a whole Orker only produces the
 // OTHER partial state (unavailable_reason, no live count at all — already covered
@@ -23,15 +22,11 @@
 // This tool is that Orker-shaped gap: a real worker.Worker on the pool's own
 // queue, DisableWorkflowWorker (an Orker is activity-only by construction,
 // internal/engine/pool_probe.go's own ObservePool comment), and NO activity
-// registered at all. Temporal's DescribeTaskQueueEnhanced counts it as a live
-// activity poller the moment it starts polling — nothing there asks what the
-// poller can run — so ObservePool reports a live count exactly as it would
-// for a real Orker. When the engine dispatches task.ActivityDescribeOrker to
-// this channel, the SDK has no such activity registered and reports the task
-// back to Temporal as a failure (activity type not found) on first attempt;
-// OrkerOnPool's two-attempt retry exhausts the same way, and
-// describeOrkerOn returns an error — which is exactly the `err != nil` branch
-// in internal/engine/pools.go this tool exists to reach live.
+// registered at all. Temporal's poller records count it as a live activity
+// poller the moment it starts polling — nothing there asks what the poller
+// can run — so ObservePool reports a live count exactly as it would for a
+// real Orker, while the inventory, which reads the presence channel, never
+// lists it.
 //
 // It runs until SIGTERM/SIGINT, so the caller controls its lifetime the same
 // way it controls bin/ork and bin/orker (ui/e2e/harness.ts spawnLogged +

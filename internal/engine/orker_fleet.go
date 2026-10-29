@@ -21,35 +21,71 @@ import (
 // cluster's poller records and from the Orker itself, so any replica answers
 // identically (AGENTS.md §7).
 type OrkerFleet interface {
-	// ObserveOrkers lists the identities polling OrkersQueue within the
-	// freshness window, with each one's last-seen time.
-	ObserveOrkers(ctx context.Context) ([]OrkerPresence, error)
+	FleetReader
 	// ObserveOrker reports whether one Orker's control channel has a live
 	// poller — the cheap "does this id exist" question CordonOrker and a
 	// single-Orker ListOrkers ask before dispatching anything.
 	ObserveOrker(ctx context.Context, orkerID string) (OrkerPresence, bool, error)
-	// DescribeOrkerByID executes DescribeOrker on ONE Orker's control channel.
-	DescribeOrkerByID(ctx context.Context, orkerID string) (*orkstackv1.DescribeOrkerResult, error)
 	// CordonOrker executes CordonOrker on ONE Orker's control channel and
 	// returns the Orker's state afterwards.
 	CordonOrker(ctx context.Context, orkerID string, in *orkstackv1.CordonOrkerInput) (*orkstackv1.DescribeOrkerResult, error)
 }
 
-// orkerDescribeTimeout bounds one Orker's answer inside the inventory fan-out.
-// Shorter than poolDescribeTimeout because ListOrkers asks the whole fleet and
-// an Orker that is down should cost the reader one wave, not the request.
+// FleetReader is the read half of OrkerFleet, and all ReadFleet needs: the
+// inventory ListOrkers lists, submit's pool checks ask and ListPools counts.
+type FleetReader interface {
+	// ObserveOrkers lists the identities polling OrkersQueue within the
+	// freshness window, with each one's last-seen time.
+	ObserveOrkers(ctx context.Context) ([]OrkerPresence, error)
+	// DescribeOrkerByID executes DescribeOrker on ONE Orker's control channel.
+	DescribeOrkerByID(ctx context.Context, orkerID string) (*orkstackv1.DescribeOrkerResult, error)
+}
+
+// FleetOrker is one live Orker of the inventory: its presence record and its
+// own answer on its control channel, or why it gave none.
+type FleetOrker struct {
+	Presence  OrkerPresence
+	Described *orkstackv1.DescribeOrkerResult // nil when Err is set
+	Err       error
+}
+
+// ReadFleet is the inventory: the presence channel's live identities, each
+// asked on its own control channel, together and each bounded by
+// orkerDescribeTimeout, in ObserveOrkers' order. Only the presence read fails
+// it; an Orker that does not answer keeps its row, with Err saying why.
+//
+// Both channels have workers and slots of their own, apart from the pool
+// channel's task worker, so an Orker whose every task slot is taken is listed
+// and answers like an idle one.
+func ReadFleet(ctx context.Context, fleet FleetReader) ([]FleetOrker, error) {
+	presence, err := fleet.ObserveOrkers(ctx)
+	if err != nil {
+		return nil, err
+	}
+	orkers := make([]FleetOrker, len(presence))
+	probeTogether(len(presence), func(i int) {
+		// Each Orker is bounded on its own, so one that is down costs the
+		// reader one wave rather than the read.
+		describeCtx, cancel := context.WithTimeout(ctx, orkerDescribeTimeout)
+		defer cancel()
+		described, err := fleet.DescribeOrkerByID(describeCtx, presence[i].Identity)
+		orkers[i] = FleetOrker{Presence: presence[i], Described: described, Err: err}
+	})
+	return orkers, nil
+}
+
+// orkerDescribeTimeout bounds one Orker's answer inside the inventory fan-out
+// (ReadFleet). Shorter than poolDescribeTimeout, which bounds a whole census,
+// because the inventory asks the whole fleet and an Orker that is down should
+// cost the reader one wave, not the request.
 const orkerDescribeTimeout = 5 * time.Second
 
 // orkerControlTimeout bounds one cordon delivery.
 const orkerControlTimeout = 10 * time.Second
 
-// OrkerDescribeTimeout and OrkerControlTimeout are the two bounds, exported
-// for the API: the fan-out bounds each call's context by the first, and the
-// cordon's Unavailable message names the second.
-const (
-	OrkerDescribeTimeout = orkerDescribeTimeout
-	OrkerControlTimeout  = orkerControlTimeout
-)
+// OrkerControlTimeout is the cordon's bound, exported for the API: the
+// cordon's Unavailable message names it.
+const OrkerControlTimeout = orkerControlTimeout
 
 var _ OrkerFleet = (*TemporalStarter)(nil)
 
@@ -57,7 +93,7 @@ var _ OrkerFleet = (*TemporalStarter)(nil)
 func (s *TemporalStarter) ObserveOrkers(ctx context.Context) ([]OrkerPresence, error) {
 	description, err := s.describeActivityPollers(ctx, task.OrkersQueue)
 	if err != nil {
-		return nil, fmt.Errorf("describe the orker presence channel: %w", err)
+		return nil, fmt.Errorf("read the Orker inventory: %w", err)
 	}
 	return livePollerRecords(description, time.Now(), DefaultPollerFreshness), nil
 }

@@ -114,6 +114,7 @@ that one field; each key absent leaves the stored value exactly as it is.
 | `run_retention` | Go duration, or `inherit` | `inherit` | duration / unset |
 | `telemetry` | mapping: `sink`, `task_logs` (`inherit`\|`enabled`\|`disabled`), `attributes` | `{}` | per sub-field; written as a unit, an all-zero policy is unset |
 | `max_running` | integer ≥ 0 | `0` | exact |
+| `fair_share_weight` | number from 0.001 to 1000, or 0 for the default weight of 1 | `0` | exact |
 | `allowed_secrets` | list of strings | `[]` | set |
 | `require_signed_by` | string | `""` | exact |
 | `budget` | mapping: `cpu_seconds`, `gib_seconds` (integers ≥ 0), `period` (Go duration), `enforce` (boolean) — the `--budget-*` flags | `{}` | per sub-field; written as a unit, an all-zero budget is unset (`--clear-budget`) |

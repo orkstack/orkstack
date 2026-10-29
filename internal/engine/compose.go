@@ -390,6 +390,9 @@ func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 	childPlan.InFlight = s.plan.InFlight
 	childPlan.SnapshotOverlay = s.plan.SnapshotOverlay
 	childPlan.PinCreationTimeoutSeconds = s.plan.PinCreationTimeoutSeconds
+	// A child runs in its parent's namespace, so its fairness is the
+	// parent's, copied here rather than carried by every nested plan.
+	childPlan.Fairness = s.plan.Fairness
 	return childPlan
 }
 

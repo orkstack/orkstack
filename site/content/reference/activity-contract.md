@@ -38,7 +38,7 @@ The working directory is `/orkstack`, and the container reads every input file.
 | `/orkstack/tmp` | read-write | Scratch space. |
 | `/orkstack/shared` | read-write | Only for a task of a pin. Every task of the pin sees it. |
 
-`/tmp` inside the container is a separate tmpfs, 64 MiB by default.
+`/tmp` inside the container is a separate tmpfs, 64 MiB by default, mounted `noexec`. The rest of the root file system, `/run` and `/var/tmp` included, is read-only, and an Orker refuses to start on a runtime that leaves any of it writable.
 
 ## Idempotency key
 

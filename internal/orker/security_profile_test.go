@@ -7,6 +7,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/quantity"
 )
 
 func TestSecurityPolicyFromEnvRefusesInvalidProcessLimits(t *testing.T) {
@@ -243,12 +244,21 @@ func TestSecurityPolicy_RefusesAnUnknownSecretScheme(t *testing.T) {
 }
 
 // TestSecurityPolicy_ProfileIDNamesTheEnforcedPosture keeps DescribeOrker
-// honest: an operator reads this string to know what a pool's Orkers enforce.
+// honest: an operator reads this string to know what a pool's Orkers enforce,
+// and its seccomp part is what the runtime actually spelled (G1): `builtin`
+// by name on Docker, nothing on the Podman engine, which applies its own
+// default, and "unknown" for a runtime that could not say.
 func TestSecurityPolicy_ProfileIDNamesTheEnforcedPosture(t *testing.T) {
-	id := DefaultSecurityPolicy().ProfileID()
-	for _, want := range []string{"readonly", "cap-drop-all", "no-new-privileges", "seccomp=" + SeccompBuiltin} {
-		if !strings.Contains(id, want) {
-			t.Errorf("profile id %q does not name %q", id, want)
+	for spelled, want := range map[string]string{
+		SeccompBuiltin:       "seccomp=" + SeccompBuiltin,
+		SeccompEngineDefault: "seccomp=" + SeccompEngineDefault,
+		"":                   "seccomp=unknown",
+	} {
+		id := DefaultSecurityPolicy().ProfileID(spelled)
+		for _, part := range []string{"readonly", "cap-drop-all", "no-new-privileges", want} {
+			if !strings.Contains(id, part) {
+				t.Errorf("profile id %q does not name %q", id, part)
+			}
 		}
 	}
 }
@@ -270,17 +280,17 @@ func TestParseMemory_UnderstandsTheKubernetesSpelling(t *testing.T) {
 		{"2G", 2e9},
 	}
 	for _, tc := range tests {
-		got, err := parseMemory(tc.raw)
+		got, err := quantity.ParseMemory(tc.raw)
 		if err != nil {
-			t.Errorf("parseMemory(%q): %v", tc.raw, err)
+			t.Errorf("quantity.ParseMemory(%q): %v", tc.raw, err)
 			continue
 		}
 		if got != tc.want {
-			t.Errorf("parseMemory(%q) = %v, want %v", tc.raw, got, tc.want)
+			t.Errorf("quantity.ParseMemory(%q) = %v, want %v", tc.raw, got, tc.want)
 		}
 	}
-	if _, err := parseMemory("4GB"); err == nil {
-		t.Error("parseMemory(\"4GB\") succeeded; GB is not the Kubernetes spelling and " +
+	if _, err := quantity.ParseMemory("4GB"); err == nil {
+		t.Error("quantity.ParseMemory(\"4GB\") succeeded; GB is not the Kubernetes spelling and " +
 			"guessing at it would silently change a cap")
 	}
 }
@@ -290,7 +300,7 @@ func TestParseMemory_UnderstandsTheKubernetesSpelling(t *testing.T) {
 //
 // Both cap comparisons were guarded with `if parseErr == nil && requested >
 // cap`, so a cap the parser cannot read simply skipped the comparison. The
-// obvious typo — "16GB", a spelling this package's own parseMemory test
+// obvious typo — "16GB", a spelling this package's own quantity.ParseMemory test
 // already asserts is unreadable — therefore granted a workload any size it
 // asked for, contradicting AGENTS.md §6 ("Workflows must not receive
 // unlimited resources by default") and this file's own "None of them is
@@ -516,11 +526,11 @@ func TestReservedResources_AgreesWithResolveResources(t *testing.T) {
 			if failure != nil {
 				t.Fatalf("ResolveResources refused what ReservedResources admitted: %v", failure)
 			}
-			cores, err := parseCPU(cpu)
+			cores, err := quantity.ParseCPU(cpu)
 			if err != nil || cores != got.GetCpu() {
 				t.Errorf("task.json cpu %q parses to %v (%v), the record says %v", cpu, cores, err, got.GetCpu())
 			}
-			bytes, err := parseMemory(memory)
+			bytes, err := quantity.ParseMemory(memory)
 			if err != nil || int64(bytes) != got.GetMemoryBytes() {
 				t.Errorf("task.json memory %q parses to %v (%v), the record says %d", memory, bytes, err, got.GetMemoryBytes())
 			}
