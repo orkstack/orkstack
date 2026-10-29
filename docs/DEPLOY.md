@@ -96,7 +96,14 @@ needs `ORK_S3_*` either way.
   (`orkctl run watch --from-sequence`) and `/ws/runs/{id}?from_sequence=N`
   continue after an event number, and the number is the producer's — the
   workflow assigns it — so resuming against a *different* replica yields the
-  same stream with nothing repeated and nothing skipped.
+  same stream with nothing repeated and nothing skipped. A stream that ends
+  `unavailable` is resumed that way by `orkctl run watch` and the UI's run
+  page, each up to six times in a row without an event. The engine itself
+  restarts a history read the cluster says changed under it
+  (`CurrentBranchChanged`, which can answer a long poll of a run that has
+  just completed), up to three times in a row without a new event, so that
+  answer reaches a client only when it persists (`internal/engine/reader.go`,
+  `historyBranchChanged`).
 - **Task logs are the same claim, over the bucket.** `StreamTaskLogs` and
   `/ws/runs/{id}/tasks/{task}/logs` read the chunks an Orker wrote and the
   task's state from the cluster, so any replica follows any task — one whose
