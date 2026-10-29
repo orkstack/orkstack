@@ -1,6 +1,7 @@
 // Package schemas generates the JSON Schemas of OrkStack's authored
-// documents (docs/schemas/): orkflow.v1.json, automation.v1.json, and the
-// dispatcher orkstack.v1.json, which selects one by kind. They are generated,
+// documents (docs/schemas/): orkflow.v1.json, automation.v1.json,
+// activityinterface.v1.json, and the dispatcher orkstack.v1.json, which
+// selects one by kind. They are generated,
 // never hand-written: `go run ./internal/schemas/cmd/genschemas` writes them,
 // and TestSchemas_AreGenerated refuses a stale one.
 package schemas
@@ -24,33 +25,98 @@ const Dir = "docs/schemas"
 
 // The files, under Dir.
 const (
-	OrkflowFile    = "orkflow.v1.json"
-	AutomationFile = "automation.v1.json"
-	DispatcherFile = "orkstack.v1.json"
+	OrkflowFile           = "orkflow.v1.json"
+	AutomationFile        = "automation.v1.json"
+	ActivityInterfaceFile = "activityinterface.v1.json"
+	DispatcherFile        = "orkstack.v1.json"
 )
 
-// labelLine is the interface label's line in a first-party Dockerfile.
+// InterfaceDocument is the file an image directory declares its with:
+// contract in (docs/ACTIVITY_IMAGES.md, "Declaring the interface").
+const InterfaceDocument = "interface.ork.yaml"
+
+// MaxDockerfileLine is the longest Dockerfile line BuildKit reads. A label
+// near MaxInterfaceLabelBytes fits a --label argument, not a LABEL line.
+const MaxDockerfileLine = 65535
+
+// labelLine is the interface label's line in a Dockerfile.
 var labelLine = regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`)
 
-// FirstPartyInterfaces reads each builtin catalog image's interface label
-// from images/activity-<name>/Dockerfile.
+// readInterface parses one image directory's interface document.
+func readInterface(dir string) (*orkstackv1.ActivityInterface, error) {
+	path := filepath.Join(dir, InterfaceDocument)
+	source, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("schemas: read %s: %w", path, err)
+	}
+	iface, err := dsl.ParseInterfaceDocument(source)
+	if err != nil {
+		return nil, fmt.Errorf("schemas: %s: %w", path, err)
+	}
+	return iface, nil
+}
+
+// FirstPartyInterfaces reads each builtin catalog image's interface from
+// images/activity-<name>/interface.ork.yaml, the source of its label.
 func FirstPartyInterfaces(repoRoot string) (map[string]*orkstackv1.ActivityInterface, error) {
 	out := map[string]*orkstackv1.ActivityInterface{}
 	for _, name := range dsl.BuiltinActivityCatalog().Names() {
-		path := filepath.Join(repoRoot, "images", "activity-"+name, "Dockerfile")
+		iface, err := readInterface(filepath.Join(repoRoot, "images", "activity-"+name))
+		if err != nil {
+			return nil, err
+		}
+		out[name] = iface
+	}
+	return out, nil
+}
+
+// Dockerfiles returns the Dockerfile of every image directory under images/
+// and examples/ that holds an interface.ork.yaml, with its one interface
+// LABEL line replaced by the line PackInterfaceLabel writes for that
+// document — keyed by path from the repository root. Every other line is the
+// Dockerfile's own. A Dockerfile without exactly one such line is refused:
+// the line is where the author put it, and the generator never guesses.
+func Dockerfiles(repoRoot string) (map[string][]byte, error) {
+	var documents []string
+	for _, parent := range []string{"images", "examples"} {
+		matches, err := filepath.Glob(filepath.Join(repoRoot, parent, "*", InterfaceDocument))
+		if err != nil {
+			return nil, err
+		}
+		documents = append(documents, matches...)
+	}
+	out := map[string][]byte{}
+	for _, document := range documents {
+		dir := filepath.Dir(document)
+		iface, err := readInterface(dir)
+		if err != nil {
+			return nil, err
+		}
+		label, err := dsl.PackInterfaceLabel(iface)
+		if err != nil {
+			return nil, fmt.Errorf("schemas: %s: %w", document, err)
+		}
+		path := filepath.Join(dir, "Dockerfile")
 		raw, err := os.ReadFile(path)
 		if err != nil {
 			return nil, fmt.Errorf("schemas: read %s: %w", path, err)
 		}
-		match := labelLine.FindSubmatch(raw)
-		if match == nil {
-			return nil, fmt.Errorf("schemas: %s carries no %s label", path, dsl.InterfaceLabel)
+		lines := labelLine.FindAllIndex(raw, -1)
+		if len(lines) != 1 {
+			return nil, fmt.Errorf("schemas: %s carries %d interface LABEL lines, want exactly one for %s to replace: "+
+				"one line, LABEL %s='…', single-quoted and unbroken", path, len(lines), InterfaceDocument, dsl.InterfaceLabel)
 		}
-		iface, err := dsl.ParseInterfaceLabel(string(match[1]))
+		line := "LABEL " + dsl.InterfaceLabel + "='" + label + "'"
+		if len(line) > MaxDockerfileLine {
+			return nil, fmt.Errorf("schemas: %s: the interface LABEL line would be %d bytes, and BuildKit refuses a Dockerfile "+
+				"line over %d; build the image with orkctl activity build --interface instead", path, len(line), MaxDockerfileLine)
+		}
+		generated := append(append(append([]byte{}, raw[:lines[0][0]]...), line...), raw[lines[0][1]:]...)
+		rel, err := filepath.Rel(repoRoot, path)
 		if err != nil {
-			return nil, fmt.Errorf("schemas: %s: %w", path, err)
+			return nil, err
 		}
-		out[name] = iface
+		out[filepath.ToSlash(rel)] = generated
 	}
 	return out, nil
 }
@@ -69,10 +135,15 @@ func Trees(repoRoot string) (map[string]map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	iface, err := dsl.ActivityInterfaceSchema()
+	if err != nil {
+		return nil, err
+	}
 	return map[string]map[string]any{
-		OrkflowFile:    orkflow,
-		AutomationFile: auto,
-		DispatcherFile: dispatcher(orkflow, auto),
+		OrkflowFile:           orkflow,
+		AutomationFile:        auto,
+		ActivityInterfaceFile: iface,
+		DispatcherFile:        dispatcher(orkflow, auto, iface),
 	}, nil
 }
 
@@ -89,11 +160,11 @@ func body(schema map[string]any) map[string]any {
 	return out
 }
 
-// dispatcher holds both kinds' definitions in one flat table and selects the
-// kind's root by kind, so one *.ork.yaml editor mapping serves both.
-func dispatcher(orkflow, auto map[string]any) map[string]any {
-	definitions := map[string]any{"orkflow": body(orkflow), "automation": body(auto)}
-	for _, schema := range []map[string]any{orkflow, auto} {
+// dispatcher holds every kind's definitions in one flat table and selects
+// the kind's root by kind, so one *.ork.yaml editor mapping serves them all.
+func dispatcher(orkflow, auto, iface map[string]any) map[string]any {
+	definitions := map[string]any{"orkflow": body(orkflow), "automation": body(auto), "activityinterface": body(iface)}
+	for _, schema := range []map[string]any{orkflow, auto, iface} {
 		for name, def := range schema["definitions"].(map[string]any) {
 			definitions[name] = def
 		}
@@ -105,17 +176,19 @@ func dispatcher(orkflow, auto map[string]any) map[string]any {
 		}
 	}
 	return map[string]any{
-		"$schema":     dsl.SchemaDialect,
-		"$comment":    dsl.SchemaComment,
-		"title":       "OrkStack authored document (" + dsl.APIVersion + ")",
-		"description": "An Orkflow (kind: Orkflow, docs/DSL.md) or an automation document (kind: Automation, docs/AUTOMATION.md); apiVersion and kind select the schema.",
-		"type":        "object",
-		"required":    []any{"apiVersion", "kind"},
+		"$schema":  dsl.SchemaDialect,
+		"$comment": dsl.SchemaComment,
+		"title":    "OrkStack authored document (" + dsl.APIVersion + ")",
+		"description": "An Orkflow (kind: Orkflow, docs/DSL.md), an automation document (kind: Automation, docs/AUTOMATION.md) " +
+			"or an activity interface (kind: ActivityInterface, docs/ACTIVITY_IMAGES.md); apiVersion and kind select the schema.",
+		"type":     "object",
+		"required": []any{"apiVersion", "kind"},
 		"properties": map[string]any{
 			"apiVersion": map[string]any{"const": dsl.APIVersion},
-			"kind":       map[string]any{"enum": []any{dsl.KindAutomation, dsl.KindOrkflow}},
+			"kind":       map[string]any{"enum": []any{dsl.KindActivityInterface, dsl.KindAutomation, dsl.KindOrkflow}},
 		},
-		"allOf":       []any{selects(dsl.KindOrkflow, "orkflow"), selects(dsl.KindAutomation, "automation")},
+		"allOf": []any{selects(dsl.KindOrkflow, "orkflow"), selects(dsl.KindAutomation, "automation"),
+			selects(dsl.KindActivityInterface, "activityinterface")},
 		"definitions": definitions,
 	}
 }

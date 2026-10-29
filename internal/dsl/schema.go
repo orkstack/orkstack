@@ -444,7 +444,7 @@ func fieldSchema(name string, f *orkstackv1.FieldSchema) map[string]any {
 	if def := f.GetDefault(); def != nil {
 		out["default"] = def.AsInterface()
 	}
-	out["description"] = "Declared by the interface label of images/activity-" + name + " (see its README)."
+	out["description"] = "Declared by images/activity-" + name + "/interface.ork.yaml, the source of the image's interface label."
 	return out
 }
 

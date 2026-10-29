@@ -27,9 +27,10 @@ USER 65532:65532
 
 # The with: contract, declared (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). Optional: the engine checks a document's with: against it at
-# validate and apply; the container never reads it. One line, because the
-# value is JSON; README.md's Interface section reproduces it verbatim.
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"exec":{"fields":{"command":{"type":"array","required":true}}},"script":{"fields":{"script":{"type":"string","required":true},"interpreter":{"type":"string"},"command":{"type":"array"}}},"eval":{"fields":{"command":{"type":"array","required":true}}}},"defaultOp":"exec","values":{"exitCode":{"type":"number"},"scriptPath":{"type":"string"},"value":{"type":"string"}}}'
+# validate and apply; the container never reads it. The line is generated
+# from interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`: edit
+# that file, never this line.
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"eval":{"fields":{"command":{"type":"array","required":true}}},"exec":{"fields":{"command":{"type":"array","required":true}}},"script":{"fields":{"command":{"type":"array"},"interpreter":{"type":"string"},"script":{"type":"string","required":true}}}},"defaultOp":"exec","values":{"exitCode":{"type":"number"},"scriptPath":{"type":"string"},"value":{"type":"string"}}}'
 
 # Exec form, mandatory.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]

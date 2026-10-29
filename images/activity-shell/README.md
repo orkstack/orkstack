@@ -112,17 +112,14 @@ e.g. as `workspace.tar.gz`. Names must be valid UTF-8.
 
 ## Interface
 
-The image declares its `with:` contract in the
+The image declares its `with:` contract in
+[`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
 "Declaring the interface"), so `orkctl orkflow validate` and apply check a
 task's `with:` before anything runs: a missing required key or an unknown
 `op` is an error, an undeclared key a warning. Three ops, `exec` when `op`
 is absent, and every `values.json` key of Output — `value` is the captured
-stdout of `op: eval`. The label, as the Dockerfile carries it:
-
-```dockerfile
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"exec":{"fields":{"command":{"type":"array","required":true}}},"script":{"fields":{"script":{"type":"string","required":true},"interpreter":{"type":"string"},"command":{"type":"array"}}},"eval":{"fields":{"command":{"type":"array","required":true}}}},"defaultOp":"exec","values":{"exitCode":{"type":"number"},"scriptPath":{"type":"string"},"value":{"type":"string"}}}'
-```
+stdout of `op: eval`.
 
 `orkctl activity inspect shell` renders it as a table.
 

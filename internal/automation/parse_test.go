@@ -121,6 +121,21 @@ func TestParse_AnOrkflowIsNotAnAutomationDocument(t *testing.T) {
 	}
 }
 
+// TestParse_AnActivityInterfaceIsNotAnAutomationDocument: an activity
+// interface is named for what it is, and pointed at the packer.
+func TestParse_AnActivityInterfaceIsNotAnAutomationDocument(t *testing.T) {
+	source := "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n"
+	doc, issues := Parse([]byte(source))
+	if doc != nil {
+		t.Fatal("an activity interface was parsed as an automation document")
+	}
+	if len(issues) != 1 || issues[0].GetField() != "kind" ||
+		issues[0].GetMessage() != "line 2: kind: ActivityInterface is an activity interface, not an automation document: "+
+			"pack it into an image's label with orkctl activity interface pack" {
+		t.Fatalf("issues = %v", issues)
+	}
+}
+
 func TestParse_HeaderIsRequiredAndExact(t *testing.T) {
 	cases := map[string]struct{ source, field, fragment string }{
 		"missing apiVersion": {"kind: Automation\nnamespace: payments\n", "apiVersion", "apiVersion is required"},

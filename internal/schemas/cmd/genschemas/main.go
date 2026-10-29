@@ -1,5 +1,7 @@
 // Command genschemas writes the JSON Schemas of the authored documents to
-// docs/schemas/ (internal/schemas). Run it from the repository root:
+// docs/schemas/ (internal/schemas), and regenerates the interface LABEL line
+// of every Dockerfile built beside an interface.ork.yaml from that document.
+// Run it from the repository root:
 //
 //	go run ./internal/schemas/cmd/genschemas
 package main
@@ -27,6 +29,13 @@ func generate(root, dest string, out io.Writer) error {
 	files, err := schemas.Files(root)
 	if err != nil {
 		return err
+	}
+	dockerfiles, err := schemas.Dockerfiles(root)
+	if err != nil {
+		return err
+	}
+	for path, content := range dockerfiles {
+		files[path] = content
 	}
 	paths := make([]string, 0, len(files))
 	for path := range files {

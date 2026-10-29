@@ -33,19 +33,25 @@ func firstPartyLabel(t *testing.T, image string) string {
 	return string(match[1])
 }
 
-// readmeInterface is the label text the image's README reproduces under its
-// "Interface" heading, so the README and the Dockerfile cannot drift apart.
-func readmeInterface(t *testing.T, image string) string {
+// readmeLinksInterface: the image's README points its reader at the
+// interface's one source, interface.ork.yaml, from its "Interface" section,
+// and copies nothing that could drift from it.
+func readmeLinksInterface(t *testing.T, dir string) {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "images", image, "README.md"))
+	raw, err := os.ReadFile(filepath.Join(dir, "README.md"))
 	if err != nil {
-		t.Fatalf("read %s README: %v", image, err)
+		t.Fatalf("read %s README: %v", dir, err)
 	}
-	match := regexp.MustCompile(`(?s)## Interface\n.*?LABEL ` + regexp.QuoteMeta(InterfaceLabel) + `='([^']*)'`).FindSubmatch(raw)
-	if match == nil {
-		t.Fatalf("images/%s/README.md has no Interface section reproducing the label", image)
+	section := regexp.MustCompile(`(?s)## Interface\n(.*?)(\n## |\z)`).FindSubmatch(raw)
+	if section == nil {
+		t.Fatalf("%s/README.md has no Interface section", dir)
 	}
-	return string(match[1])
+	if !strings.Contains(string(section[1]), "[`interface.ork.yaml`](interface.ork.yaml)") {
+		t.Fatalf("%s/README.md's Interface section does not link interface.ork.yaml", dir)
+	}
+	if strings.Contains(string(raw), "LABEL "+InterfaceLabel) {
+		t.Fatalf("%s/README.md copies the interface LABEL, which would drift from interface.ork.yaml", dir)
+	}
 }
 
 func mustParse(t *testing.T, raw string) *orkstackv1.ActivityInterface {
@@ -159,11 +165,8 @@ func TestParseInterfaceLabel_AcceptsEveryFirstPartyLabel(t *testing.T) {
 	}
 	for image, w := range cases {
 		t.Run(image, func(t *testing.T) {
-			label := firstPartyLabel(t, image)
-			if readme := readmeInterface(t, image); readme != label {
-				t.Fatalf("README Interface section and Dockerfile LABEL differ:\nREADME:     %s\nDockerfile: %s", readme, label)
-			}
-			iface := mustParse(t, label)
+			readmeLinksInterface(t, filepath.Join("..", "..", "images", image))
+			iface := mustParse(t, firstPartyLabel(t, image))
 			if iface.GetSchemaVersion() != 1 {
 				t.Fatalf("schemaVersion = %d", iface.GetSchemaVersion())
 			}

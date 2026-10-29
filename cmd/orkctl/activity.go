@@ -26,6 +26,7 @@ func newActivityCommand(g *globalFlags) *cobra.Command {
 	cmd.AddCommand(newActivityInspectCommand(g))
 	cmd.AddCommand(newActivityTestCommand(g))
 	cmd.AddCommand(newActivityBuildCommand(g))
+	cmd.AddCommand(newActivityInterfaceCommand())
 	return cmd
 }
 

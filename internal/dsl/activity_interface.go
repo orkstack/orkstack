@@ -79,48 +79,58 @@ func ParseInterfaceLabel(raw string) (*orkstackv1.ActivityInterface, error) {
 	if err := (protojson.UnmarshalOptions{DiscardUnknown: false}).Unmarshal([]byte(raw), iface); err != nil {
 		return nil, fmt.Errorf("label is not the JSON encoding of an ActivityInterface: %v", err)
 	}
+	if err := validateInterface(iface); err != nil {
+		return nil, err
+	}
+	return iface, nil
+}
+
+// validateInterface holds a decoded interface to every rule the label
+// states. A label and an authored document (ParseInterfaceDocument) are
+// judged by it alike, so what pack accepts the engine reads.
+func validateInterface(iface *orkstackv1.ActivityInterface) error {
 	if iface.GetSchemaVersion() != 1 {
-		return nil, fmt.Errorf("schemaVersion %d is not supported (this engine reads 1)", iface.GetSchemaVersion())
+		return fmt.Errorf("schemaVersion %d is not supported (this engine reads 1)", iface.GetSchemaVersion())
 	}
 	if n := len(iface.GetOps()); n > MaxInterfaceOps {
-		return nil, fmt.Errorf("declares %d ops, limit is %d", n, MaxInterfaceOps)
+		return fmt.Errorf("declares %d ops, limit is %d", n, MaxInterfaceOps)
 	}
 	opNames := mapKeys(iface.GetOps())
 	for _, op := range opNames {
 		if !opNamePattern.MatchString(op) {
-			return nil, fmt.Errorf("op %q is not a lowercase op name (%s)", op, opNamePattern.String())
+			return fmt.Errorf("op %q is not a lowercase op name (%s)", op, opNamePattern.String())
 		}
 	}
 	if err := checkFieldMap("fields", iface.GetFields()); err != nil {
-		return nil, err
+		return err
 	}
 	if err := checkFieldMap("values", iface.GetValues()); err != nil {
-		return nil, err
+		return err
 	}
 	for _, op := range opNames {
 		if err := checkFieldMap("ops."+op+".fields", iface.GetOps()[op].GetFields()); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	if _, declared := iface.GetFields()[opKey]; declared && len(opNames) > 0 {
-		return nil, errors.New("fields.op is declared explicitly but ops is non-empty; op is implied by ops")
+		return errors.New("fields.op is declared explicitly but ops is non-empty; op is implied by ops")
 	}
 	if def := iface.GetDefaultOp(); def != "" {
 		if len(opNames) == 0 {
-			return nil, fmt.Errorf("defaultOp %q is set but ops is empty", def)
+			return fmt.Errorf("defaultOp %q is set but ops is empty", def)
 		}
 		if _, ok := iface.GetOps()[def]; !ok {
-			return nil, fmt.Errorf("defaultOp %q is not one of the declared ops (%s)", def, strings.Join(opNames, ", "))
+			return fmt.Errorf("defaultOp %q is not one of the declared ops (%s)", def, strings.Join(opNames, ", "))
 		}
 	}
 	for _, op := range opNames {
 		for _, key := range mapKeys(iface.GetOps()[op].GetFields()) {
 			if _, shared := iface.GetFields()[key]; shared {
-				return nil, fmt.Errorf("key %q is declared both in fields and under op %q; declare it once", key, op)
+				return fmt.Errorf("key %q is declared both in fields and under op %q; declare it once", key, op)
 			}
 		}
 	}
-	return iface, nil
+	return nil
 }
 
 // checkFieldMap validates one fields/values map; where names it in messages.

@@ -11,7 +11,7 @@ import { API_VERSION, ORKFLOW_PLACEHOLDER, automationPlaceholder } from '../src/
 const repo = `${import.meta.dir}/../..`;
 const read = (path: string) => readFileSync(`${repo}/${path}`, 'utf8');
 const schema = (name: string) => JSON.parse(read(`docs/schemas/${name}`));
-const NAMES = ['orkflow.v1.json', 'automation.v1.json', 'orkstack.v1.json'];
+const NAMES = ['orkflow.v1.json', 'automation.v1.json', 'activityinterface.v1.json', 'orkstack.v1.json'];
 
 function compile(name: string) {
 	const ajv = new Ajv({ allErrors: true, strict: true, strictRequired: false, allowUnionTypes: true });
@@ -32,7 +32,7 @@ function expectValid(label: string, doc: unknown, kindSchema: string) {
 	}
 }
 
-test('the three generated schemas compile under strict mode', () => {
+test('every generated schema compiles under strict mode', () => {
 	for (const name of NAMES) {
 		let error = '';
 		try {
@@ -47,6 +47,7 @@ test('the three generated schemas compile under strict mode', () => {
 test('API_VERSION is the generated schemas’ apiVersion', () => {
 	expect(schema('orkflow.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 	expect(schema('automation.v1.json').properties.apiVersion.const).toBe(API_VERSION);
+	expect(schema('activityinterface.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 	expect(schema('orkstack.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 });
 
@@ -132,4 +133,32 @@ test('the schemas accept what the compiler accepts', () => {
 		const ok = validate(doc);
 		expect(ok ? label : `${label}: ${JSON.stringify(validate.errors?.slice(0, 4))}`).toBe(label);
 	}
+});
+
+// The activity interface documents (kind: ActivityInterface): every image this
+// repository builds beside an interface.ork.yaml declares one, and the schema
+// refuses what ParseInterfaceDocument refuses, at its path.
+test('every shipped activity interface validates, and the schema refuses what pack refuses', () => {
+	let count = 0;
+	for (const parent of ['images', 'examples']) {
+		for (const dir of readdirSync(`${repo}/${parent}`).sort()) {
+			let source: string;
+			try {
+				source = read(`${parent}/${dir}/interface.ork.yaml`);
+			} catch {
+				continue;
+			}
+			expectValid(`${parent}/${dir}/interface.ork.yaml`, Bun.YAML.parse(source), 'activityinterface.v1.json');
+			count++;
+		}
+	}
+	expect(count).toBe(8);
+	const iface = (body: string) => Bun.YAML.parse(`apiVersion: ${API_VERSION}\nkind: ActivityInterface\n` + body);
+	expectValid('empty fields, values and ops', iface('fields:\nvalues:\nops:\n  get:\n'), 'activityinterface.v1.json');
+	refusedAt('a written schemaVersion', iface('schemaVersion: 1\n'), 'activityinterface.v1.json', '');
+	refusedAt('type: text', iface('fields:\n  a:\n    type: text\n'), 'activityinterface.v1.json', '/fields/a/type');
+	refusedAt('a field with no type', iface('fields:\n  a:\n    required: true\n'), 'activityinterface.v1.json', '/fields/a');
+	refusedAt('an op that is not lowercase', iface('ops:\n  Get: {}\n'), 'activityinterface.v1.json', '/ops');
+	refusedAt('a key past 128 bytes', iface(`values:\n  ${'k'.repeat(129)}:\n    type: string\n`), 'activityinterface.v1.json', '/values');
+	refusedAt('an unknown key, through the dispatcher', iface('field: {}\n'), 'orkstack.v1.json', '');
 });

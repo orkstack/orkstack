@@ -160,7 +160,9 @@ The first-party `activity-http`, `activity-shell`, `activity-file`,
 `activity-json`, `activity-git` and `activity-template` images are reference
 implementations of this same public contract, not privileged plugins. An image
 may declare its `with:` interface in the `org.orkstack.activity.interface`
-label, which validate and apply then check.
+label, which validate and apply then check; its author writes it as an
+`interface.ork.yaml` (`kind: ActivityInterface`) that `orkctl` packs into the
+label at build time.
 
 ### Storage (`pkg/artifacts`)
 

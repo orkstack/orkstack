@@ -140,12 +140,21 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 		p.errorAt("", body, "an automation document is a mapping with apiVersion, kind and namespace, got %s", describeNode(body))
 		return nil, p.issues
 	}
-	// An Orkflow reaches this parser only through PlanAutomation or Admin →
-	// Automation; it is named for what it is, not refused key by key.
+	// An Orkflow or an activity interface reaches this parser only through
+	// PlanAutomation or Admin → Automation; it is named for what it is, not
+	// refused key by key.
 	for i := 0; i+1 < len(body.Content); i += 2 {
-		if key, value := body.Content[i], body.Content[i+1]; key.Value == "kind" &&
-			value.Kind == yaml.ScalarNode && value.Tag == "!!str" && value.Value == dsl.KindOrkflow {
+		key, value := body.Content[i], body.Content[i+1]
+		if key.Value != "kind" || value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+			continue
+		}
+		switch value.Value {
+		case dsl.KindOrkflow:
 			p.errorAt("kind", value, "kind: %s is an Orkflow, not an automation document: apply it with orkctl apply or the Apply page", dsl.KindOrkflow)
+			return nil, p.issues
+		case dsl.KindActivityInterface:
+			p.errorAt("kind", value, "kind: %s is an activity interface, not an automation document: "+
+				"pack it into an image's label with orkctl activity interface pack", dsl.KindActivityInterface)
 			return nil, p.issues
 		}
 	}

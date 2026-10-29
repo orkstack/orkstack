@@ -10,6 +10,20 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- An activity image's `with:` interface can be written as a readable YAML
+  document, `kind: ActivityInterface` (by convention `interface.ork.yaml`
+  beside the Dockerfile), instead of one line of JSON. `orkctl activity
+  interface pack FILE` prints the `org.orkstack.activity.interface` label
+  value it packs into, for any toolchain's `--label`, and `orkctl activity
+  build --interface FILE` packs it into the image it builds. The label stays
+  the contract the engine reads, unchanged, so every existing labelled image
+  keeps working. The packed value is canonical: one declaration always packs
+  to the same label value. `docs/schemas/activityinterface.v1.json`
+  gives editors completion, selected by `kind` in `orkstack.v1.json`.
+  `orkctl apply` refuses an activity interface named on its command line and
+  skips one in a directory, naming it on stderr (docs/ACTIVITY_IMAGES.md,
+  "Declaring the interface").
+
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
   panics: the list-filter grammar, compiler and matcher (a compiled set is a
@@ -176,6 +190,13 @@ include breaking changes, and each is marked **BREAKING**.
   them (v1.83.2 and v0.62.0).
 
 ### Changed
+
+- The first-party images and the example images declare their interfaces in
+  an `interface.ork.yaml` each, and their Dockerfiles' interface `LABEL` line
+  is generated from it by `go run ./internal/schemas/cmd/genschemas`. The
+  declarations are unchanged; the regenerated lines write them with sorted
+  keys, so each image's config digest changes once, at its next build. Each
+  image's README links its interface document instead of copying the label.
 
 - The pre-release gate excuses a runner-size miss exactly as the merge gate
   and the nightly do: on a CI runner below a row's reference CPUs, under a row

@@ -126,10 +126,12 @@ the Temporal payload, the Connect API, `orkctl --json` and the UI's typed input
 editor share (`docs/JSON.md`), so a copied CLI command reproduces exactly what
 was submitted, and it has none of YAML's silent coercions (`no`, `on`,
 octal-looking numbers). Documents a person authors — an Orkflow, an automation
-document — stay YAML, and each begins with `apiVersion: orkstack/v1` and its
-`kind:` (`Orkflow`, `Automation`). Inside one, runtime data is written as YAML
+document, an activity interface — stay YAML, and each begins with
+`apiVersion: orkstack/v1` and its `kind:` (`Orkflow`, `Automation`,
+`ActivityInterface`). Inside one, runtime data is written as YAML
 too — a task's `with:` (an http `body:`, jq `vars:`), an Orkflow's `inputs:`
-defaults, an await's `schema:`, a schedule's `input:` — and becomes JSON only
+defaults, an await's `schema:`, a schedule's `input:`, an activity
+interface's `required:` and `default:` — and becomes JSON only
 through the strict mapping (`docs/JSON.md`, "Data written in an authored
 document"), never a lenient decode: a plain scalar that YAML readers resolve
 differently (`yes`, `0755`, `1:30`, a date), a number JSON cannot hold
@@ -479,6 +481,14 @@ internal never appears on any of those surfaces.
   and webhooks by name (`docs/AUTOMATION.md`). Its plan
   (`apply --dry-run`) is unrelated to `orkctl run plan`, which simulates one
   run's DAG.
+- **Activity interface** means what an image declares about its `with:`
+  block: the `org.orkstack.activity.interface` label, which is the ABI the
+  engine reads, and the authored document it is packed from
+  (`kind: ActivityInterface`, by convention `interface.ork.yaml` beside the
+  Dockerfile; `docs/ACTIVITY_IMAGES.md`, "Declaring the interface"). The
+  document is never applied, stored or read at run time. It is unrelated to
+  an Orkflow's declared interface (`inputs:` and `outputs:`), which the
+  promote gate compares.
 - **Run retention** means how long a finished run of one OrkStack namespace
   stays readable before it is retired, counted from when the run FINISHED,
   never from submission. It is a field of `orkstack.v1.Namespace`

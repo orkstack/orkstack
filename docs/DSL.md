@@ -37,15 +37,18 @@ version: "1.4.0"
 Every Orkflow begins with these two keys. `apiVersion` is the version of the
 document format — which keys exist and what they mean — and `orkstack/v1` is
 the only one; `version` is this Orkflow's own version, which its author pins or
-the source derives. `kind` says what the document is: `Orkflow`, or
-`Automation` for an [automation document](AUTOMATION.md), which uses the same
-`apiVersion`. `orkctl apply` reads `kind` to decide what a file is, and refuses
-a file with none.
+the source derives. `kind` says what the document is: `Orkflow`,
+`Automation` for an [automation document](AUTOMATION.md), or
+`ActivityInterface` for an image's [activity
+interface](ACTIVITY_IMAGES.md#declaring-the-interface), which is packed into
+the image rather than applied; all use the same `apiVersion`. `orkctl apply`
+reads `kind` to decide what a file is, and refuses a file with none.
 
 A document without the header is refused at validate, apply and plan
 (`INVALID_ARGUMENT`, on `apiVersion`), naming the two lines to add. Another
 `apiVersion` is refused naming `orkstack/v1`; another `kind` is refused naming
-the kinds there are, and `kind: Automation` says where that document goes.
+the kinds there are, and `kind: Automation` or `kind: ActivityInterface` says
+where that document goes.
 
 Write the two lines as the document's first YAML lines. Comments may stand
 above or below them; the compiler accepts the two keys anywhere at the top
@@ -94,7 +97,10 @@ tables (`go run ./internal/schemas/cmd/genschemas`) and checked in under
 
 - [`orkflow.v1.json`](schemas/orkflow.v1.json) — `kind: Orkflow`;
 - [`automation.v1.json`](schemas/automation.v1.json) — `kind: Automation`;
-- [`orkstack.v1.json`](schemas/orkstack.v1.json) — either: it selects the
+- [`activityinterface.v1.json`](schemas/activityinterface.v1.json) —
+  `kind: ActivityInterface` (`docs/ACTIVITY_IMAGES.md`, "Declaring the
+  interface");
+- [`orkstack.v1.json`](schemas/orkstack.v1.json) — any of them: it selects the
   kind's schema by `apiVersion` and `kind`.
 
 An editor with a YAML language server (VS Code's YAML extension, for one)
@@ -106,13 +112,14 @@ every comment — with the path relative to the file in this repository:
 ```
 
 or through a mapping in VS Code's `settings.json`, where the dispatcher covers
-both kinds behind one extension:
+every kind behind one extension:
 
 ```json
 "yaml.schemas": {"<path or URL of orkstack.v1.json>": ["*.ork.yaml", "*.ork.yml"]}
 ```
 
-A first-party image's `with:` keys complete from its interface label, and
+A first-party image's `with:` keys complete from its interface (its
+`images/activity-<name>/interface.ork.yaml`, the source of its label), and
 each key's hover is this reference's text. The schema checks a document's
 shape — its keys, their types, the words a key takes, the required keys and
 the task kinds. What it cannot express is `orkctl orkflow validate`'s: a
@@ -137,8 +144,9 @@ choice:
 
 A first-party `with:` value of an undeclared type is an error in the editor
 and a warning at validate. The docs site will serve the schemas at
-`/schemas/orkflow/v1.json`, `/schemas/automation/v1.json` and
-`/schemas/orkstack/v1.json`; until it does, point at the files in a checkout.
+`/schemas/orkflow/v1.json`, `/schemas/automation/v1.json`,
+`/schemas/activityinterface/v1.json` and `/schemas/orkstack/v1.json`; until
+it does, point at the files in a checkout.
 
 ### `namespace`
 
@@ -1730,8 +1738,8 @@ How each node reads:
     other rule: a document with neither is refused on `apiVersion`, naming
     the two lines; a missing one is refused naming the line to add; another
     `apiVersion` names `orkstack/v1` (field `apiVersion`); another `kind`
-    names the kinds there are, and `kind: Automation` says where an
-    automation document goes (field `kind`). No read path compiles a stored
+    names the kinds there are, and `kind: Automation` or
+    `kind: ActivityInterface` says where that document goes (field `kind`). No read path compiles a stored
     source, so the rule applies when a document is applied, never again.
 46. `inputs`, every `tasks[i].with` and every `tasks[i].await.schema` are
     authored data, converted to JSON by the strict mapping (`docs/JSON.md`,

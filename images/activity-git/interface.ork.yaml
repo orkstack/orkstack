@@ -1,0 +1,42 @@
+# The with: contract of images/activity-git (docs/ACTIVITY_IMAGES.md, "Declaring the
+# interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
+# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
+# that line.
+apiVersion: orkstack/v1
+kind: ActivityInterface
+fields:
+  url:
+    type: string
+    required: true
+  ref:
+    type: string
+  tokenSecret:
+    type: string
+  tokenUser:
+    type: string
+    default: "x-access-token"
+  caFile:
+    type: string
+ops:
+  clone:
+    fields:
+      depth:
+        type: number
+        default: 1
+      as:
+        type: string
+        default: "src.tar.gz"
+      dest:
+        type: string
+  resolve: {}
+values:
+  commit:
+    type: string
+  ref:
+    type: string
+  path:
+    type: string
+  sizeBytes:
+    type: number
+  sha256:
+    type: string
