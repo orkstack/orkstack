@@ -58,7 +58,7 @@ Point `orkctl` at any replica with `--server` or `ORK_SERVER`.
 
 Each release publishes `ork`, `orker`, `orkctl`, `ui` and six first-party activity images to `ghcr.io/orkstack`, for linux/amd64 and linux/arm64. Deploy by digest, or by the `X.Y.Z` tag, which never moves.
 
-No release is published yet, so there are no images to pull. The [release notes](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts) describe what a release publishes.
+Releases are on the [releases page](https://github.com/orkstack/orkstack/releases), the first of them v0.1.0. Each tags its images with its version, such as `ghcr.io/orkstack/orker:0.1.0`, and attaches its binaries and their `SHA256SUMS`. [UPGRADING.md](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts), “Release artifacts”, lists everything a release publishes.
 
 Each release signs its images and its `SHA256SUMS` with one cosign key. The public half is [`deploy/cosign.pub`](https://github.com/orkstack/orkstack/blob/main/deploy/cosign.pub) in the repository, and each release attaches it as `cosign.pub`. Register it as a signing key. A namespace whose tasks use only the first-party activities can then require it:
 
@@ -106,7 +106,7 @@ On a host, an Orker with no `ORK_ORKER_ID` derives a unique id from its host and
 
 ## Before you depend on it
 
-OrkStack is pre-release. Breaking changes can land until 1.0. The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md) lists what to take care of. It is a list of care items, not a certification. Start with these:
+OrkStack has not reached 1.0, and until it does any release may include breaking changes. The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md) lists what to take care of. It is a list of care items, not a certification. Start with these:
 
 - Rehearse a rollout, a rollback, an Orker drain and a cleanup pass in a deployment that runs no real work.
 - Give each environment its own Temporal namespace.

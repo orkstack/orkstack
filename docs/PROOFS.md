@@ -715,8 +715,9 @@ is a regression on `main` like any red nightly (§6).
 `release.yml` holds five: `release.yml` › `validate` runs first on every
 dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses
 `tag: true` from any ref but `main`, and refuses a version whose `X.Y` the
-built-in activity catalog does not name or which CHANGELOG.md has no
-`## [X.Y.Z]` section for (`dist check`, `dist notes`), and decides from the
+built-in activity catalog does not name, which CHANGELOG.md has no
+`## [X.Y.Z]` section for, or whose CHANGELOG.md still holds entries under
+`## [Unreleased]` (`dist check`, `dist notes`), and decides from the
 repository's tags whether the release is the latest (`dist order`): a release
 below a released tag of its own `X.Y` is refused, because it would move the
 `X.Y` image tag back, and a backport to an older series is released but never
@@ -1501,6 +1502,30 @@ gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
 make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
 ```
 
+**Write the release notes.** A release's notes on its GitHub release page
+are its CHANGELOG.md section, word for word. Each user-visible change lands
+with its entry under `## [Unreleased]` (AGENTS.md §11.1, step 7; CONTRIBUTING.md,
+"The changelog"). Before a release is dispatched, a change to `main`, proved
+and merged like any other, cuts the version's section: it renames
+`## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, the version without its `v`
+and the day the section is cut, puts an empty `## [Unreleased]` above it, and
+edits the entries into what the release page should say, under Keep a
+Changelog's `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
+`### Fixed` and `### Security`, each breaking change marked **BREAKING**.
+Nothing writes the date at tag time: the tag names a commit a proof passed
+on, so the heading is already in that commit. `dist notes -version vX.Y.Z`
+prints exactly what the page will show: the section without its heading,
+because the release has its own title, `OrkStack vX.Y.Z`. `release.yml` ›
+`artifacts` writes that to `meta/notes.md`, and `release.yml` › `publish`
+hands it, and nothing else, to `gh release create --notes-file`; the
+checksums, `SHA256SUMS.sig` and `cosign.pub` are the release's assets, and
+[UPGRADING.md](./UPGRADING.md), "Release artifacts", says how to verify
+them. `release.yml` › `validate` refuses a version with no section or an
+empty one, and one whose `## [Unreleased]` still holds entries, because they
+would ship in the release without being in its notes: an entry merged after
+the cut moves into the section before the dispatch. The first release, 0.1.0,
+says only "First release.": everything built before it is that release.
+
 **Run the release gate.** Dispatch `release.yml` from `main` with `version`
 set and `tag: false`; `release.yml` › `validate` refuses a malformed version
 before any job starts, and `release.yml` › `gate` runs the release tier on the
@@ -1527,8 +1552,8 @@ does not push; a tag made that way publishes nothing, because `release.yml` is
 the only path that publishes. Only a `release.yml` run whose `gate` passed
 publishes. Neither path stops a
 person with write access from pushing a `v*` tag by hand (§12). Before
-dispatching, add the version's `## [X.Y.Z]` section to CHANGELOG.md: it
-becomes the release notes, and `validate` refuses a version without one.
+dispatching, write the version's section ("Write the release notes", above):
+it becomes the release notes, and `validate` refuses a version without one.
 
 **Set up release signing.** Once, before the first release (done on
 2026-10-29: `deploy/cosign.pub` is committed, and the environment holds both

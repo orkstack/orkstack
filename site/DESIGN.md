@@ -285,7 +285,7 @@ Three icon buttons (system, light, dark) in one `--rule-hair` outlined group, ha
 A `<dl>` band under a `--rule-frame` ink rule: tracked-caps muted labels over semibold `--text-md` values, cells divided by ink hairlines. From 900 px one row, the first cell twice as wide; below, auto-fit cells of at least 9rem. A value may be a link (ink, `--color-rule-strong` underline) or a stamp. The landing page closes with one (Project, Status, License, Source, Docs) and every docs page closes with one (Source file, Status, License).
 
 ### Stamp
-The UI's status stamp for a neutral state: sunken ground, `--rule-hair` outline, tracked caps, a small outlined square mark before the word. It carries only "Pre-release".
+The UI's status stamp for a neutral state: sunken ground, `--rule-hair` outline, tracked caps, a small outlined square mark before the word. It carries only "Before 1.0".
 
 ### Drawing frame (signature)
 A `<figure>` in a `--rule-region` ink border on paper; at its top left a paper patch holding a mono `--text-xs` caption in `--color-ink-secondary`, sitting on the frame's own top band so it never covers the contents. Captions name what is drawn ("each-fan-out @ 0.3.0 · 3 tasks", "How a run flows · ARCHITECTURE.md"). An optional `after` slot holds a hairline-ruled note. In the hero its side borders are dropped inside the sheet's frame: region rules above and below it under 1024 px, a single `--rule-frame` rule below it from 1024 px.

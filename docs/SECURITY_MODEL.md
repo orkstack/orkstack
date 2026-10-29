@@ -2,8 +2,8 @@
 
 This document states OrkStack's security model in one place. Each rule names
 the code or the contract that enforces it, and each one describes this branch as
-it is. It is a description of what is enforced, not an audit. OrkStack is
-pre-release. Nothing here makes it production-ready, and the bar for that is set
+it is. It is a description of what is enforced, not an audit. OrkStack has not
+reached 1.0. Nothing here makes it production-ready, and the bar for that is set
 in [AGENTS.md](../AGENTS.md), §11.
 
 The engineering contract behind this model is [AGENTS.md](../AGENTS.md) §2.3 (the
@@ -458,6 +458,6 @@ its own writes (`internal/api/audit.go`). A record is written once to
 - **Webhook receivers.** Verifying the signature, and deciding what to do with a
   delivery, is the receiver's job. OrkStack keeps no record of what a receiver did
   with one ([WEBHOOKS.md](WEBHOOKS.md), "Verifying the signature").
-- **Production readiness.** OrkStack is pre-release. Its failure and recovery
+- **Production readiness.** OrkStack has not reached 1.0. Its failure and recovery
   scenarios must be proven before it is called production-ready
   ([AGENTS.md](../AGENTS.md), §11).

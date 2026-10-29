@@ -1,6 +1,6 @@
 # Production checklist
 
-OrkStack is pre-release: stable, but breaking changes may be introduced until 1.0. [AGENTS.md](../AGENTS.md) §11 forbids calling OrkStack production-ready until its required failure and recovery scenarios are proven. This checklist is how to run OrkStack carefully while that proof is incomplete. It is not a readiness claim.
+OrkStack has not reached 1.0: until it does, any release may include breaking changes. [AGENTS.md](../AGENTS.md) §11 forbids calling OrkStack production-ready until its required failure and recovery scenarios are proven. This checklist is how to run OrkStack carefully while that proof is incomplete. It is not a readiness claim.
 
 Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because several items below work around one of its limits. Each item names the reference that holds the detail, and the commands are the ones those references give.
 
@@ -127,4 +127,4 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 ## Before you depend on it
 
 - [ ] Rehearse, in a deployment that carries no real work, each procedure this checklist relies on: a rollout and a rollback, an Orker drain, and a cleanup pass with retention enabled. Do not rely on a procedure under pressure until you have run it ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
-- [ ] Re-read [LIMITATIONS.md](./LIMITATIONS.md) and the [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]` section before each upgrade, because breaking changes are announced there ([UPGRADING.md](./UPGRADING.md), "The pre-1.0 promise").
+- [ ] Before each upgrade, re-read [LIMITATIONS.md](./LIMITATIONS.md) and, in [CHANGELOG.md](../CHANGELOG.md), the section of every release after the one you run, because breaking changes are announced there ([UPGRADING.md](./UPGRADING.md), "The pre-1.0 promise").

@@ -43,7 +43,7 @@ images:
     digest: sha256:<the release's orker digest>
 ```
 
-No release is published yet. Until one is, build the `orker` image from a clone (`deploy/source/Dockerfile`, target `orker`), push it to your registry, and name that image instead.
+A release's `orker` image is `ghcr.io/orkstack/orker`, tagged with its version, such as `0.1.0`. To run a commit that no release holds, build the `orker` image from a clone (`deploy/source/Dockerfile`, target `orker`), push it to your registry, and name that image instead.
 
 Next, create the settings the Orker reads. `orkstack.env` holds the ConfigMap's settings, such as `ORK_TEMPORAL_ADDRESS`, `ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_ENDPOINT` and `ORK_S3_BUCKET`. `s3.env` holds `ORK_S3_ACCESS_KEY` and `ORK_S3_SECRET_KEY`. Keep `s3.env` out of version control.
 

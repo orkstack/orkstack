@@ -49,7 +49,8 @@ const usageText = `usage: dist <command> [flags]
 commands:
   check -version vX.Y.Z           refuse a version the tree cannot release: the built-in
                                   activity catalog must be at X.Y, and CHANGELOG.md must
-                                  have a "## [X.Y.Z]" section
+                                  have a "## [X.Y.Z]" section and nothing left under
+                                  "## [Unreleased]"
   order -version vX.Y.Z -tags FILE
                                   print latest=true or latest=false: whether no tag FILE
                                   lists (one per line) is a higher release; refuse a version
@@ -57,7 +58,8 @@ commands:
   build -version vX.Y.Z -out DIR  build every release binary, pack the archives into DIR
                                   and the linux binaries into DIR/bin/linux-<arch>/
   sums DIR                        write DIR/SHA256SUMS for the files in DIR
-  notes -version vX.Y.Z           print the "## [X.Y.Z]" section of CHANGELOG.md
+  notes -version vX.Y.Z           print the "## [X.Y.Z]" section of CHANGELOG.md, without its
+                                  heading: the GitHub release's notes, word for word
   digests -layouts DIR            print "<image><TAB><digest>" for each of the ten OCI image layouts
                                   in DIR, sorted: the digest skopeo pushes each under
 
@@ -189,7 +191,10 @@ func (e runEnv) check(args []string) int {
 	if _, err := dist.ReleaseNotes(changelog, version); err != nil {
 		return e.failure(err)
 	}
-	fmt.Fprintf(e.stdout, "%s: the built-in activity catalog is at :%s and %s has its section\n",
+	if err := dist.CheckNothingUnreleased(changelog, version); err != nil {
+		return e.failure(err)
+	}
+	fmt.Fprintf(e.stdout, "%s: the built-in activity catalog is at :%s and %s has its section and nothing unreleased\n",
 		version, version.Series(), dist.ChangelogFile)
 	return 0
 }

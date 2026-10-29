@@ -853,6 +853,109 @@ func TestWorkflows_ReleaseToolchainIsPinned(t *testing.T) {
 	})
 }
 
+// releaseNotesProblems: a release's notes on GitHub are its CHANGELOG.md
+// section, word for word. validate refuses a version the changelog does not
+// name, or one whose [Unreleased] still holds entries (`dist check`, `dist
+// notes`), artifacts writes the section with `dist notes`, nothing else
+// writes that file, and publish hands it to gh release create as the only
+// source of notes.
+func releaseNotesProblems(w *wfFile) []string {
+	var p []string
+	const notesRun = `go run ./internal/dist/cmd/dist notes -version "$VERSION"`
+	if job, ok := w.Jobs["validate"]; !ok {
+		p = append(p, "release.yml has no validate job")
+	} else if at := stepIndex(job.Steps, func(s wfStep) bool {
+		return strings.Contains(s.Run, `go run ./internal/dist/cmd/dist check -version "$VERSION"`) && strings.Contains(s.Run, notesRun)
+	}); at < 0 {
+		p = append(p, "jobs.validate does not run dist check and dist notes for the version")
+	} else if v := envString(job.Steps[at], "VERSION"); v != "${{ steps.version.outputs.version }}" {
+		p = append(p, fmt.Sprintf("jobs.validate's changelog step reads VERSION %q, not the validated version", v))
+	}
+	written := 0
+	for _, name := range w.jobNames() {
+		for i, s := range w.Jobs[name].Steps {
+			if !strings.Contains(s.Run, "notes.md") {
+				continue
+			}
+			for _, line := range strings.Split(s.Run, "\n") {
+				if !strings.Contains(line, "notes.md") || !strings.Contains(line, ">") {
+					continue
+				}
+				if name != "artifacts" || strings.TrimSpace(line) != notesRun+" >dist/meta/notes.md" {
+					p = append(p, fmt.Sprintf("jobs.%s %s writes the notes with %q; only artifacts' dist notes writes them", name, s.label(i), strings.TrimSpace(line)))
+					continue
+				}
+				written++
+				if v := envString(s, "VERSION"); v != "${{ needs.validate.outputs.version }}" {
+					p = append(p, fmt.Sprintf("jobs.artifacts %s writes the notes for VERSION %q, not the validated version", s.label(i), v))
+				}
+			}
+		}
+	}
+	if written != 1 {
+		p = append(p, fmt.Sprintf("jobs.artifacts writes dist/meta/notes.md with dist notes %d times, want once", written))
+	}
+	job, ok := w.Jobs["publish"]
+	if !ok {
+		return append(p, "release.yml has no publish job")
+	}
+	release := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "gh release create") })
+	if release < 0 {
+		return append(p, "jobs.publish does not create the GitHub release")
+	}
+	r := job.Steps[release].Run
+	if !strings.Contains(r, "--notes-file meta/notes.md") {
+		p = append(p, "gh release create does not take its notes from --notes-file meta/notes.md")
+	}
+	for _, other := range []string{"--generate-notes", "--notes-from-tag", "--notes-start-tag", "--notes ", "-n "} {
+		if strings.Contains(r, other) {
+			p = append(p, "gh release create passes "+strings.TrimSpace(other)+": the notes are the changelog section and nothing else")
+		}
+	}
+	return p
+}
+
+func TestWorkflows_ReleaseNotesAreTheChangelogSection(t *testing.T) {
+	stepRunning := func(w *wfFile, job, text string) *wfStep {
+		for i := range w.Jobs[job].Steps {
+			if strings.Contains(w.Jobs[job].Steps[i].Run, text) {
+				return &w.Jobs[job].Steps[i]
+			}
+		}
+		t.Fatalf("jobs.%s has no step running %q", job, text)
+		return nil
+	}
+	expectEachMutationRefused(t, "release.yml", releaseNotesProblems, []mutation{
+		{"validate does not check the changelog", func(w *wfFile) {
+			s := stepRunning(w, "validate", "dist check -version")
+			s.Run = strings.Replace(s.Run, "dist check -version", "dist order -version", 1)
+		}},
+		{"validate reads the raw input", func(w *wfFile) {
+			stepRunning(w, "validate", "dist check -version").Env["VERSION"] = "${{ inputs.version }}"
+		}},
+		{"the notes are not written", func(w *wfFile) {
+			s := stepRunning(w, "artifacts", ">dist/meta/notes.md")
+			s.Run = strings.Replace(s.Run, ` >dist/meta/notes.md`, ` >/dev/null`, 1)
+		}},
+		{"something is appended to the notes", func(w *wfFile) {
+			s := stepRunning(w, "artifacts", ">dist/meta/notes.md")
+			s.Run += "\ncat extra.md >>dist/meta/notes.md"
+		}},
+		{"publish rewrites the notes", func(w *wfFile) {
+			s := stepRunning(w, "publish", "gh release create")
+			s.Run = "echo more >>meta/notes.md\n" + s.Run
+		}},
+		{"GitHub generates notes too", func(w *wfFile) {
+			s := stepRunning(w, "publish", "gh release create")
+			s.Run = strings.Replace(s.Run, "--notes-file meta/notes.md", "--notes-file meta/notes.md --generate-notes", 1)
+		}},
+		{"notes typed inline", func(w *wfFile) {
+			s := stepRunning(w, "publish", "gh release create")
+			s.Run = strings.Replace(s.Run, "--notes-file meta/notes.md", `--notes "a release"`, 1)
+		}},
+	})
+}
+
 // releaseOrderProblems: validate decides whether the release is the latest
 // from every tag the repository has, and refuses one below a released tag of
 // its own series, before anything is built.
