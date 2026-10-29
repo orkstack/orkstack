@@ -35,20 +35,27 @@ need() {
 command -v ffmpeg >/dev/null || need "ffmpeg is not installed"
 
 # The README's animation of the UI: the end-to-end recording as an animated
-# WebP, which GitHub shows inline where it cannot play a video. It needs only
-# ffmpeg and the recordings, so SITE_MEDIA_ONLY=readme redoes it alone.
+# WebP, which GitHub shows inline where it cannot play a video (a video file
+# in the repository is only a link there). The README draws it 880 CSS
+# pixels wide, so it is 1760 pixels wide: two device pixels per CSS pixel.
+# Ten frames a second; a frame no different from the one before is dropped
+# (its predecessor lasts longer, up to two seconds), and libwebp's animation
+# encoder stores each frame as its change from the last, so the held screens
+# cost next to nothing. It needs only ffmpeg and the recordings, so
+# SITE_MEDIA_ONLY=readme redoes it alone.
 readme_ui_demo() {
 	for theme in light dark; do
 		ffmpeg -y -loglevel error -i "$SITE/public/media/e2e-demo-$theme.mp4" \
-			-vf "fps=6,scale=960:-2:flags=lanczos" -loop 0 -c:v libwebp -quality 50 -compression_level 6 \
+			-vf "fps=10,scale=1760:-2:flags=lanczos,mpdecimate=hi=768:lo=320:frac=0.1:max=20" -fps_mode vfr \
+			-loop 0 -c:v libwebp_anim -quality 72 -compression_level 4 \
 			-an "$REPO/docs/images/ui-demo-$theme.webp"
-		echo "  docs/images/ui-demo-$theme.webp"
+		echo "  docs/images/ui-demo-$theme.webp ($(du -h "$REPO/docs/images/ui-demo-$theme.webp" | cut -f1))"
 	done
 }
 # Read the whole list first: grep -q stops at the first match, and under
 # pipefail the SIGPIPE ffmpeg then takes would fail the check.
 encoders="$(ffmpeg -hide_banner -encoders 2>/dev/null)"
-grep -q libwebp <<<"$encoders" || need "ffmpeg has no libwebp encoder (the README's UI animation is an animated WebP)"
+grep -q libwebp_anim <<<"$encoders" || need "ffmpeg has no libwebp_anim encoder (the README's UI animation is an animated WebP)"
 if [ "${SITE_MEDIA_ONLY:-}" = readme ]; then
 	readme_ui_demo
 	exit 0
@@ -80,11 +87,21 @@ if "$REPO/bin/orkctl" --server "$ENGINE" orker list --json 2>/dev/null | grep -q
 	need "an Orker's id names this host ($(hostname)); restart the stack with ORK_ORKER_ID=orker-example make up"
 fi
 
-# The recording shows a first apply, in the namespace the quickstart uses. An
-# Orkflow version is immutable and pins the images it was applied against, so
-# a second apply after the images were rebuilt is refused: record on a stack
-# that has not stored each-fan-out yet.
-if "$REPO/bin/orkctl" --server "$ENGINE" -n default orkflow get each-fan-out >/dev/null 2>&1; then
+# The terminal recordings to make: every tape, or the ones SITE_MEDIA_TAPES
+# names (SITE_MEDIA_TAPES=activity-test redoes that one, keeping the rest).
+TAPES=()
+selected="${SITE_MEDIA_TAPES:-$(cd "$SITE/media/tapes" && ls *.tape | sed 's/\.tape$//')}"
+for name in ${selected//,/ }; do
+	[ -f "$SITE/media/tapes/$name.tape" ] || need "SITE_MEDIA_TAPES names no tape $name (site/media/tapes/)"
+	TAPES+=("$name")
+done
+
+# The quickstart recording shows a first apply, in the namespace the
+# quickstart uses. An Orkflow version is immutable and pins the images it was
+# applied against, so a second apply after the images were rebuilt is
+# refused: record it on a stack that has not stored each-fan-out yet.
+if [[ " ${TAPES[*]} " == *" quickstart "* ]] &&
+	"$REPO/bin/orkctl" --server "$ENGINE" -n default orkflow get each-fan-out >/dev/null 2>&1; then
 	need "each-fan-out is already stored in the default namespace, and the recording shows a first apply; record on a fresh stack (make reset, make infra-up, make -C images push, make up)"
 fi
 
@@ -112,19 +129,55 @@ fi
 
 echo "== terminal (VHS) =="
 VHS="$WORK/vhs"
-mkdir -p "$VHS/bin" "$VHS/out" "$VHS/tapes"
+mkdir -p "$VHS/bin" "$VHS/host" "$VHS/out" "$VHS/tapes" "$VHS/tmp"
 # A static orkctl, so the container's own libc never matters.
 (cd "$REPO" && CGO_ENABLED=0 go build -o "$VHS/bin/orkctl" ./cmd/orkctl)
 cp "$SITE"/media/tapes/*.tape "$VHS/tapes/"
+
+# host_tool NAME: a tool a tape runs that the VHS image does not carry (curl
+# for a trigger, docker for orkctl activity test, which drives containers
+# through the docker CLI as an Orker does). It is the host's own binary,
+# copied with every shared library it loads and the host's own loader, and
+# started through that loader, so the image's libc never matters.
+host_tool() {
+	local name="$1" bin dir loader
+	bin="$(command -v "$name")" || need "$name is not installed (a terminal recording runs it)"
+	dir="$VHS/host/$name"
+	mkdir -p "$dir"
+	cp -L "$bin" "$dir/$name.bin"
+	ldd "$bin" | awk '$2 == "=>" && $3 ~ /^\// { print $3 } $1 ~ /^\// && $2 != "=>" { print $1 }' | sort -u |
+		while read -r lib; do cp -L "$lib" "$dir/"; done
+	loader="$(ldd "$bin" | awk '/ld-linux/ { print ($2 == "=>") ? $3 : $1; exit }')"
+	[ -n "$loader" ] || need "$bin names no ld-linux loader (ldd)"
+	printf '#!/bin/sh\nexec /work/host/%s/%s --library-path /work/host/%s /work/host/%s/%s.bin "$@"\n' \
+		"$name" "$(basename "$loader")" "$name" "$name" "$name" >"$VHS/bin/$name"
+	chmod +x "$VHS/bin/$name"
+}
+host_tool curl
+host_tool docker
+DOCKER_SOCK="$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null)"
+case "$DOCKER_SOCK" in
+unix://*) DOCKER_SOCK="${DOCKER_SOCK#unix://}" ;;
+*) need "the docker context is not a local socket ($DOCKER_SOCK); orkctl activity test is recorded against one" ;;
+esac
+# The activity test's workspaces are bind-mounted into the containers it
+# starts by the host's daemon, so they live at a path the host and the VHS
+# container share; a tape's hidden setup reads that path from host/tmpdir
+# into its shell's ORK_ORKER_WORKDIR, the root orkctl takes first. It runs
+# as root there; its leftovers are removed by a container too.
+printf '%s\n' "$VHS/tmp" >"$VHS/host/tmpdir"
+trap 'docker run --rm -v "$VHS/tmp:/t" --entrypoint sh "$VHS_IMAGE" -c "rm -rf /t/* /t/.[!.]*" >/dev/null 2>&1 || true; kill "${UI_PID:-}" 2>/dev/null || true; rm -rf -- "$WORK"' EXIT
 for theme in light dark; do
 	theme_json="$(node "$SITE/media/vhs-theme.mjs" "$theme")"
-	for tape in "$SITE"/media/tapes/*.tape; do
+	for tape in "${TAPES[@]/#/$SITE/media/tapes/}"; do
+		tape="$tape.tape"
 		name="cli-$(basename "$tape" .tape)-$theme"
 		# VHS takes paths relative to its working directory, /vhs.
+		# The site plays the MP4 (a WebM of it was no smaller); the README
+		# shows the quickstart as a GIF (media/finish.mjs).
 		{
-			echo "Output out/$name.webm"
 			echo "Output out/$name.mp4"
-			echo "Output out/$name.gif"
+			[ "$name" != "cli-quickstart-$theme" ] || echo "Output out/$name.gif"
 			echo "Set Theme $theme_json"
 			echo "Source tapes/$(basename "$tape")"
 		} >"$VHS/tapes/run-$name.tape"
@@ -132,6 +185,9 @@ for theme in light dark; do
 			-v "$VHS/tapes:/vhs/tapes:ro" \
 			-v "$VHS/out:/vhs/out" \
 			-v "$VHS/bin:/work/bin:ro" \
+			-v "$VHS/host:/work/host:ro" \
+			-v "$VHS/tmp:$VHS/tmp" \
+			-v "$DOCKER_SOCK:/var/run/docker.sock" \
 			-v "$REPO/examples:/work/examples:ro" \
 			"$VHS_IMAGE" "tapes/run-$name.tape"
 		# The poster is the tape's own screenshot of the finished watch, not a

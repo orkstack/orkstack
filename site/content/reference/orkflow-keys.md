@@ -148,6 +148,8 @@ on an Orkflow's Edit tab; Admin → Automation uses it for automation documents.
 - **Only the engine says a document has no problems.** The line under the
   editor says so only after the engine has checked exactly the text on screen.
 
+<!-- site-media: ui-editor -->
+
 Ctrl-Space suggests the keys a position takes. Hovering a key, or
 Ctrl-Shift-Space on its line, shows what it does. F8 goes to the next problem.
 Tab indents; to leave the editor with the keyboard, press Escape, then Tab.

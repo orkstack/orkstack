@@ -38,6 +38,10 @@ orkctl run plan order-saga --assume-failed reserve --assert-runs release --asser
 
 `--assume-failed` plans the run as if `reserve` had failed.
 
+[`examples/branch-and-recover.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/branch-and-recover.ork.yaml) has a `deploy` step that fails when its `fail_deploy` input is set. Run that way, `deploy` fails twice, its two failure handlers run, and the run ends `FAILED` with `deploy`'s error:
+
+<!-- site-media: ui-failure -->
+
 ## Choose the join
 
 | `join:` | The task starts when its needs |

@@ -249,6 +249,17 @@ h1#_top {
 	max-width: calc(100% - 2 * var(--rule-region));
 	height: auto;
 }
+/* A recording fills the column, in its own shape (sync-docs.mjs), on the
+   terminal's ground until its poster loads. */
+.sl-markdown-content .theme-clip video {
+	display: block;
+	width: 100%;
+	height: auto;
+	object-fit: contain;
+	object-position: top;
+	border: var(--rule-region) solid var(--color-ink);
+	background-color: var(--color-paper-sunken);
+}
 /* A diagram draws its own frame (scripts/readme-diagrams.mjs). */
 .sl-markdown-content .theme-diagram img {
 	width: 100%;

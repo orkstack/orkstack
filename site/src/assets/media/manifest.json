@@ -1,9 +1,10 @@
 {
 	"$comment": "Written by make site-media (site/media/). Do not edit.",
-	"sourceCommit": "c1ea9f7514830229a938619b5b50f137c433964d",
+	"sourceCommit": "906036278462df6a0dc4b742c95de6a328ef9d84",
 	"orkflows": [
 		"examples/each-fan-out.ork.yaml",
-		"examples/awaited-approval.ork.yaml"
+		"examples/awaited-approval.ork.yaml",
+		"examples/branch-and-recover.ork.yaml"
 	],
 	"browserImage": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
 	"items": {
@@ -12,20 +13,80 @@
 			"caption": "orkctl apply, run plan, run submit --watch and run logs, recorded against the local stack: the run finishes with status SUCCEEDED, and the merge task’s log lists the four parts, a to d.",
 			"mp4Dark": "cli-quickstart-dark.mp4",
 			"posterDark": "cli-quickstart-dark.webp",
-			"webmDark": "cli-quickstart-dark.webm",
 			"mp4": "cli-quickstart-light.mp4",
 			"poster": "cli-quickstart-light.webp",
-			"webm": "cli-quickstart-light.webm"
+			"width": 1200,
+			"height": 860
+		},
+		"cli-activity-test": {
+			"alt": "A terminal recording: orkctl activity test runs the first-party shell image through the six contract checks, and all six pass.",
+			"caption": "orkctl activity test against the shell image in the local registry: six checks, all PASS. The checks take about fifty seconds; the recording cuts the wait.",
+			"mp4Dark": "cli-activity-test-dark.mp4",
+			"width": 1200,
+			"height": 350,
+			"posterDark": "cli-activity-test-dark.webp",
+			"mp4": "cli-activity-test-light.mp4",
+			"poster": "cli-activity-test-light.webp"
+		},
+		"cli-schedules-triggers": {
+			"alt": "A terminal recording: orkctl creates a nightly schedule for each-fan-out and fires it once, creates a trigger, curl posts to the trigger’s URL with its secret, and orkctl run list shows the two runs, one started by the schedule and one by the trigger.",
+			"caption": "A schedule fired by hand and a trigger called with curl: run list shows each run’s origin.",
+			"mp4Dark": "cli-schedules-triggers-dark.mp4",
+			"width": 1200,
+			"height": 750,
+			"posterDark": "cli-schedules-triggers-dark.webp",
+			"mp4": "cli-schedules-triggers-light.mp4",
+			"poster": "cli-schedules-triggers-light.webp"
 		},
 		"e2e-demo": {
-			"alt": "A screen recording: the each-fan-out example applied from the UI’s Apply page, a run submitted and watched to the end, and its merged artifact opened.",
-			"caption": "Apply, submit, watch, open the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.",
-			"webm": "e2e-demo-light.webm",
+			"alt": "A screen recording of the OrkStack UI: the each-fan-out example is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task’s merged.txt artifact is opened with its provenance.",
+			"caption": "Apply, plan and submit, watch, open the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.",
+			"width": 1280,
+			"height": 800,
 			"mp4": "e2e-demo-light.mp4",
 			"poster": "e2e-demo-light.webp",
-			"webmDark": "e2e-demo-dark.webm",
 			"mp4Dark": "e2e-demo-dark.mp4",
 			"posterDark": "e2e-demo-dark.webp"
+		},
+		"ui-editor": {
+			"alt": "A screen recording of the Apply page’s YAML editor: a task’s needs is changed to name a task that does not exist, the engine’s diagnostic appears at that line and in the problems list, and the fix clears it.",
+			"caption": "The editor asks the engine as you type: an unknown task in needs is flagged at its line, and fixing it clears the problem.",
+			"width": 1280,
+			"height": 800,
+			"mp4": "ui-editor-light.mp4",
+			"poster": "ui-editor-light.webp",
+			"mp4Dark": "ui-editor-dark.mp4",
+			"posterDark": "ui-editor-dark.webp"
+		},
+		"ui-fanout-run": {
+			"alt": "A screen recording of a run of each-fan-out: list finishes, convert runs its four items two at a time, merge follows, and one item is opened to show its attempt, timing and log.",
+			"caption": "A fan-out runs one durable item per element, two at a time here; each item has its own attempts and log.",
+			"width": 1280,
+			"height": 800,
+			"mp4": "ui-fanout-run-light.mp4",
+			"poster": "ui-fanout-run-light.webp",
+			"mp4Dark": "ui-fanout-run-dark.mp4",
+			"posterDark": "ui-fanout-run-dark.webp"
+		},
+		"ui-await-run": {
+			"alt": "A screen recording of an awaited task: the run is submitted and its callback token shown once, the run waits at approval, the resolve dialog is opened, approved is checked and an approver typed, and once it is completed the next task runs and the run succeeds.",
+			"caption": "An awaited task holds the run until a person or a system resolves it; completing it starts the next task. Its callback token is shown once, at submit.",
+			"width": 1280,
+			"height": 800,
+			"mp4": "ui-await-run-light.mp4",
+			"poster": "ui-await-run-light.webp",
+			"mp4Dark": "ui-await-run-dark.mp4",
+			"posterDark": "ui-await-run-dark.webp"
+		},
+		"ui-failure": {
+			"alt": "A screen recording of branch-and-recover submitted with fail_deploy checked in its input form: deploy fails on both of its attempts, the rollback and notify failure handlers run, and the run ends FAILED with deploy’s reason, whose two attempts are then inspected.",
+			"caption": "Submitted with fail_deploy set: deploy fails twice, the failure handlers run, and the run still ends FAILED with deploy’s reason.",
+			"width": 1280,
+			"height": 800,
+			"mp4": "ui-failure-light.mp4",
+			"poster": "ui-failure-light.webp",
+			"mp4Dark": "ui-failure-dark.mp4",
+			"posterDark": "ui-failure-dark.webp"
 		},
 		"ui-run-hero": {
 			"alt": "A run of each-fan-out in the OrkStack UI while it runs: the DAG of list, convert and merge, with list done, convert running and merge waiting, beside the run’s version and timing.",
@@ -46,6 +107,16 @@
 			"light2x": "ui-run-page-light-2x.webp",
 			"dark": "ui-run-page-dark.webp",
 			"dark2x": "ui-run-page-dark-2x.webp"
+		},
+		"ui-orkflow": {
+			"alt": "The each-fan-out Orkflow’s page in the OrkStack UI after an apply: its graph of list, convert and merge, its stored version, and its three tasks with their image digests.",
+			"caption": "An applied Orkflow: an immutable version, every image pinned to a digest.",
+			"width": 1280,
+			"height": 649,
+			"light": "ui-orkflow-light.webp",
+			"light2x": "ui-orkflow-light-2x.webp",
+			"dark": "ui-orkflow-dark.webp",
+			"dark2x": "ui-orkflow-dark-2x.webp"
 		},
 		"ui-run-live": {
 			"alt": "The run’s graph in the OrkStack UI while it runs: list done, convert running its items, merge waiting.",

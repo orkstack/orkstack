@@ -28,6 +28,8 @@ The test needs a pushed image, because it runs the digest the registry returns. 
 
 A `SKIP` is not a pass. The `--json` output lists each check with its status.
 
+<!-- site-media: cli-activity-test -->
+
 ## Run one task locally
 
 `orkctl task run` runs one task of an Orkflow on your machine. It uses the same dispatcher, renderer and workspace as an Orker. It writes nothing to the deployment.

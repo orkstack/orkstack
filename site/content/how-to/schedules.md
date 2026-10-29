@@ -72,6 +72,10 @@ To list every run the schedule started, filter the run list by origin:
 orkctl run list --filter origin.kind=SCHEDULE --filter origin.id=<schedule-id>
 ```
 
+`orkctl run list` names each run's origin, so a run a schedule started and one a [trigger](/docs/how-to/triggers/) started read apart:
+
+<!-- site-media: cli-schedules-triggers -->
+
 ## When a fire fails
 
 A fire that starts no run is `refused`, and the refusal says why. With `--pause-on-failure`, a failed or refused fire pauses the schedule, and the pause note says why.

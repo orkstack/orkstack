@@ -10,7 +10,12 @@ OrkStack's processes on the host for working on them.
 OrkStack is pre-release: stable, but breaking changes may be introduced until
 1.0, and each is listed in [CHANGELOG.md](../CHANGELOG.md).
 
-<!-- site-media: e2e-demo -->
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="images/ui-demo-dark.webp">
+  <img alt="The OrkStack UI: the each-fan-out Orkflow is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task's merged.txt artifact is opened with its provenance." src="images/ui-demo-light.webp" width="880">
+</picture>
+</p>
 
 ## What you need
 
@@ -102,7 +107,12 @@ Applying compiles the document, checks it (names, the dependency graph, every
 task's configuration), resolves each image to a digest, and stores an
 immutable version. Nothing runs yet.
 
-<!-- site-media: ui-orkflow -->
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../site/public/media/ui-orkflow-dark-2x.webp">
+  <img alt="The each-fan-out Orkflow’s page in the OrkStack UI after an apply: its graph of list, convert and merge, its stored version, and its three tasks with their image digests." src="../site/public/media/ui-orkflow-light-2x.webp" width="880">
+</picture>
+</p>
 
 ## 5. Plan it, then run it
 
@@ -118,12 +128,22 @@ writes its results under `/orkstack/output`, and exits.
 
 Open the run in the UI to watch the same run as a drawing of its tasks:
 
-<!-- site-media: ui-run-live -->
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../site/public/media/ui-run-live-dark-2x.webp">
+  <img alt="The run’s graph in the OrkStack UI while it runs: list done, convert running its items, merge waiting." src="../site/public/media/ui-run-live-light-2x.webp" width="872">
+</picture>
+</p>
 
 The fan-out task runs one item per element of the list, two at a time
 (`max_parallel: 2`), each with its own attempts and logs:
 
-<!-- site-media: ui-fanout -->
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../site/public/media/ui-fanout-dark-2x.webp">
+  <img alt="The convert task’s fan-out in the run page: four items, item 2 opened with its attempt, its timing, its log line and its artifacts." src="../site/public/media/ui-fanout-light-2x.webp" width="872">
+</picture>
+</p>
 
 ## 6. Inspect what it did
 
@@ -137,7 +157,12 @@ files the run's tasks wrote, which live in object storage rather than in the
 engine. The run page shows the same: every task's attempts, timing, values,
 logs and artifacts.
 
-<!-- site-media: ui-run-finished -->
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../site/public/media/ui-run-finished-dark-2x.webp">
+  <img alt="The merge task of a finished each-fan-out run, inspected in the run page: SUCCEEDED, its attempt and timing, its log and its artifacts, merged.txt among them." src="../site/public/media/ui-run-finished-light-2x.webp" width="872">
+</picture>
+</p>
 
 ## 7. Update, stop, or start over
 
