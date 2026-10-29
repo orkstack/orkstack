@@ -64,6 +64,14 @@ gives it to any other service. An activity
 container never receives the socket, a host path or the host's namespaces
 ("What the Orker refuses" below).
 
+On Kubernetes the daemon is not the node's: each Orker pod runs a Docker
+engine of its own in a sidecar, and only the Orker container shares its
+socket ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes"). How much the node
+trusts that engine depends on the shape. In a pod with its own user
+namespace, the engine is root of that namespace, which is an unprivileged uid
+range on the node. In the privileged fallback, the engine container is root
+on the node, and so is anything that escapes from a task's container to it.
+
 ### What the Orker reads back
 
 The boundary holds in the other direction too: nothing a workload leaves in

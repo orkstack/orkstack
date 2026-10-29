@@ -73,7 +73,11 @@ A namespace requires one key. To mix your own images with the first-party ones, 
 cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
 ```
 
-The `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it.
+On a host, the `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it. On Kubernetes, each Orker pod has an engine of its own instead.
+
+## On Kubernetes
+
+Never give an Orker pod the node's container runtime or its Docker socket. [Run Orkers on Kubernetes](/docs/how-to/run-on-kubernetes/) covers the two kustomize bases, the node setup the preferred one needs, and how to deploy and check them.
 
 ## Settings that matter first
 
@@ -115,6 +119,7 @@ OrkStack is pre-release. Breaking changes can land until 1.0. The [production ch
 
 - [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#0-topology--what-you-run-and-where-state-lives): the topology, in full
 - [DEPLOY.md, “1. Configuration”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration): every key and its variable
+- [DEPLOY.md, “Orkers on Kubernetes”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): both shapes, sizing, the RuntimeClass and the proof
 - [PRODUCTION_CHECKLIST.md](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md): the full list of care items
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack keeps in the bucket, and where
 - [DEPLOY.md, “Image supply-chain policy”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#image-supply-chain-policy): trusting the release's signatures, and checking the binaries

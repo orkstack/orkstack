@@ -1,0 +1,131 @@
+name: kind-orker
+
+# The Kubernetes Orker bases (deploy/kubernetes/, docs/DEPLOY.md "Orkers on
+# Kubernetes") checked on a throwaway kind cluster: scripts/kind-orker.sh
+# makes the cluster and runs scripts/k8s-orker-check.sh, the check an
+# operator runs against a cluster of their own, against it. Not a required
+# check and never merge evidence: the merge gate is proof.yml's `proof` job.
+# It runs on a change to what the bases run (the manifests, both scripts, the
+# Orker, the source build it uses, the release Dockerfile whose docker CLI
+# the engine matches, the two activities), every day, and by dispatch. Both
+# shapes, user-namespaced and privileged, run artifacts, both network modes,
+# a cancel, the per-task ceiling and a pod deletion; the Orker refuses a
+# mismatched work root; the user-namespaced engine refuses to start without
+# its RuntimeClass; and Docker's rootless engine is shown to drop a
+# container's limits. Every tool is pinned in the script: kind's and
+# kubectl's release binaries by SHA-256, the node image and crane's image by
+# digest.
+
+on:
+  push:
+    paths:
+      - deploy/kubernetes/**
+      - scripts/kind-orker.sh
+      - scripts/k8s-orker-check.sh
+      - internal/orker/**
+      - cmd/orker/**
+      - deploy/source/**
+      - deploy/Dockerfile
+      - images/activity-shell/**
+      - images/activity-file/**
+      - .github/workflows/kind-orker.yml
+  pull_request:
+    paths:
+      - deploy/kubernetes/**
+      - scripts/kind-orker.sh
+      - scripts/k8s-orker-check.sh
+      - internal/orker/**
+      - cmd/orker/**
+      - deploy/source/**
+      - deploy/Dockerfile
+      - images/activity-shell/**
+      - images/activity-file/**
+      - .github/workflows/kind-orker.yml
+  schedule:
+    - cron: "29 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  kind-orker:
+    # A private repository spends none of its metered minutes on a schedule.
+    if: ${{ github.event.repository.visibility == 'public' || github.event_name != 'schedule' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    env:
+      # The cluster stays up after the script, so a failure can be read below;
+      # the runner is thrown away with it.
+      KEEP: "1"
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: allow unprivileged user namespaces
+        # The script measures Docker's rootless engine, whose daemon makes a
+        # user namespace as uid 1000; GitHub's Ubuntu image confines that
+        # through AppArmor. The Kubernetes pods' own user namespaces are made
+        # by the node's runtime as root and need nothing here.
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "kernel $(uname -r), apparmor_restrict_unprivileged_userns $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo absent)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: kind-orker
+        timeout-minutes: 65
+        shell: bash
+        run: scripts/kind-orker.sh
+      - name: summary
+        # The verdicts, and on a failure the check that failed and the
+        # cluster's state then (the full state is in the artifact).
+        if: always()
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -uo pipefail
+          run=$(ls -d .data/kind-orker/2*/ 2>/dev/null | tail -n 1)
+          if [ -z "$run" ]; then
+            echo "scripts/kind-orker.sh left no evidence directory" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          {
+            echo '### kind-orker'
+            echo '```'
+            # run.log carries the check's own lines too.
+            grep -E ' (PASS|FAIL|MISSING): ' "$run/run.log" || tail -n 20 "$run/run.log"
+            echo '```'
+            for state in "$run/check/namespace-state.txt" "$run/cluster-state.txt"; do
+              [ -f "$state" ] || continue
+              echo "#### $(basename "$state") at the failure (the last 150 lines; all of it in the artifact)"
+              echo '```'
+              tail -n 150 "$state"
+              echo '```'
+            done
+          } >>"$GITHUB_STEP_SUMMARY"
+          if [ -f "$run/cluster-state.txt" ]; then
+            echo "::error title=kind-orker::$(grep -m1 ' FAIL: ' "$run/run.log" | sed 's/^[0-9:]* FAIL: //')"
+          fi
+      - uses: actions/upload-artifact@v7.0.2
+        # The run's log and evidence, whatever happened; the throwaway
+        # cluster's kubeconfig and the registry's keys stay behind.
+        if: always()
+        timeout-minutes: 5
+        with:
+          name: kind-orker-${{ github.run_id }}-a${{ github.run_attempt }}
+          path: |
+            .data/kind-orker/2*/
+            !.data/kind-orker/2*/kubeconfig
+            !.data/kind-orker/2*/tls/
+          if-no-files-found: warn
+          retention-days: 30

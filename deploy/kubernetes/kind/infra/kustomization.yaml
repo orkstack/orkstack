@@ -1,0 +1,24 @@
+# Applied first by scripts/kind-orker.sh. The settings every OrkStack process
+# on the kind cluster reads, which the check copies (--settings-from
+# orkstack); the store's keys are the development stack's own.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - infra.yaml
+generatorOptions:
+  disableNameSuffixHash: true
+configMapGenerator:
+  - name: orkstack
+    namespace: orkstack
+    literals:
+      - ORK_TEMPORAL_ADDRESS=temporal.orkstack-infra.svc.cluster.local:7233
+      - ORK_ARTIFACT_BACKEND=s3
+      - ORK_S3_ENDPOINT=http://seaweedfs.orkstack-infra.svc.cluster.local:8333
+      - ORK_S3_BUCKET=orkstack-artifacts
+      - ORK_S3_PATH_STYLE=true
+secretGenerator:
+  - name: orkstack-s3
+    namespace: orkstack
+    literals:
+      - ORK_S3_ACCESS_KEY=orkstack
+      - ORK_S3_SECRET_KEY=orkstack-secret

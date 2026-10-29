@@ -1,0 +1,18 @@
+# The engine's work root at another path than the Orker's: the engine would
+# look for each workspace where it does not exist, and the Orker's boot check
+# must refuse to start (WORKDIR_NOT_BINDABLE) rather than fail every task
+# later. The test refuses to build if the engine's first mount is ever not
+# the work root, rather than move another.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: Deployment
+      name: orker
+    patch: |-
+      - op: test
+        path: /spec/template/spec/initContainers/0/volumeMounts/0/name
+        value: work
+      - op: replace
+        path: /spec/template/spec/initContainers/0/volumeMounts/0/mountPath
+        value: /srv/work

@@ -678,6 +678,16 @@ ships Podman 5:
 |---|---|
 | `podman.yml` › `podman` | on a push or pull request that touches `internal/orker/`, `cmd/orker/`, `orkctl task run`, `test/fixtures/` or the workflow, at 05:41 UTC every day, and by dispatch; one job per shape: `rootless-cli` (the podman CLI as the runner's user, `ORK_DOCKER_CLI=podman`), `rootful-cli` (the podman CLI as root through `sudo`) and `rootful-socket` (the docker CLI against the rootful Podman socket, the release image's shape). Each runs `scripts/integration.sh ./internal/orker` and the Bash activity contract fixture; the CLI shapes also run `./cmd/orker` and `orkctl task run`'s tests. The socket shape runs `internal/orker`'s runtime tests only: its image-policy tests start a plain-HTTP registry on a port chosen at run time, which the docker CLI cannot tell Podman to trust. A rootless runner that cannot start a container (AppArmor's restriction on unprivileged user namespaces) fails that job and says so in its summary; a rootful job names its `sudo` in its summary, boots the real `orker` on the runner's AppArmor profile and fails unless its boot probe refuses it (a container's init cannot signal its workload there), applies the fix of DEPLOY.md "Rootful Podman under AppArmor" and fails unless the `orker` then boots, and, when it fails, prints the kernel's AppArmor denials. Docker hosts the stack the suites use; Podman is only the engine under test |
 
+`kind-orker.yml` is not part of the proof and holds no required check; it runs
+`scripts/kind-orker.sh` on `ubuntu-24.04`, which makes a throwaway kind
+cluster and runs `scripts/k8s-orker-check.sh` against it: the check an
+operator runs against a cluster of their own before trusting the Kubernetes
+Orker bases ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes"):
+
+| Job | Runs |
+|---|---|
+| `kind-orker.yml` › `kind-orker` | on a push or pull request that touches `deploy/kubernetes/`, either script, `internal/orker/`, `cmd/orker/`, the source build (`deploy/source/`), the release `deploy/Dockerfile`, the shell or file activity, or the workflow, at 06:29 UTC every day, and by dispatch. It first lifts the runner's AppArmor restriction on unprivileged user namespaces, which the rootless engine the script measures needs, and records the kernel and that setting in its summary. The script pins every tool: kind's and kubectl's release binaries by SHA-256, the node image and crane's image by digest. The check refuses a missing prerequisite with exit 77 before it deploys anything, so on kind a refusal fails the lane like a failed check. Both shapes run artifacts, both network modes, a cancel, the per-task ceiling and a pod deletion; the Orker must refuse a mismatched work root, the user-namespaced engine must refuse to start without its RuntimeClass, and Docker's rootless engine must be seen to drop a container's limits. Its summary names the check that failed and the last of the namespace's and the cluster's state then; the artifact `kind-orker-<run>-a<attempt>` holds both scripts' logs, the check's evidence and that state in full, without the throwaway cluster's kubeconfig or the registry's keys |
+
 `nightly.yml` holds four jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
 `make vuln`, `nightly.yml` › `quickstart` runs `scripts/quickstart-smoke.sh`,
@@ -1978,6 +1988,15 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   its `fuzz` part ran its whole 105-minute budget in nightly 40706217000 and
   found a real crasher (`pkg/artifacts`, a run-index status the writer never
   spells), kept as a seed.
+- **`kind-orker.yml` has not run on GitHub yet.** `scripts/kind-orker.sh`,
+  and through it `scripts/k8s-orker-check.sh`, passed on a developer's host
+  (kind v0.33.0, Kubernetes 1.37.0, containerd 2.3.4, Linux 7.2), and the
+  workflow rules in `test/tools/proofrun` hold the lane's shape. The check has
+  run against kind clusters only; a cluster of another make is checked by its
+  operator. Only a run on the hosted runner shows the rest: that
+  user-namespaced pods start on its kernel inside kind, that lifting its
+  AppArmor restriction is enough for the rootless engine, that the images
+  pull within the job's limits, and how long the lane takes there.
 - **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
   `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
   planner is proven against fakes of `gh api`, and its workflow shape by the

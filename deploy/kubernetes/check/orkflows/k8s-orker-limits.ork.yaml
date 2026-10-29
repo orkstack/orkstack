@@ -1,0 +1,52 @@
+# A task cannot take more than the Orker was told it may give, and cannot
+# use more than it asked for (scripts/k8s-orker-check.sh runs it against an
+# Orker whose ORK_ORKER_MAX_MEMORY is 384Mi, deploy/kubernetes/check/common).
+# The run ends FAILED by design.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: k8s-orker-limits
+version: "1"
+description: The Orker's per-task ceiling and each task's own limit, through an Orker on Kubernetes.
+tasks:
+  # Exactly the ceiling: runs, with that limit.
+  - id: within
+    uses: shell
+    pool: k8s-check
+    network: none
+    resources:
+      memory: 384Mi
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        echo "memory.max: $(cat /sys/fs/cgroup/memory.max)"
+  # Asks for 64Mi and holds about 200 MB: the kernel kills it in its own
+  # cgroup, and nothing else in the pod notices.
+  - id: hog
+    uses: shell
+    pool: k8s-check
+    network: none
+    resources:
+      memory: 64Mi
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        held=$(head -c 200000000 /dev/zero | tr '\0' x)
+        echo "held ${#held} bytes"
+  # Asks for more than the ceiling: refused, after the others have ended.
+  - id: too-big
+    uses: shell
+    pool: k8s-check
+    network: none
+    needs:
+      - within
+      - hog
+    join: all_done
+    resources:
+      memory: 512Mi
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        echo "this never runs"

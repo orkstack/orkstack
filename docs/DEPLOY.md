@@ -1784,8 +1784,9 @@ anything.
 
 **The Orker in a container.** The Orker starts each task's container through
 the host's Docker daemon, so its container needs that daemon's socket
-(`/var/run/docker.sock`). Whoever can use the socket can start a privileged
-container: the Orker container is as trusted as root on its host
+(`/var/run/docker.sock`). On Kubernetes, an Orker pod has an engine of its own
+instead ("Orkers on Kubernetes", below). Whoever can use the socket can start
+a privileged container: the Orker container is as trusted as root on its host
 ([SECURITY_MODEL.md](SECURITY_MODEL.md), "The Orker's own access to the
 host"). Give the socket to the Orker and to nothing else. Three more rules
 follow from the daemon reading paths on the host:
@@ -1953,6 +1954,215 @@ suite on the fixed one.
 `~/.local/share/containers` even with storage configured elsewhere.
 `podman.yml` runs the runtime-facing suites on Podman, rootless and rootful
 ([PROOFS.md](PROOFS.md), "§5").
+
+### Orkers on Kubernetes
+
+The Orker starts each task as a container on a Docker engine. On Kubernetes,
+give each Orker pod an engine of its own, in a sidecar. Do not drive the
+node's own container runtime: its containers would run behind the kubelet's
+back, invisible to scheduling, accounting and eviction. Do not mount the
+node's Docker socket either: that is root on the node, and outside the pod's
+limits. [`deploy/kubernetes/`](../deploy/kubernetes/) holds the two supported
+shapes as kustomize bases, and
+[`scripts/kind-orker.sh`](../scripts/kind-orker.sh) proves both on a
+throwaway kind cluster.
+
+| Shape | Base | Privileged on the node | Needs |
+|---|---|---|---|
+| Engine in a user-namespaced pod | `orker-userns/` | nothing: the engine is root of the pod's user namespace, an unprivileged uid range on the node | user namespaces (`hostUsers: false`) and the `orkstack-engine` RuntimeClass, below |
+| Engine in a privileged sidecar | `orker-privileged/` | the engine container. It is root on the node, and so is anything that escapes from a task's container to the engine | a namespace that admits privileged pods |
+
+Prefer the first. Both need the `privileged` level of Pod Security Admission in
+their namespace: the first gives the engine an unmasked `/proc` and no seccomp
+or AppArmor confinement inside its user namespace, and the second is
+privileged outright. The activity containers are the same in both: each task
+runs under the Orker's own profile, with `no-new-privileges`, a seccomp filter,
+no capabilities and a read-only root ([SECURITY_MODEL.md](SECURITY_MODEL.md),
+"The mandatory profile").
+
+Each base is used from an overlay of your own. The overlay names the release's
+`orker` image by digest (the bases call it `orker`). It also creates the
+settings the Orker reads in the same namespace: the `orkstack` ConfigMap
+(`ORK_TEMPORAL_ADDRESS`, `ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_ENDPOINT`,
+`ORK_S3_BUCKET`, and the other settings of §1) and the `orkstack-s3` Secret
+(`ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`). Each base's `kustomization.yaml`
+shows the overlay.
+
+**What a pod holds.**
+
+- `engine` runs `docker:29.9.2-dind` by digest, the Docker release whose CLI the
+  `orker` image carries. It is a native sidecar, an init container with
+  `restartPolicy: Always`. It starts, and answers `docker info`, before the
+  Orker boots. It stops only after the Orker has exited, so deleting a pod
+  stops the Orker first. The Orker cancels each running task with that task's
+  own grace (`SIGTERM`, then `SIGKILL`), and the engine is still there to
+  deliver both signals.
+- `orker` runs the release's `orker` image. Its `ORK_ORKER_ID` is
+  `$(POD_NAME).$(POD_NAMESPACE)`, unique in the cluster and new for each pod.
+- Three `emptyDir` volumes. `work` is the Orker's work root at
+  `/var/lib/orkstack/work`. `engine-socket` holds the engine's API, a Unix
+  socket and nothing else, and both containers' `DOCKER_HOST` points at it.
+  `engine-data` is the engine's image cache and container layers at
+  `/var/lib/docker`: a disposable cache, so a new pod pulls its images again.
+
+**The work root is one path in both containers.** The engine bind-mounts each
+task's workspace from the path the Orker gives it, so the `work` volume must be
+mounted at the same path in `engine` and in `orker`. The Orker's boot check
+catches a mismatch. With the engine's mount moved to `/srv/work`, the Orker
+refuses to start and the pod never becomes ready:
+
+```text
+orker boot checks failed: WORKDIR_NOT_BINDABLE: path is not bind-mountable by the container runtime: probe bind of /var/lib/orkstack/work: docker exited 125: docker: Error response from daemon: invalid mount config for type "bind": bind source path does not exist: /var/lib/orkstack/work/ork-bindprobe-…
+```
+
+**Every task runs inside the pod's cgroup.** The engine's start-up puts the
+daemon in `engine/` and each task's container under `tasks/` of its own
+container's cgroup. The pod's limits therefore bound all its tasks together,
+and the kubelet accounts for what they use. The start-up does not use the
+image's own `dind` wrapper. containerd gives a privileged container no cgroup
+namespace, so that wrapper rearranges the node's root cgroup, and its daemon
+puts each task in `/docker/<id>` at the node's root, outside the pod's limits
+and the kubelet's accounting. That was measured on containerd 2.3.4. The
+start-up also enables the cgroup controllers below the engine before the
+daemon starts. Without them, the daemon warns about swap limits on every
+`docker create --memory`, and today's Orker reads that warning as part of the
+container's id and fails the task (`InfrastructureError`).
+
+**Size the engine to the Orker's ceiling.** Every task's container is inside
+the engine container, so its limits cover them all. Set its memory to at least
+`ORK_ORKER_MAX_CONCURRENT` × `ORK_ORKER_MAX_MEMORY` plus the daemon's own share,
+and its cpu to at least `ORK_ORKER_MAX_CPU`. Make its requests equal its
+limits. The bases do this for 4 tasks of at most 1 cpu and 2Gi each, and a
+test refuses a base that breaks the rule
+(`internal/dist/kubernetes_test.go`). Within that, the Orker enforces each
+task's own limit as it does on a host. A task that asks for more than the
+ceiling fails `RESOURCE_REQUEST_REFUSED`. A task that uses more memory than it
+asked for is killed by the kernel in its own cgroup and fails
+`CONTAINER_EXIT_NONZERO`, naming its limit; the rest of the pod carries on.
+The `emptyDir` volumes have `sizeLimit`s and the engine an `ephemeral-storage`
+limit. A pod that exceeds either is evicted, and its running tasks end as any
+stopped Orker's do.
+
+**The `orkstack-engine` RuntimeClass.** A pod with its own user namespace
+gets a cgroup that belongs to a uid outside that namespace, so its engine
+cannot create the cgroups that enforce each task's limits, and does not start.
+containerd's `cgroup_writable` option gives the pod's root its own cgroup.
+Declare a runtime handler with it on each node that runs these Orkers. In
+containerd 2's own configuration (version 3):
+
+```toml
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.orkstack-engine]
+  runtime_type = 'io.containerd.runc.v2'
+  cgroup_writable = true
+  [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.orkstack-engine.options]
+    SystemdCgroup = true
+```
+
+In a version 2 file, which kind writes, the table is
+`plugins."io.containerd.grpc.v1.cri".containerd.runtimes.orkstack-engine`
+([`deploy/kubernetes/kind/kind.yaml`](../deploy/kubernetes/kind/kind.yaml)).
+Restart containerd, then apply the base: it declares the RuntimeClass
+`orkstack-engine` with that handler. The proof ran on Kubernetes 1.37,
+containerd 2.3.4, cgroup v2 and Linux 7.2. The node there had no AppArmor; on
+a node that enforces it, the default profile denies the engine's mounts, which
+is why the base sets the engine's AppArmor profile to `Unconfined`.
+
+**Networks.** `network: none` gives a task only its loopback interface.
+`network: default` is the engine's bridge, which leaves through the pod's own
+network namespace, so a task reaches what the pod reaches, cluster Services
+included. Both were measured in both shapes. The bridge's default subnet is
+`172.17.0.0/16`. Where the cluster routes that range, add `--bip` with a free
+range to the engine's `dockerd` command.
+
+**Registries.** The engine pulls every task's image itself. For a registry
+with a private certificate authority, mount the authority's certificate in the
+engine at `/etc/docker/certs.d/<host>:<port>/ca.crt`, as the proof does.
+
+**Before deleting a pod**, cordon and drain its Orker, as for any Orker ("Removing an
+Orker safely" below): `SIGTERM` cancels in-flight work. A task of a deleted pod
+ends `ORKER_HEARTBEAT_TIMEOUT` unless its `retry:` runs it again on another
+Orker.
+
+**Not supported, and why.**
+
+- Docker's rootless engine (`docker:dind-rootless`). It has no systemd, and a
+  rootless daemon needs systemd for cgroups. It accepts `--memory`, `--cpus` and
+  `--pids-limit` and applies none of them: under `--memory 64m` a container
+  reads `memory.max` as `max`. Today's Orker cannot tell, so every task would
+  run without its limits.
+- The node's own container runtime, or its Docker socket, for the reasons
+  above.
+- Sysbox, which installs onto the nodes, was not measured: kind's nodes are
+  containers. Podman in the Orker container is not on `main` yet.
+
+**Check your cluster before you trust it.** Run
+[`scripts/k8s-orker-check.sh`](../scripts/k8s-orker-check.sh) against your
+own cluster first, from a clone of the release you deploy:
+
+```bash
+scripts/k8s-orker-check.sh --context prod-eu \
+  --server https://orkstack.internal.example \
+  --orker-image ghcr.io/orkstack/orker:X.Y.Z@sha256:<the release's orker digest> \
+  --settings-from orkstack
+```
+
+It needs `kubectl`, `jq` and Go (for `orkctl`), an `ork` engine at `--server`
+whose catalog resolves the `shell` and `file` activities, and the `orkstack`
+ConfigMap and `orkstack-s3` Secret your Orkers read, in the namespace
+`--settings-from` names. It refuses, with exit `77` and the reason, a missing
+prerequisite:
+
+- Kubernetes before 1.33, or no `orkstack-engine` RuntimeClass, for the
+  user-namespaced shape (`--shapes privileged` checks the fallback alone);
+- the settings, or an engine that does not answer;
+- Temporal, the object store or `--registry-host`, unreachable from a pod;
+- a user-namespaced pod in that RuntimeClass that cannot make cgroups of its
+  own, which means its handler lacks `cgroup_writable`;
+- Pod Security, or any admission policy, refusing either shape. The check
+  asks the API server with a dry-run of the shape's pod.
+
+Then it deploys each base as it ships into a namespace of its own
+(`orkstack-check` unless `--namespace` names another). It changes only what
+[`deploy/kubernetes/check/common`](../deploy/kubernetes/check/common/)
+changes: one replica in the pool `k8s-check`, the per-task ceiling its limits
+run measures, and a smaller pod. For each shape it checks:
+
+- a run that passes artifacts between tasks;
+- tasks with no network, and one on the default network, which must reach
+  the Kubernetes API's own Service;
+- each task's limits and security profile;
+- that each task's cgroup is under the engine container's, and, for the
+  privileged shape, that the engine's is under its pod's;
+- that the engine's root is a user-namespace range, or the node's root for
+  the fallback;
+- a cancel, the per-task ceiling, an out-of-memory task, and a pod deletion.
+
+Then it checks that the Orker refuses a mismatched work root, and that the
+user-namespaced engine does not start without its RuntimeClass. It deletes its
+namespace at the end (`KEEP=1` leaves it) and creates nothing cluster-wide:
+the RuntimeClass must exist already. In OrkStack it leaves three Orkflows
+(`k8s-orker-proof`, `k8s-orker-cancel`, `k8s-orker-limits`) in
+`--ork-namespace` (`default` unless named) and their runs, kept by that
+namespace's retention. Its Orkers serve only the pool `k8s-check`, which that
+namespace must allow, so they take no other run's tasks. Exit `0` means every
+check held. Exit `1` names the check that failed, and the namespace's state
+then is in its evidence (`.data/k8s-orker-check/<stamp>/`, or `--out`).
+
+**On kind, in CI.** [`scripts/kind-orker.sh`](../scripts/kind-orker.sh) makes
+a throwaway kind cluster that meets those prerequisites
+([`deploy/kubernetes/kind/`](../deploy/kubernetes/kind/)): the containerd
+handler on its nodes, the RuntimeClass, Temporal, SeaweedFS, a registry
+served over TLS, and one `ork`, with `ork`, `orker` and two activities built
+from the tree. It runs the check against that cluster with both shapes, then
+measures that the rootless engine drops a container's limits, and deletes the
+cluster (`KEEP=1` leaves it). It needs Docker, Go, curl, openssl and jq, and
+installs nothing system-wide. kind and kubectl are their release binaries,
+checked against pinned SHA-256s, and crane comes from an image pinned by
+digest. Its log and evidence go under `.data/kind-orker/<stamp>/`, with the
+cluster's state when a step fails. CI runs it as `kind-orker.yml` on a change
+to what the bases run, every day, and by dispatch
+([PROOFS.md](PROOFS.md) §5). It is not a required check and is part of no
+proof tier.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
