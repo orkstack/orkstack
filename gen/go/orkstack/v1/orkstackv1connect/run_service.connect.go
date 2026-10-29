@@ -75,7 +75,11 @@ type RunServiceClient interface {
 	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error)
 	// StreamEvents server-streams realtime events for a run. from_sequence
-	// allows resuming after a disconnect (0 = from start).
+	// allows resuming after a disconnect (0 = from start): the stream
+	// continues after that event, so a client that passes the last sequence it
+	// received sees nothing repeated and nothing skipped, from any replica. A
+	// stream that ends Unavailable is resumed that way; `orkctl run watch` and
+	// the UI's run page do it, a bounded number of times in a row.
 	StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	// StreamTaskLogs server-streams one task attempt's output: every chunk
 	// already written, in order, then each new one as it lands.
@@ -380,7 +384,11 @@ type RunServiceHandler interface {
 	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error)
 	// StreamEvents server-streams realtime events for a run. from_sequence
-	// allows resuming after a disconnect (0 = from start).
+	// allows resuming after a disconnect (0 = from start): the stream
+	// continues after that event, so a client that passes the last sequence it
+	// received sees nothing repeated and nothing skipped, from any replica. A
+	// stream that ends Unavailable is resumed that way; `orkctl run watch` and
+	// the UI's run page do it, a bounded number of times in a row.
 	StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest], *connect.ServerStream[v1.Event]) error
 	// StreamTaskLogs server-streams one task attempt's output: every chunk
 	// already written, in order, then each new one as it lands.

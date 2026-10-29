@@ -1869,7 +1869,11 @@ export const RunService: GenService<{
   },
   /**
    * StreamEvents server-streams realtime events for a run. from_sequence
-   * allows resuming after a disconnect (0 = from start).
+   * allows resuming after a disconnect (0 = from start): the stream
+   * continues after that event, so a client that passes the last sequence it
+   * received sees nothing repeated and nothing skipped, from any replica. A
+   * stream that ends Unavailable is resumed that way; `orkctl run watch` and
+   * the UI's run page do it, a bounded number of times in a row.
    *
    * @generated from rpc orkstack.v1.RunService.StreamEvents
    */
