@@ -25,7 +25,7 @@ var allReasonCodes = []string{
 	ReasonCommitSchema, ReasonCommitIdentity, ReasonCommitUndecodable,
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused, ReasonResourceAdmissionMismatch,
-	ReasonNetworkModeRefused, ReasonEachItemUnavailable,
+	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
@@ -97,6 +97,8 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"the daemon refused the bind, in its own words: a host fact a restart does not change"},
 		{ReasonRunAsOrkerUnavailable, CategoryInfrastructureError, false,
 			"the boot probe found the host maps the Orker's uid elsewhere; the next attempt on this Orker meets the same host"},
+		{ReasonOrkerStopped, CategoryInfrastructureError, true,
+			"the host went away, not the workload: what the heartbeat timeout it stands beside says"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.reason, func(t *testing.T) {

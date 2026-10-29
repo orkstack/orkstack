@@ -556,6 +556,18 @@ include breaking changes, and each is marked **BREAKING**.
   whose record matches the attempt before it in every one of those fields is
   carried forward; anything else is an attempt of its own and fails closed as
   before, so a part that recorded a result and ran again is still ineligible.
+- An Orker stopped with `SIGTERM` or `SIGINT` now finishes stopping the tasks
+  it cancels before it exits. It used to exit within milliseconds, so a
+  container that ignored `SIGTERM` was never sent `SIGKILL` and ran on after
+  its run had failed, until that Orker's next boot reaped it; each attempt
+  was left `UNREPORTED`; and the lines a workload printed after `SIGTERM`
+  never reached its log. Each attempt now gets the full sequence (`SIGTERM`,
+  `SIGKILL` after the task's grace), a record `FAILED` with the new reason
+  `ORKER_STOPPED`, and its last log lines. The run is still told nothing, as
+  for an Orker that died: the task ends `ORKER_HEARTBEAT_TIMEOUT`, or is
+  retried on another Orker under its policy. A stop now takes as long as the
+  longest running task's grace; a second signal exits at once
+  (docs/DEPLOY.md, "Removing an Orker safely: cordon and drain").
 - The unit gate gives each package's test binary a 15-minute `-timeout`
   instead of `go test`'s default ten. `internal/engine`'s unit suite took
   460 s on a 4-vCPU CI runner and passed ten minutes on a slower one (CI run

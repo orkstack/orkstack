@@ -2897,7 +2897,7 @@ AttemptOutcome is how one Temporal attempt of a task ended.
 |---|---|---|
 | `ATTEMPT_OUTCOME_UNSPECIFIED` | 0 |  |
 | `ATTEMPT_OUTCOME_SUCCEEDED` | 1 | SUCCEEDED: the attempt returned an ExecuteTaskResult, fresh or adopted. |
-| `ATTEMPT_OUTCOME_FAILED` | 2 | FAILED: the attempt returned an ApplicationError; error is set. |
+| `ATTEMPT_OUTCOME_FAILED` | 2 | FAILED: the attempt returned an ApplicationError, or its Orker was stopped while it ran and reported nothing to Temporal (ORKER_STOPPED); error is set. |
 | `ATTEMPT_OUTCOME_CANCELED` | 3 | CANCELED: the attempt's context was cancelled (§6.3). |
 | `ATTEMPT_OUTCOME_UNREPORTED` | 4 | UNREPORTED is never written by an Orker. A reader synthesizes it for an attempt number that has no record, which means the Orker running it died or lost its heartbeat before it could write one. |
 

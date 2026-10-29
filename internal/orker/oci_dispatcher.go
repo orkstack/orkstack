@@ -19,6 +19,7 @@ import (
 	"unicode/utf8"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -421,6 +422,22 @@ func (d *OCIDispatcher) Execute(
 	// Returning nil here would be worse still: it would report success for
 	// work that was torn down, which §6.3 forbids outright.
 	if err := ctx.Err(); err != nil {
+		if orkerStopping(ctx) {
+			// Nobody cancelled the task: this Orker is stopping, and the
+			// worker's Stop cancelled every attempt it runs. The record says
+			// so, and Temporal is told nothing — ErrResultPending is the SDK's
+			// one way to send no completion — so it sees what it sees of an
+			// Orker that died: no heartbeat, ORKER_HEARTBEAT_TIMEOUT, a retry
+			// elsewhere under the task's policy (§6.3).
+			failure = Fail(ReasonOrkerStopped,
+				"orker %s was stopped while this attempt ran: it stopped the attempt as it stops a "+
+					"cancelled one (SIGTERM to a running container, SIGKILL after the task's %ds grace) "+
+					"and reported nothing to the run, which sees the attempt as lost "+
+					"(ORKER_HEARTBEAT_TIMEOUT) and retries it on another Orker if its retry policy allows",
+				d.OrkerID, graceSecondsOf(in)).StampStart(startedAt)
+			end(AttemptOutcome{Reason: failure.Reason, Err: failure.TemporalError()})
+			return nil, activity.ErrResultPending
+		}
 		end(AttemptOutcome{Canceled: true, Err: err})
 		return nil, err
 	}
@@ -2401,6 +2418,14 @@ func attemptOf(ctx context.Context) int32 {
 		return activity.GetInfo(ctx).Attempt
 	}
 	return 1
+}
+
+// orkerStopping reports whether ctx was cancelled because this process's
+// worker is stopping, rather than by Temporal (a cancelled run, a failing
+// run's running siblings) or by a deadline: the SDK cancels every running
+// activity with worker.ErrWorkerShutdown as the cause when its worker stops.
+func orkerStopping(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), worker.ErrWorkerShutdown)
 }
 
 func graceSecondsOf(in *orkstackv1.ExecuteTaskInput) int32 {

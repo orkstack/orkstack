@@ -315,6 +315,45 @@ func TestCordonInterceptor_CountsRunningExecuteTasks(t *testing.T) {
 	}
 }
 
+// TestWaitForTasks_ReturnsOnceTheLastRunningTaskEnds is what a stopping Orker
+// waits on before it exits: the interceptor's count of running ExecuteTasks
+// reaching zero, however often it has left zero before.
+func TestWaitForTasks_ReturnsOnceTheLastRunningTaskEnds(t *testing.T) {
+	a := newCordonActivities(t, t.TempDir())
+	if err := a.WaitForTasks(context.Background()); err != nil {
+		t.Fatalf("an idle Orker's wait = %v, want it to return at once", err)
+	}
+	a.running.add()
+	a.running.add()
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := a.WaitForTasks(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a wait with two tasks running = %v, want it to end only with its context", err)
+	}
+	a.running.done()
+	select {
+	case <-a.running.idle():
+		t.Fatal("the count reads idle with one task still running")
+	default:
+	}
+	waited := make(chan error, 1)
+	go func() { waited <- a.WaitForTasks(context.Background()) }()
+	a.running.done()
+	if err := <-waited; err != nil {
+		t.Fatalf("the wait after the last task ended = %v", err)
+	}
+	if got := a.RunningTasks(); got != 0 {
+		t.Fatalf("running_tasks = %d after both ended; want 0", got)
+	}
+	a.running.add()
+	select {
+	case <-a.running.idle():
+		t.Fatal("the count reads idle once a task runs again")
+	default:
+	}
+	a.running.done()
+}
+
 func TestDescribeOrker_ReportsCordonAndLoad(t *testing.T) {
 	a := newCordonActivities(t, t.TempDir())
 	ctx := context.Background()

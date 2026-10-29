@@ -151,6 +151,8 @@ orkctl run attempts <run-id>     # an attempt its Orker never filed shows as UNR
 
 **Cause.** `SIGTERM` stops an Orker from polling and cancels its in-flight work. The Orker does not cordon itself first, so an operator who wants in-flight work to finish cordons and drains first ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain"). Stopping an Orker that hosts an open pin fails that pin's run with `PIN_HOST_LOST`, and the stop command says so (`cmd/orkctl/orker.go`).
 
+**Confirm.** `orkctl run attempts <run-id>` shows each attempt the Orker stopped as `FAILED` with `ORKER_STOPPED`, and the task itself ends `ORKER_HEARTBEAT_TIMEOUT` unless its `retry:` policy ran it again elsewhere ([REASONS.md](./REASONS.md), "Task outcomes"). An attempt shown `UNREPORTED` instead means the Orker was killed before it finished stopping the attempt, for example by a process manager that waited less than the task's grace.
+
 **Fix.** Drain the Orker before stopping it. `orkctl orker drain <orker-id> --reason "…"` cordons it and waits until it runs no task and hosts no pin. Exit `0` means it is safe to stop. Exit `4` means the timeout passed first, and exit `1` means the Orker stopped answering, or was uncordoned or restarted ([CLI.md](./CLI.md), "`orkctl orker drain`").
 
 ### A run shows `CANCELED`, not `FAILED`

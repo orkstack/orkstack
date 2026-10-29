@@ -261,7 +261,9 @@ enum AttemptOutcome {
   ATTEMPT_OUTCOME_UNSPECIFIED = 0;
   // SUCCEEDED: the attempt returned an ExecuteTaskResult, fresh or adopted.
   ATTEMPT_OUTCOME_SUCCEEDED = 1;
-  // FAILED: the attempt returned an ApplicationError; error is set.
+  // FAILED: the attempt returned an ApplicationError, or its Orker was
+  // stopped while it ran and reported nothing to Temporal (ORKER_STOPPED);
+  // error is set.
   ATTEMPT_OUTCOME_FAILED = 2;
   // CANCELED: the attempt's context was cancelled (§6.3).
   ATTEMPT_OUTCOME_CANCELED = 3;

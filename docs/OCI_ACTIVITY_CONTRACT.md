@@ -1280,6 +1280,7 @@ containers run.
 | Object store without conditional PUT | — | Boot-time two-writer race fails → Orker refuses to start (`COMMIT_STORE_NOT_CONDITIONAL`). | refuses to run, never runs unsafely |
 | Container exceeds its own timeout | logs, no commit | SIGTERM → grace → SIGKILL, `TimedOut/CONTAINER_TIMEOUT`, terminal by default (§8.1). | explicit failure |
 | Cancellation, or SIGTERM ignored | logs, no commit | SIGTERM → grace → SIGKILL (§14.5); the Orker returns `ctx.Err()`. | canceled, never auto-retried |
+| Orker stopped (`SIGTERM`, `SIGINT`) mid-container | logs to the last line, the attempt record (`ORKER_STOPPED`), no commit | SIGTERM → grace → SIGKILL, then the process exits (§6.3); Temporal is told nothing, so the heartbeat timeout retries per the task's policy, as for a dead Orker. | correct, container ran twice (at-least-once) |
 | Input artifact unavailable / image pull fails | nothing | `INPUT_ARTIFACT_UNAVAILABLE` / `IMAGE_PULL_FAILED` → retried. | explicit failure |
 | Tag moved between two executions | — | Impossible: the run pins a digest at apply (§4). | correct |
 
@@ -1371,6 +1372,16 @@ The Orker MUST return `ctx.Err()` only *after* the server delivered
 cancellation; returning `nil` after cancellation would report success and MUST
 NOT happen. Containers are also created with `--stop-timeout` equal to the
 grace period, so a daemon-side stop honours the same window.
+
+**An Orker that is itself stopped** (`SIGTERM`, `SIGINT`) stops polling, and
+the worker's stop cancels every running attempt. Each runs the same sequence,
+then writes its attempt record `FAILED` with `ORKER_STOPPED` and closes its log
+sink, and the process exits only once every attempt has: the `SIGKILL` at the
+end of a grace is sent by the Orker, so an Orker that exited first would leave
+a container that ignores `SIGTERM` running. Such an attempt returns nothing to
+Temporal (the SDK's pending result), which then sees exactly what it sees of an
+Orker that died: no heartbeat, a heartbeat timeout, and a retry under the
+task's policy (`ORKER_HEARTBEAT_TIMEOUT`, §8.1). A second signal exits at once.
 
 Timeouts, which must not be confused:
 
@@ -1679,6 +1690,11 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `COMMIT_STORE_NOT_CONDITIONAL` | InfrastructureError | **no** | the boot-time two-writer race proved the store lacks conditional create; the Orker refuses to start (§5.3) |
 | `VALUES_CORRUPT` | ContractViolation | no | on adoption, the refetched `values.json` does not match `commit.values.sha256` |
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
+
+One Orker code is recorded on an attempt and never reported:
+`ORKER_STOPPED` (InfrastructureError, retryable) is the record of an attempt
+its Orker stopped because the Orker itself was stopping (§6.3). Temporal hears
+nothing for it, so the task's own outcome is `ORKER_HEARTBEAT_TIMEOUT`.
 
 Two Orker codes are not task-attempt reasons: `ORKER_CORDON_INVALID`
 (ContractViolation) refuses a malformed cordon control request, and `PANIC`

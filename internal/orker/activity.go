@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -142,8 +142,9 @@ type Activities struct {
 	// exists.
 	cordon *Cordon
 	// running counts the ExecuteTask activities in flight, measured by the
-	// cordon interceptor at the SDK seam (running_tasks).
-	running atomic.Int32
+	// cordon interceptor at the SDK seam (running_tasks), and is what a
+	// stopping Orker waits on (WaitForTasks).
+	running taskCount
 	// pins is the set of sessions this Orker accepted and has not completed
 	// (open_pins), maintained by the same interceptor.
 	pins *openPins
@@ -258,6 +259,77 @@ func newCapacityFor(policy SecurityPolicy, opts Options, slots int) (*Capacity, 
 // and the bind probe — and for tests.
 func (a *Activities) Dispatcher() *OCIDispatcher { return a.dispatcher }
 
+// RunningTasks is how many ExecuteTask activities are in flight
+// (running_tasks).
+func (a *Activities) RunningTasks() int32 { return a.running.load() }
+
+// WaitForTasks returns once no ExecuteTask activity is in flight, or when ctx
+// is done.
+//
+// A stopping Orker calls it after the task worker's Stop, which cancels every
+// running attempt and returns at once. What each attempt still owes before the
+// process exits happens on its own goroutine: its container's SIGTERM and,
+// after the task's grace, SIGKILL — sent by this process, so a container that
+// ignores SIGTERM would otherwise outlive the Orker — then its attempt record
+// and its last log chunk (docs/DEPLOY.md "Removing an Orker safely").
+func (a *Activities) WaitForTasks(ctx context.Context) error {
+	select {
+	case <-a.running.idle():
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// taskCount is a count that can be waited on until it is zero. The zero value
+// is zero.
+type taskCount struct {
+	mu sync.Mutex
+	n  int32
+	// zero is closed when n returns to 0, and replaced when n leaves it.
+	zero chan struct{}
+}
+
+func (c *taskCount) add() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n == 0 {
+		c.zero = make(chan struct{})
+	}
+	c.n++
+}
+
+func (c *taskCount) done() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.n--
+	if c.n == 0 {
+		close(c.zero)
+	}
+}
+
+func (c *taskCount) load() int32 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+// idle is closed once the count is zero: already, or when it next gets there.
+func (c *taskCount) idle() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.n == 0 {
+		return closedChan
+	}
+	return c.zero
+}
+
+var closedChan = func() chan struct{} {
+	ch := make(chan struct{})
+	close(ch)
+	return ch
+}()
+
 // ExecuteTask runs one activity: check the commit, build the workspace, stage
 // inputs, pull the image, run the container, validate its outputs, upload
 // them, and write the completion manifest.
@@ -287,7 +359,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		SecurityProfile:   a.dispatcher.Policy.ProfileID(""),
 		MaxConcurrent:     a.maxConc,
 		MaxConcurrentPins: a.maxPins,
-		RunningTasks:      a.running.Load(),
+		RunningTasks:      a.running.load(),
 		// This build implements fan-out items and their fan-in staging; an
 		// Orker built before it answers false, and submit refuses a fan-out
 		// on its pool (docs/DEPLOY.md §1).
