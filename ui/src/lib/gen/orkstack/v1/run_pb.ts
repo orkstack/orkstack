@@ -1067,7 +1067,9 @@ export enum AttemptOutcome {
   SUCCEEDED = 1,
 
   /**
-   * FAILED: the attempt returned an ApplicationError; error is set.
+   * FAILED: the attempt returned an ApplicationError, or its Orker was
+   * stopped while it ran and reported nothing to Temporal (ORKER_STOPPED);
+   * error is set.
    *
    * @generated from enum value: ATTEMPT_OUTCOME_FAILED = 2;
    */

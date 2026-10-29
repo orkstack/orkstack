@@ -25,7 +25,7 @@ var allReasonCodes = []string{
 	ReasonCommitSchema, ReasonCommitIdentity, ReasonCommitUndecodable,
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused,
-	ReasonNetworkModeRefused, ReasonEachItemUnavailable,
+	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 	ReasonBindProbeTimedOut,
@@ -95,6 +95,8 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"a slow daemon says nothing about the work root; the next boot may find it fast"},
 		{ReasonWorkdirNotBindable, CategoryInfrastructureError, false,
 			"the daemon refused the bind, in its own words: a host fact a restart does not change"},
+		{ReasonOrkerStopped, CategoryInfrastructureError, true,
+			"the host went away, not the workload: what the heartbeat timeout it stands beside says"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.reason, func(t *testing.T) {

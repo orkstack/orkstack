@@ -80,6 +80,11 @@ const (
 	// unreachable while the store honours its digests, stated rather than
 	// guessed at.
 	ReasonEachItemUnavailable = "EACH_ITEM_UNAVAILABLE"
+	// ReasonOrkerStopped is an attempt this Orker stopped because the process
+	// itself was shutting down (SIGTERM, SIGINT). It is written to the
+	// attempt's record and never reported to Temporal, which sees what it sees
+	// of an Orker that died: no heartbeat, then ORKER_HEARTBEAT_TIMEOUT.
+	ReasonOrkerStopped = "ORKER_STOPPED"
 
 	// Image supply-chain policy (docs/DEPLOY.md "Image supply-chain policy"), re-exported
 	// from internal/task so the engine and the Orker spell one refusal one
@@ -159,6 +164,7 @@ var reasonCategory = map[string]string{
 	ReasonResourceRefused:      CategoryContractViolation,
 	ReasonNetworkModeRefused:   CategoryContractViolation,
 	ReasonEachItemUnavailable:  CategoryContractViolation,
+	ReasonOrkerStopped:         CategoryInfrastructureError,
 
 	ReasonImageNotPermitted:         CategoryContractViolation,
 	ReasonImageNotSigned:            CategoryContractViolation,

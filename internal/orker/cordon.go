@@ -269,8 +269,8 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 	case task.ActivityExecuteTask:
 		// The running_tasks measurement, taken at the SDK seam so a test
 		// Orker's own ExecuteTask is counted exactly as the shipped one is.
-		i.a.running.Add(1)
-		defer i.a.running.Add(-1)
+		i.a.running.add()
+		defer i.a.running.done()
 		return i.Next.ExecuteActivity(ctx, in)
 	case sessionCreationActivityName:
 	default:
@@ -412,7 +412,7 @@ func (a *Activities) CordonOrker(ctx context.Context, in *orkstackv1.CordonOrker
 		a.cordon.Set(in.GetReason(), time.Now())
 		logger.Info("orker cordoned",
 			"reason", in.GetReason(),
-			"running_tasks", a.running.Load(),
+			"running_tasks", a.running.load(),
 			"open_pins", len(a.pins.snapshot()))
 	} else {
 		was, _, since := a.cordon.State()

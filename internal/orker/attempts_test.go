@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -326,6 +328,47 @@ func TestAttemptRecords_CancellationIsStillRecorded(t *testing.T) {
 	}
 	if records[0].GetError() != nil {
 		t.Errorf("a cancelled attempt carries an error: %v", records[0].GetError())
+	}
+}
+
+// TestAttemptRecords_AnOrkerStoppingRecordsORKER_STOPPED: a worker's Stop
+// cancels every running activity with worker.ErrWorkerShutdown as the cause.
+// Nobody cancelled the task, so the record says the Orker stopped — FAILED,
+// ORKER_STOPPED, a retryable InfrastructureError — and Execute returns
+// ErrResultPending, so the SDK tells Temporal nothing and the attempt times out
+// as an Orker that died would leave it. An ordinary cancellation stays
+// CANCELED (TestAttemptRecords_CancellationIsStillRecorded).
+func TestAttemptRecords_AnOrkerStoppingRecordsORKER_STOPPED(t *testing.T) {
+	attempts := artifacts.NewMemoryAttemptStore()
+	dispatcher := newAttemptDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, attempts)
+	in := baseExportInput("orker-stopped")
+
+	ctx, cancel := context.WithCancelCause(context.Background())
+	cancel(worker.ErrWorkerShutdown)
+	result, err := dispatcher.Execute(ctx, in)
+	if !errors.Is(err, activity.ErrResultPending) || result != nil {
+		t.Fatalf("Execute while the orker stops = (%v, %v), want (nil, ErrResultPending): "+
+			"anything else is a completion the SDK would report", result, err)
+	}
+
+	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
+	if err != nil {
+		t.Fatalf("ListAttempts: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("stored %d records for an attempt the orker stopped, want 1", len(records))
+	}
+	record := records[0]
+	if record.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED {
+		t.Errorf("outcome = %v, want FAILED", record.GetOutcome())
+	}
+	got := record.GetError()
+	if got.GetCode() != ReasonOrkerStopped ||
+		got.GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR || !got.GetRetryable() {
+		t.Errorf("error = %v, want ORKER_STOPPED, a retryable INFRASTRUCTURE_ERROR", got)
+	}
+	if !strings.Contains(got.GetMessage(), "orker-attempt-test was stopped") {
+		t.Errorf("message = %q, want it to name the orker that stopped", got.GetMessage())
 	}
 }
 

@@ -1864,9 +1864,31 @@ What a cordon does, precisely:
   every Orker is cordoned reports its poller-derived count for the freshness
   window and zero after it.
 
-`SIGTERM` stops polling and cancels in-flight work; the Orker does not cordon
-itself on it. An operator who wants in-flight work to finish first cordons
-and drains.
+`SIGTERM` (or `SIGINT`) stops polling and cancels in-flight work; the Orker
+does not cordon itself on it. An operator who wants in-flight work to finish
+first cordons and drains. What a stop owes the work it cancels, the Orker
+does before it exits:
+
+- each running container gets the cancellation sequence: `SIGTERM`, then
+  `SIGKILL` once the task's `cancellation_grace_period_seconds` (30 by
+  default) has passed;
+- each attempt it stopped gets its record, `FAILED` with `ORKER_STOPPED`
+  (`orkctl run attempts`), and its log keeps every line the workload printed,
+  the ones after `SIGTERM` included (`orkctl run logs`);
+- the run is told nothing, exactly as if the Orker had died: the task ends
+  `ORKER_HEARTBEAT_TIMEOUT` about 30 s after the stop, or, under its `retry:`
+  policy, runs again on another Orker. A pin it hosts fails `PIN_HOST_LOST`.
+  A task whose grace outlasts that timeout can start again elsewhere while
+  this Orker still waits it out: execution is at-least-once (`AGENTS.md` §4).
+
+So a stop takes as long as the longest grace among its running tasks, plus a
+few seconds to write the records. Give the process manager at least that
+long before it kills the Orker — Kubernetes' `terminationGracePeriodSeconds`,
+systemd's `TimeoutStopSec`, `docker stop --time` (the quickstart's
+`compose.yaml` sets `stop_grace_period: 45s`). A second `SIGTERM` or `SIGINT`
+exits at once and leaves what a crash leaves: the attempts `UNREPORTED`, and
+a container still inside its grace running until this Orker's next boot
+reaps it.
 
 **Why the cordon lives only in the process.** An Orker is stateless and
 disposable (`AGENTS.md` §5): a stored cordon would be durable state about a

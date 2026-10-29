@@ -640,7 +640,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// drains its in-flight work on SIGTERM.
 	var controlStarted, presenceStarted bool
 	defer func() {
+		// Stop cancels every running task and returns at once; the tasks then
+		// stop on their own goroutines, and the process must outlive them.
 		taskWorker.Stop()
+		awaitStoppedTasks(logger, activities)
 		if controlStarted {
 			controlWorker.Stop()
 		}
@@ -701,9 +704,31 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"version", cfg.deployment.String())
 
 	<-ctx.Done()
+	// The first SIGINT or SIGTERM stops this Orker gracefully. Restoring the
+	// default action makes a second one end the process at once, leaving
+	// what a crash leaves (docs/DEPLOY.md "Removing an Orker safely").
+	stop()
 	sinks.Default().Ready.Set(false)
-	logger.Info("shutting down")
+	logger.Info("shutting down", "running_tasks", activities.RunningTasks())
 	return nil
+}
+
+// awaitStoppedTasks waits until every task the task worker's Stop cancelled
+// has finished stopping: its container sent SIGTERM and, after the task's
+// grace, SIGKILL — by this process, so a container that ignores SIGTERM would
+// outlive an Orker that exited first — then its attempt record written and its
+// last log lines uploaded. Each of those is bounded by the task's own grace
+// and the Orker's fixed control timeouts, and the process manager's own stop
+// timeout bounds the whole; nothing here adds a clock of its own.
+func awaitStoppedTasks(logger *slog.Logger, activities *orker.Activities) {
+	running := activities.RunningTasks()
+	if running == 0 {
+		return
+	}
+	logger.Info("waiting for cancelled tasks to stop", "running_tasks", running)
+	started := time.Now()
+	_ = activities.WaitForTasks(context.Background())
+	logger.Info("cancelled tasks stopped", "took", time.Since(started).Round(time.Millisecond))
 }
 
 // orkerOptions builds the orker.Options this Orker's activities run with,

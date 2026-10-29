@@ -96,6 +96,7 @@ OrkStack is pre-release. Breaking changes can land until 1.0. The [production ch
 - Put a gateway in front of `ork` that authenticates callers. OrkStack does not authenticate callers.
 - Keep `ORK_ADMIN_ADDR` on a private address. Keep `ORK_PPROF_ENABLED` off unless you are profiling.
 - Drain an Orker before you stop it, when it may host pins.
+- Give an Orker longer to stop than its tasks' longest cancellation grace, 30 seconds by default. A stopped Orker stops each running container and records each attempt before it exits.
 
 ## See also
 

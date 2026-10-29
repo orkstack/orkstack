@@ -705,6 +705,22 @@ func (j *joinE2E) killUnderRollback(runID string, workers map[string]worker.Work
 	return victim
 }
 
+// killedAttemptRecord is a record an in-process Orker may still write for the
+// attempt a kill took from it. The kill closes the Orker's client, so nothing
+// reaches the cluster, but the dispatcher still finishes the attempt, and the
+// record says which of the kill's two steps reached it first: CANCELED when a
+// heartbeat failed on the closed client, FAILED with ORKER_STOPPED when the
+// worker's Stop did.
+func killedAttemptRecord(r *orkstackv1.TaskAttempt) bool {
+	switch r.GetOutcome() {
+	case orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_CANCELED:
+		return r.GetError() == nil
+	case orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED:
+		return r.GetError().GetCode() == orker.ReasonOrkerStopped
+	}
+	return false
+}
+
 // heartbeatRetry returns taskID's first retried ActivityTaskStarted: its
 // attempt and the timeout type of its last_failure. Only that task's
 // ExecuteTask counts — deploy, which fails twice in these runs, has a
@@ -746,7 +762,7 @@ func TestIntegration_JoinOrkerKilledUnderAHandlerRetriesIt(t *testing.T) {
 		t.Fatalf("history: attempt %d after %s, want attempt 2 after a HEARTBEAT timeout", attempt, timeoutType)
 	}
 	// Attempt 1 reported nothing to the cluster (run attempts reads it
-	// UNREPORTED); at most a CANCELED record of its own stopped container.
+	// UNREPORTED); at most its own record of the kill (killedAttemptRecord).
 	// Attempt 2 SUCCEEDED on the survivor.
 	records := j.attemptsOf(runID, "rollback")
 	second := false
@@ -754,8 +770,8 @@ func TestIntegration_JoinOrkerKilledUnderAHandlerRetriesIt(t *testing.T) {
 		switch {
 		case r.GetAttempt() == 2 && r.GetOutcome() == orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED:
 			second = r.GetOrkerId() != victim
-		case r.GetAttempt() == 1 && r.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_CANCELED:
-			t.Errorf("rollback attempt 1 recorded %v; the killed Orker reported nothing", r.GetOutcome())
+		case r.GetAttempt() == 1 && !killedAttemptRecord(r):
+			t.Errorf("rollback attempt 1 recorded %v %v; the killed Orker reported nothing", r.GetOutcome(), r.GetError())
 		}
 	}
 	if !second {
@@ -786,8 +802,8 @@ func TestIntegration_JoinOrkerKilledUnderAHandlerWithoutRetryFailsIt(t *testing.
 		t.Fatalf("rollback = %v", rollback)
 	}
 	for _, r := range j.attemptsOf(runID, "rollback") {
-		if r.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_CANCELED {
-			t.Errorf("the killed attempt recorded %v; it reported nothing", r.GetOutcome())
+		if !killedAttemptRecord(r) {
+			t.Errorf("the killed attempt recorded %v %v; it reported nothing", r.GetOutcome(), r.GetError())
 		}
 	}
 	if !strings.Contains(j.attemptLog(runID, "rollback", 1), "rolling back") {
