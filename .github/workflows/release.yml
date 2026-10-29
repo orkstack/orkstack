@@ -5,8 +5,9 @@ name: release
 # CHANGELOG.md do not name, before anything else runs. `gate` runs the
 # release tier: every gate, the scale and soak tests included, observability
 # always. `artifacts`, beside it, builds what a release publishes (the
-# archives, the multi-arch images as OCI layouts, the quickstart bundle) and
-# runs the quickstart on them end to end. `tag` creates the release tag only
+# archives and the multi-arch images as OCI layouts), runs the quickstart's
+# compose file on those images end to end, and runs the README's Quickstart
+# as written on a clone of the commit. `tag` creates the release tag only
 # after `proofrun verify -release` accepts that proof for the exact commit,
 # and `publish` then pushes the images to ghcr.io byte for byte and creates
 # the GitHub release, running no repository code (docs/PROOFS.md §10).
@@ -131,18 +132,20 @@ jobs:
       ui_shards: 5
 
   # What a release publishes, built and run before anything is: the binaries
-  # and their archives, every image for linux/amd64 and linux/arm64 as an OCI
-  # layout, and the quickstart bundle naming those images by digest. The
-  # smoke pushes the layouts to a registry on this runner and runs the bundle
-  # on them end to end. Read-only: nothing leaves this job but its artifact,
-  # and nothing it runs comes from a cache or a floating tag.
+  # and their archives, and every image for linux/amd64 and linux/arm64 as an
+  # OCI layout. The release smoke pushes the layouts to a registry on this
+  # runner and runs compose.yaml on them, by digest, end to end; the
+  # quickstart smoke runs the README's Quickstart as written on a clone of
+  # this commit, which builds the stack from source. Read-only: nothing leaves
+  # this job but its artifact, and nothing it runs comes from a cache or a
+  # floating tag.
   artifacts:
     needs: validate
     concurrency:
       group: release-artifacts-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 195
+    timeout-minutes: 235
     permissions:
       contents: read
     # The name publish downloads, so a re-run of publish finds this upload.
@@ -190,19 +193,20 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
-        run: scripts/release-smoke.sh --layouts dist/layouts "$VERSION"
-      - name: the quickstart bundle, the checksums, the notes and the image list
+        run: scripts/quickstart-smoke.sh --release "$VERSION" --layouts dist/layouts
+      - name: the README's Quickstart, as written, on a clone of this commit
+        timeout-minutes: 40
+        shell: bash
+        run: scripts/quickstart-smoke.sh
+      - name: the checksums, the notes and the image list
         timeout-minutes: 5
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
           set -euo pipefail
-          export SOURCE_DATE_EPOCH="$(git log -1 --format=%ct)"
           mkdir -p dist/meta
           go run ./internal/dist/cmd/dist digests -layouts dist/layouts >dist/meta/images.tsv
-          go run ./internal/dist/cmd/dist quickstart -version "$VERSION" -images dist/meta/images.tsv \
-            -registry ghcr.io -tag "${VERSION#v}" -out dist
           go run ./internal/dist/cmd/dist sums dist
           go run ./internal/dist/cmd/dist notes -version "$VERSION" >dist/meta/notes.md
           cp deploy/skopeo-image.txt dist/meta/skopeo-image.txt
@@ -327,9 +331,6 @@ jobs:
           [[ "$skopeo" =~ ^quay\.io/skopeo/stable:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$ ]] || { echo "skopeo image: $skopeo" >&2; exit 1; }
           dups="$(cut -f1 meta/images.tsv | sort | uniq -d)"
           [ -z "$dups" ] || { echo "listed more than once: $dups" >&2; exit 1; }
-          # The bundle SHA256SUMS covers names every image the list does.
-          tar -xzOf orkstack-quickstart.tar.gz orkstack-quickstart/.env >"$RUNNER_TEMP/quickstart.env"
-          full="${VERSION#v}"
           n=0
           while IFS=$'\t' read -r name digest; do
             [[ "$name" =~ ^(ork|orker|orkctl|ui|activity-(shell|http|file|json|git|template))$ ]] || { echo "image name: $name" >&2; exit 1; }
@@ -343,7 +344,6 @@ jobs:
             [ "sha256:$(sha256sum <"$blob" | cut -d' ' -f1)" = "$digest" ] || { echo "$blob does not hash to $digest" >&2; exit 1; }
             platforms="$(jq -r '[.manifests[]?.platform | select(. != null) | .os + "/" + .architecture] | unique | join(",")' "$blob")"
             [ "$platforms" = "linux/amd64,linux/arm64" ] || { echo "$name is built for '$platforms', want linux/amd64 and linux/arm64" >&2; exit 1; }
-            grep -qF "ghcr.io/orkstack/$name:$full@$digest" "$RUNNER_TEMP/quickstart.env" || { echo "the quickstart bundle does not name ghcr.io/orkstack/$name:$full@$digest" >&2; exit 1; }
             n=$((n + 1))
           done <meta/images.tsv
           [ "$n" -eq 10 ] || { echo "$n images, want 10" >&2; exit 1; }

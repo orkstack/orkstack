@@ -804,12 +804,26 @@ include breaking changes, and each is marked **BREAKING**.
   architecture, a run and the commit order drawn from the UI's tokens in both
   themes (`site/scripts/readme-diagrams.mjs`), one real Orkflow (held to
   `examples/each-fan-out.ork.yaml` by a test), the CLI and the UI in motion,
-  and a Docker-only quickstart.
-- Getting started needs only Docker: it runs the quickstart bundle of a
-  published release and uses `orkctl` from its image or a release binary.
-  Go and Bun are needed only to develop OrkStack: the development stack
-  (`make infra-up`, `make up`, …) is in `CONTRIBUTING.md`, "The local
-  development stack", beside the Linux host setup ("Linux hosts").
+  and a quickstart that needs only Docker and git.
+- Getting started is a clone and one command:
+  `git clone https://github.com/orkstack/orkstack.git && cd orkstack`, then
+  `docker compose up --build -d --wait`. The repository's root `compose.yaml`
+  builds the engine, the Orker, the UI, `orkctl` and the six first-party
+  activities from the clone (`deploy/source/Dockerfile`, on the release
+  images' own pinned stages), pushes the activities to a registry of the
+  stack's own so that an apply pins them by digest, and starts the stack on
+  loopback, with the Orker's work directory under
+  `~/.cache/orkstack-quickstart`, never a shared `/tmp`; `orkctl` runs from
+  its image (`alias orkctl='docker compose run --rm orkctl'`). Docker and git
+  are the only prerequisites, and no release is needed. The README,
+  `docs/GETTING_STARTED.md`, the site's landing page and its first tutorial
+  show the same commands: the landing page reads them from the README,
+  `internal/docscheck` holds the other pages to them, and
+  `make quickstart-smoke` runs them as written on a fresh clone of the
+  working tree, as `release.yml` does before every release. Go and Bun are
+  needed only to develop OrkStack: the development stack (`make infra-up`,
+  `make up`, …) is in `CONTRIBUTING.md`, "The local development stack",
+  beside the Linux host setup ("Linux hosts").
 - The development stack's Temporal, and so the Temporal every proof starts for
   itself, detects a drained release in seconds instead of minutes. Its
   `deploy/docker-compose.yml` command passes
@@ -848,17 +862,14 @@ include breaking changes, and each is marked **BREAKING**.
   and arm64, `ork` and `orker` for Linux, as archives with `SHA256SUMS`; the
   images `ork`, `orker`, `orkctl`, `ui` and the six first-party activities on
   `ghcr.io/orkstack`, for linux/amd64 and linux/arm64, tagged `X.Y.Z` and
-  `X.Y`; and `orkstack-quickstart.tar.gz`, a compose file that runs the whole
-  stack from those images (docs/UPGRADING.md, "Release artifacts"). The
-  images are not signed yet. One commit builds the same binaries whatever the
+  `X.Y` (docs/UPGRADING.md, "Release artifacts"). The smoke runs the root
+  `compose.yaml` on those images, by digest. The images are not signed yet. One commit builds the same binaries whatever the
   state of the checkout or the caller's Go environment. A release below an
   existing release of its own `X.Y` is refused, and a backport to an older
   series is published but never marked the latest, so
-  `releases/latest/download/` always serves the newest release. The
-  quickstart keeps its work directory under `~/.cache/orkstack-quickstart`,
-  never a shared `/tmp`. `make dist`, `make release-images` and
-  `make release-smoke` build and check the same artifacts on a developer's
-  machine.
+  `releases/latest/download/` always serves the newest release.
+  `make dist`, `make release-images` and `make release-smoke` build and check
+  the same artifacts on a developer's machine.
 - `orkctl` builds and runs on Windows; `orkctl task run` and
   `orkctl activity test`, which run containers locally, refuse there with a
   reason (docs/LIMITATIONS.md).

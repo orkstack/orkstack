@@ -2,7 +2,7 @@
 
 Build the shell image in `examples/custom-image-shell/`, check the settings it declares, and run one of its tasks on your machine.
 
-> **This tutorial needs a checkout of this repository.** The quickstart bundle does not run an image registry, and the image is pushed to one. Set up the stack from source as [Contributing](/docs/contributing/) describes.
+> **This tutorial uses the development stack.** It runs OrkStack's processes on your machine, beside a registry on `localhost:5001` that the steps push the image to. If the quickstart is running, stop it first with `docker compose down`: the two use the same ports.
 
 You need Docker, Go, Bun, make, git and curl, as [Contributing](/docs/contributing/) lists.
 

@@ -88,7 +88,7 @@ func parseInstruction(line string, number int) dfInstruction {
 	return ins
 }
 
-func parseDockerfile(t *testing.T, data []byte) []dfStage {
+func parseDockerfile(t *testing.T, name string, data []byte) []dfStage {
 	t.Helper()
 	var stages []dfStage
 	lines, numbers := logicalLines(string(data))
@@ -103,7 +103,7 @@ func parseDockerfile(t *testing.T, data []byte) []dfStage {
 			case len(fields) == 3 && strings.EqualFold(fields[1], "AS"):
 				stage.image, stage.name = fields[0], fields[2]
 			default:
-				t.Fatalf("%s:%d: cannot read %q", dockerfilePath, ins.line, line)
+				t.Fatalf("%s:%d: cannot read %q", name, ins.line, line)
 			}
 			stages = append(stages, stage)
 			continue
@@ -114,14 +114,14 @@ func parseDockerfile(t *testing.T, data []byte) []dfStage {
 		stages[len(stages)-1].body = append(stages[len(stages)-1].body, ins)
 	}
 	if len(stages) == 0 {
-		t.Fatalf("%s has no FROM", dockerfilePath)
+		t.Fatalf("%s has no FROM", name)
 	}
 	return stages
 }
 
 func dockerfileStages(t *testing.T) []dfStage {
 	t.Helper()
-	return parseDockerfile(t, readRepoFile(t, dockerfilePath))
+	return parseDockerfile(t, dockerfilePath, readRepoFile(t, dockerfilePath))
 }
 
 func stageNamed(t *testing.T, stages []dfStage, name string) dfStage {
@@ -131,7 +131,7 @@ func stageNamed(t *testing.T, stages []dfStage, name string) dfStage {
 			return s
 		}
 	}
-	t.Fatalf("%s has no stage %q", dockerfilePath, name)
+	t.Fatalf("no stage %q among the Dockerfile's %d", name, len(stages))
 	return dfStage{}
 }
 
@@ -270,24 +270,30 @@ func TestReleaseDockerfile_TargetsAreTheFourPublishedImages(t *testing.T) {
 
 func TestReleaseDockerfile_EveryStageIsDigestPinned(t *testing.T) {
 	t.Parallel()
-	// The digest is the pin; the tag is kept so a reader and Dependabot know
-	// which series the digest was taken from. Distroless publishes no
-	// versioned tag, so :latest and :nonroot are those labels.
+	expectBasesPinned(t, dockerfilePath, dockerfileStages(t))
+}
+
+// expectBasesPinned fails for every stage of a Dockerfile whose base is an
+// image pull not pinned by digest. The digest is the pin; the tag is kept so a
+// reader and Dependabot know which series the digest was taken from.
+// Distroless publishes no versioned tag, so :latest and :nonroot are those
+// labels.
+func expectBasesPinned(t *testing.T, name string, stages []dfStage) {
+	t.Helper()
 	pinned := regexp.MustCompile(`^[^\s@]+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}@sha256:[0-9a-f]{64}$`)
-	stages := dockerfileStages(t)
 	bases := externalImages(stages)
 	if len(bases) == 0 {
-		t.Fatal("no stage pulls an image")
+		t.Fatalf("%s: no stage pulls an image", name)
 	}
 	for _, s := range bases {
 		if !pinned.MatchString(s.image) {
 			t.Errorf("%s:%d: FROM %s is not name:tag@sha256:<64 hex>; a base is pinned by the digest of its "+
-				"multi-arch index, with its tag kept for the reader", dockerfilePath, s.line, s.image)
+				"multi-arch index, with its tag kept for the reader", name, s.line, s.image)
 			continue
 		}
 		ref, err := dsl.ParseReference(s.image)
 		if err != nil || ref.Tag == "" || !dsl.ValidDigest(ref.Digest) {
-			t.Errorf("%s:%d: FROM %s does not parse as a tagged, digest-pinned reference (%v)", dockerfilePath, s.line, s.image, err)
+			t.Errorf("%s:%d: FROM %s does not parse as a tagged, digest-pinned reference (%v)", name, s.line, s.image, err)
 		}
 	}
 	// The pin regexp must not be vacuous.
@@ -820,9 +826,9 @@ func TestReleaseDockerignore_AdmitsOnlyWhatTheBuildCopies(t *testing.T) {
 	// And nothing else is: not the source tree, not a secret, not a built
 	// archive beside the binaries, not the UI's own build products.
 	for _, file := range []string{
-		".git/HEAD", ".env", "deploy/quickstart/.env", ".claude/settings.json", "proof/x/proof.json", ".data/x",
+		".git/HEAD", ".env", "compose.yaml", ".claude/settings.json", "proof/x/proof.json", ".data/x",
 		"go.mod", "cmd/ork/main.go", "internal/dist/archive.go", "docs/README.md", "images/shell/Dockerfile",
-		"site/package.json", "scripts/release-smoke.sh", "test/fixtures/bash/Dockerfile",
+		"site/package.json", "scripts/quickstart-smoke.sh", "deploy/source/Dockerfile", "test/fixtures/bash/Dockerfile",
 		"dist/orkctl-linux-amd64.tar.gz", "dist/SHA256SUMS", "dist/meta/images.tsv", "dist/layouts/ork/index.json",
 		"dist/bin/windows-amd64/orkctl.exe", "dist/bin/linux-amd64/orkctl.exe", "dist/bin/linux-amd64/extra",
 		"examples/README.md", "examples/automation/examples.ork.yaml", "examples/custom-image/main.go",

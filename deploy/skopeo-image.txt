@@ -1,4 +1,4 @@
 # The skopeo image that copies a release's OCI layouts to a registry byte for
-# byte (scripts/release-smoke.sh, .github/workflows/release.yml), pinned by its
+# byte (scripts/quickstart-smoke.sh --release, .github/workflows/release.yml), pinned by its
 # multi-arch index digest. A bump is a pull request that proves it.
 quay.io/skopeo/stable:v1.22.3@sha256:24940638e4abb0edfedc78a680554f316069d0212a00159276759421a059e611

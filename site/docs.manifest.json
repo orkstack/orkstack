@@ -17,7 +17,7 @@
 				{
 					"route": "docs/tutorials/first-orkflow",
 					"title": "Your first Orkflow",
-					"description": "Start OrkStack with Docker and apply, run and inspect an Orkflow, in about ten minutes.",
+					"description": "Clone OrkStack, start it with Docker, and apply, run and inspect an Orkflow, in about ten minutes.",
 					"parts": [
 						{
 							"source": "site/content/tutorials/first-orkflow.md"

@@ -57,9 +57,10 @@ can start a privileged container, so an Orker process is as trusted as root
 on its host, whatever user it runs as, and an Orker host should run nothing
 whose compromise through it you would not accept. The release's `orker` image
 runs as root for that reason and says so; the quickstart mounts the Docker
-socket into the `orker` service and into no other
-([deploy/quickstart/compose.yaml](../deploy/quickstart/compose.yaml)), and a
-test refuses a compose file that gives it to any other service. An activity
+socket into the `orker` service and into the step that pushes the first-party
+activities to its registry, and into no other
+([compose.yaml](../compose.yaml)), and a test refuses a compose file that
+gives it to any other service. An activity
 container never receives the socket, a host path or the host's namespaces
 ("What the Orker refuses" below).
 
@@ -369,13 +370,16 @@ its own writes (`internal/api/audit.go`). A record is written once to
   Temporal address and namespace for the engine and the Orker. It has no TLS or
   credential key for that connection (`internal/config/config.go`, `temporal.*`).
 - **Loopback is not an authentication boundary.** The quickstart publishes its
-  ports on `127.0.0.1` only (`deploy/quickstart/compose.yaml`). That keeps other
-  machines out, but any process on the machine reaches the API, and so can a
-  web page by DNS rebinding: the API checks neither the `Host` header nor a
-  Connect request's `Origin`, and the WebSocket bridge accepts an `Origin`
-  whose host equals the request's `Host` (`internal/api/ws.go`,
-  `originAllowed`), which a rebinding page satisfies. A deployment anyone else
-  can reach needs the authenticating gateway this model assumes.
+  ports on `127.0.0.1` only (`compose.yaml`). That keeps other machines out,
+  but any process on the machine reaches the API, and so can a web page by
+  DNS rebinding: the API checks neither the `Host` header nor a Connect
+  request's `Origin`, and the WebSocket bridge accepts an `Origin` whose host
+  equals the request's `Host` (`internal/api/ws.go`, `originAllowed`), which a
+  rebinding page satisfies. Any process on the machine can also push to the
+  quickstart's image registry, which takes a push without a login: its
+  catalog names the first-party activities by a tag there, and an apply pins
+  whatever digest that tag names at that moment. A deployment anyone else can
+  reach needs the authenticating gateway this model assumes.
 - **Object-storage keys have development defaults.** `ORK_S3_ACCESS_KEY` and
   `ORK_S3_SECRET_KEY` default to the values in the development compose file
   (`pkg/artifacts/config.go`). The operator must supply real credentials

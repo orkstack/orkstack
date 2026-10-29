@@ -12,7 +12,9 @@ import (
 // ---- the release's artifacts and its publication ---------------------------------
 //
 // release.yml builds what a release publishes in `artifacts`, read-only and
-// before anything is tagged, and runs the quickstart on it end to end; then
+// before anything is tagged, runs the quickstart's compose file on it end to
+// end, and runs the README's Quickstart as written on a clone of the commit;
+// then
 // `publish`, which holds the only package write, pushes the images and creates
 // the GitHub release without checking out or running any repository code
 // (docs/PROOFS.md §10). Each rule returns its problems, and a companion test
@@ -66,15 +68,20 @@ func releaseArtifactsProblems(w *wfFile) []string {
 		p = append(p, fmt.Sprintf("jobs.artifacts.permissions = %v, want contents: read alone", job.Permissions))
 	}
 	p = append(p, validatedGroupProblem("artifacts", job)...)
-	smoke := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "scripts/release-smoke.sh") })
+	smoke := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "scripts/quickstart-smoke.sh --release") })
+	quickstart := stepIndex(job.Steps, func(s wfStep) bool {
+		return strings.TrimSpace(s.Run) == "scripts/quickstart-smoke.sh"
+	})
 	upload := stepIndex(job.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/upload-artifact@") })
 	switch {
 	case smoke < 0:
-		p = append(p, "jobs.artifacts never runs scripts/release-smoke.sh")
+		p = append(p, "jobs.artifacts never runs scripts/quickstart-smoke.sh --release")
+	case quickstart < 0:
+		p = append(p, "jobs.artifacts never runs the README's Quickstart (scripts/quickstart-smoke.sh)")
 	case upload < 0:
 		p = append(p, "jobs.artifacts uploads nothing for publish")
-	case upload < smoke:
-		p = append(p, "jobs.artifacts uploads before the smoke ran")
+	case upload < smoke || upload < quickstart:
+		p = append(p, "jobs.artifacts uploads before the smokes ran")
 	}
 	if smoke >= 0 && !strings.Contains(job.Steps[smoke].Run, "--layouts") {
 		p = append(p, "the smoke builds its own images instead of running the layouts publish pushes")
@@ -102,8 +109,22 @@ func TestWorkflows_ReleaseBuildsAndSmokesBeforeAnythingIsTagged(t *testing.T) {
 		{"no smoke", func(w *wfFile) {
 			job := w.Jobs["artifacts"]
 			for i := range job.Steps {
-				job.Steps[i].Run = strings.ReplaceAll(job.Steps[i].Run, "scripts/release-smoke.sh", "true")
+				job.Steps[i].Run = strings.ReplaceAll(job.Steps[i].Run, "scripts/quickstart-smoke.sh --release", "true")
 			}
+		}},
+		{"no quickstart smoke", func(w *wfFile) {
+			job := w.Jobs["artifacts"]
+			for i := range job.Steps {
+				if strings.TrimSpace(job.Steps[i].Run) == "scripts/quickstart-smoke.sh" {
+					job.Steps[i].Run = "true"
+				}
+			}
+		}},
+		{"the upload before the quickstart smoke", func(w *wfFile) {
+			job := w.Jobs["artifacts"]
+			q := stepIndex(job.Steps, func(s wfStep) bool { return strings.TrimSpace(s.Run) == "scripts/quickstart-smoke.sh" })
+			up := stepIndex(job.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/upload-artifact@") })
+			job.Steps[q], job.Steps[up] = job.Steps[up], job.Steps[q]
 		}},
 		{"the upload before the smoke", func(w *wfFile) {
 			job := w.Jobs["artifacts"]
@@ -114,7 +135,7 @@ func TestWorkflows_ReleaseBuildsAndSmokesBeforeAnythingIsTagged(t *testing.T) {
 		{"the smoke on images of its own", func(w *wfFile) {
 			job := w.Jobs["artifacts"]
 			for i := range job.Steps {
-				job.Steps[i].Run = strings.ReplaceAll(job.Steps[i].Run, "--layouts dist/layouts ", "")
+				job.Steps[i].Run = strings.ReplaceAll(job.Steps[i].Run, " --layouts dist/layouts", "")
 			}
 		}},
 		{"no skopeo pin handed on", func(w *wfFile) {
@@ -266,15 +287,13 @@ func publishProblems(w *wfFile) []string {
 			p = append(p, fmt.Sprintf("the image list check does not require exactly %d images", len(releaseImageNames)))
 		}
 		// Before anything is pushed: each image once, each layout the image
-		// its digest names and built for both platforms, the bundle naming
-		// exactly those images, and the assets exactly what SHA256SUMS sums.
+		// its digest names and built for both platforms, and the assets
+		// exactly what SHA256SUMS sums.
 		for _, want := range []struct{ text, says string }{
 			{"uniq -d", "refuses an image listed twice"},
 			{`.manifests[0].digest`, "checks that each layout's index names the listed digest"},
 			{`blobs/sha256/${digest#sha256:}`, "hashes each layout's manifest blob"},
 			{`"linux/amd64,linux/arm64"`, "requires both platforms"},
-			{`orkstack-quickstart/.env`, "compares the image list with the quickstart bundle's .env"},
-			{`ghcr.io/orkstack/$name:$full@$digest`, "requires the bundle to name each image by its tag and digest"},
 			{`cmp -s`, "compares the release assets with SHA256SUMS"},
 		} {
 			if !strings.Contains(r, want.text) {
@@ -304,7 +323,7 @@ func TestWorkflows_PublishRunsNoRepositoryCodeAndHoldsTheOnlyPackageWrite(t *tes
 		}},
 		{"make in a step", func(w *wfFile) { edit(w, "set -euo pipefail\n", "set -euo pipefail\nmake dist\n") }},
 		{"a repository script", func(w *wfFile) {
-			edit(w, "set -euo pipefail\n", "set -euo pipefail\nscripts/release-smoke.sh v1.0.0\n")
+			edit(w, "set -euo pipefail\n", "set -euo pipefail\nscripts/quickstart-smoke.sh --release v1.0.0\n")
 		}},
 		{"go run", func(w *wfFile) { edit(w, "set -euo pipefail\n", "set -euo pipefail\ngo run ./x\n") }},
 		{"another action", func(w *wfFile) {
@@ -334,10 +353,6 @@ func TestWorkflows_PublishRunsNoRepositoryCodeAndHoldsTheOnlyPackageWrite(t *tes
 		{"no layout digest check", func(w *wfFile) { edit(w, `.manifests[0].digest`, `.manifests[0].size`) }},
 		{"no blob hash", func(w *wfFile) { edit(w, `blobs/sha256/${digest#sha256:}`, `index.json`) }},
 		{"one platform", func(w *wfFile) { edit(w, `"linux/amd64,linux/arm64"`, `"linux/amd64"`) }},
-		{"no bundle cross-check", func(w *wfFile) { edit(w, `orkstack-quickstart/.env`, `orkstack-quickstart/README.txt`) }},
-		{"the bundle may name another tag", func(w *wfFile) {
-			edit(w, `ghcr.io/orkstack/$name:$full@$digest`, `ghcr.io/orkstack/$name`)
-		}},
 		{"no asset-set check", func(w *wfFile) { edit(w, "cmp -s", "true") }},
 		{"the credential is not trapped", func(w *wfFile) {
 			edit(w, `trap 'rm -f "$RUNNER_TEMP/auth.json"' EXIT`, ":")
@@ -398,12 +413,12 @@ func TestWorkflows_TheSkopeoPinIsTheRepositorysPin(t *testing.T) {
 			t.Errorf("publish's check accepts %q", bad)
 		}
 	}
-	smoke, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "release-smoke.sh"))
+	smoke, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "quickstart-smoke.sh"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(smoke), "deploy/skopeo-image.txt") {
-		t.Error("scripts/release-smoke.sh does not read deploy/skopeo-image.txt")
+		t.Error("scripts/quickstart-smoke.sh does not read deploy/skopeo-image.txt")
 	}
 }
 

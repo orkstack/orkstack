@@ -2,7 +2,10 @@ package dist_test
 
 import (
 	"bytes"
+	"maps"
+	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -17,17 +20,19 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 )
 
-// deploy/quickstart/compose.yaml is the file a user runs. These tests hold it
-// to the quickstart contract (docs/DEPLOY.md, "Running the published
-// images"; docs/SECURITY_MODEL.md): what it pins, what it publishes, who sees
-// the Docker socket, and how its services find each other. They read the
+// compose.yaml, at the repository root, is the quickstart a user runs from a
+// clone (docs/GETTING_STARTED.md). These tests hold it to the quickstart
+// contract (docs/DEPLOY.md, "Running the published images";
+// docs/SECURITY_MODEL.md): what it builds and pins, what it publishes, who
+// sees the Docker socket, and how its services find each other. They read the
 // committed file, so an edit that breaks the contract fails in the unit gate.
-// The smoke (scripts/release-smoke.sh) is the proof that it also runs.
+// scripts/quickstart-smoke.sh is the proof that it also runs: as the README
+// says, from a fresh clone, and on a release's own images before the release
+// publishes anything.
 
 const (
-	composePath    = "deploy/quickstart/compose.yaml"
+	composePath    = "compose.yaml"
 	devComposePath = "deploy/docker-compose.yml"
-	envExamplePath = "deploy/quickstart/.env.example"
 )
 
 type composeFile struct {
@@ -41,6 +46,9 @@ type composeFile struct {
 
 type composeService struct {
 	Image           string              `yaml:"image"`
+	Build           *composeBuild       `yaml:"build"`
+	Scale           *int                `yaml:"scale"`
+	Entrypoint      []string            `yaml:"entrypoint"`
 	Command         []string            `yaml:"command"`
 	Environment     map[string]string   `yaml:"environment"`
 	Ports           []string            `yaml:"ports"`
@@ -56,6 +64,26 @@ type composeService struct {
 	Other map[string]any `yaml:",inline"`
 }
 
+// composeBuild is build in either of its forms: a context directory, or a
+// mapping.
+type composeBuild struct {
+	Context    string `yaml:"context"`
+	Dockerfile string `yaml:"dockerfile"`
+	Target     string `yaml:"target"`
+	// Other holds every other key (args, additional_contexts, ...), so one
+	// this file never meant to carry is seen.
+	Other map[string]any `yaml:",inline"`
+}
+
+func (b *composeBuild) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind == yaml.ScalarNode {
+		b.Context = node.Value
+		return nil
+	}
+	type plain composeBuild
+	return node.Decode((*plain)(b))
+}
+
 type composeHealthcheck struct {
 	Test     []string `yaml:"test"`
 	Interval string   `yaml:"interval"`
@@ -65,6 +93,7 @@ type composeHealthcheck struct {
 
 type composeDependency struct {
 	Condition string `yaml:"condition"`
+	Restart   bool   `yaml:"restart"`
 }
 
 // composeDependsOn is depends_on in either of its forms: a list of names
@@ -130,42 +159,97 @@ func (c composeFile) serviceNames() []string {
 }
 
 var (
-	requiredImageVariable = regexp.MustCompile(`^\$\{ORKSTACK_[A-Z]+_IMAGE:\?[^}]+\}$`)
-	digestPinnedImage     = regexp.MustCompile(`^[^\s@$]+@sha256:[0-9a-f]{64}$`)
-	taggedAndDigested     = regexp.MustCompile(`^[^\s@$]+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}@sha256:[0-9a-f]{64}$`)
-	exactVersionImage     = regexp.MustCompile(`^[^\s@$:]+:[0-9]+\.[0-9]+\.[0-9]+$`)
+	digestPinnedImage = regexp.MustCompile(`^[^\s@$]+@sha256:[0-9a-f]{64}$`)
+	taggedAndDigested = regexp.MustCompile(`^[^\s@$]+:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}@sha256:[0-9a-f]{64}$`)
+	exactVersionImage = regexp.MustCompile(`^[^\s@$:]+:[0-9]+\.[0-9]+\.[0-9]+$`)
 )
 
-// imageProblem says why image is not pinned to something that cannot move, or
-// returns "". An image is acceptable when a release must name it (a required
-// variable), when it names its digest, or when it names an exact version: the
-// development stack pins Temporal by version and the quickstart runs the same
-// one.
+// imageProblem says why an image the quickstart pulls is not pinned to
+// something that cannot move, or returns "". An image is acceptable when it
+// names its digest, or an exact version: the development stack pins Temporal
+// by version and the quickstart runs the same one.
 func imageProblem(image string) string {
 	switch {
-	case requiredImageVariable.MatchString(image):
-		return ""
 	case taggedAndDigested.MatchString(image), digestPinnedImage.MatchString(image):
 		return ""
 	case exactVersionImage.MatchString(image):
 		return ""
 	}
-	return "is neither a required ${ORKSTACK_*_IMAGE:?...} variable, nor pinned by digest, nor an exact x.y.z version"
+	return "is neither pinned by digest nor an exact x.y.z version"
 }
 
-func TestQuickstartCompose_ImagesArePinnedOrRequiredVariables(t *testing.T) {
+// sourceTargets are the platform's services, each built from
+// deploy/source/Dockerfile's target of its own name.
+var sourceTargets = []string{"ork", "orker", "orkctl", "ui"}
+
+// activityImage is the name the stack builds a first-party activity as, and
+// pushes and pins it by: an image of its own registry, on the host port that
+// moves with ORKSTACK_REGISTRY_PORT.
+func activityImage(name string) string {
+	return registryHost + "/orkstack/" + dist.ActivityPrefix + name + ":local"
+}
+
+// registryHost is the registry's address as the host's Docker daemon and the
+// engine both reach it: loopback, on the one port that can be moved.
+const registryHost = "127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}"
+
+// TestQuickstartCompose_BuildsFromTheCheckoutAndPinsTheRest: a clone is all
+// the quickstart needs, so the platform and the first-party activities are
+// built from it, and every image it pulls is pinned.
+func TestQuickstartCompose_BuildsFromTheCheckoutAndPinsTheRest(t *testing.T) {
 	t.Parallel()
 	doc := loadCompose(t)
-	required := map[string]string{
-		"ork": "ORKSTACK_ORK_IMAGE", "orker": "ORKSTACK_ORKER_IMAGE", "ui": "ORKSTACK_UI_IMAGE", "orkctl": "ORKSTACK_ORKCTL_IMAGE",
+	targets := map[string]bool{}
+	for _, s := range sourceStages(t) {
+		targets[s.name] = true
+	}
+	built := map[string]bool{}
+	for _, name := range sourceTargets {
+		built[name] = true
+		svc := doc.service(t, name)
+		if b := svc.Build; b == nil || b.Context != "." || b.Dockerfile != sourceDockerfilePath || b.Target != name || len(b.Other) != 0 {
+			t.Errorf("service %s builds %+v, want context ., dockerfile %s, target %s and nothing else", name, b, sourceDockerfilePath, name)
+		}
+		if !targets[name] {
+			t.Errorf("service %s builds the target %s, which %s does not have", name, name, sourceDockerfilePath)
+		}
+		if svc.Image != "" {
+			t.Errorf("service %s names its image %q; compose names it after the project, and nothing is published", name, svc.Image)
+		}
+	}
+	for _, name := range dist.ActivityNames() {
+		service := dist.ActivityPrefix + name
+		built[service] = true
+		svc := doc.service(t, service)
+		if b := svc.Build; b == nil || b.Context != "images/"+service || b.Dockerfile != "" || b.Target != "" || len(b.Other) != 0 {
+			t.Errorf("service %s builds %+v, want the context images/%s and nothing else", service, b, service)
+		}
+		if svc.Image != activityImage(name) {
+			t.Errorf("service %s is built as %q, want %q", service, svc.Image, activityImage(name))
+		}
+		readRepoFile(t, "images/"+service+"/Dockerfile")
+	}
+	// Every activity under images/ is one the stack builds: one added there
+	// and not here would be missing from the quickstart's catalog.
+	entries, err := os.ReadDir(filepath.Join(repoRoot(t), "images"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), dist.ActivityPrefix) && !built[e.Name()] {
+			t.Errorf("images/%s is a first-party activity the quickstart does not build", e.Name())
+		}
 	}
 	for _, name := range doc.serviceNames() {
 		svc := doc.Services[name]
-		if problem := imageProblem(svc.Image); problem != "" {
-			t.Errorf("service %s: image %q %s", name, svc.Image, problem)
-		}
-		if variable, ok := required[name]; ok && !strings.HasPrefix(svc.Image, "${"+variable+":?") {
-			t.Errorf("service %s: image %q must be the required variable ${%s:?...}, because a release writes it", name, svc.Image, variable)
+		switch {
+		case built[name]:
+		case svc.Build != nil:
+			t.Errorf("service %s builds %+v; only the platform and the first-party activities are built here", name, svc.Build)
+		default:
+			if problem := imageProblem(svc.Image); problem != "" {
+				t.Errorf("service %s: image %q %s", name, svc.Image, problem)
+			}
 		}
 	}
 	// The check is not vacuous.
@@ -180,14 +264,82 @@ func TestQuickstartCompose_ImagesArePinnedOrRequiredVariables(t *testing.T) {
 	}
 }
 
+// TestQuickstartCompose_TheEnginePinsTheActivitiesThePushPushes: an Orkflow
+// pins each task's image by its registry digest at apply, so the activities
+// are pushed to the stack's own registry before the engine starts, and the
+// engine's catalog names exactly what was pushed, at an address both the
+// host's daemon and the engine reach.
+func TestQuickstartCompose_TheEnginePinsTheActivitiesThePushPushes(t *testing.T) {
+	t.Parallel()
+	doc := loadCompose(t)
+	var catalog struct {
+		Activities map[string]string `yaml:"activities"`
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(doc.service(t, "ork").Environment["ORK_ACTIVITY_CATALOG"]))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&catalog); err != nil {
+		t.Fatalf("ORK_ACTIVITY_CATALOG: %v", err)
+	}
+	if got, want := sorted(slices.Collect(maps.Keys(catalog.Activities))), sorted(dist.ActivityNames()); !slices.Equal(got, want) {
+		t.Errorf("the catalog names %v, want every first-party activity %v", got, want)
+	}
+	for name, ref := range catalog.Activities {
+		if ref != activityImage(name) {
+			t.Errorf("the catalog resolves %s to %q, but the stack builds and pushes it as %q", name, ref, activityImage(name))
+		}
+	}
+
+	push := doc.service(t, "activities")
+	if len(push.Command) != 1 {
+		t.Fatalf("the activities step runs %d commands, want one script", len(push.Command))
+	}
+	loop := regexp.MustCompile(`for name in ([a-z ]+); do`).FindStringSubmatch(push.Command[0])
+	if loop == nil || !slices.Equal(strings.Fields(loop[1]), dist.ActivityNames()) {
+		t.Errorf("the activities step pushes %v, want %v", loop, dist.ActivityNames())
+	}
+	if want := `docker push --quiet "` + activityImage("$$name") + `"`; !strings.Contains(push.Command[0], want) {
+		t.Errorf("the activities step does not push %s", want)
+	}
+	if !slices.Equal(push.Entrypoint, []string{"sh", "-ec"}) {
+		t.Errorf("the activities step runs %v; want sh -ec, so a failed push fails it and the engine never starts", push.Entrypoint)
+	}
+	if dep := doc.service(t, "ork").DependsOn["activities"]; dep.Condition != "service_completed_successfully" {
+		t.Errorf("the engine waits for the activities step with %q, want service_completed_successfully", dep.Condition)
+	}
+
+	// The registry is published on the host's loopback for the daemon, and a
+	// forwarder in the engine's own network namespace serves the same port
+	// on its loopback, so one reference reaches the registry from both.
+	registry := doc.service(t, "registry")
+	if !slices.Equal(registry.Ports, []string{registryHost + ":5000"}) {
+		t.Errorf("the registry publishes %v, want %s:5000", registry.Ports, registryHost)
+	}
+	if hc := registry.Healthcheck; hc == nil || !strings.Contains(strings.Join(hc.Test, " "), "127.0.0.1:5000/v2/") {
+		t.Errorf("the registry's health check does not ask its API on 5000: the push would start before it answers")
+	}
+	forward := doc.service(t, "registry-forward")
+	if mode := forward.Other["network_mode"]; mode != "service:ork" {
+		t.Errorf("the forwarder runs in network %v, want service:ork: the engine resolves the catalog on its own loopback", mode)
+	}
+	if want := []string{"TCP4-LISTEN:${ORKSTACK_REGISTRY_PORT-5002},bind=127.0.0.1,fork,reuseaddr", "TCP:registry:5000"}; !slices.Equal(forward.Command, want) {
+		t.Errorf("the forwarder runs %v, want %v", forward.Command, want)
+	}
+}
+
 func TestQuickstartCompose_InfraPinsMatchTheDevStack(t *testing.T) {
 	t.Parallel()
 	quickstart := loadCompose(t)
 	dev := parseCompose(t, devComposePath, readRepoFile(t, devComposePath))
-	for _, name := range []string{"temporal", "seaweedfs"} {
+	for _, name := range []string{"temporal", "seaweedfs", "registry"} {
 		got, want := quickstart.service(t, name).Image, dev.service(t, name).Image
 		if got != want {
 			t.Errorf("service %s runs %q, but deploy/docker-compose.yml, whose pin the proof tests, runs %q", name, got, want)
+		}
+	}
+	// The push runs the docker CLI the Orker's image carries, by one pin.
+	for _, stages := range [][]dfStage{dockerfileStages(t), sourceStages(t)} {
+		if got, want := quickstart.service(t, "activities").Image, stageNamed(t, stages, "docker-cli").image; got != want {
+			t.Errorf("the activities step runs %q, but the orker's docker CLI is %q", got, want)
 		}
 	}
 	// The object store is the same server with the same bucket, and the
@@ -219,12 +371,13 @@ func TestQuickstartCompose_PublishesOnlyOnLoopback(t *testing.T) {
 			published[name] = append(published[name], parts[2])
 		}
 		if _, ok := doc.Services[name].Other["expose"]; ok {
-			t.Errorf("service %s declares expose; nothing but the three published ports is reachable", name)
+			t.Errorf("service %s declares expose; nothing but the published ports is reachable", name)
 		}
 	}
-	// Exactly the Temporal UI, the API and the UI: the admin listeners, the
-	// object store and the Temporal frontend stay inside the network.
-	want := map[string][]string{"temporal": {"8233"}, "ork": {"8080"}, "ui": {"5173"}}
+	// Exactly the Temporal UI, the API, the UI and the registry the host's
+	// daemon pulls the activities from: the admin listeners, the object store
+	// and the Temporal frontend stay inside the network.
+	want := map[string][]string{"temporal": {"8233"}, "ork": {"8080"}, "ui": {"5173"}, "registry": {"5000"}}
 	if len(published) != len(want) {
 		t.Errorf("published ports %v, want %v", published, want)
 	}
@@ -242,7 +395,7 @@ func hostPathSource(source string) bool {
 		strings.HasPrefix(source, "~") || strings.HasPrefix(source, "$")
 }
 
-func TestQuickstartCompose_OnlyTheOrkerSeesTheDockerSocket(t *testing.T) {
+func TestQuickstartCompose_OnlyTheOrkerAndThePushSeeTheDockerSocket(t *testing.T) {
 	t.Parallel()
 	doc := loadCompose(t)
 	touchesSocket := func(volume string) bool {
@@ -250,6 +403,7 @@ func TestQuickstartCompose_OnlyTheOrkerSeesTheDockerSocket(t *testing.T) {
 		return strings.Contains(parts[0], "docker.sock") || strings.Contains(parts[0], "DOCKER_SOCKET") ||
 			(len(parts) > 1 && strings.HasSuffix(parts[1], "docker.sock"))
 	}
+	const socket = "${ORKSTACK_DOCKER_SOCKET-/var/run/docker.sock}:/var/run/docker.sock"
 	for _, name := range doc.serviceNames() {
 		svc := doc.Services[name]
 		sockets := 0
@@ -259,21 +413,24 @@ func TestQuickstartCompose_OnlyTheOrkerSeesTheDockerSocket(t *testing.T) {
 			}
 		}
 		if _, set := svc.Environment["DOCKER_HOST"]; set {
-			t.Errorf("service %s sets DOCKER_HOST; only the Orker talks to a daemon, through the socket it mounts", name)
+			t.Errorf("service %s sets DOCKER_HOST; only the Orker and the push talk to a daemon, through the socket they mount", name)
 		}
 		switch {
-		case name == "orker" && sockets != 1:
-			t.Errorf("the orker mounts the Docker socket %d times, want once", sockets)
-		case name != "orker" && sockets != 0:
-			t.Errorf("service %s mounts the Docker socket; whoever has it controls the host, so only the orker may", name)
+		case (name == "orker" || name == "activities") && sockets != 1:
+			t.Errorf("service %s mounts the Docker socket %d times, want once", name, sockets)
+		case name != "orker" && name != "activities" && sockets != 0:
+			t.Errorf("service %s mounts the Docker socket; whoever has it controls the host, so only the orker and the push may", name)
 		}
 	}
-	if socket := doc.service(t, "orker").Volumes; len(socket) == 0 ||
-		socket[0] != "${ORKSTACK_DOCKER_SOCKET-/var/run/docker.sock}:/var/run/docker.sock" {
-		t.Errorf("the orker's first volume is %v; want ${ORKSTACK_DOCKER_SOCKET-/var/run/docker.sock}:/var/run/docker.sock", socket)
+	if volumes := doc.service(t, "orker").Volumes; len(volumes) == 0 || volumes[0] != socket {
+		t.Errorf("the orker's first volume is %v; want %s", volumes, socket)
+	}
+	if volumes := doc.service(t, "activities").Volumes; !slices.Equal(volumes, []string{socket}) {
+		t.Errorf("the activities step mounts %v; want the socket alone", volumes)
 	}
 	// No other service sees a host path at all, but the CLI's read-only
-	// bundle; the Orker sees the socket and its work directory and nothing else.
+	// checkout; the Orker sees the socket and its work directory and nothing
+	// else.
 	for _, name := range doc.serviceNames() {
 		for _, volume := range doc.Services[name].Volumes {
 			parts := splitColon(volume)
@@ -282,6 +439,7 @@ func TestQuickstartCompose_OnlyTheOrkerSeesTheDockerSocket(t *testing.T) {
 			}
 			switch {
 			case name == "orker":
+			case name == "activities" && volume == socket:
 			case name == "orkctl" && volume == "./:/work:ro":
 			default:
 				t.Errorf("service %s mounts the host path %q", name, volume)
@@ -322,9 +480,6 @@ func TestQuickstartCompose_TheOrkerWorkdirIsTheSamePathInsideAndOut(t *testing.T
 	if !ok || !strings.HasPrefix(def, "${HOME}/") || !path.IsAbs(strings.TrimPrefix(def, "${HOME}")) ||
 		strings.ContainsAny(def, " \t") {
 		t.Errorf("ORKSTACK_WORKDIR defaults to %q; want a path under ${HOME} with no space", def)
-	}
-	if example := parseEnvFile(t, envExamplePath, readRepoFile(t, envExamplePath))["ORKSTACK_WORKDIR"]; example != def {
-		t.Errorf(".env.example says ORKSTACK_WORKDIR defaults to %q, the compose file to %q", example, def)
 	}
 	// The Orker's identity names its lock and its containers' label; a fixed
 	// default keeps both stable when the container is recreated.
@@ -436,8 +591,8 @@ func forbiddenSettings(svc composeService) []string {
 
 func TestQuickstartCompose_NoPrivilegedHostNetworkOrHostPID(t *testing.T) {
 	t.Parallel()
-	// smoke.yaml's forwarder uses network_mode: service:ork; that file is
-	// the smoke's override and never published. This one is.
+	// The registry's forwarder shares the engine's network (service:ork),
+	// which is not the host's.
 	doc := loadCompose(t)
 	for _, name := range doc.serviceNames() {
 		if found := forbiddenSettings(doc.Services[name]); len(found) != 0 {
@@ -468,12 +623,21 @@ services:
 	}
 }
 
-func TestQuickstartCompose_EveryServiceHasAHealthcheck(t *testing.T) {
+func TestQuickstartCompose_EveryLongRunningServiceHasAHealthcheck(t *testing.T) {
 	t.Parallel()
 	doc := loadCompose(t)
-	var withoutOne []string
+	var withoutOne, notStarted []string
 	for _, name := range doc.serviceNames() {
 		svc := doc.Services[name]
+		if svc.Scale != nil {
+			if *svc.Scale != 0 {
+				t.Errorf("service %s has scale %d; a service runs once, or is built and never started (0)", name, *svc.Scale)
+			}
+			notStarted = append(notStarted, name)
+		}
+		if len(svc.Profiles) != 0 {
+			t.Errorf("service %s is behind profiles %v, so `up` would neither build nor start it", name, svc.Profiles)
+		}
 		if svc.Healthcheck == nil {
 			withoutOne = append(withoutOne, name)
 			continue
@@ -491,25 +655,28 @@ func TestQuickstartCompose_EveryServiceHasAHealthcheck(t *testing.T) {
 			t.Errorf("service %s: health check retries %d; `up --wait` would never see it fail", name, hc.Retries)
 		}
 	}
-	// Only the CLI, which is a command to run and not a service to wait for,
-	// has none, and it is behind a profile so `up --wait` never starts it.
-	if !slices.Equal(withoutOne, []string{"orkctl"}) {
-		t.Errorf("services without a health check: %v, want only orkctl", withoutOne)
+	// What `up` builds and never starts (scale 0): the CLI, a command to run
+	// and not a service to wait for, and the activities, which are pushed.
+	wantNotStarted := []string{"orkctl"}
+	for _, name := range dist.ActivityNames() {
+		wantNotStarted = append(wantNotStarted, dist.ActivityPrefix+name)
 	}
-	if got := doc.service(t, "orkctl").Profiles; !slices.Equal(got, []string{"cli"}) {
-		t.Errorf("orkctl is in profiles %v, want [cli]", got)
+	if !slices.Equal(notStarted, sorted(wantNotStarted)) {
+		t.Errorf("services built and never started: %v, want %v", notStarted, sorted(wantNotStarted))
 	}
-	for _, name := range doc.serviceNames() {
-		if name != "orkctl" && len(doc.Services[name].Profiles) != 0 {
-			t.Errorf("service %s is behind a profile, so `up --wait` would not start it", name)
-		}
+	// Without a health check: those, the push, which exits once it has
+	// pushed (the engine waits for it to succeed), and the forwarder, a bare
+	// socat that `up --wait` sees running.
+	wantWithout := append([]string{"activities", "registry-forward"}, wantNotStarted...)
+	if !slices.Equal(withoutOne, sorted(wantWithout)) {
+		t.Errorf("services without a health check: %v, want %v", withoutOne, sorted(wantWithout))
 	}
 }
 
 func TestQuickstartCompose_HealthchecksUseTheImagesOwnProbes(t *testing.T) {
 	t.Parallel()
 	doc := loadCompose(t)
-	stages := dockerfileStages(t)
+	stages := sourceStages(t)
 	// ork and orker are distroless: no shell, so the probe is their own
 	// binary, at the path their Dockerfile target installs it.
 	for _, name := range []string{"ork", "orker"} {
@@ -574,25 +741,40 @@ func TestQuickstartCompose_TheBrowserReachesTheEngineWhereItIsPublished(t *testi
 func TestQuickstartCompose_StartupFollowsHealth(t *testing.T) {
 	t.Parallel()
 	doc := loadCompose(t)
+	const healthy, started, done = "service_healthy", "service_started", "service_completed_successfully"
+	want := map[string]map[string]string{
+		"activities": {"registry": healthy},
+		"ork":        {"temporal": healthy, "seaweedfs": healthy, "activities": done},
+		// The forwarder joins the engine's network, which exists once the
+		// engine's container has started.
+		"registry-forward": {"registry": healthy, "ork": started},
+		"orker":            {"temporal": healthy, "seaweedfs": healthy},
+		"ui":               {"ork": healthy},
+		// orkctl depends on nothing: `docker compose run` would start what
+		// it depends on, the activities step included, on every command.
+	}
 	for _, name := range doc.serviceNames() {
+		got := map[string]string{}
 		for dependency, condition := range doc.Services[name].DependsOn {
-			if condition.Condition != "service_healthy" {
-				t.Errorf("service %s waits for %s with condition %q, want service_healthy", name, dependency, condition.Condition)
-			}
+			got[dependency] = condition.Condition
 			if _, ok := doc.Services[dependency]; !ok {
 				t.Errorf("service %s depends on %s, which the file does not declare", name, dependency)
 			}
 		}
-	}
-	for name, wants := range map[string][]string{
-		"ork": {"seaweedfs", "temporal"}, "orker": {"seaweedfs", "temporal"}, "ui": {"ork"}, "orkctl": {"ork"},
-	} {
-		var got []string
-		for dependency := range doc.service(t, name).DependsOn {
-			got = append(got, dependency)
-		}
-		if sort.Strings(got); !slices.Equal(got, wants) {
+		if wants := want[name]; !maps.Equal(got, wants) {
 			t.Errorf("service %s depends on %v, want %v", name, got, wants)
+		}
+	}
+	// A restarted engine has a new network namespace; the forwarder in the
+	// old one would serve nothing, so it restarts with the engine.
+	if !doc.service(t, "registry-forward").DependsOn["ork"].Restart {
+		t.Error("registry-forward does not restart with ork (depends_on: ork: restart: true)")
+	}
+	for name, svc := range doc.Services {
+		for dependency, condition := range svc.DependsOn {
+			if condition.Restart && (name != "registry-forward" || dependency != "ork") {
+				t.Errorf("service %s restarts with %s; only the forwarder shares a service's network", name, dependency)
+			}
 		}
 	}
 }
@@ -615,32 +797,31 @@ func TestQuickstartCompose_TheOrkerOutlastsItsContainersGrace(t *testing.T) {
 	}
 }
 
-func TestQuickstartCompose_OrkctlIsProfileGatedReadOnly(t *testing.T) {
+func TestQuickstartCompose_OrkctlIsBuiltNotStartedReadOnly(t *testing.T) {
 	t.Parallel()
 	doc := loadCompose(t)
 	cli := doc.service(t, "orkctl")
-	if !slices.Equal(cli.Profiles, []string{"cli"}) {
-		t.Errorf("profiles %v, want [cli]: `up` must not start a command-line tool", cli.Profiles)
+	// `up` builds it, so an update rebuilds it with the rest, and starts no
+	// container of it: `docker compose run --rm orkctl` does.
+	if cli.Scale == nil || *cli.Scale != 0 {
+		t.Errorf("scale %v, want 0: `up` must not start a command-line tool", cli.Scale)
 	}
 	if !slices.Equal(cli.Volumes, []string{"./:/work:ro"}) {
-		t.Errorf("volumes %v, want only the bundle, read-only, at /work", cli.Volumes)
+		t.Errorf("volumes %v, want only the checkout, read-only, at /work", cli.Volumes)
 	}
 	if len(cli.Ports) != 0 {
 		t.Errorf("orkctl publishes %v", cli.Ports)
 	}
 	// It runs where the Dockerfile's target starts it, against the engine by
 	// its service name.
-	if want := stageNamed(t, dockerfileStages(t), "orkctl").all("WORKDIR"); len(want) != 1 || cli.WorkingDir != want[0].args {
+	if want := stageNamed(t, sourceStages(t), "orkctl").all("WORKDIR"); len(want) != 1 || cli.WorkingDir != want[0].args {
 		t.Errorf("working_dir is %q, but the orkctl image's WORKDIR is %v", cli.WorkingDir, want)
 	}
 	if cli.WorkingDir != "/work" {
-		t.Errorf("working_dir is %q, want /work, where the bundle is mounted", cli.WorkingDir)
+		t.Errorf("working_dir is %q, want /work, where the checkout is mounted", cli.WorkingDir)
 	}
 	if server := cli.Environment["ORK_SERVER"]; server != "http://ork:8080" {
 		t.Errorf("ORK_SERVER is %q, want http://ork:8080 (the engine service)", server)
-	}
-	if !strings.HasPrefix(cli.Image, "${ORKSTACK_ORKCTL_IMAGE:?") {
-		t.Errorf("image %q", cli.Image)
 	}
 }
 
@@ -686,69 +867,85 @@ func TestQuickstartCompose_EveryOrkSettingIsARealOne(t *testing.T) {
 	}
 }
 
-func TestQuickstartEnvExample_ListsEveryRequiredVariable(t *testing.T) {
-	t.Parallel()
-	required, _ := composeVariables(string(readRepoFile(t, composePath)))
-	if len(required) == 0 {
-		t.Fatal("compose.yaml requires no variable; a release has nothing to write")
+// mappingValue is the value of key in a YAML mapping node, or nil.
+func mappingValue(node *yaml.Node, key string) *yaml.Node {
+	if node == nil || node.Kind != yaml.MappingNode {
+		return nil
 	}
-	example := parseEnvFile(t, envExamplePath, readRepoFile(t, envExamplePath))
-	for _, variable := range required {
-		if _, ok := example[variable]; !ok {
-			t.Errorf("compose.yaml requires %s, but .env.example does not list it", variable)
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		if node.Content[i].Value == key {
+			return node.Content[i+1]
 		}
 	}
+	return nil
 }
 
-func TestQuickstartEnvExample_MatchesTheComposeFile(t *testing.T) {
-	t.Parallel()
-	required, optional := composeVariables(string(readRepoFile(t, composePath)))
-	example := parseEnvFile(t, envExamplePath, readRepoFile(t, envExamplePath))
-	known := map[string]bool{}
-	for _, variable := range required {
-		known[variable] = true
-	}
-	for variable, def := range optional {
-		known[variable] = true
-		if got, ok := example[variable]; !ok || got != def {
-			t.Errorf(".env.example sets %s to %q (listed: %v); compose.yaml defaults it to %q", variable, got, ok, def)
-		}
-	}
-	for variable := range example {
-		if !known[variable] {
-			t.Errorf(".env.example lists %s, which compose.yaml never reads", variable)
-		}
-	}
+// smokeVariable is the variable deploy/release-smoke.yaml names a release
+// image by, as scripts/quickstart-smoke.sh exports it: SMOKE_<NAME>_IMAGE.
+func smokeVariable(image string) string {
+	return "SMOKE_" + strings.ToUpper(strings.ReplaceAll(image, "-", "_")) + "_IMAGE"
 }
 
-// TestQuickstartEnvExample_ShowsTheShapeTheReleaseWrites: the placeholders in
-// .env.example are the shape of the real lines, so the file does not teach a
-// form the release does not write.
-func TestQuickstartEnvExample_ShowsTheShapeTheReleaseWrites(t *testing.T) {
+// TestReleaseSmokeOverride_RunsOnlyTheReleasesImages: the release smoke's
+// override turns every service compose.yaml builds into the release image the
+// smoke pushed, so `up --no-build` runs the release's own bytes, the engine
+// pins the release's activities, and nothing of the checkout is built.
+func TestReleaseSmokeOverride_RunsOnlyTheReleasesImages(t *testing.T) {
 	t.Parallel()
-	example := parseEnvFile(t, envExamplePath, readRepoFile(t, envExamplePath))
-	var images []dist.Image
-	for _, name := range dist.Images() {
-		images = append(images, dist.Image{Name: name, Digest: "sha256:" + strings.Repeat("0", 64)})
+	const path = "deploy/release-smoke.yaml"
+	doc := loadCompose(t)
+	var file yaml.Node
+	if err := yaml.Unmarshal(readRepoFile(t, path), &file); err != nil || len(file.Content) != 1 {
+		t.Fatalf("%s: %v", path, err)
 	}
-	version, err := dist.ParseVersion("v1.2.3")
-	if err != nil {
-		t.Fatal(err)
+	services := mappingValue(file.Content[0], "services")
+	if services == nil {
+		t.Fatalf("%s has no services", path)
 	}
-	rendered, err := dist.QuickstartEnv(version, "ghcr.io", "X.Y.Z", images)
-	if err != nil {
-		t.Fatal(err)
-	}
-	written := parseEnvFile(t, "the rendered .env", rendered)
-	digest := regexp.MustCompile(`sha256:0{64}`)
-	for _, key := range []string{"ORKSTACK_ORK_IMAGE", "ORKSTACK_ORKER_IMAGE", "ORKSTACK_UI_IMAGE", "ORKSTACK_ORKCTL_IMAGE"} {
-		if got := digest.ReplaceAllString(written[key], "sha256:<digest>"); got != example[key] {
-			t.Errorf("%s: the release writes %q, .env.example shows %q", key, got, example[key])
+	named := map[string]bool{}
+	for i := 0; i+1 < len(services.Content); i += 2 {
+		name := services.Content[i].Value
+		if _, ok := doc.Services[name]; !ok {
+			t.Errorf("%s overrides %s, which compose.yaml does not declare", path, name)
 		}
 	}
-	// The catalog line shows one full entry and elides the rest.
-	if prefix := `{activities: {shell: "ghcr.io/orkstack/activity-shell:X.Y.Z@sha256:<digest>", `; !strings.HasPrefix(example["ORKSTACK_ACTIVITY_CATALOG"], prefix) ||
-		!strings.HasPrefix(digest.ReplaceAllString(written["ORKSTACK_ACTIVITY_CATALOG"], "sha256:<digest>"), prefix) {
-		t.Errorf("the catalog line differs in shape:\n  example %s\n  written %s", example["ORKSTACK_ACTIVITY_CATALOG"], written["ORKSTACK_ACTIVITY_CATALOG"])
+	for _, name := range doc.serviceNames() {
+		if doc.Services[name].Build == nil {
+			continue
+		}
+		override := mappingValue(services, name)
+		if build := mappingValue(override, "build"); build == nil || build.Tag != "!reset" {
+			t.Errorf("%s does not reset %s's build (build: !reset null), so the smoke would run what the checkout builds", path, name)
+		}
+		image := mappingValue(override, "image")
+		want := "${" + smokeVariable(name) + ":?"
+		if image == nil || !strings.HasPrefix(image.Value, want) || !strings.HasSuffix(image.Value, "}") {
+			t.Errorf("%s runs %s as %v, want the required variable %s...}", path, name, image, want)
+			continue
+		}
+		named[name] = true
+	}
+	// Every image the release publishes is run, and the smoke exports exactly
+	// those variables.
+	if got, want := sorted(slices.Collect(maps.Keys(named))), dist.Images(); !slices.Equal(got, want) {
+		t.Errorf("%s runs %v, want every image a release publishes %v", path, got, want)
+	}
+	smoke := string(readRepoFile(t, "scripts/quickstart-smoke.sh"))
+	if !strings.Contains(smoke, `variable="SMOKE_$(tr 'a-z-' 'A-Z_' <<<"$name")_IMAGE"`) {
+		t.Error("scripts/quickstart-smoke.sh does not export SMOKE_<NAME>_IMAGE for each image, as the override reads them")
+	}
+	// The engine pins the release's activities, and the push has nothing to do.
+	catalog := mappingValue(mappingValue(mappingValue(services, "ork"), "environment"), "ORK_ACTIVITY_CATALOG")
+	if catalog == nil {
+		t.Fatalf("%s does not set the engine's catalog", path)
+	}
+	for _, name := range dist.ActivityNames() {
+		if want := name + ": ${" + smokeVariable(dist.ActivityPrefix+name) + ":?}"; !strings.Contains(catalog.Value, want) {
+			t.Errorf("the smoke's catalog does not say %q", want)
+		}
+	}
+	if command := mappingValue(mappingValue(services, "activities"), "command"); command == nil ||
+		len(command.Content) != 1 || command.Content[0].Value != "true" {
+		t.Errorf("%s leaves the activities step pushing what the checkout built", path)
 	}
 }
