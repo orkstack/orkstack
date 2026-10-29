@@ -2282,7 +2282,7 @@ orkctl namespace update prod-payments --require-signed-by cosign:release
 
 **OrkStack's own images.** Each release signs every image it publishes to
 `ghcr.io/orkstack`, by digest, and its `SHA256SUMS`, with one key. Its public
-half is `deploy/cosign.pub` in this repository, and each GitHub release
+half is [`deploy/cosign.pub`](../deploy/cosign.pub), and each GitHub release
 attaches the same file as `cosign.pub`; take it from the repository at the
 release's tag rather than from the release it vouches for. Register it like
 any other key:

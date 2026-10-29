@@ -1467,7 +1467,9 @@ person with write access from pushing a `v*` tag by hand (§12). Before
 dispatching, add the version's `## [X.Y.Z]` section to CHANGELOG.md: it
 becomes the release notes, and `validate` refuses a version without one.
 
-**Set up release signing.** Once, before the first release: a release signs
+**Set up release signing.** Once, before the first release (done on
+2026-10-29: `deploy/cosign.pub` is committed, and the environment holds both
+secrets, deploys from `main` only and has one required reviewer): a release signs
 what it publishes, so `validate` refuses every dispatch until
 `deploy/cosign.pub` is committed, and `publish` pushes nothing until the
 `release` environment holds the private half. A repository administrator runs,

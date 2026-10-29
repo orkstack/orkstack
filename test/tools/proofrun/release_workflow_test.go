@@ -1,9 +1,7 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -681,17 +679,14 @@ func TestWorkflows_TheCosignPinIsTheRepositorysPin(t *testing.T) {
 			t.Errorf("scripts/quickstart-smoke.sh never says %q: the smoke would not prove what publish signs", want)
 		}
 	}
+	// The release key is committed: without it validate refuses every
+	// dispatch (docs/PROOFS.md §10, "Set up release signing").
 	key, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "cosign.pub"))
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-		// Not committed yet: release.yml's validate refuses every dispatch
-		// until it is (docs/PROOFS.md §10, "Set up release signing").
-	case err != nil:
-		t.Fatal(err)
-	default:
-		if _, err := task.ParseSigningKey(key); err != nil {
-			t.Errorf("deploy/cosign.pub: %v", err)
-		}
+	if err != nil {
+		t.Fatalf("deploy/cosign.pub: %v; every release would be refused", err)
+	}
+	if _, err := task.ParseSigningKey(key); err != nil {
+		t.Errorf("deploy/cosign.pub: %v", err)
 	}
 }
 

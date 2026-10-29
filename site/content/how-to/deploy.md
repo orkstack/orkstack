@@ -60,7 +60,7 @@ Each release publishes `ork`, `orker`, `orkctl`, `ui` and six first-party activi
 
 No release is published yet, so there are no images to pull. The [release notes](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts) describe what a release publishes.
 
-Each release signs its images and its `SHA256SUMS` with one cosign key. The public half is `deploy/cosign.pub` in the repository, and each release attaches it as `cosign.pub`. Register it as a signing key. A namespace whose tasks use only the first-party activities can then require it:
+Each release signs its images and its `SHA256SUMS` with one cosign key. The public half is [`deploy/cosign.pub`](https://github.com/orkstack/orkstack/blob/main/deploy/cosign.pub) in the repository, and each release attaches it as `cosign.pub`. Register it as a signing key. A namespace whose tasks use only the first-party activities can then require it:
 
 ```bash
 orkctl admin image-policy set --signing-key orkstack=cosign.pub
