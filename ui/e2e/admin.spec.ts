@@ -534,7 +534,9 @@ test('creating a namespace validates locally, updates round-trip the etag, and a
 });
 
 // F-ui-ux-3: typing in the namespace form survives a navigation the reader
-// did not confirm, and saving is what makes leaving free again.
+// did not confirm, and saving is what makes leaving free again. The edit form
+// asks the same way, and only once something was typed in it: opened and
+// untouched, it leaves freely.
 test('a typed namespace form asks before leaving, keeps its fields when kept, and saving clears the guard', async ({
 	page
 }) => {
@@ -566,6 +568,24 @@ test('a typed namespace form asks before leaving, keeps its fields when kept, an
 	await expect(page).toHaveURL(/\/runs(\?|$)/);
 	expect(dialogs).toHaveLength(1);
 	note(`unsaved-form guard: ${dialogs[0]}; after saving ${GUARDED_NS}, Runs opened with no dialog`);
+
+	// The edit form, opened and untouched: nothing to lose, so no question.
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, GUARDED_NS));
+	await openNamespaceEdit(page, GUARDED_NS);
+	await runsLink.click();
+	await expect(page).toHaveURL(/\/runs(\?|$)/);
+	expect(dialogs).toHaveLength(1);
+
+	// Typed in: the same click asks, and the edit stays in the box.
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, GUARDED_NS));
+	await openNamespaceEdit(page, GUARDED_NS);
+	await page.getByTestId(`ns-edit-description-${GUARDED_NS}`).fill('edited, not saved');
+	await runsLink.click();
+	await expect.poll(() => dialogs.length).toBe(2);
+	expect(dialogs[1]).toBe('confirm: Discard the namespace changes you have not saved?');
+	await expect(page).toHaveURL(/\/admin\/namespaces/);
+	await expect(page.getByTestId(`ns-edit-description-${GUARDED_NS}`)).toHaveValue('edited, not saved');
+	note(`edit-form guard: untouched, Runs opened with no dialog; typed in, ${dialogs[1]}`);
 	await rpc('NamespaceService/DeleteNamespace', { name: GUARDED_NS });
 });
 
