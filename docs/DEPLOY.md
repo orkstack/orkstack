@@ -96,7 +96,14 @@ needs `ORK_S3_*` either way.
   (`orkctl run watch --from-sequence`) and `/ws/runs/{id}?from_sequence=N`
   continue after an event number, and the number is the producer's — the
   workflow assigns it — so resuming against a *different* replica yields the
-  same stream with nothing repeated and nothing skipped.
+  same stream with nothing repeated and nothing skipped. A stream that ends
+  `unavailable` is resumed that way by `orkctl run watch` and the UI's run
+  page, each up to six times in a row without an event. The engine itself
+  restarts a history read the cluster says changed under it
+  (`CurrentBranchChanged`, which can answer a long poll of a run that has
+  just completed), up to three times in a row without a new event, so that
+  answer reaches a client only when it persists (`internal/engine/reader.go`,
+  `historyBranchChanged`).
 - **Task logs are the same claim, over the bucket.** `StreamTaskLogs` and
   `/ws/runs/{id}/tasks/{task}/logs` read the chunks an Orker wrote and the
   task's state from the cluster, so any replica follows any task — one whose
@@ -181,9 +188,11 @@ needs `ORK_S3_*` either way.
   give an operator two pools to size and two to drain when there is one, and
   tell a client a task ran on `main` while gpu's Orkers ran it.
 - **A submit into a pool with no live Orkers is refused, at submit.** The
-  engine asks Temporal which workers are polling the pool's channel and
-  refuses the submission when the answer is none, naming the pool, the tasks
-  and the fix:
+  engine asks Temporal which workers are polling the pool's channel. When the
+  answer is none it asks the Orker inventory — the presence channel, and each
+  Orker on its own control channel, the read `orkctl orker list` makes — and
+  refuses the submission only when no uncordoned Orker of the pool answers
+  there either, naming the pool, the tasks and the fix:
 
   ```
   pool "gpu" (namespace "payments", tasks: settle) has no live Orkers, so nothing
@@ -205,6 +214,30 @@ needs `ORK_S3_*` either way.
   version is being promoted, so the count is per worker identity, not per
   record.
 
+  The second question is what keeps a busy pool live. An Orker polls its
+  pool's channel only while it has a free task slot, so a pool whose every
+  Orker is running `ORK_ORKER_MAX_CONCURRENT` tasks shows no poller there once
+  their last polls are 90 seconds old. Its presence and control channels have
+  workers and slots of their own, so a busy Orker still answers there. A
+  submit reads the inventory only when a pool's channel shows no poller or a
+  capability probe (below) needs it, once per submit and once more for each
+  composed child it plans; `orkctl pool list` reads it once per call. An Orker
+  that does not answer within five seconds says nothing about which pool it
+  serves, so it is not counted, and when the pool then reads empty the engine
+  logs `a pool reads empty while some live Orkers did not answer when asked`.
+  It is not made a "cannot tell": a stopped Orker's presence record stays
+  fresh for up to 90 seconds and never answers, so that would tell every
+  submit into an empty pool to ask again after any Orker anywhere stopped. A
+  busy pool on a cluster too slow to answer a describe in five seconds
+  therefore still reads empty.
+
+  An Orker is matched to a pool by the pool it reports. Two raw
+  `ORK_ORKER_QUEUE` channels in one Temporal namespace both report the default
+  pool, so when the engine's own channel shows no poller, an Orker polling the
+  other raw channel keeps the default pool live and the submit waits rather
+  than being refused. Give each raw channel its own Temporal namespace, as the
+  test harnesses do (AGENTS.md §11.1).
+
   The residue is bounded and deliberate: inside those 90 seconds a stale record
   can still say "live" just after an Orker stopped. That degrades to the old
   behaviour — a run that waits — never to a false rejection of a healthy
@@ -215,8 +248,12 @@ needs `ORK_S3_*` either way.
   A cluster that cannot be asked is a third answer, and it is kept apart from
   the other two. "No Orkers" is `failed_precondition` — start one, or take the
   override. A probe that got no reply at all (Temporal unreachable, or slower
-  than its five-second bound) measured nothing, and the submission it refuses
-  may be perfectly good, so it is `unavailable`: ask again. Reported as
+  than its five-second bound, for the pool's channel or for the inventory)
+  measured nothing, and the submission it refuses may be perfectly good, so it
+  is `unavailable`: ask again. `allow_empty_pool` does not change that for the
+  pool's channel; for the inventory alone it does, because the override would
+  accept the pool busy or empty, and the engine logs `whether a pool with no
+  poller is busy is unknown`. Reported as
   `invalid_argument` it would send every client off to fix a request with
   nothing wrong with it for as long as the cluster was unwell.
 - **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
@@ -248,7 +285,9 @@ needs `ORK_S3_*` either way.
   reports each pool from the same channel a submit dispatches it to, so an
   engine using the `ORK_ORKER_QUEUE` escape hatch reports its default pool
   from that raw queue — the Orkers it accepts runs onto are the Orkers it
-  says the pool has.
+  says the pool has, except for the busy-pool question above, which matches
+  Orkers by the pool they report and so cannot tell two raw channels of one
+  Temporal namespace apart.
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
@@ -327,14 +366,16 @@ then the variable it becomes.
 | `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
 | `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one — across the whole deployment, not only on one host: it is also the Orker's address for `orkctl orker` (1–200 bytes of UTF-8, no whitespace or control characters; refused at boot otherwise) |
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
-| `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI |
+| `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI; `podman` on `PATH` when `orker.docker.cli` is `podman` |
+| `orker.docker.cli` | `ORK_DOCKER_CLI` | `docker` | `orker` | the grammar that CLI speaks: `docker` (the docker CLI, against Docker or against Podman's Docker-compatible socket) or `podman` (the podman CLI); any other value fails every container command, naming the setting. The engine behind the CLI is asked at boot, logged, and verified by the boot probe ([Running on Podman](#running-on-podman)). `orkctl activity test` and `orkctl task run` read it too |
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
-| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal in the daemon's own words, or a container that exits non-zero, is still `WORKDIR_NOT_BINDABLE`. A daemon that never answers holds boot for up to three times this plus a minute (7 minutes at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
+| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 195 seconds for removing what it gave up on and for that cancellation (17 minutes 15 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
+| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, as before. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
-| `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable |
+| `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable. An Orker whose boot probe finds that user does not land as the Orker (a rootless or user-namespaced daemon) refuses to start with it set, as `RUN_AS_ORKER_UNAVAILABLE` |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme. A namespace's `allowed_secrets` can only narrow this, never widen it (§5, "Secrets on a shared pool"). Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
@@ -418,7 +459,8 @@ file is the reference, not something to copy and edit by hand.
 
 ### Sizing an Orker's task ceiling
 
-`orker.max_concurrent` is how many task containers one Orker runs at once.
+`orker.max_concurrent` is how many task containers one Orker runs at once,
+pinned members aside (they run in their pin's own slots).
 Past it the Orker stops polling: further tasks wait in its pool for this Orker
 or another to free a slot, which is the right place for them to wait — a
 container the host cannot afford to run is a task that fails `OOMKilled` or
@@ -440,14 +482,97 @@ every item is dispatched at once, and only this ceiling decides how many of
 them one Orker takes. The value is logged at boot (`max_concurrent`) and
 reported by Admin → Activities.
 
+**The ceiling counts tasks, not their size.** Each slot can be taken by a task
+of any request up to the per-task caps, `orker.resources.max_cpu` (`8`) and
+`orker.resources.max_memory` (`16Gi`), so with the defaults one Orker can
+reserve `16 × 8 = 128` cpus. To rule out over-commit by unpinned tasks, size
+the ceiling by the caps rather than the defaults:
+
+```
+max_concurrent ≤ min(host cpus ÷ max_cpu, host memory ÷ max_memory)
+```
+
+A pin's members do not take these slots: they run in the pin's own, beside
+the ceiling, so a pin host also needs room for `ORK_ORKER_MAX_PINS` pins'
+members running at once, each up to the caps. The bound is pessimistic: a 16-CPU
+host with the default 8-cpu cap runs 2 tasks at once, however small they are.
+Recover concurrency by lowering the caps to what the pool's tasks really ask
+for, and give the rare large task a pool of its own whose Orkers set larger
+caps and a smaller ceiling. Set the same caps on every Orker of a pool: a task
+above the cap of the Orker that takes it fails `RESOURCE_REQUEST_REFUSED`, so a
+pool whose Orkers disagree runs a task or fails it depending on which one
+polled first.
+
+### Declaring an Orker's capacity
+
+`orker.capacity.cpu` and `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`,
+`ORK_ORKER_CAPACITY_MEMORY`) declare what one Orker admits tasks within, in the
+Kubernetes spelling: `"16"` and `"64Gi"`. Unset, the default, the Orker admits
+by `max_concurrent` alone, exactly as before. Either may be set alone; the
+other dimension is then not bounded.
+
+An Orker that declares a capacity admits no task that would take its
+reservations above it. A Temporal worker reserves a slot before it polls and
+cannot see the task until it has taken it, so the Orker holds each poll to the
+one bound it knows in advance, the per-task cap (`orker.resources.max_cpu`,
+`max_memory`):
+
+- every poll for a task reserves the cap, and is granted only while that fits
+  beside everything already reserved;
+- once the task is in hand, its reservation is trimmed to the task's own
+  resolved request, and an activity that runs no container to nothing;
+- the reservation is freed when the attempt's container is **removed**. A
+  container whose removal failed keeps its reservation, and the Orker tries to
+  remove it again every 30 seconds.
+
+`orkctl orker list` shows `CAPACITY` and `RESERVED` for each Orker that declares
+one. `RESERVED` counts each outstanding poll at the per-task cap, so an idle
+Orker shows its two pollers' share; a container that could not be removed is
+logged on every reap that fails, with its id. Boot refuses a capacity that does not read, or that the per-task cap does
+not fit in (`ORKER_CAPACITY_INVALID`). `max_concurrent` stays a count ceiling
+beside it.
+
+**What it costs.** A poll needs a whole cap free, so an Orker whose capacity
+equals its cap runs one task at a time, whatever their size: with the default
+8-cpu cap, a 16-cpu Orker holds at most two polls. Keep the cap small relative
+to the Orkers that serve a pool, and give the rare large task a pool of its
+own. A cache hit or an adopted commit starts no container, but it is admitted
+like any task, so under pressure it waits for a cap's worth too; it is priced
+as today, reservation × held time.
+
+**Pinned members are counted, not gated.** A pin's members run in the pin's own
+slots, which no capacity can gate without breaking the pin's heartbeats or
+deadlocking two pins, so a member's request joins the ledger on arrival and may
+push it over capacity. While the reservations stand at or over capacity the
+Orker grants no poll, so ordinary work yields and the overshoot drains. The
+overshoot is bounded by `ORK_ORKER_MAX_PINS` × what one pin runs at once: leave
+that much headroom on a pin host. A hard bound for pins is not provided.
+
+**The cap is a pool-wide setting**, as pin hosting is. A submit asks every
+uncordoned Orker of a task's pool for its cap, on its own channel, and refuses
+a task that declares a request above every one of them
+(`RESOURCES_UNSATISFIABLE`), before a run id exists. That read costs a submit
+whose tasks declare `resources:` one describe per live Orker of the deployment,
+together, each bounded at five seconds; a submit that declares none pays
+nothing for it. Capacity may differ per Orker, but every Orker of a pool should
+set the same cap and default.
+
+**After a crash**, the Orker's restart reaps its previous life's containers.
+One it could not remove still holds its host, so a declared capacity starts
+with that container's cap reserved, and frees it once a later reap removes it.
+
+The ledger is held in the process, as a cordon is: never stored, never shared,
+gone with the process. It is admission, not placement: Temporal decides which
+polling Orker receives a task.
+
 ### Pin hosting is a pool-wide setting
 
 Pin hosting is a property of a **pool**, not of a process: set the same
-`ORK_ORKER_MAX_PINS` on every Orker of a pool, because the submit-time probe
-that refuses a pin with no host to open it on asks one Orker of the pool and
-takes that answer as representative — a mixed pool is refused or accepted
-depending on who answered, and a pin accepted onto Orkers that in fact set `0`
-waits for a slot that never appears and then fails the run.
+`ORK_ORKER_MAX_PINS` on every Orker of a pool. The submit-time probe that
+refuses a pin with no host to open it on asks every uncordoned Orker of the
+pool, each on its own control channel, and accepts the pin when any one of
+them hosts pins; a pin accepted that way still opens only on a pin host, so in
+a mixed pool it waits for that host's slots alone.
 
 The refusal is `failed_precondition`, the same code as an empty pool, and it
 names the pool, the pins, the tasks and the fix:
@@ -460,7 +585,7 @@ for one
 ```
 
 `allow_empty_pool` downgrades it to a logged warning, as it does for an empty
-pool. A pool Orker that does not answer the describe probe is not a refusal —
+pool. A pool none of whose Orkers answers the probe is not a refusal —
 the submit proceeds and, if no host can open the pin, the triggering task
 fails `PIN_UNAVAILABLE` after the pin creation timeout
 (`engine.pin_creation_timeout`, five minutes by default; `docs/DSL.md`,
@@ -477,20 +602,22 @@ neither.
 An Orkflow with a fan-out (`each:`, `docs/DSL.md` "Fan-out") needs Orkers that
 understand items: an Orker built before fan-out would run an item without its
 `task.json` `each` object, and would stage nothing for a fan-out's direct
-dependent — a silently wrong result. So submit asks one Orker of the pool of
-every fan-out and of every direct dependent of one whether it supports
-fan-out, and refuses the run with `FailedPrecondition` naming the pool, the
-tasks, the Orker and its build when it does not; `allow_empty_pool` does not
-override that. Like pin hosting, the answer of one Orker stands for its pool:
-run every Orker of one pool on one release.
+dependent — a silently wrong result. So submit asks every uncordoned Orker of
+the pool of every fan-out and of every direct dependent of one, each on its
+own control channel, whether it supports fan-out, and refuses the run with
+`FailedPrecondition` naming the pool, the tasks, and the first Orker (by id)
+that does not and its build; `allow_empty_pool` does not override that. Any
+Orker of the pool may take an item, so one old Orker refuses the pool: run
+every Orker of one pool on one release, or cordon the old ones while they
+drain.
 
 Caching (`cache:`, `docs/DSL.md` "Caching") is the same: an Orker built before
 caching cannot even decode a cached task's input — the SDK's payload converter
 refuses the unknown field — and would fail every attempt for a reason that has
-nothing to do with the task. So submit asks one Orker of the pool of every
-cached task (a cached fan-out's items run on the fan-out's pool) whether it
-implements caching, and refuses with `FailedPrecondition` naming the pool, the
-tasks, the Orker and its build when it does not; neither `allow_empty_pool` nor
+nothing to do with the task. So submit asks every uncordoned Orker of the
+pool of every cached task (a cached fan-out's items run on the fan-out's pool)
+whether it implements caching, and refuses with `FailedPrecondition` naming
+the pool, the tasks, and the first Orker that does not and its build; neither `allow_empty_pool` nor
 `no_cache` overrides that (a bypass still sends the cache context). Memos live
 under `metadata/memo/` and need no setting of their own.
 
@@ -498,17 +625,20 @@ Failure handlers (`join: any_failed` or `all_done`, `docs/DSL.md` "Joins and
 failure handlers") are the same: an Orker built before join policies cannot
 decode a failure handler's input — the SDK's payload converter refuses the
 unknown field — and would fail the compensation step of a run that is
-already failing. So submit asks one Orker of the pool of every failure
-handler that runs a container whether it reads join policies, and refuses
-with `FailedPrecondition` naming the pool, the tasks, the Orker and its
-build when it does not; `allow_empty_pool` does not override that. A
+already failing. So submit asks every uncordoned Orker of the pool of every
+failure handler that runs a container whether it reads join policies, and
+refuses with `FailedPrecondition` naming the pool, the tasks, and the first
+Orker that does not and its build; `allow_empty_pool` does not override that. A
 `none_failed` join needs nothing from an Orker.
 
-All three probes are best-effort: a pool whose Orker does not answer within
-the describe timeout is not refused — nothing was measured — and the engine
-logs a warning (`submit: a live pool with … did not answer the describe-orker
-probe`). The probe is a guard for a mixed rollout, not a substitute for
-running every Orker of a pool on one release.
+All four probes ask each Orker on its own control channel, never on the
+pool's channel, so a pool whose every task slot is taken answers them like an
+idle one. They are best-effort: a pool none of whose uncordoned Orkers answers
+within the describe timeout is not refused — nothing was measured — and the
+engine logs a warning (`submit: no uncordoned Orker of a live pool with …
+answered on its own channel, so whether … is unknown`). The probe is a guard
+for a mixed rollout, not a substitute for running every Orker of a pool on one
+release.
 
 ### Pins on a versioned deployment
 
@@ -1615,11 +1745,13 @@ engine boot, no Temporal connection, no store.
   `start_period` is the boot: a check that fails inside it does not count
   against `retries`. The check itself gives up after 3 seconds.
 - **How long an Orker's boot can take.** An Orker is not ready until its boot
-  checks pass, and one of them runs a container to prove the work root can be
-  bound. On a healthy daemon that takes seconds. On a daemon that is
-  overloaded or wedged it can take up to three times
-  `orker.docker.bind_probe_timeout` plus a minute for removing what it gave up
-  on (7 minutes at the default), and longer by `orker.docker.pull_timeout`
+  checks pass, and one of them runs a container, built as a task's is, to
+  prove the work root can be bound and that the runtime gives a task its
+  posture, then cancels a second one as a task is cancelled. On a healthy
+  daemon that takes seconds. On a daemon that is overloaded or wedged it can
+  take up to seven times `orker.docker.bind_probe_timeout` plus 195 seconds
+  for removing what it gave up on and for that cancellation (17 minutes 15
+  seconds at the default), and longer by `orker.docker.pull_timeout`
   when the probe image is not local, before the Orker refuses to start with
   `BIND_PROBE_TIMED_OUT` ([REASONS.md](REASONS.md)). A supervisor that gives
   up sooner (a Compose check whose `start_period` plus `interval` times
@@ -1646,14 +1778,15 @@ anything.
 | Image | Runs | User | Settings it needs in a container |
 |---|---|---|---|
 | `ork` | `/usr/local/bin/ork` | non-root | the API on `ORK_HTTP_ADDR` (default `:8080`, every interface), Temporal (`ORK_TEMPORAL_ADDRESS`), the store (`ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_*`), `ORK_WS_ALLOWED_ORIGINS` naming the UI's origin, and `ORK_ADMIN_ADDR` for a health check |
-| `orker` | `/usr/local/bin/orker`, with the `docker` CLI | root | the Docker socket and a work directory, below; Temporal and the store as for `ork` |
+| `orker` | `/usr/local/bin/orker`, with the `docker` CLI | root | the Docker socket (or Podman's Docker-compatible one, [Running on Podman](#running-on-podman)) and a work directory, below; Temporal and the store as for `ork` |
 | `orkctl` | `/usr/local/bin/orkctl` | non-root | `ORK_SERVER`; its working directory is `/work` |
 | `ui` | `node build` on port 5173 | non-root | `ENGINE_API_URL` (where its server reaches the engine) and `PUBLIC_ENGINE_WS_URL` (where a browser reaches the engine's WebSockets) |
 
 **The Orker in a container.** The Orker starts each task's container through
 the host's Docker daemon, so its container needs that daemon's socket
-(`/var/run/docker.sock`). Whoever can use the socket can start a privileged
-container: the Orker container is as trusted as root on its host
+(`/var/run/docker.sock`). On Kubernetes, an Orker pod has an engine of its own
+instead ("Orkers on Kubernetes", below). Whoever can use the socket can start
+a privileged container: the Orker container is as trusted as root on its host
 ([SECURITY_MODEL.md](SECURITY_MODEL.md), "The Orker's own access to the
 host"). Give the socket to the Orker and to nothing else. Three more rules
 follow from the daemon reading paths on the host:
@@ -1681,6 +1814,367 @@ each patch release of the line. To pin the exact release instead, set
 `ORK_ACTIVITY_CATALOG` to the images by tag and digest. (The quickstart's
 catalog names the activities it built and pushed to its own registry, by tag;
 each apply pins the digest the tag names then.)
+
+### Running on Podman
+
+Podman is a second engine of the one runtime the Orker ships
+([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), "§9"). Two shapes are
+supported, each with the Orker as root inside the runtime:
+
+- **The podman CLI**: `orker.docker.cli: podman` (`ORK_DOCKER_CLI=podman`),
+  which also makes `podman` on `PATH` the default `orker.docker.bin`.
+- **The release image on a Podman socket**: the `orker` image's docker CLI
+  against Podman's Docker-compatible socket (`podman system service`, or
+  `podman.socket`), mounted where the Docker socket would be. Nothing is set:
+  the CLI is `docker`, and the engine is asked.
+
+Either way the Orker asks the engine at boot, logs it (`container runtime
+engine=podman cli=… rootless=… seccomp=engine-default`), and runs its boot
+probe, which refuses to start with `RUNTIME_POSTURE_REFUSED` on a host that
+does not give a task's container its posture, or whose cancelled workload
+never hears SIGTERM ([Rootful Podman under AppArmor](#rootful-podman-under-apparmor)).
+The probe is what makes the host requirements below checked rather than
+assumed.
+
+What differs from Docker, by design:
+
+- **Seccomp.** The Podman engine has no name for its default profile and reads
+  `seccomp=builtin` as a file path, so the Orker spells nothing and the engine
+  applies its own default; the probe checks that a filter is active
+  (`Seccomp: 2`), not that it is Docker's profile. DescribeOrker's security
+  profile says `seccomp=engine-default`.
+- **Proxy variables.** The podman CLI forwards its own process's
+  `HTTP_PROXY`, `https_proxy` and `NO_PROXY`, credentials included, into every
+  container unless told not to; the Orker passes `--http-proxy=false`, and the
+  probe refuses any `*_proxy` variable it finds.
+- **`/run` and `/var/tmp`.** Podman's `--read-only` leaves both writable, so
+  each gets an empty read-only tmpfs. On an image whose `/var/tmp` is a
+  symlink to `/tmp`, that turns `/tmp` read-only on Podman.
+- **The escape hatch** (`run_as_orker_user`, `orker.resources.force_user`).
+  On a rootless podman CLI it is rendered with `--userns=keep-id`, which lands
+  as the Orker. The docker CLI cannot say that, so against a rootless Podman
+  socket, run by a non-root Orker, the hatch lands as another host user, and
+  the probe makes such tasks fail `RUN_AS_ORKER_UNAVAILABLE`.
+- **The embedded image layout** (`orker.image_layout`) does not work on
+  Podman: Podman does not find what it loaded by the pinned digest, so a task
+  whose pull fails there fails `IMAGE_PULL_FAILED` rather than falling back.
+
+Host requirements, each of which the probe or the first task finds when
+missing:
+
+- **cgroup v2 with the `cpu`, `memory` and `pids` controllers delegated** to
+  the user a rootless Podman runs as, the systemd cgroup manager
+  (`cgroup_manager = "systemd"` in `containers.conf`), and an OCI runtime
+  built with systemd support (runc; a static crun without it failed). A limit
+  that is not enforced refuses boot, naming it.
+- **An init binary** for `--init`: `catatonit` where `containers.conf`'s
+  `init_path` says.
+- **A subordinate uid and gid range of at least 65536** for the Orker's user
+  (`/etc/subuid`, `/etc/subgid`), for rootless Podman.
+- **Qualified image references.** Podman's enforcing short-name mode refuses
+  `alpine:3.20` where more than one search registry is configured; the boot
+  probe's image is fully qualified and pinned, and an activity's reference
+  is resolved before it reaches the runtime.
+- **`insecure = true` for a plain-HTTP registry** in `registries.conf`, the
+  local development registry included (`[[registry]] location =
+  "localhost:5001"`). Docker trusts a loopback registry by itself; Podman does
+  not, and a pull from it fails `IMAGE_PULL_FAILED`.
+- **No SELinux or AppArmor relabelling yet.** Binds carry no relabel option,
+  so on an enforcing SELinux host the boot probe's container cannot read its
+  bind and boot refuses `WORKDIR_NOT_BINDABLE`; this has not been measured.
+- **Rootful Podman under AppArmor 5 needs one rule added**, below.
+
+#### Rootful Podman under AppArmor
+
+On a host whose AppArmor stacks a container's processes with the OCI
+runtime's own profile (AppArmor 5, Ubuntu 25.10 and later), rootful Podman
+runs a container's init under its generated profile,
+`containers-default-<version>`, and the workload the init starts under the
+stacked label `containers-default-<version>//&crun`. That profile lets a
+process signal only its own exact label, so the init cannot pass SIGTERM on
+to the workload: a cancelled task is killed at the end of its grace without
+its cleanup. The kernel log has one denial per cancelled container (measured
+on ubuntu-26.04, Podman 5.7.0, `containers-default-0.66.0`):
+
+```text
+apparmor="DENIED" operation="signal" class="signal" profile="containers-default-0.66.0" comm="podman-init" requested_mask="send" denied_mask="send" signal=term peer="containers-default-0.66.0//&crun"
+```
+
+The boot probe finds it: its second container traps SIGTERM and is cancelled
+as a task is, and an Orker whose workload never hears it refuses to start
+with `RUNTIME_POSTURE_REFUSED`, quoting the stacked label. Rootless Podman
+applies no AppArmor profile to its containers and is not affected.
+
+Podman generates that profile and loads it into the kernel itself, so a file
+under `/etc/apparmor.d/local/` does not reach it: those extend the `crun` and
+`podman` profiles, and the denial is the container profile's. The rule
+upstream proposes for the profile's template
+([container-libs#919](https://github.com/podman-container-tools/container-libs/pull/919),
+open as of 2026-10-29) can be added through the base abstraction, which the
+generated profile includes:
+
+1. Write the rule. Every profile that includes `abstractions/base` gets it,
+   and in each it lets the profile signal only its own label stacked with
+   another, so it allows nothing between two profiles:
+
+   ```bash
+   sudo mkdir -p /etc/apparmor.d/abstractions/base.d
+   printf '%s\n' 'signal (send, receive) peer=@{profile_name}//&*,' | sudo tee /etc/apparmor.d/abstractions/base.d/orkstack-stacked-signals
+   ```
+
+2. Check that a profile that includes it still compiles. If it does not,
+   remove the file: every profile that includes the base abstraction would
+   fail to load, Podman's among them.
+
+   ```bash
+   printf 'include <tunables/global>\nprofile orkstack-check {\n  include <abstractions/base>\n}\n' | sudo apparmor_parser -QK
+   ```
+
+3. With no container of the engine running (stop the Orker first), unload the
+   copy of the profile Podman loaded without the rule. Podman loads it again,
+   with the rule, for its next container. A reboot does the same.
+
+   ```bash
+   sudo grep -o '^containers-default[^ ]*' /sys/kernel/security/apparmor/profiles |
+     while read -r profile; do printf '%s' "$profile" | sudo tee /sys/kernel/security/apparmor/.remove >/dev/null; done
+   ```
+
+4. Start the Orker. Its boot probe checks that SIGTERM now reaches the
+   workload.
+
+Running Podman rootless avoids the denial altogether. Remove the file once a
+containers-common whose profile carries the rule is installed. Neither
+passing `--security-opt apparmor=unconfined` nor dropping `--init` is a fix:
+the first removes the container's confinement, and without an init a shell
+as PID 1 never hears SIGTERM at all. `podman.yml`'s rootful jobs show the
+probe refusing the unfixed profile, then apply these steps and run every
+suite on the fixed one.
+
+`podman system reset` writes under `~/.config/containers` and
+`~/.local/share/containers` even with storage configured elsewhere.
+`podman.yml` runs the runtime-facing suites on Podman, rootless and rootful
+([PROOFS.md](PROOFS.md), "§5").
+
+### Orkers on Kubernetes
+
+The Orker starts each task as a container on a Docker engine. On Kubernetes,
+give each Orker pod an engine of its own, in a sidecar. Do not drive the
+node's own container runtime: its containers would run behind the kubelet's
+back, invisible to scheduling, accounting and eviction. Do not mount the
+node's Docker socket either: that is root on the node, and outside the pod's
+limits. [`deploy/kubernetes/`](../deploy/kubernetes/) holds the two supported
+shapes as kustomize bases, and
+[`scripts/kind-orker.sh`](../scripts/kind-orker.sh) proves both on a
+throwaway kind cluster.
+
+| Shape | Base | Privileged on the node | Needs |
+|---|---|---|---|
+| Engine in a user-namespaced pod | `orker-userns/` | nothing: the engine is root of the pod's user namespace, an unprivileged uid range on the node | user namespaces (`hostUsers: false`) and the `orkstack-engine` RuntimeClass, below |
+| Engine in a privileged sidecar | `orker-privileged/` | the engine container. It is root on the node, and so is anything that escapes from a task's container to the engine | a namespace that admits privileged pods |
+
+Prefer the first. Both need the `privileged` level of Pod Security Admission in
+their namespace: the first gives the engine an unmasked `/proc` and no seccomp
+or AppArmor confinement inside its user namespace, and the second is
+privileged outright. The activity containers are the same in both: each task
+runs under the Orker's own profile, with `no-new-privileges`, a seccomp filter,
+no capabilities and a read-only root ([SECURITY_MODEL.md](SECURITY_MODEL.md),
+"The mandatory profile").
+
+Each base is used from an overlay of your own. The overlay names the release's
+`orker` image by digest (the bases call it `orker`). It also creates the
+settings the Orker reads in the same namespace: the `orkstack` ConfigMap
+(`ORK_TEMPORAL_ADDRESS`, `ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_ENDPOINT`,
+`ORK_S3_BUCKET`, and the other settings of §1) and the `orkstack-s3` Secret
+(`ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`). Each base's `kustomization.yaml`
+shows the overlay.
+
+**What a pod holds.**
+
+- `engine` runs `docker:29.9.2-dind` by digest, the Docker release whose CLI the
+  `orker` image carries. It is a native sidecar, an init container with
+  `restartPolicy: Always`. It starts, and answers `docker info`, before the
+  Orker boots. It stops only after the Orker has exited, so deleting a pod
+  stops the Orker first. The Orker cancels each running task with that task's
+  own grace (`SIGTERM`, then `SIGKILL`), and the engine is still there to
+  deliver both signals.
+- `orker` runs the release's `orker` image. Its `ORK_ORKER_ID` is
+  `$(POD_NAME).$(POD_NAMESPACE)`, unique in the cluster and new for each pod.
+- Three `emptyDir` volumes. `work` is the Orker's work root at
+  `/var/lib/orkstack/work`. `engine-socket` holds the engine's API, a Unix
+  socket and nothing else, and both containers' `DOCKER_HOST` points at it.
+  `engine-data` is the engine's image cache and container layers at
+  `/var/lib/docker`: a disposable cache, so a new pod pulls its images again.
+
+**The work root is one path in both containers.** The engine bind-mounts each
+task's workspace from the path the Orker gives it, so the `work` volume must be
+mounted at the same path in `engine` and in `orker`. The Orker's boot check
+catches a mismatch. With the engine's mount moved to `/srv/work`, the Orker
+refuses to start and the pod never becomes ready:
+
+```text
+orker boot checks failed: WORKDIR_NOT_BINDABLE: path is not bind-mountable by the container runtime: probe bind of /var/lib/orkstack/work: docker exited 125: docker: Error response from daemon: invalid mount config for type "bind": bind source path does not exist: /var/lib/orkstack/work/ork-bindprobe-…
+```
+
+**Every task runs inside the pod's cgroup.** The engine's start-up puts the
+daemon in `engine/` and each task's container under `tasks/` of its own
+container's cgroup. The pod's limits therefore bound all its tasks together,
+and the kubelet accounts for what they use. The start-up does not use the
+image's own `dind` wrapper. containerd gives a privileged container no cgroup
+namespace, so that wrapper rearranges the node's root cgroup, and its daemon
+puts each task in `/docker/<id>` at the node's root, outside the pod's limits
+and the kubelet's accounting. That was measured on containerd 2.3.4. The
+start-up also enables the cgroup controllers below the engine before the
+daemon starts. Without them, the daemon warns about swap limits on every
+`docker create --memory`, and today's Orker reads that warning as part of the
+container's id and fails the task (`InfrastructureError`).
+
+**Size the engine to the Orker's capacity.** Every task's container is inside
+the engine container, so its limits cover them all. The bases declare the
+Orker's capacity ([Declaring an Orker's capacity](#declaring-an-orkers-capacity)),
+`ORK_ORKER_CAPACITY_CPU=4` and `ORK_ORKER_CAPACITY_MEMORY=8Gi`, and give the
+engine that plus the daemon's own share: 5 cpu and 9Gi, with its requests
+equal to its limits. A task's reservation is its limit, and the Orker admits
+no task that would take its reservations above its capacity, so its tasks
+together stay within the engine's limits whatever `ORK_ORKER_MAX_CONCURRENT`
+allows. Change the capacity and the engine's resources together; a test
+refuses a base whose engine does not cover its capacity, or whose capacity
+does not hold one task at the per-task cap (`internal/dist/kubernetes_test.go`).
+The bases' cap is 1 cpu and 2Gi (`ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY`),
+and `orkctl orker list` shows each Orker's `CAPACITY` and `RESERVED`. Within
+that, the Orker enforces each task's own limit as it does on a host. A submit
+whose task asks for more than the cap of every Orker of its pool is refused
+with `RESOURCES_UNSATISFIABLE`, before a run exists. A task that uses more
+memory than it asked for is killed by the kernel in its own cgroup and fails
+`CONTAINER_EXIT_NONZERO`, naming its limit; the rest of the pod carries on.
+The `emptyDir` volumes have `sizeLimit`s and the engine an `ephemeral-storage`
+limit. A pod that exceeds either is evicted, and its running tasks end as any
+stopped Orker's do.
+
+**The `orkstack-engine` RuntimeClass.** A pod with its own user namespace
+gets a cgroup that belongs to a uid outside that namespace, so its engine
+cannot create the cgroups that enforce each task's limits, and does not start.
+containerd's `cgroup_writable` option gives the pod's root its own cgroup.
+Declare a runtime handler with it on each node that runs these Orkers. In
+containerd 2's own configuration (version 3):
+
+```toml
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.orkstack-engine]
+  runtime_type = 'io.containerd.runc.v2'
+  cgroup_writable = true
+  [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.orkstack-engine.options]
+    SystemdCgroup = true
+```
+
+In a version 2 file, which kind writes, the table is
+`plugins."io.containerd.grpc.v1.cri".containerd.runtimes.orkstack-engine`
+([`deploy/kubernetes/kind/kind.yaml`](../deploy/kubernetes/kind/kind.yaml)).
+Restart containerd, then apply the base: it declares the RuntimeClass
+`orkstack-engine` with that handler. The proof ran on Kubernetes 1.37,
+containerd 2.3.4, cgroup v2 and Linux 7.2. The node there had no AppArmor; on
+a node that enforces it, the default profile denies the engine's mounts, which
+is why the base sets the engine's AppArmor profile to `Unconfined`.
+
+**Networks.** `network: none` gives a task only its loopback interface.
+`network: default` is the engine's bridge, which leaves through the pod's own
+network namespace, so a task reaches what the pod reaches, cluster Services
+included. Both were measured in both shapes. The bridge's default subnet is
+`172.17.0.0/16`. Where the cluster routes that range, add `--bip` with a free
+range to the engine's `dockerd` command.
+
+**Registries.** The engine pulls every task's image itself. For a registry
+with a private certificate authority, mount the authority's certificate in the
+engine at `/etc/docker/certs.d/<host>:<port>/ca.crt`, as the proof does.
+
+**Before deleting a pod**, cordon and drain its Orker, as for any Orker ("Removing an
+Orker safely" below): `SIGTERM` cancels in-flight work. A task of a deleted pod
+ends `ORKER_HEARTBEAT_TIMEOUT` unless its `retry:` runs it again on another
+Orker.
+
+**Not supported, and why.**
+
+- Docker's rootless engine (`docker:dind-rootless`). It has no systemd, and a
+  rootless daemon needs systemd for cgroups. It accepts `--memory`, `--cpus` and
+  `--pids-limit` and applies none of them: under `--memory 64m` a container
+  reads `memory.max` as `max`. Today's Orker cannot tell, so every task would
+  run without its limits.
+- The node's own container runtime, or its Docker socket, for the reasons
+  above.
+- Sysbox, which installs onto the nodes, was not measured: kind's nodes are
+  containers. Podman in the Orker container is not on `main` yet.
+
+**Check your cluster before you trust it.** Run
+[`scripts/k8s-orker-check.sh`](../scripts/k8s-orker-check.sh) against your
+own cluster first, from a clone of the release you deploy:
+
+```bash
+scripts/k8s-orker-check.sh --context prod-eu \
+  --server https://orkstack.internal.example \
+  --orker-image ghcr.io/orkstack/orker:X.Y.Z@sha256:<the release's orker digest> \
+  --settings-from orkstack
+```
+
+It needs `kubectl`, `jq` and Go (for `orkctl`), an `ork` engine at `--server`
+whose catalog resolves the `shell` and `file` activities, and the `orkstack`
+ConfigMap and `orkstack-s3` Secret your Orkers read, in the namespace
+`--settings-from` names. It refuses, with exit `77` and the reason, a missing
+prerequisite:
+
+- Kubernetes before 1.33, or no `orkstack-engine` RuntimeClass, for the
+  user-namespaced shape (`--shapes privileged` checks the fallback alone);
+- the settings, or an engine that does not answer;
+- Temporal, the object store or `--registry-host`, unreachable from a pod;
+- a user-namespaced pod in that RuntimeClass that cannot make cgroups of its
+  own, which means its handler lacks `cgroup_writable`;
+- Pod Security, or any admission policy, refusing either shape. The check
+  asks the API server with a dry-run of the shape's pod.
+
+Then it deploys each base as it ships into a namespace of its own
+(`orkstack-check` unless `--namespace` names another). It changes only what
+[`deploy/kubernetes/check/common`](../deploy/kubernetes/check/common/)
+changes: one replica in the pool `k8s-check`, the per-task cap its limits run
+measures, and a smaller pod with a capacity to match. For each shape it
+checks:
+
+- a run that passes artifacts between tasks;
+- tasks with no network, and one on the default network, which must reach
+  the Kubernetes API's own Service;
+- each task's limits and security profile;
+- that each task's cgroup is under the engine container's, and, for the
+  privileged shape, that the engine's is under its pod's;
+- that the engine's root is a user-namespace range, or the node's root for
+  the fallback;
+- that the Orker reports the capacity its pod declares;
+- a cancel; a task above the per-task cap, refused at submit by the cap the
+  Orker reported, with no run left behind; a task at the cap, with the cap as
+  its limit; an out-of-memory task; and a pod deletion.
+
+Then it checks that the Orker refuses a mismatched work root, and that the
+user-namespaced engine does not start without its RuntimeClass. It deletes its
+namespace at the end (`KEEP=1` leaves it) and creates nothing cluster-wide:
+the RuntimeClass must exist already. In OrkStack it leaves four Orkflows
+(`k8s-orker-proof`, `k8s-orker-cancel`, `k8s-orker-limits`,
+`k8s-orker-too-big`) in
+`--ork-namespace` (`default` unless named) and their runs, kept by that
+namespace's retention. Its Orkers serve only the pool `k8s-check`, which that
+namespace must allow, so they take no other run's tasks. Exit `0` means every
+check held. Exit `1` names the check that failed, and the namespace's state
+then is in its evidence (`.data/k8s-orker-check/<stamp>/`, or `--out`).
+
+**On kind, in CI.** [`scripts/kind-orker.sh`](../scripts/kind-orker.sh) makes
+a throwaway kind cluster that meets those prerequisites
+([`deploy/kubernetes/kind/`](../deploy/kubernetes/kind/)): the containerd
+handler on its nodes, the RuntimeClass, Temporal, SeaweedFS, a registry
+served over TLS, and one `ork`, with `ork`, `orker` and two activities built
+from the tree. It runs the check against that cluster with both shapes, then
+measures that the rootless engine drops a container's limits, and deletes the
+cluster (`KEEP=1` leaves it). It needs Docker, Go, curl, openssl and jq, and
+installs nothing system-wide. kind and kubectl are their release binaries,
+checked against pinned SHA-256s, and crane comes from an image pinned by
+digest. Its log and evidence go under `.data/kind-orker/<stamp>/`, with the
+cluster's state when a step fails. CI runs it as `kind-orker.yml` on a change
+to what the bases run, every day, and by dispatch
+([PROOFS.md](PROOFS.md) §5). It is not a required check and is part of no
+proof tier.
 
 ### The admin surface: what a deployment is made of, and who is serving it
 
@@ -1784,9 +2278,11 @@ What that costs, stated so nobody has to discover it:
 
 - **There is no per-pool inventory of what a pool can run.** An activity is an
   OCI image, and which images a deployment can run is engine configuration
-  (`orkctl activity list`), not something an Orker reports. A pool's Orkers
-  still prove they are alive by answering `DescribeOrker` on the pool's own
-  channel; that probe is what `LAST SEEN` and the count are built from.
+  (`orkctl activity list`), not something an Orker reports. The count and
+  `LAST SEEN` come from the pool's channel and from the Orker inventory: the
+  larger of the channel's live pollers and the pool's uncordoned Orkers that
+  answer on their own channels, so a pool whose every Orker is busy, and so
+  polls nothing on its channel, still reports them.
 - **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
   minutes after its worker died, so a record older than the freshness window is
   dropped before anything is counted or timestamped. A pool whose Orkers have
@@ -1859,14 +2355,38 @@ What a cordon does, precisely:
 - **Everything in flight** is untouched: running containers finish, and open
   pins keep executing their remaining members, their release, and their
   completion on this host.
-- **The pool probe.** A cordoned Orker stops answering `DescribeOrker` on its
-  pool channel (only its own control channel still answers), so a pool whose
-  every Orker is cordoned reports its poller-derived count for the freshness
-  window and zero after it.
+- **The pool probe.** A cordoned Orker stops polling its pool's channel but
+  still answers on its own control channel, where submit's probes and the
+  inventory read it as an Orker that takes no new task. So a pool whose every
+  Orker is cordoned reports its poller-derived count for the freshness window
+  and zero after it, and a cordoned Orker never keeps a pool live or speaks for
+  what it can run.
 
-`SIGTERM` stops polling and cancels in-flight work; the Orker does not cordon
-itself on it. An operator who wants in-flight work to finish first cordons
-and drains.
+`SIGTERM` (or `SIGINT`) stops polling and cancels in-flight work; the Orker
+does not cordon itself on it. An operator who wants in-flight work to finish
+first cordons and drains. What a stop owes the work it cancels, the Orker
+does before it exits:
+
+- each running container gets the cancellation sequence: `SIGTERM`, then
+  `SIGKILL` once the task's `cancellation_grace_period_seconds` (30 by
+  default) has passed;
+- each attempt it stopped gets its record, `FAILED` with `ORKER_STOPPED`
+  (`orkctl run attempts`), and its log keeps every line the workload printed,
+  the ones after `SIGTERM` included (`orkctl run logs`);
+- the run is told nothing, exactly as if the Orker had died: the task ends
+  `ORKER_HEARTBEAT_TIMEOUT` about 30 s after the stop, or, under its `retry:`
+  policy, runs again on another Orker. A pin it hosts fails `PIN_HOST_LOST`.
+  A task whose grace outlasts that timeout can start again elsewhere while
+  this Orker still waits it out: execution is at-least-once (`AGENTS.md` §4).
+
+So a stop takes as long as the longest grace among its running tasks, plus a
+few seconds to write the records. Give the process manager at least that
+long before it kills the Orker — Kubernetes' `terminationGracePeriodSeconds`,
+systemd's `TimeoutStopSec`, `docker stop --time` (the quickstart's
+`compose.yaml` sets `stop_grace_period: 45s`). A second `SIGTERM` or `SIGINT`
+exits at once and leaves what a crash leaves: the attempts `UNREPORTED`, and
+a container still inside its grace running until this Orker's next boot
+reaps it.
 
 **Why the cordon lives only in the process.** An Orker is stateless and
 disposable (`AGENTS.md` §5): a stored cordon would be durable state about a
@@ -1892,6 +2412,35 @@ cordon` answers `NotFound`.
 Every cordon and uncordon is an audit record (`orker.cordon`,
 `orker.uncordon`, target the Orker id, the reason in its detail, no
 namespace).
+
+### Fair dispatch across namespaces
+
+When tasks of several namespaces wait for the same pool's Orkers, the cluster
+can dispatch them fairly rather than first in, first out. Every task activity
+of a run carries its namespace as a fairness key, and the namespace's
+`fair_share_weight` (`orkctl namespace update NS --fair-share-weight 3`; 0, the
+default, is a weight of 1, otherwise from 0.001 to 1000) as its weight. Both are decided at
+submit and pinned in the run, so a changed weight moves only the runs
+submitted after it. A namespace name longer than 64 bytes is keyed by a
+readable prefix and a SHA-256 suffix.
+
+It is Temporal's own task-queue fairness, never an OrkStack queue, and it takes
+effect only where the operator enables it on the Temporal cluster:
+`matching.enableFairness=true` in the server's dynamic configuration, for the
+Temporal namespace OrkStack uses, or globally. That is a setting of the
+deployment's Temporal, not an OrkStack dependency; OrkStack cannot detect it.
+Without it the keys are ignored and dispatch stays first in, first out.
+
+What fairness does and does not do:
+
+- it orders the tasks waiting on one pool's channel, per partition of that
+  channel, so the effect is real but moderate, and it never moves a task to
+  another pool;
+- a weight pinned at submit never reorders a backlog already queued;
+- during a release rollout it holds among the tasks queued for one worker
+  version;
+- the cluster keeps the state of at most its top 100 keys across a server
+  restart.
 
 ### Namespace admission: `hold` and `max_running`
 
@@ -2265,14 +2814,49 @@ be asked is never a pass: `unavailable` at apply and submit, and a retried
 `IMAGE_SIGNATURE_INVALID`, an image outside the floor `IMAGE_NOT_PERMITTED`
 — all three `ContractViolation`, never retried.
 
-Signing an image, with the `cosign` CLI and default settings:
+Signing an image with the `cosign` CLI. cosign 2 writes the layout OrkStack
+reads by default. cosign 3 writes a newer bundle format unless told not to,
+and OrkStack would find no signature (`IMAGE_NOT_SIGNED`), so pass it the
+flags below, as OrkStack's own release does; cosign 3.1 warns that they are
+deprecated. `--tlog-upload=false` keeps the signature out of the public
+transparency log, which OrkStack never reads; leave it out to record one.
 
 ```bash
 cosign generate-key-pair                                  # cosign.key, cosign.pub
-cosign sign --key cosign.key ghcr.io/acme/migrate@sha256:<digest>
+cosign sign --key cosign.key --new-bundle-format=false --use-signing-config=false \
+  --tlog-upload=false ghcr.io/acme/migrate@sha256:<digest>
 orkctl admin image-policy set --signing-key release=cosign.pub
 orkctl namespace update prod-payments --require-signed-by cosign:release
 ```
+
+**OrkStack's own images.** Each release signs every image it publishes to
+`ghcr.io/orkstack`, by digest, and its `SHA256SUMS`, with one key. Its public
+half is [`deploy/cosign.pub`](../deploy/cosign.pub), and each GitHub release
+attaches the same file as `cosign.pub`; take it from the repository at the
+release's tag rather than from the release it vouches for. Register it like
+any other key:
+
+```bash
+orkctl admin image-policy set --signing-key orkstack=cosign.pub
+orkctl namespace update ops --require-signed-by cosign:orkstack
+```
+
+A namespace names one signer, so `cosign:orkstack` suits a namespace whose
+tasks use only the first-party activities. A namespace that also runs your own
+images needs every image signed by one key: verify the first-party images you
+use, copy them into your registry, and sign them with yours. To check an image
+or the binaries by hand:
+
+```bash
+cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
+cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true --signature SHA256SUMS.sig SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+```
+
+The release records nothing in a public transparency log: the key is the
+trust root, and `--insecure-ignore-tlog=true` tells cosign so (it prints a
+warning). Without cosign, `openssl dgst -sha256 -verify cosign.pub -signature
+<(base64 -d SHA256SUMS.sig) SHA256SUMS` checks the same signature.
 
 To rotate a key without a gap, add the new key under a new name, re-sign,
 move each namespace's `--require-signed-by`, then `--remove-signing-key` the
@@ -2917,6 +3501,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
+| `ork.orker.workspace_cleanup_failures` | — | Orker, once per attempt whose own directory or secrets could not be removed when it ended and are left on disk (typically files a workload wrote as a uid the Orker cannot remove); the Orker logs the path and the error |
 | `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold, `max_running` or enforced budget refused (`namespace_held`, `max_running_reached`, `budget_exceeded`, `budget_unmeasurable`); not a run, not counted on `ork.runs` |
 | `ork.run.continuations` | `ork.namespace`, `outcome` | engine, once per run carried on into a fresh history: `written` (its saved state written), `write_failed` (object storage refused it; the run tries again after more growth), `over_cap` (its saved state is over `engine.continuation.bytes`; it never carries on), `restored` (the next history read it back), or a `RUN_STATE_*` code (the next history could not) |
 | `ork.run.continuation.state.bytes` | `ork.namespace`, `kind` | engine, the stored size of what a switch wrote: `checkpoint` (the saved state), `events` (the earlier history's events), `snapshot` (the full state at the switch) |

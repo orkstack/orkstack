@@ -2,7 +2,7 @@
 
 Learn what the test suite covers, how each change is checked before it lands, and why you can trust a result. Read this before you trust OrkStack with work that matters.
 
-OrkStack is pre-release. It is stable, but breaking changes can still land before 1.0. The repository calls its checks **proofs**.
+The repository calls its checks **proofs**.
 
 ## What the tests cover
 

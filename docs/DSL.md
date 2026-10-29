@@ -484,8 +484,12 @@ which `source:` values its tasks may name (`allowed_secrets`, shown by
 `orkctl namespace get`), and a source outside that bound is refused at
 validate, apply and submit.
 
-`resources` uses `cpu` and `memory` request strings. Orker policy may refuse a
-request above its cap but never silently raises or clamps it. `network` accepts
+`resources` uses `cpu` and `memory` request strings in the Kubernetes spelling
+(`"2"`, `"500m"`; `"512Mi"`, `"4Gi"`), refused at validate and apply when they do
+not read as a limit (rule 6d). A request is reserved for the task's lifetime and
+is also its limit. Orker policy may refuse a request above its cap but never
+silently raises or clamps it; a submit refuses a task whose request is above
+the cap of every Orker of its pool (`RESOURCES_UNSATISFIABLE`). `network` accepts
 only `default` and `none`. Cancellation sends SIGTERM and waits
 `cancellation_grace_period_seconds` before SIGKILL. `run_as_orker_user` is an
 opt-in readability escape hatch: it overrides the image's own USER so output
@@ -1599,6 +1603,11 @@ How each node reads:
    `default` or `none` (6b). Every secret has a `name` matching
    `^[A-Za-z0-9._-]{1,128}$` — validated, never sanitized, so it cannot
    escape the secrets directory — and a non-empty `source:` (6c).
+   `resources.cpu` and `resources.memory`, when present, are quantities in
+   the Kubernetes spelling that are a limit: a positive number of cpus
+   (`"2"`, `"0.5"`, `"500m"`), and at least one byte of memory (`"512Mi"`,
+   `"4Gi"`, `"1000000"`; `Gi`, not `GB`), refused with the path otherwise
+   (6d). Whether a request fits is Orker policy, checked at dispatch.
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks, and
    `.each` under rule 25.

@@ -2,8 +2,8 @@
 
 This document states OrkStack's security model in one place. Each rule names
 the code or the contract that enforces it, and each one describes this branch as
-it is. It is a description of what is enforced, not an audit. OrkStack is
-pre-release. Nothing here makes it production-ready, and the bar for that is set
+it is. It is a description of what is enforced, not an audit. Nothing here makes
+OrkStack production-ready, and the bar for that is set
 in [AGENTS.md](../AGENTS.md), §11.
 
 The engineering contract behind this model is [AGENTS.md](../AGENTS.md) §2.3 (the
@@ -64,6 +64,35 @@ gives it to any other service. An activity
 container never receives the socket, a host path or the host's namespaces
 ("What the Orker refuses" below).
 
+On Kubernetes the daemon is not the node's: each Orker pod runs a Docker
+engine of its own in a sidecar, and only the Orker container shares its
+socket ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes"). How much the node
+trusts that engine depends on the shape. In a pod with its own user
+namespace, the engine is root of that namespace, which is an unprivileged uid
+range on the node. In the privileged fallback, the engine container is root
+on the node, and so is anything that escapes from a task's container to it.
+
+### What the Orker reads back
+
+The boundary holds in the other direction too: nothing a workload leaves in
+its output directory makes the Orker read outside it. The Orker reads the
+output on the host, where a symlink resolves in the Orker's own mount
+namespace, so a link the workload wrote could name any file the Orker can
+open. It therefore reads `/orkstack/output` only through a confined root
+(`os.Root`) opened on the attempt's output directory, `lstat`s every name it
+reads before opening it, proves every open with a second `lstat` taken while
+the descriptor is held, and reads each artifact only through the descriptor
+its scan opened, so a name replaced afterwards is never resolved again. A
+symlinked `values.json` fails `VALUES_MALFORMED`, and a symlinked or
+non-directory `output/artifacts`, or any artifact entry that is not a regular
+file, fails `ARTIFACT_NOT_A_FILE`. Both are contract violations, never
+retried, and each names the container path and never a host path. The failure
+path reads through the same root, so a failed attempt publishes nothing from
+outside either. The Orker does not depend on the host's
+`fs.protected_symlinks`, which a same-uid workload passes
+([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md) §9.5;
+`internal/orker/workspace.go`, `OutputTree`).
+
 ## What an activity container receives
 
 The Orker renders the container's mounts from paths it created for the attempt
@@ -77,9 +106,10 @@ Nothing in an Orkflow can name a host path.
 | `/orkstack/output` | the attempt's values and artifacts | read-write |
 | `/orkstack/tmp` | the attempt's scratch | read-write |
 | `/orkstack/shared` | the pin's shared directory | read-write, pinned tasks only |
-| `/tmp` | a tmpfs, 64 MiB by default | read-write, `nosuid`, `nodev` |
+| `/tmp` | a tmpfs, 64 MiB by default | read-write, `nosuid`, `nodev`, `noexec` |
 
-- The root file system is read-only, and the working directory is `/orkstack`.
+- The root file system is read-only, `/run` and `/var/tmp` included, and the
+  working directory is `/orkstack`.
 - The environment is the image's own `ENV`, overridden by the task's `env:`
   map, plus what the container runtime adds (`HOSTNAME` under Docker). The
   platform adds no variable: required platform state travels as files
@@ -89,6 +119,13 @@ Nothing in an Orkflow can name a host path.
   only when the task sets `run_as_orker_user: true`, or when the deployment sets
   `ORK_ORKER_FORCE_USER=true`, which defaults to off
   (`internal/orker/oci_dispatcher.go`; `internal/orker/security_profile.go`).
+  The boot probe checks that this user lands as the Orker; where it does not,
+  such a task fails `RUN_AS_ORKER_UNAVAILABLE` (`internal/orker/boot_probe.go`).
+- Before it takes work, the Orker runs one container built as a task's is and
+  checks from inside it that the runtime applied this posture, and cancels a
+  second one as a task is cancelled to check that its workload hears
+  SIGTERM; an Orker whose runtime does not refuses to start with
+  `RUNTIME_POSTURE_REFUSED` ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md) §3.1).
 
 ## What the Orker refuses
 
@@ -120,7 +157,7 @@ to omit them ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §9.2):
 | `--read-only` | the root file system cannot be written |
 | `--cap-drop=ALL` | no Linux capability is kept |
 | `--security-opt no-new-privileges` | a process cannot gain privilege it did not start with |
-| `--security-opt seccomp=builtin` | the runtime's default seccomp profile, named explicitly |
+| `--security-opt seccomp=builtin` | the runtime's default seccomp profile, named explicitly; on the Podman engine, which has no name for its default, nothing is spelled and the engine applies its own, which the boot probe checks is a filter |
 | `--init` | PID 1 reaps zombies and forwards signals |
 | `--pids-limit` | 512 by default |
 | `--cpus`, `--memory` | always set, never unlimited |
@@ -423,6 +460,6 @@ its own writes (`internal/api/audit.go`). A record is written once to
 - **Webhook receivers.** Verifying the signature, and deciding what to do with a
   delivery, is the receiver's job. OrkStack keeps no record of what a receiver did
   with one ([WEBHOOKS.md](WEBHOOKS.md), "Verifying the signature").
-- **Production readiness.** OrkStack is pre-release. Its failure and recovery
-  scenarios must be proven before it is called production-ready
+- **Production readiness.** OrkStack's failure and recovery scenarios must be
+  proven before it is called production-ready
   ([AGENTS.md](../AGENTS.md), §11).

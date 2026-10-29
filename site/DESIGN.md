@@ -126,11 +126,6 @@ components:
     backgroundColor: "{colors.paper}"
     textColor: "{colors.ink}"
     padding: "calc(var(--spacing) * 2.5) calc(var(--spacing) * 4)"
-  stamp:
-    backgroundColor: "{colors.paper-sunken}"
-    textColor: "{colors.ink}"
-    typography: "{typography.label}"
-    rounded: "{rounded.sm}"
   frame-caption:
     backgroundColor: "{colors.paper}"
     textColor: "{colors.ink-secondary}"
@@ -164,9 +159,9 @@ The site has no visual system of its own. `ui/src/tokens.css` holds every colour
 
 **Creative North Star: "One More Sheet From the Drawing Office"**
 
-The site is a drawing set from the same office as the UI. The landing page is one sheet: its first view is a real run of the example Orkflow in the UI, framed as a drawing, and along its bottom edge a title block holds the headline, the two actions and six facts. Below the sheet, each section is a region of the same drawing, opened by a region rule: the model drawn on a drafting grid with balloons keyed to a parts list, a real Orkflow listed line by line with balloons in its margin, the features as registers, durability as an owners register, the limits as a ruled list, the quickstart as a terminal and a recording, and the status as a ruled row of links. The docs are Starlight, restyled only through its custom properties, plain CSS over its public markup and five component overrides, so a docs page carries the same top bar, the same ink rules, the same registers and the same closing title block.
+The site is a drawing set from the same office as the UI. The landing page is one sheet: its first view is a real run of the example Orkflow in the UI, framed as a drawing, and along its bottom edge a title block holds the headline, the two actions and five facts. Below the sheet, each section is a region of the same drawing, opened by a region rule: the model drawn on a drafting grid with balloons keyed to a parts list, a real Orkflow listed line by line with balloons in its margin, the features as registers, six recordings of core features as a register beside one player, durability as an owners register, the limits as a ruled list, the quickstart as a terminal and a recording, and the status as a ruled row of links. The docs are Starlight, restyled only through its custom properties, plain CSS over its public markup and five component overrides, so a docs page carries the same top bar, the same ink rules, the same registers and the same closing title block.
 
-Density follows the UI's: narrow sans body text, tracked caps for every label, the mono only for what a person copies or compares (YAML, commands, ids, captions naming a version). Structure comes from line weight (`--rule-hair`, `--rule-region`, `--rule-frame`), never from cards, fills or shadows. Code takes the UI's syntax colours, the same tokens as its YAML editor. The landing page renders without JavaScript; scripts only add the appearance switch, the copy button and the pre-paint theme choice.
+Density follows the UI's: narrow sans body text, tracked caps for every label, the mono only for what a person copies or compares (YAML, commands, ids, captions naming a version). Structure comes from line weight (`--rule-hair`, `--rule-region`, `--rule-frame`), never from cards, fills or shadows. Code takes the UI's syntax colours, the same tokens as its YAML editor. The landing page renders without JavaScript; scripts only add the appearance switch, the copy button, the recordings' tablist and the pre-paint theme choice.
 
 **Key Characteristics:**
 - No colour or face of its own: tokens by name, enforced by `site/scripts/check-tokens.mjs`.
@@ -191,7 +186,7 @@ Drafting paper and blue-black ink, with hue rationed tighter than in the UI: the
 
 ### Neutral
 - **Drafting Paper** (`--color-paper`): the page ground of both landing page and docs, every drawing frame, the top bar, the title block, buttons, balloons and the docs' nav and sidebar.
-- **Sunken Paper** (`--color-paper-sunken`): register heads, the code listing and terminal grounds, the stamp, inline code-block and Expressive Code editor grounds, docs NOTE asides, the empty frame a missing screenshot draws.
+- **Sunken Paper** (`--color-paper-sunken`): register heads, the code listing and terminal grounds, inline code-block and Expressive Code editor grounds, docs NOTE asides, the empty frame a missing screenshot draws.
 - **Sheet** (`--color-sheet`): overlays only: the mobile menu drawer and the docs' search dialog.
 - **Hover Wash** (`--color-hover`): hover ground of buttons, the copy button, status links, menu entries and sidebar links; the ground of inline code in the docs.
 - **Ink** (`--color-ink`): text, headings, region and frame rules, the hero sheet's frame, balloon outlines, the architecture drawing's boxes, edges and arrowheads, the primary button's fill and the pressed appearance button.
@@ -236,7 +231,7 @@ Drafting paper and blue-black ink, with hue rationed tighter than in the UI: the
 
 **The landing sheet.** `main` is centred at a maximum of 90rem, with `--spacing-gutter` side padding below 640 px and `--spacing-sheet` from 640 px. Sections (`.block`) stand `calc(var(--spacing) * 24)` apart; each opens with a `--rule-region` ink rule, then a heading block at most 46rem wide with more space below it (`* 10`) than above (`* 6`).
 
-**The first viewport.** The hero is one grid inside a `--rule-frame` ink border. Below 1024 px it reads in document order: title cell, the framed view, the facts in two columns. From 1024 px the view spans the top and the title block runs along the bottom: the title cell (about 1.15 parts) with a `--rule-frame` ink rule on its right, then six fact cells in two rows of three divided by hairlines in ink. The view is the run page's top, which `make site-media` cuts under its heading, its drawing and the aside's timing register, and it gives way to the viewport (`max-height: clamp(16rem, calc(100svh - 26rem), 40rem)`) so the actions stay in view. Below 640 px the screenshot is shown at 230% width, its left: the run heading and the DAG at a readable size.
+**The first viewport.** The hero is one grid inside a `--rule-frame` ink border. Below 1024 px it reads in document order: title cell, the framed view, the facts in two columns, the last one across both. From 1024 px the view spans the top and the title block runs along the bottom: the title cell (about 1.15 parts) with a `--rule-frame` ink rule on its right, then five fact cells in two rows divided by hairlines in ink, three above and two that share the row below. The view is the run page's top, which `make site-media` cuts under its heading, its drawing and the aside's timing register, and it gives way to the viewport (`max-height: clamp(16rem, calc(100svh - 26rem), 40rem)`) so the actions stay in view. Below 640 px the screenshot is shown at 230% width, its left: the run heading and the DAG at a readable size.
 
 **Breakpoints in use.** 640 px (top-bar links fold into the Menu disclosure; sheet padding; registers and owners and status links restack), 768 px (limits become two columns), 900 px (the architecture drawing switches from down to across; the parts list becomes three columns; the title block band becomes one row with the first cell twice as wide), 1024 px (the hero sheet; features as two columns of registers), 1100 px (the code listing beside its parts list, 2 : 1). Starlight's own 50rem switches the docs header.
 
@@ -261,7 +256,7 @@ Flat. Depth is line weight: hairline rows, region rules, frame borders. `--shado
 
 ## Shapes
 
-Square-cornered. Controls (buttons, the appearance switch, the copy button, the docs' GitHub link, search trigger, pagination links, sidebar entries, asides, the stamp, code blocks) take `--radius-sm`; overlays (the Menu drawer, the search dialog) `--radius-md`; inline code `--radius-xs`. Drawing frames, the hero sheet, the listing, the terminal, registers and recordings have no radius. `--radius-full` is only for balloons. Icons are the UI's own (`ui/src/lib/icons.ts`, copied into a generated JSON by `sync-docs.mjs`): a 16-unit grid, one 1.5 stroke, round caps, `currentColor`, hidden from assistive technology. The wordmark is a title-block corner drawn in the ink beside "OrkStack" in tracked caps.
+Square-cornered. Controls (buttons, the appearance switch, the copy button, the docs' GitHub link, search trigger, pagination links, sidebar entries, asides, code blocks) take `--radius-sm`; overlays (the Menu drawer, the search dialog) `--radius-md`; inline code `--radius-xs`. Drawing frames, the hero sheet, the listing, the terminal, registers and recordings have no radius. `--radius-full` is only for balloons. Icons are the UI's own (`ui/src/lib/icons.ts`, copied into a generated JSON by `sync-docs.mjs`): a 16-unit grid, one 1.5 stroke, round caps, `currentColor`, hidden from assistive technology. The wordmark is a title-block corner drawn in the ink beside "OrkStack" in tracked caps.
 
 ## Components
 
@@ -282,10 +277,7 @@ Square-cornered. Controls (buttons, the appearance switch, the copy button, the 
 Three icon buttons (system, light, dark) in one `--rule-hair` outlined group, hairline dividers between, `* 7` square. The pressed one is ink-filled with on-ink icon. Hidden until its script runs. It replaces Starlight's theme select in the docs.
 
 ### Title block (signature)
-A `<dl>` band under a `--rule-frame` ink rule: tracked-caps muted labels over semibold `--text-md` values, cells divided by ink hairlines. From 900 px one row, the first cell twice as wide; below, auto-fit cells of at least 9rem. A value may be a link (ink, `--color-rule-strong` underline) or a stamp. The landing page closes with one (Project, Status, License, Source, Docs) and every docs page closes with one (Source file, Status, License).
-
-### Stamp
-The UI's status stamp for a neutral state: sunken ground, `--rule-hair` outline, tracked caps, a small outlined square mark before the word. It carries only "Pre-release".
+A `<dl>` band under a `--rule-frame` ink rule: tracked-caps muted labels over semibold `--text-md` values, cells divided by ink hairlines. From 900 px one row, the first cell twice as wide; below, auto-fit cells of at least 9rem. A value may be a link (ink, `--color-rule-strong` underline). The landing page closes with one (Project, License, Source, Docs) and every docs page closes with one (Source file, License).
 
 ### Drawing frame (signature)
 A `<figure>` in a `--rule-region` ink border on paper; at its top left a paper patch holding a mono `--text-xs` caption in `--color-ink-secondary`, sitting on the frame's own top band so it never covers the contents. Captions name what is drawn ("each-fan-out @ 0.3.0 · 3 tasks", "How a run flows · ARCHITECTURE.md"). An optional `after` slot holds a hairline-ruled note. In the hero its side borders are dropped inside the sheet's frame: region rules above and below it under 1024 px, a single `--rule-frame` rule below it from 1024 px.
@@ -302,6 +294,9 @@ The listing is a real file from `examples/` rendered by Astro's `Code` with two 
 ### Terminal
 The quickstart's commands: a sunken-paper box in a `--rule-region` ink border under a paper bar holding "Shell" in caps and a "Copy all" button that appears only when the Clipboard API exists and announces its result through a polite live region. Each command is mono medium ink after a muted, unselectable prompt, with a muted mono comment line below. The commands and the recording share one measure, at most 64rem, so the recording and its controls fit a laptop's viewport and its text stays under the body's. On a phone the recording shows its left columns at 270% width in a framed window, and its caption states how the run ended, so no crop hides the result.
 
+### Recording reel
+"See it run": six recordings of core features, each made by `make site-media` from `examples/`. A register of the six under a `--rule-region` ink rule (a semibold name over one line of secondary ink, `--rule-hair` rows) beside the chosen one's recording, its muted caption and a "more" link to the page that explains it. From 1024 px the register is a column of at most 21rem; below, it stands above the player. With JavaScript the register is a vertical tablist (arrow keys, Home and End move, Space selects; a modified arrow stays the browser's), each tab named by its short name and described by its sentence: the selected entry takes the blue tint and its name a `--rule-frame` blue underline, the others the hover wash on hover, a link's `#reel-…` fragment selects its entry, and a recording playing in a panel that is hidden is paused. The panels after the first are hidden from the first paint (the theme script's `data-theme`), so nothing moves when the script runs. Without it, every recording is listed under its own heading, and the entries are links to them. Every recording sits in one 16 : 10 box, the UI's own shape, a terminal recording centred in it on `--color-paper-sunken`, so choosing another never moves the page.
+
 ### Registers
 The UI's table: tracked-caps muted heads on sunken paper under a `--rule-region` ink rule, `--rule-hair` rows, cells in secondary ink, row heads semibold. Feature row heads are ink links underlined in `--color-rule-strong` that turn blue on hover. Docs markdown tables get the same treatment with no zebra striping. Below 640 px a row restacks into a grid.
 
@@ -316,7 +311,7 @@ Sidebar group labels in tracked caps; links in secondary ink, hover wash; the cu
 - **Do** frame screenshots and drawings in `DrawingFrame` with a mono caption naming what is drawn.
 - **Do** ship every screenshot and recording as a light and dark pair from `make site-media` (`ThemeShot`, `ThemeClip`), within the media budget `check-tokens.mjs` enforces (900 KiB an image, 2.5 MiB a video, 24 MiB in all), lazy, with alt text, and a caption on every recording.
 - **Do** draw a screenshot at its own size or narrower, never larger: `make site-media` captures it natively at one and two device pixels per CSS pixel and saves both losslessly in `public/media`, and the page serves the pair as a `srcset` with the screenshot's own `width` and `height`. The landing page's are taken at the width of its frames, the docs' as cuts of the UI's main column that fit the docs column; nothing re-encodes or resizes them on the way.
-- **Do** give recordings controls, a poster, `muted`, `playsinline` and `preload="none"`; a terminal recording is drawn at twice the size it is shown at, and sits at the top of a box 220 of its pixels taller, in the terminal's own `--color-paper-sunken`, so a paused video's controls band falls below its last line.
+- **Do** give recordings controls, a poster, `muted`, `playsinline` and `preload="none"`, in a box of the recording's own shape. Every recording is drawn at twice the size it is shown at: a recording of the UI is the page captured at two device pixels per CSS pixel, losslessly, with the cursor drawn over it afterwards and each step named in a caption drawn with the UI's tokens, then encoded once to H.264; a terminal recording sits at the top of a box 220 of its pixels taller, in the terminal's own `--color-paper-sunken`, so a paused video's controls band falls below its last line.
 - **Do** keep motion to colour and ground transitions over `--duration-fast` on `--ease-out`, and stop the one entrance animation under `prefers-reduced-motion`.
 - **Do** keep the landing page working with JavaScript off: commands stay selectable text, the Menu is a `<details>`, and the theme follows the system through the generated dark block.
 

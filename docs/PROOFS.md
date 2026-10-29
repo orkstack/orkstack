@@ -624,7 +624,7 @@ repository is private, carries the `ci:proof` label.
 | `proof.yml` › `integration` | one matrix entry per shard: its own Temporal, store, registry and images | one part per shard |
 | `proof.yml` › `ui-e2e` | one matrix entry per UI shard: its own stack and file list; the pinned browser image pulled, the host's Chromium installed only where the shard's files drive it (§2.1) | one part per shard |
 | `proof.yml` › `activity-fixture` | one matrix entry per activity: `make -C images contract` | one part per activity |
-| `proof.yml` › `observability` | when the plan says it is due, or always for release | one part |
+| `proof.yml` › `observability` | when the plan says it is due, or always for release; its `observability stack` step starts the profile and waits up to 3 minutes until the Collector, Loki, Tempo and Prometheus answer ready, the readiness `proof.sh` requires | one part |
 | `proof.yml` › `proof` | `if: always()`; downloads every part and GitHub's job records; runs `proofrun merge`; writes the summary | the merged `proof.json` and ledgers |
 
 `proof` is the single required check. Its last step judges each tier by its
@@ -669,9 +669,29 @@ recorded a result (§10):
 |---|---|
 | `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
 
-`nightly.yml` holds three jobs, scheduled at 05:17 UTC on the default branch:
+`podman.yml` is not part of the proof and holds no required check; it runs the
+runtime-facing suites on Podman, OrkStack's second engine
+([DEPLOY.md](DEPLOY.md), "Running on Podman"), on `ubuntu-26.04`, whose image
+ships Podman 5:
+
+| Job | Runs |
+|---|---|
+| `podman.yml` › `podman` | on a push or pull request that touches `internal/orker/`, `cmd/orker/`, `orkctl task run`, `test/fixtures/` or the workflow, at 05:41 UTC every day, and by dispatch; one job per shape: `rootless-cli` (the podman CLI as the runner's user, `ORK_DOCKER_CLI=podman`), `rootful-cli` (the podman CLI as root through `sudo`) and `rootful-socket` (the docker CLI against the rootful Podman socket, the release image's shape). Each runs `scripts/integration.sh ./internal/orker` and the Bash activity contract fixture; the CLI shapes also run `./cmd/orker` and `orkctl task run`'s tests. The socket shape runs `internal/orker`'s runtime tests only: its image-policy tests start a plain-HTTP registry on a port chosen at run time, which the docker CLI cannot tell Podman to trust. A rootless runner that cannot start a container (AppArmor's restriction on unprivileged user namespaces) fails that job and says so in its summary; a rootful job names its `sudo` in its summary, boots the real `orker` on the runner's AppArmor profile and fails unless its boot probe refuses it (a container's init cannot signal its workload there), applies the fix of DEPLOY.md "Rootful Podman under AppArmor" and fails unless the `orker` then boots, and, when it fails, prints the kernel's AppArmor denials. Docker hosts the stack the suites use; Podman is only the engine under test |
+
+`kind-orker.yml` is not part of the proof and holds no required check; it runs
+`scripts/kind-orker.sh` on `ubuntu-24.04`, which makes a throwaway kind
+cluster and runs `scripts/k8s-orker-check.sh` against it: the check an
+operator runs against a cluster of their own before trusting the Kubernetes
+Orker bases ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes"):
+
+| Job | Runs |
+|---|---|
+| `kind-orker.yml` › `kind-orker` | on a push or pull request that touches `deploy/kubernetes/`, either script, `internal/orker/`, `cmd/orker/`, the source build (`deploy/source/`), the release `deploy/Dockerfile`, the shell or file activity, or the workflow, at 06:29 UTC every day, and by dispatch. It first lifts the runner's AppArmor restriction on unprivileged user namespaces, which the rootless engine the script measures needs, and records the kernel and that setting in its summary. The script pins every tool: kind's and kubectl's release binaries by SHA-256, the node image and crane's image by digest. The check refuses a missing prerequisite with exit 77 before it deploys anything, so on kind a refusal fails the lane like a failed check. Both shapes run artifacts, both network modes, a cancel, the Orker's declared capacity, the per-task cap (a task above it refused at submit, one at it run with it as its limit), an out-of-memory task and a pod deletion; the Orker must refuse a mismatched work root, the user-namespaced engine must refuse to start without its RuntimeClass, and Docker's rootless engine must be seen to drop a container's limits. Its summary names the check that failed and the last of the namespace's and the cluster's state then; the artifact `kind-orker-<run>-a<attempt>` holds both scripts' logs, the check's evidence and that state in full, without the throwaway cluster's kubeconfig or the registry's keys |
+
+`nightly.yml` holds four jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
-`make vuln`, and `nightly.yml` › `flakes`
+`make vuln`, `nightly.yml` › `quickstart` runs `scripts/quickstart-smoke.sh`,
+and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
 suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
 `nightly`, whatever its result, so its window includes that night's proof.
@@ -681,11 +701,23 @@ is a regression on `main` like any red nightly (§6). The fix is to bump the mod
 version (an exact one, §11.1 of `AGENTS.md`) and prove that change like any
 other; `go tool govulncheck -show verbose ./...` lists the ones the code cannot
 reach, which fail nothing.
+`quickstart` is independent of the proof too: it runs the README's Quickstart
+as written on a clone of the commit, where the root `compose.yaml` builds the
+stack from source, and checks that a run of `each-fan-out` succeeds and that
+the UI answers (`make quickstart-smoke`). No proof gate runs that path, and
+`release.yml` › `artifacts` runs it only before a release, so this job is what
+finds a break on `main` within a day: a directory the source Dockerfile copies
+that `deploy/source/Dockerfile.dockerignore` does not admit, a Go or UI build
+that fails in `deploy/source/Dockerfile`, a `compose.yaml` key the runner's
+Compose refuses, or a stack that never turns healthy. It needs only what the
+runner image has (Docker with Compose, git, curl and python3), and a failure
+is a regression on `main` like any red nightly (§6).
 `release.yml` holds five: `release.yml` › `validate` runs first on every
 dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses
 `tag: true` from any ref but `main`, and refuses a version whose `X.Y` the
-built-in activity catalog does not name or which CHANGELOG.md has no
-`## [X.Y.Z]` section for (`dist check`, `dist notes`), and decides from the
+built-in activity catalog does not name, which CHANGELOG.md has no
+`## [X.Y.Z]` section for, or whose CHANGELOG.md still holds entries under
+`## [Unreleased]` (`dist check`, `dist notes`), and decides from the
 repository's tags whether the release is the latest (`dist order`): a release
 below a released tag of its own `X.Y` is refused, because it would move the
 `X.Y` image tag back, and a backport to an older series is released but never
@@ -708,18 +740,33 @@ only with `tag: true` on `main`, verifies before anything is pushed that the
 assets are exactly what the artifact's `SHA256SUMS` sums and match it, that
 the image list names each of the ten images once, that each layout's index
 names that digest, and that its bytes hash to it and list linux/amd64 and
-linux/arm64; it then pushes each layout to `ghcr.io/orkstack/<image>` byte for byte
+linux/arm64; it signs `SHA256SUMS` with the release key and verifies that
+signature with the committed `deploy/cosign.pub`, so a missing key, a wrong
+password or a key that is not that file's pair stops it before anything is
+pushed; it then pushes each layout to `ghcr.io/orkstack/<image>` byte for byte
 (`skopeo copy --all --preserve-digests`, from the image
 `deploy/skopeo-image.txt` pins) under `X.Y.Z` and `X.Y`, checks each digest
-after the push, refuses to move an `X.Y.Z` that holds another digest, and only
-then creates the GitHub release (`gh release create --verify-tag`, marked the
-latest when `validate` said so, never a draft or a pre-release, so
-`releases/latest/download/` names the newest release). `tag` and `publish`
+after the push, refuses to move an `X.Y.Z` that holds another digest, signs
+each image by its digest (cosign, from the image `deploy/cosign-image.txt`
+pins, with `--new-bundle-format=false --use-signing-config=false
+--tlog-upload=false`, so it writes the `sha256-<hex>.sig` layout OrkStack's
+verifier reads and nothing in a public transparency log), verifies each
+signature by digest with `deploy/cosign.pub` and reads the `.sig` manifest
+back, and only then creates the GitHub release (`gh release create
+--verify-tag`, marked the latest when `validate` said so, never a draft or a
+pre-release, so `releases/latest/download/` names the newest release), with
+`SHA256SUMS.sig` and `cosign.pub` beside the archives. `validate` refuses a
+dispatch whose `deploy/cosign.pub` is not committed, and the `--release`
+smoke signs every image with a throwaway key by the same image and flags and
+runs an Orkflow in a namespace that requires that key. `tag` and `publish`
 download what `gate` and `artifacts` uploaded by the names those jobs output,
 so a re-run of either finds the first attempt's artifact.
 `publish` checks out nothing and runs no repository code; it holds the only
-`packages: write`. The tag job's checkout keeps no credential, and only the
-step that pushes is given the token. Every one takes a concurrency group named
+`packages: write`, and runs in the `release` environment, which alone holds
+the signing key. The tag job's checkout keeps no credential, only the steps
+that push, sign images and release are given the token, and only the two
+signing steps the key, which cosign reads from the environment
+(`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a concurrency group named
 from the validated version, so two dispatches of one version run one after the
 other. A dispatch with `tag: false` builds, smokes and proves, and publishes
 nothing.
@@ -996,6 +1043,9 @@ were still 921 MB (run 40388322907).
   `reruns` entry has `reason` `lost-runner`, `runner-degraded` or
   `setup-failed`, and its `lost_attempt` describes the earlier attempt
   whichever it was (conclusion, annotations, failed step);
+- `carried_forward`, every part attempt whose job "Re-run failed jobs" did
+  not run again (§7.1), with the part, the attempt and the attempt that ran
+  the job (`from`);
 - `pr` and `ci`.
 
 A ledger entry has `package`, `test`, `job`, `outcome`, `seconds`, an optional
@@ -1096,6 +1146,23 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   no result, and the proof fails naming it. Two tests pin the names to
   `proof.yml` in both directions, with rename mutations: the proof step names
   (`proofStepNames`) and the allowlist (`setupStepNames`).
+- **Carried-forward jobs.** "Re-run failed jobs" lists every job of the run
+  again in the new attempt, each under a new id and that attempt's number,
+  and a job it did not run keeps the earlier attempt's start, end,
+  conclusion, runner and steps, to the second, while its artifact exists only
+  as `part-<name>-a<earlier>` (run 40934338667). The proof job's job records
+  keep those fields, and the merger reads such a job as the attempt that ran
+  it, not as an attempt of the part (`carriedForward` in `merge.go`): only
+  when its record and the one of the attempt just before it each name their
+  own attempt, were read whole, have a start, an end, a conclusion and steps,
+  and agree in all of them. A job that ran again started later, so it stays an
+  attempt of its own, and every rule above judges it as before: a part that
+  recorded a result and ran again is still ineligible. A record missing any of
+  those fields (one a proof job wrote before it kept them, or one it could not
+  read) is an attempt of its own too, so it fails closed. A part that left an
+  artifact of an attempt its record says was carried forward is ineligible.
+  `proof.json` lists every carried-forward attempt in `carried_forward`
+  (`part`, `attempt`, `from`), and the README under "Carried forward".
 
 `make merge-check PROOF=…` refuses a proof whose quarantine `checked_on` is
 more than 30 days old (the merged artifact's private retention). A `NIGHTLY=` proof it is given is
@@ -1135,7 +1202,10 @@ job failed in a fetch or install step before its proof step started
 (**setup-failed**, §7.1), may run again. "Re-run job" on that one job is the
 way, and "Re-run failed jobs" is permitted when every failed part is one of
 these three, because it then gives no part that recorded a result a second
-attempt (the `proof` job runs again with them, and merges every attempt).
+attempt (the `proof` job runs again with them, and merges every attempt). The
+jobs it does not run appear in the new attempt's record as carried forward,
+and the merger takes their result from the attempt that ran them (§7.1), so
+the proof is merge-eligible once the parts it ran again pass.
 "Re-run all jobs" gives every part a second attempt after a result, so its
 proof is ineligible. A test failure is never answered by a rerun, and a part
 that runs again runs whole, as a new part of the same tree, never a failed
@@ -1325,8 +1395,12 @@ annotations, the logs of failed jobs), and `gh run rerun --failed` runs only if
 every failed job is the `proof` job or a part that is lost, setup-failed or
 degraded. A part with a result, a cancel, a failed `base`, `plan` or `build`,
 a job it cannot read and a job whose name is not a part of the workflow all
-mean no rerun, so a run that can never become merge-eligible is not rerun. At
-most two automatic reruns follow the first attempt. It is off until the
+mean no rerun, so a run that can never become merge-eligible is not rerun. The
+planner reads only the failed jobs of the attempt that just completed: a job
+"Re-run failed jobs" carried forward (§7.1) succeeded, so it never decides a
+rerun, and a failed job a single "Re-run job" carried forward is classified
+from its record in that attempt, while the merger still judges it by the
+attempt that ran it. At most two automatic reruns follow the first attempt. It is off until the
 repository variable `PROOF_AUTO_RERUN` is `true`, a setting only the
 maintainer makes. Its planner prints three words it validated (`rerun`,
 `reason`, `parts`) and never an annotation or a log line. The merger remains
@@ -1407,6 +1481,11 @@ git rev-parse main
   module and the version that fixes it; bump the module to exactly that
   version, run `make check`, and merge that change on its own proof. A
   vulnerability the code cannot reach is not reported and fails nothing.
+- Only `nightly.yml` › `quickstart` failed: the README's Quickstart no longer
+  works on a clone of `headSha`, which is a regression on `main` too. The
+  job's log names the Quickstart command that failed, or the check, and on a
+  failure ends with the last 80 lines of the stack's `activities`, `ork`,
+  `orker` and `ui` logs. `make quickstart-smoke` on that commit reproduces it.
 - Only `runner-degraded` parts failed: a runner failure, not a regression
   (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree.
 
@@ -1422,6 +1501,30 @@ gh run view <nid> --json attempt -q .attempt                         # <attempt>
 gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
 make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
 ```
+
+**Write the release notes.** A release's notes on its GitHub release page
+are its CHANGELOG.md section, word for word. Each user-visible change lands
+with its entry under `## [Unreleased]` (AGENTS.md §11.1, step 7; CONTRIBUTING.md,
+"The changelog"). Before a release is dispatched, a change to `main`, proved
+and merged like any other, cuts the version's section: it renames
+`## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, the version without its `v`
+and the day the section is cut, puts an empty `## [Unreleased]` above it, and
+edits the entries into what the release page should say, under Keep a
+Changelog's `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
+`### Fixed` and `### Security`, each breaking change marked **BREAKING**.
+Nothing writes the date at tag time: the tag names a commit a proof passed
+on, so the heading is already in that commit. `dist notes -version vX.Y.Z`
+prints exactly what the page will show: the section without its heading,
+because the release has its own title, `OrkStack vX.Y.Z`. `release.yml` ›
+`artifacts` writes that to `meta/notes.md`, and `release.yml` › `publish`
+hands it, and nothing else, to `gh release create --notes-file`; the
+checksums, `SHA256SUMS.sig` and `cosign.pub` are the release's assets, and
+[UPGRADING.md](./UPGRADING.md), "Release artifacts", says how to verify
+them. `release.yml` › `validate` refuses a version with no section or an
+empty one, and one whose `## [Unreleased]` still holds entries, because they
+would ship in the release without being in its notes: an entry merged after
+the cut moves into the section before the dispatch. The first release, 0.1.0,
+says only "First release.": everything built before it is that release.
 
 **Run the release gate.** Dispatch `release.yml` from `main` with `version`
 set and `tag: false`; `release.yml` › `validate` refuses a malformed version
@@ -1449,12 +1552,50 @@ does not push; a tag made that way publishes nothing, because `release.yml` is
 the only path that publishes. Only a `release.yml` run whose `gate` passed
 publishes. Neither path stops a
 person with write access from pushing a `v*` tag by hand (§12). Before
-dispatching, add the version's `## [X.Y.Z]` section to CHANGELOG.md: it
-becomes the release notes, and `validate` refuses a version without one.
+dispatching, write the version's section ("Write the release notes", above):
+it becomes the release notes, and `validate` refuses a version without one.
+
+**Set up release signing.** Once, before the first release (done on
+2026-10-29: `deploy/cosign.pub` is committed, and the environment holds both
+secrets, deploys from `main` only and has one required reviewer): a release signs
+what it publishes, so `validate` refuses every dispatch until
+`deploy/cosign.pub` is committed, and `publish` pushes nothing until the
+`release` environment holds the private half. A repository administrator runs,
+on their own machine, with `cosign` (2.6 or later) and a signed-in `gh`:
+
+```bash
+scripts/release-signing-setup.sh --dry-run    # every action, nothing run
+scripts/release-signing-setup.sh              # asks for the key's password twice
+```
+
+It refuses a key directory (`--dir`, default `~/orkstack-release-key`) inside
+any git work tree, an existing key file, and an environment that already holds
+`COSIGN_PRIVATE_KEY` or a committed `deploy/cosign.pub` unless `--rotate`, all
+before it writes anything. It then generates the pair with `cosign
+generate-key-pair`, proves it by signing and verifying a file with
+`release.yml`'s flags, creates or updates the `release` environment
+(deployments from `main` only, the caller a required reviewer unless
+`--no-reviewer`, so `publish` waits for an approval), sets
+`COSIGN_PRIVATE_KEY` (the whole `.key` file) and `COSIGN_PASSWORD`, and
+copies the public key to `deploy/cosign.pub`. The password reaches cosign
+through its environment and `gh` on stdin, never an argument or a file.
+Commit `deploy/cosign.pub` through a pull request, and keep the `.key` file
+and its password offline, apart, and never in a repository. Without the
+script, the same by hand: `cosign generate-key-pair`; create the environment
+`release` in the repository's settings, limited to the `main` branch
+(Deployment branches and tags → Selected branches); `gh secret set
+COSIGN_PRIVATE_KEY --env release < cosign.key`; `gh secret set
+COSIGN_PASSWORD --env release`; and commit the `.pub` file as
+`deploy/cosign.pub`. To rotate, run the script with `--rotate` and a new
+`--dir`, or replace both secrets and `deploy/cosign.pub` together; a release
+already published stays signed by the key its own tag carries, and each
+deployment that trusts OrkStack's releases registers the new key before it
+runs a release signed with it.
 
 **Recover a failed publish.** `publish` is safe to re-run: an image tag that
-already holds this release's digest is left alone, and the release itself is
-created last. Re-run the failed job from the run's page while the
+already holds this release's digest is left alone, an image whose signature
+already verifies is not signed again, and the release itself is created
+last. Re-run the failed job from the run's page while the
 `artifacts` job's upload is kept (7 days); after that, dispatch again with a
 new patch version.
 
@@ -1549,7 +1690,7 @@ listing with no bucket at all.
 | `make dist` | the release's binaries, archives and `SHA256SUMS` for `VERSION=vX.Y.Z` |
 | `make release-images` | the release images as OCI layouts under `OUT`, for `PLATFORMS` |
 | `make release-smoke` | build both for this machine and run `compose.yaml` on those images |
-| `make quickstart-smoke` | run the README's Quickstart as written on a fresh clone of the working tree |
+| `make quickstart-smoke` | run the README's Quickstart as written on a fresh clone of the working tree; `nightly.yml` › `quickstart` and `release.yml` › `artifacts` run it (§5) |
 | `make proof-flakes` | derive per-test flake rates from the ledgers |
 | `make proof-slow-list` | regenerate the costs and the slow list from a proof |
 | `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
@@ -1847,9 +1988,14 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
 - **`release.yml` has not run on GitHub yet.**
-  `nightly.yml` has three jobs, `nightly`, `vuln` and `flakes`; the first and
-  the last have run, and so has `proof.yml` as a reusable workflow through them
-  (`workflow_call`; the flakes job passed in run 40555387388). `release.yml`'s
+  `nightly.yml` has four jobs, `nightly`, `vuln`, `quickstart` and `flakes`;
+  `nightly` and `flakes` have run, and so has `proof.yml` as a reusable
+  workflow through them (`workflow_call`; the flakes job passed in run
+  40555387388). `quickstart` has not run on GitHub yet, and neither has the
+  same smoke in `release.yml`: the first scheduled or dispatched nightly after
+  it lands is the smoke's first run on a hosted runner, and its time there,
+  for which the job allows 40 minutes, is not measured (5 minutes cold on the
+  16-CPU reference host). `release.yml`'s
   `artifacts` and `publish` jobs were added after the last `actionlint` pass;
   the workflow rules in `test/tools/proofrun` hold their shape, and `make
   release-smoke` and `make quickstart-smoke` run their build and both smokes
@@ -1867,6 +2013,21 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   its `fuzz` part ran its whole 105-minute budget in nightly 40706217000 and
   found a real crasher (`pkg/artifacts`, a run-index status the writer never
   spells), kept as a seed.
+- **`kind-orker.yml` has not passed on GitHub yet.** `scripts/kind-orker.sh`,
+  and through it `scripts/k8s-orker-check.sh`, passed on a developer's host
+  (kind v0.33.0, Kubernetes 1.37.0, containerd 2.3.4, Linux 7.2), and the
+  workflow rules in `test/tools/proofrun` hold the lane's shape. Its first run
+  on GitHub (40965501413, of `2d95c0f3` on 2026-10-29) built the cluster and
+  the images, and on the hosted runner's kernel (7.0, inside kind) every
+  prerequisite held and the user-namespaced shape passed its run with
+  artifacts and both network modes, its cgroups and its cancel, in under four
+  minutes. It
+  then failed at the limits check, which still expected a task above the
+  per-task cap to fail at dispatch after resource placement had moved that
+  refusal to submit. The rest of the check, the privileged shape and the
+  rootless measurement, after lifting the runner's AppArmor restriction, have
+  not run there. The check has run against kind clusters only; a cluster of
+  another make is checked by its operator.
 - **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
   `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
   planner is proven against fakes of `gh api`, and its workflow shape by the

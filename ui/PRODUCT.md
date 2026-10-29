@@ -37,7 +37,7 @@ Two things a neighbouring product could not truthfully copy, both to be shown by
 - Undecided: a final product name treatment and logo (OrkStack as a name is binding), and any accessibility standard beyond good practice.
 
 ## Brand Commitments
-The name OrkStack, and the words Orkflow, Orker, `ork` and `orkctl`, are fixed. The product is pre-release, positioned as stable but with breaking changes possible until 1.0, and is never compared to or named against another tool in its own copy. No logo or brand asset exists yet.
+The name OrkStack, and the words Orkflow, Orker, `ork` and `orkctl`, are fixed. The product is never compared to or named against another tool in its own copy. No logo or brand asset exists yet.
 
 ## Evidence on Hand
 - Real running behaviour: the current UI, 225 Playwright specs with screenshots, and the example Orkflows in `examples/`.

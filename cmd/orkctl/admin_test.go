@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"testing"
 	"time"
 
-	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
@@ -41,31 +39,10 @@ func (p adminLivePools) ObservePool(_ context.Context, channel string) (engine.P
 	return live, nil
 }
 
-// adminPoolOrkers is the set of pools with a live Orker. It answers the
-// DescribeOrker probe for those pools' channels; answering at all is the
-// liveness evidence (§6.5).
-type adminPoolOrkers map[string]struct{}
-
-func (p adminPoolOrkers) OrkerOnPool(_ context.Context, channel string) (*orkstackv1.DescribeOrkerResult, error) {
-	var pool string
-	switch channel {
-	case "ork-tasks":
-		pool = task.DefaultPool
-	case "ork-pool-gpu":
-		pool = "gpu"
-	default:
-		return nil, fmt.Errorf("no orker is polling %q", channel)
-	}
-	if _, serving := p[pool]; !serving {
-		return nil, fmt.Errorf("pool %q has no orker", pool)
-	}
-	return &orkstackv1.DescribeOrkerResult{OrkerId: "orker-" + pool, RuntimeName: "docker"}, nil
-}
-
 // adminFixture is a CLI fixture wired with the Config fields `cmd/ork` wires
-// and no others: system information injected as `ork` injects it, the pool
-// probe, and the per-pool orker describer. A fixture that configured a seam no
-// shipped binary sets would golden a deployment nobody can run.
+// and no others: system information injected as `ork` injects it, and the
+// pool probe. A fixture that configured a seam no shipped binary sets would
+// golden a deployment nobody can run.
 //
 // The values are fixed rather than read from the machine, which is what lets
 // the goldens hold: a golden carrying this host's Go version or clock would
@@ -88,7 +65,6 @@ func adminFixture(t *testing.T) *fixture {
 			Orkers:   map[string]int{task.DefaultPool: 2, "gpu": 1},
 			LastSeen: fixedNow,
 		}
-		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {}, "gpu": {}}
 	})
 }
 
@@ -213,7 +189,6 @@ func TestPoolList_AnswersWithTheReachablePoolsAndMarksTheRest(t *testing.T) {
 			live:      adminLivePools{Orkers: map[string]int{task.DefaultPool: 2}, LastSeen: fixedNow},
 			unreached: map[string]string{"ork-pool-gpu": "context deadline exceeded"},
 		}
-		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {}}
 	})
 	f.run("namespace", "create", "vision",
 		"--allow-pool", task.DefaultPool,

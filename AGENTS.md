@@ -282,7 +282,7 @@ below explicit failure.
 The Orker is responsible for:
 
 ```text
-poll Temporal
+poll Temporal, within its declared capacity
 resolve the activity specification
 check the completion commit
 check the run's image policy
@@ -303,10 +303,25 @@ return a compact ActivityResult
 cleanup
 ```
 
-Do not spread Docker-specific details through unrelated OrkStack components.
-Keep the OCI runtime boundary clean enough for future Podman, containerd,
-Kubernetes Jobs, ECS Tasks, or Nomad implementations. Do not implement all of
-those runtimes now; portability is a boundary, not a mandate for a framework.
+An Orker that declares a capacity (`orker.capacity`) admits no task that
+would take its reservations above it. It reserves before it polls the
+largest request the channel it polls can carry, trims that reservation to
+the task's resolved request once the task is in hand, and frees it when the
+attempt's container is removed. A pinned member is counted but never made
+to wait, because it can run nowhere else; while the reservations stand at
+or above capacity, the Orker polls for no new task. The ledger is
+process-local, exactly as a cordon is: never stored, never shared, gone
+with the process. It is admission, not placement: Temporal decides which
+polling Orker receives a task, and OrkStack never chooses a host.
+
+Docker- and Podman-specific details live in the runtime files
+(`internal/orker/runtime_docker.go` and `runtime_dialect.go`) and nowhere else:
+do not spread them through unrelated OrkStack components. Podman is a dialect
+of the one runtime, a value of spellings chosen by the CLI setting and the
+engine it answers, never an interface or a plugin. Keep the OCI runtime
+boundary clean enough for future containerd, Kubernetes Jobs, ECS Tasks, or
+Nomad implementations. Do not implement all of those runtimes now; portability
+is a boundary, not a mandate for a framework.
 
 ## 6. Security and resource controls
 
@@ -335,7 +350,8 @@ resources:
 ```
 
 Support activity-level `timeout` and `cancellationGracePeriod`. Orker policy
-may cap requested resources. Workflows must not receive unlimited resources by
+caps requested resources, and an Orker that declares a capacity admits a task
+only within it (§5). Workflows must not receive unlimited resources by
 default. Put complicated execution logic in a container instead of adding
 platform primitives.
 
@@ -574,9 +590,13 @@ workflow code is deterministic and may not read a namespace document,
 process configuration, or the cluster. `SubmitRun`'s preparation resolves the
 namespace and Orkflow, applies the admission gate (hold, then `max_running`,
 then an enforced budget), resolves each task's pool against the namespace's
-allow-list and checks a live, capable Orker serves it, and then decides the
+allow-list and checks, from the Orker inventory, that a live, capable Orker
+serves it, refuses a task whose declared request exceeds its pool's per-task
+cap, which is a pool-wide setting, asking the pool's Orkers over their own
+control channels, and then decides the
 image-policy selection, telemetry selection, cache plan, every composed
-child's plan, the origin and any await callback tokens. All of it rides the
+child's plan, the origin, any await callback tokens, and each task's
+fairness key (its namespace) and weight. All of it rides the
 replay-pinned `RunPlan` and is never re-read. Every refusal happens before a
 run ID is minted or an idempotency key claimed, so a refused submission leaves
 nothing behind. Admission is never retroactive. A guard that reads the
@@ -685,7 +705,7 @@ history replays unchanged without a version marker — or by a plan field the
 submitting engine sets together with a `workflow.GetVersion` gate asked lazily
 where the path first diverges (`lean-event-path`, `run-history-guard`,
 `continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
-`snapshot-overlay`), so a history recorded before the gate
+`snapshot-overlay`, `fairness-keys`), so a history recorded before the gate
 replays its `DefaultVersion` branch; each new command path gets its own
 recorded history fixture. Every tunable number that decides whether, which,
 how many or where workflow code issues a command — a history ceiling or
@@ -699,9 +719,10 @@ and a recorded history protects it; changing such a constant is a new command
 path with its own gate. Because the activity channel can fall
 through to another release, an activity-input field an older Orker would
 reject or ignore (cache, join, fan-out items) is advertised as a capability on
-`DescribeOrker`. Submit asks one Orker of each pool such a task would run on
-and refuses with `FailedPrecondition`, naming the Orker and its build, when it
-lacks the capability; a pool that does not answer the probe is logged, not
+`DescribeOrker`. Submit asks every uncordoned Orker of each pool such a task
+would run on, each on its own control channel, and refuses with
+`FailedPrecondition`, naming the Orker and its build, when one lacks the
+capability; a pool none of whose Orkers answers the probe is logged, not
 refused, so every Orker of one pool must run one release.
 
 ### 7.3 Generations
@@ -762,6 +783,11 @@ completion: a Temporal Timer for its deadline and a Signal for its resolution,
 and no container. A schedule is a Temporal Schedule; a composed task is a
 Temporal child workflow of the same `RunWorkflow` interpreter; a fan-out's
 items are ordinary activities in the interpreter's own in-flight set.
+
+Fair dispatch across namespaces is Temporal's task-queue fairness, keyed
+by namespace and pinned in the plan; it is never an OrkStack queue.
+Enabling it is a Temporal setting of the deployment; without it dispatch
+stays first-in first-out per queue.
 
 ## 9. First-party activities
 
@@ -937,7 +963,12 @@ commit is a later run. The same workflow runs the vulnerability scan
 (`make vuln`) as a job of its own, because it needs the network and so is in
 no proof: a vulnerability whose vulnerable code the module reaches fails that
 run like any other nightly failure, and the fix is to bump the module to the
-version the report names.
+version the report names. It runs the README's Quickstart on a clone of the
+commit (`scripts/quickstart-smoke.sh`) as a job of its own too, because no
+proof runs the getting-started path: a stack that no longer builds or starts
+from a clone fails that run like any other nightly failure. `release.yml`
+runs the same smoke itself before it publishes anything, so for a release
+that one is a check, not a rule.
 
 A failing nightly (the latest completed `nightly.yml` run on `main`) is a
 regression on `main`, not a merge freeze (decided 2026-10-28): fixing it, or
@@ -1430,7 +1461,8 @@ cmd/orkctl/            CLI entrypoint
 internal/engine/       Temporal workflows and activities
 internal/api/          Connect services and WebSocket bridge
 internal/dsl/          YAML parse, validation, and Orkflow compilation
-internal/orker/        Orker runtime and OCI activity dispatch
+internal/orker/        Orker runtime and OCI activity dispatch; the runtime files
+                       (runtime_docker.go, runtime_dialect.go) alone name Docker or Podman
 internal/task/         Temporal namespace, pool routing, and deployment identity
 internal/config/       Configuration file schema and loader
 internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation
@@ -1441,6 +1473,7 @@ internal/schemas/      JSON Schemas of the authored documents, generated from th
 internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
+internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker
 internal/docscheck/    Documentation drift checks (test-only)
 internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
 internal/dist/         Release artifacts: binaries, archives, checksums, release guards; the quickstart's guards

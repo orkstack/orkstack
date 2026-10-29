@@ -1,0 +1,184 @@
+# An Orker on Kubernetes with a Docker engine of its own, in a pod with its
+# own user namespace (docs/DEPLOY.md, "Orkers on Kubernetes"). Nothing in
+# this pod is privileged on the node: the engine runs as root of the pod's
+# user namespace, which is an unprivileged uid range on the node.
+#
+# Needs: user namespaces (hostUsers: false) and the orkstack-engine
+# RuntimeClass (runtimeclass.yaml), whose containerd handler gives the pod's
+# root its own cgroup so the engine can enforce each task's limits. Set the
+# orker image by digest and create the orkstack ConfigMap and the
+# orkstack-s3 Secret first (kustomization.yaml says how).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orker
+  labels:
+    app.kubernetes.io/name: orker
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: orker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orker
+    spec:
+      hostUsers: false
+      runtimeClassName: orkstack-engine
+      # Longer than the longest cancellation grace a task may ask for: a
+      # stopped Orker cancels each running task with its own grace (30 s by
+      # default) before the engine stops.
+      terminationGracePeriodSeconds: 120
+      initContainers:
+        # The engine is a native sidecar: it starts, and passes its startup
+        # probe, before the Orker boots, and it stops only after the Orker
+        # has exited, so a task is never left without its daemon.
+        - name: engine
+          image: docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977
+          restartPolicy: Always
+          command:
+            - sh
+            - -c
+            # The daemon and every task container live in this container's
+            # own cgroup: the daemon in engine/, the tasks under tasks/. The
+            # image's own wrapper (dind) is not used, because it rearranges
+            # whatever cgroup root it sees, which for a privileged container
+            # on containerd is the node's. PID 1 is moved by a child process
+            # (a self-move is refused), and the API is a socket only.
+            - |
+              set -eu
+              cg=$(sed -n 's/^0:://p' /proc/self/cgroup)
+              cg=${cg%/}
+              mkdir -p "/sys/fs/cgroup$cg/engine"
+              sh -c "echo 1 > '/sys/fs/cgroup$cg/engine/cgroup.procs'"
+              sed -e 's/ / +/g' -e 's/^/+/' "/sys/fs/cgroup$cg/cgroup.controllers" > "/sys/fs/cgroup$cg/cgroup.subtree_control"
+              mountpoint -q /tmp || mount -t tmpfs none /tmp
+              mount --make-rshared /
+              exec docker-init -- dockerd --host=unix:///var/lib/orkstack/engine/docker.sock --cgroup-parent="$cg/tasks"
+          env:
+            - name: DOCKER_HOST
+              value: unix:///var/lib/orkstack/engine/docker.sock
+          securityContext:
+            # Every capability here is the pod's user namespace's, not the
+            # node's. The engine mounts container filesystems and /proc for
+            # its tasks, which an unmasked /proc and no seccomp or AppArmor
+            # confinement of the daemon allow; each task still runs under the
+            # Orker's own profile (no capabilities, seccomp, read-only root).
+            procMount: Unmasked
+            seccompProfile:
+              type: Unconfined
+            appArmorProfile:
+              type: Unconfined
+            capabilities:
+              add:
+                - ALL
+          startupProbe:
+            exec:
+              command:
+                - docker
+                - info
+            periodSeconds: 2
+            failureThreshold: 60
+          # Every task runs inside this container's cgroup, so these limits
+          # bound all of them together: the Orker's capacity
+          # (ORK_ORKER_CAPACITY_CPU and ORK_ORKER_CAPACITY_MEMORY), plus the
+          # daemon's own share. Change them together.
+          resources:
+            requests:
+              cpu: "5"
+              memory: 9Gi
+              ephemeral-storage: 40Gi
+            limits:
+              cpu: "5"
+              memory: 9Gi
+              ephemeral-storage: 40Gi
+          volumeMounts:
+            - name: work
+              mountPath: /var/lib/orkstack/work
+            - name: engine-socket
+              mountPath: /var/lib/orkstack/engine
+            - name: engine-data
+              mountPath: /var/lib/docker
+      containers:
+        - name: orker
+          image: orker
+          envFrom:
+            - configMapRef:
+                name: orkstack
+            - secretRef:
+                name: orkstack-s3
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            # Unique across the cluster, and new for each pod: a restarted
+            # Orker container keeps it and reaps its previous life's tasks.
+            - name: ORK_ORKER_ID
+              value: $(POD_NAME).$(POD_NAMESPACE)
+            # The engine bind-mounts each task's workspace from this path, so
+            # it is the same volume at the same path in both containers.
+            - name: ORK_ORKER_WORKDIR
+              value: /var/lib/orkstack/work
+            - name: DOCKER_HOST
+              value: unix:///var/lib/orkstack/engine/docker.sock
+            - name: ORK_ORKER_MAX_CONCURRENT
+              value: "4"
+            - name: ORK_ORKER_MAX_CPU
+              value: "1"
+            - name: ORK_ORKER_MAX_MEMORY
+              value: 2Gi
+            # What the engine container gives its tasks, less the daemon's
+            # share: the Orker admits no task that would take what it has
+            # reserved above it, whatever ORK_ORKER_MAX_CONCURRENT allows,
+            # and a task's reservation is its limit.
+            - name: ORK_ORKER_CAPACITY_CPU
+              value: "4"
+            - name: ORK_ORKER_CAPACITY_MEMORY
+              value: 8Gi
+            - name: ORK_ADMIN_ADDR
+              value: 127.0.0.1:9464
+          startupProbe:
+            exec:
+              command:
+                - /usr/local/bin/orker
+                - --healthcheck
+            periodSeconds: 10
+            failureThreshold: 48
+          readinessProbe:
+            exec:
+              command:
+                - /usr/local/bin/orker
+                - --healthcheck
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: 250m
+              memory: 256Mi
+          volumeMounts:
+            - name: work
+              mountPath: /var/lib/orkstack/work
+            - name: engine-socket
+              mountPath: /var/lib/orkstack/engine
+      volumes:
+        # Task workspaces: ephemeral execution directories (AGENTS.md §5).
+        - name: work
+          emptyDir:
+            sizeLimit: 20Gi
+        # The engine's API socket, seen only by the two containers.
+        - name: engine-socket
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        # The engine's image cache and container layers: a disposable cache.
+        - name: engine-data
+          emptyDir:
+            sizeLimit: 20Gi

@@ -250,8 +250,8 @@ func (a *attemptObservation) endPhaseLocked(now time.Time) {
 
 // End ends the last phase span and the attempt span exactly once, sets span
 // status Error with the reason when outcome.Reason is non-empty, and records
-// the ork.orker.tasks / ork.orker.task.duration / ork.orker.commit_adopted
-// instruments.
+// the ork.orker.tasks / ork.orker.task.duration / ork.orker.commit_adopted /
+// ork.orker.workspace_cleanup_failures instruments.
 func (a *attemptObservation) End(outcome orker.AttemptOutcome) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -304,5 +304,8 @@ func (a *attemptObservation) End(outcome orker.AttemptOutcome) {
 	}
 	if outcome.CommitAdopted && a.inst.CommitAdopted != nil {
 		a.inst.CommitAdopted.Add(a.attemptCtx, 1, metric.WithAttributes(durationAttrs...))
+	}
+	if outcome.CleanupErr != nil && a.inst.WorkspaceCleanupFailures != nil {
+		a.inst.WorkspaceCleanupFailures.Add(a.attemptCtx, 1, metric.WithAttributes(durationAttrs...))
 	}
 }

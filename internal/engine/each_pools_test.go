@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"sync"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -14,25 +13,13 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// eachSupportPools answers DescribeOrker per channel with each_supported as
-// given, and records every channel it was asked about.
-type eachSupportPools struct {
-	mu        sync.Mutex
-	supported map[string]bool
-	asked     []string
-	fail      bool
-}
-
-func (p *eachSupportPools) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	p.asked = append(p.asked, queue)
-	if p.fail {
-		return nil, errors.New("describe timed out")
-	}
-	return &orkstackv1.DescribeOrkerResult{
-		OrkerId: "gpu-3", BuildId: "2026.09.01", EachSupported: p.supported[queue],
-	}, nil
+// eachFleet is one current Orker for each of eachPoolsDocument's pools, with
+// gpu's Orker (gpu-3, build 2026.09.01) answering each_supported as given.
+func eachFleet(gpuSupported bool) *fakeFleet {
+	gpu := currentOrker("gpu-3", "gpu", 0)
+	gpu.BuildId = "2026.09.01"
+	gpu.EachSupported = gpuSupported
+	return fleetOf(currentOrker("cpu-1", "cpu", 0), gpu, currentOrker("io-1", "io", 0))
 }
 
 const eachPoolsDocument = `
@@ -62,20 +49,19 @@ tasks:
     with: {op: exec}
 `
 
-func eachPoolsResolver(p *eachSupportPools, logger *slog.Logger) *engine.PoolResolver {
+func eachPoolsResolver(fleet engine.FleetReader, logger *slog.Logger) *engine.PoolResolver {
 	cpu, _ := task.QueueForPool("cpu", "")
 	gpu, _ := task.QueueForPool("gpu", "")
 	io, _ := task.QueueForPool("io", "")
 	return &engine.PoolResolver{
 		Probe:  livePools{cpu: 1, gpu: 1, io: 1},
-		Orkers: p,
+		Fleet:  fleet,
 		Logger: logger,
 	}
 }
 
 func TestPoolResolverPlan_RefusesAPoolWhoseOrkerPredatesFanOut(t *testing.T) {
-	p := &eachSupportPools{supported: map[string]bool{}}
-	_, _, err := eachPoolsResolver(p, nil).Plan(context.Background(),
+	_, _, err := eachPoolsResolver(eachFleet(false), nil).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "data"}, compile(t, eachPoolsDocument), false)
 	var refused *engine.PoolNoEachSupportError
 	if !errors.As(err, &refused) {
@@ -93,18 +79,29 @@ func TestPoolResolverPlan_RefusesAPoolWhoseOrkerPredatesFanOut(t *testing.T) {
 			t.Fatalf("message %q lacks %q", err.Error(), want)
 		}
 	}
-	gpu, _ := task.QueueForPool("gpu", "")
-	p.supported[gpu] = true
-	if _, _, err := eachPoolsResolver(p, nil).Plan(context.Background(),
+	if _, _, err := eachPoolsResolver(eachFleet(true), nil).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "data"}, compile(t, eachPoolsDocument), false); err != nil {
 		t.Fatalf("a pool whose Orker supports fan-out = %v", err)
 	}
 }
 
+// Any Orker of a pool may take an item, so one Orker that predates fan-out
+// refuses the pool even when its sibling answers first and supports it.
+func TestPoolResolverPlan_OneOldOrkerOfAPoolRefusesAFanOut(t *testing.T) {
+	fleet := eachFleet(false)
+	fleet.orkers = append(fleet.orkers, currentOrker("gpu-1", "gpu", 0))
+	_, _, err := eachPoolsResolver(fleet, nil).Plan(context.Background(),
+		&orkstackv1.Namespace{Name: "data"}, compile(t, eachPoolsDocument), false)
+	var refused *engine.PoolNoEachSupportError
+	if !errors.As(err, &refused) || refused.OrkerID != "gpu-3" {
+		t.Fatalf("Plan = %v, want PoolNoEachSupportError naming gpu-3", err)
+	}
+}
+
 func TestPoolResolverPlan_IgnoresADescribeFailure(t *testing.T) {
 	var logged strings.Builder
-	p := &eachSupportPools{fail: true}
-	if _, _, err := eachPoolsResolver(p, slog.New(slog.NewTextHandler(&logged, nil))).Plan(context.Background(),
+	fleet := &fakeFleet{silent: []string{"cpu-1", "gpu-3", "io-1"}}
+	if _, _, err := eachPoolsResolver(fleet, slog.New(slog.NewTextHandler(&logged, nil))).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "data"}, compile(t, eachPoolsDocument), false); err != nil {
 		t.Fatalf("a describe failure refused the submit: %v", err)
 	}
@@ -114,8 +111,7 @@ func TestPoolResolverPlan_IgnoresADescribeFailure(t *testing.T) {
 }
 
 func TestPoolResolverPlan_AllowEmptyPoolDoesNotDowngradeIt(t *testing.T) {
-	p := &eachSupportPools{supported: map[string]bool{}}
-	_, _, err := eachPoolsResolver(p, nil).Plan(context.Background(),
+	_, _, err := eachPoolsResolver(eachFleet(false), nil).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "data"}, compile(t, eachPoolsDocument), true)
 	var refused *engine.PoolNoEachSupportError
 	if !errors.As(err, &refused) {
@@ -123,25 +119,23 @@ func TestPoolResolverPlan_AllowEmptyPoolDoesNotDowngradeIt(t *testing.T) {
 	}
 }
 
-func TestPoolResolverPlan_AsksOnlyForPoolsOfFanOutsAndTheirDirectDependents(t *testing.T) {
-	p := &eachSupportPools{supported: map[string]bool{}}
-	gpu, _ := task.QueueForPool("gpu", "")
-	p.supported[gpu] = true
-	if _, _, err := eachPoolsResolver(p, nil).Plan(context.Background(),
+func TestPoolResolverPlan_JudgesOnlyPoolsOfFanOutsAndTheirDirectDependents(t *testing.T) {
+	// cpu holds the source and io a task two hops down, so neither pool's
+	// Orker is held to fan-out, however old.
+	fleet := eachFleet(true)
+	for _, orker := range fleet.orkers {
+		if orker.GetPool() != "gpu" {
+			orker.EachSupported = false
+		}
+	}
+	if _, _, err := eachPoolsResolver(fleet, nil).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "data"}, compile(t, eachPoolsDocument), false); err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	if fmt.Sprint(p.asked) != fmt.Sprint([]string{gpu}) {
-		t.Fatalf("asked %v, want only gpu (cpu holds the source, io a task two hops down)", p.asked)
-	}
-	// An Orkflow with no fan-out asks nothing.
-	none := &eachSupportPools{}
-	resolver := &engine.PoolResolver{Probe: everyPoolLive{}, Orkers: none}
+	// An Orkflow with no fan-out on live pools reads no census at all.
+	resolver := &engine.PoolResolver{Probe: everyPoolLive{}, Fleet: refusingFleet{t: t}}
 	if _, _, err := resolver.Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "data"}, compile(t, twoPoolDocument), false); err != nil {
 		t.Fatalf("Plan: %v", err)
-	}
-	if len(none.asked) != 0 {
-		t.Fatalf("an Orkflow with no fan-out asked %v", none.asked)
 	}
 }

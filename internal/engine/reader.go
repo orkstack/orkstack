@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -1070,6 +1071,39 @@ func (r *TemporalRunReader) scanWith(
 	return projection, nil
 }
 
+// maxHistoryRestarts bounds how many times in a row scanExecution restarts a
+// history read the cluster reported changed under it (historyBranchChanged)
+// without handling a new event in between. A restart that handles one resets
+// the count; one more failure past the bound ends the read with the error.
+const maxHistoryRestarts = 3
+
+// currentBranchChangedFailure is the error detail the cluster attaches to its
+// CurrentBranchChanged answer. It is a server-internal message the client has
+// no type for, so the API's serviceerror decodes the answer as a plain
+// InvalidArgument and keeps the detail undecoded in its status.
+const currentBranchChangedFailure = "temporal.server.api.errordetails.v1.CurrentBranchChangedFailure"
+
+// historyBranchChanged reports whether err is the cluster's answer that the
+// history a paged read was following changed under it ("Current and request
+// branch tokens, or current and request versioned transitions, don't
+// match."). It answers a page request whose token names a branch or a state
+// transition the execution has moved past — seen on a long poll of a run that
+// had just completed — so it says the token is stale, never that the run's
+// events are, and the read restarts from the execution's first event. Every
+// other InvalidArgument is not this answer and still ends the read.
+func historyBranchChanged(err error) bool {
+	var invalid *serviceerror.InvalidArgument
+	if !errors.As(err, &invalid) {
+		return false
+	}
+	for _, detail := range invalid.Status().Proto().GetDetails() {
+		if detail.MessageName() == currentBranchChangedFailure {
+			return true
+		}
+	}
+	return false
+}
+
 // scanExecution reads one execution's history — the current one when
 // execution is empty — into st, and returns the execution it continued as new
 // into, or "" when it did not (or the walk stopped at a terminal event).
@@ -1086,9 +1120,32 @@ func (r *TemporalRunReader) scanExecution(
 		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	projection := st.projection
 	read := 0
+	// A restarted read (historyBranchChanged) begins again at the execution's
+	// first event and skips through the last one this walk handled — but only
+	// on the same execution, which its started event identifies: a restart of
+	// the current execution can land on its successor, whose carry replays
+	// what the walk had not reached yet, deduplicated by sequence. restarts
+	// counts the restarts since the walk last handled an event.
+	var first *historypb.HistoryEvent
+	var handled, skipThrough int64
+	restarts := 0
 	for iter.HasNext() {
 		historyEvent, err := iter.Next()
 		if err != nil {
+			if historyBranchChanged(err) {
+				if restarts >= maxHistoryRestarts {
+					return "", fmt.Errorf("engine: read history of run %s: it changed under the read %d times in a row: %w",
+						runID, restarts+1, err)
+				}
+				restarts++
+				skipThrough = handled
+				slog.Warn("restarting a run's history read: the cluster reported it changed under the read",
+					"run_id", runID, "execution", execution, "follow", follow,
+					"after_event", handled, "restart", restarts, "error", err)
+				iter = r.client.GetWorkflowHistory(ctx, runID, execution, follow,
+					enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+				continue
+			}
 			var notFound *serviceerror.NotFound
 			if errors.As(err, &notFound) && read == 0 {
 				// On the first execution: no such run. On a followed
@@ -1099,6 +1156,17 @@ func (r *TemporalRunReader) scanExecution(
 			}
 			return "", fmt.Errorf("engine: read history of run %s: %w", runID, err)
 		}
+		if first == nil {
+			first = historyEvent
+		} else if historyEvent.GetEventType() == enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED &&
+			!proto.Equal(historyEvent, first) {
+			first, handled, skipThrough = historyEvent, 0, 0
+		}
+		if skipThrough > 0 && historyEvent.GetEventId() <= skipThrough {
+			continue
+		}
+		handled = max(handled, historyEvent.GetEventId())
+		restarts = 0
 		read++
 
 		if attrs := historyEvent.GetWorkflowExecutionStartedEventAttributes(); attrs != nil {

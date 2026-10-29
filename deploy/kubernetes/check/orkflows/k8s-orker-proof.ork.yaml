@@ -1,0 +1,83 @@
+# A run through an Orker whose engine is its own (scripts/k8s-orker-check.sh),
+# on the check's own pool:
+# artifacts written, hashed, compressed and read back by later tasks, tasks
+# with no network and one on the default network, and what each task's
+# container is given: its limits and the Orker's security profile.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: k8s-orker-proof
+version: "1"
+description: Artifacts, both network modes, limits and the task profile through an Orker on Kubernetes.
+tasks:
+  - id: produce
+    uses: shell
+    pool: k8s-check
+    network: none
+    resources:
+      cpu: "0.5"
+      memory: 128Mi
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        out=/orkstack/output/artifacts
+        {
+          echo "interfaces: $(ls /sys/class/net | tr '\n' ' ')"
+          echo "memory.max: $(cat /sys/fs/cgroup/memory.max)"
+          echo "cpu.max: $(cat /sys/fs/cgroup/cpu.max)"
+          echo "pids.max: $(cat /sys/fs/cgroup/pids.max)"
+          grep -E '^(NoNewPrivs|Seccomp|CapEff):' /proc/self/status | tr -s '\t' ' '
+          if touch /root-is-writable 2>/dev/null; then echo "root: writable"; else echo "root: read-only"; fi
+        } > "$out/report.txt"
+        cat "$out/report.txt"
+        head -c 1048576 /dev/urandom > "$out/blob.bin"
+        sha256sum "$out/blob.bin"
+  - id: checksum
+    uses: file
+    pool: k8s-check
+    needs:
+      - produce
+    network: none
+    with:
+      op: checksum
+      src: '{{ artifact "produce/blob.bin" }}'
+  - id: compress
+    uses: file
+    pool: k8s-check
+    needs:
+      - produce
+    network: none
+    with:
+      op: gzip
+      src: '{{ artifact "produce/report.txt" }}'
+  - id: verify
+    uses: shell
+    pool: k8s-check
+    needs:
+      - checksum
+      - compress
+    network: none
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        sha256sum '{{ artifact "produce/blob.bin" }}'
+        cat /orkstack/input/upstream/checksum/values.json
+        echo
+        gunzip -c '{{ artifact "compress/report.txt.gz" }}'
+  - id: reach
+    uses: shell
+    pool: k8s-check
+    network: default
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -u
+        # The Kubernetes API's own Service, which every cluster has: any
+        # answer shows the task's traffic left through the pod's network.
+        status=$(wget -S --no-check-certificate -O /dev/null https://kubernetes.default.svc/ 2>&1 | grep -m1 'HTTP/')
+        echo "default network reached the Kubernetes API Service:${status}"
+        [ -n "$status" ]

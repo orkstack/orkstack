@@ -1,0 +1,20 @@
+# An Orker pool on Kubernetes, each Orker with a Docker engine of its own in
+# a privileged sidecar (docs/DEPLOY.md, "Orkers on Kubernetes"): the
+# fallback where orker-userns/ cannot run.
+#
+# Use this directory as the base of an overlay that names the release's orker
+# image by digest, and create the settings it reads in the same namespace:
+#
+#   resources:
+#     - <path>/deploy/kubernetes/orker-privileged
+#   images:
+#     - name: orker
+#       newName: ghcr.io/orkstack/orker
+#       digest: sha256:<the release's orker digest>
+#
+#   kubectl create configmap orkstack --from-env-file=orkstack.env
+#   kubectl create secret generic orkstack-s3 --from-env-file=s3.env
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - orker.yaml

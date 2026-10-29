@@ -59,8 +59,21 @@ type wfJob struct {
 	Concurrency map[string]any    `yaml:"concurrency"`
 	Outputs     map[string]string `yaml:"outputs"`
 	Steps       []wfStep          `yaml:"steps"`
+	// Environment is a name, or a mapping with a `name:`.
+	Environment any `yaml:"environment"`
 	// ContinueOnError is read only so that a rule can refuse it.
 	ContinueOnError any `yaml:"continue-on-error"`
+}
+
+// environment is the name of the deployment environment the job runs in, or "".
+func (j *wfJob) environment() string {
+	switch v := j.Environment.(type) {
+	case string:
+		return v
+	case map[string]any:
+		return fmt.Sprint(v["name"])
+	}
+	return ""
 }
 
 func (j *wfJob) needs() []string {
@@ -109,7 +122,7 @@ func (w *wfFile) onTypes(event string) ([]string, bool) {
 	return out, true
 }
 
-var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml", "proof-rerun.yml"}
+var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml", "proof-rerun.yml", "podman.yml", "kind-orker.yml"}
 
 func workflowPath(name string) string {
 	return filepath.Join("..", "..", "..", ".github", "workflows", name)
@@ -818,6 +831,89 @@ func TestWorkflows_JobRecordsCarryWhatTheMergerClassifies(t *testing.T) {
 	}
 	if class, _ := classify(&j, partReading{}); class != attemptResult {
 		t.Errorf("an unreadable record is classified %v, want a result (fails closed)", class)
+	}
+}
+
+// TestWorkflows_JobRecordsCarryWhatTellsACarriedForwardJob: the job records
+// step keeps GitHub's times, runner and steps of every job, so the merger can
+// tell a job "Re-run failed jobs" carried forward from one it ran again. The
+// input is GitHub's own job objects of run 40934338667 (its fast job, carried
+// into attempt 2, and its integration (8), run again there), and the records
+// the program writes for them are the ones the merger's test of that run
+// reads (merge_rerun_test.go).
+func TestWorkflows_JobRecordsCarryWhatTellsACarriedForwardJob(t *testing.T) {
+	jq, err := exec.LookPath("jq")
+	if err != nil {
+		t.Skip("jq is not installed")
+	}
+	program := jobRecordProgram(t)
+	dir := filepath.Join("testdata", "rerun-40934338667")
+	raw, err := os.ReadFile(filepath.Join(dir, "api-jobs.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored := map[string]githubJob{}
+	for _, a := range []int{1, 2} {
+		var rec githubAttempt
+		if err := readJSON(filepath.Join(dir, "attempt-"+strconv.Itoa(a)+".json"), &rec); err != nil {
+			t.Fatal(err)
+		}
+		for _, j := range rec.Jobs {
+			stored[j.Name+"@"+strconv.Itoa(a)] = j
+		}
+	}
+	empty := filepath.Join(t.TempDir(), "log")
+	if err := os.WriteFile(empty, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]githubJob{}
+	for _, line := range strings.Split(strings.TrimSpace(string(raw)), "\n") {
+		var api struct {
+			Name       string `json:"name"`
+			RunAttempt int    `json:"run_attempt"`
+		}
+		if err := json.Unmarshal([]byte(line), &api); err != nil {
+			t.Fatal(err)
+		}
+		key := api.Name + "@" + strconv.Itoa(api.RunAttempt)
+		want, ok := stored[key]
+		if !ok {
+			t.Fatalf("no stored record of %s", key)
+		}
+		ann, err := json.Marshal(want.Annotations)
+		if err != nil {
+			t.Fatal(err)
+		}
+		annFile := filepath.Join(t.TempDir(), "ann")
+		if err := os.WriteFile(annFile, ann, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(jq, "-c", "--rawfile", "log", empty, "--slurpfile", "ann", annFile, "--arg", "err", "", program)
+		cmd.Stdin = strings.NewReader(line)
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("the job records program failed on %s: %v", key, err)
+		}
+		var j githubJob
+		if err := json.Unmarshal(out, &j); err != nil {
+			t.Fatalf("the record of %s does not decode: %v\n%s", key, err, out)
+		}
+		storedJSON, _ := json.Marshal(want)
+		gotJSON, _ := json.Marshal(j)
+		if string(storedJSON) != string(gotJSON) {
+			t.Errorf("the program's record of %s is not the stored one:\n got  %s\n want %s", key, gotJSON, storedJSON)
+		}
+		if j.ID == 0 || j.RunAttempt != api.RunAttempt || j.StartedAt == "" || j.CompletedAt == "" || j.RunnerName == "" ||
+			len(j.Steps) == 0 || j.Steps[0].Number == 0 || j.Steps[0].StartedAt == "" || j.Steps[0].CompletedAt == "" {
+			t.Errorf("the record of %s lacks what tells a carried-forward job: %+v", key, j)
+		}
+		got[key] = j
+	}
+	if !sameExecution(got["fast@1"], 1, got["fast@2"], 2) {
+		t.Error("the fast job GitHub carried into attempt 2 is not recognised as attempt 1's")
+	}
+	if sameExecution(got["integration (8)@1"], 1, got["integration (8)@2"], 2) {
+		t.Error("the integration (8) job GitHub ran again in attempt 2 is taken for attempt 1's")
 	}
 }
 
@@ -1559,6 +1655,69 @@ func TestWorkflows_TheFlakesJobReadsTonightsProof(t *testing.T) {
 	expectEachMutationRefused(t, "nightly.yml", rule, []mutation{
 		{"no needs", func(w *wfFile) { w.Jobs["flakes"].Needs = nil }},
 		{"no always()", func(w *wfFile) { w.Jobs["flakes"].If = "${{ github.event_name == 'workflow_dispatch' }}" }},
+	})
+}
+
+// isQuickstartSmoke reports whether a step runs the README's Quickstart as
+// written on a clone of the commit: the getting-started path, which no proof
+// runs.
+func isQuickstartSmoke(s wfStep) bool {
+	return strings.TrimSpace(s.Run) == "scripts/quickstart-smoke.sh"
+}
+
+// TestWorkflows_TheNightlyRunsTheQuickstart: `quickstart` runs the README's
+// Quickstart on every night the nightly runs, beside the proof and whatever
+// its result, with nothing that lets a broken getting-started path pass.
+// Without it only release.yml would run it, before a release.
+func TestWorkflows_TheNightlyRunsTheQuickstart(t *testing.T) {
+	rule := func(w *wfFile) []string {
+		job, ok := w.Jobs["quickstart"]
+		if !ok {
+			return []string{"nightly.yml has no quickstart job"}
+		}
+		var p []string
+		if job.ContinueOnError != nil {
+			p = append(p, "jobs.quickstart continues on error, so a broken quickstart would not fail the nightly")
+		}
+		if len(job.needs()) > 0 {
+			p = append(p, fmt.Sprintf("jobs.quickstart.needs = %v; it runs beside the proof, whatever the proof's result", job.needs()))
+		}
+		if nightly, ok := w.Jobs["nightly"]; !ok || normalizeIf(job.If) != normalizeIf(nightly.If) {
+			p = append(p, fmt.Sprintf("jobs.quickstart.if = %q, want the nightly's own, so it runs every night the nightly does", job.If))
+		}
+		ran := false
+		for i, s := range job.Steps {
+			if s.ContinueOnError != nil {
+				p = append(p, fmt.Sprintf("jobs.quickstart %s continues on error", s.label(i)))
+			}
+			if isQuickstartSmoke(s) {
+				ran = true
+				if s.If != "" {
+					p = append(p, fmt.Sprintf("jobs.quickstart %s is conditional, so the smoke can be skipped", s.label(i)))
+				}
+			}
+		}
+		if !ran {
+			p = append(p, "jobs.quickstart never runs the README's Quickstart (scripts/quickstart-smoke.sh)")
+		}
+		return p
+	}
+	smoke := func(w *wfFile) *wfStep {
+		for i := range w.Jobs["quickstart"].Steps {
+			if isQuickstartSmoke(w.Jobs["quickstart"].Steps[i]) {
+				return &w.Jobs["quickstart"].Steps[i]
+			}
+		}
+		return &wfStep{}
+	}
+	expectEachMutationRefused(t, "nightly.yml", rule, []mutation{
+		{"no quickstart job", func(w *wfFile) { delete(w.Jobs, "quickstart") }},
+		{"a job that continues on error", func(w *wfFile) { w.Jobs["quickstart"].ContinueOnError = true }},
+		{"a smoke that continues on error", func(w *wfFile) { smoke(w).ContinueOnError = true }},
+		{"a skippable smoke", func(w *wfFile) { smoke(w).If = "false" }},
+		{"the release smoke instead", func(w *wfFile) { smoke(w).Run = "scripts/quickstart-smoke.sh --release v0.0.0" }},
+		{"waiting for the proof", func(w *wfFile) { w.Jobs["quickstart"].Needs = "nightly" }},
+		{"by dispatch only", func(w *wfFile) { w.Jobs["quickstart"].If = "${{ github.event_name == 'workflow_dispatch' }}" }},
 	})
 }
 

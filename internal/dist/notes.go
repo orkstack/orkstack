@@ -13,6 +13,10 @@ const ChangelogFile = "CHANGELOG.md"
 // Changelog puts at the bottom of the file, after the last release.
 var linkDefinition = regexp.MustCompile(`^\[[^\]]+\]:\s+\S`)
 
+// UnreleasedHeading is the heading of the section a change's entry lands in
+// until a release takes it into a section of its own.
+const UnreleasedHeading = "## [Unreleased]"
+
 // ReleaseNotes returns the text of the "## [X.Y.Z]" section of the changelog
 // for version: everything after that heading up to the next "## " heading, with
 // the surrounding blank lines and any trailing link definitions removed, and a
@@ -23,13 +27,40 @@ var linkDefinition = regexp.MustCompile(`^\[[^\]]+\]:\s+\S`)
 // so a release cannot be published with nothing to say for it. A line that
 // starts with "## " inside a code fence belongs to the section's text.
 func ReleaseNotes(changelog []byte, version Version) (string, error) {
-	text := strings.ReplaceAll(string(changelog), "\r\n", "\n")
 	heading := "## [" + version.Plain() + "]"
-	var (
-		open  fenceRun // the fence the line is inside, or none
-		found bool
-		body  []string
-	)
+	body, found := section(changelog, heading)
+	if !found {
+		return "", fmt.Errorf("%s has no %q section; a release needs one, and it becomes the release notes",
+			ChangelogFile, heading)
+	}
+	if len(body) == 0 {
+		return "", fmt.Errorf("the %q section of %s is empty; a release needs notes", heading, ChangelogFile)
+	}
+	return strings.Join(body, "\n") + "\n", nil
+}
+
+// CheckNothingUnreleased refuses a changelog whose "## [Unreleased]" section
+// still holds entries. At a release they become the version's own section,
+// which is its notes, so an entry left behind would ship in the release
+// without being in them. A changelog with no such section leaves nothing
+// behind.
+func CheckNothingUnreleased(changelog []byte, version Version) error {
+	body, _ := section(changelog, UnreleasedHeading)
+	if len(body) == 0 {
+		return nil
+	}
+	return fmt.Errorf("the %q section of %s still holds entries, starting %q; at a release they move into its %q section, "+
+		"which becomes the release notes, and %q is left empty",
+		UnreleasedHeading, ChangelogFile, body[0], "## ["+version.Plain()+"]", UnreleasedHeading)
+}
+
+// section returns the lines under heading, the first "## " line that is
+// heading or heading followed by a space, up to the next "## " heading outside
+// a code fence, with the blank lines at both ends and any trailing link
+// definitions removed. found is false when no line is that heading.
+func section(changelog []byte, heading string) (body []string, found bool) {
+	text := strings.ReplaceAll(string(changelog), "\r\n", "\n")
+	var open fenceRun // the fence the line is inside, or none
 	for _, line := range strings.Split(text, "\n") {
 		if run := fenceMarker(line); run.length > 0 {
 			switch {
@@ -51,18 +82,11 @@ func ReleaseNotes(changelog []byte, version Version) (string, error) {
 			body = append(body, line)
 		}
 	}
-	if !found {
-		return "", fmt.Errorf("%s has no %q section; a release needs one, and it becomes the release notes",
-			ChangelogFile, heading)
-	}
 	body = trimBlank(body)
 	for len(body) > 0 && linkDefinition.MatchString(body[len(body)-1]) {
 		body = trimBlank(body[:len(body)-1])
 	}
-	if len(body) == 0 {
-		return "", fmt.Errorf("the %q section of %s is empty; a release needs notes", heading, ChangelogFile)
-	}
-	return strings.Join(body, "\n") + "\n", nil
+	return body, found
 }
 
 // fenceRun is a line's run of three or more backticks or tildes, which opens

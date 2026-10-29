@@ -49,7 +49,7 @@ export ORK_ORKER_WORKDIR=/srv/orkstack/work   # a path the Docker daemon can bin
 - **Temporal** keeps execution state: which runs exist, what each task is doing, and retries. Run it yourself. A hosted Temporal Cloud is not supported yet.
 - **S3-compatible object storage** holds Orkflow definitions, artifacts, task logs and finished runs. It must support conditional writes (`If-None-Match`). Each Orker checks this at boot and refuses to start without it.
 - **`ork`** is the engine: the API, and the WebSocket bridge for live run streams. Its replicas hold no state, so any replica answers for any run. Put one address in front of them.
-- **`orker`** runs the containers. It joins one pool and runs its tasks on the Docker daemon of its own host.
+- **`orker`** runs the containers. It joins one pool and runs its tasks on the Docker daemon of its own host, or on Podman: through the podman CLI (`ORK_DOCKER_CLI=podman`), or through Podman's Docker-compatible socket in place of Docker's ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-on-podman), "Running on Podman"). Rootful Podman under AppArmor 5 (Ubuntu 25.10 and later) needs one AppArmor rule added first, or the Orker refuses to start ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#rootful-podman-under-apparmor), "Rootful Podman under AppArmor").
 - **`ui`** is the web interface. Its server forwards API calls to `ork`. The browser opens live run streams to `ork` directly.
 
 Point `orkctl` at any replica with `--server` or `ORK_SERVER`.
@@ -58,9 +58,26 @@ Point `orkctl` at any replica with `--server` or `ORK_SERVER`.
 
 Each release publishes `ork`, `orker`, `orkctl`, `ui` and six first-party activity images to `ghcr.io/orkstack`, for linux/amd64 and linux/arm64. Deploy by digest, or by the `X.Y.Z` tag, which never moves.
 
-No release is published yet, so there are no images to pull. The [release notes](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts) describe what a release publishes. The images are not signed yet. Activity images you build yourself can be signed, and a namespace can require that.
+Releases are on the [releases page](https://github.com/orkstack/orkstack/releases), the first of them v0.1.0. Each tags its images with its version, such as `ghcr.io/orkstack/orker:0.1.0`, and attaches its binaries and their `SHA256SUMS`. [UPGRADING.md](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts), “Release artifacts”, lists everything a release publishes.
 
-The `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it.
+Each release signs its images and its `SHA256SUMS` with one cosign key. The public half is [`deploy/cosign.pub`](https://github.com/orkstack/orkstack/blob/main/deploy/cosign.pub) in the repository, and each release attaches it as `cosign.pub`. Register it as a signing key. A namespace whose tasks use only the first-party activities can then require it:
+
+```bash
+orkctl admin image-policy set --signing-key orkstack=cosign.pub
+orkctl namespace update ops --require-signed-by cosign:orkstack
+```
+
+A namespace requires one key. To mix your own images with the first-party ones, copy the ones you use into your registry and sign everything with your key. To check an image by hand:
+
+```bash
+cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
+```
+
+On a host, the `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it. On Kubernetes, each Orker pod has an engine of its own instead.
+
+## On Kubernetes
+
+Never give an Orker pod the node's container runtime or its Docker socket. [Run Orkers on Kubernetes](/docs/how-to/run-on-kubernetes/) covers the two kustomize bases, the node setup the preferred one needs, and how to deploy and check them.
 
 ## Settings that matter first
 
@@ -72,8 +89,9 @@ The `orker` mounts the host's Docker socket. Whoever controls that socket contro
 | `storage.s3.*` | `ORK_S3_*` | the development store | both. `ork` always needs these, because it reads definitions from the bucket |
 | `pool.name` | `ORK_ORKER_POOL` | `main` | both. The pool an Orker joins, and the pool a task with no `pool:` runs on |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | the temp directory | orker. Must be a path the Docker daemon can bind-mount, with no comma or control character in it |
-| `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | orker. Tasks at once on one Orker; size it to the host |
+| `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | orker. Tasks at once on one Orker; size it to the host. To rule out over-commit, keep it at or below the host's cpus ÷ `max_cpu` and its memory ÷ `max_memory` |
 | `orker.resources.max_cpu`, `max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | orker. A task that asks for more is refused |
+| `orker.capacity.cpu`, `memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | empty | orker. What the Orker admits tasks within; each poll then waits for a per-task cap's worth to be free. Empty admits by `max_concurrent` alone |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | orker. Above zero makes the Orker a pin host |
 | `deployment.build_id` | `ORK_BUILD_ID` | empty | both. Empty means versioning is off |
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | empty | ork. Needed when the UI runs on another origin |
@@ -88,7 +106,7 @@ On a host, an Orker with no `ORK_ORKER_ID` derives a unique id from its host and
 
 ## Before you depend on it
 
-OrkStack is pre-release. Breaking changes can land until 1.0. The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md) lists what to take care of. It is a list of care items, not a certification. Start with these:
+The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md) lists what to take care of. It is a list of care items, not a certification. Start with these:
 
 - Rehearse a rollout, a rollback, an Orker drain and a cleanup pass in a deployment that runs no real work.
 - Give each environment its own Temporal namespace.
@@ -96,12 +114,15 @@ OrkStack is pre-release. Breaking changes can land until 1.0. The [production ch
 - Put a gateway in front of `ork` that authenticates callers. OrkStack does not authenticate callers.
 - Keep `ORK_ADMIN_ADDR` on a private address. Keep `ORK_PPROF_ENABLED` off unless you are profiling.
 - Drain an Orker before you stop it, when it may host pins.
+- Give an Orker longer to stop than its tasks' longest cancellation grace, 30 seconds by default. A stopped Orker stops each running container and records each attempt before it exits.
 
 ## See also
 
 - [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#0-topology--what-you-run-and-where-state-lives): the topology, in full
 - [DEPLOY.md, “1. Configuration”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration): every key and its variable
+- [DEPLOY.md, “Orkers on Kubernetes”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): both shapes, sizing, the RuntimeClass and the proof
 - [PRODUCTION_CHECKLIST.md](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md): the full list of care items
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack keeps in the bucket, and where
+- [DEPLOY.md, “Image supply-chain policy”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#image-supply-chain-policy): trusting the release's signatures, and checking the binaries
 - [LIMITATIONS.md](https://github.com/orkstack/orkstack/blob/main/docs/LIMITATIONS.md): what is not built yet
 - Next: [Roll out a release](/docs/how-to/roll-out-a-release/), [Manage namespaces](/docs/how-to/namespaces/), [Observe a deployment](/docs/how-to/observe/)

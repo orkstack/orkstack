@@ -101,6 +101,11 @@ type config struct {
 	// maxConcurrentErr is a malformed or non-positive ceiling, refused at boot
 	// by the same rule as the errors above.
 	maxConcurrentErr error
+	// capacityCPU and capacityMemory are orker.capacity: what this Orker
+	// admits tasks within, read and refused by orker.Activities.Boot. Both
+	// empty declare none.
+	capacityCPU    string
+	capacityMemory string
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -147,6 +152,8 @@ func loadConfig() config {
 		maxPinsErr:        maxPinsErr,
 		maxConcurrent:     maxConcurrent,
 		maxConcurrentErr:  maxConcurrentErr,
+		capacityCPU:       env(orker.CapacityCPUVar, ""),
+		capacityMemory:    env(orker.CapacityMemoryVar, ""),
 		deployment:        task.DeploymentFromEnv(),
 	}
 }
@@ -397,6 +404,9 @@ func workerOptions(cfg config) worker.Options {
 		DisableRegistrationAliasing:  true,
 		DisableWorkflowWorker:        true,
 		MaxHeartbeatThrottleInterval: cfg.tick(),
+		// Explicit, so a namespace's poller autoscaling cannot enrol this
+		// worker and its session worker (orker.TaskPollers).
+		MaxConcurrentActivityTaskPollers: orker.TaskPollers,
 
 		EnableSessionWorker:               cfg.maxPins > 0,
 		MaxConcurrentSessionExecutionSize: int(cfg.maxPins),
@@ -640,7 +650,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// drains its in-flight work on SIGTERM.
 	var controlStarted, presenceStarted bool
 	defer func() {
+		// Stop cancels every running task and returns at once; the tasks then
+		// stop on their own goroutines, and the process must outlive them.
 		taskWorker.Stop()
+		awaitStoppedTasks(logger, activities)
 		if controlStarted {
 			controlWorker.Stop()
 		}
@@ -669,7 +682,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// Every Orker boots ready; a cordon is process-local and does not
 		// survive a restart.
 		"cordon", false,
-		"security_profile", activities.Dispatcher().Policy.ProfileID(),
+		"security_profile", activities.SecurityProfile(ctx),
 		// Whether this Orker is a pin host, and for how many pins at once. 0 is
 		// said out loud rather than omitted: it is the answer to "why was my
 		// pinned run refused at submit".
@@ -701,9 +714,31 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"version", cfg.deployment.String())
 
 	<-ctx.Done()
+	// The first SIGINT or SIGTERM stops this Orker gracefully. Restoring the
+	// default action makes a second one end the process at once, leaving
+	// what a crash leaves (docs/DEPLOY.md "Removing an Orker safely").
+	stop()
 	sinks.Default().Ready.Set(false)
-	logger.Info("shutting down")
+	logger.Info("shutting down", "running_tasks", activities.RunningTasks())
 	return nil
+}
+
+// awaitStoppedTasks waits until every task the task worker's Stop cancelled
+// has finished stopping: its container sent SIGTERM and, after the task's
+// grace, SIGKILL — by this process, so a container that ignores SIGTERM would
+// outlive an Orker that exited first — then its attempt record written and its
+// last log lines uploaded. Each of those is bounded by the task's own grace
+// and the Orker's fixed control timeouts, and the process manager's own stop
+// timeout bounds the whole; nothing here adds a clock of its own.
+func awaitStoppedTasks(logger *slog.Logger, activities *orker.Activities) {
+	running := activities.RunningTasks()
+	if running == 0 {
+		return
+	}
+	logger.Info("waiting for cancelled tasks to stop", "running_tasks", running)
+	started := time.Now()
+	_ = activities.WaitForTasks(context.Background())
+	logger.Info("cancelled tasks stopped", "took", time.Since(started).Round(time.Millisecond))
 }
 
 // orkerOptions builds the orker.Options this Orker's activities run with,
@@ -734,6 +769,11 @@ func orkerOptions(
 		// The task ceiling: one number sizes the task worker's activity slot
 		// supplier (Activities.WorkerTuner) and is what DescribeOrker reports.
 		MaxConcurrent: cfg.maxConcurrent,
+		// The capacity admission ledger (orker capacity.go), and the channel
+		// whose polls hold its permits.
+		CapacityCPU:    cfg.capacityCPU,
+		CapacityMemory: cfg.capacityMemory,
+		TaskQueue:      cfg.queue,
 		// The embedded OCI-layout fallback (§4.6). It is used ONLY when a
 		// pull of an already-pinned digest fails, and only after OrkStack has
 		// hashed the layout's root blob itself and matched it against the

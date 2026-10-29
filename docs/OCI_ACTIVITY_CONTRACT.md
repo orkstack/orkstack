@@ -103,7 +103,8 @@ old histories replay unchanged. Submit asks the task's pool what it can run
 no pins (`max_concurrent_pins` 0), and a fan-out, a cached task or a container
 failure handler on a pool whose Orker predates the feature (`each_supported`,
 `cache_supported`, `join_supported` false) and could not decode its context.
-The probe reaches one Orker, so every Orker of a pool must run a release that
+The probe asks every uncordoned Orker of the pool, and one that lacks the
+feature refuses the pool, so every Orker of a pool must run a release that
 supports what the pool is sent (`docs/DEPLOY.md`, §1).
 
 ### 2.2 `proto/orkstack/v1/activity.proto`
@@ -296,10 +297,21 @@ fine (§14.8). No mount configuration fixes this, so three measures apply:
    do the same thing on every attempt; classifying it as a retryable upload
    failure would loop forever against deterministic behaviour.
 2. **An explicit escape hatch.** A task may set `runAsOrkerUser: true`, or an
-   Orker `ORK_ORKER_FORCE_USER=1`, which adds `--user <orker-uid>:<orker-gid>`
-   so the Orker owns every written file whatever the umask; `task.json` then
-   reports `task.runAsOrkerUser: true`. It is opt-in because it overrides the
-   image's own `USER` and breaks images that need their baked-in identity.
+   Orker `ORK_ORKER_FORCE_USER=1`, which runs the container as the Orker's own
+   user so the Orker owns every written file whatever the umask; `task.json`
+   then reports `task.runAsOrkerUser: true`. The dispatcher asks for the
+   intent (`ContainerSpec.RunAsOrker`) and the runtime renders it: the docker
+   CLI as `--user <orker-uid>:<orker-gid>`, and the podman CLI on a rootless
+   engine as `--userns=keep-id --user <orker-uid>:<orker-gid>`, measured to
+   land as the Orker. Under a user namespace the CLI cannot keep (a rootless
+   Docker daemon, `userns-remap`, the docker CLI against a rootless Podman
+   socket) that uid is another user on the host, so the boot probe checks the
+   rendering: its container writes a `0600` file as the
+   Orker's user, and when the Orker cannot read it back, a task that asks for
+   the hatch fails `InfrastructureError/RUN_AS_ORKER_UNAVAILABLE`, which is not
+   retried, and an Orker with `ORK_ORKER_FORCE_USER` refuses to start with
+   that reason. It is opt-in because it overrides the image's own `USER` and
+   breaks images that need their baked-in identity.
 3. **First-party images set `umask 022`** before writing anything (§10.1).
 
 Rejected alternatives: `--group-add` plus a setgid directory propagates group
@@ -314,17 +326,56 @@ even that.
 which is why `make up` uses `.data/work`) and whose path holds no comma or
 control character, which a container mount cannot carry. The Orker probes this
 at boot and refuses to start with `InfrastructureError/WORKDIR_NOT_BINDABLE`
-rather than failing every task later. The probe runs a container, so each step
-of it that waits on the daemon (asking whether the probe's image is local, and
-each of two attempts to run its container) has a budget of its own
-(`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes). An attempt that overruns it, or
-that the daemon ends with a deadline error of its own, is tried once more. A
-daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`, which says
-the daemon is slow and nothing about the work root. `WORKDIR_NOT_BINDABLE` is
-kept for a work root whose path holds a comma or control character, a probe the
-daemon refused within its budget, in its own words or otherwise, a probe
-container that exited non-zero, and a probe directory that cannot be made; none
-of those is tried again.
+rather than failing every task later.
+
+The boot probe runs a container built exactly as a task's is: the same spec
+builder and the same §9.2 argument vector, a task's four mounts from a probe
+directory under the work root, the policy's default resources, network `none`,
+the escape hatch's user, and the image
+`docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc`
+(`orker.BindProbeImage`, qualified and pinned, so no short-name search list or
+moved tag decides what runs). It judges what the daemon gave that container,
+from the host and from inside it (`internal/orker/boot_probe.go`):
+
+- **The bind is the Orker's directory.** The container reads back a nonce the
+  Orker wrote into `input/`, and the Orker reads back one the container wrote
+  into `output/`. A daemon that satisfies a bind with a directory of its own,
+  as Podman's Docker-compatible socket does with a missing source, fails it,
+  as `WORKDIR_NOT_BINDABLE`.
+- **The posture is a task's.** `NoNewPrivs` is 1; `Seccomp` is 2; `CapEff`,
+  `CapPrm` and `CapBnd` are zero; `/`, `/run`, `/var/tmp`, `/orkstack/input`
+  and its secrets are read-only; `/tmp` is `nosuid,nodev,noexec`; no
+  `*_proxy` variable is in the environment (printed by name only, never by
+  value); and on cgroup v2 `memory.max`, `pids.max` and `cpu.max` are what the
+  container asked for. Anything weaker refuses boot as
+  `InfrastructureError/RUNTIME_POSTURE_REFUSED`, naming each fact, and so
+  does a refusal of the container that is neither a bind nor a deadline, and
+  a non-zero exit (the probe's script always exits 0). Two limits: `Seccomp:
+  2` shows that a filter is active, not that it is the default profile, which
+  the spelling `seccomp=builtin` decides; and on a host whose cgroup is not v2
+  alone the limits are not read, and the Orker logs that it did not read them.
+- **A cancelled workload hears SIGTERM.** A second container, built the same
+  way and started once the first has passed, traps SIGTERM, says it is ready, and is
+  cancelled exactly as a task is (§6.3: SIGTERM through the runtime, the
+  default 30-second grace, then SIGKILL). The file its trap writes into
+  `output/` decides. A workload that never heard SIGTERM refuses boot as
+  `InfrastructureError/RUNTIME_POSTURE_REFUSED`, quoting the security label
+  and the signal masks it ran with: rootful Podman under AppArmor 5 runs the
+  workload under a stacked label its profile does not let the container's
+  init signal ([DEPLOY.md](DEPLOY.md), "Rootful Podman under AppArmor").
+- **The escape hatch lands as the Orker** (measure 2 above).
+
+The probe runs containers, so each step of it that waits on the daemon
+(identifying the engine, asking whether the probe's image is local, each of
+two attempts to run each of its two containers, and the second one's ready
+file) has a budget of its own
+(`ORK_DOCKER_BIND_PROBE_TIMEOUT`, 2 minutes). An attempt that overruns it, or that the daemon ends with a deadline
+error of its own, is tried once more. A daemon that is still too slow refuses
+boot as `BIND_PROBE_TIMED_OUT`, which says the daemon is slow and nothing about
+the work root. `WORKDIR_NOT_BINDABLE` is kept for a work root whose path holds
+a comma or control character, a bind the daemon refused within its budget in
+its own words, a bind that is not the Orker's directory, and a probe directory
+that cannot be made; none of those is tried again.
 
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt
 directory the Orker creates, populates, mounts read-only, and removes on every
@@ -598,6 +649,10 @@ The template helpers are exactly three:
 
 - **REQUIRED.** Exit `0` with no `values.json` is
   `ContractViolation/VALUES_MISSING`. A workload with no result writes `{}`.
+- MUST be a **regular file** directly in `output/`. A symlink, whatever and
+  wherever its target, a directory, a device, a socket or a FIFO is
+  `ContractViolation/VALUES_MALFORMED`, naming `/orkstack/output/values.json`
+  and what it is. The Orker follows no link the workload wrote (§9.5).
 - MUST be a JSON **object** at the top level. An array, a scalar, or `null` is
   `ContractViolation/VALUES_MALFORMED`.
 - MUST be valid UTF-8 and MUST NOT exceed `limits.valuesMaxBytes` (256 KiB
@@ -620,6 +675,11 @@ separately: only a `values.json` of ≤ 4 KiB is copied inline into the result.
 - The scan is **not recursive**. A directory, symlink, device, socket or FIFO
   is `ContractViolation/ARTIFACT_NOT_A_FILE`. A hierarchy is archived by the
   workload, e.g. as `workspace.tar.gz` (AGENTS.md §3.1).
+- `output/artifacts` itself MUST stay the directory the Orker created. A
+  workload that replaces it with a symlink, a regular file or anything else
+  fails `ContractViolation/ARTIFACT_NOT_A_FILE`, naming
+  `/orkstack/output/artifacts`, before any entry is listed (§9.5). Removing it
+  is not a violation: a workload with no artifacts need not keep it.
 - More than `limits.artifactMaxCount` files, or any file larger than
   `limits.artifactMaxBytes`, is `ContractViolation/ARTIFACT_LIMIT_EXCEEDED`.
 - Every file MUST be readable by the Orker (`OUTPUT_NOT_READABLE`, §3.1).
@@ -1104,8 +1164,8 @@ guarantee that every byte still exists.
 **Success path**, in this exact order (AGENTS.md §4.1):
 
 ```
-1. validate values.json                (exists, readable, object, UTF-8, ≤ limit)
-2. scan + validate output/artifacts/   (regular files, UTF-8 names, readable, count/size)
+1. validate values.json                (exists, regular, readable, object, UTF-8, ≤ limit)
+2. scan + validate output/artifacts/   (a directory of regular files, UTF-8 names, readable, count/size)
 3. hash every artifact and values.json (sha256, streaming)
 4. bound the commit                    (project ActivityCommit via RefFor, assert ≤ commit_max_bytes)
 5. upload artifacts                    (content-addressed keys)
@@ -1212,6 +1272,7 @@ containers run.
 | Temporal temporarily unavailable | the commit, if written | Worker retries the completion; on adoption the result is returned again. | correct |
 | Container exits 1 | logs + declared artifacts, no commit | `ActivityFailed` → retried per policy. | explicit failure |
 | Exit 0, no / malformed / oversize `values.json` | logs, no commit | `VALUES_MISSING` / `VALUES_MALFORMED` / `VALUES_TOO_LARGE` → never retried. | explicit failure |
+| A link in the output: `values.json`, `output/artifacts` or an artifact | logs, no commit | `VALUES_MALFORMED` / `ARTIFACT_NOT_A_FILE`, naming the path → never retried. Nothing outside the output directory is read (§9.5). | explicit failure |
 | Output limits exceeded | logs, no commit | `ARTIFACT_LIMIT_EXCEEDED`, or `COMMIT_TOO_LARGE` measured before any upload. | explicit failure |
 | Outputs the Orker cannot read (`umask 077`) | logs, no commit | `OUTPUT_NOT_READABLE`, naming file, mode and owner. | explicit failure |
 | Torn `commit.json` | the torn object | `link(2)` publication cannot produce one; an existing one is reread once, then `COMMIT_UNDECODABLE`. | explicit failure |
@@ -1219,6 +1280,7 @@ containers run.
 | Object store without conditional PUT | — | Boot-time two-writer race fails → Orker refuses to start (`COMMIT_STORE_NOT_CONDITIONAL`). | refuses to run, never runs unsafely |
 | Container exceeds its own timeout | logs, no commit | SIGTERM → grace → SIGKILL, `TimedOut/CONTAINER_TIMEOUT`, terminal by default (§8.1). | explicit failure |
 | Cancellation, or SIGTERM ignored | logs, no commit | SIGTERM → grace → SIGKILL (§14.5); the Orker returns `ctx.Err()`. | canceled, never auto-retried |
+| Orker stopped (`SIGTERM`, `SIGINT`) mid-container | logs to the last line, the attempt record (`ORKER_STOPPED`), no commit | SIGTERM → grace → SIGKILL, then the process exits (§6.3); Temporal is told nothing, so the heartbeat timeout retries per the task's policy, as for a dead Orker. | correct, container ran twice (at-least-once) |
 | Input artifact unavailable / image pull fails | nothing | `INPUT_ARTIFACT_UNAVAILABLE` / `IMAGE_PULL_FAILED` → retried. | explicit failure |
 | Tag moved between two executions | — | Impossible: the run pins a digest at apply (§4). | correct |
 
@@ -1249,10 +1311,17 @@ One implementation runs every activity: `internal/orker.OCIDispatcher`, over a
 stores, the security policy, and the work root. `orkctl activity test` and
 `orkctl task run` drive the same dispatcher, built by the same constructor.
 
-Exactly one runtime ships: `DockerRuntime`, shelling out to `docker`. The
-interface exists so Podman, containerd, Kubernetes Jobs, ECS or Nomad remain
-*possible*, not because any is planned. **No Docker-specific detail may
-appear outside `internal/orker/runtime_docker.go`.**
+One runtime ships: `DockerRuntime`, shelling out to a Docker-compatible CLI —
+the docker CLI, against Docker or against Podman's Docker-compatible socket,
+or the podman CLI. What differs between them is a dialect, a value of
+spellings on two axes: the CLI's flag grammar, which is configured
+(`orker.docker.cli`, `ORK_DOCKER_CLI`: `docker` or `podman`), and the engine
+behind it, which is asked (`version`; Podman's socket reports a `Podman
+Engine` component), logged at boot and verified by the boot probe (§3.1).
+DescribeOrker reports the engine, not the CLI. The interface exists so
+containerd, Kubernetes Jobs, ECS or Nomad remain *possible*, not because any
+is planned. **No Docker- or Podman-specific detail may appear outside the
+runtime files, `internal/orker/runtime_docker.go` and `runtime_dialect.go`.**
 
 **The interface split is also the failure classification.** `Create` and
 `Start` return `error`; `Wait` returns `(ExitStatus, error)`. A container that
@@ -1303,6 +1372,16 @@ The Orker MUST return `ctx.Err()` only *after* the server delivered
 cancellation; returning `nil` after cancellation would report success and MUST
 NOT happen. Containers are also created with `--stop-timeout` equal to the
 grace period, so a daemon-side stop honours the same window.
+
+**An Orker that is itself stopped** (`SIGTERM`, `SIGINT`) stops polling, and
+the worker's stop cancels every running attempt. Each runs the same sequence,
+then writes its attempt record `FAILED` with `ORKER_STOPPED` and closes its log
+sink, and the process exits only once every attempt has: the `SIGKILL` at the
+end of a grace is sent by the Orker, so an Orker that exited first would leave
+a container that ignores `SIGTERM` running. Such an attempt returns nothing to
+Temporal (the SDK's pending result), which then sees exactly what it sees of an
+Orker that died: no heartbeat, a heartbeat timeout, and a retry under the
+task's policy (`ORKER_HEARTBEAT_TIMEOUT`, §8.1). A second signal exits at once.
 
 Timeouts, which must not be confused:
 
@@ -1383,12 +1462,19 @@ host's disk, and `ORK_ORKER_TMPFS_BYTES` does not apply (it is a bind mount).
 
 ### 6.5 Pool liveness
 
-`DescribeOrker` is the pool-liveness probe: the engine dispatches it as a
-Temporal activity on the pool's own channel (5 s / 10 s timeouts,
-`MaximumAttempts: 2`), so a pool proves it is alive only when an Orker is
-actually polling it. Its result also carries the Orker's runtime, security
+`DescribeOrker` is the pool-liveness probe. The engine dispatches it as a
+Temporal activity on one Orker's own control channel (5 s timeout,
+`MaximumAttempts: 2`), once for each Orker the presence channel lists, so an
+Orker proves it is alive only when it answers. The control channel has its
+own worker and slots, so an Orker whose every task slot is taken answers like
+an idle one. A pool whose every Orker is busy therefore still reads as live at
+submit, though its own channel shows no poller (`docs/DEPLOY.md`, "Running M
+Orker pools"). Its result also carries the Orker's pool, runtime, security
 profile, concurrency, pin capacity, cordon state, and the capability flags
-submit reads (§2.1). The Admin **Activities** page and `orkctl activity list`
+submit reads (§2.1). One caller still asks a pool's own channel:
+`ActivityService.DescribeOrker`, the Admin **Activities** page's Orker panel,
+dispatches it on the default pool's channel, so on a pool whose every task
+slot is taken it waits for a free one and can time out. The Admin **Activities** page and `orkctl activity list`
 render the engine's catalog, because that is engine configuration, not
 something to ask an Orker.
 
@@ -1450,8 +1536,8 @@ instead would make an input file mutable during setup, and §3.1 depends on
 `input/` being sealed `0555`/`0444` before the container starts. Pulling first
 also fails `IMAGE_PULL_FAILED` before any staging bandwidth is spent.
 
-**The failure path scans too**, so the regular-file, symlink, device, FIFO,
-readability, count and size rules apply on exactly the path a broken or
+**The failure path scans too**, through the same confined tree (§9.5), so the
+regular-file, symlink, device, FIFO, readability, count and size rules apply on exactly the path a broken or
 hostile image is most likely to take. A violation there is a **note attached
 to the workload's error** (`ActivityFailureDetail.scan_notes`), never a
 replacement for it: a task that exited 1 *and* wrote a symlink is reported as
@@ -1563,10 +1649,12 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `CONTAINER_TIMEOUT` | TimedOut | **no** (§8.1) | Orker killed the container at `timeout_seconds` |
 | `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | **no** | the daemon cannot bind the workspace path — a host misconfiguration retrying will not fix |
-| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | `ORK_ORKER_WORKDIR`'s path holds a comma or control character, or the daemon refused the boot probe's run within its budget, or the probe's container exited non-zero, and not for a deadline (or no probe directory could be made): `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
-| `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start the probe's container within it, or ended it with a deadline error of its own; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
-| `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`alpine:3.20`) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
-| `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created |
+| `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | `ORK_ORKER_WORKDIR`'s path holds a comma or control character, or the daemon refused the boot probe's bind within its budget in its own words, or the probe's container and the Orker did not read back each other's nonce (the daemon bound a directory of its own), or no probe directory could be made: `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
+| `RUNTIME_POSTURE_REFUSED` | InfrastructureError | — | the boot probe's container, built as a task's is, was refused for a reason that is neither a bind nor a deadline, exited non-zero, or saw a weaker posture than §9.2 from inside (privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable it was never given, cgroup v2 limits other than it asked for), or its SIGTERM container's workload, cancelled as a task is, never heard SIGTERM (§3.1); the Orker refuses to start, naming each |
+| `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start one of the probe's two containers within it, or ended it with a deadline error of its own, or the second one's workload did not say it was ready within it; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
+| `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`orker.BindProbeImage`, alpine 3.20 by digest) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
+| `RUN_AS_ORKER_UNAVAILABLE` | InfrastructureError | **no** | the task runs as the Orker's own user (`runAsOrkerUser`, or `ORK_ORKER_FORCE_USER`), and the boot probe found that user does not land as the Orker on this host: a `0600` file its container wrote as that user is one the Orker cannot read. Refused before a container is created; under `ORK_ORKER_FORCE_USER` the Orker refuses to start instead |
+| `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created, or the Orker had no file descriptor left to hold an output artifact open |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |
 | `IMAGE_DIGEST_MISMATCH` | ContractViolation | no | pulled or embedded content does not match `image.pinned` |
 | `IMAGE_NOT_PINNED` | ContractViolation | no | `ImageRef.pinned` empty or not `…@sha256:…` |
@@ -1575,9 +1663,9 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `IMAGE_SIGNATURE_INVALID` | ContractViolation | no | signatures exist and none verifies with the named key over this digest |
 | `IMAGE_SIGNATURE_UNAVAILABLE` | InfrastructureError | yes | the registry could not be asked for a signature, or this Orker has no registry client |
 | `VALUES_MISSING` | ContractViolation | no | exit 0 with no `/orkstack/output/values.json` |
-| `VALUES_MALFORMED` | ContractViolation | no | not valid UTF-8 JSON, or not a top-level object |
+| `VALUES_MALFORMED` | ContractViolation | no | not valid UTF-8 JSON, or not a top-level object, or not a regular file (a symlink, directory, device, socket or FIFO) |
 | `VALUES_TOO_LARGE` | ContractViolation | no | over `limits.valuesMaxBytes` |
-| `ARTIFACT_NOT_A_FILE` | ContractViolation | no | a directory, symlink, device, socket or FIFO in `output/artifacts/` |
+| `ARTIFACT_NOT_A_FILE` | ContractViolation | no | a directory, symlink, device, socket or FIFO in `output/artifacts/`, or `output/artifacts` itself replaced by one that is not a directory |
 | `ARTIFACT_LIMIT_EXCEEDED` | ContractViolation | no | too many artifacts, or one too large |
 | `ARTIFACT_NAME_NOT_UTF8` | ContractViolation | no | an `output/artifacts/` file name is not valid UTF-8 (§3.5) |
 | `ARTIFACT_UPLOAD_FAILED` | InfrastructureError | yes | store `Put` failed |
@@ -1591,6 +1679,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | the Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed |
 | `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor (`docs/DEPLOY.md`, "Secrets on a shared pool") |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | the request exceeds the Orker's cap, or is not a positive finite quantity |
+| `RESOURCE_ADMISSION_MISMATCH` | ContractViolation | no | on an Orker declaring a capacity, the resolved request is larger than the reservation it was polled under and free capacity cannot cover it; it cannot happen while every poll reserves the per-task cap |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | the requested mode is not `default` or `none` |
 | `COMMIT_READ_FAILED` | InfrastructureError | yes | commit store unreadable at step 0 |
 | `COMMIT_WRITE_FAILED` | InfrastructureError | yes | conditional PUT failed for a non-precondition reason |
@@ -1601,6 +1690,11 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `COMMIT_STORE_NOT_CONDITIONAL` | InfrastructureError | **no** | the boot-time two-writer race proved the store lacks conditional create; the Orker refuses to start (§5.3) |
 | `VALUES_CORRUPT` | ContractViolation | no | on adoption, the refetched `values.json` does not match `commit.values.sha256` |
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
+
+One Orker code is recorded on an attempt and never reported:
+`ORKER_STOPPED` (InfrastructureError, retryable) is the record of an attempt
+its Orker stopped because the Orker itself was stopping (§6.3). Temporal hears
+nothing for it, so the task's own outcome is `ORKER_HEARTBEAT_TIMEOUT`.
 
 Two Orker codes are not task-attempt reasons: `ORKER_CORDON_INVALID`
 (ContractViolation) refuses a malformed cordon control request, and `PANIC`
@@ -1702,7 +1796,8 @@ socket.
 --read-only                                   root filesystem
 --cap-drop=ALL
 --security-opt no-new-privileges
---security-opt seccomp=builtin                default profile, named explicitly
+--security-opt seccomp=builtin                default profile, named explicitly; omitted on the Podman engine, which has no name for its default and reads builtin as a file
+--http-proxy=false                            podman CLI only: it forwards its own process's proxy variables otherwise
 --pids-limit <policy>                         default 512
 --memory <request or policy default>          always set; never unlimited
 --cpus <request or policy default>            always set; never unlimited
@@ -1717,15 +1812,29 @@ socket.
 --mount type=bind,source=<attempt>/output,destination=/orkstack/output
 --mount type=bind,source=<attempt>/tmp,destination=/orkstack/tmp
 --mount type=bind,source=<pin>/shared,destination=/orkstack/shared   pinned tasks only
---tmpfs /tmp:rw,nosuid,nodev,size=<policy>    default 64 MiB
---user <orker-uid>:<orker-gid>                only with runAsOrkerUser / ORK_ORKER_FORCE_USER
+--tmpfs /tmp:rw,nosuid,nodev,noexec,size=<policy>   default 64 MiB; noexec spelled, not left to the runtime
+--tmpfs /run:ro,size=1m --tmpfs /var/tmp:ro,size=1m   Podman engine only, below
+--user <orker-uid>:<orker-gid>                only with runAsOrkerUser / ORK_ORKER_FORCE_USER, as the runtime renders "as the Orker"
+--userns=keep-id                              with that --user, on a rootless podman CLI only
 --env <task env:>                             the task's own, nothing else
 ```
 
+`--read-only` makes the whole root read-only, `/run` and `/var/tmp` included,
+on Docker. The Podman engine's leaves those two writable tmpfs, behind its CLI
+and its socket alike, and its `containers.conf` setting for it had no effect,
+so on that engine alone each gets an empty read-only tmpfs. Docker does not:
+a mount target follows the image's own symlinks, so on an image whose
+`/var/tmp` links to `/tmp` the tmpfs turns `/tmp` read-only, which on Podman
+is the price of a read-only `/run` and `/var/tmp`. The boot probe runs this
+argument vector and checks from inside its container that the engine applied
+it, `/run` and `/var/tmp` by name, so a runtime that leaves either writable is
+refused at boot (§3.1).
+
 Rootless execution is used when the runtime supports it. Per-container user
-namespace remapping is not implementable (`--userns=host` is the only valid
-`docker run` value and it *reduces* isolation); deployments wanting it
-configure the daemon.
+namespace remapping is not implementable on the docker CLI (`--userns=host` is
+the only valid `docker run` value and it *reduces* isolation); deployments
+wanting it configure the daemon. The podman CLI's `--userns=keep-id` is used
+for the escape hatch alone (§3.1).
 
 ### 9.3 Resource policy
 
@@ -1742,6 +1851,18 @@ refuses rather than running uncapped, and a cap or default that is not a
 positive, finite quantity stops the Orker at boot. **No workload ever
 receives unlimited resources**, including one that requested nothing. The
 effective values reach the workload in `task.json` and the attempt record.
+The grammar is one package (`internal/quantity`) that the DSL also reads a
+request with at validate and apply (`docs/DSL.md` rule 6d), so a spelling
+apply accepts is never one the Orker cannot read.
+
+An Orker may also declare a **capacity** (`ORK_ORKER_CAPACITY_CPU`,
+`ORK_ORKER_CAPACITY_MEMORY`) and then admits no task beyond it: each poll
+reserves the per-task cap, the reservation is trimmed to the task's effective
+request once the task is in hand, and it is freed when the container is
+removed. The container sees none of this; its limits are its effective
+request, as without a capacity (`docs/DEPLOY.md`, "Declaring an Orker's
+capacity"). A submit refuses a task whose request is above every answering
+Orker's cap of its pool (`RESOURCES_UNSATISFIABLE`).
 
 ### 9.4 Secrets
 
@@ -1756,6 +1877,53 @@ run archive, a log chunk, or `task.json` — which carries names and paths only.
 The per-attempt secrets directory is removed on every exit path, including
 panic and cancellation. A cached task resolves no secret on a hit, which is why
 a task that mounts a secret should not be cached (`docs/ACTIVITY_IMAGES.md`).
+
+### 9.5 Reading the output
+
+Everything under `/orkstack/output` is the workload's, and the workload may
+be hostile. The Orker reads it back on the host, where a symlink resolves in
+the **Orker's** mount namespace, not the container's: a `values.json` linked
+to a file the container never saw, such as a registry login or another
+attempt's `task.json` in the Orker's work root, would otherwise be read and
+committed as the task's result, and an `output/artifacts` linked to a host
+directory would upload what is in it. So the Orker never reads below the
+output directory by host path:
+
+- It opens the attempt's output directory once, as a confined root
+  (`os.Root`). The directory is the bind-mount point, which the container can
+  neither rename nor remove, inside a `0700` attempt directory no container
+  mounts. Every later read resolves through that root, and a resolution that
+  would leave it fails.
+- It `lstat`s `values.json`, `artifacts` and each entry of `artifacts` inside
+  the root before opening it, and refuses a symlink, even one whose target is
+  inside the tree, and any other entry that is not where §3.4 and §3.5 put a
+  regular file or the artifacts directory (`VALUES_MALFORMED`,
+  `ARTIFACT_NOT_A_FILE`, naming the container path and the entry's kind and
+  never a host path).
+- Every open goes through the root, without blocking on a FIFO, and is proved
+  by a second `lstat` taken while the descriptor is held: the descriptor must
+  be a regular file, the name itself (not a link) must name it, and an
+  artifact must still have the size the scan measured, or it is refused. The
+  proof does not compare the first `lstat` with the descriptor, because a
+  filesystem may give a freed inode number to the next file at once (ext4
+  does), so a replacement can carry the identity the first `lstat` saw; a
+  held descriptor pins its inode, so no other file can match it.
+- The scan opens each artifact once and keeps that descriptor until the
+  commit. Validation, hashing, content-type sniffing, upload and the failure
+  path's upload all read through it, so a name replaced after the scan is
+  never resolved again. An artifact the Orker cannot open fails alone: the
+  success path names it, and the failure path still uploads the others.
+  Holding one descriptor per artifact bounds the descriptors an attempt takes
+  by `artifact_max_count`; an Orker with none left fails `WORKDIR_FAILED`,
+  retried.
+
+The kernel's `fs.protected_symlinks` refuses to follow some of these links
+when the workload's uid is not the Orker's. The Orker does not rely on it: a
+same-uid workload (`runAsOrkerUser`, or root in a root Orker's container)
+passes it, and not every host sets it. Hard links are not a way out either: a
+container cannot link a file across its bind mounts (`EXDEV`). The removal of
+an attempt's or a pin's tree walks and unseals through a confined root too
+(`internal/orker/workspace.go`, `OutputTree`, `removeSealedTree`).
 
 ---
 
@@ -2055,7 +2223,7 @@ hold the tree to them.
   bound (§5.3, §5.4).
 - **14.8 Output readability is host-dependent.** The same image, umask
   (`077`) and mode failed `Permission denied` on a native filesystem and read
-  fine through a VM-shared bind mount that remapped ownership. `stat` succeeds
+  fine through a VM-shared bind mount that remapped ownership. `lstat` succeeds
   where `open` fails, so `OUTPUT_NOT_READABLE` can always name mode and owner;
   `--user` of the Orker's own UID reads its own `0600` file (§3.1).
 - **14.9 A `Struct` cannot carry byte-identical JSON.** A `Struct`/`protojson`

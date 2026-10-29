@@ -471,10 +471,10 @@ func TestProofHost_CosignIsPinnedByReleaseAndByHash(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(cosignSHA256) {
 		t.Errorf("the cosign hash %q is not a SHA-256", cosignSHA256)
 	}
-	// The CHANGELOG says which cosign the proofs run; it names this release.
-	changelog := readRepoFileForPins(t, "CHANGELOG.md")
-	if !strings.Contains(changelog, "cosign (v2.6.5)") {
-		t.Error("CHANGELOG.md no longer names cosign v2.6.5, the release proof-host downloads")
+	// docs/PROOFS.md says which cosign the proofs run; it names this release.
+	proofs := strings.Join(strings.Fields(readRepoFileForPins(t, "docs/PROOFS.md")), " ")
+	if !strings.Contains(proofs, "cosign v2.6.5 is downloaded through it") {
+		t.Error("docs/PROOFS.md no longer names cosign v2.6.5, the release proof-host downloads")
 	}
 }
 

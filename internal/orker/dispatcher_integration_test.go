@@ -31,20 +31,56 @@ import (
 // execution must never silently switch images because a tag moved
 // (AGENTS.md §5). The digest is resolved once, at the start of the run, from
 // whatever alpine:3.20 the host has — so the test pins what it actually ran
-// rather than hardcoding a digest that will rot.
-const referenceTag = "alpine:3.20"
+// rather than hardcoding a digest that will rot. It is qualified, because
+// Podman's enforcing short-name mode refuses a short name.
+const referenceTag = "docker.io/library/alpine:3.20"
+
+// containerCLI is the container CLI these suites drive and inspect with: the
+// one the runtime under test is pointed at, ORK_DOCKER_BIN, then podman for
+// ORK_DOCKER_CLI=podman, then docker, on PATH. The suites run unchanged on
+// Docker, on the podman CLI, and on the docker CLI against Podman's socket.
+func containerCLI(t *testing.T) string {
+	t.Helper()
+	name := strings.TrimSpace(os.Getenv(orker.DockerBinVar))
+	if name == "" {
+		name = orker.DefaultDockerBin
+		if strings.EqualFold(strings.TrimSpace(os.Getenv(orker.CLIVar)), orker.CLIPodman) {
+			name = orker.CLIPodman
+		}
+	}
+	path, err := exec.LookPath(name)
+	if err != nil {
+		infraAbsent(t, "the container CLI %q is not on PATH: %v", name, err)
+	}
+	return path
+}
+
+// runtimeInfo is what the runtime under test says it is: the engine, the CLI
+// and whether the engine is rootless, for the few expectations whose spelling
+// differs by shape.
+func runtimeInfo(t *testing.T) orker.RuntimeInfo {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	info, err := orker.NewDockerRuntime().Describe(ctx)
+	if err != nil {
+		infraAbsent(t, "the container runtime cannot describe itself: %v", err)
+	}
+	return info
+}
+
+// onPodman reports whether the engine behind that CLI is Podman.
+func onPodman(t *testing.T) bool { return runtimeInfo(t).Name == orker.CLIPodman }
 
 // requireDocker skips (or fails under ORK_REQUIRE_INFRA) when there is no
 // daemon to talk to.
 func requireDocker(t *testing.T) {
 	t.Helper()
-	if _, err := exec.LookPath("docker"); err != nil {
-		infraAbsent(t, "the docker CLI is not on PATH: %v", err)
-	}
+	cli := containerCLI(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").CombinedOutput(); err != nil {
-		infraAbsent(t, "the docker daemon is not reachable: %v: %s", err, out)
+	if out, err := exec.CommandContext(ctx, cli, "version", "--format", "{{.Server.Version}}").CombinedOutput(); err != nil {
+		infraAbsent(t, "the container engine is not reachable through %s: %v: %s", cli, err, out)
 	}
 }
 
@@ -55,19 +91,20 @@ func pinnedReference(t *testing.T) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 
-	if out, err := exec.CommandContext(ctx, "docker", "image", "inspect", referenceTag).CombinedOutput(); err != nil {
-		if pullOut, pullErr := exec.CommandContext(ctx, "docker", "pull", "--quiet", referenceTag).CombinedOutput(); pullErr != nil {
+	cli := containerCLI(t)
+	if out, err := exec.CommandContext(ctx, cli, "image", "inspect", referenceTag).CombinedOutput(); err != nil {
+		if pullOut, pullErr := exec.CommandContext(ctx, cli, "pull", "--quiet", referenceTag).CombinedOutput(); pullErr != nil {
 			infraAbsent(t, "cannot pull %s: %v: %s (inspect said %s)",
 				referenceTag, pullErr, pullOut, out)
 		}
 	}
-	out, err := exec.CommandContext(ctx, "docker", "image", "inspect",
+	out, err := exec.CommandContext(ctx, cli, "image", "inspect",
 		"--format", "{{index .RepoDigests 0}}", referenceTag).Output()
 	if err != nil {
 		// An image built or loaded locally has no RepoDigest. Fall back to
 		// the image ID, which is digest-shaped and is what the runtime will
 		// resolve against.
-		id, idErr := exec.CommandContext(ctx, "docker", "image", "inspect",
+		id, idErr := exec.CommandContext(ctx, cli, "image", "inspect",
 			"--format", "{{.Id}}", referenceTag).Output()
 		if idErr != nil {
 			infraAbsent(t, "cannot resolve a digest for %s: %v", referenceTag, idErr)
@@ -95,7 +132,7 @@ func bindableWorkRoot(t *testing.T) string {
 		candidates = append(candidates, filepath.Join(home, ".orkstack-test-work"))
 	}
 
-	runtime := orker.NewDockerRuntime()
+	prober := &orker.OCIDispatcher{Runtime: orker.NewDockerRuntime(), Policy: orker.DefaultSecurityPolicy()}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -105,7 +142,13 @@ func bindableWorkRoot(t *testing.T) string {
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}
-		if err := runtime.ProbeBindable(ctx, candidate); err != nil {
+		if err := prober.ProbeRuntime(ctx, candidate); err != nil {
+			// A runtime that does not give a task's container its posture
+			// refuses every root alike: that is a failure of the host's
+			// runtime, not a root to try another for.
+			if errors.Is(err, orker.ErrPostureRefused) {
+				t.Fatalf("the boot probe refused this host's container runtime under %s: %v", candidate, err)
+			}
 			reasons = append(reasons, candidate+": "+err.Error())
 			continue
 		}
@@ -555,6 +598,69 @@ func TestIntegration_CancellationSignalsThenKills(t *testing.T) {
 	if elapsed < grace {
 		t.Errorf("the container died after %s, before its %s grace period elapsed", elapsed, grace)
 	}
+}
+
+// TestIntegration_CancellationDeliversSIGTERMToTheWorkload is the first half
+// of §3.3 on a real daemon: cancelling the activity reaches a running
+// workload as SIGTERM, through the runtime's init, and a workload that
+// handles it ends inside its grace period rather than being killed at the
+// end of it. TestIntegration_CancellationSignalsThenKills proves the second
+// half, and passes whether or not SIGTERM arrives, because its workload
+// ignores SIGTERM.
+func TestIntegration_CancellationDeliversSIGTERMToTheWorkload(t *testing.T) {
+	requireDocker(t)
+	dispatcher, _ := newDispatcher(t)
+	in := baseInput(t, "hears", "/bin/sh", "-c",
+		`trap 'echo got-TERM; exit 0' TERM; touch /orkstack/tmp/`+trapInstalled+`; echo ready; while true; do sleep 1; done`)
+	const grace = 30 * time.Second
+	in.CancellationGracePeriodSeconds = int32(grace / time.Second)
+	in.TimeoutSeconds = 300
+	var (
+		mu    sync.Mutex
+		lines []string
+	)
+	dispatcher.LogSinkObserver = func(_ *orkstackv1.ExecuteTaskInput, line string) {
+		mu.Lock()
+		defer mu.Unlock()
+		lines = append(lines, line)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	var execErr error
+	go func() {
+		defer close(done)
+		_, execErr = dispatcher.Execute(ctx, in)
+	}()
+	awaitWorkspaceMarker(t, dispatcher.WorkRoot, trapInstalled, 2*time.Minute)
+	started := time.Now()
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(grace + time.Minute):
+		t.Fatal("cancellation never ended the container; it was still running past its grace period")
+	}
+	elapsed := time.Since(started)
+	if !errors.Is(execErr, context.Canceled) {
+		t.Errorf("Execute returned %v, want a context cancellation", execErr)
+	}
+	mu.Lock()
+	heard := false
+	for _, line := range lines {
+		heard = heard || strings.Contains(line, "got-TERM")
+	}
+	seen := strings.Join(lines, " | ")
+	mu.Unlock()
+	if !heard {
+		t.Errorf("the workload never said got-TERM: SIGTERM did not reach it (its lines: %s)", seen)
+	}
+	if elapsed >= grace {
+		t.Errorf("the container ended %s after cancellation, at or past its %s grace period: "+
+			"it was killed, not stopped by SIGTERM", elapsed.Round(time.Millisecond), grace)
+	}
+	t.Logf("§3.3: the workload heard SIGTERM and ended %s after cancellation (grace period %s)",
+		elapsed.Round(time.Millisecond), grace)
 }
 
 // trapInstalled is the marker the SIGTERM-ignoring workload writes once its

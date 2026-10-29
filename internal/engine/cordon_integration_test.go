@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -64,6 +65,9 @@ type cordonDeployment struct {
 	pools       []string
 	transcript  *poolTranscript
 	transcriptN string
+	// apiLog is everything the API service logged, still echoed to stderr,
+	// so a test can assert on what submit recorded about a pool.
+	apiLog *syncBuffer
 }
 
 // syncBuffer is a goroutine-safe log sink, so a test can read an Orker's own
@@ -102,6 +106,7 @@ func newCordonDeployment(t *testing.T, ctx context.Context, name string, pools .
 		pools:       pools,
 		transcript:  &poolTranscript{},
 		transcriptN: "cordon-" + name + "-transcript.txt",
+		apiLog:      &syncBuffer{},
 	}
 	d.temporal = dialVersioningCluster(t, ctx, d.namespace)
 	awaitNamespaceReadyForCommitE2E(t, ctx, d.temporal, d.namespace)
@@ -179,13 +184,13 @@ func newCordonDeployment(t *testing.T, ctx context.Context, name string, pools .
 		Bus:           bus,
 		Starter:       d.starter,
 		Pools:         engine.NewTemporalPoolProbe(d.temporal),
-		PoolOrkers:    d.starter,
 		Orkers:        d.starter,
 		Fleet:         d.starter,
 		ArtifactStore: d.store,
 		Logs:          d.logs,
 		Artifacts:     cfg,
 		Limits:        engine.DefaultLimits(),
+		Logger:        slog.New(slog.NewTextHandler(io.MultiWriter(os.Stderr, d.apiLog), nil)),
 	})
 	d.serve(t, svc)
 	d.image = pinnedAlpineForCommitE2E(t)
@@ -747,13 +752,19 @@ func TestIntegration_ARestartedCordonedOrkerComesBackReady(t *testing.T) {
 	t.Logf("EVIDENCE restart clears the cordon: %s", describeRows(rows))
 }
 
-func TestIntegration_DescribeOrkerOnThePoolChannelStillAnswersFromTheUncordonedSibling(t *testing.T) {
+// A cordon closes an Orker's task slots, never its control channel: the
+// inventory submit's probes read (engine.ReadFleet) still reaches a cordoned
+// Orker there and reads it as cordoned, while the pool's count still holds
+// both inside the freshness window.
+func TestIntegration_ACordonedOrkerStillAnswersOnItsOwnChannelBesideItsSibling(t *testing.T) {
 	ctx := cordonContext(t, 5*time.Minute)
 	pool := fmt.Sprintf("probe-%d", time.Now().UnixNano()%1_000_000)
 	d := newCordonDeployment(t, ctx, "probe", pool)
 	a := d.orker("orker-pa-"+d.token, pool, pinOrkerConfig{})
 	b := d.orker("orker-pb-"+d.token, pool, pinOrkerConfig{})
 	awaitPoolServedBy(t, ctx, engine.NewTemporalPoolProbe(d.temporal), pool, a.queue, 2)
+	d.awaitFleet(orkersWhere("pool", pool), time.Minute, "both Orkers listed",
+		func(rows []*orkstackv1.Orker) bool { return len(rows) == 2 })
 	d.cordon(a.id, "probe check")
 
 	resp, err := d.namespaces.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{Namespace: d.orkNS}))
@@ -770,21 +781,21 @@ func TestIntegration_DescribeOrkerOnThePoolChannelStillAnswersFromTheUncordonedS
 	if count != 2 {
 		t.Fatalf("pool %s reports %d live Orkers inside the freshness window; want 2", pool, count)
 	}
-	// At most two describes can land on A's already-outstanding long polls
-	// (the cordon window); three answers therefore include at least one from B.
-	answered := map[string]int{}
-	for i := 0; i < 3; i++ {
-		got, err := d.starter.OrkerOnPool(ctx, a.queue)
-		if err != nil {
-			t.Fatalf("the pool's describe probe failed with A cordoned: %v", err)
+	orkers, err := engine.ReadFleet(ctx, d.starter)
+	if err != nil {
+		t.Fatalf("read the orker inventory: %v", err)
+	}
+	cordoned := map[string]bool{}
+	for _, o := range orkers {
+		if o.Err == nil && o.Described.GetPool() == pool {
+			cordoned[o.Presence.Identity] = o.Described.GetCordoned()
 		}
-		answered[got.GetOrkerId()]++
 	}
-	d.transcript.line("pool describe probe answered by %v", answered)
-	if answered[b.id] == 0 {
-		t.Fatalf("the uncordoned sibling never answered the pool probe: %v", answered)
+	d.transcript.line("answered on their own channels, cordoned: %v", cordoned)
+	if len(cordoned) != 2 || !cordoned[a.id] || cordoned[b.id] {
+		t.Fatalf("answers on the Orkers' own channels = %v; want A cordoned and B not", cordoned)
 	}
-	t.Logf("EVIDENCE pool probe with A cordoned: live_orker_count=%d, answered by %v", count, answered)
+	t.Logf("EVIDENCE probe with A cordoned: live_orker_count=%d, answered cordoned=%v", count, cordoned)
 }
 
 func TestIntegration_CordonReachesAVersionedOrkersControlChannel(t *testing.T) {

@@ -428,6 +428,10 @@
 	let editTelemetryAttributesText = $state('');
 	let editHoldReason = $state('');
 	let editMaxRunning = $state('');
+	// Not edited here (orkctl namespace update --fair-share-weight sets it),
+	// but carried through: UpdateNamespace replaces the document, so leaving
+	// it out would silently reset the namespace to the default weight.
+	let editFairShareWeight = $state(0);
 	let editAllowedSecrets = $state('');
 	let editBudgetCpuSeconds = $state('');
 	let editBudgetGibSeconds = $state('');
@@ -458,6 +462,7 @@
 			: '';
 		editHoldReason = ns.hold?.reason ?? '';
 		editMaxRunning = ns.maxRunning > 0 ? String(ns.maxRunning) : '';
+		editFairShareWeight = ns.fairShareWeight;
 		editAllowedSecrets = ns.allowedSecrets.join('\n');
 		editBudgetCpuSeconds = ns.budget && ns.budget.cpuSeconds > 0n ? String(ns.budget.cpuSeconds) : '';
 		editBudgetGibSeconds = ns.budget && ns.budget.gibSeconds > 0n ? String(ns.budget.gibSeconds) : '';
@@ -469,18 +474,77 @@
 		editErrors = {};
 		editServerError = '';
 		editConflict = false;
-		editSeed = editFields();
+		editOpened = editFieldValues();
 	}
 
-	// The edit form's fields as one value, and the value it was opened with.
-	function editFields() {
-		return JSON.stringify([
-			editDescription, editDefaultPool, editAllowedPools, editRunRetentionHours, editTelemetrySink,
-			editTaskLogs, editTelemetryAttributesText, editHoldReason, editMaxRunning, editAllowedSecrets,
-			editBudgetCpuSeconds, editBudgetGibSeconds, editBudgetPeriodHours, editBudgetEnforce, editRequireSignedBy
-		]);
+	// The edit form's fields by name, and the values it was opened with: what
+	// the dirty guard compares, and what a conflict retry diffs to tell the
+	// reader's edit from what the form merely loaded.
+	type EditFields = {
+		description: string;
+		defaultPool: string;
+		allowedPools: string;
+		runRetentionHours: string;
+		telemetrySink: string;
+		taskLogs: TaskLogsChoice;
+		telemetryAttributes: string;
+		holdReason: string;
+		maxRunning: string;
+		allowedSecrets: string;
+		budgetCpuSeconds: string;
+		budgetGibSeconds: string;
+		budgetPeriodHours: string;
+		budgetEnforce: boolean;
+		requireSignedBy: string;
+	};
+	function editFieldValues(): EditFields {
+		return {
+			description: editDescription,
+			defaultPool: editDefaultPool,
+			allowedPools: editAllowedPools,
+			runRetentionHours: editRunRetentionHours,
+			telemetrySink: editTelemetrySink,
+			taskLogs: editTaskLogs,
+			telemetryAttributes: editTelemetryAttributesText,
+			holdReason: editHoldReason,
+			maxRunning: editMaxRunning,
+			allowedSecrets: editAllowedSecrets,
+			budgetCpuSeconds: editBudgetCpuSeconds,
+			budgetGibSeconds: editBudgetGibSeconds,
+			budgetPeriodHours: editBudgetPeriodHours,
+			budgetEnforce: editBudgetEnforce,
+			requireSignedBy: editRequireSignedBy
+		};
 	}
-	let editSeed = '';
+	function setEditFields(fields: EditFields) {
+		editDescription = fields.description;
+		editDefaultPool = fields.defaultPool;
+		editAllowedPools = fields.allowedPools;
+		editRunRetentionHours = fields.runRetentionHours;
+		editTelemetrySink = fields.telemetrySink;
+		editTaskLogs = fields.taskLogs;
+		editTelemetryAttributesText = fields.telemetryAttributes;
+		editHoldReason = fields.holdReason;
+		editMaxRunning = fields.maxRunning;
+		editAllowedSecrets = fields.allowedSecrets;
+		editBudgetCpuSeconds = fields.budgetCpuSeconds;
+		editBudgetGibSeconds = fields.budgetGibSeconds;
+		editBudgetPeriodHours = fields.budgetPeriodHours;
+		editBudgetEnforce = fields.budgetEnforce;
+		editRequireSignedBy = fields.requireSignedBy;
+	}
+	let editOpened: EditFields | undefined;
+	// changedEditFields is the reader's edit: the fields whose value differs
+	// from the one the form was opened with.
+	function changedEditFields(): (keyof EditFields)[] {
+		const now = editFieldValues();
+		const opened = editOpened;
+		if (!opened) return [];
+		return (Object.keys(now) as (keyof EditFields)[]).filter((key) => now[key] !== opened[key]);
+	}
+	function takeEditField<K extends keyof EditFields>(to: EditFields, from: EditFields, key: K) {
+		to[key] = from[key];
+	}
 
 	function closeEdit() {
 		editingName = '';
@@ -495,7 +559,7 @@
 	guardUnsaved(
 		(navigation) =>
 			leavesRoute(navigation) &&
-			((createOpen && createFields() !== createSeed) || (editingName !== '' && editFields() !== editSeed)),
+			((createOpen && createFields() !== createSeed) || (editingName !== '' && changedEditFields().length > 0)),
 		'Discard the namespace changes you have not saved?'
 	);
 
@@ -560,6 +624,7 @@
 					// reason on save is a deliberate release, not an omission.
 					hold: holdRequest(editHoldReason),
 					maxRunning: maxRunningRequest(editMaxRunning),
+					fairShareWeight: editFairShareWeight,
 					// Prefilled one entry per line from the row: blank on save
 					// sends an empty list, a deliberate choice of unrestricted,
 					// not an omission — the rule run retention follows above.
@@ -598,24 +663,38 @@
 
 	// reloadEtagAndRetry re-reads the namespace for its CURRENT etag and
 	// re-submits this same edit against it — "the loser re-reads and
-	// re-applies" (UpdateNamespace's own doc comment). The FORM's own
-	// fields (description/pool) are left exactly as the user typed them —
-	// that is the edit being re-applied. Everything this form does NOT
-	// expose is instead refreshed from this fresh read, not just the etag:
-	// the earlier version of this fix moved the concurrency token forward
-	// while replaying `editLabels` captured at the ORIGINAL open, so a
-	// concurrent label change made underneath this edit (the same kind of
-	// out-of-band write the conflict itself proves happened) was silently
-	// overwritten by the retry. Labels are the one such field this page
-	// carries today; a future hidden field belongs here too.
+	// re-applies" (UpdateNamespace's own doc comment). The edit being
+	// re-applied is the fields the reader CHANGED since the form opened;
+	// every other field — shown or not — is taken from this fresh read, as
+	// the etag is. The conflict proves somebody wrote underneath this form,
+	// so a field the reader never touched still holds the value the form
+	// loaded, not one the reader chose: re-sending it would silently revert
+	// that write. Earlier versions did exactly that, first with the hidden
+	// labels and fair-share weight, and then with every shown field — a hold
+	// placed from another tab was released by a retry whose hold reason the
+	// form had loaded blank. A field both sides changed keeps the reader's
+	// value: that is the edit being re-applied.
 	async function reloadEtagAndRetry() {
 		editBusy = true;
 		editServerError = '';
 		try {
-			const res = await namespaceClient(fetch).getNamespace({ name: editingName });
-			editEtag = res.namespace?.etag ?? '';
-			editLabels = { ...res.namespace?.labels };
-			editConflict = false;
+			const name = editingName;
+			const res = await namespaceClient(fetch).getNamespace({ name });
+			if (!res.namespace) throw new Error(`namespace ${name} was not returned`);
+			// The reader may have opened another namespace's form while the
+			// read was in flight: that form is theirs now, so this retry ends.
+			if (editingName !== name) return;
+			// The reader's edit is taken after the read, so nothing typed
+			// while it was in flight is lost. openEdit then takes everything
+			// from the fresh read, the hidden fields and the etag included,
+			// and makes it the form's new opened state; the reader's changes
+			// go back on top.
+			const mine = editFieldValues();
+			const changed = changedEditFields();
+			openEdit(res.namespace);
+			const merged = editFieldValues();
+			for (const key of changed) takeEditField(merged, mine, key);
+			setEditFields(merged);
 			await submitEdit();
 		} catch (err) {
 			// The reread itself failed — a NotFound because the namespace was

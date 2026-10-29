@@ -145,7 +145,7 @@ Defined in `proto/orkstack/v1/run_service.proto`.
 | `GetRun` | [`GetRunRequest`](#getrunrequest) | [`GetRunResponse`](#getrunresponse) |  |
 | `ListRuns` | [`ListRunsRequest`](#listrunsrequest) | [`ListRunsResponse`](#listrunsresponse) |  |
 | `CancelRun` | [`CancelRunRequest`](#cancelrunrequest) | [`CancelRunResponse`](#cancelrunresponse) |  |
-| `StreamEvents` | [`StreamEventsRequest`](#streameventsrequest) | stream [`Event`](#event) | StreamEvents server-streams realtime events for a run. from_sequence allows resuming after a disconnect (0 = from start). |
+| `StreamEvents` | [`StreamEventsRequest`](#streameventsrequest) | stream [`Event`](#event) | StreamEvents server-streams realtime events for a run. from_sequence allows resuming after a disconnect (0 = from start): the stream continues after that event, so a client that passes the last sequence it received sees nothing repeated and nothing skipped, from any replica. A stream that ends Unavailable is resumed that way; `orkctl run watch` and the UI's run page do it, a bounded number of times in a row. |
 | `StreamTaskLogs` | [`StreamTaskLogsRequest`](#streamtasklogsrequest) | stream [`TaskLogChunk`](#tasklogchunk) | StreamTaskLogs server-streams one task attempt's output: every chunk already written, in order, then each new one as it lands.<br><br>Logs are a SEPARATE stream from Event on purpose. Task output is bytes, and bytes never enter a Temporal payload or the event stream (a run's history is replayed forever, and a chatty task would bloat it forever too). The Orker writes numbered chunks to the artifact store while the task runs; this RPC reads them back from there. EventType gains nothing: EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no task output in it.<br><br>Any replica answers for any run, on the same terms as StreamEvents: the chunks are in the shared store and the task's state comes from the shared cluster, so a replica that started nothing serves a run to completion. |
 | `ListRunArtifacts` | [`ListRunArtifactsRequest`](#listrunartifactsrequest) | [`ListRunArtifactsResponse`](#listrunartifactsresponse) |  |
 | `ReadArtifact` | [`ReadArtifactRequest`](#readartifactrequest) | stream [`ArtifactChunk`](#artifactchunk) |  |
@@ -821,6 +821,10 @@ is alive by answering DescribeOrker (§6.5).
 | `each_supported` | `bool` | each_supported is true on an Orker that implements fan-out items: it honours ExecuteTaskInput.each (task.json `each`, .each in with:) and stages EachUpstream. An Orker built before it answers false (unset), and submit refuses an Orkflow with a fan-out on such a pool rather than let it run items without their item or a dependent without its items. |
 | `cache_supported` | `bool` | cache_supported is true on an Orker that implements the memo step. An Orker built before it answers false (unset), and submit refuses an Orkflow with a cached task on its pool: the SDK's default payload converter refuses unknown fields, so such an Orker would FAIL every cached task's attempt on decoding ExecuteTaskInput.cache. |
 | `join_supported` | `bool` | join_supported is true on an Orker that reads ExecuteTaskInput.join (task.json `join`). An Orker built before it answers false (unset), and submit refuses an Orkflow with a container failure handler on its pool: the SDK's default payload converter refuses unknown fields, so such an Orker would FAIL every attempt of a failure handler on decoding ExecuteTaskInput.join — the compensation step of a run that is already failing. |
+| `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity is what this Orker admits tasks within (orker.capacity.cpu and orker.capacity.memory). Unset when it declares none: it then admits by max_concurrent alone, as every Orker did before capacity existed. A dimension at 0 is not bounded. |
+| `reserved` | [`ResourceQuantity`](#resourcequantity) | reserved is what stands reserved against capacity now: the per-task cap of every outstanding poll for a task, the request of every task it holds, pinned members included, and every container it has not yet removed. Unset when capacity is. A pinned member is counted but never made to wait, so reserved can exceed capacity by what open pins run. |
+| `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is the per-task cap (orker.resources.max_cpu and max_memory): the largest request this Orker runs. Submit refuses a task whose request no answering Orker of its pool could hold (RESOURCES_UNSATISFIABLE). Unset on an Orker built before it existed. |
+| `default_request` | [`ResourceQuantity`](#resourcequantity) | default_request is what a task that requests nothing is given (orker.resources.default_cpu and default_memory). |
 
 ### DiffOrkflowVersionsRequest
 
@@ -1760,6 +1764,7 @@ nothing still has one namespace, and every orkflow that names none is in it.
 | `allowed_secrets` | repeated `string` | allowed_secrets bounds which SecretRef.source values a task of this namespace may resolve. Empty means UNRESTRICTED, which is what every namespace has today and therefore what an upgrade preserves — a deployment that sets none behaves exactly as it did before this field existed. It bounds NAMES: nothing that reads this field stores, compares or transmits a secret value.<br><br>Each entry is `scheme:pattern`. The scheme is literal. The pattern is matched against the locator ONLY, never across the separator, and never as a regular expression: "*" is the one wildcard and it does not cross "/"; every other character is itself. A "file:" locator with a ".." segment is refused outright rather than normalized, so a pattern cannot be escaped by path traversal. The rule is internal/dsl.ValidSecretPattern and CheckSecretSource, the one place it is implemented; the registry refuses an entry that fails it.<br><br>It is enforced at the API boundary in the two places a secret can be named, exactly as allowed_pools is: when an orkflow is applied or validated, with the file in hand (an issue anchored to tasks[i].secrets[j].source), and again when a run is submitted, which is the gate no client can bypass and which catches a definition stored while the list was wider. It composes by INTERSECTION with each Orker's own floor (ORK_ORKER_SECRET_ALLOW): a namespace can only ever narrow what its Orkers already permit. |
 | `require_signed_by` | `string` | require_signed_by names a signer every image executed in this namespace must satisfy: "cosign:&lt;key-name>", where &lt;key-name> is one of the deployment's ImagePolicy.signing_keys. Unset means no signature is required, which is what every namespace has today and what an upgrade preserves. A namespace may only TIGHTEN the deployment policy: this is its one field for doing so, and there is none for loosening.<br><br>It is enforced in the three places an image passes: at apply and validate, with the file in hand (a field-anchored issue on tasks[i].uses); at submit, before a run id is minted, which catches a definition stored before the requirement existed; and by the Orker at dispatch, which verifies the signature itself against the key the run pinned at submit. Only "cosign:" exists; it is a closed set, not an extension point (AGENTS.md §13). |
 | `budget` | [`Budget`](#budget) | budget bounds this namespace's reserved consumption over a rolling period. Unset means unbounded, which is what every namespace has today and what an upgrade preserves.<br><br>An enforced budget is checked in exactly one place — the admission gate in SubmitRun's preparation, after the hold and max_running — by reading the namespace's usage over the trailing period. That read is a read-then-act with no lock, cached for at most ORK_USAGE_CACHE_TTL, and counts a run only once it has finished, so enforcement is best-effort by a bounded margin: the runs that finished inside one cache lifetime, every run still in flight, and submits racing the check. A lock would remove the margin and AGENTS.md §2.1 forbids building one. |
+| `fair_share_weight` | `double` | fair_share_weight is this namespace's share of dispatch when tasks of several namespaces wait for the same pool's Orkers: every task of a run carries its namespace as a fairness key, and the cluster dispatches the keys in proportion to their weights. 0, the default, is a weight of 1; otherwise from 0.001 to 1000.<br><br>It is pinned in each run's plan at submit, so a change applies to runs submitted after it and never reorders work already waiting. It takes effect only on a cluster whose operator enabled fair dispatch (docs/DEPLOY.md, "Fair dispatch across namespaces"); without it dispatch is first in, first out, whatever the weights. |
 
 ### NamespaceHold
 
@@ -1818,6 +1823,9 @@ Orker is one execution process, observed live.
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment this Orker was observed polling. It answers "how fresh is this row", never "when did this Orker die". |
 | `unavailable_reason` | `string` | unavailable_reason says this Orker COULD NOT BE ASKED, and why — the same three-state distinction Pool.unavailable_reason makes, for the same reason: "not measured" rendered as "measured zero" sends an operator to stop a host that may be mid-task. When set, fields 2–9 and 12 are unset: nothing was measured, so there is no number to report. |
 | `pins` | repeated [`OpenPin`](#openpin) |  |
+| `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity and reserved are DescribeOrkerResult's: what this Orker admits tasks within, and what stands reserved against it, each outstanding poll counted at the per-task cap. Both unset when it declares no capacity. |
+| `reserved` | [`ResourceQuantity`](#resourcequantity) |  |
+| `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is DescribeOrkerResult's: the per-task cap, the largest request this Orker runs, which submit holds a task's declared request to. |
 
 ### Orkflow
 
@@ -2243,6 +2251,17 @@ of it the workload used.
 | `reject` | `bool` |  |
 | `values_sha256` | `string` | values_sha256 is the hex sha256 of the stored values.json; empty for a rejection. |
 | `repeat` | `bool` | repeat is true when this request repeated the resolution that had already been applied — same values, or same rejection reason — so nothing was stored or delivered. |
+
+### ResourceQuantity
+
+ResourceQuantity is an amount of each resource an Orker reserves for a
+task: cpu in cores ("500m" is 0.5) and memory in bytes ("4Gi" is
+4294967296).
+
+| Field | Type | Description |
+|---|---|---|
+| `cpu` | `double` |  |
+| `memory_bytes` | `int64` |  |
 
 ### ResourceRequest
 
@@ -2878,7 +2897,7 @@ AttemptOutcome is how one Temporal attempt of a task ended.
 |---|---|---|
 | `ATTEMPT_OUTCOME_UNSPECIFIED` | 0 |  |
 | `ATTEMPT_OUTCOME_SUCCEEDED` | 1 | SUCCEEDED: the attempt returned an ExecuteTaskResult, fresh or adopted. |
-| `ATTEMPT_OUTCOME_FAILED` | 2 | FAILED: the attempt returned an ApplicationError; error is set. |
+| `ATTEMPT_OUTCOME_FAILED` | 2 | FAILED: the attempt returned an ApplicationError, or its Orker was stopped while it ran and reported nothing to Temporal (ORKER_STOPPED); error is set. |
 | `ATTEMPT_OUTCOME_CANCELED` | 3 | CANCELED: the attempt's context was cancelled (§6.3). |
 | `ATTEMPT_OUTCOME_UNREPORTED` | 4 | UNREPORTED is never written by an Orker. A reader synthesizes it for an attempt number that has no record, which means the Orker running it died or lost its heartbeat before it could write one. |
 

@@ -2,23 +2,13 @@
 
 This guide is the procedure for moving OrkStack forward and back. It starts with the rule for breaking changes, then covers Orkflow versions and the deployment itself. Each step names the reference that holds the detail, and the commands are the ones the references give.
 
-## The pre-1.0 promise
-
-OrkStack is pre-release: stable, but breaking changes may be introduced until 1.0.
+## Breaking changes
 
 - Every breaking change is listed in [CHANGELOG.md](../CHANGELOG.md), in the **Changed** or **Removed** section, and marked **BREAKING**. The changelog follows the Keep a Changelog 1.1.0 format named in its header.
 - OrkStack makes no promise of deprecation windows beyond that listing.
-- This repository has no release tags yet, and the changelog has only an `[Unreleased]` section. Once releases exist they follow Semantic Versioning from the first one ([CHANGELOG.md](../CHANGELOG.md), header).
+- Releases follow Semantic Versioning from the first, 0.1.0 ([CHANGELOG.md](../CHANGELOG.md), header). Its section says only "First release.": there is no earlier release to upgrade from, so it lists no breaking change. Every release is on the [releases page](https://github.com/orkstack/orkstack/releases).
 
-Before you upgrade, read the **BREAKING** entries in the `[Unreleased]` section. At the time of writing they are these:
-
-| Entry | What to do |
-|---|---|
-| Every Orkflow begins with `apiVersion: orkstack/v1` and `kind: Orkflow`. A document without them is refused at validate, apply and plan ([DSL.md](./DSL.md), "The document header") | Add the two lines to the top of the document, after any comments |
-| `orkctl apply` decides what a file is by its `kind:` and refuses a file with neither ([CHANGELOG.md](../CHANGELOG.md), Changed) | Give every file a `kind:`: `Orkflow`, or `Automation` for an automation document |
-| An automation document's schedule `input:` is a YAML mapping. A JSON object written as a string is refused ([CHANGELOG.md](../CHANGELOG.md), Changed; [JSON.md](./JSON.md), "Data written in an authored document") | Remove the quotes, so that `input:` is a mapping |
-| Data written in an Orkflow (`inputs:`, `with:`, `await.schema`) becomes JSON through one strict mapping. A plain `yes`, `on`, `0755`, `1:30`, `1e3` or date is refused, naming the path ([JSON.md](./JSON.md), "Data written in an authored document") | Quote the value if you mean a string, or write the number the way JSON writes it |
-| An unpinned Orkflow's derived version now covers the whole source, header included. Applying a pinned version again with only its header changed is refused ([CHANGELOG.md](../CHANGELOG.md), Changed) | Give an edited document a new `version:`, or remove `version:` and let the source name one |
+Before you upgrade, read the **BREAKING** entries in the section of every release after the one you run. Each release's section is also the notes on its GitHub release page.
 
 ## Release artifacts
 
@@ -36,7 +26,10 @@ publishes, and the README's Quickstart ran as written on a clone of its commit
   - `ork-linux-amd64.tar.gz`, `ork-linux-arm64.tar.gz`,
     `orker-linux-amd64.tar.gz`, `orker-linux-arm64.tar.gz`;
   - `SHA256SUMS`, over every file above: `sha256sum --ignore-missing -c
-    SHA256SUMS` checks the ones you downloaded.
+    SHA256SUMS` checks the ones you downloaded;
+  - `SHA256SUMS.sig`, the release key's cosign signature over `SHA256SUMS`,
+    and `cosign.pub`, that key's public half: the same file as
+    `deploy/cosign.pub` at the release's tag.
 - **On `ghcr.io/orkstack`**, for linux/amd64 and linux/arm64: `ork`, `orker`,
   `orkctl`, `ui`, and the six first-party activity images `activity-shell`,
   `activity-http`, `activity-file`, `activity-json`, `activity-git` and
@@ -44,16 +37,18 @@ publishes, and the README's Quickstart ran as written on a clone of its commit
   which moves to each patch release of that line. Deploy by digest, or by
   `X.Y.Z`.
 
-The images are not signed yet. A namespace's `require_signed_by` therefore
-cannot be met by the first-party activity images as published; sign them with
-your own key and push them to your own registry if you need it
-([SECURITY_MODEL.md](./SECURITY_MODEL.md), "Image policy").
+Each image is signed by its digest with the release key, in the layout
+OrkStack's image policy verifies, so a namespace can require that key
+(`--require-signed-by`). [DEPLOY.md](./DEPLOY.md), "Image supply-chain
+policy", says how to trust it, and how to verify an image or `SHA256SUMS` by
+hand.
 
 The built-in activity catalog names the activity images by their `X.Y` tag,
 so a release's `ork` resolves `uses: shell` to that release line's image at
 apply time and pins its digest; `release.yml` refuses a version whose `X.Y`
-the catalog does not name. The release notes are the version's
-`## [X.Y.Z]` section of [CHANGELOG.md](../CHANGELOG.md).
+the catalog does not name. The notes on the GitHub release page are the
+version's `## [X.Y.Z]` section of [CHANGELOG.md](../CHANGELOG.md), word for
+word, without its heading.
 
 Running the published images is set out in [DEPLOY.md](./DEPLOY.md),
 "Running the published images". A deployment that turns versioning on sets

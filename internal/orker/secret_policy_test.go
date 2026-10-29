@@ -15,6 +15,7 @@ import (
 
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -105,6 +106,7 @@ func runOnce(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput) er
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetTestTimeout(60 * time.Second)
+	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
 	env.RegisterWorkflow(attemptProbeWorkflow)
 	env.RegisterActivityWithOptions(d.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
 	env.ExecuteWorkflow(attemptProbeWorkflow, in)

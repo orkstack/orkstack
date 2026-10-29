@@ -1,8 +1,9 @@
 name: nightly
 
 # The nightly tier: the scale and soak tests a merge proof defers, and two
-# lanes of its own, the race repeat and the fuzz lane; and the vulnerability
-# scan, which needs the network and so is in no proof. A red
+# lanes of its own, the race repeat and the fuzz lane; the vulnerability
+# scan, which needs the network and so is in no proof; and the README's
+# Quickstart on a clone of main, which no proof runs. A red
 # nightly is a regression on main: fixing it, or reverting what broke it, is
 # the next work, but it holds no other merge; the pre-release gate, which runs
 # every deferred test, holds the release. (docs/PROOFS.md; AGENTS.md §11.)
@@ -62,6 +63,33 @@ jobs:
       - name: vuln
         timeout-minutes: 10
         run: make vuln
+
+  quickstart:
+    # The getting-started path, end to end: the README's Quickstart as
+    # written, on a clone of this commit, where the root compose.yaml builds
+    # the stack from source (`make quickstart-smoke`). No proof runs it, and
+    # release.yml runs it only before a release, so without this job a gap in
+    # deploy/source/Dockerfile.dockerignore, a break in that Dockerfile's
+    # build or a compose key this runner's Compose refuses would reach every
+    # new user until then. It runs beside the proof, whatever its result, and
+    # needs only what the runner image has: Docker with Compose, git, curl
+    # and python3.
+    if: ${{ github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - name: the README's Quickstart, as written, on a clone of this commit
+        # release.yml's limit for the same step: a cold build of the stack on
+        # a 4-vCPU runner, where 5 minutes was measured cold on 16 CPUs.
+        timeout-minutes: 40
+        shell: bash
+        run: scripts/quickstart-smoke.sh
 
   flakes:
     # The flake budget's evidence (docs/PROOFS.md §6.1): same-tree flips and

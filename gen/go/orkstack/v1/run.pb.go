@@ -82,7 +82,9 @@ const (
 	AttemptOutcome_ATTEMPT_OUTCOME_UNSPECIFIED AttemptOutcome = 0
 	// SUCCEEDED: the attempt returned an ExecuteTaskResult, fresh or adopted.
 	AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED AttemptOutcome = 1
-	// FAILED: the attempt returned an ApplicationError; error is set.
+	// FAILED: the attempt returned an ApplicationError, or its Orker was
+	// stopped while it ran and reported nothing to Temporal (ORKER_STOPPED);
+	// error is set.
 	AttemptOutcome_ATTEMPT_OUTCOME_FAILED AttemptOutcome = 2
 	// CANCELED: the attempt's context was cancelled (§6.3).
 	AttemptOutcome_ATTEMPT_OUTCOME_CANCELED AttemptOutcome = 3

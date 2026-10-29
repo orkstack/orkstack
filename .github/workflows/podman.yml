@@ -1,0 +1,296 @@
+name: podman
+
+# The runtime-facing suites on Podman, OrkStack's second engine
+# (docs/DEPLOY.md "Running on Podman"). Not a required check and never merge
+# evidence: the merge gate is proof.yml's `proof` job, which runs on Docker.
+# It runs on a change to the runtime or its suites, every day, and by
+# dispatch, on ubuntu-26.04, whose image ships Podman 5.
+#
+#   rootless-cli    the podman CLI as the runner's own user (ORK_DOCKER_CLI=podman)
+#   rootful-cli     the podman CLI as root, through sudo
+#   rootful-socket  the docker CLI against the rootful Podman socket: the shape
+#                   of the release image on a Podman host
+#
+# The rootful jobs first boot the orker on the runner's AppArmor profile,
+# which its boot probe must refuse (a container's init cannot signal its
+# workload), then apply docs/DEPLOY.md's "Rootful Podman under AppArmor" fix
+# and boot it again before the suites run.
+#
+# Each runs internal/orker's integration suite, cmd/orker's, `orkctl task
+# run`'s, and the Bash activity contract fixture. The socket shape runs the
+# runtime's own tests of internal/orker only: the image-policy tests start a
+# plain-HTTP registry on a port chosen at run time, which Podman's
+# registries.conf cannot name, and the docker CLI cannot tell Podman to skip
+# TLS for one pull. Docker stays the engine of every other suite.
+
+on:
+  push:
+    paths:
+      - internal/orker/**
+      - cmd/orker/**
+      - cmd/orkctl/task_run*.go
+      - test/fixtures/**
+      - .github/workflows/podman.yml
+  pull_request:
+    paths:
+      - internal/orker/**
+      - cmd/orker/**
+      - cmd/orkctl/task_run*.go
+      - test/fixtures/**
+      - .github/workflows/podman.yml
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  podman:
+    name: podman (${{ matrix.shape }})
+    # A private repository spends none of its metered minutes on a schedule.
+    if: ${{ github.event.repository.visibility == 'public' || github.event_name != 'schedule' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 130
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shape: [rootless-cli, rootful-cli, rootful-socket]
+    env:
+      ORK_REQUIRE_INFRA: "1"
+      PROOF_JOBS: "3"
+      PROBE_IMAGE: docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      # Docker hosts the stack the suites need (SeaweedFS, the registry,
+      # Temporal) exactly as on every other runner; Podman is only the engine
+      # under test.
+      - uses: ./.github/actions/proof-host
+        timeout-minutes: 10
+        with:
+          cosign: "true"
+      - name: Temporal
+        timeout-minutes: 5
+        shell: bash
+        run: docker compose -f deploy/docker-compose.yml up -d --wait --pull never temporal
+      - name: activity images
+        timeout-minutes: 15
+        shell: bash
+        run: make -C images push
+
+      - name: Podman
+        id: podman
+        timeout-minutes: 10
+        shell: bash
+        env:
+          SHAPE: ${{ matrix.shape }}
+        run: |
+          set -euo pipefail
+          podman version | tee -a "$GITHUB_STEP_SUMMARY"
+          # The dev registry is plain HTTP on loopback: Docker trusts that by
+          # itself, Podman only by name (docs/DEPLOY.md "Running on Podman").
+          conf='[[registry]]
+          location = "localhost:5001"
+          insecure = true'
+          case "$SHAPE" in
+            rootless-cli)
+              echo "kernel.apparmor_restrict_unprivileged_userns = $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo absent)" | tee -a "$GITHUB_STEP_SUMMARY"
+              # The host requirements of docs/DEPLOY.md "Running on Podman": a
+              # systemd user session for the systemd cgroup manager, and the
+              # cpu, memory and pids controllers delegated to it.
+              sudo mkdir -p /etc/systemd/system/user@.service.d
+              printf '[Service]\nDelegate=cpu cpuset io memory pids\n' | sudo tee /etc/systemd/system/user@.service.d/delegate.conf >/dev/null
+              sudo systemctl daemon-reload
+              sudo loginctl enable-linger "$USER"
+              uid="$(id -u)"
+              for _ in $(seq 60); do [ -S "/run/user/$uid/bus" ] && break; sleep 1; done
+              echo "XDG_RUNTIME_DIR=/run/user/$uid" >>"$GITHUB_ENV"
+              echo "DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$uid/bus" >>"$GITHUB_ENV"
+              export XDG_RUNTIME_DIR="/run/user/$uid" DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$uid/bus"
+              mkdir -p ~/.config/containers/registries.conf.d
+              printf '%s\n' "$conf" | sed 's/^ *//' > ~/.config/containers/registries.conf.d/50-orkstack.conf
+              # What the boot probe will need, asked first: a container that
+              # starts, under limits the kernel enforces.
+              if ! out="$(podman run --rm --network none --cpus 1 --memory 64m --pids-limit 64 "$PROBE_IMAGE" \
+                  sh -c 'cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max' 2>&1)"; then
+                {
+                  echo "rootless Podman cannot run a container under limits on this runner:"
+                  echo '```'; echo "$out"; echo '```'
+                  echo "AppArmor's restriction on unprivileged user namespaces, or controllers not delegated to the user's systemd session, are the usual causes."
+                } | tee -a "$GITHUB_STEP_SUMMARY"
+                exit 1
+              fi
+              echo "limits seen by a rootless container: $(echo "$out" | tr '\n' ' ')" | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "cli=podman" >>"$GITHUB_OUTPUT"
+              echo "bin=$(command -v podman)" >>"$GITHUB_OUTPUT"
+              ;;
+            rootful-cli)
+              # The rootful CLI runs through sudo, whose implementation decides
+              # what a command inherits; the summary names it.
+              echo "sudo: $(sudo --version 2>&1 | head -n 1)" | tee -a "$GITHUB_STEP_SUMMARY"
+              sudo mkdir -p /etc/containers/registries.conf.d
+              printf '%s\n' "$conf" | sed 's/^ *//' | sudo tee /etc/containers/registries.conf.d/50-orkstack.conf >/dev/null
+              # The Orker runs the podman CLI as root; its own uid stays the
+              # runner's, which rootful Podman maps to nothing.
+              mkdir -p "$RUNNER_TEMP/podman-root"
+              printf '#!/bin/sh\nexec sudo -n podman "$@"\n' > "$RUNNER_TEMP/podman-root/podman"
+              chmod +x "$RUNNER_TEMP/podman-root/podman"
+              "$RUNNER_TEMP/podman-root/podman" run --rm --network none "$PROBE_IMAGE" true
+              echo "cli=podman" >>"$GITHUB_OUTPUT"
+              echo "bin=$RUNNER_TEMP/podman-root/podman" >>"$GITHUB_OUTPUT"
+              ;;
+            rootful-socket)
+              sudo mkdir -p /etc/containers/registries.conf.d
+              printf '%s\n' "$conf" | sed 's/^ *//' | sudo tee /etc/containers/registries.conf.d/50-orkstack.conf >/dev/null
+              sudo systemctl start podman.socket
+              # This runner only: the runner's user reaches root's socket, as
+              # the release image does when it mounts it.
+              sudo chmod 0755 /run/podman
+              sudo chmod 0666 /run/podman/podman.sock
+              DOCKER_HOST=unix:///run/podman/podman.sock docker version --format '{{json .Server.Components}}' | tee -a "$GITHUB_STEP_SUMMARY"
+              echo "docker_host=unix:///run/podman/podman.sock" >>"$GITHUB_OUTPUT"
+              echo "cli=docker" >>"$GITHUB_OUTPUT"
+              ;;
+          esac
+
+      # docs/DEPLOY.md "Rootful Podman under AppArmor": the runner's own
+      # profile does not let a container's init signal its workload, so the
+      # boot probe must refuse it as shipped and accept it once the documented
+      # rule is in place. Each boot is the real orker binary, judged by what it
+      # logs, and stopped by its PID if it boots.
+      - name: boot probe refuses the runner's AppArmor profile
+        if: matrix.shape != 'rootless-cli'
+        timeout-minutes: 10
+        shell: bash
+        env:
+          ORK_DOCKER_CLI: ${{ steps.podman.outputs.cli }}
+          ORK_DOCKER_BIN: ${{ steps.podman.outputs.bin }}
+          DOCKER_HOST: ${{ steps.podman.outputs.docker_host }}
+        run: |
+          set -euo pipefail
+          go build -o "$RUNNER_TEMP/orker" ./cmd/orker
+          cat > "$RUNNER_TEMP/boot-orker.sh" <<'EOF'
+          # boot-orker.sh NAME: boot the orker once, print booted, refused or
+          # silent, and leave its log at $RUNNER_TEMP/NAME.log.
+          set -u
+          [ -n "${ORK_DOCKER_BIN:-}" ] || unset ORK_DOCKER_BIN
+          [ -n "${DOCKER_HOST:-}" ] || unset DOCKER_HOST
+          log="$RUNNER_TEMP/$1.log"; root="$RUNNER_TEMP/$1-work"; mkdir -p "$root"
+          ORK_TEMPORAL_NAMESPACE="ork-$1" ORK_ORKER_WORKDIR="$root" ORK_ORKER_ID="$1" \
+            "$RUNNER_TEMP/orker" >"$log" 2>&1 &
+          pid=$!
+          verdict=silent
+          for _ in $(seq 180); do
+            if grep -q 'msg="container runtime" engine=' "$log"; then verdict=booted; break; fi
+            if ! kill -0 "$pid" 2>/dev/null; then verdict=refused; break; fi
+            sleep 1
+          done
+          kill "$pid" 2>/dev/null || true
+          wait "$pid" 2>/dev/null || true
+          echo "$verdict"
+          EOF
+          verdict=$(bash "$RUNNER_TEMP/boot-orker.sh" apparmor-unfixed)
+          log="$RUNNER_TEMP/apparmor-unfixed.log"
+          {
+            echo "boot probe on the runner's AppArmor profile, unfixed: $verdict"
+            echo '```'; grep -o 'RUNTIME_POSTURE_REFUSED.*' "$log" | cut -c1-1500 || true; echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$verdict" != refused ] || ! grep -q 'never heard SIGTERM' "$log"; then
+            echo "the boot probe did not refuse the unfixed profile. If this runner's containers-common now lets a container's init signal its workload, the host fix in docs/DEPLOY.md is no longer needed here."
+            cat "$log"
+            exit 1
+          fi
+
+      - name: AppArmor host fix
+        if: matrix.shape != 'rootless-cli'
+        timeout-minutes: 5
+        shell: bash
+        env:
+          ORK_DOCKER_CLI: ${{ steps.podman.outputs.cli }}
+          ORK_DOCKER_BIN: ${{ steps.podman.outputs.bin }}
+          DOCKER_HOST: ${{ steps.podman.outputs.docker_host }}
+        run: |
+          set -euo pipefail
+          # The steps of docs/DEPLOY.md "Rootful Podman under AppArmor", as written there.
+          sudo mkdir -p /etc/apparmor.d/abstractions/base.d
+          printf '%s\n' 'signal (send, receive) peer=@{profile_name}//&*,' | sudo tee /etc/apparmor.d/abstractions/base.d/orkstack-stacked-signals
+          printf 'include <tunables/global>\nprofile orkstack-check {\n  include <abstractions/base>\n}\n' | sudo apparmor_parser -QK
+          { sudo grep -o '^containers-default[^ ]*' /sys/kernel/security/apparmor/profiles || true; } |
+            while read -r profile; do printf '%s' "$profile" | sudo tee /sys/kernel/security/apparmor/.remove >/dev/null; done
+          verdict=$(bash "$RUNNER_TEMP/boot-orker.sh" apparmor-fixed)
+          echo "boot probe on the runner's AppArmor profile, with the rule: $verdict" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$verdict" != booted ]; then
+            cat "$RUNNER_TEMP/apparmor-fixed.log"
+            exit 1
+          fi
+
+      - name: internal/orker
+        timeout-minutes: 30
+        shell: bash
+        env:
+          ORK_DOCKER_CLI: ${{ steps.podman.outputs.cli }}
+          ORK_DOCKER_BIN: ${{ steps.podman.outputs.bin }}
+          DOCKER_HOST: ${{ steps.podman.outputs.docker_host }}
+          SHAPE: ${{ matrix.shape }}
+        run: |
+          set -euo pipefail
+          [ -n "$ORK_DOCKER_BIN" ] || unset ORK_DOCKER_BIN
+          [ -n "$DOCKER_HOST" ] || unset DOCKER_HOST
+          if [ "$SHAPE" = rootful-socket ]; then
+            scripts/integration.sh ./internal/orker -run '^TestIntegration_(BootProbe|BootBindProbe|Dispatcher|BurstOutput|Cancellation|ContainerTimeout|RemoveOfARunning|ACLIThatWrites|ReplacementOrkerReapsLabelledOrphan|WorkspaceModes|OutputNotReadable|AFailedTaskStillPublishes|RefusesAnUnpinned)'
+          else
+            scripts/integration.sh ./internal/orker
+          fi
+
+      - name: cmd/orker and orkctl task run
+        if: matrix.shape != 'rootful-socket'
+        timeout-minutes: 20
+        shell: bash
+        env:
+          ORK_DOCKER_CLI: ${{ steps.podman.outputs.cli }}
+          ORK_DOCKER_BIN: ${{ steps.podman.outputs.bin }}
+        run: |
+          set -euo pipefail
+          scripts/integration.sh ./cmd/orker
+          scripts/integration.sh ./cmd/orkctl -run '^TestIntegration_TaskRun'
+
+      - name: Bash activity contract fixture
+        timeout-minutes: 10
+        shell: bash
+        env:
+          ORK_DOCKER_BIN: ${{ steps.podman.outputs.bin }}
+          DOCKER_HOST: ${{ steps.podman.outputs.docker_host }}
+        run: |
+          set -euo pipefail
+          [ -n "$ORK_DOCKER_BIN" ] || unset ORK_DOCKER_BIN
+          [ -n "$DOCKER_HOST" ] || unset DOCKER_HOST
+          image=localhost:5001/orkstack/activity-shell:dev
+          "${ORK_DOCKER_BIN:-docker}" pull --quiet "$image"
+          bash test/fixtures/bash_activity_contract.sh "$image"
+
+      - name: logs
+        if: failure()
+        timeout-minutes: 2
+        shell: bash
+        env:
+          SHAPE: ${{ matrix.shape }}
+        run: |
+          for f in .data/integration/*/integration/*.log; do
+            [ -f "$f" ] || continue
+            grep -l -- '--- FAIL' "$f" >/dev/null 2>&1 && { echo "== $f"; grep -B2 -A12 -- '--- FAIL' "$f" | head -80; }
+          done || true
+          # A rootful engine confines each container with AppArmor; what it
+          # refused (a signal, a mount) is only in the kernel's log.
+          if [ "$SHAPE" != rootless-cli ]; then
+            echo "== AppArmor denials"
+            sudo journalctl -k --no-pager 2>/dev/null | grep 'apparmor="DENIED"' | tail -n 40 || true
+          fi

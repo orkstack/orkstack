@@ -2,6 +2,7 @@ package orker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -119,6 +120,16 @@ const DefaultMaxConcurrent = 16
 // MaxConcurrentVar is orker.max_concurrent's environment variable.
 const MaxConcurrentVar = "ORK_ORKER_MAX_CONCURRENT"
 
+// TaskPollers is how many polls the task worker keeps outstanding on its
+// pool's channel: the SDK's own default, set explicitly because a count left
+// at the default is the SDK's signal to auto-enrol the worker in poller
+// autoscaling when the Temporal namespace advertises it (go.temporal.io/sdk
+// internal_worker.go, v1.47.0). An autoscaled worker decides for itself how
+// many polls to hold, and every poll reserves a slot before it is sent, so an
+// Orker's reservations would follow a server setting nobody chose for them. A
+// pin host's session activity worker takes the same poller behaviour.
+const TaskPollers = 2
+
 // sdkDefaultSlots is the SDK's own default for every other supplier the tuner
 // must name (go.temporal.io/sdk/internal/internal_worker.go, v1.47.0).
 const sdkDefaultSlots = 1000
@@ -169,6 +180,11 @@ func (a *Activities) WorkerTuner() (worker.WorkerTuner, error) {
 	activitySlots, err := fixed(int(a.maxConc))
 	if err != nil {
 		return nil, err
+	}
+	if a.capacity != nil {
+		// A declared capacity replaces the fixed count with the ledger,
+		// which holds both the count and the capacity (capacity.go).
+		activitySlots = &capacitySlotSupplier{c: a.capacity, cordon: a.cordon}
 	}
 	localSlots, err := fixed(sdkDefaultSlots)
 	if err != nil {
@@ -269,11 +285,26 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 	case task.ActivityExecuteTask:
 		// The running_tasks measurement, taken at the SDK seam so a test
 		// Orker's own ExecuteTask is counted exactly as the shipped one is.
-		i.a.running.Add(1)
-		defer i.a.running.Add(-1)
-		return i.Next.ExecuteActivity(ctx, in)
+		i.a.running.add()
+		defer i.a.running.done()
+		admission, err := i.a.admit(info.TaskQueue, executeTaskRequest(i.a.dispatcher.Policy, in))
+		if err != nil {
+			return nil, err
+		}
+		defer admission.Done()
+		return i.Next.ExecuteActivity(withAdmission(ctx, admission), in)
 	case sessionCreationActivityName:
 	default:
+		// Anything else polled on the pool channel (DescribeOrker) holds a
+		// permit's reservation and runs no container: it is trimmed to
+		// nothing.
+		if i.a.capacity != nil && info.TaskQueue == i.a.taskQueue {
+			admission, err := i.a.admit(info.TaskQueue, amount{})
+			if err != nil {
+				return nil, err
+			}
+			defer admission.Done()
+		}
 		return i.Next.ExecuteActivity(ctx, in)
 	}
 
@@ -300,6 +331,39 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 	i.a.pins.add(key, info.WorkflowExecution.ID, time.Now())
 	defer i.a.pins.remove(key)
 	return i.Next.ExecuteActivity(ctx, in)
+}
+
+// admit admits one activity against the declared capacity, if there is one.
+// A refusal is the attempt's failure, already in the shape the engine reads.
+func (a *Activities) admit(queue string, request amount) (*Admission, error) {
+	if a.capacity == nil {
+		return nil, nil
+	}
+	admission, err := a.capacity.admit(queue == a.taskQueue, request)
+	if err != nil {
+		var failure *Failure
+		if errors.As(err, &failure) {
+			return nil, failure.TemporalError()
+		}
+		return nil, err
+	}
+	return admission, nil
+}
+
+// executeTaskRequest is what an ExecuteTask attempt reserves: its resolved
+// request, or nothing for a request the policy refuses, because the attempt
+// fails RESOURCE_REQUEST_REFUSED before any container exists. An input this
+// cannot read keeps the whole per-task cap: unknown is never nothing.
+func executeTaskRequest(policy SecurityPolicy, in *interceptor.ExecuteActivityInput) amount {
+	var input *orkstackv1.ExecuteTaskInput
+	if len(in.Args) > 0 {
+		input, _ = in.Args[0].(*orkstackv1.ExecuteTaskInput)
+	}
+	if input == nil {
+		ceiling, _ := policy.ceiling()
+		return ceiling
+	}
+	return amountFromProto(policy.ReservedResources(input.GetResources()))
 }
 
 // ---------------------------------------------------------------- open pins
@@ -412,7 +476,7 @@ func (a *Activities) CordonOrker(ctx context.Context, in *orkstackv1.CordonOrker
 		a.cordon.Set(in.GetReason(), time.Now())
 		logger.Info("orker cordoned",
 			"reason", in.GetReason(),
-			"running_tasks", a.running.Load(),
+			"running_tasks", a.running.load(),
 			"open_pins", len(a.pins.snapshot()))
 	} else {
 		was, _, since := a.cordon.State()

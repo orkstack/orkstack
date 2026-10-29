@@ -49,7 +49,9 @@ type observedRuntime struct {
 
 	mu           sync.Mutex
 	stopped      bool
+	createAsked  bool
 	created      bool
+	removed      bool
 	started      time.Time
 	ran          time.Duration
 	waited       bool
@@ -101,6 +103,9 @@ func (o *observedRuntime) Create(ctx context.Context, spec orker.ContainerSpec) 
 		o.mu.Unlock()
 		return "", errRenderOnly
 	}
+	o.mu.Lock()
+	o.createAsked = true
+	o.mu.Unlock()
 	id, err := o.ContainerRuntime.Create(ctx, spec)
 	if err == nil {
 		o.mu.Lock()
@@ -132,6 +137,7 @@ func (o *observedRuntime) Remove(ctx context.Context, id orker.ContainerID) erro
 	err := o.ContainerRuntime.Remove(ctx, id)
 	o.mu.Lock()
 	source := o.outputSource
+	o.removed = err == nil
 	o.mu.Unlock()
 	if o.keep && source != "" {
 		skipped, copyErr := copyTree(source, filepath.Join(o.session, "output"), nil)
@@ -143,6 +149,20 @@ func (o *observedRuntime) Remove(ctx context.Context, id orker.ContainerID) erro
 		o.mu.Unlock()
 	}
 	return err
+}
+
+// settled reports whether this run leaves no container of its own behind: it
+// never asked the runtime for one, or the one it got was removed. A create
+// that failed may still have left one, so it is not settled; the next run's
+// scan asks the runtime by this run's label. A run that stopped before the
+// decorator existed created nothing.
+func (o *observedRuntime) settled() bool {
+	if o == nil {
+		return true
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return !o.createAsked || o.removed
 }
 
 // observation is a consistent read of what the decorator saw.

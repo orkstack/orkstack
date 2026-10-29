@@ -6,8 +6,10 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 )
 
@@ -242,21 +244,108 @@ func TestReadme_OrkflowIsTheShippedExample(t *testing.T) {
 	}
 }
 
-// TestChangelog_HasAnUnreleasedSection: the changelog starts with an
-// Unreleased section, and its subsections are Keep a Changelog's.
-func TestChangelog_HasAnUnreleasedSection(t *testing.T) {
-	doc := readFile(t, filepath.Join(repoRoot(t), "CHANGELOG.md"))
-	if !strings.Contains(doc, "## [Unreleased]") {
-		t.Fatal("CHANGELOG.md has no ## [Unreleased] section")
-	}
+// changelogRelease is a release's heading: its version and the day it was
+// cut, which release.yml's `dist check` and `dist notes` find by the version.
+var changelogRelease = regexp.MustCompile(`^## \[(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\] - ([0-9]{4}-[0-9]{2}-[0-9]{2})$`)
+
+// changelogProblems checks CHANGELOG.md's shape (Keep a Changelog 1.1.0): an
+// Unreleased section first, then one section per release, newest first, each
+// headed "## [X.Y.Z] - YYYY-MM-DD" with a real date, and subsections only of
+// Keep a Changelog's kinds. A "## " line inside a code fence is text.
+func changelogProblems(doc string) []string {
 	allowed := map[string]bool{"Added": true, "Changed": true, "Deprecated": true, "Removed": true, "Fixed": true, "Security": true}
-	section := doc[strings.Index(doc, "## [Unreleased]"):]
-	if end := strings.Index(section[1:], "\n## "); end >= 0 {
-		section = section[:end+1]
+	var (
+		p        []string
+		fenced   bool
+		headings int
+		section  string
+		last     [3]int
+		lastDay  time.Time
+	)
+	for _, line := range strings.Split(doc, "\n") {
+		if strings.HasPrefix(strings.TrimLeft(line, " "), "```") {
+			fenced = !fenced
+		}
+		if fenced {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(line, "## "):
+			headings++
+			section = line
+			if headings == 1 {
+				if line != "## [Unreleased]" {
+					p = append(p, fmt.Sprintf("the first section is %q; Keep a Changelog's first is ## [Unreleased]", line))
+				}
+				continue
+			}
+			m := changelogRelease.FindStringSubmatch(line)
+			if m == nil {
+				p = append(p, fmt.Sprintf("%q is not a release heading, ## [X.Y.Z] - YYYY-MM-DD", line))
+				continue
+			}
+			var v [3]int
+			for i := range v {
+				v[i], _ = strconv.Atoi(m[i+1])
+			}
+			day, err := time.Parse(time.DateOnly, m[4])
+			if err != nil {
+				p = append(p, fmt.Sprintf("%q: %s is not a date", line, m[4]))
+			}
+			if headings > 2 {
+				if !(v[0] < last[0] || v[0] == last[0] && (v[1] < last[1] || v[1] == last[1] && v[2] < last[2])) {
+					p = append(p, fmt.Sprintf("%q is not older than the release above it; releases are newest first", line))
+				}
+				if err == nil && day.After(lastDay) {
+					p = append(p, fmt.Sprintf("%q is dated after the release above it", line))
+				}
+			}
+			last, lastDay = v, day
+		case strings.HasPrefix(line, "### ") && !allowed[strings.TrimSpace(line[4:])]:
+			p = append(p, fmt.Sprintf("%s has a subsection %q; Keep a Changelog's are Added, Changed, Deprecated, Removed, Fixed and Security", section, line[4:]))
+		}
 	}
-	for _, m := range regexp.MustCompile(`(?m)^###\s+(.+)$`).FindAllStringSubmatch(section, -1) {
-		if !allowed[strings.TrimSpace(m[1])] {
-			t.Errorf("CHANGELOG.md [Unreleased] has a subsection %q; Keep a Changelog's are Added, Changed, Deprecated, Removed, Fixed and Security", m[1])
+	if headings == 0 {
+		p = append(p, "there is no ## [Unreleased] section")
+	}
+	return p
+}
+
+// TestChangelog_IsKeepAChangelogs: CHANGELOG.md has the shape
+// changelogProblems states, so release.yml finds each release's notes.
+func TestChangelog_IsKeepAChangelogs(t *testing.T) {
+	for _, problem := range changelogProblems(readFile(t, filepath.Join(repoRoot(t), "CHANGELOG.md"))) {
+		t.Error("CHANGELOG.md: " + problem)
+	}
+}
+
+// TestChangelogProblems_RefusesWhatIsNotKeepAChangelogs: each departure from
+// the shape is found, and a well-formed changelog has none.
+func TestChangelogProblems_RefusesWhatIsNotKeepAChangelogs(t *testing.T) {
+	good := "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- next\n\n" +
+		"## [0.10.0] - 2026-12-01\n\n### Changed\n\n- **BREAKING** a change\n\n```markdown\n## [9.9.9] in a fence\n### Anything\n```\n\n" +
+		"## [0.2.0] - 2026-11-20\n\n### Fixed\n\n- a fix\n\n## [0.1.0] - 2026-10-29\n\nFirst release.\n"
+	if p := changelogProblems(good); len(p) > 0 {
+		t.Fatalf("a well-formed changelog: %v", p)
+	}
+	for _, tc := range []struct {
+		name, from, to, want string
+	}{
+		{"no Unreleased first", "## [Unreleased]\n\n### Added\n\n- next\n\n", "", "first section"},
+		{"no date", "## [0.2.0] - 2026-11-20", "## [0.2.0]", "not a release heading"},
+		{"not a date", "2026-11-20", "2026-11-31", "not a date"},
+		{"a v in the heading", "## [0.2.0]", "## [v0.2.0]", "not a release heading"},
+		{"out of order", "## [0.2.0]", "## [0.11.0]", "not older"},
+		{"dated after the newer one", "2026-11-20", "2026-12-02", "dated after"},
+		{"a subsection of no kind", "### Fixed", "### Bug fixes", "Bug fixes"},
+	} {
+		bad := strings.Replace(good, tc.from, tc.to, 1)
+		if bad == good {
+			t.Fatalf("%s: the sample has no %q", tc.name, tc.from)
+		}
+		p := strings.Join(changelogProblems(bad), "\n")
+		if !strings.Contains(p, tc.want) {
+			t.Errorf("%s: problems %q do not mention %q", tc.name, p, tc.want)
 		}
 	}
 }

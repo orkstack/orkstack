@@ -26,7 +26,7 @@ The list is newest first. Filter on `status` (`PENDING`, `RUNNING`, `SUCCEEDED`,
 ## Watch a run in progress
 
 - `orkctl run inspect <run-id> --watch` shows each running task, its state and the state of its last heartbeat. A heartbeat marked `STALE` means the Orker has gone.
-- `orkctl run watch <run-id>` streams events until the run ends. It exits `0` on success, `2` on failure and `3` on cancel.
+- `orkctl run watch <run-id>` streams events until the run ends. It exits `0` on success, `2` on failure and `3` on cancel. If the engine drops the stream, the watch picks up after the last event it printed and says so on stderr.
 - `orkctl run logs <run-id> --task convert -f` follows one task's output live.
 
 ## Read the timing

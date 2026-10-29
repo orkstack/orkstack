@@ -166,7 +166,10 @@ WORK_DIR="$(mktemp -d "$REPO/.data/work/observability-p$$-XXXXXX")"
 local_activity_catalog() {
 	local registry="${ORK_LOCAL_REGISTRY:-localhost:5001}" name doc=""
 	for name in $(make -s -C "$REPO/images" print-activities); do
-		curl -sfo /dev/null -H 'Accept: application/vnd.oci.image.index.v1+json' \
+		# Any manifest type: a CI part pushes each layout as a single-platform
+		# image manifest, which a registry answers 404 to an index-only Accept
+		# (proof.sh's MANIFEST_ACCEPT is the same list).
+		curl -sfo /dev/null -H 'Accept: application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json' \
 			"http://$registry/v2/orkstack/activity-$name/manifests/$IMAGE_TAG" || return 0
 		doc="$doc  $name: $registry/orkstack/activity-$name:$IMAGE_TAG
 "

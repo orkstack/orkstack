@@ -716,6 +716,11 @@ func namespaceSpecSummary(ns *orkstackv1.Namespace) string {
 		parts = append(parts, "hold="+strconv.Quote(hold.GetReason()))
 	}
 	parts = append(parts, "max_running="+strconv.FormatInt(int64(ns.GetMaxRunning()), 10))
+	// The weight only when set, so a namespace that never set one audits
+	// byte-identically to before it existed.
+	if w := ns.GetFairShareWeight(); w != 0 {
+		parts = append(parts, "fair_share_weight="+strconv.FormatFloat(w, 'f', -1, 64))
+	}
 	// Budget (docs/DEPLOY.md "Namespace budgets"): budget={…} only when set, on the hold= rule,
 	// so a namespace with no budget summarizes byte-identically to before the
 	// field existed and a cleared budget is the record with no key.

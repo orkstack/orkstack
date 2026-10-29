@@ -164,7 +164,6 @@ func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T)
 	// the channel the default pool would have used without the override.
 	resolver := &engine.PoolResolver{
 		Probe:    livePools{raw: 3, gpuQueue: 1},
-		Orkers:   fakePoolOrkers{raw: true, gpuQueue: true},
 		RawQueue: raw,
 	}
 	ns := &orkstackv1.Namespace{Name: "default"}
@@ -217,7 +216,6 @@ func TestPoolResolver_OneSetOfOrkersIsOnePool(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
 		Probe:    livePools{gpuQueue: 2},
-		Orkers:   fakePoolOrkers{gpuQueue: true},
 		RawQueue: gpuQueue, // what ORK_ORKER_POOL=gpu binds on the engine
 	}
 	ns := &orkstackv1.Namespace{Name: "default"}
@@ -559,8 +557,7 @@ tasks:
 func TestPoolResolver_ReportsPoolsWithTheirLiveOrkers(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
-		Probe:  livePools{task.DefaultQueue: 2, gpuQueue: 1},
-		Orkers: fakePoolOrkers{gpuQueue: true, task.DefaultQueue: true},
+		Probe: livePools{task.DefaultQueue: 2, gpuQueue: 1},
 	}
 	ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"main", "gpu", "cold"}}
 
@@ -588,48 +585,82 @@ func TestPoolResolver_ReportsPoolsWithTheirLiveOrkers(t *testing.T) {
 	}
 }
 
-// fakePoolOrkers answers the DescribeOrker probe for the channels it maps; a
-// channel it does not map is a pool nobody serves.
-type fakePoolOrkers map[string]bool
+// fakeFleet is a stand-in Orker inventory (engine.FleetReader). Each Orker it
+// lists polls the presence channel and answers on its own control channel
+// with the DescribeOrkerResult given, whose orker_id is its identity; a
+// silent one polls and never answers. A test states the fleet instead of
+// arranging workers.
+type fakeFleet struct {
+	mu         sync.Mutex
+	orkers     []*orkstackv1.DescribeOrkerResult
+	silent     []string
+	observeErr error
+	reads      int
+	asked      []string
+}
 
-func (f fakePoolOrkers) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	if _, serving := f[queue]; !serving {
-		return nil, fmt.Errorf("no orker is polling %q", queue)
+func (f *fakeFleet) ObserveOrkers(context.Context) ([]engine.OrkerPresence, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reads++
+	if f.observeErr != nil {
+		return nil, f.observeErr
 	}
-	return &orkstackv1.DescribeOrkerResult{OrkerId: "orker-" + queue, RuntimeName: "docker"}, nil
+	var presence []engine.OrkerPresence
+	for _, orker := range f.orkers {
+		presence = append(presence, engine.OrkerPresence{Identity: orker.GetOrkerId(), LastSeen: time.Now()})
+	}
+	for _, id := range f.silent {
+		presence = append(presence, engine.OrkerPresence{Identity: id, LastSeen: time.Now()})
+	}
+	return presence, nil
+}
+
+func (f *fakeFleet) DescribeOrkerByID(_ context.Context, id string) (*orkstackv1.DescribeOrkerResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, id)
+	for _, orker := range f.orkers {
+		if orker.GetOrkerId() == id {
+			return orker, nil
+		}
+	}
+	return nil, fmt.Errorf("orker %q did not answer on its own channel", id)
+}
+
+// fleetOf is a fakeFleet of Orkers that all answer.
+func fleetOf(orkers ...*orkstackv1.DescribeOrkerResult) *fakeFleet {
+	return &fakeFleet{orkers: orkers}
+}
+
+// currentOrker is one Orker of pool built with every capability submit asks
+// about; maxPins is its ORK_ORKER_MAX_PINS.
+func currentOrker(id, pool string, maxPins int32) *orkstackv1.DescribeOrkerResult {
+	return &orkstackv1.DescribeOrkerResult{
+		OrkerId: id, Pool: pool, RuntimeName: "docker", MaxConcurrentPins: maxPins,
+		EachSupported: true, CacheSupported: true, JoinSupported: true,
+	}
+}
+
+// refusingFleet fails the test if the inventory is read at all. It is how a
+// test proves no census was taken — the promise that a submit whose pools are
+// polled and that asks no capability question costs the inventory nothing.
+type refusingFleet struct{ t *testing.T }
+
+func (r refusingFleet) ObserveOrkers(context.Context) ([]engine.OrkerPresence, error) {
+	r.t.Error("the orker inventory was read, want no read at all")
+	return nil, errors.New("unexpected inventory read")
+}
+
+func (r refusingFleet) DescribeOrkerByID(_ context.Context, id string) (*orkstackv1.DescribeOrkerResult, error) {
+	r.t.Errorf("orker %q was asked to describe itself, want no describe call at all", id)
+	return nil, errors.New("unexpected describe")
 }
 
 // ---------------------------------------------------------------------------
 // Task pins at submit (docs/DSL.md "Pins", docs/DEPLOY.md "Pin hosting is a
 // pool-wide setting")
 // ---------------------------------------------------------------------------
-
-// pinHostPools answers the DescribeOrker probe with each channel's
-// ORK_ORKER_MAX_PINS, which is the one thing the submit-time pin check reads.
-// A channel it does not map has no Orker to answer at all.
-type pinHostPools map[string]int32
-
-func (p pinHostPools) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	maxPins, serving := p[queue]
-	if !serving {
-		return nil, fmt.Errorf("no orker is polling %q", queue)
-	}
-	return &orkstackv1.DescribeOrkerResult{
-		OrkerId:           "orker-" + queue,
-		RuntimeName:       "docker",
-		MaxConcurrentPins: maxPins,
-	}, nil
-}
-
-// refusingDescriber fails the test if it is asked anything. It is how a test
-// proves the describe call was NOT made — the promise that an unpinned
-// submit runs no probe it did not run before this feature.
-type refusingDescriber struct{ t *testing.T }
-
-func (r refusingDescriber) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	r.t.Errorf("the describe-orker probe was made for %q, want no describe call at all", queue)
-	return nil, errors.New("unexpected describe")
-}
 
 const pinnedSubmitDocument = `
 apiVersion: orkstack/v1
@@ -673,8 +704,8 @@ tasks:
 func TestPoolResolver_RefusesAPinnedSubmitOntoAPoolThatHostsNoPins(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
-		Probe:  livePools{gpuQueue: 2},
-		Orkers: pinHostPools{gpuQueue: 0},
+		Probe: livePools{gpuQueue: 2},
+		Fleet: fleetOf(currentOrker("gpu-1", "gpu", 0), currentOrker("gpu-2", "gpu", 0)),
 	}
 	ns := &orkstackv1.Namespace{Name: "ci"}
 
@@ -712,8 +743,8 @@ func TestPoolResolver_RefusesAPinnedSubmitOntoAPoolThatHostsNoPins(t *testing.T)
 func TestPoolResolver_AcceptsAPinnedSubmitWhenThePoolHostsPins(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
-		Probe:  livePools{gpuQueue: 1},
-		Orkers: pinHostPools{gpuQueue: 1},
+		Probe: livePools{gpuQueue: 1},
+		Fleet: fleetOf(currentOrker("gpu-1", "gpu", 1)),
 	}
 	ns := &orkstackv1.Namespace{Name: "ci"}
 
@@ -740,7 +771,7 @@ func TestPoolResolver_DowngradesTheNoPinHostRefusalUnderAllowEmptyPool(t *testin
 	var logged strings.Builder
 	resolver := &engine.PoolResolver{
 		Probe:  livePools{gpuQueue: 1},
-		Orkers: pinHostPools{gpuQueue: 0},
+		Fleet:  fleetOf(currentOrker("gpu-1", "gpu", 0)),
 		Logger: slog.New(slog.NewTextHandler(&logged, nil)),
 	}
 	ns := &orkstackv1.Namespace{Name: "ci"}
@@ -764,8 +795,8 @@ func TestPoolResolver_DowngradesTheNoPinHostRefusalUnderAllowEmptyPool(t *testin
 func TestPoolResolver_AsksNothingAboutPinsForAnUnpinnedSubmit(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
-		Probe:  livePools{gpuQueue: 1, task.DefaultQueue: 1},
-		Orkers: refusingDescriber{t: t},
+		Probe: livePools{gpuQueue: 1, task.DefaultQueue: 1},
+		Fleet: refusingFleet{t: t},
 	}
 	ns := &orkstackv1.Namespace{Name: "ci"}
 
@@ -781,8 +812,8 @@ func TestPoolResolver_AsksNothingAboutPinsForAnUnpinnedSubmit(t *testing.T) {
 // send them to configure a process that does not exist.
 func TestPoolResolver_KeepsTheEmptyPoolAnswerForAPinnedSubmit(t *testing.T) {
 	resolver := &engine.PoolResolver{
-		Probe:  livePools{},
-		Orkers: pinHostPools{},
+		Probe: livePools{},
+		Fleet: fleetOf(),
 	}
 	ns := &orkstackv1.Namespace{Name: "ci"}
 
@@ -796,30 +827,31 @@ func TestPoolResolver_KeepsTheEmptyPoolAnswerForAPinnedSubmit(t *testing.T) {
 // TestPoolResolver_DoesNotRefusePinsWithNoAuthorityToAsk covers the two ways
 // the check declines to have an opinion, and why each is right.
 //
-// A process with no describer wired has no authority to ask, exactly as one
-// with no Probe has none about liveness — inventing an answer would refuse
-// every pinned submit in a deployment that simply never wired the seam. And a
-// describe call that FAILED measured nothing: the pool's liveness was measured
-// and stands, and turning a describe blip into a refused submit would invent a
-// failure the deployment does not have. The in-workflow backstop still covers
-// a pool that genuinely cannot open a pin (PIN_UNAVAILABLE).
+// A process with no fleet wired has no authority to ask, exactly as one with
+// no Probe has none about liveness — inventing an answer would refuse every
+// pinned submit in a deployment that simply never wired the seam. And an
+// Orker that did not answer on its own channel measured nothing: the pool's
+// liveness was measured and stands, and turning a describe blip into a
+// refused submit would invent a failure the deployment does not have. The
+// in-workflow backstop still covers a pool that genuinely cannot open a pin
+// (PIN_UNAVAILABLE).
 func TestPoolResolver_DoesNotRefusePinsWithNoAuthorityToAsk(t *testing.T) {
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	ns := &orkstackv1.Namespace{Name: "ci"}
 	wf := compile(t, pinnedSubmitDocument)
 
-	t.Run("no describer wired", func(t *testing.T) {
+	t.Run("no fleet wired", func(t *testing.T) {
 		resolver := &engine.PoolResolver{Probe: livePools{gpuQueue: 1}}
 		if _, _, err := resolver.Plan(context.Background(), ns, wf, false); err != nil {
 			t.Fatalf("Plan = %v, want no refusal from a process with nothing to ask", err)
 		}
 	})
 
-	t.Run("the describe call failed", func(t *testing.T) {
+	t.Run("no Orker of the pool answered", func(t *testing.T) {
 		resolver := &engine.PoolResolver{
 			Probe: livePools{gpuQueue: 1},
-			// Maps no channel, so every describe fails.
-			Orkers: pinHostPools{},
+			// Polls, and never answers on its own channel.
+			Fleet:  &fakeFleet{silent: []string{"gpu-1"}},
 			Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		}
 		if _, _, err := resolver.Plan(context.Background(), ns, wf, false); err != nil {
@@ -865,8 +897,8 @@ tasks:
 
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	resolver := &engine.PoolResolver{
-		Probe:  livePools{gpuQueue: 1, task.DefaultQueue: 1},
-		Orkers: pinHostPools{gpuQueue: 1, task.DefaultQueue: 1},
+		Probe: livePools{gpuQueue: 1, task.DefaultQueue: 1},
+		Fleet: fleetOf(currentOrker("gpu-1", "gpu", 1), currentOrker("main-1", "main", 1)),
 	}
 	ns := &orkstackv1.Namespace{Name: "ci", DefaultPool: "gpu"}
 
@@ -910,8 +942,8 @@ func TestPoolResolver_RefusesAPinSpanningTwoPoolsOnAHandBuiltRequest(t *testing.
 	gpuQueue, _ := task.QueueForPool("gpu", "")
 	cpuQueue, _ := task.QueueForPool("cpu", "")
 	resolver := &engine.PoolResolver{
-		Probe:  livePools{gpuQueue: 1, cpuQueue: 1},
-		Orkers: pinHostPools{gpuQueue: 1, cpuQueue: 1},
+		Probe: livePools{gpuQueue: 1, cpuQueue: 1},
+		Fleet: fleetOf(currentOrker("gpu-1", "gpu", 1), currentOrker("cpu-1", "cpu", 1)),
 	}
 
 	_, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "ci"}, wf, false)

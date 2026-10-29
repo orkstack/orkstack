@@ -7,5 +7,5 @@
 
 Before asking, the [documentation](https://orkstack.github.io/orkstack/docs/)
 may already answer it, Troubleshooting and FAQ in particular. OrkStack is
-pre-release and maintained on a best-effort basis; there is no support
+maintained on a best-effort basis; there is no support
 commitment and no response time is promised.

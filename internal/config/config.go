@@ -212,6 +212,10 @@ var Schema = []Var{
 	{Path: "orker.task_log_export", Env: "ORK_ORKER_TASK_LOG_EXPORT", Binaries: usesOrker, Kind: KindBool, Default: "false"},
 	{Path: "orker.heartbeat_interval", Env: "ORK_ORKER_HEARTBEAT_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultHeartbeatInterval)},
 	{Path: "orker.max_concurrent", Env: orker.MaxConcurrentVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(int64(orker.DefaultMaxConcurrent))},
+	// orker.capacity is empty by default: no declared capacity admits by
+	// max_concurrent alone, as every Orker did before capacity existed.
+	{Path: "orker.capacity.cpu", Env: orker.CapacityCPUVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
+	{Path: "orker.capacity.memory", Env: orker.CapacityMemoryVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
 
 	// orker.pins.max_concurrent is 0 (no default constant) rather than a
 	// derived-from-code literal: hosting zero pins is the deliberate
@@ -236,6 +240,7 @@ var Schema = []Var{
 	// the "on PATH" resolution note; the constant itself is what bin()
 	// falls back to.
 	{Path: "orker.docker.bin", Env: "ORK_DOCKER_BIN", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultDockerBin + " on PATH"},
+	{Path: "orker.docker.cli", Env: "ORK_DOCKER_CLI", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultDockerCLI},
 	{Path: "orker.docker.pull_timeout", Env: "ORK_DOCKER_PULL_TIMEOUT", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultPullTimeout)},
 	{Path: "orker.docker.bind_probe_timeout", Env: "ORK_DOCKER_BIND_PROBE_TIMEOUT", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultBindProbeTimeout)},
 

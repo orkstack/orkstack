@@ -39,6 +39,7 @@ var automationDescriptions = map[string]string{
 	"settings.run_retention":     "Go duration, or `inherit`",
 	"settings.telemetry":         "mapping: `sink`, `task_logs` (`inherit`|`enabled`|`disabled`), `attributes`",
 	"settings.max_running":       "integer ≥ 0",
+	"settings.fair_share_weight": "number from 0.001 to 1000, or 0 for the default weight of 1",
 	"settings.allowed_secrets":   "list of strings",
 	"settings.require_signed_by": "string",
 	"settings.budget":            "mapping: `cpu_seconds`, `gib_seconds` (integers ≥ 0), `period` (Go duration), `enforce` (boolean) — the `--budget-*` flags",
@@ -76,9 +77,10 @@ var settingWords = map[protoreflect.FullName][]string{
 
 // settingMinimums are the parsers' lower bounds, keyed by full name.
 var settingMinimums = map[protoreflect.FullName]int{
-	"orkstack.v1.Namespace.max_running": 0,
-	"orkstack.v1.Budget.cpu_seconds":    0,
-	"orkstack.v1.Budget.gib_seconds":    0,
+	"orkstack.v1.Namespace.max_running":       0,
+	"orkstack.v1.Namespace.fair_share_weight": 0,
+	"orkstack.v1.Budget.cpu_seconds":          0,
+	"orkstack.v1.Budget.gib_seconds":          0,
 }
 
 // settingSubKeys are the parsers' sub-key lists of the settings that are
@@ -130,6 +132,8 @@ func scalarSchema(fd protoreflect.FieldDescriptor) (map[string]any, error) {
 		out = map[string]any{"type": "string"}
 	case protoreflect.Int32Kind, protoreflect.Int64Kind:
 		out = map[string]any{"type": "integer"}
+	case protoreflect.DoubleKind:
+		out = map[string]any{"type": "number"}
 	case protoreflect.BoolKind:
 		out = map[string]any{"type": "boolean"}
 	case protoreflect.EnumKind:

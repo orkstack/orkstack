@@ -52,10 +52,6 @@ This excerpt fans `convert` out over the array that `list` computes:
 | look up a word | [Glossary](/docs/concepts/glossary/) |
 | change OrkStack | [Contributing](/docs/contributing/) |
 
-## Status
-
-OrkStack is pre-release. Breaking changes can still land before 1.0. Each one is listed in the [changelog](/docs/reference/changelog/), marked **BREAKING**.
-
 ## Where the details live
 
 These pages summarize the repository's own docs. Each page links to the full reference on GitHub, with every key, rule and default. [How OrkStack is tested](/docs/concepts/proven/) explains what the test suite covers.

@@ -704,7 +704,31 @@ jobs:
           go-version: "1.27.3"
       - name: observability stack
         timeout-minutes: 10
-        run: docker compose -f deploy/docker-compose.yml --profile observability up -d --wait
+        run: |
+          set -euo pipefail
+          docker compose -f deploy/docker-compose.yml --profile observability up -d --wait
+          # --wait returns once the containers run, but Loki answers /ready
+          # with 503 for its first seconds (about 22 s on a 16-CPU host), and
+          # proof.sh refuses the part (exit 77) unless every endpoint below is
+          # ready. Wait for them here, so a stack that never comes up fails
+          # this setup step (setupStepNames) and not the proof step.
+          ready() {
+            curl -sf -o /dev/null http://127.0.0.1:3100/ready &&
+              curl -sf -o /dev/null http://127.0.0.1:3200/ready &&
+              curl -sf -o /dev/null http://127.0.0.1:9090/-/ready &&
+              curl -s -o /dev/null http://127.0.0.1:4318/v1/logs
+          }
+          deadline=$((SECONDS + 180))
+          until ready; do
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "the observability stack was not ready after 180 s" >&2
+              docker compose -f deploy/docker-compose.yml --profile observability ps >&2
+              docker compose -f deploy/docker-compose.yml --profile observability logs --tail 40 otel-collector loki tempo prometheus >&2
+              exit 1
+            fi
+            sleep 2
+          done
+          echo "observability stack ready after $SECONDS s"
       - name: fetch plan
         uses: ./.github/actions/proof-fetch
         timeout-minutes: 10
@@ -803,7 +827,10 @@ jobs:
           # check run's annotations (where GitHub says it lost the runner),
           # its log when it did not succeed (best effort), and read_error when
           # the job listing or the annotations could not be fetched, so the
-          # merger fails that job closed.
+          # merger fails that job closed. The job's and its steps' times and
+          # its runner are how the merger tells a job "Re-run failed jobs"
+          # carried forward from the attempt before, which GitHub lists again
+          # under a new id without running it (merge.go, carriedForward).
           set -uo pipefail
           dir="$RUNNER_TEMP/ci/jobs"
           work="$RUNNER_TEMP/ci/jobs-work"
@@ -842,9 +869,13 @@ jobs:
               fi
               jq -c --rawfile log "$work/log" --slurpfile ann "$work/ann" --arg err "$err" '
                 {name, conclusion: (.conclusion // ""),
+                 id: (.id // 0), run_attempt: (.run_attempt // 0),
+                 started_at: (.started_at // ""), completed_at: (.completed_at // ""),
+                 runner_name: (.runner_name // ""),
                  check_run_id: ((.check_run_url // "") | split("/") | last | tonumber? // 0),
                  annotations: $ann[0], log: $log,
-                 steps: [.steps[]? | {name, conclusion: (.conclusion // "")}],
+                 steps: [.steps[]? | {name, number: (.number // 0), conclusion: (.conclusion // ""),
+                                      started_at: (.started_at // ""), completed_at: (.completed_at // "")}],
                  failed_step: ([.steps[]? | select(.conclusion == "failure") | .name][0] // "")}
                 + (if $err == "" then {} else {read_error: $err} end)' <<<"$job" >>"$work/jobs-$n" ||
                 echo "{\"name\":$(jq '.name' <<<"$job"),\"read_error\":\"the record could not be assembled\"}" >>"$work/jobs-$n"

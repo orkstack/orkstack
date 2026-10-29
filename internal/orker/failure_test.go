@@ -24,11 +24,11 @@ var allReasonCodes = []string{
 	ReasonSecretSchemeForbid, ReasonSecretNotPermitted, ReasonCommitReadFailed, ReasonCommitWriteFailed,
 	ReasonCommitSchema, ReasonCommitIdentity, ReasonCommitUndecodable,
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonOutputNotReadable,
-	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused,
-	ReasonNetworkModeRefused, ReasonEachItemUnavailable,
+	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused, ReasonResourceAdmissionMismatch,
+	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
-	ReasonBindProbeTimedOut,
+	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake
@@ -95,6 +95,10 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"a slow daemon says nothing about the work root; the next boot may find it fast"},
 		{ReasonWorkdirNotBindable, CategoryInfrastructureError, false,
 			"the daemon refused the bind, in its own words: a host fact a restart does not change"},
+		{ReasonRunAsOrkerUnavailable, CategoryInfrastructureError, false,
+			"the boot probe found the host maps the Orker's uid elsewhere; the next attempt on this Orker meets the same host"},
+		{ReasonOrkerStopped, CategoryInfrastructureError, true,
+			"the host went away, not the workload: what the heartbeat timeout it stands beside says"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.reason, func(t *testing.T) {

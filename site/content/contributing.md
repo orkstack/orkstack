@@ -38,6 +38,14 @@ of input OrkStack does not control also gets a fuzz target; `make check` runs
 its seeds, and `go test -list '^Fuzz' ./...` lists them all (see "Fuzzing" in
 [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).
 
+## Record the change
+
+A change people can see adds its entry under `[Unreleased]` in the
+[changelog](/docs/reference/changelog/), with a breaking one marked
+**BREAKING**. At a release that section becomes the version's own, and its
+text is the release's notes on GitHub, word for word (see "The changelog" in
+[CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).
+
 ## See also
 
 - [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md): the checklist, the development stack, and what CI runs

@@ -14,10 +14,12 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -136,6 +138,14 @@ type OCIDispatcher struct {
 	// work root.
 	stageOnce sync.Once
 	stage     *stagingCache
+	// runAsOrker is the boot probe's finding about the §3.1 escape hatch on
+	// this host: nil until a probe ran (`orkctl activity test` and `task run`
+	// run none, and render the hatch as before), then what the probe found.
+	runAsOrker atomic.Pointer[runAsOrkerFinding]
+	// signalProbeGrace is the boot probe's grace between SIGTERM and SIGKILL;
+	// zero is DefaultCancellationGrace, the grace a task that sets none gets.
+	// Tests shorten it.
+	signalProbeGrace time.Duration
 }
 
 // transferLimit is the per-phase bound on concurrent object-store requests.
@@ -186,6 +196,32 @@ type AttemptOutcome struct {
 	// Cache is the attempt's memo decision (key_components included), for an
 	// attempt of a cached task that reached the memo step; nil otherwise.
 	Cache *orkstackv1.CacheResult
+	// CleanupErr is why the attempt's own directory, or its secrets, could
+	// not be removed after it ended; nil when both were. It changes nothing
+	// about the outcome: the attempt's result is already decided, and what
+	// is left behind is a disk to reclaim, not a task to fail.
+	CleanupErr error
+}
+
+// attemptCleanup collects what removing one attempt's own directories left
+// behind. The removals are deferred inside execute; Execute's end hands the
+// result to the observer.
+type attemptCleanup struct {
+	err error
+}
+
+// record logs a removal that failed and keeps it for the observer. A removal
+// that succeeded records nothing.
+func (c *attemptCleanup) record(
+	logger *slog.Logger, in *orkstackv1.ExecuteTaskInput, attempt int32, what, path string, err error,
+) {
+	if err == nil {
+		return
+	}
+	logger.Warn("attempt cleanup: a directory could not be removed and is left on disk",
+		"run", in.GetRunId(), "task", in.GetTaskId(), "attempt", attempt,
+		"directory", what, "path", path, "error", err)
+	c.err = errors.Join(c.err, fmt.Errorf("remove the attempt's %s %s: %w", what, path, err))
 }
 
 // TaskLogExporter receives every framed line of one attempt, beside the
@@ -305,6 +341,10 @@ func (d *OCIDispatcher) Execute(
 		// so the attempt record and the observer see it on every exit path —
 		// a miss whose container then failed still records its miss.
 		trace = &memoTrace{emit: emit}
+		// cleanup is what removing the attempt's own directories left
+		// behind. execute's deferred removals have run by the time end
+		// reads it, on every exit path, a panic's included.
+		cleanup = &attemptCleanup{}
 	)
 
 	// end is the ONLY thing in Execute allowed to call attemptObs.End, and it
@@ -326,6 +366,7 @@ func (d *OCIDispatcher) Execute(
 		}
 		ended = true
 		outcome.Cache = trace.result
+		outcome.CleanupErr = cleanup.err
 		if attemptObs != nil {
 			attemptObs.End(outcome)
 		}
@@ -361,7 +402,7 @@ func (d *OCIDispatcher) Execute(
 	defer beat.Stop()
 	beat.Phase("start")
 
-	result, failure = d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink, trace)
+	result, failure = d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink, trace, cleanup)
 
 	// The line writers are flushed before the sink closes, so a workload's
 	// last unterminated line is not lost.
@@ -381,6 +422,22 @@ func (d *OCIDispatcher) Execute(
 	// Returning nil here would be worse still: it would report success for
 	// work that was torn down, which §6.3 forbids outright.
 	if err := ctx.Err(); err != nil {
+		if orkerStopping(ctx) {
+			// Nobody cancelled the task: this Orker is stopping, and the
+			// worker's Stop cancelled every attempt it runs. The record says
+			// so, and Temporal is told nothing — ErrResultPending is the SDK's
+			// one way to send no completion — so it sees what it sees of an
+			// Orker that died: no heartbeat, ORKER_HEARTBEAT_TIMEOUT, a retry
+			// elsewhere under the task's policy (§6.3).
+			failure = Fail(ReasonOrkerStopped,
+				"orker %s was stopped while this attempt ran: it stopped the attempt as it stops a "+
+					"cancelled one (SIGTERM to a running container, SIGKILL after the task's %ds grace) "+
+					"and reported nothing to the run, which sees the attempt as lost "+
+					"(ORKER_HEARTBEAT_TIMEOUT) and retries it on another Orker if its retry policy allows",
+				d.OrkerID, graceSecondsOf(in)).StampStart(startedAt)
+			end(AttemptOutcome{Reason: failure.Reason, Err: failure.TemporalError()})
+			return nil, activity.ErrResultPending
+		}
 		end(AttemptOutcome{Canceled: true, Err: err})
 		return nil, err
 	}
@@ -502,6 +559,7 @@ func (d *OCIDispatcher) execute(
 	stdoutLine, stderrLine io.Writer,
 	sink *logChunkSink,
 	trace *memoTrace,
+	cleanup *attemptCleanup,
 ) (*orkstackv1.ExecuteTaskResult, *Failure) {
 	if failure := d.Validate(in); failure != nil {
 		return nil, failure
@@ -547,10 +605,15 @@ func (d *OCIDispatcher) execute(
 	// Workspace.Remove, not os.RemoveAll: Seal leaves input/ at 0555 and
 	// unlinking needs write on the DIRECTORY, so a plain RemoveAll would fail
 	// and leave the attempt's tree — staged secrets included — on disk.
-	defer func() { _ = ws.Remove() }()
+	//
+	// A removal that fails anyway is reported, never discarded: a workload
+	// running as a uid other than the Orker's can leave a directory or a file
+	// the Orker cannot remove, and a tree left behind is a disk that fills
+	// with no sign of why.
+	defer func() { cleanup.record(d.logger(), in, attempt, "workspace", ws.Root, ws.Remove()) }()
 	// Secret bytes must not outlive the attempt that needed them, on ANY exit
 	// path (§9.4).
-	defer func() { _ = ws.RemoveSecrets() }()
+	defer func() { cleanup.record(d.logger(), in, attempt, "secrets", ws.Secrets, ws.RemoveSecrets()) }()
 
 	// STEP 4b. The pin's shared directory, for a pinned attempt only (§3.1).
 	//
@@ -671,6 +734,16 @@ func (d *OCIDispatcher) execute(
 		return nil, netFailure
 	}
 	runAsOrkerUser := in.GetRunAsOrkerUser() || d.Policy.ForceUser
+	// The hatch is refused here, after the memo step and the commit check,
+	// so a task that runs no container is never refused for it, and before
+	// anything is rendered for a container that will not run.
+	if runAsOrkerUser {
+		if err := d.runAsOrkerUnavailable(); err != nil {
+			return nil, FailCause(ReasonRunAsOrkerUnavailable, err,
+				"task %q runs as the Orker's own user (runAsOrkerUser or %s), which does not work on this Orker: %v",
+				in.GetTaskId(), ForceUserVar, err)
+		}
+	}
 
 	// An item of a fan-out resolves its own element of the array the engine
 	// counted, after staging (a task source is read from the staged
@@ -742,14 +815,20 @@ func (d *OCIDispatcher) execute(
 		return nil, d.runtimeFailure(err, "create the container")
 	}
 	beat.Container(id)
+	// A declared capacity frees this attempt's reservation when the
+	// container is removed, never before (capacity.go).
+	admission := admissionFrom(ctx)
+	admission.ContainerCreated(id)
 	// Remove runs on a DETACHED context: cleanup must survive the
 	// cancellation that caused it (§6.3).
 	defer func() {
 		removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
 		defer cancel()
-		if err := d.Runtime.Remove(removeCtx, id); err != nil {
+		err := d.Runtime.Remove(removeCtx, id)
+		if err != nil {
 			sink.Write(fmt.Sprintf("[ork] container %s could not be removed: %v", id, err))
 		}
+		admission.ContainerRemoved(err)
 	}()
 
 	// STEP 9-10. Run, stream, and wait for exit, cancellation or the task
@@ -785,16 +864,23 @@ func (d *OCIDispatcher) execute(
 	// STEP 12. Validate — INCLUDING readability — and bound the projected
 	// commit before any byte is uploaded.
 	beat.Phase("validate")
-	values, failure := ReadValues(filepath.Join(ws.Output, "values.json"), in.GetLimits())
+	// Every read of what the workload left goes through the confined tree,
+	// never a host path, so no link it wrote reaches outside it (OutputTree).
+	output, failure := OpenOutputTree(ws.Output)
 	if failure != nil {
 		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
 	}
-	scanned, failure := ScanOutputArtifacts(ws.Artifacts, in.GetLimits())
+	defer func() { _ = output.Close() }()
+	values, failure := output.ReadValues(in.GetLimits())
+	if failure != nil {
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+	}
+	scanned, failure := output.ScanArtifacts(in.GetLimits())
 	if failure != nil {
 		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
 	}
 	for _, artifact := range scanned {
-		if failure := CheckReadable(artifact.Path, ContainerArtifacts+"/"+artifact.Name); failure != nil {
+		if _, failure := artifact.Open(); failure != nil {
 			return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
 		}
 	}
@@ -1512,9 +1598,9 @@ func (d *OCIDispatcher) containerSpec(
 	if each := in.GetEach(); each != nil {
 		spec.Labels["ork.item"] = fmt.Sprintf("%d", each.GetIndex())
 	}
-	if runAsOrkerUser {
-		spec.User = fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
-	}
+	// The intent, not a uid: the runtime renders "as the Orker" in its own
+	// spelling, and the boot probe checked that rendering on this host.
+	spec.RunAsOrker = runAsOrkerUser
 	return spec, nil
 }
 
@@ -1666,31 +1752,20 @@ func (d *OCIDispatcher) commit(
 
 	// Step 3: hash everything, streaming.
 	type pending struct {
+		artifact    ScannedArtifact
 		name        string
-		path        string
 		sha         string
 		size        int64
 		contentType string
 	}
 	items := make([]pending, 0, len(scanned))
 	for _, artifact := range scanned {
-		sha, size, err := HashFile(artifact.Path)
-		if err != nil {
-			return nil, FailCause(ReasonOutputNotReadable, err,
-				"hash output artifact %q: %v", artifact.Name, err)
-		}
-		// Resolve the content type HERE, from the same bytes and the same rule
-		// the store will use, so the step-4 projection and the step-5 upload
-		// agree on the field. Leaving it empty made RefFor project "" while
-		// Put sniffed a real type, so the bound understated the manifest it
-		// claimed to measure byte-for-byte.
-		contentType, err := sniffFileContentType(artifact.Path)
-		if err != nil {
-			return nil, FailCause(ReasonOutputNotReadable, err,
-				"read output artifact %q to resolve its content type: %v", artifact.Name, err)
+		sha, size, contentType, failure := digestArtifact(artifact)
+		if failure != nil {
+			return nil, failure
 		}
 		items = append(items, pending{
-			name: artifact.Name, path: artifact.Path,
+			artifact: artifact, name: artifact.Name,
 			sha: sha, size: size, contentType: contentType,
 		})
 	}
@@ -1754,7 +1829,12 @@ func (d *OCIDispatcher) commit(
 	uploadFailures := make([]*Failure, len(items))
 	if at, err := eachBounded(ctx, len(items), d.transferLimit(), func(ctx context.Context, i int) error {
 		item := items[i]
-		ref, failure := d.upload(ctx, provenance, item.name, item.path, item.contentType, item.sha, item.size)
+		body, failure := item.artifact.Open()
+		if failure != nil {
+			uploadFailures[i] = failure
+			return failure
+		}
+		ref, failure := d.upload(ctx, provenance, item.name, body, item.contentType, item.sha, item.size)
 		if failure != nil {
 			uploadFailures[i] = failure
 			return failure
@@ -1851,22 +1931,50 @@ func (d *OCIDispatcher) commit(
 	}
 }
 
-// upload sends the file at path. sha and size are the digest step 3 already
-// computed with HashFile, or "" when nothing has hashed it yet: a known digest
-// lets the store upload straight from the file, once, with the digest as a
-// checksum the server verifies, instead of spooling and hashing it again.
+// digestArtifact is step 3 for one artifact: its sha256, size and content
+// type, read through the descriptor the scan opened, so the hash, the type
+// and the upload describe the same bytes.
+func digestArtifact(artifact ScannedArtifact) (sha string, size int64, contentType string, failure *Failure) {
+	body, failure := artifact.Open()
+	if failure != nil {
+		return "", 0, "", failure
+	}
+	sha, size, err := hashReader(body)
+	if err != nil {
+		return "", 0, "", FailCause(ReasonOutputNotReadable, err,
+			"hash output artifact %q: %v", artifact.Name, err)
+	}
+	// Resolve the content type HERE, from the same bytes and the same rule
+	// the store will use, so the step-4 projection and the step-5 upload
+	// agree on the field. Leaving it empty made RefFor project "" while Put
+	// sniffed a real type, so the bound understated the manifest it claimed
+	// to measure byte-for-byte.
+	contentType, err = sniffContentType(body)
+	if err != nil {
+		return "", 0, "", FailCause(ReasonOutputNotReadable, err,
+			"read output artifact %q to resolve its content type: %v", artifact.Name, err)
+	}
+	return sha, size, contentType, nil
+}
+
+// upload sends a file's bytes from its start: an open file, or an output
+// artifact's reader (ScannedArtifact.Open), which reads through the descriptor
+// the scan opened. sha and size are the digest step 3 already computed, or ""
+// when nothing has hashed it yet: a known digest lets the store upload
+// straight from the file, once, with the digest as a checksum the server
+// verifies, instead of spooling and hashing it again.
+//
+// It takes a reader, not a path, because an output artifact is read only
+// through the descriptor its confined scan opened.
 func (d *OCIDispatcher) upload(
 	ctx context.Context,
 	prov artifacts.Provenance,
-	name, path, contentType, sha string,
+	name string,
+	body io.ReadSeeker,
+	contentType, sha string,
 	size int64,
 ) (*orkstackv1.ArtifactRef, *Failure) {
-	file, err := os.Open(path)
-	if err != nil {
-		return nil, FailCause(ReasonOutputNotReadable, err, "open output artifact %q: %v", name, err)
-	}
-	defer func() { _ = file.Close() }()
-	return d.put(ctx, prov, name, file, contentType, sha, size)
+	return d.put(ctx, prov, name, body, contentType, sha, size)
 }
 
 func (d *OCIDispatcher) uploadBytes(
@@ -1935,9 +2043,16 @@ func (d *OCIDispatcher) uploadStreams(
 		if _, err := os.Stat(stream.path); err != nil {
 			continue
 		}
+		// By host path, because the capture is the Orker's own: it lives in
+		// the attempt's logs/, which no container mounts.
+		file, err := os.Open(stream.path)
+		if err != nil {
+			return nil, FailCause(ReasonOutputNotReadable, err, "open %s: %v", stream.name, err)
+		}
 		// No digest yet: a stream capture is hashed by the store in one pass
 		// and uploaded from the same file.
-		ref, failure := d.upload(ctx, prov, stream.name, stream.path, "text/plain; charset=utf-8", "", 0)
+		ref, failure := d.upload(ctx, prov, stream.name, file, "text/plain; charset=utf-8", "", 0)
+		_ = file.Close()
 		if failure != nil {
 			return nil, failure
 		}
@@ -1992,23 +2107,7 @@ func (d *OCIDispatcher) attachFailureDetail(
 	defer cancel()
 
 	if ws != nil {
-		scanned, scanFailure := ScanOutputArtifacts(ws.Artifacts, in.GetLimits())
-		if scanFailure != nil {
-			detail.ScanNotes = append(detail.ScanNotes, scanFailure.Error())
-		}
-		for _, artifact := range scanned {
-			if readFailure := CheckReadable(artifact.Path, ContainerArtifacts+"/"+artifact.Name); readFailure != nil {
-				detail.ScanNotes = append(detail.ScanNotes, readFailure.Error())
-				continue
-			}
-			ref, upFailure := d.upload(upCtx, prov, artifact.Name, artifact.Path, "", "", 0)
-			if upFailure != nil {
-				detail.ScanNotes = append(detail.ScanNotes,
-					fmt.Sprintf("artifact %q could not be stored: %s", artifact.Name, upFailure.Message))
-				continue
-			}
-			detail.Artifacts = append(detail.Artifacts, ref)
-		}
+		d.publishFailedOutput(upCtx, in, ws, prov, detail)
 	}
 	if capture != nil {
 		if refs, upFailure := d.uploadStreams(upCtx, prov, capture); upFailure == nil {
@@ -2019,6 +2118,42 @@ func (d *OCIDispatcher) attachFailureDetail(
 		}
 	}
 	return failure.WithDetail(detail)
+}
+
+// publishFailedOutput scans a failed attempt's artifacts through the same
+// confined tree the success path reads (OutputTree) and uploads each that
+// passes; every refusal and every upload failure becomes a scan note.
+func (d *OCIDispatcher) publishFailedOutput(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+	ws *Workspace,
+	prov artifacts.Provenance,
+	detail *orkstackv1.ActivityFailureDetail,
+) {
+	output, failure := OpenOutputTree(ws.Output)
+	if failure != nil {
+		detail.ScanNotes = append(detail.ScanNotes, failure.Error())
+		return
+	}
+	defer func() { _ = output.Close() }()
+	scanned, scanFailure := output.ScanArtifacts(in.GetLimits())
+	if scanFailure != nil {
+		detail.ScanNotes = append(detail.ScanNotes, scanFailure.Error())
+	}
+	for _, artifact := range scanned {
+		body, readFailure := artifact.Open()
+		if readFailure != nil {
+			detail.ScanNotes = append(detail.ScanNotes, readFailure.Error())
+			continue
+		}
+		ref, upFailure := d.upload(ctx, prov, artifact.Name, body, "", "", 0)
+		if upFailure != nil {
+			detail.ScanNotes = append(detail.ScanNotes,
+				fmt.Sprintf("artifact %q could not be stored: %s", artifact.Name, upFailure.Message))
+			continue
+		}
+		detail.Artifacts = append(detail.Artifacts, ref)
+	}
 }
 
 func (c *runCapture) exitCode() int32 {
@@ -2280,6 +2415,14 @@ func attemptOf(ctx context.Context) int32 {
 		return activity.GetInfo(ctx).Attempt
 	}
 	return 1
+}
+
+// orkerStopping reports whether ctx was cancelled because this process's
+// worker is stopping, rather than by Temporal (a cancelled run, a failing
+// run's running siblings) or by a deadline: the SDK cancels every running
+// activity with worker.ErrWorkerShutdown as the cause when its worker stops.
+func orkerStopping(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), worker.ErrWorkerShutdown)
 }
 
 func graceSecondsOf(in *orkstackv1.ExecuteTaskInput) int32 {

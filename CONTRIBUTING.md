@@ -89,10 +89,15 @@ builds the release images (`ork`, `orker`, `orkctl`, `ui` and the six
 activities) as OCI layouts from those binaries, for this machine unless
 `PLATFORMS` says otherwise. `make release-smoke VERSION=vX.Y.Z` builds both
 for this machine and runs the quickstart's `compose.yaml` on those images end
-to end, by digest, in a compose project, registry and ports of its own.
+to end, by digest, in a compose project, registry and ports of its own. It
+signs each image with a throwaway key, by the cosign image and flags the
+release signs with (`deploy/cosign-image.txt`), and runs an Orkflow in a
+namespace that requires that key, so OrkStack's own verifier accepts what a
+release signs.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
-runs both before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
+runs both before it publishes anything, and `nightly.yml` runs the quickstart
+smoke on `main` every night ([docs/PROOFS.md](./docs/PROOFS.md)).
 
 ## Fast checks (no Docker, under two minutes warm)
 
@@ -137,6 +142,17 @@ Linux host, do the one-time `host.docker.internal` setup in "Linux hosts"
 below first.
 
 ## Linux hosts
+
+The runtime-facing suites (`internal/orker`, `cmd/orker`, `orkctl task run`
+and `test/fixtures/bash_activity_contract.sh`) run on whichever CLI the
+environment names, so they can be run on Podman as well as Docker: set
+`ORK_DOCKER_CLI=podman` for the podman CLI (and `ORK_DOCKER_BIN` if it is not
+`podman` on `PATH`), or `DOCKER_HOST` to Podman's socket for the docker CLI
+against it. Podman needs `insecure = true` for `localhost:5001` in
+`registries.conf` and the host requirements of docs/DEPLOY.md, "Running on
+Podman". Podman may write under `~/.config/containers` and
+`~/.local/share/containers`; restore them when done. CI runs them on Podman in
+`podman.yml`.
 
 Docker Desktop (macOS, Windows) provides `host.docker.internal` inside
 containers; plain Docker Engine on Linux does not. Several integration and
@@ -247,7 +263,8 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
 6. Update the docs the change makes false, and add the CHANGELOG.md
-   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1). The
+   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1; "The
+   changelog", below). The
    site's pages (`site/content/`) are short pages written for readers that
    cite the repository docs they summarise: update the page that describes a
    behaviour you change, and give a new doc under `docs/` a site page that
@@ -264,6 +281,23 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    `main` buildable.
 9. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate; a
    local `make proof` is the equivalent path.
+
+## The changelog
+
+CHANGELOG.md follows Keep a Changelog 1.1.0. A user-visible change adds its
+entry under `## [Unreleased]` in the same pull request, in the subsection of
+its kind (`### Added`, `### Changed`, `### Deprecated`, `### Removed`,
+`### Fixed` or `### Security`), and marks a breaking change **BREAKING**
+(AGENTS.md §11.1, step 7). Write it for the people who read the release: at a
+release the `[Unreleased]` section becomes the version's own,
+`## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
+section's text is the GitHub release's notes, word for word. Link to a
+document by its absolute URL: a relative link does not resolve on the release
+page. `make check` refuses a heading or a subsection of any other shape
+(`internal/docscheck`), and `release.yml` refuses a release while entries are
+still under `[Unreleased]`; docs/PROOFS.md §10, "Write the release notes", is
+the release's side of it. 0.1.0, the first release, says only "First
+release.".
 
 ## Fuzzing
 

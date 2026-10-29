@@ -21,6 +21,8 @@ curl -X POST http://localhost:8080/v1/triggers/trg-… \
 
 An empty object `{}` starts a run with no input, so the Orkflow's defaults apply. A `201` response holds the new run's `id`.
 
+<!-- site-media: cli-schedules-triggers -->
+
 ## Create a trigger
 
 | Flag | Meaning |

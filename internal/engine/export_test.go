@@ -175,3 +175,12 @@ func OverlayDiffsForTest() int64 { return overlayDiffs.Load() }
 func MaterializeSnapshotForTest(ctx context.Context, store SnapshotStore, uri string) (*orkstackv1.Run, error) {
 	return materializeSnapshot(ctx, store, nil, uri)
 }
+
+// DisableFairnessKeysGateForTest makes priorityFor take its DefaultVersion
+// branch without asking the fairness-keys version, so a recorder can write a
+// history in the shape of the builds before the gate. It returns the
+// function that restores the gate.
+func DisableFairnessKeysGateForTest() (restore func()) {
+	fairnessKeysGateDisabledForTest.Store(true)
+	return func() { fairnessKeysGateDisabledForTest.Store(false) }
+}

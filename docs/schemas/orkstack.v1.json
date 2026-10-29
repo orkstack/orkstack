@@ -366,6 +366,11 @@
           "description": "string",
           "type": "string"
         },
+        "fair_share_weight": {
+          "description": "number from 0.001 to 1000, or 0 for the default weight of 1",
+          "minimum": 0,
+          "type": "number"
+        },
         "labels": {
           "additionalProperties": {
             "type": "string"

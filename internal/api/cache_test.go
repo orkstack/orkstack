@@ -141,12 +141,13 @@ func TestSubmitRun_ComposedChildPlansInheritNoCache(t *testing.T) {
 	}
 }
 
-// cacheSupportOrkers answers DescribeOrker with cache_supported as given.
-type cacheSupportOrkers bool
-
-func (s cacheSupportOrkers) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	return &orkstackv1.DescribeOrkerResult{OrkerId: "gpu-3", BuildId: "2026.09.01", EachSupported: true,
-		CacheSupported: bool(s)}, nil
+// oldGPUOrker is gpu's one Orker, of a build that predates the capability
+// without() clears.
+func oldGPUOrker(without func(*orkstackv1.DescribeOrkerResult)) *stubFleet {
+	orker := currentOrker("gpu-3", "gpu", 0)
+	orker.BuildId = "2026.09.01"
+	without(orker)
+	return fleetOf(orker)
 }
 
 func TestSubmitRun_PoolWithoutCacheSupportIsFailedPreconditionAndMintsNothing(t *testing.T) {
@@ -154,7 +155,7 @@ func TestSubmitRun_PoolWithoutCacheSupportIsFailedPreconditionAndMintsNothing(t 
 	gpuQueue := poolQueue(t, "gpu")
 	minted := 0
 	svc := api.NewService(api.Config{
-		Starter: starter, Pools: livePools{gpuQueue: 1}, PoolOrkers: cacheSupportOrkers(false),
+		Starter: starter, Pools: livePools{gpuQueue: 1}, Fleet: oldGPUOrker(func(o *orkstackv1.DescribeOrkerResult) { o.CacheSupported = false }),
 		NewRunID: func() string { minted++; return fmt.Sprintf("run-%d", minted) },
 	})
 	applyYAML(t, svc, strings.ReplaceAll(cachedYAML, "uses: busybox:latest", "uses: busybox:latest\n    pool: gpu"))

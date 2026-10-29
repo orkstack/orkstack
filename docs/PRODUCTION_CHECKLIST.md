@@ -1,6 +1,6 @@
 # Production checklist
 
-OrkStack is pre-release: stable, but breaking changes may be introduced until 1.0. [AGENTS.md](../AGENTS.md) §11 forbids calling OrkStack production-ready until its required failure and recovery scenarios are proven. This checklist is how to run OrkStack carefully while that proof is incomplete. It is not a readiness claim.
+[AGENTS.md](../AGENTS.md) §11 forbids calling OrkStack production-ready until its required failure and recovery scenarios are proven. This checklist is how to run OrkStack carefully while that proof is incomplete. It is not a readiness claim.
 
 Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because several items below work around one of its limits. Each item names the reference that holds the detail, and the commands are the ones those references give.
 
@@ -33,7 +33,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Set `ORK_WS_ALLOWED_ORIGINS` on every replica when the UI is served from another origin. Unset, the WebSocket upgrade is refused with 403 ([DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas").
 - [ ] Set `ORK_ORKER_POOL` to the same value on both binaries. A task that names no pool runs on the engine's default route, which must match the Orkers that serve it ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 - [ ] Give every Orker an `ORK_ORKER_ID` that is unique across the whole deployment. Two Orkers that share one show as a single row, and a cordon can land on either ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
-- [ ] Run every Orker of one pool on one release. Fan-out, caching and failure handlers are checked against one Orker of each pool, so a mixed pool gives the answer of one of its builds ([DEPLOY.md](./DEPLOY.md), "Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them").
+- [ ] Run every Orker of one pool on one release. Fan-out, caching and failure handlers are checked against every uncordoned Orker of each pool, so one Orker of an older build refuses them for its whole pool until it is upgraded or cordoned ([DEPLOY.md](./DEPLOY.md), "Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them").
 - [ ] Restrict each namespace to the pools it may use, with `orkctl namespace update NAME --allow-pool …`. An empty list means no restriction ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 - [ ] Check pool health with `orkctl pool list` before and after a change. A pool with no live Orkers reads `0`, measured, and a pool the cluster could not answer for reads `unknown`, never `0` ([DEPLOY.md](./DEPLOY.md), "The admin surface: what a deployment is made of, and who is serving it").
 - [ ] Set `ORK_ORKER_MAX_PINS` above zero on every Orker of a pool that runs pins, and leave it at zero elsewhere. A pool with no pin host refuses a pinning document at submit ([DEPLOY.md](./DEPLOY.md), "Pin hosting is a pool-wide setting").
@@ -112,6 +112,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Stop the process only when `orkctl orker drain` exits 0. Exit 4 means the timeout passed with work still on the host, and stopping then fails the runs whose pins it holds with `PIN_HOST_LOST` ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Remember that a cordon is a flag in the Orker process, so a restarted Orker comes back ready ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Remember that `SIGTERM` stops polling and cancels in-flight work, and does not cordon the Orker first ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
+- [ ] Give the Orker's process manager longer to stop it than the longest `cancellation_grace_period_seconds` its tasks use, 30 s by default: `terminationGracePeriodSeconds`, `TimeoutStopSec` or `docker stop --time`. A stopped Orker sends each container `SIGKILL` after that grace and writes each attempt's record before it exits ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 
 ## Observability
 
@@ -126,4 +127,4 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 ## Before you depend on it
 
 - [ ] Rehearse, in a deployment that carries no real work, each procedure this checklist relies on: a rollout and a rollback, an Orker drain, and a cleanup pass with retention enabled. Do not rely on a procedure under pressure until you have run it ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
-- [ ] Re-read [LIMITATIONS.md](./LIMITATIONS.md) and the [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]` section before each upgrade, because breaking changes are announced there ([UPGRADING.md](./UPGRADING.md), "The pre-1.0 promise").
+- [ ] Before each upgrade, re-read [LIMITATIONS.md](./LIMITATIONS.md) and, in [CHANGELOG.md](../CHANGELOG.md), the section of every release after the one you run, because breaking changes are announced there ([UPGRADING.md](./UPGRADING.md), "Breaking changes").

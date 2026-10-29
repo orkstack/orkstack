@@ -2,11 +2,7 @@
 
 Each limit on this page is deliberate: the engineering contract fixes it, or it is a default a deployment may move, and the row says which, and names the setting where there is one. The reasoning is in [AGENTS.md](../AGENTS.md), and each row links the section that gives the bound and why it is there.
 
-Deployment settings are the configuration keys of [DEPLOY.md](./DEPLOY.md), "1. Configuration", with their environment variables in capitals. Task settings, such as `retry:` and `timeout_seconds`, are written in the Orkflow. [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) is the generated reference for every default.
-
-## Pre-release status
-
-OrkStack is pre-release: stable, but breaking changes may be introduced until 1.0. Each breaking change is marked **BREAKING** in [CHANGELOG.md](../CHANGELOG.md), and [UPGRADING.md](./UPGRADING.md) says what that means for an upgrade. No release or tag exists yet, and this page is not a claim that OrkStack is production-ready; [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) says what that would take.
+Deployment settings are the configuration keys of [DEPLOY.md](./DEPLOY.md), "1. Configuration", with their environment variables in capitals. Task settings, such as `retry:` and `timeout_seconds`, are written in the Orkflow. [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) is the generated reference for every default. This page is not a claim that OrkStack is production-ready; [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) says what that would take.
 
 ## Payloads and artifacts
 
@@ -20,7 +16,7 @@ Workflow payloads are small by contract. Anything large is an artifact, which is
 | Structured output, `values.json` | 256 KiB at most, valid UTF-8. A larger file is a `ContractViolation` (`VALUES_TOO_LARGE`). Only a file of 4 KiB or less is carried inline, for display | `engine.limits.values_max_bytes` (`ORK_VALUES_MAX_BYTES`), pinned at submit | [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "3.4 `output/values.json`"; "1. Ownership: who knows what" |
 | Artifacts per attempt | 256 at most | `engine.limits.artifact_max_count` (`ORK_ARTIFACT_MAX_COUNT`) | [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "3.5 `output/artifacts/`" |
 | Artifact size | 5 GiB each | `engine.limits.artifact_max_bytes` (`ORK_ARTIFACT_MAX_BYTES`) | [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "3.5 `output/artifacts/`" |
-| Artifact shape | Regular files directly inside the artifacts directory. A directory, symlink, device, socket or FIFO is refused, the scan does not recurse, and names must be UTF-8. Archive a tree first, for example as `workspace.tar.gz` | none, fixed | [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "3.5 `output/artifacts/`"; [AGENTS.md](../AGENTS.md) §3.1 |
+| Artifact shape | Regular files directly inside the artifacts directory, which must stay a real directory. A directory, symlink, device, socket or FIFO is refused, a symlinked `output/artifacts` or `values.json` is refused, the scan does not recurse, and names must be UTF-8. Archive a tree first, for example as `workspace.tar.gz` | none, fixed | [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "3.5 `output/artifacts/`"; [AGENTS.md](../AGENTS.md) §3.1 |
 | Durable logs | 16 MiB per stream (stdout and stderr) per attempt | `engine.limits.log_max_bytes` (`ORK_LOG_MAX_BYTES`) | [DEPLOY.md](./DEPLOY.md), "1. Configuration" |
 | Live log stream | 16 MiB per task attempt. Past it the Orker stores one truncation notice and nothing more | `orker.log.max_bytes` (`ORK_ORKER_LOG_MAX_BYTES`) | [DEPLOY.md](./DEPLOY.md), "Live task logs: where they are, what bounds them, how long they stay" |
 | Completion commit | 4 MiB serialized | `engine.limits.commit_max_bytes` (`ORK_COMMIT_MAX_BYTES`) | [DEPLOY.md](./DEPLOY.md), "1. Configuration" |
@@ -97,8 +93,8 @@ An Orkflow says what runs. It does not hold control flow beyond its DAG, and it 
 
 | Limit | Value or rule | Setting that moves it | Source |
 |---|---|---|---|
-| Container runtime | Docker is the only runtime shipped. It sits behind one seam, and no other runtime is built | none; `orker.docker.bin` (`ORK_DOCKER_BIN`) names the CLI only | [ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "1. Ownership: who knows what" |
-| Local runs | `orkctl task run` and `orkctl activity test` start a container on the machine they run on, so they need a Linux or macOS host with a Docker daemon. On Windows both refuse at the start, with that reason. Every other `orkctl` command works there | none, fixed | [CLI.md](./CLI.md), "`orkctl task run`" and "`orkctl activity test`" |
+| Container runtime | Docker and Podman, through one runtime behind one seam: the docker CLI against Docker or against Podman's socket, or the podman CLI. containerd and other runtimes are not built | `orker.docker.cli` (`ORK_DOCKER_CLI`) names the CLI's grammar, `orker.docker.bin` (`ORK_DOCKER_BIN`) the binary; [DEPLOY.md](./DEPLOY.md), "Running on Podman" | [ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "1. Ownership: who knows what" |
+| Local runs | `orkctl task run` and `orkctl activity test` start a container on the machine they run on, so they need a Linux or macOS host with a Docker daemon, or Podman (`ORK_DOCKER_CLI`). On Windows both refuse at the start, with that reason. Every other `orkctl` command works there | none, fixed | [CLI.md](./CLI.md), "`orkctl task run`" and "`orkctl activity test`" |
 | Network modes | `default` and `none` only. Named, Orker-defined network profiles are left for later | none, fixed | [DSL.md](./DSL.md), "Tasks"; [AGENTS.md](../AGENTS.md) §6 |
 | Forbidden container settings | Privileged mode, host namespaces, host network, device passthrough, arbitrary host mounts, the Docker socket, and the Orker's own configuration, credentials or workspace root. No configuration key exists for any of them | none, fixed | [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "9.1 Forbidden, without exception"; [AGENTS.md](../AGENTS.md) §6 |
 | Credentials in a container | An activity container receives no Temporal, object-storage or OrkStack control-plane credentials, unless the user supplies them as workload secrets | none, fixed | [AGENTS.md](../AGENTS.md) §2.3 |
@@ -147,6 +143,7 @@ These are deferred. Nothing on this list is promised by a date.
 
 - Temporal Cloud, with the authentication and TLS a hosted cluster needs.
 - Named, Orker-defined network profiles. Only `default` and `none` exist ([AGENTS.md](../AGENTS.md) §6).
-- Container runtimes other than Docker ([ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)").
+- Container runtimes other than Docker and Podman, such as containerd, Kubernetes Jobs, ECS Tasks or Nomad ([AGENTS.md](../AGENTS.md) §5; [ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)"). An Orker does run on Kubernetes, as a pod with a Docker engine of its own that runs its tasks' containers ([DEPLOY.md](./DEPLOY.md), "Orkers on Kubernetes").
 - A structured progress channel from a container. Plain stdout and stderr are the required interface, and the container implements no heartbeat ([AGENTS.md](../AGENTS.md) §3.3).
+- Reading cosign's newer signature bundle format. OrkStack reads the key-based `sha256-<hex>.sig` layout only. cosign 3 writes the bundle by default, and cosign 3.1 marks the flags that still write the `.sig` layout (and that the release signs with) deprecated ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy").
 - Automatic reclamation of workload artifact bytes by the cleanup worker. It would mean a scan of the whole reference index, so the cleanup worker does not do it, and a bucket lifecycle rule is the current answer ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").

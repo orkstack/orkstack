@@ -752,7 +752,10 @@ from the last event it applied after a dropped connection. Six reconnects in
 a row that deliver nothing end it: the badge reads `STOPPED`, the page says
 `Live updates stopped: <reason>` (the socket never opened, or opened and
 delivered nothing), and **Retry live updates** resumes from the last event.
-A composed task's child roll-up says the same.
+A composed task's child roll-up says the same. `orkctl run watch` keeps the
+same rule: a stream the engine ends as `unavailable` is opened again after
+the last event printed, each resume said on stderr, and six resumes in a row
+that deliver nothing end the watch with the engine's error.
 
 ### Task pins
 
@@ -1319,6 +1322,7 @@ clients show it verbatim. Operator semantics are in [DEPLOY.md](DEPLOY.md).
 | Hold and cap | `--hold REASON`, `--release-hold`, `--max-running N` | Hold and Max running columns; Hold… / Release hold; a hold banner on Orkflows, the dashboard and the submit dialog, with submit disabled | `failed_precondition` `NAMESPACE_HELD` / `MAX_RUNNING_REACHED`, with the reason and the fix |
 | Budget | `--budget-cpu-seconds`, `--budget-gib-seconds`, `--budget-period`, `--budget-enforce[=false]`, `--clear-budget`; `stats usage` | Budget column and fields; dashboard Usage section; Admin → Usage ([STATS.md](STATS.md) §8) | `BUDGET_EXCEEDED` / `BUDGET_UNMEASURABLE`, with usage, budget, period and fix |
 | Secret sources | `--allow-secret PATTERN…`, `--clear-allowed-secrets` | Allowed secrets column, one per line, `unrestricted` caption | `invalid_argument` at apply/validate/submit naming the task, secret and list; the Orker's own floor refuses with `SECRET_NOT_PERMITTED` before pulling |
+| Fair share weight | `--fair-share-weight W` (create, update); `namespace get` shows a set weight | not shown or edited; the edit form keeps the stored weight | `invalid_argument` outside 0 or [0.001, 1000] |
 | Required signer | `--require-signed-by cosign:KEY`, `--clear-require-signed-by` | Signed by column and a signer select | see image policy below |
 
 `orkflow validate`, the Apply page and the editor show a policy refusal as a

@@ -1,0 +1,284 @@
+---
+// Six recordings of the real stack, one feature each, made by make site-media
+// from examples/ (site/media/). A register of the six, and beside it the
+// chosen one's recording, its caption and the page that explains it.
+//
+// Without JavaScript every recording is listed under its own heading, one
+// after the other, and the register's entries are links to them. The script
+// makes the register a tablist that shows one recording at a time, the one a
+// link's #fragment names or else the first; with JavaScript on, the theme
+// script has set data-theme before the first paint, so the other panels are
+// hidden from the start and nothing moves when the script runs. Nothing
+// autoplays, and a recording is fetched only when it is played (ThemeClip).
+import ThemeClip from '../shared/ThemeClip.astro';
+import { clip } from '../../lib/media';
+import { route } from '../../../site.config.mjs';
+
+/** An entry's text with `backticked` words set as code; nothing else is markup. */
+const html = (t: string) =>
+	t
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+const reel = [
+	{
+		id: 'editor',
+		media: 'ui-editor',
+		name: 'Checked as you type',
+		text: 'The YAML editor asks the engine while you write: a `needs:` naming no task is flagged at its line.',
+		href: route('docs/reference/orkflow-keys') + '#check-a-document-as-you-write-it',
+		link: 'Check a document as you write it',
+	},
+	{
+		id: 'fan-out',
+		media: 'ui-fanout-run',
+		name: 'Fan out',
+		text: 'One durable item per element of a list, two at a time here, each with its own attempts and log.',
+		href: route('docs/how-to/fan-out'),
+		link: 'Fan out over a list',
+	},
+	{
+		id: 'await',
+		media: 'ui-await-run',
+		name: 'Wait for a person',
+		text: 'An awaited task holds the run, with no container running, until it is resolved with the values it asks for.',
+		href: route('docs/how-to/await'),
+		link: 'Wait for a person or a system',
+	},
+	{
+		id: 'failure',
+		media: 'ui-failure',
+		name: 'Recover from a failure',
+		text: 'A failing `deploy` is retried; the failure handlers run, and the run still ends FAILED with its reason.',
+		href: route('docs/how-to/handle-failure'),
+		link: 'Handle a failed run',
+	},
+	{
+		id: 'activity-test',
+		media: 'cli-activity-test',
+		name: 'Test an image',
+		text: '`orkctl activity test` runs an image through the contract’s six checks, with no Orkflow and no engine.',
+		href: route('docs/how-to/test-an-activity-image'),
+		link: 'Test an activity image',
+	},
+	{
+		id: 'schedules-triggers',
+		media: 'cli-schedules-triggers',
+		name: 'Schedules and triggers',
+		text: 'A schedule fired by hand and a trigger called with `curl`; each run records what started it.',
+		href: route('docs/how-to/triggers'),
+		link: 'Start runs over HTTP with a trigger',
+	},
+].map((r) => ({ ...r, clip: clip(r.media) }));
+---
+
+<section class="block reel" aria-labelledby="reel-title" data-reel>
+	<header class="block-head">
+		<h2 id="reel-title">See it run</h2>
+		<p>
+			Six recordings of the local stack, made from the examples by the repository’s own scripts. Nothing loads until you
+			press play.
+		</p>
+	</header>
+	<div class="reel-body">
+		<ol class="reel-index" data-reel-index>
+			{
+				reel.map((r) => (
+					<li>
+						<a href={`#reel-${r.id}`} id={`reel-tab-${r.id}`} data-reel-tab={r.id}>
+							<span class="reel-name" id={`reel-name-${r.id}`}>
+								{r.name}
+							</span>
+							<span class="reel-text" id={`reel-text-${r.id}`} set:html={html(r.text)} />
+						</a>
+					</li>
+				))
+			}
+		</ol>
+		<div class="reel-panels">
+			{
+				reel.map((r) => (
+					<div class="reel-panel" id={`reel-${r.id}`} data-reel-panel={r.id}>
+						<h3 class="reel-title">{r.name}</h3>
+						<ThemeClip clip={r.clip} />
+						<a class="more" href={r.href}>
+							{r.link}
+						</a>
+					</div>
+				))
+			}
+		</div>
+	</div>
+</section>
+
+<script>
+	for (const root of document.querySelectorAll<HTMLElement>('[data-reel]')) {
+		const index = root.querySelector<HTMLElement>('[data-reel-index]');
+		const tabs = [...root.querySelectorAll<HTMLAnchorElement>('[data-reel-tab]')];
+		const panels = new Map([...root.querySelectorAll<HTMLElement>('[data-reel-panel]')].map((p) => [p.dataset.reelPanel, p]));
+		if (!index || tabs.length === 0) continue;
+		index.setAttribute('role', 'tablist');
+		index.setAttribute('aria-label', 'Recordings');
+		index.setAttribute('aria-orientation', 'vertical');
+		for (const li of index.querySelectorAll('li')) li.setAttribute('role', 'presentation');
+		for (const tab of tabs) {
+			const id = tab.dataset.reelTab;
+			const panel = panels.get(id);
+			// The tab is named by its short name; its sentence describes it.
+			tab.setAttribute('role', 'tab');
+			tab.setAttribute('aria-labelledby', `reel-name-${id}`);
+			tab.setAttribute('aria-describedby', `reel-text-${id}`);
+			if (panel) {
+				tab.setAttribute('aria-controls', panel.id);
+				panel.setAttribute('role', 'tabpanel');
+				panel.setAttribute('aria-labelledby', `reel-name-${id}`);
+			}
+		}
+		const select = (chosen: HTMLAnchorElement, focus: boolean) => {
+			for (const tab of tabs) {
+				const on = tab === chosen;
+				tab.setAttribute('aria-selected', String(on));
+				tab.tabIndex = on ? 0 : -1;
+				const panel = panels.get(tab.dataset.reelTab);
+				if (!panel) continue;
+				panel.hidden = !on;
+				// A recording left playing in a hidden panel would go on unseen.
+				if (!on) for (const video of panel.querySelectorAll('video')) video.pause();
+			}
+			if (focus) chosen.focus();
+		};
+		for (const tab of tabs) {
+			tab.addEventListener('click', (event) => {
+				event.preventDefault();
+				// Some browsers do not focus a clicked link; the arrow keys
+				// start from the focused tab.
+				select(tab, true);
+			});
+		}
+		index.addEventListener('keydown', (event) => {
+			// Alt, Ctrl and Cmd with an arrow are the browser's own.
+			if (event.altKey || event.ctrlKey || event.metaKey) return;
+			const at = tabs.indexOf(document.activeElement as HTMLAnchorElement);
+			if (at < 0) return;
+			if (event.key === ' ') {
+				event.preventDefault();
+				select(tabs[at], false);
+				return;
+			}
+			const moves: Record<string, number> = { ArrowDown: at + 1, ArrowRight: at + 1, ArrowUp: at - 1, ArrowLeft: at - 1, Home: 0, End: tabs.length - 1 };
+			const to = moves[event.key];
+			if (to === undefined) return;
+			event.preventDefault();
+			select(tabs[(to + tabs.length) % tabs.length], true);
+		});
+		const named = () => tabs.find((tab) => location.hash === `#reel-${tab.dataset.reelTab}`);
+		addEventListener('hashchange', () => {
+			const tab = named();
+			if (tab) select(tab, false);
+		});
+		root.classList.add('reel-tabbed');
+		select(named() ?? tabs[0], false);
+	}
+</script>
+
+<style>
+	.reel-body {
+		display: grid;
+		gap: calc(var(--spacing) * 8);
+	}
+	@media (min-width: 1024px) {
+		.reel-body {
+			grid-template-columns: minmax(16rem, 21rem) minmax(0, 1fr);
+			align-items: start;
+		}
+	}
+	/* The register of recordings: the UI's rows under a region rule. */
+	.reel-index {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		border-top: var(--rule-region) solid var(--color-ink);
+	}
+	.reel-index a {
+		display: grid;
+		gap: calc(var(--spacing) * 1);
+		border-bottom: var(--rule-hair) solid var(--color-rule);
+		padding: calc(var(--spacing) * 3);
+		color: var(--color-ink);
+		text-decoration: none;
+		transition: background-color var(--duration-fast) var(--ease-out);
+	}
+	.reel-index a:hover {
+		background-color: var(--color-hover);
+	}
+	/* The chosen one: the tint, and its name underlined in the blue, as the
+	   top bar marks the current place. */
+	.reel-index a[aria-selected='true'] {
+		background-color: var(--color-blue-tint);
+	}
+	.reel-index a[aria-selected='true'] .reel-name {
+		text-decoration-line: underline;
+		text-decoration-color: var(--color-blue);
+		text-decoration-thickness: var(--rule-frame);
+		text-underline-offset: var(--underline-offset);
+	}
+	.reel-name {
+		font-size: var(--text-md);
+		line-height: var(--text-md--line-height);
+		font-weight: var(--font-weight-semibold);
+	}
+	.reel-text {
+		color: var(--color-ink-secondary);
+		font-size: var(--text-base);
+		line-height: var(--text-base--line-height);
+	}
+	.reel-text :global(code) {
+		font-family: var(--font-mono);
+		font-size: 0.9em;
+		color: var(--color-ink);
+	}
+	/* One frame for every recording: the UI's 16 : 10, a terminal recording
+	   centred in it on the terminal's ground, so choosing another never moves
+	   the page. */
+	.reel-panels :global(.clip video) {
+		aspect-ratio: 16 / 10;
+		object-position: center;
+	}
+	.reel-panel {
+		display: grid;
+		gap: calc(var(--spacing) * 3);
+		justify-items: start;
+	}
+	.reel-panel :global(.clip) {
+		width: 100%;
+	}
+	.reel-panel[hidden] {
+		display: none;
+	}
+	.reel-panel + .reel-panel {
+		margin-top: calc(var(--spacing) * 12);
+	}
+	:global(:root[data-theme]) .reel-panel + .reel-panel {
+		margin-top: 0;
+	}
+	/* Before the script runs, the first recording stands alone. */
+	:global(:root[data-theme]) .reel:not(.reel-tabbed) .reel-panel + .reel-panel {
+		display: none;
+	}
+	.reel-title {
+		margin: 0;
+		font-size: var(--text-lg);
+		line-height: var(--text-lg--line-height);
+		font-weight: var(--font-weight-semibold);
+	}
+	/* With the register a tablist, the selected tab names the recording. */
+	:global(:root[data-theme]) .reel-title {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
+	}
+</style>

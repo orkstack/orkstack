@@ -51,7 +51,8 @@ orkctl run artifacts <run-id> --task fetch
 - Any regular file directly in `/orkstack/output/artifacts/` becomes one artifact, named as the file.
 - The scan does not look in subfolders.
 - A directory, symlink, device, socket or named pipe there fails the task. Archive a folder into one file first, for example `workspace.tar.gz`.
-- Write the small result to `/orkstack/output/values.json`. It must be one JSON object. A task with no result writes `{}`.
+- Leave `/orkstack/output/artifacts/` itself a directory. Replacing it with a link or a file fails the task.
+- Write the small result to `/orkstack/output/values.json`. It must be one JSON object, in a regular file, not a link. A task with no result writes `{}`.
 
 ## Read a file
 
@@ -76,9 +77,9 @@ orkctl run artifacts <run-id> --task fetch
 | Code | Cause | Retried under `retry:` |
 |---|---|---|
 | `VALUES_MISSING` | The task exited 0 and wrote no `values.json`. | no |
-| `VALUES_MALFORMED` | `values.json` is not one JSON object. | no |
+| `VALUES_MALFORMED` | `values.json` is not one JSON object, or is a link or not a regular file. | no |
 | `VALUES_TOO_LARGE` | `values.json` is over 256 KiB. | no |
-| `ARTIFACT_NOT_A_FILE` | A directory, symlink, device, socket or named pipe is in `output/artifacts/`. | no |
+| `ARTIFACT_NOT_A_FILE` | A directory, symlink, device, socket or named pipe is in `output/artifacts/`, or `output/artifacts` is not a directory. | no |
 | `ARTIFACT_LIMIT_EXCEEDED` | Too many artifacts, or one is too large. | no |
 | `OUTPUT_NOT_READABLE` | The Orker cannot open a file the task wrote. Write files with `umask 022`. | no |
 | `INPUT_ARTIFACT_UNAVAILABLE` | The store did not return an upstream file. | yes |

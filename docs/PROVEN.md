@@ -6,7 +6,7 @@ believed, and it links the tests and rules rather than restating them:
 [AGENTS.md](../AGENTS.md) §11 states the rules, and
 [PROOFS.md](./PROOFS.md) is the reference for the machinery.
 
-OrkStack is pre-release. AGENTS.md §11 forbids calling it production-ready
+AGENTS.md §11 forbids calling OrkStack production-ready
 until the required failure and recovery scenarios are proven, and this page
 makes no such claim. Activities run at least once, never exactly once
 (AGENTS.md §4): a durably committed result is not run again, and a stable

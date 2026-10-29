@@ -20,7 +20,7 @@ A submission refused in this section leaves nothing behind: no run id is minted 
 
 ### "has no live Orkers, so nothing would pick these tasks up"
 
-**Cause.** The pool a task resolves to has no Orker that the cluster sees polling. The engine refuses the submit with `failed_precondition`, before a run id exists (`internal/engine/pools.go`, `PoolEmptyError`; `internal/api/service.go`, `poolPlanError`). The rule is in ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
+**Cause.** The pool a task resolves to has no Orker that would take it: nothing polls the pool's channel, and no uncordoned Orker of the pool answers on its own channel. The second check is what keeps a busy pool live, because an Orker whose every task slot is taken stops polling the pool's channel but still answers on its own. An Orker that does not answer within five seconds is not counted, and the engine logs `a pool reads empty while some live Orkers did not answer when asked`. The engine refuses the submit with `failed_precondition`, before a run id exists (`internal/engine/pools.go`, `PoolEmptyError`; `internal/api/service.go`, `poolPlanError`). The rule is in ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 
 **Confirm.**
 
@@ -33,15 +33,23 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 ### "cannot tell whether pool … has live Orkers"
 
-**Cause.** The cluster could not be asked. Nothing was measured, so this is not an empty pool. The engine answers `unavailable`, and `--allow-empty-pool` does not change that answer (`internal/engine/pools.go`, `PoolUnreachableError`; `internal/api/service.go`, `poolPlanError`). The distinction is deliberate: an empty pool needs an Orker or the override, and an unreachable cluster needs a retry ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
+**Cause.** The cluster could not be asked: about the pool's channel, or, for a pool whose channel shows no poller, about the Orker inventory. Nothing was measured, so this is not an empty pool. The engine answers `unavailable`, and `--allow-empty-pool` does not change that answer when the pool's channel could not be asked (`internal/engine/pools.go`, `PoolUnreachableError`; `internal/api/service.go`, `poolPlanError`). When only the inventory could not, the override accepts the run, because it would accept the pool busy or empty, and the engine logs `whether a pool with no poller is busy is unknown`. The distinction is deliberate: an empty pool needs an Orker or the override, and an unreachable cluster needs a retry ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 
 **Confirm.** `orkctl pool list` prints `unknown (unreachable)` for the pool, with the reason under the table ([CLI.md](./CLI.md), "`orkctl pool list`").
 
 **Fix.** Retry. If the error persists, check the engine and the Temporal server (`make status` on the local stack). Do not use `--allow-empty-pool` for this error.
 
+### "RESOURCES_UNSATISFIABLE: task … requests …, which no Orker of pool … runs"
+
+**Cause.** The task declares a `resources:` request above the per-task cap of every Orker of its pool that answered (`orker.resources.max_cpu`, `orker.resources.max_memory`). An Orker refuses such a request after dispatch, terminally (`RESOURCE_REQUEST_REFUSED`), so the run is refused at submit instead, before a run id exists, and `--allow-empty-pool` does not change that (`internal/engine/pools.go`, `PoolResourcesUnsatisfiableError`). The message names the largest cap the pool reported ([DEPLOY.md](./DEPLOY.md), "Declaring an Orker's capacity").
+
+**Confirm.** `orkctl orker list --filter pool=<pool>` lists the pool's Orkers; each one's cap is in `orkctl orker get <orker-id> --json` (`maxRequest`).
+
+**Fix.** Lower the task's request, or move the task to a pool whose Orkers set larger caps. The cap is a pool-wide setting: set the same one on every Orker of a pool.
+
 ### "has live Orkers but none of them hosts pins"
 
-**Cause.** The pool has live Orkers, but none of them has `ORK_ORKER_MAX_PINS` above zero, so no pin can open. The engine asks one Orker of the pool and refuses with `failed_precondition` (`internal/engine/pools.go`, `PoolNoPinHostError`). Pin hosting is a pool-wide setting ([DEPLOY.md](./DEPLOY.md), "Pin hosting is a pool-wide setting").
+**Cause.** The pool has live Orkers, but none of them has `ORK_ORKER_MAX_PINS` above zero, so no pin can open. The engine asks every uncordoned Orker of the pool, each on its own channel, and refuses with `failed_precondition` (`internal/engine/pools.go`, `PoolNoPinHostError`). Pin hosting is a pool-wide setting ([DEPLOY.md](./DEPLOY.md), "Pin hosting is a pool-wide setting").
 
 **Confirm.** `orkctl orker list` shows `open/max` in the PINS column for a pin host and `-` for any other Orker ([CLI.md](./CLI.md), "`orkctl orker list`").
 
@@ -106,23 +114,25 @@ orkctl -n <namespace> stats usage --since 720h    # answers only if the budget c
 
 ### My run's tasks stay `PENDING`
 
-**Cause.** A ready task waits rather than fails in four cases. The first three are what a saturated pool does, as the docs describe them ([DSL.md](./DSL.md), "How many tasks an Orkflow may declare"; [DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks"):
+**Cause.** `PENDING` is the engine's own hold: a ready task it has not dispatched yet. That happens in three cases ([DSL.md](./DSL.md), "How many tasks an Orkflow may declare"; [DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks"):
 
-1. Every Orker of the pool is at its task ceiling, `ORK_ORKER_MAX_CONCURRENT` (16 by default). The task waits in the pool for a slot (`internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling").
-2. The run is at its in-flight cap, `ORK_RUN_MAX_IN_FLIGHT` (1000 by default). It starts more as running work finishes (`internal/engine/hold.go`; [DSL.md](./DSL.md), "How many tasks an Orkflow may declare").
-3. The run's history is near its hold line. It holds new tasks until the running ones finish, so it can carry on into a fresh history ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
-4. A pin is opening. Its ready tasks stay `PENDING` while the pin opens ([DSL.md](./DSL.md), "Pins").
+1. The run is at its in-flight cap, `ORK_RUN_MAX_IN_FLIGHT` (1000 by default). It starts more as running work finishes (`internal/engine/hold.go`; [DSL.md](./DSL.md), "How many tasks an Orkflow may declare").
+2. The run's history is near its hold line. It holds new tasks until the running ones finish, so it can carry on into a fresh history ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
+3. A pin is opening. Its ready tasks stay `PENDING` while the pin opens ([DSL.md](./DSL.md), "Pins").
 
-**Confirm.** `orkctl orker list` shows each Orker's load and cordon state. `orkctl run inspect <run-id>` shows a held task with no attempt. When the in-flight cap applies, the engine logs `run reached its in-flight cap` ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
+A task waiting for a free slot on a busy pool is not one of them: the engine has dispatched it, so it is `RUNNING`. See "My run stays `RUNNING` and nothing happens".
 
-**Fix.** A `PENDING` task is not a failure, and the run resumes as work finishes. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load.
+**Confirm.** `orkctl run inspect <run-id>` shows a held task with no attempt. When the in-flight cap applies, the engine logs `run reached its in-flight cap` ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
+
+**Fix.** A `PENDING` task is not a failure, and the run resumes as its running work finishes.
 
 ## Running
 
 ### My run stays `RUNNING` and nothing happens
 
-**Cause.** One of three things is usually true:
+**Cause.** One of four things is usually true:
 
+- Every Orker of the pool is busy. Each runs at most `ORK_ORKER_MAX_CONCURRENT` tasks at once (16 by default), and, when it declares a capacity, polls only while a whole per-task cap is free beside what it has reserved; a task beyond that waits in the pool. `orkctl orker list` shows each Orker's `TASKS`, `CAPACITY` and `RESERVED`. The task is `RUNNING` from the moment it is dispatched: `orkctl run inspect` says `waiting for an orker on pool <pool> for <time>`, and the run page says `Waiting for an orker` (`internal/engine/workflow.go`; `internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling").
 - No Orker serves the pool, or the ones that do are cordoned. A cordoned Orker takes no new task and opens no new pin, and a restart clears the cordon ([CLI.md](./CLI.md), "`orkctl orker cordon`").
 - An Orker died while it held an attempt. Its heartbeat stops, `orkctl run inspect` reports the heartbeat as `STALE`, and the attempt times out as `ORKER_HEARTBEAT_TIMEOUT` (`internal/engine/workflow.go`). A heartbeat timeout is retryable under the task's `retry:` policy ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.1 The five categories").
 - A pinned task's host was lost. See `PIN_HOST_LOST` below.
@@ -135,11 +145,13 @@ orkctl run inspect <run-id>
 orkctl run attempts <run-id>     # an attempt its Orker never filed shows as UNREPORTED
 ```
 
-**Fix.** Restart the Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
+**Fix.** If the pool is busy, the task starts when a slot frees. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load. Restart a dead Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
 
 ### I stopped an Orker and its tasks failed
 
 **Cause.** `SIGTERM` stops an Orker from polling and cancels its in-flight work. The Orker does not cordon itself first, so an operator who wants in-flight work to finish cordons and drains first ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain"). Stopping an Orker that hosts an open pin fails that pin's run with `PIN_HOST_LOST`, and the stop command says so (`cmd/orkctl/orker.go`).
+
+**Confirm.** `orkctl run attempts <run-id>` shows each attempt the Orker stopped as `FAILED` with `ORKER_STOPPED`, and the task itself ends `ORKER_HEARTBEAT_TIMEOUT` unless its `retry:` policy ran it again elsewhere ([REASONS.md](./REASONS.md), "Task outcomes"). An attempt shown `UNREPORTED` instead means the Orker was killed before it finished stopping the attempt, for example by a process manager that waited less than the task's grace.
 
 **Fix.** Drain the Orker before stopping it. `orkctl orker drain <orker-id> --reason "…"` cordons it and waits until it runs no task and hosts no pin. Exit `0` means it is safe to stop. Exit `4` means the timeout passed first, and exit `1` means the Orker stopped answering, or was uncordoned or restarted ([CLI.md](./CLI.md), "`orkctl orker drain`").
 
@@ -217,13 +229,13 @@ orkctl run artifacts <run-id> --task <task>                # the recorded stdout
 
 ### A task failed with `VALUES_MALFORMED` or `VALUES_TOO_LARGE`
 
-**Cause.** `values.json` is not valid UTF-8 JSON, or its top-level value is not an object, such as an array. A directory or another non-regular file at that path is refused the same way. A file over `limits.valuesMaxBytes` is `VALUES_TOO_LARGE`. Both are contract violations and never retried (`internal/orker/workspace.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+**Cause.** `values.json` is not valid UTF-8 JSON, or its top-level value is not an object, such as an array. A symlink, a directory or another non-regular file at that path is refused the same way, whatever the link points at: the Orker follows no link the workload wrote. A file over `limits.valuesMaxBytes` is `VALUES_TOO_LARGE`. Both are contract violations and never retried (`internal/orker/workspace.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 
 **Fix.** Write exactly one JSON object. Move large data into an artifact, which is a regular file, or archive a directory such as `workspace.tar.gz` ([AGENTS.md](../AGENTS.md), "3.1 Files, values, and artifacts").
 
 ### A task failed with `OUTPUT_NOT_READABLE` or `ARTIFACT_NOT_A_FILE`
 
-**Cause.** `OUTPUT_NOT_READABLE`: the Orker cannot open a file the workload wrote, and the message names the path, mode and owner. `ARTIFACT_NOT_A_FILE`: a directory, symlink, device, socket or FIFO was written under `output/artifacts/`. Both are contract violations (`internal/orker/workspace.go`).
+**Cause.** `OUTPUT_NOT_READABLE`: the Orker cannot open a file the workload wrote, and the message names the path, mode and owner. `ARTIFACT_NOT_A_FILE`: a directory, symlink, device, socket or FIFO was written under `output/artifacts/`, or `output/artifacts` itself was replaced by a symlink or a file. Both are contract violations (`internal/orker/workspace.go`).
 
 **Fix.** For `OUTPUT_NOT_READABLE`, the contract's fix is `umask 022` in the workload, so the files are readable by the Orker's user. For `ARTIFACT_NOT_A_FILE`, write regular files only, and archive any directory ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 
@@ -275,7 +287,7 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 **Cause.** The container daemon cannot bind-mount the Orker's work directory. This happens when the daemon runs in a virtual machine that does not share that path with the host. The daemon then says "bind source path does not exist" for a path that exists, which reads like a missing file. There are two codes:
 
-- `WORKDIR_NOT_BINDABLE`: the Orker refuses to start (`internal/orker/activity.go`, `Boot`) because its work root cannot be bind-mounted. Either the path holds a comma or a control character, which a container mount cannot carry (a mount is a comma-separated option list), and the message names `ORK_ORKER_WORKDIR`; or the Orker's own boot probe found the work root unbindable. Retrying does not fix it.
+- `WORKDIR_NOT_BINDABLE`: the Orker refuses to start (`internal/orker/activity.go`, `Boot`) because its work root cannot be bind-mounted. Either the path holds a comma or a control character, which a container mount cannot carry (a mount is a comma-separated option list), and the message names `ORK_ORKER_WORKDIR`; or the Orker's own boot probe found the work root unbindable: the daemon refused the bind, or its container and the Orker did not read back each other's nonce, which means the daemon bound a directory of its own (`internal/orker/boot_probe.go`). Retrying does not fix it.
 - `WORKSPACE_NOT_BINDABLE`: one attempt's container could not be created because the daemon refused the workspace's bind (`internal/orker/oci_dispatcher.go`, `runtimeFailure`). It is an `InfrastructureError` and is never retried.
 
 ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes"; [stack.sh](../scripts/stack.sh), "check_workdir_mountable".)
@@ -450,18 +462,36 @@ These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](.
 
 **Fix.** Start Docker, then run `make up` again. The script skips processes that are already running. If `ork` exits during startup, read the last line of `.run/ork.log`. Set `ORK_HTTP_ADDR` to another address if the port is taken. The UI's dev server runs with `--strictPort`, so a taken `ORK_UI_PORT` (5173 by default) stops it rather than letting it move ([stack.sh](../scripts/stack.sh), `cmd_up`).
 
+### The Orker refuses to start, or a task fails, on Podman
+
+**Cause.** Podman needs host settings Docker does not, and the Orker's boot probe checks them rather than assuming them ([DEPLOY.md](./DEPLOY.md), "Running on Podman"). The usual ones:
+
+- `RUNTIME_POSTURE_REFUSED` naming `cpu.max`, `memory.max` or `pids.max` as unreadable: a rootless Podman whose user has not been delegated the `cpu`, `memory` and `pids` cgroup controllers, or that is not using the systemd cgroup manager. The limit would not be enforced.
+- `RUNTIME_POSTURE_REFUSED` quoting `catatonit` or an init that cannot be found: `--init` needs `init_path` in `containers.conf`.
+- `RUNTIME_POSTURE_REFUSED` quoting `open builtin: no such file or directory`: the engine was not identified as Podman, so `seccomp=builtin` reached it. The boot log's `container runtime engine=` line says which engine the Orker found.
+- `RUNTIME_POSTURE_REFUSED` saying `identify the container engine` and `can't evaluate field Components`: the CLI is the podman CLI under the name `docker` (the `podman-docker` shim), which speaks the podman grammar. Set `ORK_DOCKER_CLI=podman`.
+- `RUNTIME_POSTURE_REFUSED` saying the workload `never heard SIGTERM` and quoting a stacked AppArmor label such as `containers-default-0.66.0//&crun`: rootful Podman under AppArmor 5, whose generated profile does not let the container's init signal the workload, so every cancelled task would be killed without its cleanup. The kernel log has the denial (`journalctl -k | grep 'apparmor="DENIED"'`, `operation="signal"`). Add the rule [DEPLOY.md](./DEPLOY.md), "Rootful Podman under AppArmor", gives, or run Podman rootless.
+- `IMAGE_PULL_FAILED` with "server gave HTTP response to HTTPS client": a plain-HTTP registry, the local `localhost:5001` included, that `registries.conf` does not mark `insecure = true`.
+- `RUN_AS_ORKER_UNAVAILABLE`: the docker CLI against a rootless Podman socket, run by a non-root Orker, which cannot keep the Orker's uid in the container. Run the Orker as root inside the runtime, or use the podman CLI.
+
+**Confirm.** `.run/orker.log` (or the Orker's log) has a `container runtime` line with `engine=podman`, then the refusal.
+
+**Fix.** Make the change the refusal names in the host's Podman configuration, then start the Orker again.
+
 ### `make up` stops with "orker boot checks failed"
 
 **Cause.** The Orker refuses to boot when one of its checks fails (`cmd/orker/main.go`; `internal/orker/activity.go`, `Boot`). The codes are:
 
 - `WORKDIR_NOT_BINDABLE`: see the entry above.
-- `BIND_PROBE_IMAGE_UNAVAILABLE`: the probe image `alpine:3.20` is not present, and it could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`. The message names the image, not the work root ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
-- `BIND_PROBE_TIMED_OUT`: the container daemon was too slow for the probe. It did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` (two minutes) whether the probe image is local, or on each of two attempts it did not start the probe container within that time or ended it with a deadline error of its own. The daemon is overloaded or unresponsive. The work root is not the finding, so do not change `ORK_ORKER_WORKDIR`. The probe can take up to seven minutes to give up, longer than the 60 seconds `make up` waits for the Orker, so the refusal may appear in `.run/orker.log` after `make up` has stopped with a timeout ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+- `RUNTIME_POSTURE_REFUSED`: the probe ran one container built exactly as a task's is, and the runtime did not give it a task's posture. The message names each weaker fact: privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable the runtime added (by name only), or cgroup v2 limits other than it asked for. It also covers a runtime that refused the container for a reason that is not a bind or a deadline, and one whose workload, cancelled as a task is, never heard SIGTERM ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "3.1 Layout").
+- `RUN_AS_ORKER_UNAVAILABLE`, only when `ORK_ORKER_FORCE_USER` is set: running a container as the Orker's own user does not land as the Orker on this host, as on a rootless or user-namespaced daemon. Without `ORK_ORKER_FORCE_USER` the Orker starts, logs `running a task as the Orker's user does not work on this host`, and fails only the tasks that set `run_as_orker_user: true`, with the same code.
+- `BIND_PROBE_IMAGE_UNAVAILABLE`: the probe image (`orker.BindProbeImage`, alpine 3.20 by digest) is not present, and it could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`. The message names the image, not the work root ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+- `BIND_PROBE_TIMED_OUT`: the container daemon was too slow for the probe. It did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` (two minutes) whether the probe image is local, or on each of two attempts it did not start one of the probe's two containers within that time or ended it with a deadline error of its own, or the second container's workload did not say it was ready within it. The daemon is overloaded or unresponsive. The work root is not the finding, so do not change `ORK_ORKER_WORKDIR`. The probe can take up to seventeen minutes and fifteen seconds to give up, longer than the 60 seconds `make up` waits for the Orker, so the refusal may appear in `.run/orker.log` after `make up` has stopped with a timeout ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 - `RESOURCE_REQUEST_REFUSED`: a resource cap that cannot be read, such as an invalid `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`.
 
 **Confirm.** `.run/orker.log` contains `orker boot checks failed:` followed by the code.
 
-**Fix.** For the probe image, run `docker pull alpine:3.20`. For a timed-out probe, check that `docker run --rm alpine:3.20 true` finishes, stop whatever is loading the daemon, and raise `ORK_DOCKER_BIND_PROBE_TIMEOUT` if the daemon is only slow. Correct the cap in `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`, or fix the work root. Then run `make down` and `make up`. Configuration keys are listed in ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
+**Fix.** For the probe image, run `docker pull docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc`. For a weaker posture, fix the runtime: for a proxy variable, remove `proxies` from the docker CLI's `config.json` for the Orker's user, and give a task that needs a proxy its own `env:`; for limits on a rootless daemon, delegate the `cpu`, `memory` and `pids` controllers to its user. For `RUN_AS_ORKER_UNAVAILABLE`, run the Orker as root inside the runtime, or unset `ORK_ORKER_FORCE_USER`. For a timed-out probe, check that `docker run --rm docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc true` finishes, stop whatever is loading the daemon, and raise `ORK_DOCKER_BIND_PROBE_TIMEOUT` if the daemon is only slow. Correct the cap in `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`, or fix the work root. Then run `make down` and `make up`. Configuration keys are listed in ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 
 ### `uses: shell` fails to apply on a fresh clone
 

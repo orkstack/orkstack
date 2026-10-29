@@ -1,0 +1,70 @@
+# What scripts/k8s-orker-check.sh changes in every shipped base it checks, and
+# nothing else: one replica in the check's own pool, the per-task cap its
+# limits run measures, a pod sized for a small node with a capacity to match,
+# and no RuntimeClass of its own. The RuntimeClass is cluster-wide, so the
+# check requires it rather than creating it. The sizes keep the shipped rule:
+# the engine's limits cover the Orker's capacity plus the daemon's share, the
+# capacity holds the per-task cap, and a task's default is within the cap
+# (internal/dist/kubernetes_test.go). The image, the pull
+# policy, the namespace and a registry's certificate authority are the
+# check's options, written beside this by the script.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - target:
+      kind: RuntimeClass
+    patch: |-
+      $patch: delete
+      apiVersion: node.k8s.io/v1
+      kind: RuntimeClass
+      metadata:
+        name: orkstack-engine
+  - target:
+      kind: Deployment
+      name: orker
+    patch: |-
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: orker
+      spec:
+        replicas: 1
+        template:
+          spec:
+            initContainers:
+              - name: engine
+                resources:
+                  requests:
+                    cpu: "2"
+                    memory: 2Gi
+                    ephemeral-storage: 8Gi
+                  limits:
+                    cpu: "2"
+                    memory: 2Gi
+                    ephemeral-storage: 8Gi
+            containers:
+              - name: orker
+                env:
+                  # The check's own pool: its Orkers take only its runs, and
+                  # its runs land only on them.
+                  - name: ORK_ORKER_POOL
+                    value: k8s-check
+                  - name: ORK_ORKER_MAX_CPU
+                    value: "0.5"
+                  - name: ORK_ORKER_MAX_MEMORY
+                    value: 384Mi
+                  - name: ORK_ORKER_DEFAULT_CPU
+                    value: "0.25"
+                  - name: ORK_ORKER_DEFAULT_MEMORY
+                    value: 256Mi
+                  - name: ORK_ORKER_CAPACITY_CPU
+                    value: "1.5"
+                  - name: ORK_ORKER_CAPACITY_MEMORY
+                    value: 1536Mi
+                resources:
+                  requests:
+                    cpu: 100m
+                    memory: 128Mi
+                  limits:
+                    cpu: 250m
+                    memory: 256Mi

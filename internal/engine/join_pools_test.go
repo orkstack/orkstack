@@ -10,27 +10,19 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// joinSupportPools answers DescribeOrker per channel with join_supported as
-// given (each and cache always supported), and records every channel asked.
-type joinSupportPools struct {
-	eachSupportPools
-	joinSupported map[string]bool
+// joinFleet is one current Orker for each of joinPoolsDocument's pools, with
+// gpu's Orker (gpu-3, build 2026.09.01) answering join_supported as given.
+func joinFleet(gpuSupported bool) *fakeFleet {
+	gpu := currentOrker("gpu-3", "gpu", 0)
+	gpu.BuildId = "2026.09.01"
+	gpu.JoinSupported = gpuSupported
+	return fleetOf(currentOrker("cpu-1", "cpu", 0), gpu)
 }
 
-func (p *joinSupportPools) OrkerOnPool(ctx context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	result, err := p.eachSupportPools.OrkerOnPool(ctx, queue)
-	if err != nil {
-		return nil, err
-	}
-	result.EachSupported, result.CacheSupported = true, true
-	result.JoinSupported = p.joinSupported[queue]
-	return result, nil
-}
-
-func joinPoolsResolver(p *joinSupportPools) *engine.PoolResolver {
+func joinPoolsResolver(fleet engine.FleetReader) *engine.PoolResolver {
 	cpu, _ := task.QueueForPool("cpu", "")
 	gpu, _ := task.QueueForPool("gpu", "")
-	return &engine.PoolResolver{Probe: livePools{cpu: 1, gpu: 1}, Orkers: p}
+	return &engine.PoolResolver{Probe: livePools{cpu: 1, gpu: 1}, Fleet: fleet}
 }
 
 const joinPoolsDocument = `
@@ -67,8 +59,7 @@ tasks:
 `
 
 func TestPoolResolverPlan_RefusesAPoolWhoseOrkerPredatesJoins(t *testing.T) {
-	p := &joinSupportPools{joinSupported: map[string]bool{}}
-	_, _, err := joinPoolsResolver(p).Plan(context.Background(),
+	_, _, err := joinPoolsResolver(joinFleet(false)).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, joinPoolsDocument), false)
 	refused, ok := err.(*engine.PoolNoJoinSupportError)
 	if !ok {
@@ -83,45 +74,38 @@ func TestPoolResolverPlan_RefusesAPoolWhoseOrkerPredatesJoins(t *testing.T) {
 	if err.Error() != want {
 		t.Fatalf("message = %q\nwant %q", err.Error(), want)
 	}
-	gpu, _ := task.QueueForPool("gpu", "")
-	p.joinSupported[gpu] = true
-	if _, _, err := joinPoolsResolver(p).Plan(context.Background(),
+	if _, _, err := joinPoolsResolver(joinFleet(true)).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, joinPoolsDocument), false); err != nil {
 		t.Fatalf("a pool whose Orker reads join policies = %v", err)
 	}
 }
 
 func TestPoolResolverPlan_JoinIgnoresADescribeFailure(t *testing.T) {
-	p := &joinSupportPools{}
-	p.fail = true
-	if _, _, err := joinPoolsResolver(p).Plan(context.Background(),
+	fleet := &fakeFleet{silent: []string{"cpu-1", "gpu-3"}}
+	if _, _, err := joinPoolsResolver(fleet).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, joinPoolsDocument), false); err != nil {
 		t.Fatalf("a describe failure refused the submit: %v", err)
 	}
 }
 
 func TestPoolResolverPlan_JoinAllowEmptyPoolDoesNotDowngradeIt(t *testing.T) {
-	p := &joinSupportPools{joinSupported: map[string]bool{}}
-	_, _, err := joinPoolsResolver(p).Plan(context.Background(),
+	_, _, err := joinPoolsResolver(joinFleet(false)).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, joinPoolsDocument), true)
 	if _, ok := err.(*engine.PoolNoJoinSupportError); !ok {
 		t.Fatalf("Plan with allow_empty_pool = %v, want the refusal to stand", err)
 	}
 }
 
-func TestPoolResolverPlan_AsksOnlyForPoolsOfContainerFailureHandlers(t *testing.T) {
-	gpu, _ := task.QueueForPool("gpu", "")
-	p := &joinSupportPools{joinSupported: map[string]bool{gpu: true}}
-	if _, _, err := joinPoolsResolver(p).Plan(context.Background(),
+func TestPoolResolverPlan_JudgesOnlyPoolsOfContainerFailureHandlers(t *testing.T) {
+	// cpu hosts only a none_failed task; the awaited handler is never routed.
+	fleet := joinFleet(true)
+	fleet.orkers[0].JoinSupported = false
+	if _, _, err := joinPoolsResolver(fleet).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, joinPoolsDocument), false); err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	// cpu hosts only a none_failed task; the awaited handler is never routed.
-	if fmt.Sprint(p.asked) != fmt.Sprint([]string{gpu}) {
-		t.Fatalf("asked %v, want only gpu", p.asked)
-	}
 	// A definition with no join, and one whose only handlers are awaited or
-	// composed, cause no describe call at all.
+	// composed, read no census at all.
 	for _, doc := range []string{`
 apiVersion: orkstack/v1
 kind: Orkflow
@@ -155,13 +139,9 @@ tasks:
     join: any_failed
     uses: orkflow:release-block@2.1.0
 `} {
-		q := &joinSupportPools{}
-		if _, _, err := joinPoolsResolver(q).Plan(context.Background(),
+		if _, _, err := joinPoolsResolver(refusingFleet{t: t}).Plan(context.Background(),
 			&orkstackv1.Namespace{Name: "ml"}, compile(t, doc), false); err != nil {
 			t.Fatalf("Plan: %v", err)
-		}
-		if len(q.asked) != 0 {
-			t.Fatalf("asked %v for a definition with no container failure handler", q.asked)
 		}
 	}
 }
