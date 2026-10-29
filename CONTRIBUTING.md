@@ -92,7 +92,8 @@ for this machine and runs the quickstart's `compose.yaml` on those images end
 to end, by digest, in a compose project, registry and ports of its own.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
-runs both before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
+runs both before it publishes anything, and `nightly.yml` runs the quickstart
+smoke on `main` every night ([docs/PROOFS.md](./docs/PROOFS.md)).
 
 ## Fast checks (no Docker, under two minutes warm)
 

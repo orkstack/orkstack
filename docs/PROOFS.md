@@ -669,9 +669,10 @@ recorded a result (§10):
 |---|---|
 | `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
 
-`nightly.yml` holds three jobs, scheduled at 05:17 UTC on the default branch:
+`nightly.yml` holds four jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
-`make vuln`, and `nightly.yml` › `flakes`
+`make vuln`, `nightly.yml` › `quickstart` runs `scripts/quickstart-smoke.sh`,
+and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
 suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
 `nightly`, whatever its result, so its window includes that night's proof.
@@ -681,6 +682,17 @@ is a regression on `main` like any red nightly (§6). The fix is to bump the mod
 version (an exact one, §11.1 of `AGENTS.md`) and prove that change like any
 other; `go tool govulncheck -show verbose ./...` lists the ones the code cannot
 reach, which fail nothing.
+`quickstart` is independent of the proof too: it runs the README's Quickstart
+as written on a clone of the commit, where the root `compose.yaml` builds the
+stack from source, and checks that a run of `each-fan-out` succeeds and that
+the UI answers (`make quickstart-smoke`). No proof gate runs that path, and
+`release.yml` › `artifacts` runs it only before a release, so this job is what
+finds a break on `main` within a day: a directory the source Dockerfile copies
+that `deploy/source/Dockerfile.dockerignore` does not admit, a Go or UI build
+that fails in `deploy/source/Dockerfile`, a `compose.yaml` key the runner's
+Compose refuses, or a stack that never turns healthy. It needs only what the
+runner image has (Docker with Compose, git, curl and python3), and a failure
+is a regression on `main` like any red nightly (§6).
 `release.yml` holds five: `release.yml` › `validate` runs first on every
 dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses
 `tag: true` from any ref but `main`, and refuses a version whose `X.Y` the
@@ -1407,6 +1419,11 @@ git rev-parse main
   module and the version that fixes it; bump the module to exactly that
   version, run `make check`, and merge that change on its own proof. A
   vulnerability the code cannot reach is not reported and fails nothing.
+- Only `nightly.yml` › `quickstart` failed: the README's Quickstart no longer
+  works on a clone of `headSha`, which is a regression on `main` too. The
+  job's log names the Quickstart command that failed, or the check, and on a
+  failure ends with the last 80 lines of the stack's `activities`, `ork`,
+  `orker` and `ui` logs. `make quickstart-smoke` on that commit reproduces it.
 - Only `runner-degraded` parts failed: a runner failure, not a regression
   (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree.
 
@@ -1549,7 +1566,7 @@ listing with no bucket at all.
 | `make dist` | the release's binaries, archives and `SHA256SUMS` for `VERSION=vX.Y.Z` |
 | `make release-images` | the release images as OCI layouts under `OUT`, for `PLATFORMS` |
 | `make release-smoke` | build both for this machine and run `compose.yaml` on those images |
-| `make quickstart-smoke` | run the README's Quickstart as written on a fresh clone of the working tree |
+| `make quickstart-smoke` | run the README's Quickstart as written on a fresh clone of the working tree; `nightly.yml` › `quickstart` and `release.yml` › `artifacts` run it (§5) |
 | `make proof-flakes` | derive per-test flake rates from the ledgers |
 | `make proof-slow-list` | regenerate the costs and the slow list from a proof |
 | `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
@@ -1847,9 +1864,14 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
 - **`release.yml` has not run on GitHub yet.**
-  `nightly.yml` has three jobs, `nightly`, `vuln` and `flakes`; the first and
-  the last have run, and so has `proof.yml` as a reusable workflow through them
-  (`workflow_call`; the flakes job passed in run 40555387388). `release.yml`'s
+  `nightly.yml` has four jobs, `nightly`, `vuln`, `quickstart` and `flakes`;
+  `nightly` and `flakes` have run, and so has `proof.yml` as a reusable
+  workflow through them (`workflow_call`; the flakes job passed in run
+  40555387388). `quickstart` has not run on GitHub yet, and neither has the
+  same smoke in `release.yml`: the first scheduled or dispatched nightly after
+  it lands is the smoke's first run on a hosted runner, and its time there,
+  for which the job allows 40 minutes, is not measured (5 minutes cold on the
+  16-CPU reference host). `release.yml`'s
   `artifacts` and `publish` jobs were added after the last `actionlint` pass;
   the workflow rules in `test/tools/proofrun` hold their shape, and `make
   release-smoke` and `make quickstart-smoke` run their build and both smokes
