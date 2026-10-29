@@ -14,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/quantity"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -318,6 +319,42 @@ func (e *PoolNoJoinSupportError) Error() string {
 		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
 }
 
+// ReasonResourcesUnsatisfiable refuses a submit whose task asks for more than
+// any Orker of its pool runs (PoolResourcesUnsatisfiableError).
+const ReasonResourcesUnsatisfiable = "RESOURCES_UNSATISFIABLE"
+
+// PoolResourcesUnsatisfiableError refuses a submit whose task requests more
+// cpu or memory than the per-task cap of every Orker of its pool that
+// answered (DescribeOrkerResult.max_request). Such a task could never run
+// there: an Orker refuses a request above its cap with
+// RESOURCE_REQUEST_REFUSED after dispatch, terminally, so the run would fail
+// on its first attempt. The cap is a pool-wide setting (docs/DEPLOY.md), so
+// the refusal names the largest cap the pool reported. allow_empty_pool does
+// not downgrade it: the Orkers are present, and none of them can hold it.
+type PoolResourcesUnsatisfiableError struct {
+	Namespace string
+	Pool      string
+	Task      string
+	CPU       string // as the task wrote it; empty when it asked for none
+	Memory    string
+	Largest   *orkstackv1.ResourceQuantity
+}
+
+func (e *PoolResourcesUnsatisfiableError) Error() string {
+	var asked []string
+	if e.CPU != "" {
+		asked = append(asked, fmt.Sprintf("cpu %s", e.CPU))
+	}
+	if e.Memory != "" {
+		asked = append(asked, fmt.Sprintf("memory %s", e.Memory))
+	}
+	return fmt.Sprintf("%s: task %q requests %s, which no Orker of pool %q (namespace %q) runs: the largest "+
+		"per-task cap there is %g cpu and %d bytes of memory. Ask for less, or run the task on a pool whose "+
+		"Orkers set larger caps (orker.resources.max_cpu, orker.resources.max_memory)",
+		ReasonResourcesUnsatisfiable, e.Task, strings.Join(asked, " and "), e.Pool, e.Namespace,
+		e.Largest.GetCpu(), e.Largest.GetMemoryBytes())
+}
+
 // PoolUnreachableError reports that the cluster could not be asked whether a
 // pool has Orkers.
 //
@@ -600,6 +637,11 @@ func (r *PoolResolver) Plan(
 	// pools whose Orker must read ExecuteTaskInput.join. An awaited or
 	// composed handler never reaches this loop's routing, so is never counted.
 	handlerTasksByPool := map[string][]string{}
+	// The sizing view: every task that declares a resource request, per
+	// resolved pool — the requests a pool's per-task cap must hold. A task
+	// that declares none gets its Orker's default, which every Orker's boot
+	// holds within its cap, so it is never asked about.
+	sizedTasksByPool := map[string][]*orkstackv1.Task{}
 
 	for _, t := range planned.GetTasks() {
 		// An awaited task is never routed: no route, no allow-list check, no
@@ -638,6 +680,9 @@ func (r *PoolResolver) Plan(
 		}
 		if isFailureHandler(t) {
 			handlerTasksByPool[route.Pool] = append(handlerTasksByPool[route.Pool], t.GetId())
+		}
+		if res := t.GetResources(); strings.TrimSpace(res.GetCpu()) != "" || strings.TrimSpace(res.GetMemory()) != "" {
+			sizedTasksByPool[route.Pool] = append(sizedTasksByPool[route.Pool], t)
 		}
 		if eachRelated[t.GetId()] {
 			eachTasksByPool[route.Pool] = append(eachTasksByPool[route.Pool], t.GetId())
@@ -741,6 +786,12 @@ func (r *PoolResolver) Plan(
 			// its Orker read join policies at all.
 			if err := r.checkJoinSupport(ctx, census, namespaceName(ns), wf.GetName(), pool,
 				handlerTasksByPool[pool]); err != nil {
+				return nil, RunPlan{}, err
+			}
+			// And, for a pool that carries a task declaring a request: can
+			// any of its Orkers hold it.
+			if err := r.checkResourcesFit(ctx, census, namespaceName(ns), wf.GetName(), pool,
+				sizedTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
 			continue
@@ -1046,6 +1097,73 @@ func (r *PoolResolver) checkJoinSupport(ctx context.Context, census *poolCensus,
 		OrkerID:   old.GetOrkerId(),
 		BuildID:   old.GetBuildId(),
 	}
+}
+
+// checkResourcesFit refuses a live pool none of whose Orkers could hold a
+// task's request: each declared dimension above every answering Orker's
+// per-task cap (DescribeOrkerResult.max_request). Asked only of a pool that
+// carries a task declaring a request, so any other submit reads no census for
+// it. No Orker answering, and an Orker built before it reported its cap, are
+// logged and not refused — nothing was measured — on checkPinHost's
+// precedent; allow_empty_pool never downgrades it.
+func (r *PoolResolver) checkResourcesFit(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []*orkstackv1.Task) error {
+	if len(tasks) == 0 || r.Fleet == nil {
+		return nil
+	}
+	ids := make([]string, len(tasks))
+	for i, t := range tasks {
+		ids[i] = t.GetId()
+	}
+	orkers := r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: ids,
+		carrying: "a sized task", question: "it can hold the request",
+	})
+	var caps []*orkstackv1.ResourceQuantity
+	for _, described := range orkers {
+		if c := described.GetMaxRequest(); c != nil {
+			caps = append(caps, c)
+		}
+	}
+	if len(caps) == 0 {
+		if len(orkers) > 0 {
+			r.logger().Warn("submit: no Orker of a live pool with a sized task reports its per-task cap, "+
+				"so whether it can hold the request is unknown",
+				"namespace", namespace, "pool", pool, "orkflow", orkflow, "tasks", strings.Join(ids, ","))
+		}
+		return nil
+	}
+	largest := &orkstackv1.ResourceQuantity{}
+	for _, c := range caps {
+		largest.Cpu = max(largest.Cpu, c.GetCpu())
+		largest.MemoryBytes = max(largest.MemoryBytes, c.GetMemoryBytes())
+	}
+	for _, t := range tasks {
+		cpu := strings.TrimSpace(t.GetResources().GetCpu())
+		memory := strings.TrimSpace(t.GetResources().GetMemory())
+		if requestFitsOne(cpu, memory, caps) {
+			continue
+		}
+		return &PoolResourcesUnsatisfiableError{
+			Namespace: namespace, Pool: pool, Task: t.GetId(), CPU: cpu, Memory: memory, Largest: largest,
+		}
+	}
+	return nil
+}
+
+// requestFitsOne reports whether some cap holds every declared dimension of a
+// request. A dimension that does not read is left to the Orker, which refuses
+// it at dispatch by name; validate already refused it for an applied document.
+func requestFitsOne(cpu, memory string, caps []*orkstackv1.ResourceQuantity) bool {
+	cores, cpuErr := quantity.CPU(cpu)
+	bytes, memErr := quantity.Memory(memory)
+	for _, c := range caps {
+		cpuFits := cpu == "" || cpuErr != nil || cores <= c.GetCpu()
+		memFits := memory == "" || memErr != nil || bytes <= float64(c.GetMemoryBytes())
+		if cpuFits && memFits {
+			return true
+		}
+	}
+	return false
 }
 
 // routeFor resolves one pool against the channel this deployment bound as its

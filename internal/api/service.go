@@ -1838,6 +1838,12 @@ func poolPlanError(err error) error {
 	if errors.As(err, &noJoin) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
+	// A task larger than any Orker of its pool runs: the request is well
+	// formed and the pool cannot hold it (RESOURCES_UNSATISFIABLE).
+	var unsatisfiable *engine.PoolResourcesUnsatisfiableError
+	if errors.As(err, &unsatisfiable) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
 	var unreachable *engine.PoolUnreachableError
 	if errors.As(err, &unreachable) {
 		return connect.NewError(connect.CodeUnavailable, err)

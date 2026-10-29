@@ -129,6 +129,9 @@ type pinOrker struct {
 	// shared-directory round trip can be read off the Orker's own answer
 	// rather than reconstructed from the run.
 	results map[string]*orkstackv1.ExecuteTaskResult
+	// every is each result this Orker returned, per run: a fan-out's items
+	// share one task id, so results keeps only the last of them.
+	every map[string][]*orkstackv1.ExecuteTaskResult
 
 	stopOnce  sync.Once
 	closeOnce sync.Once
@@ -183,6 +186,7 @@ func (o *pinOrker) execute(
 	if result != nil {
 		o.mu.Lock()
 		o.results[in.GetRunId()+"/"+in.GetTaskId()] = result
+		o.every[in.GetRunId()] = append(o.every[in.GetRunId()], result)
 		o.mu.Unlock()
 	}
 	return result, err
@@ -1136,6 +1140,11 @@ type pinOrkerConfig struct {
 	deployment    task.Deployment
 	maxConcurrent int32
 	hostsNoPins   bool
+	// policy overrides the resource policy (nil: the environment's), and
+	// capacityCPU and capacityMemory declare orker.capacity.
+	policy         *orker.SecurityPolicy
+	capacityCPU    string
+	capacityMemory string
 }
 
 // newPinOrker builds and starts one real pin host, the way cmd/orker builds
@@ -1176,6 +1185,7 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		ran:      map[string][]string{},
 		phases:   map[string][]string{},
 		results:  map[string]*orkstackv1.ExecuteTaskResult{},
+		every:    map[string][]*orkstackv1.ExecuteTaskResult{},
 	}
 
 	// This Orker's OWN Temporal client. Three Orkers are three processes, so
@@ -1227,10 +1237,14 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		HeartbeatInterval: tick,
 		// The real Options.Phases seam, so Proof 2 can wait for the container
 		// to actually be running before it kills the host.
-		Phases:        pinPhaseObserver{o: o},
-		Logger:        cfg.logger,
-		BuildID:       cfg.buildID,
-		MaxConcurrent: cfg.maxConcurrent,
+		Phases:         pinPhaseObserver{o: o},
+		Logger:         cfg.logger,
+		BuildID:        cfg.buildID,
+		MaxConcurrent:  cfg.maxConcurrent,
+		Policy:         cfg.policy,
+		CapacityCPU:    cfg.capacityCPU,
+		CapacityMemory: cfg.capacityMemory,
+		TaskQueue:      cfg.queue,
 	})
 	if err := activities.Boot(ctx); err != nil {
 		infraAbsent(t, "orker %s boot checks failed: %v", cfg.id, err)

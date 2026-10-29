@@ -97,7 +97,9 @@ func newOrkerListCommand(g *globalFlags) *cobra.Command {
 			"answer, so any replica answers the same. An Orker that could not be asked is\n" +
 			"listed as `unknown (unreachable)` with the reason under the table: its load\n" +
 			"is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.\n" +
-			"PINS is open/max for a pin host and - otherwise.",
+			"PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker\n" +
+			"declaring one admits tasks within, and RESERVED what stands reserved against\n" +
+			"it, pinned members included; both are - for an Orker that declares none.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			filters, err := parseFilterFlags(*filterTexts)
@@ -508,6 +510,40 @@ func orkerPins(row *orkstackv1.Orker) string {
 	return fmt.Sprintf("%d/%d", row.GetOpenPins(), row.GetMaxConcurrentPins())
 }
 
+// formatResources renders a cpu and memory amount in the spelling an operator
+// configures one in ("16 cpu, 64Gi"), with a dimension at 0 left out and -
+// for none at all.
+func formatResources(q *orkstackv1.ResourceQuantity) string {
+	if q == nil {
+		return dash
+	}
+	var parts []string
+	if q.GetCpu() != 0 {
+		parts = append(parts, strconv.FormatFloat(q.GetCpu(), 'f', -1, 64)+" cpu")
+	}
+	if bytes := q.GetMemoryBytes(); bytes != 0 {
+		parts = append(parts, formatMemory(bytes))
+	}
+	if len(parts) == 0 {
+		return "0"
+	}
+	return strings.Join(parts, ", ")
+}
+
+// formatMemory is a byte count in the Kubernetes binary spelling when it is a
+// whole number of one, and in bytes otherwise.
+func formatMemory(bytes int64) string {
+	for _, unit := range []struct {
+		suffix string
+		size   int64
+	}{{"Ti", 1 << 40}, {"Gi", 1 << 30}, {"Mi", 1 << 20}, {"Ki", 1 << 10}} {
+		if bytes%unit.size == 0 {
+			return strconv.FormatInt(bytes/unit.size, 10) + unit.suffix
+		}
+	}
+	return strconv.FormatInt(bytes, 10)
+}
+
 func orkerTasks(row *orkstackv1.Orker) string {
 	if row.GetUnavailableReason() != "" {
 		return dash
@@ -525,7 +561,7 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "ORKER\tPOOL\tBUILD\tSTATE\tTASKS\tPINS\tLAST SEEN")
+	fmt.Fprintln(table, "ORKER\tPOOL\tBUILD\tSTATE\tTASKS\tPINS\tCAPACITY\tRESERVED\tLAST SEEN")
 	var cordoned, unreachable []*orkstackv1.Orker
 	for _, row := range rows {
 		switch {
@@ -534,9 +570,10 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 		case row.GetCordoned():
 			cordoned = append(cordoned, row)
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.GetOrkerId(), orDash(row.GetPool()), orDash(row.GetBuildId()), orkerState(row),
-			orkerTasks(row), orkerPins(row), formatTime(row.GetLastSeen()))
+			orkerTasks(row), orkerPins(row), formatResources(row.GetCapacity()), formatResources(row.GetReserved()),
+			formatTime(row.GetLastSeen()))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

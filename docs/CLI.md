@@ -740,7 +740,9 @@ The list comes from the cluster (who is polling) and from each Orker's own
 answer, so any replica answers the same. An Orker that could not be asked is
 listed as `unknown (unreachable)` with the reason under the table: its load
 is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.
-PINS is open/max for a pin host and - otherwise.
+PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker
+declaring one admits tasks within, and RESERVED what stands reserved against
+it, pinned members included; both are - for an Orker that declares none.
 
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD      OPERATORS       VALUES

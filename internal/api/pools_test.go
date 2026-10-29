@@ -1015,3 +1015,45 @@ tasks:
 		t.Errorf("a refused submission still started %v", starter.startedRuns())
 	}
 }
+
+// TestSubmitRun_RefusesATaskNoOrkerOfItsPoolCanHold: RESOURCES_UNSATISFIABLE
+// is FailedPrecondition and refuses before a run id is minted.
+func TestSubmitRun_RefusesATaskNoOrkerOfItsPoolCanHold(t *testing.T) {
+	starter := &fakeStarter{}
+	gpuQueue := poolQueue(t, "gpu")
+	orker := currentOrker("gpu-1", "gpu", 0)
+	orker.MaxRequest = &orkstackv1.ResourceQuantity{Cpu: 8, MemoryBytes: 16 << 30}
+	minted := 0
+	svc := api.NewService(api.Config{
+		Starter: starter,
+		Pools:   livePools{gpuQueue: 1},
+		Fleet:   fleetOf(orker),
+		NewRunID: func() string {
+			minted++
+			return "run-sized"
+		},
+	})
+	const document = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: train
+version: 0.1.0
+tasks:
+  - id: train
+    uses: shell
+    pool: gpu
+    with: {command: "echo train"}
+    resources: {cpu: "16"}
+`
+	if _, err := svc.ApplyOrkflow(context.Background(),
+		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: document})); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	_, err := svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "train"}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "RESOURCES_UNSATISFIABLE") {
+		t.Fatalf("SubmitRun = %v, want FailedPrecondition with RESOURCES_UNSATISFIABLE", err)
+	}
+	if minted != 0 || len(starter.startedRuns()) != 0 {
+		t.Fatalf("a refused submit minted %d ids and started %v", minted, starter.startedRuns())
+	}
+}

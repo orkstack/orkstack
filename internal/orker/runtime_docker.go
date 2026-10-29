@@ -835,6 +835,7 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 	var (
 		removed  int
 		failures []error
+		stayed   []ContainerID
 	)
 	for _, id := range strings.Fields(out) {
 		// One container that cannot be removed (a removal already in
@@ -843,12 +844,13 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 		// together.
 		if err := d.Remove(ctx, ContainerID(id)); err != nil {
 			failures = append(failures, fmt.Errorf("reap container %s: %w", id, err))
+			stayed = append(stayed, ContainerID(id))
 			continue
 		}
 		removed++
 	}
 	if len(failures) > 0 {
-		return removed, &ReapIncompleteError{Failures: failures}
+		return removed, &ReapIncompleteError{Failures: failures, Containers: stayed}
 	}
 	return removed, nil
 }

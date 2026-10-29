@@ -418,3 +418,26 @@ func (p SecurityPolicy) ResolveNetwork(mode orkstackv1.NetworkMode) (string, *Fa
 			mode.String(), NetworkDefault, NetworkNone)
 	}
 }
+
+// ceiling is the per-task cap as a reservation: what every poll of an Orker
+// declaring a capacity holds until the task it took is admitted.
+func (p SecurityPolicy) ceiling() (amount, error) {
+	return policyAmount(p.MaxCPU, p.MaxMemory)
+}
+
+// defaults is what a task that requests nothing is given, as a reservation.
+func (p SecurityPolicy) defaults() (amount, error) {
+	return policyAmount(p.DefaultCPU, p.DefaultMemory)
+}
+
+func policyAmount(cpu, memory string) (amount, error) {
+	cores, err := quantity.CPU(cpu)
+	if err != nil {
+		return amount{}, err
+	}
+	bytes, err := quantity.Memory(memory)
+	if err != nil {
+		return amount{}, err
+	}
+	return amountOf(cores, int64(bytes)), nil
+}

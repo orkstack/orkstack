@@ -821,6 +821,10 @@ is alive by answering DescribeOrker (§6.5).
 | `each_supported` | `bool` | each_supported is true on an Orker that implements fan-out items: it honours ExecuteTaskInput.each (task.json `each`, .each in with:) and stages EachUpstream. An Orker built before it answers false (unset), and submit refuses an Orkflow with a fan-out on such a pool rather than let it run items without their item or a dependent without its items. |
 | `cache_supported` | `bool` | cache_supported is true on an Orker that implements the memo step. An Orker built before it answers false (unset), and submit refuses an Orkflow with a cached task on its pool: the SDK's default payload converter refuses unknown fields, so such an Orker would FAIL every cached task's attempt on decoding ExecuteTaskInput.cache. |
 | `join_supported` | `bool` | join_supported is true on an Orker that reads ExecuteTaskInput.join (task.json `join`). An Orker built before it answers false (unset), and submit refuses an Orkflow with a container failure handler on its pool: the SDK's default payload converter refuses unknown fields, so such an Orker would FAIL every attempt of a failure handler on decoding ExecuteTaskInput.join — the compensation step of a run that is already failing. |
+| `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity is what this Orker admits tasks within (orker.capacity.cpu and orker.capacity.memory). Unset when it declares none: it then admits by max_concurrent alone, as every Orker did before capacity existed. A dimension at 0 is not bounded. |
+| `reserved` | [`ResourceQuantity`](#resourcequantity) | reserved is what stands reserved against capacity now: the per-task cap of every outstanding poll for a task, the request of every task it holds, pinned members included, and every container it has not yet removed. Unset when capacity is. A pinned member is counted but never made to wait, so reserved can exceed capacity by what open pins run. |
+| `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is the per-task cap (orker.resources.max_cpu and max_memory): the largest request this Orker runs. Submit refuses a task whose request no answering Orker of its pool could hold (RESOURCES_UNSATISFIABLE). Unset on an Orker built before it existed. |
+| `default_request` | [`ResourceQuantity`](#resourcequantity) | default_request is what a task that requests nothing is given (orker.resources.default_cpu and default_memory). |
 
 ### DiffOrkflowVersionsRequest
 
@@ -1818,6 +1822,8 @@ Orker is one execution process, observed live.
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment this Orker was observed polling. It answers "how fresh is this row", never "when did this Orker die". |
 | `unavailable_reason` | `string` | unavailable_reason says this Orker COULD NOT BE ASKED, and why — the same three-state distinction Pool.unavailable_reason makes, for the same reason: "not measured" rendered as "measured zero" sends an operator to stop a host that may be mid-task. When set, fields 2–9 and 12 are unset: nothing was measured, so there is no number to report. |
 | `pins` | repeated [`OpenPin`](#openpin) |  |
+| `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity and reserved are DescribeOrkerResult's: what this Orker admits tasks within, and what stands reserved against it. Both unset when it declares no capacity. |
+| `reserved` | [`ResourceQuantity`](#resourcequantity) |  |
 
 ### Orkflow
 
@@ -2243,6 +2249,17 @@ of it the workload used.
 | `reject` | `bool` |  |
 | `values_sha256` | `string` | values_sha256 is the hex sha256 of the stored values.json; empty for a rejection. |
 | `repeat` | `bool` | repeat is true when this request repeated the resolution that had already been applied — same values, or same rejection reason — so nothing was stored or delivered. |
+
+### ResourceQuantity
+
+ResourceQuantity is an amount of each resource an Orker reserves for a
+task: cpu in cores ("500m" is 0.5) and memory in bytes ("4Gi" is
+4294967296).
+
+| Field | Type | Description |
+|---|---|---|
+| `cpu` | `double` |  |
+| `memory_bytes` | `int64` |  |
 
 ### ResourceRequest
 

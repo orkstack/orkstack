@@ -30,7 +30,15 @@
       "pool": "build",
       "buildId": "2026.08.16-a1b2",
       "maxConcurrentPins": 2,
-      "lastSeen": "2026-09-22T09:14:04Z"
+      "lastSeen": "2026-09-22T09:14:04Z",
+      "capacity": {
+        "cpu": 16,
+        "memoryBytes": "68719476736"
+      },
+      "reserved": {
+        "cpu": 2.5,
+        "memoryBytes": "2684354560"
+      }
     },
     {
       "orkerId": "orker-b45e",

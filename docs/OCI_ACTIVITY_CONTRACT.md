@@ -1599,6 +1599,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | the Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed |
 | `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor (`docs/DEPLOY.md`, "Secrets on a shared pool") |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | the request exceeds the Orker's cap, or is not a positive finite quantity |
+| `RESOURCE_ADMISSION_MISMATCH` | ContractViolation | no | on an Orker declaring a capacity, the resolved request is larger than the reservation it was polled under and free capacity cannot cover it; it cannot happen while every poll reserves the per-task cap |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | the requested mode is not `default` or `none` |
 | `COMMIT_READ_FAILED` | InfrastructureError | yes | commit store unreadable at step 0 |
 | `COMMIT_WRITE_FAILED` | InfrastructureError | yes | conditional PUT failed for a non-precondition reason |
@@ -1753,6 +1754,15 @@ effective values reach the workload in `task.json` and the attempt record.
 The grammar is one package (`internal/quantity`) that the DSL also reads a
 request with at validate and apply (`docs/DSL.md` rule 6d), so a spelling
 apply accepts is never one the Orker cannot read.
+
+An Orker may also declare a **capacity** (`ORK_ORKER_CAPACITY_CPU`,
+`ORK_ORKER_CAPACITY_MEMORY`) and then admits no task beyond it: each poll
+reserves the per-task cap, the reservation is trimmed to the task's effective
+request once the task is in hand, and it is freed when the container is
+removed. The container sees none of this; its limits are its effective
+request, as without a capacity (`docs/DEPLOY.md`, "Declaring an Orker's
+capacity"). A submit refuses a task whose request is above every answering
+Orker's cap of its pool (`RESOURCES_UNSATISFIABLE`).
 
 ### 9.4 Secrets
 

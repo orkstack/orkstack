@@ -707,6 +707,33 @@ message DescribeOrkerResult {
   // ExecuteTaskInput.join — the compensation step of a run that is already
   // failing.
   bool join_supported = 18;
+  // capacity is what this Orker admits tasks within (orker.capacity.cpu and
+  // orker.capacity.memory). Unset when it declares none: it then admits by
+  // max_concurrent alone, as every Orker did before capacity existed. A
+  // dimension at 0 is not bounded.
+  ResourceQuantity capacity = 19;
+  // reserved is what stands reserved against capacity now: the per-task cap
+  // of every outstanding poll for a task, the request of every task it holds,
+  // pinned members included, and every container it has not yet removed.
+  // Unset when capacity is. A pinned member is counted but never made to
+  // wait, so reserved can exceed capacity by what open pins run.
+  ResourceQuantity reserved = 20;
+  // max_request is the per-task cap (orker.resources.max_cpu and
+  // max_memory): the largest request this Orker runs. Submit refuses a task
+  // whose request no answering Orker of its pool could hold
+  // (RESOURCES_UNSATISFIABLE). Unset on an Orker built before it existed.
+  ResourceQuantity max_request = 21;
+  // default_request is what a task that requests nothing is given
+  // (orker.resources.default_cpu and default_memory).
+  ResourceQuantity default_request = 22;
+}
+
+// ResourceQuantity is an amount of each resource an Orker reserves for a
+// task: cpu in cores ("500m" is 0.5) and memory in bytes ("4Gi" is
+// 4294967296).
+message ResourceQuantity {
+  double cpu = 1;
+  int64 memory_bytes = 2;
 }
 
 // OpenPin is one pin this Orker currently hosts: a pin it has accepted and
@@ -761,4 +788,9 @@ message Orker {
   // unset: nothing was measured, so there is no number to report.
   string unavailable_reason = 11;
   repeated OpenPin pins = 12;
+  // capacity and reserved are DescribeOrkerResult's: what this Orker admits
+  // tasks within, and what stands reserved against it. Both unset when it
+  // declares no capacity.
+  ResourceQuantity capacity = 13;
+  ResourceQuantity reserved = 14;
 }

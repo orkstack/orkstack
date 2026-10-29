@@ -267,3 +267,76 @@ func TestReadFleet_KeepsAnOrkerThatDidNotAnswer(t *testing.T) {
 		t.Fatal("a failed presence read was not an error")
 	}
 }
+
+const sizedDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: sized
+tasks:
+  - id: small
+    uses: shell
+    pool: gpu
+    with: {command: "echo small"}
+    resources: {cpu: "2"}
+  - id: train
+    uses: shell
+    pool: gpu
+    needs: [small]
+    with: {command: "echo train"}
+    resources: {cpu: "12", memory: "32Gi"}
+`
+
+func cappedOrker(id, pool string, cpu float64, memory int64) *orkstackv1.DescribeOrkerResult {
+	orker := currentOrker(id, pool, 0)
+	orker.MaxRequest = &orkstackv1.ResourceQuantity{Cpu: cpu, MemoryBytes: memory}
+	return orker
+}
+
+// A task larger than every answering Orker's per-task cap could never run on
+// its pool, so it is refused at submit, by name, before a run id exists.
+func TestPoolResolver_RefusesATaskNoOrkerOfItsPoolCanHold(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	resolver := &engine.PoolResolver{
+		Probe: livePools{gpuQueue: 2},
+		Fleet: fleetOf(cappedOrker("gpu-1", "gpu", 8, 16<<30), cappedOrker("gpu-2", "gpu", 8, 64<<30)),
+	}
+	for _, allowEmpty := range []bool{false, true} {
+		_, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "ml"}, compile(t, sizedDocument), allowEmpty)
+		var refused *engine.PoolResourcesUnsatisfiableError
+		if !errors.As(err, &refused) || refused.Task != "train" || refused.Pool != "gpu" {
+			t.Fatalf("allow_empty_pool=%v: Plan = %v, want train refused on gpu", allowEmpty, err)
+		}
+		for _, want := range []string{"RESOURCES_UNSATISFIABLE", `task "train"`, "cpu 12", "memory 32Gi", "8 cpu"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("the refusal %q does not say %q", err.Error(), want)
+			}
+		}
+	}
+	// One Orker of the pool that holds it is enough.
+	resolver.Fleet = fleetOf(cappedOrker("gpu-1", "gpu", 8, 16<<30), cappedOrker("gpu-3", "gpu", 16, 64<<30))
+	if _, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "ml"}, compile(t, sizedDocument), false); err != nil {
+		t.Fatalf("Plan = %v, want the request held by gpu-3", err)
+	}
+}
+
+func TestPoolResolver_DoesNotJudgeSizesItCannotMeasure(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	var logged strings.Builder
+	// gpu-1 predates max_request: nothing to judge by, so the submit stands.
+	resolver := &engine.PoolResolver{
+		Probe:  livePools{gpuQueue: 1},
+		Fleet:  fleetOf(currentOrker("gpu-1", "gpu", 0)),
+		Logger: slog.New(slog.NewTextHandler(&logged, nil)),
+	}
+	if _, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "ml"}, compile(t, sizedDocument), false); err != nil {
+		t.Fatalf("Plan = %v, want a cap nobody reported left unjudged", err)
+	}
+	if !strings.Contains(logged.String(), "reports its per-task cap") {
+		t.Fatalf("the unjudged request was not logged: %s", logged.String())
+	}
+	// A definition that declares no request reads no census for sizing.
+	resolver.Fleet = refusingFleet{t: t}
+	if _, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "ml"}, compile(t, gpuOnlyDocument), false); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+}

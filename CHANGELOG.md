@@ -10,6 +10,25 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- An Orker can declare a capacity, `orker.capacity.cpu` and
+  `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`, `_MEMORY`), and then
+  admits no task that would take its reservations above it: every poll
+  reserves the per-task cap, the reservation is trimmed to the task's
+  effective request once it arrives, and it is freed when the container is
+  removed. A pinned member is counted but never made to wait, so a pin host
+  can exceed its capacity by what its pins run at once, and polls for no new
+  task until the overshoot drains. A container that could not be removed,
+  including an orphan a restart could not reap, keeps its reservation until a
+  later removal succeeds. Unset keeps today's behaviour. `DescribeOrkerResult`
+  gains `capacity`, `reserved`, `max_request` and `default_request`, the
+  `Orker` row `capacity` and `reserved`, and `orkctl orker list` the
+  `CAPACITY` and `RESERVED` columns. New reasons: `RESOURCE_ADMISSION_MISMATCH`
+  (a guard that cannot fire while caps are honoured) and the boot refusal
+  `ORKER_CAPACITY_INVALID` (docs/DEPLOY.md, "Declaring an Orker's capacity").
+- A submit refuses a task whose `resources:` request is above the per-task
+  cap of every answering Orker of its pool, with `RESOURCES_UNSATISFIABLE`
+  (`failed_precondition`), before a run id is minted. It used to be accepted
+  and fail its first attempt `RESOURCE_REQUEST_REFUSED`.
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
   panics: the list-filter grammar, compiler and matcher (a compiled set is a

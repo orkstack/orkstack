@@ -363,6 +363,7 @@ then the variable it becomes.
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal in the daemon's own words, or a container that exits non-zero, is still `WORKDIR_NOT_BINDABLE`. A daemon that never answers holds boot for up to three times this plus a minute (7 minutes at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
+| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, as before. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
@@ -493,6 +494,63 @@ caps and a smaller ceiling. Set the same caps on every Orker of a pool: a task
 above the cap of the Orker that takes it fails `RESOURCE_REQUEST_REFUSED`, so a
 pool whose Orkers disagree runs a task or fails it depending on which one
 polled first.
+
+### Declaring an Orker's capacity
+
+`orker.capacity.cpu` and `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`,
+`ORK_ORKER_CAPACITY_MEMORY`) declare what one Orker admits tasks within, in the
+Kubernetes spelling: `"16"` and `"64Gi"`. Unset, the default, the Orker admits
+by `max_concurrent` alone, exactly as before. Either may be set alone; the
+other dimension is then not bounded.
+
+An Orker that declares a capacity admits no task that would take its
+reservations above it. A Temporal worker reserves a slot before it polls and
+cannot see the task until it has taken it, so the Orker holds each poll to the
+one bound it knows in advance, the per-task cap (`orker.resources.max_cpu`,
+`max_memory`):
+
+- every poll for a task reserves the cap, and is granted only while that fits
+  beside everything already reserved;
+- once the task is in hand, its reservation is trimmed to the task's own
+  resolved request, and an activity that runs no container to nothing;
+- the reservation is freed when the attempt's container is **removed**. A
+  container whose removal failed keeps its reservation, and the Orker tries to
+  remove it again every 30 seconds.
+
+`orkctl orker list` shows `CAPACITY` and `RESERVED` for each Orker that declares
+one. Boot refuses a capacity that does not read, or that the per-task cap does
+not fit in (`ORKER_CAPACITY_INVALID`). `max_concurrent` stays a count ceiling
+beside it.
+
+**What it costs.** A poll needs a whole cap free, so an Orker whose capacity
+equals its cap runs one task at a time, whatever their size: with the default
+8-cpu cap, a 16-cpu Orker holds at most two polls. Keep the cap small relative
+to the Orkers that serve a pool, and give the rare large task a pool of its
+own. A cache hit or an adopted commit starts no container, but it is admitted
+like any task, so under pressure it waits for a cap's worth too; it is priced
+as today, reservation × held time.
+
+**Pinned members are counted, not gated.** A pin's members run in the pin's own
+slots, which no capacity can gate without breaking the pin's heartbeats or
+deadlocking two pins, so a member's request joins the ledger on arrival and may
+push it over capacity. While the reservations stand at or over capacity the
+Orker grants no poll, so ordinary work yields and the overshoot drains. The
+overshoot is bounded by `ORK_ORKER_MAX_PINS` × what one pin runs at once: leave
+that much headroom on a pin host. A hard bound for pins is not provided.
+
+**The cap is a pool-wide setting**, as pin hosting is. A submit asks every
+uncordoned Orker of a task's pool for its cap, on its own channel, and refuses
+a task that declares a request above every one of them
+(`RESOURCES_UNSATISFIABLE`), before a run id exists. Capacity may differ per
+Orker, but every Orker of a pool should set the same cap and default.
+
+**After a crash**, the Orker's restart reaps its previous life's containers.
+One it could not remove still holds its host, so a declared capacity starts
+with that container's cap reserved, and frees it once a later reap removes it.
+
+The ledger is held in the process, as a cordon is: never stored, never shared,
+gone with the process. It is admission, not placement: Temporal decides which
+polling Orker receives a task.
 
 ### Pin hosting is a pool-wide setting
 

@@ -2,6 +2,7 @@ package orker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
@@ -180,6 +181,11 @@ func (a *Activities) WorkerTuner() (worker.WorkerTuner, error) {
 	if err != nil {
 		return nil, err
 	}
+	if a.capacity != nil {
+		// A declared capacity replaces the fixed count with the ledger,
+		// which holds both the count and the capacity (capacity.go).
+		activitySlots = &capacitySlotSupplier{c: a.capacity}
+	}
 	localSlots, err := fixed(sdkDefaultSlots)
 	if err != nil {
 		return nil, err
@@ -281,9 +287,24 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		// Orker's own ExecuteTask is counted exactly as the shipped one is.
 		i.a.running.Add(1)
 		defer i.a.running.Add(-1)
-		return i.Next.ExecuteActivity(ctx, in)
+		admission, err := i.a.admit(info.TaskQueue, executeTaskRequest(i.a.dispatcher.Policy, in))
+		if err != nil {
+			return nil, err
+		}
+		defer admission.Done()
+		return i.Next.ExecuteActivity(withAdmission(ctx, admission), in)
 	case sessionCreationActivityName:
 	default:
+		// Anything else polled on the pool channel (DescribeOrker) holds a
+		// permit's reservation and runs no container: it is trimmed to
+		// nothing.
+		if i.a.capacity != nil && info.TaskQueue == i.a.taskQueue {
+			admission, err := i.a.admit(info.TaskQueue, amount{})
+			if err != nil {
+				return nil, err
+			}
+			defer admission.Done()
+		}
 		return i.Next.ExecuteActivity(ctx, in)
 	}
 
@@ -310,6 +331,37 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 	i.a.pins.add(key, info.WorkflowExecution.ID, time.Now())
 	defer i.a.pins.remove(key)
 	return i.Next.ExecuteActivity(ctx, in)
+}
+
+// admit admits one activity against the declared capacity, if there is one.
+// A refusal is the attempt's failure, already in the shape the engine reads.
+func (a *Activities) admit(queue string, request amount) (*Admission, error) {
+	if a.capacity == nil {
+		return nil, nil
+	}
+	admission, err := a.capacity.admit(queue == a.taskQueue, request)
+	if err != nil {
+		var failure *Failure
+		if errors.As(err, &failure) {
+			return nil, failure.TemporalError()
+		}
+		return nil, err
+	}
+	return admission, nil
+}
+
+// executeTaskRequest is what an ExecuteTask attempt reserves: its resolved
+// request, or nothing for a request the policy refuses, because the attempt
+// fails RESOURCE_REQUEST_REFUSED before any container exists.
+func executeTaskRequest(policy SecurityPolicy, in *interceptor.ExecuteActivityInput) amount {
+	if len(in.Args) == 0 {
+		return amount{}
+	}
+	input, ok := in.Args[0].(*orkstackv1.ExecuteTaskInput)
+	if !ok {
+		return amount{}
+	}
+	return amountFromProto(policy.ReservedResources(input.GetResources()))
 }
 
 // ---------------------------------------------------------------- open pins

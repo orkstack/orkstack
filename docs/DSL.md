@@ -467,7 +467,8 @@ validate, apply and submit.
 (`"2"`, `"500m"`; `"512Mi"`, `"4Gi"`), refused at validate and apply when they do
 not read as a limit (rule 6d). A request is reserved for the task's lifetime and
 is also its limit. Orker policy may refuse a request above its cap but never
-silently raises or clamps it. `network` accepts
+silently raises or clamps it; a submit refuses a task whose request is above
+the cap of every Orker of its pool (`RESOURCES_UNSATISFIABLE`). `network` accepts
 only `default` and `none`. Cancellation sends SIGTERM and waits
 `cancellation_grace_period_seconds` before SIGKILL. `run_as_orker_user` is an
 opt-in readability escape hatch: it overrides the image's own USER so output

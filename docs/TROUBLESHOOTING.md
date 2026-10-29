@@ -39,6 +39,14 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 **Fix.** Retry. If the error persists, check the engine and the Temporal server (`make status` on the local stack). Do not use `--allow-empty-pool` for this error.
 
+### "RESOURCES_UNSATISFIABLE: task … requests …, which no Orker of pool … runs"
+
+**Cause.** The task declares a `resources:` request above the per-task cap of every Orker of its pool that answered (`orker.resources.max_cpu`, `orker.resources.max_memory`). An Orker refuses such a request after dispatch, terminally (`RESOURCE_REQUEST_REFUSED`), so the run is refused at submit instead, before a run id exists, and `--allow-empty-pool` does not change that (`internal/engine/pools.go`, `PoolResourcesUnsatisfiableError`). The message names the largest cap the pool reported ([DEPLOY.md](./DEPLOY.md), "Declaring an Orker's capacity").
+
+**Confirm.** `orkctl orker list --filter pool=<pool>` lists the pool's Orkers; their caps are in `orkctl orker get <orker-id> --json` (`maxRequest`).
+
+**Fix.** Lower the task's request, or move the task to a pool whose Orkers set larger caps. The cap is a pool-wide setting: set the same one on every Orker of a pool.
+
 ### "has live Orkers but none of them hosts pins"
 
 **Cause.** The pool has live Orkers, but none of them has `ORK_ORKER_MAX_PINS` above zero, so no pin can open. The engine asks every uncordoned Orker of the pool, each on its own channel, and refuses with `failed_precondition` (`internal/engine/pools.go`, `PoolNoPinHostError`). Pin hosting is a pool-wide setting ([DEPLOY.md](./DEPLOY.md), "Pin hosting is a pool-wide setting").
@@ -124,7 +132,7 @@ A task waiting for a free slot on a busy pool is not one of them: the engine has
 
 **Cause.** One of four things is usually true:
 
-- Every Orker of the pool is busy. Each runs at most `ORK_ORKER_MAX_CONCURRENT` tasks at once (16 by default), and a task beyond that waits in the pool for a free slot. The task is `RUNNING` from the moment it is dispatched: `orkctl run inspect` says `waiting for an orker on pool <pool> for <time>`, and the run page says `Waiting for an orker` (`internal/engine/workflow.go`; `internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling").
+- Every Orker of the pool is busy. Each runs at most `ORK_ORKER_MAX_CONCURRENT` tasks at once (16 by default), and, when it declares a capacity, polls only while a whole per-task cap is free beside what it has reserved; a task beyond that waits in the pool. `orkctl orker list` shows each Orker's `TASKS`, `CAPACITY` and `RESERVED`. The task is `RUNNING` from the moment it is dispatched: `orkctl run inspect` says `waiting for an orker on pool <pool> for <time>`, and the run page says `Waiting for an orker` (`internal/engine/workflow.go`; `internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling").
 - No Orker serves the pool, or the ones that do are cordoned. A cordoned Orker takes no new task and opens no new pin, and a restart clears the cordon ([CLI.md](./CLI.md), "`orkctl orker cordon`").
 - An Orker died while it held an attempt. Its heartbeat stops, `orkctl run inspect` reports the heartbeat as `STALE`, and the attempt times out as `ORKER_HEARTBEAT_TIMEOUT` (`internal/engine/workflow.go`). A heartbeat timeout is retryable under the task's `retry:` policy ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.1 The five categories").
 - A pinned task's host was lost. See `PIN_HOST_LOST` below.

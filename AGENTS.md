@@ -285,6 +285,7 @@ resolve the activity specification
 check the completion commit
 check the run's image policy
 check a cached task's memo
+admit the task within its declared capacity
 resolve the OCI image and digest
 create an isolated workspace
 materialize input artifacts
@@ -300,6 +301,17 @@ write the completion manifest
 return a compact ActivityResult
 cleanup
 ```
+
+An Orker that declares a capacity (`orker.capacity`) admits no task that
+would take its reservations above it. It reserves before it polls the
+largest request the channel it polls can carry, trims that reservation to
+the task's resolved request once the task is in hand, and frees it when the
+attempt's container is removed. A pinned member is counted but never made
+to wait, because it can run nowhere else; while the reservations stand at
+or above capacity, the Orker polls for no new task. The ledger is
+process-local, exactly as a cordon is: never stored, never shared, gone
+with the process. It is admission, not placement: Temporal decides which
+polling Orker receives a task, and OrkStack never chooses a host.
 
 Do not spread Docker-specific details through unrelated OrkStack components.
 Keep the OCI runtime boundary clean enough for future Podman, containerd,
@@ -333,7 +345,8 @@ resources:
 ```
 
 Support activity-level `timeout` and `cancellationGracePeriod`. Orker policy
-may cap requested resources. Workflows must not receive unlimited resources by
+caps requested resources, and an Orker that declares a capacity admits a task
+only within it (§5). Workflows must not receive unlimited resources by
 default. Put complicated execution logic in a container instead of adding
 platform primitives.
 
@@ -564,7 +577,10 @@ workflow code is deterministic and may not read a namespace document,
 process configuration, or the cluster. `SubmitRun`'s preparation resolves the
 namespace and Orkflow, applies the admission gate (hold, then `max_running`,
 then an enforced budget), resolves each task's pool against the namespace's
-allow-list and checks a live, capable Orker serves it, and then decides the
+allow-list and checks, from the Orker inventory, that a live, capable Orker
+serves it, refuses a task whose effective request exceeds its pool's per-task
+cap, which is a pool-wide setting, asking the pool's Orkers over their own
+control channels, and then decides the
 image-policy selection, telemetry selection, cache plan, every composed
 child's plan, the origin and any await callback tokens. All of it rides the
 replay-pinned `RunPlan` and is never re-read. Every refusal happens before a
