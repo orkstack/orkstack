@@ -65,7 +65,6 @@ func poolScopeService(t *testing.T, store engine.OrkflowStore, clock *poolScopeC
 		Orkflows:   store,
 		Namespaces: registry{"default": {Name: "default"}},
 		Pools:      livePools{task.DefaultQueue: 1, gpu: 1},
-		PoolOrkers: poolOrkers{task.DefaultQueue: {}, gpu: {}},
 		Now:        clock.Now,
 	})
 }

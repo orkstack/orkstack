@@ -103,7 +103,8 @@ old histories replay unchanged. Submit asks the task's pool what it can run
 no pins (`max_concurrent_pins` 0), and a fan-out, a cached task or a container
 failure handler on a pool whose Orker predates the feature (`each_supported`,
 `cache_supported`, `join_supported` false) and could not decode its context.
-The probe reaches one Orker, so every Orker of a pool must run a release that
+The probe asks every uncordoned Orker of the pool, and one that lacks the
+feature refuses the pool, so every Orker of a pool must run a release that
 supports what the pool is sent (`docs/DEPLOY.md`, §1).
 
 ### 2.2 `proto/orkstack/v1/activity.proto`
@@ -1383,12 +1384,19 @@ host's disk, and `ORK_ORKER_TMPFS_BYTES` does not apply (it is a bind mount).
 
 ### 6.5 Pool liveness
 
-`DescribeOrker` is the pool-liveness probe: the engine dispatches it as a
-Temporal activity on the pool's own channel (5 s / 10 s timeouts,
-`MaximumAttempts: 2`), so a pool proves it is alive only when an Orker is
-actually polling it. Its result also carries the Orker's runtime, security
+`DescribeOrker` is the pool-liveness probe. The engine dispatches it as a
+Temporal activity on one Orker's own control channel (5 s timeout,
+`MaximumAttempts: 2`), once for each Orker the presence channel lists, so an
+Orker proves it is alive only when it answers. The control channel has its
+own worker and slots, so an Orker whose every task slot is taken answers like
+an idle one. A pool whose every Orker is busy therefore still reads as live at
+submit, though its own channel shows no poller (`docs/DEPLOY.md`, "Running M
+Orker pools"). Its result also carries the Orker's pool, runtime, security
 profile, concurrency, pin capacity, cordon state, and the capability flags
-submit reads (§2.1). The Admin **Activities** page and `orkctl activity list`
+submit reads (§2.1). One caller still asks a pool's own channel:
+`ActivityService.DescribeOrker`, the Admin **Activities** page's Orker panel,
+dispatches it on the default pool's channel, so on a pool whose every task
+slot is taken it waits for a free one and can time out. The Admin **Activities** page and `orkctl activity list`
 render the engine's catalog, because that is engine configuration, not
 something to ask an Orker.
 

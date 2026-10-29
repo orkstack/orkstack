@@ -563,18 +563,11 @@ func TestSubmitRun_LoweredCapIsFailedPreconditionAndMintsNothing(t *testing.T) {
 	}
 }
 
-// eachSupportOrkers answers DescribeOrker with each_supported as given.
-type eachSupportOrkers bool
-
-func (s eachSupportOrkers) OrkerOnPool(_ context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	return &orkstackv1.DescribeOrkerResult{OrkerId: "old-1", BuildId: "2026.09.01", EachSupported: bool(s)}, nil
-}
-
 func TestSubmitRun_PoolWithoutEachSupportIsFailedPrecondition(t *testing.T) {
 	starter := &fakeStarter{}
 	gpuQueue := poolQueue(t, "gpu")
 	svc := api.NewService(api.Config{
-		Starter: starter, Pools: livePools{gpuQueue: 1}, PoolOrkers: eachSupportOrkers(false),
+		Starter: starter, Pools: livePools{gpuQueue: 1}, Fleet: oldGPUOrker(func(o *orkstackv1.DescribeOrkerResult) { o.EachSupported = false }),
 	})
 	doc := `
 apiVersion: orkstack/v1

@@ -252,8 +252,8 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		Starter:    starter,
 		// The liveness answer comes from Temporal's poller information, which
 		// is the whole point: the engine asks the cluster rather than guessing.
-		Pools:      engine.NewTemporalPoolProbe(temporalClient),
-		PoolOrkers: starter,
+		Pools: engine.NewTemporalPoolProbe(temporalClient),
+		Fleet: starter,
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

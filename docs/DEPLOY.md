@@ -181,9 +181,11 @@ needs `ORK_S3_*` either way.
   give an operator two pools to size and two to drain when there is one, and
   tell a client a task ran on `main` while gpu's Orkers ran it.
 - **A submit into a pool with no live Orkers is refused, at submit.** The
-  engine asks Temporal which workers are polling the pool's channel and
-  refuses the submission when the answer is none, naming the pool, the tasks
-  and the fix:
+  engine asks Temporal which workers are polling the pool's channel. When the
+  answer is none it asks the Orker inventory — the presence channel, and each
+  Orker on its own control channel, the read `orkctl orker list` makes — and
+  refuses the submission only when no uncordoned Orker of the pool answers
+  there either, naming the pool, the tasks and the fix:
 
   ```
   pool "gpu" (namespace "payments", tasks: settle) has no live Orkers, so nothing
@@ -205,6 +207,30 @@ needs `ORK_S3_*` either way.
   version is being promoted, so the count is per worker identity, not per
   record.
 
+  The second question is what keeps a busy pool live. An Orker polls its
+  pool's channel only while it has a free task slot, so a pool whose every
+  Orker is running `ORK_ORKER_MAX_CONCURRENT` tasks shows no poller there once
+  their last polls are 90 seconds old. Its presence and control channels have
+  workers and slots of their own, so a busy Orker still answers there. A
+  submit reads the inventory only when a pool's channel shows no poller or a
+  capability probe (below) needs it, once per submit and once more for each
+  composed child it plans; `orkctl pool list` reads it once per call. An Orker
+  that does not answer within five seconds says nothing about which pool it
+  serves, so it is not counted, and when the pool then reads empty the engine
+  logs `a pool reads empty while some live Orkers did not answer when asked`.
+  It is not made a "cannot tell": a stopped Orker's presence record stays
+  fresh for up to 90 seconds and never answers, so that would tell every
+  submit into an empty pool to ask again after any Orker anywhere stopped. A
+  busy pool on a cluster too slow to answer a describe in five seconds
+  therefore still reads empty.
+
+  An Orker is matched to a pool by the pool it reports. Two raw
+  `ORK_ORKER_QUEUE` channels in one Temporal namespace both report the default
+  pool, so when the engine's own channel shows no poller, an Orker polling the
+  other raw channel keeps the default pool live and the submit waits rather
+  than being refused. Give each raw channel its own Temporal namespace, as the
+  test harnesses do (AGENTS.md §11.1).
+
   The residue is bounded and deliberate: inside those 90 seconds a stale record
   can still say "live" just after an Orker stopped. That degrades to the old
   behaviour — a run that waits — never to a false rejection of a healthy
@@ -215,8 +241,12 @@ needs `ORK_S3_*` either way.
   A cluster that cannot be asked is a third answer, and it is kept apart from
   the other two. "No Orkers" is `failed_precondition` — start one, or take the
   override. A probe that got no reply at all (Temporal unreachable, or slower
-  than its five-second bound) measured nothing, and the submission it refuses
-  may be perfectly good, so it is `unavailable`: ask again. Reported as
+  than its five-second bound, for the pool's channel or for the inventory)
+  measured nothing, and the submission it refuses may be perfectly good, so it
+  is `unavailable`: ask again. `allow_empty_pool` does not change that for the
+  pool's channel; for the inventory alone it does, because the override would
+  accept the pool busy or empty, and the engine logs `whether a pool with no
+  poller is busy is unknown`. Reported as
   `invalid_argument` it would send every client off to fix a request with
   nothing wrong with it for as long as the cluster was unwell.
 - **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
@@ -248,7 +278,9 @@ needs `ORK_S3_*` either way.
   reports each pool from the same channel a submit dispatches it to, so an
   engine using the `ORK_ORKER_QUEUE` escape hatch reports its default pool
   from that raw queue — the Orkers it accepts runs onto are the Orkers it
-  says the pool has.
+  says the pool has, except for the busy-pool question above, which matches
+  Orkers by the pool they report and so cannot tell two raw channels of one
+  Temporal namespace apart.
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
@@ -443,11 +475,11 @@ reported by Admin → Activities.
 ### Pin hosting is a pool-wide setting
 
 Pin hosting is a property of a **pool**, not of a process: set the same
-`ORK_ORKER_MAX_PINS` on every Orker of a pool, because the submit-time probe
-that refuses a pin with no host to open it on asks one Orker of the pool and
-takes that answer as representative — a mixed pool is refused or accepted
-depending on who answered, and a pin accepted onto Orkers that in fact set `0`
-waits for a slot that never appears and then fails the run.
+`ORK_ORKER_MAX_PINS` on every Orker of a pool. The submit-time probe that
+refuses a pin with no host to open it on asks every uncordoned Orker of the
+pool, each on its own control channel, and accepts the pin when any one of
+them hosts pins; a pin accepted that way still opens only on a pin host, so in
+a mixed pool it waits for that host's slots alone.
 
 The refusal is `failed_precondition`, the same code as an empty pool, and it
 names the pool, the pins, the tasks and the fix:
@@ -460,7 +492,7 @@ for one
 ```
 
 `allow_empty_pool` downgrades it to a logged warning, as it does for an empty
-pool. A pool Orker that does not answer the describe probe is not a refusal —
+pool. A pool none of whose Orkers answers the probe is not a refusal —
 the submit proceeds and, if no host can open the pin, the triggering task
 fails `PIN_UNAVAILABLE` after the pin creation timeout
 (`engine.pin_creation_timeout`, five minutes by default; `docs/DSL.md`,
@@ -477,20 +509,22 @@ neither.
 An Orkflow with a fan-out (`each:`, `docs/DSL.md` "Fan-out") needs Orkers that
 understand items: an Orker built before fan-out would run an item without its
 `task.json` `each` object, and would stage nothing for a fan-out's direct
-dependent — a silently wrong result. So submit asks one Orker of the pool of
-every fan-out and of every direct dependent of one whether it supports
-fan-out, and refuses the run with `FailedPrecondition` naming the pool, the
-tasks, the Orker and its build when it does not; `allow_empty_pool` does not
-override that. Like pin hosting, the answer of one Orker stands for its pool:
-run every Orker of one pool on one release.
+dependent — a silently wrong result. So submit asks every uncordoned Orker of
+the pool of every fan-out and of every direct dependent of one, each on its
+own control channel, whether it supports fan-out, and refuses the run with
+`FailedPrecondition` naming the pool, the tasks, and the first Orker (by id)
+that does not and its build; `allow_empty_pool` does not override that. Any
+Orker of the pool may take an item, so one old Orker refuses the pool: run
+every Orker of one pool on one release, or cordon the old ones while they
+drain.
 
 Caching (`cache:`, `docs/DSL.md` "Caching") is the same: an Orker built before
 caching cannot even decode a cached task's input — the SDK's payload converter
 refuses the unknown field — and would fail every attempt for a reason that has
-nothing to do with the task. So submit asks one Orker of the pool of every
-cached task (a cached fan-out's items run on the fan-out's pool) whether it
-implements caching, and refuses with `FailedPrecondition` naming the pool, the
-tasks, the Orker and its build when it does not; neither `allow_empty_pool` nor
+nothing to do with the task. So submit asks every uncordoned Orker of the
+pool of every cached task (a cached fan-out's items run on the fan-out's pool)
+whether it implements caching, and refuses with `FailedPrecondition` naming
+the pool, the tasks, and the first Orker that does not and its build; neither `allow_empty_pool` nor
 `no_cache` overrides that (a bypass still sends the cache context). Memos live
 under `metadata/memo/` and need no setting of their own.
 
@@ -498,17 +532,20 @@ Failure handlers (`join: any_failed` or `all_done`, `docs/DSL.md` "Joins and
 failure handlers") are the same: an Orker built before join policies cannot
 decode a failure handler's input — the SDK's payload converter refuses the
 unknown field — and would fail the compensation step of a run that is
-already failing. So submit asks one Orker of the pool of every failure
-handler that runs a container whether it reads join policies, and refuses
-with `FailedPrecondition` naming the pool, the tasks, the Orker and its
-build when it does not; `allow_empty_pool` does not override that. A
+already failing. So submit asks every uncordoned Orker of the pool of every
+failure handler that runs a container whether it reads join policies, and
+refuses with `FailedPrecondition` naming the pool, the tasks, and the first
+Orker that does not and its build; `allow_empty_pool` does not override that. A
 `none_failed` join needs nothing from an Orker.
 
-All three probes are best-effort: a pool whose Orker does not answer within
-the describe timeout is not refused — nothing was measured — and the engine
-logs a warning (`submit: a live pool with … did not answer the describe-orker
-probe`). The probe is a guard for a mixed rollout, not a substitute for
-running every Orker of a pool on one release.
+All four probes ask each Orker on its own control channel, never on the
+pool's channel, so a pool whose every task slot is taken answers them like an
+idle one. They are best-effort: a pool none of whose uncordoned Orkers answers
+within the describe timeout is not refused — nothing was measured — and the
+engine logs a warning (`submit: no uncordoned Orker of a live pool with …
+answered on its own channel, so whether … is unknown`). The probe is a guard
+for a mixed rollout, not a substitute for running every Orker of a pool on one
+release.
 
 ### Pins on a versioned deployment
 
@@ -1780,9 +1817,11 @@ What that costs, stated so nobody has to discover it:
 
 - **There is no per-pool inventory of what a pool can run.** An activity is an
   OCI image, and which images a deployment can run is engine configuration
-  (`orkctl activity list`), not something an Orker reports. A pool's Orkers
-  still prove they are alive by answering `DescribeOrker` on the pool's own
-  channel; that probe is what `LAST SEEN` and the count are built from.
+  (`orkctl activity list`), not something an Orker reports. The count and
+  `LAST SEEN` come from the pool's channel and from the Orker inventory: the
+  larger of the channel's live pollers and the pool's uncordoned Orkers that
+  answer on their own channels, so a pool whose every Orker is busy, and so
+  polls nothing on its channel, still reports them.
 - **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
   minutes after its worker died, so a record older than the freshness window is
   dropped before anything is counted or timestamped. A pool whose Orkers have
@@ -1855,10 +1894,12 @@ What a cordon does, precisely:
 - **Everything in flight** is untouched: running containers finish, and open
   pins keep executing their remaining members, their release, and their
   completion on this host.
-- **The pool probe.** A cordoned Orker stops answering `DescribeOrker` on its
-  pool channel (only its own control channel still answers), so a pool whose
-  every Orker is cordoned reports its poller-derived count for the freshness
-  window and zero after it.
+- **The pool probe.** A cordoned Orker stops polling its pool's channel but
+  still answers on its own control channel, where submit's probes and the
+  inventory read it as an Orker that takes no new task. So a pool whose every
+  Orker is cordoned reports its poller-derived count for the freshness window
+  and zero after it, and a cordoned Orker never keeps a pool live or speaks for
+  what it can run.
 
 `SIGTERM` stops polling and cancels in-flight work; the Orker does not cordon
 itself on it. An operator who wants in-flight work to finish first cordons

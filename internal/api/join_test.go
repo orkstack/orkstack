@@ -161,20 +161,12 @@ func TestApplyOrkflow_StoresWithJoinWarningsAndRefusesRules37To42(t *testing.T) 
 	}
 }
 
-// joinSupportOrkers answers DescribeOrker with join_supported as given.
-type joinSupportOrkers bool
-
-func (s joinSupportOrkers) OrkerOnPool(_ context.Context, _ string) (*orkstackv1.DescribeOrkerResult, error) {
-	return &orkstackv1.DescribeOrkerResult{OrkerId: "gpu-3", BuildId: "2026.09.01", EachSupported: true,
-		CacheSupported: true, JoinSupported: bool(s)}, nil
-}
-
 func TestSubmitRun_PoolWithoutJoinSupportIsFailedPreconditionAndMintsNothing(t *testing.T) {
 	starter := &fakeStarter{}
 	gpuQueue := poolQueue(t, "gpu")
 	minted := 0
 	svc := api.NewService(api.Config{
-		Starter: starter, Pools: livePools{gpuQueue: 1}, PoolOrkers: joinSupportOrkers(false),
+		Starter: starter, Pools: livePools{gpuQueue: 1}, Fleet: oldGPUOrker(func(o *orkstackv1.DescribeOrkerResult) { o.JoinSupported = false }),
 		NewRunID: func() string { minted++; return fmt.Sprintf("run-%d", minted) },
 	})
 	applyYAML(t, svc, strings.ReplaceAll(joinYAML, "uses: busybox:latest", "uses: busybox:latest\n    pool: gpu"))

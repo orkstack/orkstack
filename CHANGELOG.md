@@ -251,6 +251,28 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- A pool whose every Orker is busy is no longer refused at submit as empty,
+  and submit's capability probes no longer skip it. An Orker polls its pool's
+  channel only while it has a free task slot, so once every Orker of a pool
+  had run `ORK_ORKER_MAX_CONCURRENT` tasks for 90 seconds the channel showed
+  no poller: a submit was refused `has no live Orkers` while the Orkers were
+  doing the pool's work, and the pin-host, fan-out, caching and failure
+  handler probes, sent as activities on that same channel, waited behind the
+  busy slots and were skipped with a warning. When a pool's channel shows no
+  poller, submit now asks the Orker inventory (the presence channel, and each
+  Orker on its own control channel, the read `orkctl orker list` makes), and
+  every probe asks each uncordoned Orker of the pool on its own control
+  channel. A probe now judges every such Orker, so one Orker of an older
+  release refuses its pool rather than only when it happened to answer, and
+  one pin host is enough to open a pin. `ListPools` counts a busy pool's
+  Orkers the same way. Found by reading the code; reproduced by
+  `TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes`, which
+  failed on the empty-pool refusal and, with only presence fixed, on the
+  skipped pin-host probe.
+- `docs/TROUBLESHOOTING.md` no longer says a task waiting for a busy pool
+  stays `PENDING`. It is `RUNNING` from dispatch, with `waiting for an orker`
+  in `orkctl run inspect` and on the run page; `PENDING` is only the engine's
+  own hold (the in-flight cap, the history hold line, a pin opening).
 - The unit gate gives each package's test binary a 15-minute `-timeout`
   instead of `go test`'s default ten. `internal/engine`'s unit suite took
   460 s on a 4-vCPU CI runner and passed ten minutes on a slower one (CI run

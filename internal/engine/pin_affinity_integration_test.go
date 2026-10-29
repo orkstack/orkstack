@@ -453,7 +453,7 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 		Bus:           bus,
 		Starter:       starter,
 		Pools:         engine.NewTemporalPoolProbe(temporalClient),
-		PoolOrkers:    starter,
+		Fleet:         starter,
 		Orkers:        starter,
 		ArtifactStore: store,
 		Logs:          logStore,
@@ -1127,11 +1127,15 @@ type pinOrkerConfig struct {
 	// which is what a restart of the same Orker does. logger receives the
 	// Orker's lifecycle lines (nil: slog.Default). buildID and deployment make
 	// the task worker versioned, as ORK_BUILD_ID does for cmd/orker.
-	maxPins    int32
-	workRoot   string
-	logger     *slog.Logger
-	buildID    string
-	deployment task.Deployment
+	// maxConcurrent overrides ORK_ORKER_MAX_CONCURRENT (0 keeps the default),
+	// and hostsNoPins is ORK_ORKER_MAX_PINS=0: no session worker at all.
+	maxPins       int32
+	workRoot      string
+	logger        *slog.Logger
+	buildID       string
+	deployment    task.Deployment
+	maxConcurrent int32
+	hostsNoPins   bool
 }
 
 // newPinOrker builds and starts one real pin host, the way cmd/orker builds
@@ -1191,6 +1195,9 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 	if maxPins == 0 {
 		maxPins = 2
 	}
+	if cfg.hostsNoPins {
+		maxPins = 0
+	}
 	// The Orker's heartbeat tick, deliberately FASTER than the SDK's session
 	// heartbeat, and that ordering is load-bearing for Proof 2.
 	//
@@ -1220,9 +1227,10 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		HeartbeatInterval: tick,
 		// The real Options.Phases seam, so Proof 2 can wait for the container
 		// to actually be running before it kills the host.
-		Phases:  pinPhaseObserver{o: o},
-		Logger:  cfg.logger,
-		BuildID: cfg.buildID,
+		Phases:        pinPhaseObserver{o: o},
+		Logger:        cfg.logger,
+		BuildID:       cfg.buildID,
+		MaxConcurrent: cfg.maxConcurrent,
 	})
 	if err := activities.Boot(ctx); err != nil {
 		infraAbsent(t, "orker %s boot checks failed: %v", cfg.id, err)
@@ -1245,7 +1253,7 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		// <queue>__internal_session_creation and the session activity worker on
 		// <uuid>@<hostname>. Without this the process is not a pin host and no
 		// session could ever be created on it.
-		EnableSessionWorker:               true,
+		EnableSessionWorker:               maxPins > 0,
 		MaxConcurrentSessionExecutionSize: int(maxPins),
 		// MANDATORY here, and not a detail: engine.livePollers counts one
 		// poller per Temporal worker identity, and the SDK's default identity

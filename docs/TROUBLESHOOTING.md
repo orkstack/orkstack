@@ -20,7 +20,7 @@ A submission refused in this section leaves nothing behind: no run id is minted 
 
 ### "has no live Orkers, so nothing would pick these tasks up"
 
-**Cause.** The pool a task resolves to has no Orker that the cluster sees polling. The engine refuses the submit with `failed_precondition`, before a run id exists (`internal/engine/pools.go`, `PoolEmptyError`; `internal/api/service.go`, `poolPlanError`). The rule is in ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
+**Cause.** The pool a task resolves to has no Orker that would take it: nothing polls the pool's channel, and no uncordoned Orker of the pool answers on its own channel. The second check is what keeps a busy pool live, because an Orker whose every task slot is taken stops polling the pool's channel but still answers on its own. An Orker that does not answer within five seconds is not counted, and the engine logs `a pool reads empty while some live Orkers did not answer when asked`. The engine refuses the submit with `failed_precondition`, before a run id exists (`internal/engine/pools.go`, `PoolEmptyError`; `internal/api/service.go`, `poolPlanError`). The rule is in ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 
 **Confirm.**
 
@@ -33,7 +33,7 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 ### "cannot tell whether pool … has live Orkers"
 
-**Cause.** The cluster could not be asked. Nothing was measured, so this is not an empty pool. The engine answers `unavailable`, and `--allow-empty-pool` does not change that answer (`internal/engine/pools.go`, `PoolUnreachableError`; `internal/api/service.go`, `poolPlanError`). The distinction is deliberate: an empty pool needs an Orker or the override, and an unreachable cluster needs a retry ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
+**Cause.** The cluster could not be asked: about the pool's channel, or, for a pool whose channel shows no poller, about the Orker inventory. Nothing was measured, so this is not an empty pool. The engine answers `unavailable`, and `--allow-empty-pool` does not change that answer when the pool's channel could not be asked (`internal/engine/pools.go`, `PoolUnreachableError`; `internal/api/service.go`, `poolPlanError`). When only the inventory could not, the override accepts the run, because it would accept the pool busy or empty, and the engine logs `whether a pool with no poller is busy is unknown`. The distinction is deliberate: an empty pool needs an Orker or the override, and an unreachable cluster needs a retry ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 
 **Confirm.** `orkctl pool list` prints `unknown (unreachable)` for the pool, with the reason under the table ([CLI.md](./CLI.md), "`orkctl pool list`").
 
@@ -41,7 +41,7 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 ### "has live Orkers but none of them hosts pins"
 
-**Cause.** The pool has live Orkers, but none of them has `ORK_ORKER_MAX_PINS` above zero, so no pin can open. The engine asks one Orker of the pool and refuses with `failed_precondition` (`internal/engine/pools.go`, `PoolNoPinHostError`). Pin hosting is a pool-wide setting ([DEPLOY.md](./DEPLOY.md), "Pin hosting is a pool-wide setting").
+**Cause.** The pool has live Orkers, but none of them has `ORK_ORKER_MAX_PINS` above zero, so no pin can open. The engine asks every uncordoned Orker of the pool, each on its own channel, and refuses with `failed_precondition` (`internal/engine/pools.go`, `PoolNoPinHostError`). Pin hosting is a pool-wide setting ([DEPLOY.md](./DEPLOY.md), "Pin hosting is a pool-wide setting").
 
 **Confirm.** `orkctl orker list` shows `open/max` in the PINS column for a pin host and `-` for any other Orker ([CLI.md](./CLI.md), "`orkctl orker list`").
 
@@ -106,23 +106,25 @@ orkctl -n <namespace> stats usage --since 720h    # answers only if the budget c
 
 ### My run's tasks stay `PENDING`
 
-**Cause.** A ready task waits rather than fails in four cases. The first three are what a saturated pool does, as the docs describe them ([DSL.md](./DSL.md), "How many tasks an Orkflow may declare"; [DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks"):
+**Cause.** `PENDING` is the engine's own hold: a ready task it has not dispatched yet. That happens in three cases ([DSL.md](./DSL.md), "How many tasks an Orkflow may declare"; [DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks"):
 
-1. Every Orker of the pool is at its task ceiling, `ORK_ORKER_MAX_CONCURRENT` (16 by default). The task waits in the pool for a slot (`internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling").
-2. The run is at its in-flight cap, `ORK_RUN_MAX_IN_FLIGHT` (1000 by default). It starts more as running work finishes (`internal/engine/hold.go`; [DSL.md](./DSL.md), "How many tasks an Orkflow may declare").
-3. The run's history is near its hold line. It holds new tasks until the running ones finish, so it can carry on into a fresh history ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
-4. A pin is opening. Its ready tasks stay `PENDING` while the pin opens ([DSL.md](./DSL.md), "Pins").
+1. The run is at its in-flight cap, `ORK_RUN_MAX_IN_FLIGHT` (1000 by default). It starts more as running work finishes (`internal/engine/hold.go`; [DSL.md](./DSL.md), "How many tasks an Orkflow may declare").
+2. The run's history is near its hold line. It holds new tasks until the running ones finish, so it can carry on into a fresh history ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
+3. A pin is opening. Its ready tasks stay `PENDING` while the pin opens ([DSL.md](./DSL.md), "Pins").
 
-**Confirm.** `orkctl orker list` shows each Orker's load and cordon state. `orkctl run inspect <run-id>` shows a held task with no attempt. When the in-flight cap applies, the engine logs `run reached its in-flight cap` ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
+A task waiting for a free slot on a busy pool is not one of them: the engine has dispatched it, so it is `RUNNING`. See "My run stays `RUNNING` and nothing happens".
 
-**Fix.** A `PENDING` task is not a failure, and the run resumes as work finishes. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load.
+**Confirm.** `orkctl run inspect <run-id>` shows a held task with no attempt. When the in-flight cap applies, the engine logs `run reached its in-flight cap` ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
+
+**Fix.** A `PENDING` task is not a failure, and the run resumes as its running work finishes.
 
 ## Running
 
 ### My run stays `RUNNING` and nothing happens
 
-**Cause.** One of three things is usually true:
+**Cause.** One of four things is usually true:
 
+- Every Orker of the pool is busy. Each runs at most `ORK_ORKER_MAX_CONCURRENT` tasks at once (16 by default), and a task beyond that waits in the pool for a free slot. The task is `RUNNING` from the moment it is dispatched: `orkctl run inspect` says `waiting for an orker on pool <pool> for <time>`, and the run page says `Waiting for an orker` (`internal/engine/workflow.go`; `internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling").
 - No Orker serves the pool, or the ones that do are cordoned. A cordoned Orker takes no new task and opens no new pin, and a restart clears the cordon ([CLI.md](./CLI.md), "`orkctl orker cordon`").
 - An Orker died while it held an attempt. Its heartbeat stops, `orkctl run inspect` reports the heartbeat as `STALE`, and the attempt times out as `ORKER_HEARTBEAT_TIMEOUT` (`internal/engine/workflow.go`). A heartbeat timeout is retryable under the task's `retry:` policy ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.1 The five categories").
 - A pinned task's host was lost. See `PIN_HOST_LOST` below.
@@ -135,7 +137,7 @@ orkctl run inspect <run-id>
 orkctl run attempts <run-id>     # an attempt its Orker never filed shows as UNREPORTED
 ```
 
-**Fix.** Restart the Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
+**Fix.** If the pool is busy, the task starts when a slot frees. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load. Restart a dead Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
 
 ### I stopped an Orker and its tasks failed
 

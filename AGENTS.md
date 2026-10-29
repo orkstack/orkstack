@@ -689,9 +689,10 @@ and a recorded history protects it; changing such a constant is a new command
 path with its own gate. Because the activity channel can fall
 through to another release, an activity-input field an older Orker would
 reject or ignore (cache, join, fan-out items) is advertised as a capability on
-`DescribeOrker`. Submit asks one Orker of each pool such a task would run on
-and refuses with `FailedPrecondition`, naming the Orker and its build, when it
-lacks the capability; a pool that does not answer the probe is logged, not
+`DescribeOrker`. Submit asks every uncordoned Orker of each pool such a task
+would run on, each on its own control channel, and refuses with
+`FailedPrecondition`, naming the Orker and its build, when one lacks the
+capability; a pool none of whose Orkers answers the probe is logged, not
 refused, so every Orker of one pool must run one release.
 
 ### 7.3 Generations

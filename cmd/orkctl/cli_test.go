@@ -579,7 +579,6 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 			Orkers:   map[string]int{task.DefaultPool: 1},
 			LastSeen: fixedNow,
 		}
-		cfg.PoolOrkers = adminPoolOrkers{task.DefaultPool: {}}
 	}, &orkstackv1.ActivityInfo{Name: "http", Reference: "ghcr.io/orkstack/activity-http:0.1"})
 	f.applyExample().requireExit(t, exitOK)
 

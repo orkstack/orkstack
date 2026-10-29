@@ -1348,7 +1348,6 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Bus:        bus,
 		Starter:    starter,
 		Pools:      pools,
-		PoolOrkers: starter,
 		Orkers:     starter,
 		Fleet:      starter,
 		Releases:   releases,

@@ -383,32 +383,24 @@ tasks:
     with: {op: exec}
 `
 
-// cacheSupportPools answers DescribeOrker per channel with cache_supported
-// as given (each_supported always true), and records every channel asked.
-type cacheSupportPools struct {
-	eachSupportPools
-	cacheSupported map[string]bool
+// cacheFleet is one current Orker for each of cachePoolsDocument's pools,
+// with gpu's Orker (gpu-3, build 2026.09.01) answering cache_supported as
+// given.
+func cacheFleet(gpuSupported bool) *fakeFleet {
+	gpu := currentOrker("gpu-3", "gpu", 0)
+	gpu.BuildId = "2026.09.01"
+	gpu.CacheSupported = gpuSupported
+	return fleetOf(currentOrker("cpu-1", "cpu", 0), gpu)
 }
 
-func (p *cacheSupportPools) OrkerOnPool(ctx context.Context, queue string) (*orkstackv1.DescribeOrkerResult, error) {
-	result, err := p.eachSupportPools.OrkerOnPool(ctx, queue)
-	if err != nil {
-		return nil, err
-	}
-	result.EachSupported = true
-	result.CacheSupported = p.cacheSupported[queue]
-	return result, nil
-}
-
-func cachePoolsResolver(p *cacheSupportPools) *engine.PoolResolver {
+func cachePoolsResolver(fleet engine.FleetReader) *engine.PoolResolver {
 	cpu, _ := task.QueueForPool("cpu", "")
 	gpu, _ := task.QueueForPool("gpu", "")
-	return &engine.PoolResolver{Probe: livePools{cpu: 1, gpu: 1}, Orkers: p}
+	return &engine.PoolResolver{Probe: livePools{cpu: 1, gpu: 1}, Fleet: fleet}
 }
 
 func TestPoolResolverPlan_RefusesAPoolWhoseOrkerPredatesCaching(t *testing.T) {
-	p := &cacheSupportPools{cacheSupported: map[string]bool{}}
-	_, _, err := cachePoolsResolver(p).Plan(context.Background(),
+	_, _, err := cachePoolsResolver(cacheFleet(false)).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, cachePoolsDocument), false)
 	refused, ok := err.(*engine.PoolNoCacheSupportError)
 	if !ok {
@@ -423,40 +415,34 @@ func TestPoolResolverPlan_RefusesAPoolWhoseOrkerPredatesCaching(t *testing.T) {
 	if err.Error() != want {
 		t.Fatalf("message = %q\nwant %q", err.Error(), want)
 	}
-	gpu, _ := task.QueueForPool("gpu", "")
-	p.cacheSupported[gpu] = true
-	if _, _, err := cachePoolsResolver(p).Plan(context.Background(),
+	if _, _, err := cachePoolsResolver(cacheFleet(true)).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, cachePoolsDocument), false); err != nil {
 		t.Fatalf("a pool whose Orker supports caching = %v", err)
 	}
 }
 
 func TestPoolResolverPlan_CacheIgnoresADescribeFailure(t *testing.T) {
-	p := &cacheSupportPools{}
-	p.fail = true
-	if _, _, err := cachePoolsResolver(p).Plan(context.Background(),
+	fleet := &fakeFleet{silent: []string{"cpu-1", "gpu-3"}}
+	if _, _, err := cachePoolsResolver(fleet).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, cachePoolsDocument), false); err != nil {
 		t.Fatalf("a describe failure refused the submit: %v", err)
 	}
 }
 
 func TestPoolResolverPlan_CacheAllowEmptyPoolDoesNotDowngradeIt(t *testing.T) {
-	p := &cacheSupportPools{cacheSupported: map[string]bool{}}
-	_, _, err := cachePoolsResolver(p).Plan(context.Background(),
+	_, _, err := cachePoolsResolver(cacheFleet(false)).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, cachePoolsDocument), true)
 	if _, ok := err.(*engine.PoolNoCacheSupportError); !ok {
 		t.Fatalf("Plan with allow_empty_pool = %v, want the refusal to stand", err)
 	}
 }
 
-func TestPoolResolverPlan_AsksOnlyForPoolsOfCachedTasks(t *testing.T) {
-	gpu, _ := task.QueueForPool("gpu", "")
-	p := &cacheSupportPools{cacheSupported: map[string]bool{gpu: true}}
-	if _, _, err := cachePoolsResolver(p).Plan(context.Background(),
+func TestPoolResolverPlan_JudgesOnlyPoolsOfCachedTasks(t *testing.T) {
+	// cpu runs no cached task, so its Orker is not held to caching.
+	fleet := cacheFleet(true)
+	fleet.orkers[0].CacheSupported = false
+	if _, _, err := cachePoolsResolver(fleet).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "ml"}, compile(t, cachePoolsDocument), false); err != nil {
 		t.Fatalf("Plan: %v", err)
-	}
-	if fmt.Sprint(p.asked) != fmt.Sprint([]string{gpu}) {
-		t.Fatalf("asked %v, want only gpu", p.asked)
 	}
 }
