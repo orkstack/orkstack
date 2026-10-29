@@ -80,7 +80,9 @@ output on the host, where a symlink resolves in the Orker's own mount
 namespace, so a link the workload wrote could name any file the Orker can
 open. It therefore reads `/orkstack/output` only through a confined root
 (`os.Root`) opened on the attempt's output directory, `lstat`s every name it
-reads before opening it, and checks every open against that `lstat`. A
+reads before opening it, proves every open with a second `lstat` taken while
+the descriptor is held, and reads each artifact only through the descriptor
+its scan opened, so a name replaced afterwards is never resolved again. A
 symlinked `values.json` fails `VALUES_MALFORMED`, and a symlinked or
 non-directory `output/artifacts`, or any artifact entry that is not a regular
 file, fails `ARTIFACT_NOT_A_FILE`. Both are contract violations, never

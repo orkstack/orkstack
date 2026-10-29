@@ -308,12 +308,11 @@ func FuzzOutputTree(f *testing.F) {
 			}
 			var got []string
 			for _, artifact := range scanned {
-				file, failure := artifact.Open()
+				body, failure := artifact.Open()
 				if failure != nil {
 					t.Fatalf("Open %s: %v", artifact.Name, failure)
 				}
-				raw, err := io.ReadAll(file)
-				_ = file.Close()
+				raw, err := io.ReadAll(body)
 				if err != nil {
 					t.Fatal(err)
 				}

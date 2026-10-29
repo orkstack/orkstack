@@ -1170,10 +1170,11 @@ func EncodeArtifactName(name string) string {
 // goes through an os.Root, which refuses any resolution that leaves the
 // directory, and every name is Lstat'ed inside it before it is opened, so a
 // symlink is refused rather than followed even when its target is inside:
-// AGENTS.md §3.1 admits regular files only. Every open is then checked
-// against what the Lstat saw (os.SameFile on the open descriptor), so the
-// bytes the Orker reads are the regular file the check approved, never what a
-// name came to point at afterwards.
+// AGENTS.md §3.1 admits regular files only. Every open is then proved against
+// a second Lstat taken while the descriptor is held (openScanned), and every
+// later read goes through that one descriptor, so the bytes the Orker reads
+// are the regular file the check approved, never what a name came to point at
+// afterwards.
 //
 // The kernel's fs.protected_symlinks blocks some of this when the workload's
 // uid is not the Orker's. It is not a boundary the Orker relies on: a
@@ -1182,9 +1183,12 @@ func EncodeArtifactName(name string) string {
 type OutputTree struct {
 	root *os.Root
 	// artifacts is output/artifacts, opened by ScanArtifacts; nil before it,
-	// or when the workload left none. It outlives the scan because every
-	// later read of an artifact (hash, sniff, upload) opens through it.
+	// or when the workload left none.
 	artifacts *os.Root
+	// files are the artifact descriptors ScanArtifacts opened. They outlive
+	// the scan because every later read of an artifact (hash, sniff, upload)
+	// goes through them, and no name is resolved again.
+	files []*os.File
 }
 
 // OpenOutputTree opens dir, the attempt's output directory. dir itself is
@@ -1200,29 +1204,43 @@ func OpenOutputTree(dir string) (*OutputTree, *Failure) {
 	return &OutputTree{root: root}, nil
 }
 
-// Close releases the tree. No artifact scanned from it can be opened after.
+// Close releases the tree. No artifact scanned from it can be read after.
 func (t *OutputTree) Close() error {
-	var err error
-	if t.artifacts != nil {
-		err = t.artifacts.Close()
+	var errs []error
+	for _, file := range t.files {
+		errs = append(errs, file.Close())
 	}
-	return errors.Join(err, t.root.Close())
+	t.files = nil
+	if t.artifacts != nil {
+		errs = append(errs, t.artifacts.Close())
+	}
+	return errors.Join(append(errs, t.root.Close())...)
 }
 
 // ScannedArtifact is one regular file found directly in output/artifacts/.
 type ScannedArtifact struct {
 	Name string
 	Size int64
-	// dir is the confined artifacts directory the scan read, and info what
-	// its Lstat saw. Open holds every later read to both.
-	dir  *os.Root
-	info os.FileInfo
+	// seen is what the scan's Lstat saw before it opened the name; file is
+	// the descriptor the open proved (openScanned), or nil with failure the
+	// reason it could not be. A failure is kept per artifact rather than
+	// ending the scan, so the failure path still uploads the others (§7.1
+	// step 14).
+	seen    os.FileInfo
+	file    *os.File
+	failure *Failure
 }
 
-// Open opens the artifact through the directory it was scanned from, and
-// refuses anything that is no longer the regular file the scan saw.
-func (a ScannedArtifact) Open() (*os.File, *Failure) {
-	return openScanned(a.dir, a.Name, a.info, ContainerArtifacts+"/"+a.Name, ReasonArtifactNotAFile)
+// Open returns the artifact's bytes from its start, read through the
+// descriptor the scan opened, so a name the workload replaced after the scan
+// is never resolved again. Each call is an independent reader; it is valid
+// until the tree is closed. It returns instead the failure the scan's open
+// hit, which is the §3.1 readability check.
+func (a ScannedArtifact) Open() (*io.SectionReader, *Failure) {
+	if a.failure != nil {
+		return nil, a.failure
+	}
+	return io.NewSectionReader(a.file, 0, a.Size), nil
 }
 
 // ScanArtifacts implements §3.5.
@@ -1291,13 +1309,29 @@ func (t *OutputTree) ScanArtifacts(limits *orkstackv1.WorkspaceLimits) ([]Scanne
 		_ = dir.Close()
 		return nil, failure
 	}
-	for i := range found {
-		found[i].dir = dir
-	}
 	if t.artifacts != nil {
 		_ = t.artifacts.Close()
 	}
 	t.artifacts = dir
+	for i := range found {
+		artifact := &found[i]
+		containerPath := ContainerArtifacts + "/" + artifact.Name
+		file, opened, failure := openScanned(dir, artifact.Name, artifact.seen, containerPath, ReasonArtifactNotAFile)
+		if failure == nil && opened.Size() != artifact.Size {
+			// Its size is the one the limits were checked against and the
+			// one every read is bounded by.
+			_ = file.Close()
+			failure = Fail(ReasonArtifactNotAFile,
+				"%s changed while the orker opened it: it was %d bytes and is now %d",
+				containerPath, artifact.Size, opened.Size())
+		}
+		if failure != nil {
+			artifact.failure = failure
+			continue
+		}
+		artifact.file = file
+		t.files = append(t.files, file)
+	}
 	return found, nil
 }
 
@@ -1344,7 +1378,7 @@ func scanOutputArtifactEntries(
 				"output artifact %s/%s is %d bytes, over the %d-byte per-artifact limit",
 				ContainerArtifacts, name, info.Size(), maxBytes)
 		}
-		found = append(found, ScannedArtifact{Name: name, Size: info.Size(), info: info})
+		found = append(found, ScannedArtifact{Name: name, Size: info.Size(), seen: info})
 	}
 
 	if maxCount > 0 && int32(len(found)) > maxCount {
@@ -1376,9 +1410,22 @@ func describeMode(mode os.FileMode) string {
 	}
 }
 
-// openScanned opens name in dir and proves the descriptor is the regular file
-// seen, which an Lstat of the same name returned. notRegular is the reason a
-// name that no longer is one fails with.
+// openScanned opens name in dir and proves the descriptor is a regular file
+// that name itself, not a link, names. seen is the Lstat the caller judged the
+// name by before the open, so nothing that was not a regular file then (a
+// device, a FIFO) is ever opened. notRegular is the reason a name that no
+// longer is one fails with. It returns the descriptor and its own stat, which
+// is what the caller measures.
+//
+// The proof is a second Lstat, taken AFTER the open and compared with the
+// descriptor. Comparing the first Lstat with the descriptor proves nothing:
+// once a file is unlinked its inode number is free, and ext4 gives it to the
+// next file created on that filesystem, so a name replaced after the first
+// Lstat — by another file, or by a link to one — carries the device and inode
+// the Lstat saw. An open descriptor pins its inode, and while the Orker holds
+// it no other file can have that number, so a match with an Lstat taken while
+// it is held is conclusive. What happens to the name after that does not
+// matter, because the caller reads only through the descriptor.
 //
 // It is also the §3.1 readability measure, and that measure exists because
 // READABILITY IS NOT GUARANTEED BY THE MOUNT. 1777 guarantees the workload can
@@ -1398,28 +1445,37 @@ func describeMode(mode os.FileMode) string {
 // Classifying it as ARTIFACT_UPLOAD_FAILED — infrastructure, retryable — would
 // loop forever against deterministic image behavior, which AGENTS.md §11
 // forbids.
-func openScanned(dir *os.Root, name string, seen os.FileInfo, containerPath, notRegular string) (*os.File, *Failure) {
+func openScanned(dir *os.Root, name string, seen os.FileInfo, containerPath, notRegular string) (*os.File, os.FileInfo, *Failure) {
 	// O_NONBLOCK, so a FIFO that took the name after the Lstat cannot hold
 	// the open waiting for a writer; a regular file ignores the flag.
 	file, err := dir.OpenFile(name, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		if errors.Is(err, fs.ErrPermission) {
-			return nil, FailCause(ReasonOutputNotReadable, err,
+		switch {
+		case errors.Is(err, fs.ErrPermission):
+			return nil, nil, FailCause(ReasonOutputNotReadable, err,
 				"the orker cannot read %s (mode=%o%s): %v — the workload wrote it with permissions the "+
 					"orker's user cannot open. Set `umask 022` in the image's entry script, or set "+
 					"runAsOrkerUser: true on this task",
 				containerPath, seen.Mode().Perm(), ownerOf(seen), err)
+		case errors.Is(err, syscall.EMFILE), errors.Is(err, syscall.ENFILE):
+			// The scan holds one descriptor per artifact until the commit,
+			// so this is the Orker's limit, not the workload's doing.
+			return nil, nil, FailCause(ReasonWorkdirFailed, err,
+				"the orker has no file descriptor left to open %s: %v", containerPath, err)
 		}
-		return nil, FailCause(notRegular, err,
+		return nil, nil, FailCause(notRegular, err,
 			"%s changed while the orker opened it and is no longer the regular file it was: %v", containerPath, err)
 	}
 	opened, err := file.Stat()
-	if err != nil || !opened.Mode().IsRegular() || !os.SameFile(seen, opened) {
-		_ = file.Close()
-		return nil, Fail(notRegular,
-			"%s changed while the orker opened it and is no longer the regular file it was", containerPath)
+	if err == nil && opened.Mode().IsRegular() {
+		var named os.FileInfo
+		if named, err = dir.Lstat(name); err == nil && named.Mode().IsRegular() && os.SameFile(named, opened) {
+			return file, opened, nil
+		}
 	}
-	return file, nil
+	_ = file.Close()
+	return nil, nil, Fail(notRegular,
+		"%s changed while the orker opened it and is no longer the regular file it was", containerPath)
 }
 
 // describeUnreadable renders "mode=600 owner=65534:65534" for a message about
@@ -1469,7 +1525,7 @@ func (t *OutputTree) ReadValues(limits *orkstackv1.WorkspaceLimits) ([]byte, *Fa
 		return nil, Fail(ReasonValuesTooLarge,
 			"%s is %d bytes, over the %d-byte limit", ContainerValuesJSON, info.Size(), max)
 	}
-	file, failure := openScanned(t.root, "values.json", info, ContainerValuesJSON, ReasonValuesMalformed)
+	file, _, failure := openScanned(t.root, "values.json", info, ContainerValuesJSON, ReasonValuesMalformed)
 	if failure != nil {
 		return nil, failure
 	}
