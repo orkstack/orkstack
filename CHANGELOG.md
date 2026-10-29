@@ -21,7 +21,10 @@ include breaking changes, and each is marked **BREAKING**.
   policy"). The private key is a secret of the `release` environment, which
   only `publish` names; `validate` refuses a dispatch until `deploy/cosign.pub`
   is committed, and `publish` refuses to push before the key is present and
-  verifies against it (docs/PROOFS.md §10, "Set up release signing"). cosign
+  verifies against it (docs/PROOFS.md §10, "Set up release signing");
+  `scripts/release-signing-setup.sh` generates and proves the key pair,
+  configures the environment and its secrets, and copies the public half to
+  `deploy/cosign.pub`, with `--dry-run` and `--rotate`. cosign
   runs as the image `deploy/cosign-image.txt` pins (v3.1.4), with the flags
   that make it write that layout, and records nothing in a public
   transparency log. The release smoke signs each image with a throwaway key

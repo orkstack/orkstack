@@ -111,7 +111,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          [ -s deploy/cosign.pub ] || { echo "deploy/cosign.pub is not committed: a release signs what it publishes (docs/PROOFS.md §10, \"Set up release signing\")" >&2; exit 1; }
+          [ -s deploy/cosign.pub ] || { echo "deploy/cosign.pub is not committed: a release signs what it publishes; an administrator runs scripts/release-signing-setup.sh once (docs/PROOFS.md §10, \"Set up release signing\")" >&2; exit 1; }
           openssl pkey -pubin -in deploy/cosign.pub -noout -text | grep -q 'ASN1 OID: prime256v1' || { echo "deploy/cosign.pub is not an ECDSA P-256 public key" >&2; exit 1; }
       # The release is the latest unless a higher release exists, so a backport
       # never takes releases/latest/download from the newer series; one below

@@ -1470,17 +1470,37 @@ becomes the release notes, and `validate` refuses a version without one.
 **Set up release signing.** Once, before the first release: a release signs
 what it publishes, so `validate` refuses every dispatch until
 `deploy/cosign.pub` is committed, and `publish` pushes nothing until the
-`release` environment holds the private half. Generate the pair with `cosign
-generate-key-pair` and a strong password, commit the `.pub` file as
-`deploy/cosign.pub` through a pull request, and in the repository's settings
-create the environment `release`, limited to the `main` branch (Deployment
-branches and tags → Selected branches), with two secrets:
-`COSIGN_PRIVATE_KEY`, the whole `.key` file, and `COSIGN_PASSWORD`. A
-required reviewer on the environment makes `publish` wait for an approval.
-Keep the `.key` file and its password offline, and never in the repository.
-To rotate, commit the new `deploy/cosign.pub` and replace both secrets
-together; a release already published stays signed by the key its own tag
-carries.
+`release` environment holds the private half. A repository administrator runs,
+on their own machine, with `cosign` (2.6 or later) and a signed-in `gh`:
+
+```bash
+scripts/release-signing-setup.sh --dry-run    # every action, nothing run
+scripts/release-signing-setup.sh              # asks for the key's password twice
+```
+
+It refuses a key directory (`--dir`, default `~/orkstack-release-key`) inside
+any git work tree, an existing key file, and an environment that already holds
+`COSIGN_PRIVATE_KEY` or a committed `deploy/cosign.pub` unless `--rotate`, all
+before it writes anything. It then generates the pair with `cosign
+generate-key-pair`, proves it by signing and verifying a file with
+`release.yml`'s flags, creates or updates the `release` environment
+(deployments from `main` only, the caller a required reviewer unless
+`--no-reviewer`, so `publish` waits for an approval), sets
+`COSIGN_PRIVATE_KEY` (the whole `.key` file) and `COSIGN_PASSWORD`, and
+copies the public key to `deploy/cosign.pub`. The password reaches cosign
+through its environment and `gh` on stdin, never an argument or a file.
+Commit `deploy/cosign.pub` through a pull request, and keep the `.key` file
+and its password offline, apart, and never in a repository. Without the
+script, the same by hand: `cosign generate-key-pair`; create the environment
+`release` in the repository's settings, limited to the `main` branch
+(Deployment branches and tags → Selected branches); `gh secret set
+COSIGN_PRIVATE_KEY --env release < cosign.key`; `gh secret set
+COSIGN_PASSWORD --env release`; and commit the `.pub` file as
+`deploy/cosign.pub`. To rotate, run the script with `--rotate` and a new
+`--dir`, or replace both secrets and `deploy/cosign.pub` together; a release
+already published stays signed by the key its own tag carries, and each
+deployment that trusts OrkStack's releases registers the new key before it
+runs a release signed with it.
 
 **Recover a failed publish.** `publish` is safe to re-run: an image tag that
 already holds this release's digest is left alone, an image whose signature
