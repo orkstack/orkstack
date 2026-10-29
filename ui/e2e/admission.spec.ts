@@ -46,7 +46,8 @@ const BUCKET = ownBucket('admission');
 //      the slow run is cancelled, a submit is accepted;
 //   6. two tabs: a hold written from a second browser context after the
 //      first opened the edit form makes the first's save a stale-etag
-//      conflict, never a silent overwrite of the hold.
+//      conflict, never a silent overwrite of the hold; its "reload and
+//      re-apply" then lands the first tab's edit and keeps the hold.
 //   7. a save from the edit form keeps the fair-share weight the form does
 //      not edit: the form replaces the whole document, so a weight it did not
 //      carry through would be reset to the default by any edit.
@@ -285,7 +286,10 @@ test('5: at max_running the dialog shows the server’s cap sentence verbatim', 
 	note(`after the slow run was cancelled: ${page.url()} admitted and SUCCEEDED`);
 });
 
-test('6: a hold from a second tab turns the first tab’s save into a stale-etag conflict', async ({ page, browser }) => {
+test('6: a hold from a second tab turns the first tab’s save into a stale-etag conflict, and its retry keeps the hold', async ({
+	page,
+	browser
+}) => {
 	await openAdmin(page);
 	await openNamespaceEdit(page, NS);
 	await expect(page.getByTestId(`namespace-edit-form-${NS}`)).toBeVisible();
@@ -315,9 +319,30 @@ test('6: a hold from a second tab turns the first tab’s save into a stale-etag
 	expect(stored.namespace.hold?.reason).toBe(REASON);
 	note(`after the conflicting save, the stored hold is still "${stored.namespace.hold?.reason}"`);
 
+	// "Reload and re-apply" re-applies this tab's edit, the description, onto
+	// what is stored now. The hold reason this tab opened with was blank, and
+	// it never touched it, so the retry must not send that blank back: it
+	// would release the hold the second tab placed.
+	await page.getByTestId(`namespace-edit-conflict-retry-${NS}`).click();
+	await expect(page.getByTestId(`namespace-edit-form-${NS}`)).toHaveCount(0);
+	await expect(page.getByTestId(`namespace-row-${NS}`)).toContainText('edited in the first tab');
+	await expect(page.getByTestId(`namespace-hold-${NS}`)).toContainText(`"${REASON}"`);
+	await page.screenshot({ path: out('screenshot-two-tabs-retry-keeps-hold.png'), fullPage: true });
+
+	const retried = await rpc<{ namespace: { description?: string; hold?: { reason: string } } }>(
+		'NamespaceService/GetNamespace',
+		{ name: NS }
+	);
+	// The positive control: the retried save reached the registry.
+	expect(retried.namespace.description).toBe('edited in the first tab');
+	expect(retried.namespace.hold?.reason).toBe(REASON);
+	note(
+		`after the retry: description "${retried.namespace.description}", hold "${retried.namespace.hold?.reason}"`
+	);
+
 	// Leave the namespace accepting.
 	await rpc('NamespaceService/UpdateNamespace', {
-		namespace: { ...stored.namespace, hold: undefined }
+		namespace: { ...retried.namespace, hold: undefined }
 	});
 });
 

@@ -282,6 +282,15 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- Admin → Namespaces' **Reload latest and re-apply my edit**, offered when a
+  save loses to a change made underneath the open form, now re-applies only
+  the fields the reader changed, onto the namespace as it is stored now. It
+  used to re-send every field the form shows as it had loaded it, so the
+  retry silently reverted whatever the concurrent change had set in a field
+  the reader never touched: a hold placed from another tab was released by
+  the retry. A field both sides changed keeps the reader's value. Proven by
+  `ui/e2e/admission.spec.ts` (test 6, which now carries the two-tab
+  conflict through the retry).
 - A pool whose every Orker is busy is no longer refused at submit as empty,
   and submit's capability probes no longer skip it. An Orker polls its pool's
   channel only while it has a free task slot, so once every Orker of a pool
