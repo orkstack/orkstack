@@ -183,10 +183,11 @@ func requireProbeImage(ctx context.Context, t *testing.T, realDocker string) {
 // seconds that is spent on the step it makes slow, and the shim answers
 // everything else itself: the probe asks `image inspect` under the same
 // budget, and a real inspect that a busy daemon answered late would fail the
-// case for a reason it does not test. The case that overruns once has the shim
-// answer the retry as well: its budget is what the hung first attempt costs in
-// wall time, and a real start inside a budget that short would measure the
-// host, not the probe.
+// case for a reason it does not test. For the same reason those cases have
+// the engine identified on the real daemon before their budget starts. The
+// case that overruns once has the shim answer the retry as well: its budget is
+// what the hung first attempt costs in wall time, and a real start inside a
+// budget that short would measure the host, not the probe.
 func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *testing.T) {
 	requireDocker(t)
 	realDocker := containerCLI(t)
@@ -270,8 +271,25 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = store.Close() })
+			runtime := &orker.DockerRuntime{Bin: realDocker, BindProbeTimeout: tt.budget}
+			if !tt.realBind {
+				// The engine is identified on the real daemon before the
+				// case's budget starts, so that budget is spent only on the
+				// step the case makes slow. Asked inside it, six cases at
+				// once asking a cold Podman for `version` and `info` took more
+				// than two seconds, and the case ended before its container
+				// was asked for. An engine that overruns this step is
+				// TestDockerRuntime_RunBootProbeSlowEngineIsTheDaemonsNotThePostures.
+				identify, cancelIdentify := context.WithTimeout(context.Background(), time.Minute)
+				_, err := runtime.Describe(identify)
+				cancelIdentify()
+				if err != nil {
+					t.Fatalf("identify the engine on the real daemon: %v", err)
+				}
+			}
+			runtime.Bin = shim.bin
 			activities := orker.NewActivitiesWithOptions(store, orker.Options{
-				Runtime:  &orker.DockerRuntime{Bin: shim.bin, BindProbeTimeout: tt.budget},
+				Runtime:  runtime,
 				OrkerID:  proof.OrkerID(fmt.Sprintf("bindprobe-%d", i)),
 				WorkRoot: workRoot,
 			})
