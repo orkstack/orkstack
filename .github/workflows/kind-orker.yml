@@ -102,7 +102,8 @@ jobs:
           {
             echo '### kind-orker'
             echo '```'
-            grep -hE ' (PASS|FAIL|MISSING): ' "$run/check/check.log" "$run/run.log" 2>/dev/null || tail -n 20 "$run/run.log"
+            # run.log carries the check's own lines too.
+            grep -E ' (PASS|FAIL|MISSING): ' "$run/run.log" || tail -n 20 "$run/run.log"
             echo '```'
             for state in "$run/check/namespace-state.txt" "$run/cluster-state.txt"; do
               [ -f "$state" ] || continue

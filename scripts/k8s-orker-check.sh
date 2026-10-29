@@ -217,7 +217,8 @@ done
 # Run a probe pod to its end; say what it printed, or why it never ran.
 probe() { # probe NAME WHAT, the pod's manifest on stdin
 	local name=$1 what=$2 phase="" deadline=$((SECONDS + 180))
-	k -n "$ns" apply -f - >/dev/null
+	k -n "$ns" apply -f - >/dev/null 2>"$out/probe-$name.err" ||
+		refuse "the cluster refuses the probe pod $name (Pod Security or an admission policy): $(tail -n 1 "$out/probe-$name.err")"
 	while :; do
 		phase=$(k -n "$ns" get pod "$name" -o jsonpath='{.status.phase}' 2>/dev/null || :)
 		case $phase in Succeeded | Failed) break ;; esac
@@ -229,7 +230,9 @@ probe() { # probe NAME WHAT, the pod's manifest on stdin
 	done
 	k -n "$ns" logs "$name" >"$out/probe-$name.log" 2>&1 || :
 	sed 's/^/  /' "$out/probe-$name.log"
-	[ "$phase" = Succeeded ] || refuse "$what: $(tail -n 1 "$out/probe-$name.log")"
+	local why
+	why=$(grep -E ' NOT |rror|denied|can.t|ermission' "$out/probe-$name.log" | head -n 3 | paste -sd ';' - || :)
+	[ "$phase" = Succeeded ] || refuse "$what: ${why:-$(tail -n 1 "$out/probe-$name.log")}"
 	k -n "$ns" delete pod "$name" --wait=false >/dev/null
 }
 
@@ -428,7 +431,13 @@ check_shape() { # check_shape SHAPE
 	orkctl run logs "$run" >"$dir/proof-logs.txt"
 	orkctl run artifacts "$run" >"$dir/proof-artifacts.txt"
 	orkctl run attempts "$run" >"$dir/proof-attempts.txt"
-	[ "$(run_status "$run")" = SUCCEEDED ] || fail "$shape: k8s-orker-proof $run ended $(run_status "$run") (proof-run.txt names each task's error)"
+	if [ "$(run_status "$run")" != SUCCEEDED ]; then
+		orkctl run get "$run" --json | jq -r '.run.taskRuns[] | select(.error) | "\(.taskId) \(.error.code): \(.error.message)"' >"$dir/proof-errors.txt" || :
+		if grep -q ' IMAGE_PULL_FAILED: ' "$dir/proof-errors.txt"; then
+			fail "$shape: the engine could not pull a task's image ($(grep -m1 ' IMAGE_PULL_FAILED: ' "$dir/proof-errors.txt" | cut -c1-300)); a registry with a private certificate authority needs --registry-host and --registry-ca"
+		fi
+		fail "$shape: k8s-orker-proof $run ended $(run_status "$run"): $(head -n 1 "$dir/proof-errors.txt" | cut -c1-300)"
+	fi
 	log "ok: $shape: k8s-orker-proof $run SUCCEEDED"
 	expect "$dir/proof-logs.txt" '^\[produce\] interfaces: lo $' "$shape: network none: only the loopback interface"
 	expect "$dir/proof-logs.txt" '^\[reach\] default network reached the Kubernetes API Service: *HTTP/' "$shape: network default: a cluster Service answered"
