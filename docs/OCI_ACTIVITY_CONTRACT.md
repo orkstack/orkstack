@@ -1654,7 +1654,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start one of the probe's two containers within it, or ended it with a deadline error of its own, or the second one's workload did not say it was ready within it; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
 | `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`orker.BindProbeImage`, alpine 3.20 by digest) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `RUN_AS_ORKER_UNAVAILABLE` | InfrastructureError | **no** | the task runs as the Orker's own user (`runAsOrkerUser`, or `ORK_ORKER_FORCE_USER`), and the boot probe found that user does not land as the Orker on this host: a `0600` file its container wrote as that user is one the Orker cannot read. Refused before a container is created; under `ORK_ORKER_FORCE_USER` the Orker refuses to start instead |
-| `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created |
+| `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created, or the Orker had no file descriptor left to hold an output artifact open |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |
 | `IMAGE_DIGEST_MISMATCH` | ContractViolation | no | pulled or embedded content does not match `image.pinned` |
 | `IMAGE_NOT_PINNED` | ContractViolation | no | `ImageRef.pinned` empty or not `…@sha256:…` |
@@ -1900,11 +1900,22 @@ output directory by host path:
   regular file or the artifacts directory (`VALUES_MALFORMED`,
   `ARTIFACT_NOT_A_FILE`, naming the container path and the entry's kind and
   never a host path).
-- Every open (validation, hashing, content-type sniffing, upload, and the
-  failure path's upload) goes through the root, without blocking on a FIFO,
-  and is checked against the `lstat`: a descriptor that is not that regular
-  file is refused. `output/artifacts` is opened once and held, so a name
-  replaced after the scan is never re-resolved.
+- Every open goes through the root, without blocking on a FIFO, and is proved
+  by a second `lstat` taken while the descriptor is held: the descriptor must
+  be a regular file, the name itself (not a link) must name it, and an
+  artifact must still have the size the scan measured, or it is refused. The
+  proof does not compare the first `lstat` with the descriptor, because a
+  filesystem may give a freed inode number to the next file at once (ext4
+  does), so a replacement can carry the identity the first `lstat` saw; a
+  held descriptor pins its inode, so no other file can match it.
+- The scan opens each artifact once and keeps that descriptor until the
+  commit. Validation, hashing, content-type sniffing, upload and the failure
+  path's upload all read through it, so a name replaced after the scan is
+  never resolved again. An artifact the Orker cannot open fails alone: the
+  success path names it, and the failure path still uploads the others.
+  Holding one descriptor per artifact bounds the descriptors an attempt takes
+  by `artifact_max_count`; an Orker with none left fails `WORKDIR_FAILED`,
+  retried.
 
 The kernel's `fs.protected_symlinks` refuses to follow some of these links
 when the workload's uid is not the Orker's. The Orker does not rely on it: a

@@ -73,12 +73,11 @@ func TestOutputTree_RefusesEveryLinkTheWorkloadLeft(t *testing.T) {
 		}
 		var all []byte
 		for _, artifact := range scanned {
-			file, failure := artifact.Open()
+			body, failure := artifact.Open()
 			if failure != nil {
 				return all, failure
 			}
-			raw, err := io.ReadAll(file)
-			_ = file.Close()
+			raw, err := io.ReadAll(body)
 			if err != nil {
 				return all, FailCause(ReasonOutputNotReadable, err, "read %s", artifact.Name)
 			}
@@ -228,12 +227,11 @@ func TestOutputTree_ReadsWhatAWellBehavedWorkloadWrote(t *testing.T) {
 	}
 	var got []string
 	for _, artifact := range scanned {
-		file, failure := artifact.Open()
+		body, failure := artifact.Open()
 		if failure != nil {
 			t.Fatalf("Open %s: %v", artifact.Name, failure)
 		}
-		raw, err := io.ReadAll(file)
-		_ = file.Close()
+		raw, err := io.ReadAll(body)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -248,81 +246,154 @@ func TestOutputTree_ReadsWhatAWellBehavedWorkloadWrote(t *testing.T) {
 }
 
 // TestScannedArtifact_OpenNeverFollowsWhatTookTheNameAfterTheScan: the scan
-// approves an inode, and every later open (hash, sniff, upload) must read that
-// inode or refuse. A name replaced by a link, or by another file, is refused;
-// a directory renamed away and replaced by a link is never re-resolved,
-// because the scan holds the directory itself.
+// opens every artifact and every later read (hash, sniff, upload) goes through
+// that descriptor, so whatever takes the name after the scan — a link outside,
+// another regular file, a link in place of the directory — is never read: the
+// reader returns the scanned file's own bytes. Nothing here depends on the
+// filesystem: ext4 gives a freed inode number to the next file at once, which
+// made an earlier re-open by name, checked by device and inode, accept the
+// replacement on ext4 and refuse it on tmpfs.
 func TestScannedArtifact_OpenNeverFollowsWhatTookTheNameAfterTheScan(t *testing.T) {
-	scanOne := func(t *testing.T, fx outputFixture) ScannedArtifact {
-		t.Helper()
-		mustWrite(t, filepath.Join(fx.output, "artifacts", "report.txt"), "report")
-		scanned, failure := openTestOutput(t, fx.output).ScanArtifacts(testLimits())
-		if failure != nil || len(scanned) != 1 {
-			t.Fatalf("scan = %v, %v", scanned, failure)
-		}
-		return scanned[0]
+	for _, tc := range []struct {
+		name    string
+		replace func(t *testing.T, fx outputFixture)
+	}{
+		{
+			name: "the name becomes a link outside",
+			replace: func(t *testing.T, fx outputFixture) {
+				path := filepath.Join(fx.output, "artifacts", "report.txt")
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				mustSymlink(t, filepath.Join(fx.outside, "outside.txt"), path)
+			},
+		},
+		{
+			name: "the name becomes another regular file",
+			replace: func(t *testing.T, fx outputFixture) {
+				path := filepath.Join(fx.output, "artifacts", "report.txt")
+				if err := os.Remove(path); err != nil {
+					t.Fatal(err)
+				}
+				mustWrite(t, path, "ersatz")
+			},
+		},
+		{
+			name: "the directory is renamed away and replaced by a link outside",
+			replace: func(t *testing.T, fx outputFixture) {
+				artifactsDir := filepath.Join(fx.output, "artifacts")
+				if err := os.Rename(artifactsDir, filepath.Join(fx.output, "moved")); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Join(fx.outside, "dir"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				mustWrite(t, filepath.Join(fx.outside, "dir", "report.txt"), outsideSentinel)
+				mustSymlink(t, filepath.Join(fx.outside, "dir"), artifactsDir)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newOutputFixture(t)
+			mustWrite(t, filepath.Join(fx.output, "artifacts", "report.txt"), "report")
+			scanned, failure := openTestOutput(t, fx.output).ScanArtifacts(testLimits())
+			if failure != nil || len(scanned) != 1 {
+				t.Fatalf("scan = %v, %v", scanned, failure)
+			}
+			tc.replace(t, fx)
+
+			// Twice, as the commit reads it: once to hash, once to upload.
+			for range 2 {
+				body, failure := scanned[0].Open()
+				if failure != nil {
+					t.Fatalf("Open: %v", failure)
+				}
+				raw, err := io.ReadAll(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(raw) != "report" {
+					t.Fatalf("Open read %q; want the scanned file's own bytes", raw)
+				}
+			}
+		})
 	}
+}
 
-	t.Run("the name becomes a link outside", func(t *testing.T) {
-		fx := newOutputFixture(t)
-		artifact := scanOne(t, fx)
-		path := filepath.Join(fx.output, "artifacts", "report.txt")
-		if err := os.Remove(path); err != nil {
-			t.Fatal(err)
-		}
-		mustSymlink(t, filepath.Join(fx.outside, "outside.txt"), path)
-		file, failure := artifact.Open()
-		if file != nil {
-			_ = file.Close()
-		}
-		if failure == nil || failure.Reason != ReasonArtifactNotAFile {
-			t.Fatalf("Open = %v; want %s", failure, ReasonArtifactNotAFile)
-		}
-	})
+// TestOpenScanned_ProvesTheNameAgainstTheDescriptorItHolds: the proof that a
+// descriptor is the regular file its name names must not rest on inode numbers
+// being fresh. Each row hands openScanned the Lstat it would have seen had the
+// scanned file been unlinked and its inode number given to the file the name
+// reaches now — what ext4 does — and only the Lstat taken while the
+// descriptor is held tells the cases apart.
+func TestOpenScanned_ProvesTheNameAgainstTheDescriptorItHolds(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// plant leaves the directory's report.txt in its final shape and
+		// returns the file whose inode number the first Lstat "saw".
+		plant func(t *testing.T, dir string) string
+		want  string // "" when the open is proved
+	}{
+		{
+			name: "a link to a file that took the scanned file's inode number",
+			plant: func(t *testing.T, dir string) string {
+				mustWrite(t, filepath.Join(dir, "real.txt"), "inside")
+				mustSymlink(t, "real.txt", filepath.Join(dir, "report.txt"))
+				return "real.txt"
+			},
+			want: ReasonArtifactNotAFile,
+		},
+		{
+			name: "a link inside a subdirectory to such a file",
+			plant: func(t *testing.T, dir string) string {
+				if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				mustWrite(t, filepath.Join(dir, "sub", "real.txt"), "inside")
+				mustSymlink(t, filepath.Join("sub", "real.txt"), filepath.Join(dir, "report.txt"))
+				return filepath.Join("sub", "real.txt")
+			},
+			want: ReasonArtifactNotAFile,
+		},
+		{
+			name: "the regular file the name names",
+			plant: func(t *testing.T, dir string) string {
+				mustWrite(t, filepath.Join(dir, "report.txt"), "report")
+				return "report.txt"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			seenName := tc.plant(t, dir)
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = root.Close() })
+			seen, err := root.Lstat(seenName)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-	t.Run("the name becomes another regular file", func(t *testing.T) {
-		fx := newOutputFixture(t)
-		artifact := scanOne(t, fx)
-		path := filepath.Join(fx.output, "artifacts", "report.txt")
-		if err := os.Remove(path); err != nil {
-			t.Fatal(err)
-		}
-		mustWrite(t, path, "something else")
-		file, failure := artifact.Open()
-		if file != nil {
-			_ = file.Close()
-		}
-		if failure == nil || failure.Reason != ReasonArtifactNotAFile {
-			t.Fatalf("Open = %v; want %s", failure, ReasonArtifactNotAFile)
-		}
-	})
-
-	t.Run("the directory is renamed away and replaced by a link outside", func(t *testing.T) {
-		fx := newOutputFixture(t)
-		artifact := scanOne(t, fx)
-		artifactsDir := filepath.Join(fx.output, "artifacts")
-		if err := os.Rename(artifactsDir, filepath.Join(fx.output, "moved")); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.MkdirAll(filepath.Join(fx.outside, "dir"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		mustWrite(t, filepath.Join(fx.outside, "dir", "report.txt"), outsideSentinel)
-		mustSymlink(t, filepath.Join(fx.outside, "dir"), artifactsDir)
-
-		file, failure := artifact.Open()
-		if failure != nil {
-			t.Fatalf("Open: %v", failure)
-		}
-		defer func() { _ = file.Close() }()
-		raw, err := io.ReadAll(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if string(raw) != "report" {
-			t.Fatalf("Open read %q; want the scanned file's own bytes", raw)
-		}
-	})
+			file, opened, failure := openScanned(root, "report.txt", seen, ContainerArtifacts+"/report.txt", ReasonArtifactNotAFile)
+			if file != nil {
+				t.Cleanup(func() { _ = file.Close() })
+			}
+			if tc.want == "" {
+				if failure != nil || file == nil || !os.SameFile(opened, seen) {
+					t.Fatalf("openScanned = %v, %v; want the named file", opened, failure)
+				}
+				return
+			}
+			if failure == nil || failure.Reason != tc.want {
+				t.Fatalf("openScanned = %v; want %s: the name is a link, whatever inode number its target has", failure, tc.want)
+			}
+			if file != nil {
+				t.Fatal("a refused open returned a descriptor")
+			}
+		})
+	}
 }
 
 // linkingRuntime is cacheRuntime's workload followed by plant, which rewrites

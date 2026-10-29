@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1015,6 +1016,40 @@ func TestReadValues_PreservesKeyOrderAndLargeIntegersExactly(t *testing.T) {
 	}
 }
 
+// TestScanArtifacts_AnUnreadableArtifactFailsAlone: the scan opens every
+// artifact, and one it cannot open keeps its failure to itself, so the
+// failure path still uploads a failed task's other artifacts (§7.1 step 14)
+// and the success path still names the one that failed.
+func TestScanArtifacts_AnUnreadableArtifactFailsAlone(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root, which can open any mode; the check is about a non-root Orker")
+	}
+	output := t.TempDir()
+	if err := os.Mkdir(filepath.Join(output, "artifacts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, filepath.Join(output, "artifacts", "core"), "dump")
+	mustWrite(t, filepath.Join(output, "artifacts", "report.txt"), "report")
+	if err := os.Chmod(filepath.Join(output, "artifacts", "core"), 0o000); err != nil {
+		t.Fatalf("chmod: %v", err)
+	}
+
+	scanned, failure := openTestOutput(t, output).ScanArtifacts(testLimits())
+	if failure != nil || len(scanned) != 2 {
+		t.Fatalf("scan = %v, %v; want both artifacts", scanned, failure)
+	}
+	if _, failure := scanned[0].Open(); failure == nil || failure.Reason != ReasonOutputNotReadable {
+		t.Fatalf("Open core = %v; want %s", failure, ReasonOutputNotReadable)
+	}
+	body, failure := scanned[1].Open()
+	if failure != nil {
+		t.Fatalf("Open report.txt: %v", failure)
+	}
+	if raw, err := io.ReadAll(body); err != nil || string(raw) != "report" {
+		t.Fatalf("report.txt = %q, %v", raw, err)
+	}
+}
+
 // TestOutputTree_AnUnreadableFileNamesItsModeAndTheFix is §3.1's detection
 // measure, for values.json and for an artifact alike.
 //
@@ -1045,10 +1080,7 @@ func TestOutputTree_AnUnreadableFileNamesItsModeAndTheFix(t *testing.T) {
 				if failure != nil {
 					return failure
 				}
-				file, failure := scanned[0].Open()
-				if file != nil {
-					_ = file.Close()
-				}
+				_, failure = scanned[0].Open()
 				return failure
 			},
 		},

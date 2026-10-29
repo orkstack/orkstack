@@ -880,11 +880,9 @@ func (d *OCIDispatcher) execute(
 		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
 	}
 	for _, artifact := range scanned {
-		file, failure := artifact.Open()
-		if failure != nil {
+		if _, failure := artifact.Open(); failure != nil {
 			return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
 		}
-		_ = file.Close()
 	}
 
 	// STEP 13. Hash, bound, upload, commit.
@@ -1831,13 +1829,12 @@ func (d *OCIDispatcher) commit(
 	uploadFailures := make([]*Failure, len(items))
 	if at, err := eachBounded(ctx, len(items), d.transferLimit(), func(ctx context.Context, i int) error {
 		item := items[i]
-		file, failure := item.artifact.Open()
+		body, failure := item.artifact.Open()
 		if failure != nil {
 			uploadFailures[i] = failure
 			return failure
 		}
-		defer func() { _ = file.Close() }()
-		ref, failure := d.upload(ctx, provenance, item.name, file, item.contentType, item.sha, item.size)
+		ref, failure := d.upload(ctx, provenance, item.name, body, item.contentType, item.sha, item.size)
 		if failure != nil {
 			uploadFailures[i] = failure
 			return failure
@@ -1935,15 +1932,14 @@ func (d *OCIDispatcher) commit(
 }
 
 // digestArtifact is step 3 for one artifact: its sha256, size and content
-// type, read from ONE confined open, so the hash and the type describe the
-// same bytes.
+// type, read through the descriptor the scan opened, so the hash, the type
+// and the upload describe the same bytes.
 func digestArtifact(artifact ScannedArtifact) (sha string, size int64, contentType string, failure *Failure) {
-	file, failure := artifact.Open()
+	body, failure := artifact.Open()
 	if failure != nil {
 		return "", 0, "", failure
 	}
-	defer func() { _ = file.Close() }()
-	sha, size, err := hashReader(file)
+	sha, size, err := hashReader(body)
 	if err != nil {
 		return "", 0, "", FailCause(ReasonOutputNotReadable, err,
 			"hash output artifact %q: %v", artifact.Name, err)
@@ -1953,7 +1949,7 @@ func digestArtifact(artifact ScannedArtifact) (sha string, size int64, contentTy
 	// agree on the field. Leaving it empty made RefFor project "" while Put
 	// sniffed a real type, so the bound understated the manifest it claimed
 	// to measure byte-for-byte.
-	contentType, err = sniffContentType(file)
+	contentType, err = sniffContentType(body)
 	if err != nil {
 		return "", 0, "", FailCause(ReasonOutputNotReadable, err,
 			"read output artifact %q to resolve its content type: %v", artifact.Name, err)
@@ -1961,22 +1957,24 @@ func digestArtifact(artifact ScannedArtifact) (sha string, size int64, contentTy
 	return sha, size, contentType, nil
 }
 
-// upload sends an open file from its start. sha and size are the digest step
-// 3 already computed, or "" when nothing has hashed it yet: a known digest
-// lets the store upload straight from the file, once, with the digest as a
-// checksum the server verifies, instead of spooling and hashing it again.
+// upload sends a file's bytes from its start: an open file, or an output
+// artifact's reader (ScannedArtifact.Open), which reads through the descriptor
+// the scan opened. sha and size are the digest step 3 already computed, or ""
+// when nothing has hashed it yet: a known digest lets the store upload
+// straight from the file, once, with the digest as a checksum the server
+// verifies, instead of spooling and hashing it again.
 //
-// It takes a file, not a path, because an output artifact is opened only
-// through its confined directory (ScannedArtifact.Open).
+// It takes a reader, not a path, because an output artifact is read only
+// through the descriptor its confined scan opened.
 func (d *OCIDispatcher) upload(
 	ctx context.Context,
 	prov artifacts.Provenance,
 	name string,
-	file *os.File,
+	body io.ReadSeeker,
 	contentType, sha string,
 	size int64,
 ) (*orkstackv1.ArtifactRef, *Failure) {
-	return d.put(ctx, prov, name, file, contentType, sha, size)
+	return d.put(ctx, prov, name, body, contentType, sha, size)
 }
 
 func (d *OCIDispatcher) uploadBytes(
@@ -2143,13 +2141,12 @@ func (d *OCIDispatcher) publishFailedOutput(
 		detail.ScanNotes = append(detail.ScanNotes, scanFailure.Error())
 	}
 	for _, artifact := range scanned {
-		file, readFailure := artifact.Open()
+		body, readFailure := artifact.Open()
 		if readFailure != nil {
 			detail.ScanNotes = append(detail.ScanNotes, readFailure.Error())
 			continue
 		}
-		ref, upFailure := d.upload(ctx, prov, artifact.Name, file, "", "", 0)
-		_ = file.Close()
+		ref, upFailure := d.upload(ctx, prov, artifact.Name, body, "", "", 0)
 		if upFailure != nil {
 			detail.ScanNotes = append(detail.ScanNotes,
 				fmt.Sprintf("artifact %q could not be stored: %s", artifact.Name, upFailure.Message))
