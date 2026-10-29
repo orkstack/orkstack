@@ -179,23 +179,20 @@ stable idempotency key for the systems that need one.
 
 ## Quickstart
 
-You need Docker. Each release ships a quickstart bundle: a compose file that
-runs the whole stack from that release's images, and the examples.
+You need Docker, with Compose v2, and git. The compose file at the root of the
+repository builds the whole stack from your clone and starts it; the first
+build takes a few minutes.
 
 ```bash
-curl -fsSLO https://github.com/orkstack/orkstack/releases/latest/download/orkstack-quickstart.tar.gz
-tar -xzf orkstack-quickstart.tar.gz && cd orkstack-quickstart
-docker compose up -d --wait
+git clone https://github.com/orkstack/orkstack.git && cd orkstack
+docker compose up --build -d --wait
 alias orkctl='docker compose run --rm orkctl'
 orkctl apply examples/each-fan-out.ork.yaml
 orkctl run submit each-fan-out --watch
 ```
 
 Then open the UI at http://localhost:5173. [Getting started](./docs/GETTING_STARTED.md)
-walks through each step, and installing `orkctl` itself instead of the alias.
-OrkStack has no published release yet: until the first one, build and run it
-from source ([CONTRIBUTING.md](./CONTRIBUTING.md), "The local development
-stack").
+walks through each step, and how to update and stop the stack.
 
 ## What it does not do
 

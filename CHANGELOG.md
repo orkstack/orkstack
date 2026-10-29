@@ -10,6 +10,39 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- An activity image's `with:` interface can be written as a readable YAML
+  document, `kind: ActivityInterface` (by convention `interface.ork.yaml`
+  beside the Dockerfile), instead of one line of JSON. `orkctl activity
+  interface pack FILE` prints the `org.orkstack.activity.interface` label
+  value it packs into, for any toolchain's `--label`, and `orkctl activity
+  build --interface FILE` packs it into the image it builds. The label stays
+  the contract the engine reads, unchanged, so every existing labelled image
+  keeps working. The packed value is canonical: one declaration always packs
+  to the same label value. `docs/schemas/activityinterface.v1.json`
+  gives editors completion, selected by `kind` in `orkstack.v1.json`.
+  `orkctl apply` refuses an activity interface named on its command line and
+  skips one in a directory, naming it on stderr (docs/ACTIVITY_IMAGES.md,
+  "Declaring the interface").
+- A YAML editor in the UI for the Apply page, an Orkflow's Edit tab and
+  Admin → Automation. It checks the document as you type, against YAML syntax
+  and the generated JSON Schema of its kind. It asks the engine
+  (`ValidateOrkflow`, or a plan for an automation document) once typing
+  pauses. That covers what only the engine can check: the strict YAML-to-JSON
+  rules, `needs:` references and cycles, interfaces, pools and policy. Each
+  finding is underlined on its line, marked in the gutter, explained on hover
+  and listed under the editor with its line and column. The document reads as
+  having no problems only when the engine said so about exactly that text.
+  The editor also offers schema completion, and key docs on hover or with
+  Ctrl-Shift-Space. Tab indents; Escape, then Tab, leaves the editor.
+- Syntax colours as design tokens (`--color-syntax-*` in `ui/src/tokens.css`,
+  light and dark): keys in ink, strings teal, numbers ochre, `true`/`false`/
+  `null` olive, `{{ … }}` templates violet, anchors and tags slate. The editor,
+  the automation export, the version diff and every code block on the site
+  (landing page, examples, docs) draw YAML with them.
+- `go run ./internal/schemas/cmd/genschemas` also writes the Orkflow and
+  automation schemas to `ui/src/lib/schemas/`, the UI's copy of
+  `docs/schemas/`.
+
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
   panics: the list-filter grammar, compiler and matcher (a compiled set is a
@@ -176,6 +209,13 @@ include breaking changes, and each is marked **BREAKING**.
   them (v1.83.2 and v0.62.0).
 
 ### Changed
+
+- The first-party images and the example images declare their interfaces in
+  an `interface.ork.yaml` each, and their Dockerfiles' interface `LABEL` line
+  is generated from it by `go run ./internal/schemas/cmd/genschemas`. The
+  declarations are unchanged; the regenerated lines write them with sorted
+  keys, so each image's config digest changes once, at its next build. Each
+  image's README links its interface document instead of copying the label.
 
 - The pre-release gate excuses a runner-size miss exactly as the merge gate
   and the nightly do: on a CI runner below a row's reference CPUs, under a row
@@ -804,12 +844,26 @@ include breaking changes, and each is marked **BREAKING**.
   architecture, a run and the commit order drawn from the UI's tokens in both
   themes (`site/scripts/readme-diagrams.mjs`), one real Orkflow (held to
   `examples/each-fan-out.ork.yaml` by a test), the CLI and the UI in motion,
-  and a Docker-only quickstart.
-- Getting started needs only Docker: it runs the quickstart bundle of a
-  published release and uses `orkctl` from its image or a release binary.
-  Go and Bun are needed only to develop OrkStack: the development stack
-  (`make infra-up`, `make up`, …) is in `CONTRIBUTING.md`, "The local
-  development stack", beside the Linux host setup ("Linux hosts").
+  and a quickstart that needs only Docker and git.
+- Getting started is a clone and one command:
+  `git clone https://github.com/orkstack/orkstack.git && cd orkstack`, then
+  `docker compose up --build -d --wait`. The repository's root `compose.yaml`
+  builds the engine, the Orker, the UI, `orkctl` and the six first-party
+  activities from the clone (`deploy/source/Dockerfile`, on the release
+  images' own pinned stages), pushes the activities to a registry of the
+  stack's own so that an apply pins them by digest, and starts the stack on
+  loopback, with the Orker's work directory under
+  `~/.cache/orkstack-quickstart`, never a shared `/tmp`; `orkctl` runs from
+  its image (`alias orkctl='docker compose run --rm orkctl'`). Docker and git
+  are the only prerequisites, and no release is needed. The README,
+  `docs/GETTING_STARTED.md`, the site's landing page and its first tutorial
+  show the same commands: the landing page reads them from the README,
+  `internal/docscheck` holds the other pages to them, and
+  `make quickstart-smoke` runs them as written on a fresh clone of the
+  working tree, as `release.yml` does before every release. Go and Bun are
+  needed only to develop OrkStack: the development stack (`make infra-up`,
+  `make up`, …) is in `CONTRIBUTING.md`, "The local development stack",
+  beside the Linux host setup ("Linux hosts").
 - The development stack's Temporal, and so the Temporal every proof starts for
   itself, detects a drained release in seconds instead of minutes. Its
   `deploy/docker-compose.yml` command passes
@@ -848,17 +902,14 @@ include breaking changes, and each is marked **BREAKING**.
   and arm64, `ork` and `orker` for Linux, as archives with `SHA256SUMS`; the
   images `ork`, `orker`, `orkctl`, `ui` and the six first-party activities on
   `ghcr.io/orkstack`, for linux/amd64 and linux/arm64, tagged `X.Y.Z` and
-  `X.Y`; and `orkstack-quickstart.tar.gz`, a compose file that runs the whole
-  stack from those images (docs/UPGRADING.md, "Release artifacts"). The
-  images are not signed yet. One commit builds the same binaries whatever the
+  `X.Y` (docs/UPGRADING.md, "Release artifacts"). The smoke runs the root
+  `compose.yaml` on those images, by digest. The images are not signed yet. One commit builds the same binaries whatever the
   state of the checkout or the caller's Go environment. A release below an
   existing release of its own `X.Y` is refused, and a backport to an older
   series is published but never marked the latest, so
-  `releases/latest/download/` always serves the newest release. The
-  quickstart keeps its work directory under `~/.cache/orkstack-quickstart`,
-  never a shared `/tmp`. `make dist`, `make release-images` and
-  `make release-smoke` build and check the same artifacts on a developer's
-  machine.
+  `releases/latest/download/` always serves the newest release.
+  `make dist`, `make release-images` and `make release-smoke` build and check
+  the same artifacts on a developer's machine.
 - `orkctl` builds and runs on Windows; `orkctl task run` and
   `orkctl activity test`, which run containers locally, refuse there with a
   reason (docs/LIMITATIONS.md).

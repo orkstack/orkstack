@@ -1,0 +1,52 @@
+# The release smoke's override of compose.yaml (scripts/quickstart-smoke.sh
+# --release): the same stack on one release's own images instead of images
+# built from the checkout. The smoke copies every image, byte for byte, into
+# the stack's own registry and names each here by tag and digest, so the
+# engine and the host's Docker daemon pull exactly what the release
+# publishes. It is a check of a release, never a way to run OrkStack.
+services:
+  ork:
+    build: !reset null
+    image: ${SMOKE_ORK_IMAGE:?set by scripts/quickstart-smoke.sh}
+    environment:
+      ORK_ACTIVITY_CATALOG: |
+        activities:
+          shell: ${SMOKE_ACTIVITY_SHELL_IMAGE:?}
+          http: ${SMOKE_ACTIVITY_HTTP_IMAGE:?}
+          file: ${SMOKE_ACTIVITY_FILE_IMAGE:?}
+          json: ${SMOKE_ACTIVITY_JSON_IMAGE:?}
+          git: ${SMOKE_ACTIVITY_GIT_IMAGE:?}
+          template: ${SMOKE_ACTIVITY_TEMPLATE_IMAGE:?}
+  orker:
+    build: !reset null
+    image: ${SMOKE_ORKER_IMAGE:?}
+  ui:
+    build: !reset null
+    image: ${SMOKE_UI_IMAGE:?}
+  orkctl:
+    build: !reset null
+    image: ${SMOKE_ORKCTL_IMAGE:?}
+
+  # The activities are the release's, already in the registry: nothing is
+  # built, and the push step has nothing to push.
+  activities:
+    command:
+      - "true"
+  activity-shell:
+    build: !reset null
+    image: ${SMOKE_ACTIVITY_SHELL_IMAGE:?}
+  activity-http:
+    build: !reset null
+    image: ${SMOKE_ACTIVITY_HTTP_IMAGE:?}
+  activity-file:
+    build: !reset null
+    image: ${SMOKE_ACTIVITY_FILE_IMAGE:?}
+  activity-json:
+    build: !reset null
+    image: ${SMOKE_ACTIVITY_JSON_IMAGE:?}
+  activity-git:
+    build: !reset null
+    image: ${SMOKE_ACTIVITY_GIT_IMAGE:?}
+  activity-template:
+    build: !reset null
+    image: ${SMOKE_ACTIVITY_TEMPLATE_IMAGE:?}

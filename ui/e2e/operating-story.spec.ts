@@ -27,6 +27,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fillYaml, yamlValue } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('operating-story');
@@ -442,9 +443,7 @@ test('a version is edited from its current (non-head) base and applied as the ne
 	await page.goto(`${UI_ORIGIN}/orkflows/${VERSIONED_ORKFLOW}?ns=default&tab=edit`);
 	await expect(page.getByTestId('editor-form')).toBeVisible();
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
-	await page
-		.getByTestId('editor-yaml')
-		.fill(versionedOrkflowYaml(VERSIONED_ORKFLOW, '0.2.0', 'second revision', 'echo two'));
+	await fillYaml(page, 'editor-yaml', versionedOrkflowYaml(VERSIONED_ORKFLOW, '0.2.0', 'second revision', 'echo two'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
 	await expect(page.getByTestId('version-head-0.2.0')).toBeVisible();
@@ -468,8 +467,8 @@ test('a version is edited from its current (non-head) base and applied as the ne
 	// 0.1.0's source, not 0.2.0's.
 	await page.getByTestId('version-edit-0.1.0').click();
 	await expect(page.getByTestId('editor-form')).toBeVisible();
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(/first revision/);
-	await expect(page.getByTestId('editor-yaml')).not.toHaveValue(/second revision/);
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/first revision/);
+	await expect(yamlValue(page, 'editor-yaml')).not.toHaveValue(/second revision/);
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
 	await expect(page.getByTestId('editor-head-version')).toHaveText('0.2.0');
 	await expect(page.getByTestId('editor-fork-notice')).toBeVisible();
@@ -478,9 +477,7 @@ test('a version is edited from its current (non-head) base and applied as the ne
 
 	// Apply it as the new head: base=0.1.0 (provenance), expected_head=0.2.0
 	// (the CAS token).
-	await page
-		.getByTestId('editor-yaml')
-		.fill(versionedOrkflowYaml(VERSIONED_ORKFLOW, '0.3.0', 'forked from current', 'echo three'));
+	await fillYaml(page, 'editor-yaml', versionedOrkflowYaml(VERSIONED_ORKFLOW, '0.3.0', 'forked from current', 'echo three'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
 	await expect(page.getByTestId('version-head-0.3.0')).toBeVisible();

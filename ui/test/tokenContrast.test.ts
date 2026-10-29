@@ -75,6 +75,12 @@ const PIN_FILLS = PIN_ACCENTS.map((p) => `${p}-fill`);
 const GROUNDS = ['paper', 'paper-sunken', 'sheet', 'hover', 'blue-tint', 'red-tint', ...STATUSES.map((s) => `${s}-bg`), ...PIN_FILLS];
 const TEXT = ['ink', 'ink-secondary', 'ink-muted', 'ink-placeholder', 'blue', 'blue-strong', 'red', 'red-strong', ...STATUSES.map((s) => `${s}-fg`)];
 const FILLS = ['ink', 'ink-secondary', 'red', 'red-strong', 'blue', 'blue-strong'];
+// Code is drawn on paper (the editor), sunken paper (read-only listings and
+// the site's code blocks), sheet (a completion or hover popup), the hover wash
+// (the editor's current line) and the blue tint (a selection, and a diff's
+// added line). The syntax pencils must read as text on each.
+const SYNTAX = ['key', 'string', 'number', 'literal', 'template', 'meta', 'comment', 'punctuation'].map((r) => `syntax-${r}`);
+const CODE_GROUNDS = ['paper', 'paper-sunken', 'sheet', 'hover', 'blue-tint'];
 
 function check(theme: keyof typeof themes, fg: string, bg: string, floor: number, failures: string[]): void {
 	if (NEVER_ADJACENT.some((n) => n.fg === fg && n.bg === bg)) return;
@@ -99,6 +105,12 @@ for (const theme of ['light', 'dark'] as const) {
 	test(`${theme}: every text token reads at 4.5:1 on every ground`, () => {
 		const failures: string[] = [];
 		for (const fg of TEXT) for (const bg of GROUNDS) check(theme, fg, bg, 4.5, failures);
+		expect(failures).toEqual([]);
+	});
+
+	test(`${theme}: every syntax colour reads at 4.5:1 on every ground code is drawn on`, () => {
+		const failures: string[] = [];
+		for (const fg of SYNTAX) for (const bg of CODE_GROUNDS) check(theme, fg, bg, 4.5, failures);
 		expect(failures).toEqual([]);
 	});
 

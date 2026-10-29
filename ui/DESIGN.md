@@ -307,14 +307,17 @@ A warm off-white paper and a deep blue-black ink, with one blue, one green and o
 ### Pins
 Six coloured-pencil pairs (`--color-pin-a-line` / `-fill` through `pin-f`: blue, violet, teal, ochre, slate, olive, each with a dark twin in `tokens.css`). A pin's member task rows carry its 1 px line all round and its fill. They are identity, never status: the pin's name is always written beside it, and each line is at least 3:1 on paper and on its own fill. They are runtime tokens (read with `var()`), not Tailwind utilities.
 
+### Syntax
+The colours of an authored document, and of nothing else: the YAML editor, the read-only YAML views (the automation export, a version diff) and every code block on the site, which reads the same tokens. Keys are the ink at semibold (`--color-syntax-key`, an alias of `ink`); comments the muted ink, oblique, and punctuation the muted ink (`--color-syntax-comment`, `--color-syntax-punctuation`). The values take five syntax pencils, the pin pencils taken down to text weight: strings teal (`--color-syntax-string`), numbers ochre (`--color-syntax-number`), `true`/`false`/`null` olive (`--color-syntax-literal`), a `{{ … }}` template violet (`--color-syntax-template`), anchors, aliases and tags slate (`--color-syntax-meta`), each with a dark twin. Every syntax colour reads at 4.5:1 on each ground code is drawn on (paper, sunken paper, sheet, the hover wash and the blue tint of a selection or an added diff line), checked by `ui/test/tokenContrast.test.ts`. They are runtime tokens (app.css's `.syntax-*` and the editor's theme read them), not Tailwind utilities. One classifier assigns them everywhere (`ui/src/lib/yaml/highlight.ts`), so a key looks the same in the editor, a diff and the docs.
+
 ### Status
 Status tokens (`--color-{status}-bg / -fg / -border / -solid`) are aliases of the colours above, never new hues: PENDING is paper with a strong rule; RUNNING is green-strong on green-tint with a green border and mark; AWAITING is blue-strong on blue-tint; SUCCEEDED is ink on sunken paper with the `mark` fill; FAILED is red on red-tint; CANCELED is ink-secondary on sunken paper; SKIPPED and UNSPECIFIED are ink-muted on paper with a dashed or dotted border.
 
 ### Aliases
-`--color-fg` is the one permanent alias, of `ink`: `run-page-pins.spec.ts` reads it by name, and it has always meant the ink. Every legacy name from before this design was deleted; no other alias may be added.
+`--color-fg` is the one permanent alias, of `ink`: `run-page-pins.spec.ts` reads it by name, and it has always meant the ink. Every legacy name from before this design was deleted; no other alias may be added, except a role that names which ink a family draws with: the status tokens above, and the syntax roles `--color-syntax-key`, `-comment` and `-punctuation` (Syntax).
 
 ### Named Rules
-**The Three Accents Rule.** Blue means selected, linked or waiting on the outside world. Green means running now. Red means failed or needs attention. None is ever used for emphasis, branding or decoration, and a canceled run's reason is an ink NOTE, not red. (Until 2026-10-22 this was the Two Accents Rule, with RUNNING in blue. It became three because blue then meant both "selected" and "running" — a selected running node was a blue ring round a blue outline — and because the person who runs these Orkflows reads running work as green. A fourth accent needs the same kind of case, written here.)
+**The Three Accents Rule.** Blue means selected, linked or waiting on the outside world. Green means running now. Red means failed or needs attention. None is ever used for emphasis, branding or decoration, and a canceled run's reason is an ink NOTE, not red. (Until 2026-10-22 this was the Two Accents Rule, with RUNNING in blue. It became three because blue then meant both "selected" and "running" — a selected running node was a blue ring round a blue outline — and because the person who runs these Orkflows reads running work as green. A fourth accent needs the same kind of case, written here.) Code takes no accent: its colours are the syntax pencils (Syntax), a family of their own like the pins, added on 2026-10-28 because authors asked for an Orkflow's keys, values and templates to be told apart at a glance; red appears in code only as a finding's mark.
 
 **The One File Rule.** Every colour, in both themes, is declared in `ui/src/tokens.css`. No component, route or stylesheet declares a raw colour; Tailwind's own palette is reset away, so `bg-red-500`, `text-white` or `shadow-md` emit nothing. `ui/test/tokens.test.ts` enforces it on the sources and on the compiled CSS.
 
@@ -425,7 +428,15 @@ The table is the main surface of most pages.
 - **Style:** 1 px `rule-strong` outline, 2 px corner, paper ground, ink text, 36 px tall with 12 px padding; placeholder in `ink-placeholder` at full opacity.
 - **Label:** 11 px tracked caps in `ink-secondary` above the control, 6 px gap, with an optional hint in 12 px plain case on the same line.
 - **Focus:** the global 2 px focus outline. **Select** is a custom combobox with the same trigger as a field and a listbox on `sheet` with the overlay shadow; the selected option is semibold on blue-tint.
-- The run input editor is the typed JSON editor; there is no YAML input mode. The Apply page's YAML textarea is an authored document, not input.
+- The run input editor is the typed JSON editor; there is no YAML input mode. The YAML editor (below) holds an authored document, not input.
+
+### YAML editor
+An authored document's field: the Apply page, an Orkflow's Edit tab and Admin → Automation's document. It is a field first: the 1 px `rule-strong` outline, 2 px corner and paper ground of every field, the global 2 px focus outline, the mono at 13 px, and a sunken gutter of line numbers in the muted ink behind a `rule` hairline. The current line takes the hover wash while the editor has focus. Text is coloured with the syntax tokens (Syntax).
+- **Findings:** an error is underlined with a red wave, a warning with a red dotted line, and marked in an 8 px gutter column with the severity marks of Notes and Holds (filled square for an error, outlined for a warning). Hovering the underline shows the finding in a popup; hovering a key shows the schema's description of it, its type and the words it takes.
+- **Under the field:** one line says what is known about the document, the engine's words: "Checking with the engine…", "The engine refuses this document: 2 problems.", "The engine finds no problems in this document.", or why it could not check. Only the engine says a document has no problems, and its sentence also says what the check did not cover (validation is not the apply). Beside it, in the muted ink, the keys: Tab indents; Escape, then Tab within two seconds, leaves the editor (Ctrl-M lets Tab leave until pressed again); Ctrl-Space suggests keys; Ctrl-Shift-Space explains the key on the caret's line; F8 goes to the next problem. The visible line is the editor's description; a separate live region speaks only when a check settles (the engine's answer, or why it could not answer) or a key is explained, never while typing.
+- **Problems list:** in the place the Validate results always had, under a caps heading (a real heading, a level below the page's): the engine's issues first ("Validation results", worded as the engine wrote them), then the editor's own ("Editor checks · YAML syntax and the generated schema"). Each row is its line:column in the mono, a 24 px target named by its own text, which moves the cursor there, the severity word in red-strong caps, and the sentence after its severity mark; a key named in a sentence is set in the mono.
+- **Popups:** completion, hover and lint popups take the overlay treatment (sheet ground, 1 px ink frame, 3 px corner, overlay shadow); the active completion is ink on the blue tint. CodeMirror's own colours are all replaced by tokens.
+- **Weight:** the page holds a plain textarea from its first paint; the editor's code (CodeMirror, the YAML parser, the validator and the two schemas) is loaded on mount and takes the textarea's place, value, test id and focus.
 
 ### Navigation
 - **Top bar:** the wordmark (a title-block-corner SVG mark and "ORKSTACK" in tracked caps), then two modes, **Build** and **Operate**, in caps. The current mode is ink with a 2 px blue underline; Build's three daily pages (Runs, Orkflows, Apply) follow it in 13 px, the current one ink, semibold and underlined. At the right: the namespace picker under a "NAMESPACE" caps label, the palette button ("Jump to…" with ⌘K or Ctrl K in a `<kbd>`), and the appearance switch (system, light, dark as three pressed buttons; the pressed one is ink-filled).
@@ -457,6 +468,7 @@ Motion is state feedback, never decoration, and all of it is in `tokens.css`. Ea
 
 ### Do:
 - **Do** take every colour, size, radius, shadow and duration from `ui/src/tokens.css`, by its token name, in both themes.
+- **Do** colour code with the syntax tokens only, through `ui/src/lib/yaml/highlight.ts`.
 - **Do** tell status by its drawn mark and its word first; colour is the third channel (WCAG 1.4.1).
 - **Do** divide rows with the 1 px `rule` hairline and regions with the 1.5 px ink rule, instead of boxing content in cards.
 - **Do** put the page's one ink-filled primary button at the top right of its `SheetHeader`.
@@ -467,6 +479,7 @@ Motion is state feedback, never decoration, and all of it is in `tokens.css`. Ea
 
 ### Don't:
 - **Don't** use blue, green or red for emphasis, branding or decoration; a canceled run's reason is an ink NOTE.
+- **Don't** colour code with blue, green or red; red in code is a finding's mark and nothing else.
 - **Don't** draw a revision cloud for anything but the run's own failure, and never more than one per page.
 - **Don't** put the drafting grid behind anything but the DAG.
 - **Don't** add shadows to page content; they belong to overlays and the title block's lift.

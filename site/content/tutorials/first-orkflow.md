@@ -1,37 +1,34 @@
 # Your first Orkflow
 
-Start OrkStack with Docker, then apply an Orkflow, run it, and read each item's log and the merged result. This takes about ten minutes.
-
-> **This works once the first release is published.** Until then there is no bundle to download. [Build from source](/docs/contributing/) instead.
+Clone OrkStack and start it with Docker, then apply an Orkflow, run it, and read each item's log and the merged result. This takes about ten minutes, most of it the first build.
 
 ## What you need
 
 - Docker, with Compose v2. Docker Engine or Docker Desktop.
-- curl and tar, to unpack the bundle.
+- git, to clone the repository.
 
-Nothing else is needed: no toolchain and no database. The bundle starts Temporal, an S3-compatible object store, the engine, an Orker and the UI.
+Nothing else is needed: no toolchain and no database. The compose file builds the whole stack in containers and starts Temporal, an S3-compatible object store, the engine, an Orker and the UI.
 
-## 1. Download the bundle
+## 1. Clone the repository
 
 ```bash
-curl -fsSLO https://github.com/orkstack/orkstack/releases/latest/download/orkstack-quickstart.tar.gz
-tar -xzf orkstack-quickstart.tar.gz
-cd orkstack-quickstart
+git clone https://github.com/orkstack/orkstack.git
+cd orkstack
 ```
 
-The folder holds `compose.yaml`, an `examples/` folder, and a `.env` file. Run `ls -a` to see `.env`.
+Run the rest of the steps in this folder.
 
 ## 2. Start the stack
 
 ```bash
-docker compose up -d --wait
+docker compose up --build -d --wait
 ```
 
-The command returns when every service passes its health check. Open the UI at http://localhost:5173. The engine listens on port 8080 and the Temporal UI on 8233. All of them listen on this machine only.
+The first run builds every image from the clone, which takes a few minutes. The command returns when every service passes its health check. Open the UI at http://localhost:5173. The engine listens on port 8080 and the Temporal UI on 8233. All of them listen on this machine only.
 
 Listening on this machine only is not a login. Any program on it can start a run, and a run is a container on your Docker. Stop the stack with `docker compose down` when you are done.
 
-If a port is taken, set `ORKSTACK_UI_PORT` or `ORKSTACK_API_PORT` in `.env`.
+If a port is taken, set `ORKSTACK_UI_PORT` or `ORKSTACK_API_PORT` in a `.env` file in this folder.
 
 ## 3. Set up orkctl
 
@@ -39,7 +36,7 @@ If a port is taken, set `ORKSTACK_UI_PORT` or `ORKSTACK_API_PORT` in `.env`.
 alias orkctl='docker compose run --rm orkctl'
 ```
 
-Run the rest of the steps in the bundle folder. The `orkctl` container sees that folder read-only, so `orkctl apply examples/...` works.
+This runs `orkctl` from the image the stack built. The container sees the folder read-only, so `orkctl apply examples/...` works.
 
 ## 4. Apply the Orkflow
 
@@ -86,7 +83,7 @@ The run page shows each task's attempts, timing, logs and artifacts:
 docker compose down
 ```
 
-This stops the stack and keeps the object store's data. To delete the stored data as well, run `docker compose down -v`.
+This stops the stack and keeps the object store's data. To delete the stored data as well, run `docker compose down -v`. To update later, run `git pull`, then the command from step 2 again.
 
 ## Next
 
@@ -96,5 +93,5 @@ This stops the stack and keeps the object store's data. To delete the stored dat
 
 ## See also
 
-- [docs/GETTING_STARTED.md](https://github.com/orkstack/orkstack/blob/main/docs/GETTING_STARTED.md): the same steps, with the checksum check and how to install `orkctl` as a binary.
+- [docs/GETTING_STARTED.md](https://github.com/orkstack/orkstack/blob/main/docs/GETTING_STARTED.md): the same steps, with what the compose file builds and how to install `orkctl` as a binary.
 - [examples/each-fan-out.ork.yaml](https://github.com/orkstack/orkstack/blob/main/examples/each-fan-out.ork.yaml): the Orkflow this tutorial runs.

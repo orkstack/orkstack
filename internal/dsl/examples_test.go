@@ -556,8 +556,8 @@ func TestOrkflowPatterns_CitesNoCodeAnchors(t *testing.T) {
 }
 
 // customImageLabel is the interface both example images declare: the same
-// activity, so the same label.
-const customImageLabel = `{"schemaVersion":1,"fields":{"label":{"type":"string"},"src":{"type":"string"},"as":{"type":"string","default":"report.txt"}},"values":{"idempotencyKey":{"type":"string"},"attempt":{"type":"number"},"taskId":{"type":"string"},"label":{"type":"string"},"argv":{"type":"array"},"source":{"type":"string"},"artifact":{"type":"string"},"stats":{"type":"object"},"each":{"type":"object"}}}`
+// activity, so the same label, packed from each one's interface.ork.yaml.
+const customImageLabel = `{"schemaVersion":1,"fields":{"as":{"type":"string","default":"report.txt"},"label":{"type":"string"},"src":{"type":"string"}},"values":{"argv":{"type":"array"},"artifact":{"type":"string"},"attempt":{"type":"number"},"each":{"type":"object"},"idempotencyKey":{"type":"string"},"label":{"type":"string"},"source":{"type":"string"},"stats":{"type":"object"},"taskId":{"type":"string"}}}`
 
 func TestCustomImages_FollowTheDockerfileContract(t *testing.T) {
 	dirs := imageDirs(t)
@@ -565,7 +565,7 @@ func TestCustomImages_FollowTheDockerfileContract(t *testing.T) {
 		t.Fatalf("example image directories = %v, want custom-image and custom-image-shell", dirs)
 	}
 	labelLine := regexp.MustCompile(`^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`)
-	readmeLabel := regexp.MustCompile(`(?s)## Interface\n.*?LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'`)
+	readmeInterface := regexp.MustCompile(`(?s)## Interface\n(.*?)(\n## |\z)`)
 	exec := regexp.MustCompile(`^ENTRYPOINT \[("[^"]+")(, "[^"]+")*\]$`)
 	for _, dir := range dirs {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
@@ -626,9 +626,14 @@ func TestCustomImages_FollowTheDockerfileContract(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			m := readmeLabel.FindSubmatch(readme)
-			if m == nil || string(m[1]) != labels[0] {
-				t.Errorf("README.md's Interface section does not reproduce the Dockerfile's label verbatim")
+			// The README points at the interface's one source and copies
+			// nothing that could drift from it.
+			m := readmeInterface.FindSubmatch(readme)
+			if m == nil || !strings.Contains(string(m[1]), "[`interface.ork.yaml`](interface.ork.yaml)") {
+				t.Errorf("README.md's Interface section does not link interface.ork.yaml")
+			}
+			if strings.Contains(string(readme), "LABEL "+dsl.InterfaceLabel) {
+				t.Errorf("README.md copies the interface LABEL, which would drift from interface.ork.yaml")
 			}
 		})
 	}

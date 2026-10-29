@@ -65,9 +65,10 @@ USER 65532:65532
 
 # The with: contract, declared (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). Optional: the engine checks a document's with: against it at
-# validate and apply; the container never reads it. One line, because the
-# value is JSON; README.md's Interface section reproduces it verbatim.
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"render":{"fields":{"src":{"type":"string","required":true},"data":{"type":"string"},"values":{"type":"object"},"datasources":{"type":"object"},"leftDelim":{"type":"string"},"rightDelim":{"type":"string"},"as":{"type":"string"}}}},"values":{"path":{"type":"string"},"sizeBytes":{"type":"number"},"sha256":{"type":"string"}}}'
+# validate and apply; the container never reads it. The line is generated
+# from interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`: edit
+# that file, never this line.
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"render":{"fields":{"as":{"type":"string"},"data":{"type":"string"},"datasources":{"type":"object"},"leftDelim":{"type":"string"},"rightDelim":{"type":"string"},"src":{"type":"string","required":true},"values":{"type":"object"}}}},"values":{"path":{"type":"string"},"sha256":{"type":"string"},"sizeBytes":{"type":"number"}}}'
 
 # Exec form, mandatory.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]

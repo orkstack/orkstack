@@ -2,6 +2,7 @@ package schemas_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -16,24 +17,231 @@ import (
 const root = "../.."
 
 // TestSchemas_AreGenerated: the committed schemas are byte for byte what the
-// generator writes.
+// generator writes, in docs/schemas/ and in the UI's generated copy, which the
+// editor is built from (ui/src/lib/yaml/schemas.ts).
 func TestSchemas_AreGenerated(t *testing.T) {
 	files, err := schemas.Files(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	committed, err := filepath.Glob(filepath.Join(root, schemas.Dir, "*.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(committed) != len(files) {
-		t.Errorf("%s holds %d files, the generator writes %d", schemas.Dir, len(committed), len(files))
+	for dir, want := range map[string]int{schemas.Dir: 4, schemas.UIDir: len(schemas.UIFiles)} {
+		committed, err := filepath.Glob(filepath.Join(root, dir, "*.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(committed) != want {
+			t.Errorf("%s holds %d files, the generator writes %d", dir, len(committed), want)
+		}
 	}
 	for path, want := range files {
 		got, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil || string(got) != string(want) {
 			t.Errorf("%s is stale (%v): run go run ./internal/schemas/cmd/genschemas", path, err)
 		}
+	}
+}
+
+// TestSchemas_UICopyIsTheReference: the UI's copy of each kind's schema is the
+// docs/schemas/ file itself, byte for byte, never a second rendering of it.
+func TestSchemas_UICopyIsTheReference(t *testing.T) {
+	files, err := schemas.Files(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(schemas.UIFiles) != 2 {
+		t.Fatalf("UIFiles = %v, want the two kinds' schemas", schemas.UIFiles)
+	}
+	for _, name := range schemas.UIFiles {
+		ui, ok := files[schemas.UIDir+"/"+name]
+		if !ok {
+			t.Fatalf("the generator writes no %s/%s", schemas.UIDir, name)
+		}
+		if string(ui) != string(files[schemas.Dir+"/"+name]) {
+			t.Errorf("%s/%s differs from %s/%s", schemas.UIDir, name, schemas.Dir, name)
+		}
+	}
+}
+
+// TestInterfaces_LabelsAreGenerated: every Dockerfile built beside an
+// interface.ork.yaml carries, byte for byte, the LABEL line the generator
+// packs from it — the first-party images and the examples alike.
+func TestInterfaces_LabelsAreGenerated(t *testing.T) {
+	files, err := schemas.Dockerfiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documents, err := filepath.Glob(filepath.Join(root, "*", "*", "interface.ork.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) != len(documents) || len(files) != 8 {
+		t.Errorf("the generator writes %d Dockerfiles, the tree holds %d interface documents; want eight", len(files), len(documents))
+	}
+	for path, want := range files {
+		got, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil || string(got) != string(want) {
+			t.Errorf("%s is stale (%v): run go run ./internal/schemas/cmd/genschemas", path, err)
+		}
+	}
+	// A Dockerfile that carries an interface LABEL carries one generated
+	// from a document: a hand-written label here has no source to drift from.
+	for _, parent := range []string{"images", "examples"} {
+		dockerfiles, err := filepath.Glob(filepath.Join(root, parent, "*", "Dockerfile"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, dockerfile := range dockerfiles {
+			raw, err := os.ReadFile(dockerfile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rel, _ := filepath.Rel(root, dockerfile)
+			if _, generated := files[filepath.ToSlash(rel)]; strings.Contains(string(raw), "LABEL "+dsl.InterfaceLabel) && !generated {
+				t.Errorf("%s carries an interface LABEL with no %s beside it", rel, schemas.InterfaceDocument)
+			}
+		}
+	}
+}
+
+// interfaceDocumentPacking builds an interface document whose packed label
+// is exactly size bytes: keys are added while the label stays under size,
+// then the first keys' names grow by the bytes still missing.
+func interfaceDocumentPacking(t *testing.T, size int) string {
+	t.Helper()
+	build := func(keys int, pad []int) string {
+		var doc strings.Builder
+		doc.WriteString("apiVersion: orkstack/v1\nkind: ActivityInterface\nops:\n")
+		for i := 0; i < keys; i++ {
+			if i%250 == 0 {
+				fmt.Fprintf(&doc, "  op%d:\n    fields:\n", i/250)
+			}
+			extra := 0
+			if i < len(pad) {
+				extra = pad[i]
+			}
+			fmt.Fprintf(&doc, "      k%04d%s:\n        type: string|number|boolean|object|array\n", i, strings.Repeat("x", extra))
+		}
+		return doc.String()
+	}
+	packed := func(source string) int {
+		iface, err := dsl.ParseInterfaceDocument([]byte(source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		label, err := dsl.PackInterfaceLabel(iface)
+		if err != nil {
+			return 1 << 30
+		}
+		return len(label)
+	}
+	low, high := 1, 2000 // the most keys whose label stays under size
+	for low < high {
+		mid := (low + high + 1) / 2
+		if packed(build(mid, nil)) <= size {
+			low = mid
+		} else {
+			high = mid - 1
+		}
+	}
+	missing := size - packed(build(low, nil))
+	var pad []int
+	for missing > 0 {
+		step := min(missing, 100)
+		pad = append(pad, step)
+		missing -= step
+	}
+	source := build(low, pad)
+	if got := packed(source); got != size {
+		t.Fatalf("the document packs to %d bytes, want %d", got, size)
+	}
+	return source
+}
+
+// TestInterfaces_TheGeneratorRefusesALineBuildKitCannotRead: a label near
+// the packer's bound fits a --label argument but not a Dockerfile line,
+// which BuildKit reads up to 65535 bytes.
+func TestInterfaces_TheGeneratorRefusesALineBuildKitCannotRead(t *testing.T) {
+	overhead := len("LABEL " + dsl.InterfaceLabel + "=''")
+	for _, tc := range []struct {
+		name  string
+		label int
+		err   string
+	}{
+		{"the longest line BuildKit reads", schemas.MaxDockerfileLine - overhead, ""},
+		{"one byte longer", schemas.MaxDockerfileLine - overhead + 1, "BuildKit refuses a Dockerfile line over 65535"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			image := filepath.Join(dir, "images", "activity-x")
+			if err := os.MkdirAll(image, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			files := map[string]string{
+				"interface.ork.yaml": interfaceDocumentPacking(t, tc.label),
+				"Dockerfile":         "FROM scratch\nLABEL " + dsl.InterfaceLabel + "='{}'\n",
+			}
+			for name, content := range files {
+				if err := os.WriteFile(filepath.Join(image, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			out, err := schemas.Dockerfiles(dir)
+			if tc.err == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if line := strings.Split(string(out["images/activity-x/Dockerfile"]), "\n")[1]; len(line) != schemas.MaxDockerfileLine {
+					t.Fatalf("the LABEL line is %d bytes, want %d", len(line), schemas.MaxDockerfileLine)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.err) {
+				t.Fatalf("Dockerfiles = %v; want an error containing %q", err, tc.err)
+			}
+		})
+	}
+}
+
+// TestInterfaces_TheGeneratorReplacesOnlyTheLabelLine: a Dockerfile's other
+// lines are its author's, and a Dockerfile with no interface LABEL line, or
+// two, is refused rather than guessed at.
+func TestInterfaces_TheGeneratorReplacesOnlyTheLabelLine(t *testing.T) {
+	const document = "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields:\n  a:\n    type: string\n"
+	const label = `LABEL ` + dsl.InterfaceLabel + `='{"schemaVersion":1,"fields":{"a":{"type":"string"}}}'`
+	for _, tc := range []struct {
+		name, dockerfile, want, err string
+	}{
+		{"stale", "FROM scratch\n# kept\nLABEL " + dsl.InterfaceLabel + "='{}'\nENTRYPOINT [\"/x\"]\n",
+			"FROM scratch\n# kept\n" + label + "\nENTRYPOINT [\"/x\"]\n", ""},
+		{"current", "FROM scratch\n" + label + "\n", "FROM scratch\n" + label + "\n", ""},
+		{"none", "FROM scratch\n", "", "carries 0 interface LABEL lines, want exactly one"},
+		{"two", "FROM scratch\n" + label + "\n" + label + "\n", "", "carries 2 interface LABEL lines, want exactly one"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			image := filepath.Join(dir, "images", "activity-x")
+			if err := os.MkdirAll(image, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for name, content := range map[string]string{"interface.ork.yaml": document, "Dockerfile": tc.dockerfile} {
+				if err := os.WriteFile(filepath.Join(image, name), []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			files, err := schemas.Dockerfiles(dir)
+			if tc.err != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.err) {
+					t.Fatalf("Dockerfiles = %v; want an error containing %q", err, tc.err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := string(files["images/activity-x/Dockerfile"]); got != tc.want {
+				t.Fatalf("Dockerfile\n%s\nwant\n%s", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -241,7 +449,7 @@ func refs(v any, out *[]string) {
 	}
 }
 
-func TestSchemas_DispatcherHoldsBothKinds(t *testing.T) {
+func TestSchemas_DispatcherHoldsEveryKind(t *testing.T) {
 	all := trees(t)
 	dispatcher := all[schemas.DispatcherFile]
 	allOf := dispatcher["allOf"].([]any)
@@ -251,7 +459,15 @@ func TestSchemas_DispatcherHoldsBothKinds(t *testing.T) {
 		kind := clause["if"].(map[string]any)["properties"].(map[string]any)["kind"].(map[string]any)["const"].(string)
 		kinds[kind] = clause["then"].(map[string]any)["$ref"].(string)
 	}
-	want := map[string]string{dsl.KindOrkflow: "#/definitions/orkflow", dsl.KindAutomation: "#/definitions/automation"}
+	want := map[string]string{
+		dsl.KindOrkflow:           "#/definitions/orkflow",
+		dsl.KindAutomation:        "#/definitions/automation",
+		dsl.KindActivityInterface: "#/definitions/activityinterface",
+	}
+	if got := stringsOf(dispatcher["properties"].(map[string]any)["kind"].(map[string]any)["enum"]); !reflect.DeepEqual(got,
+		[]string{dsl.KindActivityInterface, dsl.KindAutomation, dsl.KindOrkflow}) {
+		t.Errorf("the dispatcher's kind enum is %v", got)
+	}
 	if !reflect.DeepEqual(kinds, want) {
 		t.Fatalf("the dispatcher selects %v, want %v", kinds, want)
 	}

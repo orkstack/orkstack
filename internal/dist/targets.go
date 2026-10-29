@@ -1,9 +1,9 @@
 // Package dist describes, builds and packs one release's artifacts: which
 // binaries are published for which platforms, how they are built, and how they
 // are archived and checksummed so that the same commit always produces the same
-// bytes. It also names the images a release publishes (images.go), reads the
-// digests of their OCI layouts, and packs the quickstart bundle that names
-// them (quickstart.go). cmd/dist (internal/dist/cmd/dist) is its only caller.
+// bytes. It also names the images a release publishes (images.go) and reads
+// the digests of their OCI layouts. cmd/dist (internal/dist/cmd/dist) is its
+// only caller.
 //
 // It publishes nothing and talks to no registry. release.yml owns publishing.
 package dist

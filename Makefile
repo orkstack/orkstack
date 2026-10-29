@@ -260,13 +260,15 @@ proof-release: ## The pre-release gate: every gate, observability always -> proo
 	@scripts/proof.sh --tier release $(if $(NAME),$(NAME),release)
 
 # Release artifacts (docs/UPGRADING.md, "Release artifacts"). release.yml
-# runs these three for every release; each also runs by hand. VERSION must be
+# runs these for every release; each also runs by hand. VERSION must be
 # vMAJOR.MINOR.PATCH here.
 #   make dist             the binaries, their archives and SHA256SUMS -> dist/
 #   make release-images   the release images as OCI layouts -> OUT/<image>/
 #                         (needs make dist; PLATFORMS defaults to this machine)
-#   make release-smoke    builds both for this machine, runs the quickstart
-#                         bundle on them and requires a finished run
+#   make release-smoke    builds both for this machine, runs compose.yaml on
+#                         those images and requires a finished run
+#   make quickstart-smoke runs the README's Quickstart as written on a fresh
+#                         clone of this working tree (no VERSION)
 DIST ?= dist
 PLATFORMS ?=
 RELEASE_IMAGES := ork orker orkctl ui
@@ -296,8 +298,12 @@ release-images: ## Release images (ork, orker, orkctl, ui, activities) as OCI la
 	  LABELS='org.opencontainers.image.source=https://github.com/orkstack/orkstack org.opencontainers.image.licenses=MIT org.opencontainers.image.version=$(VERSION)'
 
 .PHONY: release-smoke
-release-smoke: ## Build the release for this machine and run the quickstart bundle on it end to end: VERSION=vX.Y.Z
-	@scripts/release-smoke.sh $(VERSION)
+release-smoke: ## Build the release for this machine and run compose.yaml on its images end to end: VERSION=vX.Y.Z
+	@scripts/quickstart-smoke.sh --release $(VERSION)
+
+.PHONY: quickstart-smoke
+quickstart-smoke: ## Run the README's Quickstart as written on a fresh clone of this working tree, end to end
+	@scripts/quickstart-smoke.sh
 
 .PHONY: release-tag
 release-tag: ## Tag HEAD only after a passing release proof of it: VERSION=vX.Y.Z PROOF=proof/<name>

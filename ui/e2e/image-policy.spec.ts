@@ -29,6 +29,7 @@ import {
 	waitForEngine
 } from './harness';
 import { adminNamespaceUrl } from './uiHelpers';
+import { fillYaml } from './yaml';
 
 // Image supply-chain policy in a browser, against a real engine, Orker,
 // Temporal, MinIO and registry (docs/DEPLOY.md "Image supply-chain policy"):
@@ -292,7 +293,7 @@ test('4: Validate anchors both refusals to tasks[0].uses; a signed catalog image
 	// `localhost:5001/orkstack/` needs no public-registry round trip.
 	const { outside, outsideRepo } = await outsideImage();
 	await page.goto(`${UI_ORIGIN}/apply?ns=${PROD}`);
-	await page.getByTestId('apply-yaml').fill(document('deploy', outside));
+	await fillYaml(page, 'apply-yaml', document('deploy', outside));
 	await page.getByTestId('apply-validate').click();
 	const issues = page.getByTestId('apply-validation-issues');
 	await expect(issues).toContainText(
@@ -301,14 +302,14 @@ test('4: Validate anchors both refusals to tasks[0].uses; a signed catalog image
 	note(`validate issue: ${await issues.innerText()}`);
 	await page.screenshot({ path: out('screenshot-validate-registry-issue.png'), fullPage: true });
 
-	await page.getByTestId('apply-yaml').fill(document('deploy', activityRef('shell')));
+	await fillYaml(page, 'apply-yaml', document('deploy', activityRef('shell')));
 	await page.getByTestId('apply-validate').click();
 	await expect(issues).toContainText(
 		`tasks[0].uses: task "build": image "${activityRef('shell')}" is a mutable tag, and this deployment requires a digest`
 	);
 	note(`validate issue: ${await issues.innerText()}`);
 
-	await page.getByTestId('apply-yaml').fill(document('deploy', 'shell'));
+	await fillYaml(page, 'apply-yaml', document('deploy', 'shell'));
 	await page.getByTestId('apply-validate').click();
 	await expect(issues).toHaveCount(0);
 	await page.getByTestId('apply-submit').click();

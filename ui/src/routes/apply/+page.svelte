@@ -6,8 +6,11 @@
 	import { orkflowClient } from '$lib/clients/orkflows';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import SheetHeader from '$lib/components/SheetHeader.svelte';
+	import YamlField from '$lib/yaml/YamlField.svelte';
+	import YamlProblems from '$lib/yaml/YamlProblems.svelte';
+	import { YamlSession } from '$lib/yaml/session.svelte';
 	import { setTitleBlock } from '$lib/sheet.svelte';
-	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/orkflow_service_pb';
+	import { ValidationSeverity } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel, withNamespace } from '$lib/namespace';
 	import { API_VERSION, ORKFLOW_PLACEHOLDER } from '$lib/placeholders';
 	import type { PageProps } from './$types';
@@ -19,13 +22,20 @@
 	let validating = $state(false);
 	let formError = $state('');
 	let warnings = $state<string[]>([]);
-	let issues = $state<ValidationIssue[]>([]);
 	let applied = $state<{ name: string; version: string } | null>(null);
 	let cleanYaml = $state('');
 	let permitNavigation = $state(false);
 	const dirty = $derived(yaml !== cleanYaml);
 
 	guardUnsaved(() => dirty && !permitNavigation, 'Discard unsaved Orkflow YAML?');
+
+	// The document's live check: ValidateOrkflow, the same preparation apply
+	// runs, asked once typing pauses (src/lib/yaml/session.svelte.ts). Its
+	// answer is the only thing that ever says the document has no problems.
+	const session = new YamlSession(async (text, namespace, signal) => {
+		const res = await orkflowClient(fetch).validateOrkflow({ yaml: text, namespace }, { signal });
+		return res.issues;
+	}, 'Apply also refuses a version already stored with other content.');
 
 	// An example's YAML is fetched when its card is chosen, not shipped with
 	// the page ($lib/examples). A second click while one is loading is not
@@ -48,16 +58,14 @@
 
 	async function validate(): Promise<boolean> {
 		formError = '';
-		issues = [];
 		if (!yaml.trim()) { formError = 'Paste an Orkflow YAML document first.'; return false; }
 		const validatedYaml = yaml;
 		const validatedNamespace = data.namespace;
 		validating = true;
 		try {
-			const result = await orkflowClient(fetch).validateOrkflow({ yaml: validatedYaml, namespace: validatedNamespace });
-			if (yaml !== validatedYaml || data.namespace !== validatedNamespace) return false;
-			issues = result.issues;
-			return !result.issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
+			const issues = await session.validateNow(validatedYaml, validatedNamespace);
+			if (issues === null || yaml !== validatedYaml || data.namespace !== validatedNamespace) return false;
+			return !issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
 		} catch (err) {
 			formError = errorMessage(err);
 			return false;
@@ -146,16 +154,18 @@
 	}}
 >
 	<div class="flex flex-col gap-1.5">
-		<label for="yaml" class="text-ink-muted"><span class="caps">Orkflow YAML</span> <span class="font-mono text-xs">(apiVersion: {API_VERSION})</span></label>
-		<textarea
-			id="yaml"
-			data-testid="apply-yaml"
+		<span id="apply-yaml-label" class="text-ink-muted"><span class="caps">Orkflow YAML</span> <span class="font-mono text-xs">(apiVersion: {API_VERSION})</span></span>
+		<YamlField
 			bind:value={yaml}
-			rows="18"
-			spellcheck="false"
+			kind="Orkflow"
+			namespace={data.namespace}
+			{session}
+			testid="apply-yaml"
+			label="Orkflow YAML"
+			labelledby="apply-yaml-label"
 			placeholder={ORKFLOW_PLACEHOLDER}
-			class="field min-h-[360px] w-full px-3 py-2 font-mono text-sm leading-5 [font-variant-ligatures:none]"
-		></textarea>
+			rows={18}
+		/>
 		<div class="flex flex-wrap items-center gap-4 text-sm">
 			<label class="link cursor-pointer font-semibold"
 				>Import YAML<input
@@ -179,21 +189,7 @@
 			{warning}
 		</div>
 	{/each}
-	{#if issues.length > 0}
-		<div data-testid="apply-validation-issues" class="space-y-2 border-t border-rule pt-3 text-sm">
-			<p class="caps text-ink-muted">Validation results</p>
-			{#each issues as issue, i (`${issue.field}-${i}`)}
-				<p
-					data-testid="apply-validation-issue"
-					data-severity={issue.severity === ValidationSeverity.ERROR ? 'error' : 'warning'}
-					data-field={issue.field}
-					class={issue.severity === ValidationSeverity.ERROR ? 'severity-error' : 'severity-warning'}
-				>
-					<span class="font-semibold">{issue.field || 'document'}</span>: {issue.message}
-				</p>
-			{/each}
-		</div>
-	{/if}
+	<YamlProblems {session} listTestid="apply-validation-issues" issueTestid="apply-validation-issue" testid="apply-yaml" />
 	{#if applied}
 		<p data-testid="apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">
 			Applied {applied.name}@{applied.version}.

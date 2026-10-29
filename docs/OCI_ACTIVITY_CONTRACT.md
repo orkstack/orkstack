@@ -764,7 +764,7 @@ compile and store. For each distinct `uses` the resolver:
    unpullable pin.
 5. Stamps `Task.image`.
 6. Reads the image's interface label (`docs/ACTIVITY_IMAGES.md`, "Declaring
-   the interface"): for an index, the **first entry in index order whose
+   the interface"; the label is the contract, whatever wrote it): for an index, the **first entry in index order whose
    `platform.os` is present and not `unknown`** (buildx attestation manifests
    are skipped), fetched and digest-checked; then its config blob, bounded at
    4 MiB and digest-checked. A registry that serves a manifest but not its
@@ -1824,7 +1824,9 @@ every container is refused before it starts.
    environment. Defaults go in the Dockerfile as `ENV`, overridable by `env:`,
    and are documented in the image's README.
 10. **Validate `with:` before any side effect** and reject an unknown `op`
-    (exit `2`), and declare the interface label (`docs/ACTIVITY_IMAGES.md`).
+    (exit `2`), and declare the interface label, written as an
+    `interface.ork.yaml` and packed by `orkctl activity interface pack`
+    (`docs/ACTIVITY_IMAGES.md`).
 
 ### 10.2 The entry-script pattern
 

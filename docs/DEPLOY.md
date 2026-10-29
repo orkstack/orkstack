@@ -1471,7 +1471,7 @@ them too. They are development and proof settings, never a recommendation:
 a shorter grace period can report a version drained while a workflow that
 started on it has not yet reached visibility, and every refresh is a
 visibility query and a new run of the version's own workflow on the cluster.
-The quickstart's Temporal (`deploy/quickstart/compose.yaml`) and every
+The quickstart's Temporal (the root `compose.yaml`) and every
 production cluster keep the defaults.
 
 **Permissions.** A cluster behind an authorizer must grant the engine's
@@ -1635,10 +1635,13 @@ engine boot, no Temporal connection, no store.
 Each release publishes `ork`, `orker`, `orkctl` and `ui` images to
 `ghcr.io/orkstack`, for linux/amd64 and linux/arm64, beside the first-party
 activity images ([UPGRADING.md](UPGRADING.md), "Release artifacts").
-[`deploy/quickstart/compose.yaml`](../deploy/quickstart/compose.yaml) runs all
-of them on one machine and is the worked example of what follows; it is
-checked by `internal/dist`'s tests and run end to end by
-`scripts/release-smoke.sh` before a release publishes anything.
+The quickstart's [`compose.yaml`](../compose.yaml) runs the same four
+services on one machine, built from a clone from the same stages
+([`deploy/source/Dockerfile`](../deploy/source/Dockerfile)), and is the worked
+example of what follows. It is checked by `internal/dist`'s tests, and run end
+to end on a release's own images, by digest, by
+`scripts/quickstart-smoke.sh --release` before the release publishes
+anything.
 
 | Image | Runs | User | Settings it needs in a container |
 |---|---|---|---|
@@ -1675,8 +1678,9 @@ follow from the daemon reading paths on the host:
 other first-party names by the tag of its release line, for example
 `ghcr.io/orkstack/activity-shell:0.1` for every 0.1 release; that tag moves to
 each patch release of the line. To pin the exact release instead, set
-`ORK_ACTIVITY_CATALOG` to the images by tag and digest, as the quickstart's
-`.env` does.
+`ORK_ACTIVITY_CATALOG` to the images by tag and digest. (The quickstart's
+catalog names the activities it built and pushed to its own registry, by tag;
+each apply pins the digest the tag names then.)
 
 ### The admin surface: what a deployment is made of, and who is serving it
 

@@ -288,7 +288,10 @@ One Orkflow file with none of the automation flags behaves as a plain Orkflow
 apply (`--json` prints `ApplyOrkflowResponse`). Otherwise each argument is a file, or a directory read non-recursively for
 `*.ork.yaml` and `*.ork.yml` in lexical order. A file's `kind:` decides:
 `kind: Orkflow` is an Orkflow, `kind: Automation` an automation document, and
-a file with no `kind`, or any other, is refused before anything is sent. Two automation documents naming one namespace are
+a file with no `kind`, or any other, is refused before anything is sent. An
+activity interface (`kind: ActivityInterface`) is packed into an image, never
+applied: one named as a file is refused, and one in a directory is skipped
+and named on stderr. Two automation documents naming one namespace are
 refused. Only an `-n` typed on the command line is checked against a
 document's namespace; `ORK_NAMESPACE` and the saved default never apply to
 it.

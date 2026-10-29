@@ -553,7 +553,7 @@
 					{diffPair}: the two versions' source YAML is byte-identical.
 				</p>
 			{:else}
-				<DiffView diff={diffText} testid="version-diff" />
+				<DiffView diff={diffText} testid="version-diff" lang="yaml" />
 			{/if}
 		{:else}
 			<p data-testid="diff-idle" class="text-sm text-ink-muted">

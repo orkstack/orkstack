@@ -1,0 +1,244 @@
+# The OrkStack quickstart: the whole stack built from this checkout, with
+# Docker as the only prerequisite (docs/GETTING_STARTED.md).
+#
+#   docker compose up --build -d --wait          build and start, or update
+#   docker compose run --rm orkctl <command>     orkctl, from the image it built
+#   docker compose down                          stop (object store data kept)
+#
+# ork, orker, orkctl and ui are built from deploy/source/Dockerfile, and the
+# six first-party activities from images/. An Orkflow pins every task's image
+# by its registry digest at apply time (docs/OCI_ACTIVITY_CONTRACT.md §4.6),
+# so the activities are pushed to a registry of the stack's own. The one
+# address both the host's Docker daemon (which pulls them for the Orker) and
+# the engine (which pins them) reach is loopback: the registry is published on
+# the host's 127.0.0.1, and a forwarder in the engine's own network namespace
+# serves the same port on its 127.0.0.1. Temporal and the object store are the
+# development stack's own (deploy/docker-compose.yml), pinned for the same
+# reasons. Everything is published on 127.0.0.1 only.
+#
+# The Orker runs each task's image on this host's Docker daemon, through the
+# socket mounted below; the activities step pushes through it too. Whoever
+# controls that socket controls the host, so only those two services see it
+# (docs/SECURITY_MODEL.md). The daemon bind-mounts each task's workspace from
+# ORKSTACK_WORKDIR, a path it reads on the host, so the Orker sees that
+# directory at the same path.
+#
+# Each setting below can be changed in a .env file beside this one (it is
+# gitignored): the ports, the Docker socket, the Orker's work directory.
+name: orkstack-quickstart
+
+x-store: &store
+  ORK_ARTIFACT_BACKEND: s3
+  ORK_S3_ENDPOINT: http://seaweedfs:8333
+  ORK_S3_BUCKET: orkstack-artifacts
+  ORK_S3_ACCESS_KEY: orkstack
+  ORK_S3_SECRET_KEY: orkstack-secret
+  ORK_S3_PATH_STYLE: "true"
+  ORK_TEMPORAL_ADDRESS: temporal:7233
+
+x-source: &source
+  context: .
+  dockerfile: deploy/source/Dockerfile
+
+services:
+  temporal:
+    image: temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
+    command:
+      - server
+      - start-dev
+      - --ip
+      - 0.0.0.0
+      - --ui-port
+      - "8233"
+      - --log-level
+      - warn
+    ports:
+      - "127.0.0.1:${ORKSTACK_TEMPORAL_UI_PORT-8233}:8233"
+    healthcheck:
+      test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  seaweedfs:
+    image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+    command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts"]
+    volumes:
+      - seaweedfs-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:8333/ | grep -qE '200|403'"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  registry:
+    image: registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+    ports:
+      - "127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}:5000"
+    volumes:
+      - registry-data:/var/lib/registry
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5000/v2/"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # The first-party activities, built from images/ by `up` and never started
+  # (scale 0): the activities step below pushes them.
+  activity-shell:
+    image: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-shell:local
+    build: images/activity-shell
+    scale: 0
+  activity-http:
+    image: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-http:local
+    build: images/activity-http
+    scale: 0
+  activity-file:
+    image: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-file:local
+    build: images/activity-file
+    scale: 0
+  activity-json:
+    image: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-json:local
+    build: images/activity-json
+    scale: 0
+  activity-git:
+    image: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-git:local
+    build: images/activity-git
+    scale: 0
+  activity-template:
+    image: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-template:local
+    build: images/activity-template
+    scale: 0
+
+  # Pushes the six activities to the registry, where they get the digests the
+  # engine pins, and exits; the engine starts only once it has.
+  activities:
+    image: docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb
+    entrypoint: ["sh", "-ec"]
+    command:
+      - |
+        for name in shell http file json git template; do
+          docker push --quiet "127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-$$name:local"
+        done
+    volumes:
+      - ${ORKSTACK_DOCKER_SOCKET-/var/run/docker.sock}:/var/run/docker.sock
+    depends_on:
+      registry:
+        condition: service_healthy
+
+  ork:
+    build:
+      <<: *source
+      target: ork
+    environment:
+      <<: *store
+      ORK_HTTP_ADDR: 0.0.0.0:8080
+      # The admin listener answers the health check inside the container and
+      # is never published.
+      ORK_ADMIN_ADDR: 127.0.0.1:9464
+      ORK_WS_ALLOWED_ORIGINS: localhost:${ORKSTACK_UI_PORT-5173},127.0.0.1:${ORKSTACK_UI_PORT-5173}
+      ORK_ACTIVITY_CATALOG: |
+        activities:
+          shell: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-shell:local
+          http: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-http:local
+          file: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-file:local
+          json: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-json:local
+          git: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-git:local
+          template: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-template:local
+    ports:
+      - "127.0.0.1:${ORKSTACK_API_PORT-8080}:8080"
+    depends_on:
+      temporal:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+      activities:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/ork", "--healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  # The registry's port on the engine's own 127.0.0.1, where it resolves the
+  # catalog's references to digests. It lives in the engine's network
+  # namespace, so it restarts whenever the engine does.
+  registry-forward:
+    image: alpine/socat:1.8.1.3@sha256:603174b77eebaba25ba8f8ebb15e1234d6600409554e95d6fb203fd106150287
+    network_mode: service:ork
+    command: ["TCP4-LISTEN:${ORKSTACK_REGISTRY_PORT-5002},bind=127.0.0.1,fork,reuseaddr", "TCP:registry:5000"]
+    depends_on:
+      registry:
+        condition: service_healthy
+      ork:
+        condition: service_started
+        restart: true
+
+  orker:
+    build:
+      <<: *source
+      target: orker
+    environment:
+      <<: *store
+      ORK_ADMIN_ADDR: 127.0.0.1:9465
+      ORK_ORKER_ID: ${ORKSTACK_ORKER_ID-quickstart}
+      ORK_ORKER_WORKDIR: ${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}
+    # The work directory is under your home, never a shared /tmp: whoever owns
+    # it could swap a task's directories for links to the host's, and the
+    # daemon would mount them. It is mounted at the same path, because the
+    # Orker names it to the daemon by its path on this machine.
+    volumes:
+      - ${ORKSTACK_DOCKER_SOCKET-/var/run/docker.sock}:/var/run/docker.sock
+      - ${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}:${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}
+    init: true
+    # Longer than a task container's 30 s cancellation grace, so a stop
+    # reaches every running container before the Orker itself is killed.
+    stop_grace_period: 45s
+    depends_on:
+      temporal:
+        condition: service_healthy
+      seaweedfs:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/orker", "--healthcheck"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  ui:
+    build:
+      <<: *source
+      target: ui
+    environment:
+      ENGINE_API_URL: http://ork:8080
+      PUBLIC_ENGINE_WS_URL: ws://localhost:${ORKSTACK_API_PORT-8080}
+    ports:
+      - "127.0.0.1:${ORKSTACK_UI_PORT-5173}:5173"
+    depends_on:
+      ork:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/_app/version.json').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # orkctl without installing it: `docker compose run --rm orkctl apply
+  # examples/each-fan-out.ork.yaml`. `up` builds it and starts nothing
+  # (scale 0); it sees this checkout, read-only. It depends on nothing, so a
+  # `run` starts no other service (and never repeats the activities step):
+  # the stack is `up`'s to start.
+  orkctl:
+    build:
+      <<: *source
+      target: orkctl
+    scale: 0
+    environment:
+      ORK_SERVER: http://ork:8080
+    volumes:
+      - ./:/work:ro
+    working_dir: /work
+
+volumes:
+  seaweedfs-data:
+  registry-data:

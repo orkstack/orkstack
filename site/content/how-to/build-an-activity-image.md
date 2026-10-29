@@ -78,6 +78,7 @@ When a task is cancelled, the container gets `SIGTERM`. It has 30 seconds to exi
 | `--tag` | The registry reference to build and push. Required. |
 | `--platform` | Target platforms, such as `linux/amd64,linux/arm64`. |
 | `--push` | Push after the build. Default `true`. |
+| `--interface` | An `interface.ork.yaml` to pack into the image's interface label. |
 
 `orkctl activity build <path>` prints a reference with `@sha256:` in it. Paste that reference into `uses:` if your deployment requires digests. A tag resolves to a digest when you apply.
 
@@ -85,7 +86,23 @@ A local image that was never pushed has no registry digest, so the deployment ca
 
 ## Declare the interface
 
-Add an `org.orkstack.activity.interface` label to the image. `orkctl apply` then checks each task's `with:` keys against it before any run starts. The label is optional. The container never reads it. `orkctl activity inspect <reference>` shows what the image declares.
+Write the `with:` keys your program reads in an `interface.ork.yaml` next to the Dockerfile:
+
+```yaml
+apiVersion: orkstack/v1
+kind: ActivityInterface
+fields:
+  src:
+    type: string
+    required: true
+  as:
+    type: string
+    default: report.txt
+```
+
+Build with `orkctl activity build <path> --tag <ref> --interface interface.ork.yaml`. It packs the file into the image's `org.orkstack.activity.interface` label. With another build tool, pass the value `orkctl activity interface pack interface.ork.yaml` prints to its `--label`.
+
+`orkctl apply` then checks each task's `with:` keys against the label before any run starts. The interface is optional. The container never reads it. `orkctl activity inspect <reference>` shows what the image declares.
 
 ## When an attempt fails
 
@@ -113,7 +130,7 @@ A contract violation is never retried. A non-zero exit is retried only when the 
 ## See also
 
 - [Activity images and the `op` convention](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#activity-images-and-the-op-convention): the conventions for images that share one shape
-- [Declaring the interface](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#declaring-the-interface): the `with:` label
+- [Declaring the interface](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#declaring-the-interface): the `with:` label and `interface.ork.yaml`
 - [OCI Activity Contract, section 3](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#3-the-orkstack-workspace): the workspace, file by file
 - [OCI Activity Contract, section 10.1](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#101-the-dockerfile-and-entry-script-rules): the Dockerfile and entry-script rules
 - [Test an activity image](/docs/how-to/test-an-activity-image/): check your image before a run uses it

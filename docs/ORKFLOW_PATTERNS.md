@@ -407,8 +407,9 @@ existing tool's image when one already does the job. The contract is files:
   `/orkstack/output/artifacts/`;
 - exit `0`, or non-zero for a failure.
 
-No SDK, and no `op` unless you want one. Declare the interface label
-(`org.orkstack.activity.interface`), and handle SIGTERM if the work is long.
+No SDK, and no `op` unless you want one. Declare the interface in an
+`interface.ork.yaml` packed into the `org.orkstack.activity.interface` label,
+and handle SIGTERM if the work is long.
 
 - Build, push and pin it with `orkctl activity build <dir> --tag <ref>`.
 - The image policy applies to it: `require_digest`, `allowed_registries`,

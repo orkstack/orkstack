@@ -46,9 +46,10 @@ USER 65532:65532
 
 # The with: contract, declared (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). Optional: the engine checks a document's with: against it at
-# validate and apply; the container never reads it. One line, because the
-# value is JSON; README.md's Interface section reproduces it verbatim.
-LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"url":{"type":"string","required":true},"ref":{"type":"string"},"tokenSecret":{"type":"string"},"tokenUser":{"type":"string","default":"x-access-token"},"caFile":{"type":"string"}},"ops":{"clone":{"fields":{"depth":{"type":"number","default":1},"as":{"type":"string","default":"src.tar.gz"},"dest":{"type":"string"}}},"resolve":{}},"values":{"commit":{"type":"string"},"ref":{"type":"string"},"path":{"type":"string"},"sizeBytes":{"type":"number"},"sha256":{"type":"string"}}}'
+# validate and apply; the container never reads it. The line is generated
+# from interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`: edit
+# that file, never this line.
+LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"caFile":{"type":"string"},"ref":{"type":"string"},"tokenSecret":{"type":"string"},"tokenUser":{"type":"string","default":"x-access-token"},"url":{"type":"string","required":true}},"ops":{"clone":{"fields":{"as":{"type":"string","default":"src.tar.gz"},"depth":{"type":"number","default":1},"dest":{"type":"string"}}},"resolve":{}},"values":{"commit":{"type":"string"},"path":{"type":"string"},"ref":{"type":"string"},"sha256":{"type":"string"},"sizeBytes":{"type":"number"}}}'
 
 # Exec form, mandatory.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]

@@ -5,7 +5,8 @@ contract. This file is the quick checklist.
 
 ## Prerequisites
 
-Using OrkStack needs only Docker ([docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md)).
+Trying OrkStack needs only Docker and git: the quickstart builds the whole
+stack in containers from a clone ([docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md)).
 Developing it needs:
 
 - **Docker** with Compose v2, for the infrastructure, every task and the
@@ -18,7 +19,10 @@ Developing it needs:
 
 ## The local development stack
 
-The stack built from this checkout, for working on OrkStack itself:
+The stack built from this checkout, for working on OrkStack itself: the
+engine, the Orker and the UI run on the host, so a change is a rebuild away.
+It uses the quickstart's ports (5173, 8080, 8233), so stop one before
+starting the other:
 
 ```bash
 make infra-up        # Temporal, SeaweedFS and a local registry, in Docker
@@ -84,9 +88,11 @@ for Linux, macOS and Windows, `ork` and `orker` for Linux, each archived, and
 builds the release images (`ork`, `orker`, `orkctl`, `ui` and the six
 activities) as OCI layouts from those binaries, for this machine unless
 `PLATFORMS` says otherwise. `make release-smoke VERSION=vX.Y.Z` builds both
-for this machine and runs the release's quickstart bundle on them end to end,
-in a compose project, registry and ports of its own; `release.yml` runs the
-same smoke before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
+for this machine and runs the quickstart's `compose.yaml` on those images end
+to end, by digest, in a compose project, registry and ports of its own.
+`make quickstart-smoke` runs the README's Quickstart as written on a fresh
+clone of the working tree, which builds the stack from source; `release.yml`
+runs both before it publishes anything ([docs/PROOFS.md](./docs/PROOFS.md)).
 
 ## Fast checks (no Docker, under two minutes warm)
 

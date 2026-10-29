@@ -1,25 +1,35 @@
 ---
-// The quickstart: the commands docs/GETTING_STARTED.md walks through, in
-// order, run against a published release with Docker as the only
-// prerequisite, and a recording of them run on the real stack. The copy
-// button is an enhancement: without JavaScript the commands are plain,
-// selectable text. After Landpack's ContentCommand (MIT, see
-// site/THIRD_PARTY.md).
+// The quickstart: the README's commands, which docs/GETTING_STARTED.md walks
+// through, in order, run from a clone with Docker and git as the only
+// prerequisites, and a recording of them run on the real stack. The commands
+// are read from the README at build time (lib/quickstart.ts); each one needs
+// a note here, and a note no command has fails the build. The copy button is
+// an enhancement: without JavaScript the commands are plain, selectable text.
+// After Landpack's ContentCommand (MIT, see site/THIRD_PARTY.md).
 import Icon from '../shared/Icon.astro';
 import { clip } from '../../lib/media';
 import { route } from '../../../site.config.mjs';
 import { example } from '../../lib/example';
+import { quickstartCommands } from '../../lib/quickstart';
 import ThemeClip from '../shared/ThemeClip.astro';
 
-const download = 'https://github.com/orkstack/orkstack/releases/latest/download/orkstack-quickstart.tar.gz';
-const steps = [
-	{ cmd: `curl -fsSLO ${download}`, note: 'the release: a compose file, its images and the examples' },
-	{ cmd: 'tar -xzf orkstack-quickstart.tar.gz && cd orkstack-quickstart', note: 'unpack it' },
-	{ cmd: 'docker compose up -d --wait', note: 'Temporal, an object store, the engine, an Orker and the UI' },
-	{ cmd: "alias orkctl='docker compose run --rm orkctl'", note: 'orkctl from its image, nothing to install' },
-	{ cmd: `orkctl apply ${example.path}`, note: 'validate and store the Orkflow' },
-	{ cmd: `orkctl run submit ${example.name} --watch`, note: 'run it and follow it to the end' },
-];
+const notes: Record<string, string> = {
+	'git clone https://github.com/orkstack/orkstack.git && cd orkstack': 'the source, with the compose file at its root',
+	'docker compose up --build -d --wait': 'build and start Temporal, an object store, the engine, an Orker and the UI',
+	"alias orkctl='docker compose run --rm orkctl'": 'orkctl from the image it built, nothing to install',
+	[`orkctl apply ${example.path}`]: 'validate and store the Orkflow',
+	[`orkctl run submit ${example.name} --watch`]: 'run it and follow it to the end',
+};
+const steps = quickstartCommands.map((cmd) => {
+	const note = notes[cmd];
+	if (!note) throw new Error(`Quickstart.astro has no note for the README's command: ${cmd}`);
+	return { cmd, note };
+});
+for (const cmd of Object.keys(notes)) {
+	if (!quickstartCommands.includes(cmd)) throw new Error(`Quickstart.astro notes a command the README does not run: ${cmd}`);
+}
+// The prose counts them in words, as the rest of the page does.
+const count = ['no', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'][steps.length] ?? String(steps.length);
 const all = steps.map((s) => s.cmd).join('\n');
 const demo = clip('cli-quickstart');
 ---
@@ -28,9 +38,8 @@ const demo = clip('cli-quickstart');
 	<header class="block-head">
 		<h2 id="quickstart-title">Run it on your machine</h2>
 		<p>
-			You need Docker. From a published release, the whole stack and a first run take six commands;{' '}
-			<a href={route('docs/tutorials/first-orkflow')}>Your first Orkflow</a> walks through each. Until the
-			first release is out, <a href={route('docs/contributing')}>build it from source</a>.
+			You need Docker and git. From a clone, the whole stack and a first run take {count} commands;{' '}
+			<a href={route('docs/tutorials/first-orkflow')}>Your first Orkflow</a> walks through each.
 		</p>
 	</header>
 	<div class="quickstart-body">

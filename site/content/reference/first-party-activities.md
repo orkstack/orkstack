@@ -1,6 +1,6 @@
 # First-party activities
 
-Every `with:` key, default and `values.json` key of the six images that ship with OrkStack. Each section matches the image's interface label, and `orkctl activity inspect <name>` shows the same keys from a deployment.
+Every `with:` key, default and `values.json` key of the six images that ship with OrkStack. Each section matches the image's `interface.ork.yaml`, the source of its interface label, and `orkctl activity inspect <name>` shows the same keys from a deployment.
 
 ```yaml
 - id: notify

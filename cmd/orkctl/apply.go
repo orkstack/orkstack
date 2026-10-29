@@ -30,7 +30,10 @@ func newApplyCommand(g *globalFlags) *cobra.Command {
 			"write to the existing RPC it names, in order. A directory is read\n" +
 			"non-recursively for *.ork.yaml and *.ork.yml files; orkflows are applied\n" +
 			"before automation, and nothing is written until every document has been\n" +
-			"validated and planned.\n\n" +
+			"validated and planned. A directory's activity interfaces (kind:\n" +
+			"ActivityInterface, packed into images by orkctl activity interface pack)\n" +
+			"are skipped, each named on stderr; one named on the command line is\n" +
+			"refused.\n\n" +
 			"An automation document names its own namespace, which is authoritative:\n" +
 			"only an -n given on this command line is checked against it, and\n" +
 			"ORK_NAMESPACE and the saved default never apply to it.\n\n" +

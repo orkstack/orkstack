@@ -184,6 +184,10 @@ func TestApply_ClassifiesDocumentsByKind(t *testing.T) {
 			`x.ork.yaml: unknown document kind "Workflow": want kind: Orkflow or kind: Automation`},
 		{"kind: orkflow\nname: hello\n", orkflowDocument,
 			`x.ork.yaml: unknown document kind "orkflow": want kind: Orkflow or kind: Automation`},
+		{"apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n", orkflowDocument,
+			`x.ork.yaml: kind: ActivityInterface is an activity interface, not a document to apply: pack it into an image's ` +
+				`org.orkstack.activity.interface label with orkctl activity interface pack, or build the image with ` +
+				`orkctl activity build --interface`},
 	}
 	for _, tc := range cases {
 		in, err := classifyDocument("x.ork.yaml", []byte(tc.source))
@@ -197,6 +201,59 @@ func TestApply_ClassifiesDocumentsByKind(t *testing.T) {
 		case in.kind != tc.want:
 			t.Errorf("%q: kind = %v, want %v", tc.source, in.kind, tc.want)
 		}
+	}
+}
+
+// TestApply_ADirectorySkipsItsActivityInterfaces: an image's
+// interface.ork.yaml is packed into the image, not applied, so a directory
+// holding one beside its Orkflows applies the Orkflows; a directory holding
+// nothing but interfaces has nothing to apply and says why.
+func TestApply_ADirectorySkipsItsActivityInterfaces(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"deploy.ork.yaml":    "apiVersion: orkstack/v1\nkind: Orkflow\nname: deploy\n",
+		"interface.ork.yaml": "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	inputs, skipped, err := expandApplyArgs([]string{dir})
+	if err != nil {
+		t.Fatalf("expand: %v", err)
+	}
+	if len(inputs) != 1 || filepath.Base(inputs[0].path) != "deploy.ork.yaml" {
+		t.Fatalf("expanded = %v, want only deploy.ork.yaml", inputs)
+	}
+	if len(skipped) != 1 || filepath.Base(skipped[0]) != "interface.ork.yaml" {
+		t.Fatalf("skipped = %v, want interface.ork.yaml, reported", skipped)
+	}
+	only := t.TempDir()
+	if err := os.WriteFile(filepath.Join(only, "interface.ork.yaml"), []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := expandApplyArgs([]string{only}); err == nil ||
+		err.Error() != only+": no Orkflow or automation document to apply: its *.ork.yaml files are activity interfaces, which are packed into images" {
+		t.Fatalf("a directory of interfaces = %v", err)
+	}
+}
+
+// TestApply_AnActivityInterfaceFileIsRefusedBeforeAnyRequest: naming an
+// interface document on the command line is refused, by what it is, with no
+// RPC.
+func TestApply_AnActivityInterfaceFileIsRefusedBeforeAnyRequest(t *testing.T) {
+	f := newFixture(t)
+	path := filepath.Join(t.TempDir(), "interface.ork.yaml")
+	if err := os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mark := len(f.requests())
+	out := f.run("apply", path).requireExit(t, exitError)
+	if !strings.Contains(out.stderr, path+": kind: ActivityInterface is an activity interface, not a document to apply") {
+		t.Fatalf("stderr does not name the file and its kind:\n%s", out.stderr)
+	}
+	if got := f.requests()[mark:]; len(got) != 0 {
+		t.Fatalf("an activity interface sent %v", got)
 	}
 }
 
@@ -283,7 +340,7 @@ func TestApply_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	inputs, err := expandApplyArgs([]string{dir})
+	inputs, _, err := expandApplyArgs([]string{dir})
 	if err != nil {
 		t.Fatalf("expand: %v", err)
 	}
@@ -295,7 +352,7 @@ func TestApply_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {
 		t.Errorf("expanded = %v, want [a.ork.yml b.ork.yaml]", got)
 	}
 	empty := t.TempDir()
-	if _, err := expandApplyArgs([]string{empty}); err == nil || !strings.Contains(err.Error(), "no *.ork.yaml or *.ork.yml files") {
+	if _, _, err := expandApplyArgs([]string{empty}); err == nil || !strings.Contains(err.Error(), "no *.ork.yaml or *.ork.yml files") {
 		t.Errorf("empty directory = %v", err)
 	}
 }

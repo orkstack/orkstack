@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // `orkctl activity build <path|git-url> --tag <ref> [--push]` (§4.6).
@@ -29,6 +31,7 @@ func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 		push     bool
 		platform string
 		file     string
+		iface    string
 	)
 	cmd := &cobra.Command{
 		Use:   "build <path|git-url>",
@@ -50,15 +53,18 @@ func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 			context := args[0]
 			out := cmd.OutOrStdout()
 
-			build := []string{"build", "--tag", tag}
-			if platform != "" {
-				build = append(build, "--platform", platform)
+			// The document is packed before anything is built, so one that
+			// cannot be packed builds nothing.
+			var label string
+			if iface != "" {
+				packed, err := packInterfaceFile(iface)
+				if err != nil {
+					return err
+				}
+				label = packed
+				fmt.Fprintf(out, "Declaring the interface of %s in the %s label.\n", iface, dsl.InterfaceLabel)
 			}
-			if file != "" {
-				build = append(build, "--file", file)
-			}
-			build = append(build, context)
-			if err := runDocker(cmd, out, build...); err != nil {
+			if err := runDocker(cmd, out, activityBuildArgs(tag, platform, file, label, context)...); err != nil {
 				return err
 			}
 			if !push {
@@ -96,7 +102,28 @@ func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&push, "push", true, "push after building; --push=false builds only")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform(s), e.g. linux/amd64,linux/arm64")
 	cmd.Flags().StringVar(&file, "file", "", "path to the Dockerfile")
+	cmd.Flags().StringVar(&iface, "interface", "",
+		"a kind: ActivityInterface document to pack into the image's "+dsl.InterfaceLabel+
+			" label (it replaces a LABEL of that key in the Dockerfile)")
 	return cmd
+}
+
+// activityBuildArgs is the toolchain's argv for one build. A packed
+// interface is one --label key=value argument: no shell stands between
+// orkctl and the toolchain, so the label's quotes and braces arrive as they
+// are.
+func activityBuildArgs(tag, platform, file, label, context string) []string {
+	args := []string{"build", "--tag", tag}
+	if platform != "" {
+		args = append(args, "--platform", platform)
+	}
+	if file != "" {
+		args = append(args, "--file", file)
+	}
+	if label != "" {
+		args = append(args, "--label", dsl.InterfaceLabel+"="+label)
+	}
+	return append(args, context)
 }
 
 // runDocker executes the container toolchain, streaming its output through.
@@ -114,9 +141,22 @@ func runDocker(cmd *cobra.Command, out interface{ Write([]byte) (int, error) }, 
 	proc.Stdout = out
 	proc.Stderr = os.Stderr
 	if err := proc.Run(); err != nil {
-		return fmt.Errorf("docker %s: %w", strings.Join(args, " "), err)
+		return fmt.Errorf("docker %s: %w", describeDockerArgs(args), err)
 	}
 	return nil
+}
+
+// describeDockerArgs is argv for an error message: a packed interface label,
+// up to 64 KiB of JSON, is named by its size rather than echoed.
+func describeDockerArgs(args []string) string {
+	out := make([]string, len(args))
+	for i, arg := range args {
+		if value, ok := strings.CutPrefix(arg, dsl.InterfaceLabel+"="); ok {
+			arg = fmt.Sprintf("%s=<packed interface, %d bytes>", dsl.InterfaceLabel, len(value))
+		}
+		out[i] = arg
+	}
+	return strings.Join(out, " ")
 }
 
 // manifestDigest reads back the index digest the registry assigned.

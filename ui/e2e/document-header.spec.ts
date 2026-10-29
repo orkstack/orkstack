@@ -23,6 +23,7 @@ import {
 	waitForEngine
 } from './harness';
 import { ORKFLOW_PLACEHOLDER, automationPlaceholder } from '../src/lib/placeholders';
+import { editorReady, fillYaml, yamlValue } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('document-header');
@@ -95,9 +96,9 @@ test.afterAll(async () => {
 test('the header is required, shown and offered by every authoring surface', async ({ page }) => {
 	// 1. The Apply page's placeholder is a document that validates and applies.
 	await page.goto(`${UI}/apply?ns=${NS}`);
-	const editor = page.getByTestId('apply-yaml');
-	await expect(editor).toHaveAttribute('placeholder', ORKFLOW_PLACEHOLDER);
-	await editor.fill(ORKFLOW_PLACEHOLDER);
+	await editorReady(page, 'apply-yaml');
+	await expect(page.getByTestId('apply-yaml')).toHaveAttribute('aria-placeholder', ORKFLOW_PLACEHOLDER);
+	await fillYaml(page, 'apply-yaml', ORKFLOW_PLACEHOLDER);
 	await page.getByTestId('apply-validate').click();
 	await expect(page.getByTestId('apply-validate')).toHaveText('Validate');
 	await expect(page.getByTestId('apply-validation-issues')).toHaveCount(0);
@@ -112,7 +113,7 @@ test('the header is required, shown and offered by every authoring surface', asy
 	// 2. A document without the header is refused on apiVersion, at validate
 	//    and at apply, and nothing is stored.
 	await page.goto(`${UI}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill(HEADERLESS);
+	await fillYaml(page, 'apply-yaml', HEADERLESS);
 	await page.getByTestId('apply-validate').click();
 	const issue = page.getByTestId('apply-validation-issue');
 	await expect(issue).toHaveCount(1);
@@ -127,7 +128,7 @@ test('the header is required, shown and offered by every authoring surface', asy
 	await shot(page, 'document-header-missing.png');
 
 	// 3. An automation document is named for what it is, on kind.
-	await page.getByTestId('apply-yaml').fill(AUTOMATION);
+	await fillYaml(page, 'apply-yaml', AUTOMATION);
 	await page.getByTestId('apply-validate').click();
 	await expect(issue).toHaveAttribute('data-field', 'kind');
 	await expect(issue).toContainText(
@@ -136,8 +137,8 @@ test('the header is required, shown and offered by every authoring surface', asy
 
 	// 4. The applied version's editor opens on its stored source, header first.
 	await page.goto(`${UI}/orkflows/my-orkflow?ns=${NS}&tab=edit`);
-	const source = page.getByTestId('editor-yaml');
-	await expect(source).toBeVisible();
+	await editorReady(page, 'editor-yaml');
+	const source = yamlValue(page, 'editor-yaml');
 	await expect(source).toHaveValue(ORKFLOW_PLACEHOLDER);
 	expect((await source.inputValue()).startsWith('apiVersion: orkstack/v1\nkind: Orkflow\n')).toBe(true);
 	await shot(page, 'document-header-source.png');
@@ -147,5 +148,6 @@ test('the header is required, shown and offered by every authoring surface', asy
 	// rewrite a bare URL before hydration; name the namespace instead of
 	// racing that restore (the behaviour is documented, the test was racy).
 	await page.goto(`${UI}/admin/automation?ns=default`);
-	await expect(page.getByTestId('automation-yaml')).toHaveAttribute('placeholder', automationPlaceholder('default'));
+	await editorReady(page, 'automation-yaml');
+	await expect(page.getByTestId('automation-yaml')).toHaveAttribute('aria-placeholder', automationPlaceholder('default'));
 });

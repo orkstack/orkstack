@@ -23,6 +23,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fillYaml, yamlValue } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('authoring-operations');
@@ -159,7 +160,7 @@ test('version-pinned submit, typed inputs, CLI, and run-again retain author inte
 
 test('apply validates without writing, imports and exports exact YAML, and guards a dirty draft', async ({ page }) => {
 	await page.goto(`${UI}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill('apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "1"\ntasks: []\n');
+	await fillYaml(page, 'apply-yaml', 'apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "1"\ntasks: []\n');
 	await page.getByTestId('apply-validate').click();
 	await expect(page.getByTestId('apply-validation-issues')).toBeVisible();
 	const before = await rpc<{ orkflows: { name: string }[] }>('OrkflowService/ListOrkflows', { namespace: NS });
@@ -168,7 +169,7 @@ test('apply validates without writing, imports and exports exact YAML, and guard
 
 	const source = yaml('3.0.0', 'imported exact bytes');
 	await page.getByTestId('apply-import').setInputFiles({ name: 'exact.yaml', mimeType: 'application/yaml', buffer: Buffer.from(source) });
-	await expect(page.getByTestId('apply-yaml')).toHaveValue(source);
+	await expect(yamlValue(page, 'apply-yaml')).toHaveValue(source);
 	const download = page.waitForEvent('download');
 	await page.getByTestId('apply-export').click();
 	expect(await (await download).createReadStream()).toBeTruthy();
@@ -215,7 +216,7 @@ tasks:
       op: copy
 `;
 	await page.goto(`${UI}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill(missing);
+	await fillYaml(page, 'apply-yaml', missing);
 	await page.getByTestId('apply-validate').click();
 	const error = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].with.src"]');
 	await expect(error).toHaveAttribute('data-severity', 'error');
@@ -242,7 +243,7 @@ tasks:
       src: in/x
       srcs: [why]
 `;
-	await page.getByTestId('apply-yaml').fill(warned);
+	await fillYaml(page, 'apply-yaml', warned);
 	await page.getByTestId('apply-validate').click();
 	const warning = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].with.srcs"]');
 	await expect(warning).toHaveAttribute('data-severity', 'warning');

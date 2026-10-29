@@ -3,10 +3,12 @@
 	//
 	// Three decisions are load-bearing here and none is cosmetic:
 	//
-	// 1. There is NO client-side validation. The compiler is the validator, and
-	//    a second one in the browser would drift from it — telling somebody a
-	//    document is fine that the engine then rejects, or worse the reverse.
-	//    Every message in the error panel below is an ApplyOrkflow response.
+	// 1. The engine is the validator. The editor checks YAML syntax and the
+	//    generated schema as the document is typed (src/lib/yaml/), and asks
+	//    the engine — ValidateOrkflow, apply's own preparation — once typing
+	//    pauses; only that answer ever says the document has no problems, and
+	//    nothing the editor finds on its own ever disables Apply. Every message
+	//    in the error panel below is an ApplyOrkflow response.
 	//
 	// 2. Every apply carries TWO versions, because it states two facts
 	//    (proto/orkstack/v1/service.proto, ApplyOrkflowRequest):
@@ -26,9 +28,12 @@
 	import { Code, ConnectError } from '@connectrpc/connect';
 	import DiffView from '$lib/components/DiffView.svelte';
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
+	import YamlField from '$lib/yaml/YamlField.svelte';
+	import YamlProblems from '$lib/yaml/YamlProblems.svelte';
+	import { YamlSession } from '$lib/yaml/session.svelte';
 	import { errorMessage } from '$lib/client';
 	import { orkflowClient } from '$lib/clients/orkflows';
-	import { ValidationSeverity, type ValidationIssue } from '$lib/gen/orkstack/v1/orkflow_service_pb';
+	import { ValidationSeverity } from '$lib/gen/orkstack/v1/orkflow_service_pb';
 	import { namespaceLabel } from '$lib/namespace';
 
 	interface Props {
@@ -90,7 +95,6 @@
 	let reloading = $state(false);
 	let applyError = $state('');
 	let warnings = $state<string[]>([]);
-	let issues = $state<ValidationIssue[]>([]);
 	let applied = $state<{ name: string; version: string } | null>(null);
 	// The no-op report: an apply that stored nothing, said out loud. Silence
 	// here would be indistinguishable from success, and navigating away would
@@ -131,18 +135,23 @@
 
 	guardUnsaved(() => dirty, 'Discard unsaved Orkflow YAML?');
 
+	// The live check (src/lib/yaml/session.svelte.ts): ValidateOrkflow, asked
+	// once typing pauses and by the Validate button.
+	const session = new YamlSession(async (text, ns, signal) => {
+		const res = await orkflowClient(fetch).validateOrkflow({ yaml: text, namespace: ns }, { signal });
+		return res.issues;
+	}, 'Apply also refuses a version already stored with other content.');
+
 	async function validate(): Promise<boolean> {
 		applyError = '';
-		issues = [];
 		if (!yaml.trim()) { applyError = 'Paste an Orkflow YAML document first.'; return false; }
 		const validatedYaml = yaml;
 		const validatedNamespace = namespace;
 		validating = true;
 		try {
-			const res = await orkflowClient(fetch).validateOrkflow({ yaml: validatedYaml, namespace: validatedNamespace });
-			if (yaml !== validatedYaml || namespace !== validatedNamespace) return false;
-			issues = res.issues;
-			return !res.issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
+			const issues = await session.validateNow(validatedYaml, validatedNamespace);
+			if (issues === null || yaml !== validatedYaml || namespace !== validatedNamespace) return false;
+			return !issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
 		} catch (err) {
 			applyError = errorMessage(err);
 			return false;
@@ -330,16 +339,20 @@
 			</span>
 		</div>
 
-		<textarea
-			id="editor-yaml"
-			data-testid="editor-yaml"
-			aria-label="Orkflow YAML"
-			bind:value={yaml}
-			oninput={() => (noop = '')}
-			rows="24"
-			spellcheck="false"
-			class="field min-h-[360px] w-full px-3 py-2 font-mono text-sm leading-5 [font-variant-ligatures:none] [tab-size:2] whitespace-pre"
-		></textarea>
+		<div>
+			<span id="editor-yaml-label" class="field-label">Orkflow YAML</span>
+			<YamlField
+				bind:value={yaml}
+				kind="Orkflow"
+				{namespace}
+				{session}
+				testid="editor-yaml"
+				label="Orkflow YAML"
+				labelledby="editor-yaml-label"
+				rows={24}
+				oninput={() => (noop = '')}
+			/>
+		</div>
 		<div class="flex flex-wrap gap-3 text-sm">
 			<label class="link cursor-pointer font-semibold">Import YAML<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
 			<button type="button" data-testid="editor-export" onclick={exportYaml} class="link font-semibold">Export YAML</button>
@@ -364,14 +377,7 @@
 				{warning}
 			</div>
 		{/each}
-		{#if issues.length > 0}
-			<div data-testid="editor-validation-issues" class="space-y-2 border-t border-rule pt-3 text-sm">
-				<p class="caps text-ink-muted">Validation results</p>
-				{#each issues as issue, i (`${issue.field}-${i}`)}
-					<p class={issue.severity === ValidationSeverity.ERROR ? 'severity-error' : 'severity-warning'}><span class="font-medium">{issue.field || 'document'}</span>: {issue.message}</p>
-				{/each}
-			</div>
-		{/if}
+		<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" />
 		{#if applied}
 			<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
 		{/if}
@@ -450,7 +456,7 @@
 							The two versions' source YAML is byte-identical.
 						</p>
 					{:else}
-						<DiffView diff={conflictDiff} testid="conflict-diff" />
+						<DiffView diff={conflictDiff} testid="conflict-diff" lang="yaml" />
 					{/if}
 				{/if}
 			</div>
