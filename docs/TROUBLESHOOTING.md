@@ -227,13 +227,13 @@ orkctl run artifacts <run-id> --task <task>                # the recorded stdout
 
 ### A task failed with `VALUES_MALFORMED` or `VALUES_TOO_LARGE`
 
-**Cause.** `values.json` is not valid UTF-8 JSON, or its top-level value is not an object, such as an array. A directory or another non-regular file at that path is refused the same way. A file over `limits.valuesMaxBytes` is `VALUES_TOO_LARGE`. Both are contract violations and never retried (`internal/orker/workspace.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+**Cause.** `values.json` is not valid UTF-8 JSON, or its top-level value is not an object, such as an array. A symlink, a directory or another non-regular file at that path is refused the same way, whatever the link points at: the Orker follows no link the workload wrote. A file over `limits.valuesMaxBytes` is `VALUES_TOO_LARGE`. Both are contract violations and never retried (`internal/orker/workspace.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 
 **Fix.** Write exactly one JSON object. Move large data into an artifact, which is a regular file, or archive a directory such as `workspace.tar.gz` ([AGENTS.md](../AGENTS.md), "3.1 Files, values, and artifacts").
 
 ### A task failed with `OUTPUT_NOT_READABLE` or `ARTIFACT_NOT_A_FILE`
 
-**Cause.** `OUTPUT_NOT_READABLE`: the Orker cannot open a file the workload wrote, and the message names the path, mode and owner. `ARTIFACT_NOT_A_FILE`: a directory, symlink, device, socket or FIFO was written under `output/artifacts/`. Both are contract violations (`internal/orker/workspace.go`).
+**Cause.** `OUTPUT_NOT_READABLE`: the Orker cannot open a file the workload wrote, and the message names the path, mode and owner. `ARTIFACT_NOT_A_FILE`: a directory, symlink, device, socket or FIFO was written under `output/artifacts/`, or `output/artifacts` itself was replaced by a symlink or a file. Both are contract violations (`internal/orker/workspace.go`).
 
 **Fix.** For `OUTPUT_NOT_READABLE`, the contract's fix is `umask 022` in the workload, so the files are readable by the Orker's user. For `ARTIFACT_NOT_A_FILE`, write regular files only, and archive any directory ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 

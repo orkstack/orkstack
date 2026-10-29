@@ -772,13 +772,21 @@ func TestWorkspace_TaskJSONTraceIsOptionalAndNonABI(t *testing.T) {
 	})
 }
 
-type namedDirEntry string
+// lstatBeforeValidation is the scanner's stat when a test must show no entry
+// is examined before its name is valid.
+func lstatBeforeValidation(string) (os.FileInfo, error) {
+	return nil, errors.New("lstat must not run before name validation")
+}
 
-func (e namedDirEntry) Name() string    { return string(e) }
-func (namedDirEntry) IsDir() bool       { return false }
-func (namedDirEntry) Type() os.FileMode { return 0 }
-func (namedDirEntry) Info() (os.FileInfo, error) {
-	return nil, errors.New("Info must not run before name validation")
+// openTestOutput opens dir as the attempt's output tree, closed with the test.
+func openTestOutput(t *testing.T, dir string) *OutputTree {
+	t.Helper()
+	tree, failure := OpenOutputTree(dir)
+	if failure != nil {
+		t.Fatalf("OpenOutputTree: %v", failure)
+	}
+	t.Cleanup(func() { _ = tree.Close() })
+	return tree
 }
 
 func TestScanOutputArtifactsRejectsInvalidUTF8BeforeFilesystemAccess(t *testing.T) {
@@ -793,7 +801,7 @@ func TestScanOutputArtifactsRejectsInvalidUTF8BeforeFilesystemAccess(t *testing.
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			found, failure := scanOutputArtifactEntries(
-				"unread", []os.DirEntry{namedDirEntry(string(tc.bytes))}, testLimits(),
+				[]string{string(tc.bytes)}, lstatBeforeValidation, testLimits(),
 			)
 			if failure == nil {
 				t.Fatalf("scan succeeded with %v for invalid UTF-8 %x", found, tc.bytes)
@@ -868,7 +876,7 @@ func TestScanOutputArtifacts_EnforcesTheOutputRules(t *testing.T) {
 			}
 			tc.build(t, dir)
 
-			found, failure := ScanOutputArtifacts(dir, testLimits())
+			found, failure := openTestOutput(t, filepath.Dir(dir)).ScanArtifacts(testLimits())
 			if tc.wantReason != "" {
 				if failure == nil {
 					t.Fatalf("scan succeeded with %v; want %s", found, tc.wantReason)
@@ -907,7 +915,7 @@ func TestScanOutputArtifacts_EnforcesTheLimits(t *testing.T) {
 		limits := testLimits()
 		limits.ArtifactMaxCount = 3
 
-		_, failure := ScanOutputArtifacts(dir, limits)
+		_, failure := openTestOutput(t, filepath.Dir(dir)).ScanArtifacts(limits)
 		if failure == nil || failure.Reason != ReasonArtifactLimit {
 			t.Fatalf("scan = %v, want %s", failure, ReasonArtifactLimit)
 		}
@@ -922,7 +930,7 @@ func TestScanOutputArtifacts_EnforcesTheLimits(t *testing.T) {
 		limits := testLimits()
 		limits.ArtifactMaxBytes = 10
 
-		_, failure := ScanOutputArtifacts(dir, limits)
+		_, failure := openTestOutput(t, filepath.Dir(dir)).ScanArtifacts(limits)
 		if failure == nil || failure.Reason != ReasonArtifactLimit {
 			t.Fatalf("scan = %v, want %s", failure, ReasonArtifactLimit)
 		}
@@ -958,7 +966,7 @@ func TestReadValues_EnforcesTheValuesContract(t *testing.T) {
 				limits.ValuesMaxBytes = tc.limit
 			}
 
-			raw, failure := ReadValues(path, limits)
+			raw, failure := openTestOutput(t, filepath.Dir(path)).ReadValues(limits)
 			if tc.wantReason != "" {
 				if failure == nil {
 					t.Fatalf("ReadValues succeeded with %q; want %s", raw, tc.wantReason)
@@ -992,7 +1000,7 @@ func TestReadValues_PreservesKeyOrderAndLargeIntegersExactly(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "values.json")
 	mustWrite(t, path, exact)
 
-	raw, failure := ReadValues(path, testLimits())
+	raw, failure := openTestOutput(t, filepath.Dir(path)).ReadValues(testLimits())
 	if failure != nil {
 		t.Fatalf("ReadValues: %v", failure)
 	}
@@ -1007,52 +1015,78 @@ func TestReadValues_PreservesKeyOrderAndLargeIntegersExactly(t *testing.T) {
 	}
 }
 
-// TestCheckReadable_NamesTheFileItsModeAndTheFix is §3.1's detection measure.
+// TestOutputTree_AnUnreadableFileNamesItsModeAndTheFix is §3.1's detection
+// measure, for values.json and for an artifact alike.
 //
-// stat succeeds even when open fails, which is what lets the message always be
-// specific. The message has to carry the fix, because the person reading it is
-// the image author and `umask 022` is the one-line answer.
-func TestCheckReadable_NamesTheFileItsModeAndTheFix(t *testing.T) {
+// The Lstat succeeds even when the open fails, which is what lets the message
+// always be specific. The message has to carry the fix, because the person
+// reading it is the image author and `umask 022` is the one-line answer.
+func TestOutputTree_AnUnreadableFileNamesItsModeAndTheFix(t *testing.T) {
 	if os.Geteuid() == 0 {
 		t.Skip("running as root, which can open any mode; the check is about a non-root Orker")
 	}
-	path := filepath.Join(t.TempDir(), "values.json")
-	mustWrite(t, path, `{}`)
-	if err := os.Chmod(path, 0o000); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
+	for _, tc := range []struct {
+		name          string
+		path          string
+		containerPath string
+		read          func(*OutputTree) *Failure
+	}{
+		{
+			name: "values.json", path: "values.json", containerPath: ContainerValuesJSON,
+			read: func(tree *OutputTree) *Failure {
+				_, failure := tree.ReadValues(testLimits())
+				return failure
+			},
+		},
+		{
+			name: "an artifact", path: "artifacts/report.txt", containerPath: ContainerArtifacts + "/report.txt",
+			read: func(tree *OutputTree) *Failure {
+				scanned, failure := tree.ScanArtifacts(testLimits())
+				if failure != nil {
+					return failure
+				}
+				file, failure := scanned[0].Open()
+				if file != nil {
+					_ = file.Close()
+				}
+				return failure
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output := t.TempDir()
+			path := filepath.Join(output, tc.path)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			mustWrite(t, path, `{}`)
+			if err := os.Chmod(path, 0o000); err != nil {
+				t.Fatalf("chmod: %v", err)
+			}
 
-	failure := CheckReadable(path, ContainerValuesJSON)
-	if failure == nil {
-		t.Fatal("CheckReadable accepted a file it cannot open")
-	}
-	if failure.Reason != ReasonOutputNotReadable {
-		t.Errorf("reason = %q, want %q", failure.Reason, ReasonOutputNotReadable)
-	}
-	// ContractViolation, never ARTIFACT_UPLOAD_FAILED: the image will do the
-	// same thing on every attempt, and classifying it as retryable
-	// infrastructure would loop forever.
-	if failure.Category() != CategoryContractViolation {
-		t.Errorf("category = %q, want %q — a retryable classification would loop against "+
-			"deterministic image behavior", failure.Category(), CategoryContractViolation)
-	}
-	for _, want := range []string{ContainerValuesJSON, "mode=", "umask 022", "runAsOrkerUser"} {
-		if !strings.Contains(failure.Message, want) {
-			t.Errorf("the message does not name %q:\n%s", want, failure.Message)
-		}
-	}
-}
-
-// TestCheckReadable_AcceptsAFileItCanOpen is the negative control: the check
-// must not fail a workload that behaved.
-func TestCheckReadable_AcceptsAFileItCanOpen(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "values.json")
-	mustWrite(t, path, `{}`)
-	if err := os.Chmod(path, 0o644); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
-	if failure := CheckReadable(path, ContainerValuesJSON); failure != nil {
-		t.Errorf("CheckReadable rejected a 0644 file: %v", failure)
+			failure := tc.read(openTestOutput(t, output))
+			if failure == nil {
+				t.Fatal("the tree read a file it cannot open")
+			}
+			if failure.Reason != ReasonOutputNotReadable {
+				t.Errorf("reason = %q, want %q (%s)", failure.Reason, ReasonOutputNotReadable, failure.Message)
+			}
+			// ContractViolation, never ARTIFACT_UPLOAD_FAILED: the image will
+			// do the same thing on every attempt, and classifying it as
+			// retryable infrastructure would loop forever.
+			if failure.Category() != CategoryContractViolation {
+				t.Errorf("category = %q, want %q — a retryable classification would loop against "+
+					"deterministic image behavior", failure.Category(), CategoryContractViolation)
+			}
+			for _, want := range []string{tc.containerPath, "mode=0", "umask 022", "runAsOrkerUser"} {
+				if !strings.Contains(failure.Message, want) {
+					t.Errorf("the message does not name %q:\n%s", want, failure.Message)
+				}
+			}
+			if strings.Contains(failure.Message, output) {
+				t.Errorf("the message names the host path %s:\n%s", output, failure.Message)
+			}
+		})
 	}
 }
 
@@ -1144,9 +1178,14 @@ func TestSniffFileContentType_AgreesWithWhatTheStoreWouldRecord(t *testing.T) {
 			path := filepath.Join(dir, tc.name)
 			mustWrite(t, path, tc.content)
 
-			got, err := sniffFileContentType(path)
+			file, err := os.Open(path)
 			if err != nil {
-				t.Fatalf("sniffFileContentType: %v", err)
+				t.Fatal(err)
+			}
+			defer func() { _ = file.Close() }()
+			got, err := sniffContentType(file)
+			if err != nil {
+				t.Fatalf("sniffContentType: %v", err)
 			}
 			if got == "" {
 				t.Fatal("an empty content type is exactly the defect: RefFor would " +

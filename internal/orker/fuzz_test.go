@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -113,12 +114,17 @@ func FuzzReadValues(f *testing.F) {
 	}
 	dir := f.TempDir()
 	path := filepath.Join(dir, "values.json")
+	tree, failure := OpenOutputTree(dir)
+	if failure != nil {
+		f.Fatal(failure)
+	}
+	f.Cleanup(func() { _ = tree.Close() })
 	f.Fuzz(func(t *testing.T, content []byte, max int64) {
 		if err := os.WriteFile(path, content, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		limits := &orkstackv1.WorkspaceLimits{ValuesMaxBytes: max}
-		raw, failure := ReadValues(path, limits)
+		raw, failure := tree.ReadValues(limits)
 		var object map[string]json.RawMessage
 		wellFormed := utf8.Valid(content) && json.Valid(content) && json.Unmarshal(content, &object) == nil && object != nil
 		// json.Unmarshal into any is what the check reads with; a number
@@ -141,6 +147,181 @@ func FuzzReadValues(f *testing.F) {
 			t.Fatalf("ReadValues accepted %q (max %d)", content, max)
 		case !bytes.Equal(raw, content):
 			t.Fatalf("ReadValues returned %q for %q: the bytes are returned verbatim", raw, content)
+		}
+	})
+}
+
+// The kinds of thing FuzzOutputTree plants where the Orker reads. For
+// output/artifacts itself, outputKindRegular means a real directory and
+// outputKindDir a regular file, so a zero byte is the well-formed layout.
+const (
+	outputKindRegular = iota
+	outputKindAbsent
+	outputKindDir
+	outputKindLinkOutsideFile
+	outputKindLinkInside
+	outputKindLinkOutsideDir
+	outputKindLinkDangling
+	outputKindFIFO
+	outputKinds
+)
+
+// FuzzOutputTree: the output directory's layout is the workload's. Whatever
+// it plants where the Orker reads — regular files, directories, links inside
+// or outside the tree, dangling links, FIFOs — the tree returns only the bytes
+// of regular files exactly where §3.4 and §3.5 put them, never a byte from
+// outside, and refuses everything else as a ContractViolation that names the
+// container path it refused and nothing of the host's (B7).
+func FuzzOutputTree(f *testing.F) {
+	for _, seed := range []struct {
+		values, artifacts uint8
+		entries           []byte
+	}{
+		{0, 0, []byte{0, 0}}, {0, 0, nil}, {1, 1, nil}, {3, 0, nil}, {4, 5, nil}, {0, 0, []byte{3}},
+		{6, 4, []byte{0, 5}}, {7, 7, nil}, {2, 2, nil}, {5, 3, nil}, {0, 6, nil}, {0, 0, []byte{0, 2, 4, 6, 7, 1}},
+	} {
+		f.Add(seed.values, seed.artifacts, seed.entries)
+	}
+	f.Fuzz(func(t *testing.T, valuesKind, artifactsKind uint8, entryKinds []byte) {
+		valuesKind, artifactsKind = valuesKind%outputKinds, artifactsKind%outputKinds
+		if len(entryKinds) > 6 {
+			entryKinds = entryKinds[:6]
+		}
+		base := t.TempDir()
+		output, outside := filepath.Join(base, "output"), filepath.Join(base, "outside")
+		for _, dir := range []string{filepath.Join(output, "inside-dir"), filepath.Join(outside, "dir")} {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		const sentinel = "orker-only-bytes"
+		mustWrite(t, filepath.Join(outside, "outside.json"), `{"leaked":"`+sentinel+`"}`)
+		mustWrite(t, filepath.Join(output, "inside.json"), `{"inside":true}`)
+		for i := range 6 {
+			mustWrite(t, filepath.Join(outside, "dir", "e"+strconv.Itoa(i)), sentinel)
+			mustWrite(t, filepath.Join(output, "inside-dir", "e"+strconv.Itoa(i)), "inside")
+		}
+		// plant puts kind at path; regular writes what a regular file holds,
+		// and inside is the in-tree target of a link that stays inside.
+		plant := func(path string, kind uint8, regular func(string) error, inside string) {
+			var err error
+			switch kind {
+			case outputKindRegular:
+				err = regular(path)
+			case outputKindAbsent:
+			case outputKindDir:
+				err = os.Mkdir(path, 0o755)
+			case outputKindLinkOutsideFile:
+				err = os.Symlink(filepath.Join(outside, "outside.json"), path)
+			case outputKindLinkInside:
+				err = os.Symlink(inside, path)
+			case outputKindLinkOutsideDir:
+				err = os.Symlink(filepath.Join(outside, "dir"), path)
+			case outputKindLinkDangling:
+				err = os.Symlink(filepath.Join(outside, "missing"), path)
+			case outputKindFIFO:
+				mustFIFO(t, path)
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		writes := func(content string) func(string) error {
+			return func(path string) error { return os.WriteFile(path, []byte(content), 0o644) }
+		}
+		plant(filepath.Join(output, "values.json"), valuesKind, writes(`{"v":1}`), "inside.json")
+		artifactsDir := filepath.Join(output, "artifacts")
+		switch artifactsKind {
+		case outputKindRegular:
+			plant(artifactsDir, outputKindDir, nil, "")
+		case outputKindDir:
+			plant(artifactsDir, outputKindRegular, writes("x"), "")
+		default:
+			plant(artifactsDir, artifactsKind, nil, "inside-dir")
+		}
+		var wantArtifacts []string
+		entriesRegular := true
+		if artifactsKind == outputKindRegular {
+			for i, kind := range entryKinds {
+				kind %= outputKinds
+				name := "e" + strconv.Itoa(i)
+				plant(filepath.Join(artifactsDir, name), kind, writes("artifact-"+name), "../inside.json")
+				switch kind {
+				case outputKindRegular:
+					wantArtifacts = append(wantArtifacts, name+"=artifact-"+name)
+				case outputKindAbsent:
+				default:
+					entriesRegular = false
+				}
+			}
+		}
+
+		tree, failure := OpenOutputTree(output)
+		if failure != nil {
+			t.Fatal(failure)
+		}
+		defer func() { _ = tree.Close() }()
+		refused := func(what string, failure *Failure, reason, named string) {
+			t.Helper()
+			switch {
+			case failure == nil:
+				t.Fatalf("%s: accepted; want %s", what, reason)
+			case failure.Reason != reason:
+				t.Fatalf("%s: %s; want %s", what, failure, reason)
+			case failure.Category() != CategoryContractViolation:
+				t.Fatalf("%s: category %s", what, failure.Category())
+			case !strings.Contains(failure.Message, named):
+				t.Fatalf("%s: %q does not name %s", what, failure.Message, named)
+			case strings.Contains(failure.Error(), base) || strings.Contains(failure.Error(), sentinel):
+				t.Fatalf("%s: %q names the host's path or bytes", what, failure)
+			}
+		}
+
+		values, failure := tree.ReadValues(testLimits())
+		switch valuesKind {
+		case outputKindRegular:
+			if failure != nil || string(values) != `{"v":1}` {
+				t.Fatalf("values.json = %q, %v; want the regular file's bytes", values, failure)
+			}
+		case outputKindAbsent:
+			refused("values.json", failure, ReasonValuesMissing, ContainerValuesJSON)
+		default:
+			if values != nil {
+				t.Fatalf("values.json kind %d returned %q", valuesKind, values)
+			}
+			refused("values.json", failure, ReasonValuesMalformed, ContainerValuesJSON+" is ")
+		}
+
+		scanned, failure := tree.ScanArtifacts(testLimits())
+		switch {
+		case artifactsKind == outputKindAbsent:
+			if failure != nil || scanned != nil {
+				t.Fatalf("no artifacts directory = %v, %v; want nothing", scanned, failure)
+			}
+		case artifactsKind != outputKindRegular:
+			refused("output/artifacts", failure, ReasonArtifactNotAFile, ContainerArtifacts+" is ")
+		case !entriesRegular:
+			refused("an artifact", failure, ReasonArtifactNotAFile, ContainerArtifacts+"/e")
+		default:
+			if failure != nil {
+				t.Fatalf("regular artifacts refused: %v", failure)
+			}
+			var got []string
+			for _, artifact := range scanned {
+				file, failure := artifact.Open()
+				if failure != nil {
+					t.Fatalf("Open %s: %v", artifact.Name, failure)
+				}
+				raw, err := io.ReadAll(file)
+				_ = file.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				got = append(got, artifact.Name+"="+string(raw))
+			}
+			if strings.Join(got, ",") != strings.Join(wantArtifacts, ",") {
+				t.Fatalf("artifacts = %v; want %v", got, wantArtifacts)
+			}
 		}
 	})
 }

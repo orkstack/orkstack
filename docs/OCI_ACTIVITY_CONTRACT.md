@@ -639,6 +639,10 @@ The template helpers are exactly three:
 
 - **REQUIRED.** Exit `0` with no `values.json` is
   `ContractViolation/VALUES_MISSING`. A workload with no result writes `{}`.
+- MUST be a **regular file** directly in `output/`. A symlink, whatever and
+  wherever its target, a directory, a device, a socket or a FIFO is
+  `ContractViolation/VALUES_MALFORMED`, naming `/orkstack/output/values.json`
+  and what it is. The Orker follows no link the workload wrote (§9.5).
 - MUST be a JSON **object** at the top level. An array, a scalar, or `null` is
   `ContractViolation/VALUES_MALFORMED`.
 - MUST be valid UTF-8 and MUST NOT exceed `limits.valuesMaxBytes` (256 KiB
@@ -661,6 +665,11 @@ separately: only a `values.json` of ≤ 4 KiB is copied inline into the result.
 - The scan is **not recursive**. A directory, symlink, device, socket or FIFO
   is `ContractViolation/ARTIFACT_NOT_A_FILE`. A hierarchy is archived by the
   workload, e.g. as `workspace.tar.gz` (AGENTS.md §3.1).
+- `output/artifacts` itself MUST stay the directory the Orker created. A
+  workload that replaces it with a symlink, a regular file or anything else
+  fails `ContractViolation/ARTIFACT_NOT_A_FILE`, naming
+  `/orkstack/output/artifacts`, before any entry is listed (§9.5). Removing it
+  is not a violation: a workload with no artifacts need not keep it.
 - More than `limits.artifactMaxCount` files, or any file larger than
   `limits.artifactMaxBytes`, is `ContractViolation/ARTIFACT_LIMIT_EXCEEDED`.
 - Every file MUST be readable by the Orker (`OUTPUT_NOT_READABLE`, §3.1).
@@ -1145,8 +1154,8 @@ guarantee that every byte still exists.
 **Success path**, in this exact order (AGENTS.md §4.1):
 
 ```
-1. validate values.json                (exists, readable, object, UTF-8, ≤ limit)
-2. scan + validate output/artifacts/   (regular files, UTF-8 names, readable, count/size)
+1. validate values.json                (exists, regular, readable, object, UTF-8, ≤ limit)
+2. scan + validate output/artifacts/   (a directory of regular files, UTF-8 names, readable, count/size)
 3. hash every artifact and values.json (sha256, streaming)
 4. bound the commit                    (project ActivityCommit via RefFor, assert ≤ commit_max_bytes)
 5. upload artifacts                    (content-addressed keys)
@@ -1253,6 +1262,7 @@ containers run.
 | Temporal temporarily unavailable | the commit, if written | Worker retries the completion; on adoption the result is returned again. | correct |
 | Container exits 1 | logs + declared artifacts, no commit | `ActivityFailed` → retried per policy. | explicit failure |
 | Exit 0, no / malformed / oversize `values.json` | logs, no commit | `VALUES_MISSING` / `VALUES_MALFORMED` / `VALUES_TOO_LARGE` → never retried. | explicit failure |
+| A link in the output: `values.json`, `output/artifacts` or an artifact | logs, no commit | `VALUES_MALFORMED` / `ARTIFACT_NOT_A_FILE`, naming the path → never retried. Nothing outside the output directory is read (§9.5). | explicit failure |
 | Output limits exceeded | logs, no commit | `ARTIFACT_LIMIT_EXCEEDED`, or `COMMIT_TOO_LARGE` measured before any upload. | explicit failure |
 | Outputs the Orker cannot read (`umask 077`) | logs, no commit | `OUTPUT_NOT_READABLE`, naming file, mode and owner. | explicit failure |
 | Torn `commit.json` | the torn object | `link(2)` publication cannot produce one; an existing one is reread once, then `COMMIT_UNDECODABLE`. | explicit failure |
@@ -1505,8 +1515,8 @@ instead would make an input file mutable during setup, and §3.1 depends on
 `input/` being sealed `0555`/`0444` before the container starts. Pulling first
 also fails `IMAGE_PULL_FAILED` before any staging bandwidth is spent.
 
-**The failure path scans too**, so the regular-file, symlink, device, FIFO,
-readability, count and size rules apply on exactly the path a broken or
+**The failure path scans too**, through the same confined tree (§9.5), so the
+regular-file, symlink, device, FIFO, readability, count and size rules apply on exactly the path a broken or
 hostile image is most likely to take. A violation there is a **note attached
 to the workload's error** (`ActivityFailureDetail.scan_notes`), never a
 replacement for it: a task that exited 1 *and* wrote a symlink is reported as
@@ -1632,9 +1642,9 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `IMAGE_SIGNATURE_INVALID` | ContractViolation | no | signatures exist and none verifies with the named key over this digest |
 | `IMAGE_SIGNATURE_UNAVAILABLE` | InfrastructureError | yes | the registry could not be asked for a signature, or this Orker has no registry client |
 | `VALUES_MISSING` | ContractViolation | no | exit 0 with no `/orkstack/output/values.json` |
-| `VALUES_MALFORMED` | ContractViolation | no | not valid UTF-8 JSON, or not a top-level object |
+| `VALUES_MALFORMED` | ContractViolation | no | not valid UTF-8 JSON, or not a top-level object, or not a regular file (a symlink, directory, device, socket or FIFO) |
 | `VALUES_TOO_LARGE` | ContractViolation | no | over `limits.valuesMaxBytes` |
-| `ARTIFACT_NOT_A_FILE` | ContractViolation | no | a directory, symlink, device, socket or FIFO in `output/artifacts/` |
+| `ARTIFACT_NOT_A_FILE` | ContractViolation | no | a directory, symlink, device, socket or FIFO in `output/artifacts/`, or `output/artifacts` itself replaced by one that is not a directory |
 | `ARTIFACT_LIMIT_EXCEEDED` | ContractViolation | no | too many artifacts, or one too large |
 | `ARTIFACT_NAME_NOT_UTF8` | ContractViolation | no | an `output/artifacts/` file name is not valid UTF-8 (§3.5) |
 | `ARTIFACT_UPLOAD_FAILED` | InfrastructureError | yes | store `Put` failed |
@@ -1841,6 +1851,42 @@ run archive, a log chunk, or `task.json` — which carries names and paths only.
 The per-attempt secrets directory is removed on every exit path, including
 panic and cancellation. A cached task resolves no secret on a hit, which is why
 a task that mounts a secret should not be cached (`docs/ACTIVITY_IMAGES.md`).
+
+### 9.5 Reading the output
+
+Everything under `/orkstack/output` is the workload's, and the workload may
+be hostile. The Orker reads it back on the host, where a symlink resolves in
+the **Orker's** mount namespace, not the container's: a `values.json` linked
+to a file the container never saw, such as a registry login or another
+attempt's `task.json` in the Orker's work root, would otherwise be read and
+committed as the task's result, and an `output/artifacts` linked to a host
+directory would upload what is in it. So the Orker never reads below the
+output directory by host path:
+
+- It opens the attempt's output directory once, as a confined root
+  (`os.Root`). The directory is the bind-mount point, which the container can
+  neither rename nor remove, inside a `0700` attempt directory no container
+  mounts. Every later read resolves through that root, and a resolution that
+  would leave it fails.
+- It `lstat`s `values.json`, `artifacts` and each entry of `artifacts` inside
+  the root before opening it, and refuses a symlink, even one whose target is
+  inside the tree, and any other entry that is not where §3.4 and §3.5 put a
+  regular file or the artifacts directory (`VALUES_MALFORMED`,
+  `ARTIFACT_NOT_A_FILE`, naming the container path and the entry's kind and
+  never a host path).
+- Every open (validation, hashing, content-type sniffing, upload, and the
+  failure path's upload) goes through the root, without blocking on a FIFO,
+  and is checked against the `lstat`: a descriptor that is not that regular
+  file is refused. `output/artifacts` is opened once and held, so a name
+  replaced after the scan is never re-resolved.
+
+The kernel's `fs.protected_symlinks` refuses to follow some of these links
+when the workload's uid is not the Orker's. The Orker does not rely on it: a
+same-uid workload (`runAsOrkerUser`, or root in a root Orker's container)
+passes it, and not every host sets it. Hard links are not a way out either: a
+container cannot link a file across its bind mounts (`EXDEV`). The removal of
+an attempt's or a pin's tree walks and unseals through a confined root too
+(`internal/orker/workspace.go`, `OutputTree`, `removeSealedTree`).
 
 ---
 
@@ -2140,7 +2186,7 @@ hold the tree to them.
   bound (§5.3, §5.4).
 - **14.8 Output readability is host-dependent.** The same image, umask
   (`077`) and mode failed `Permission denied` on a native filesystem and read
-  fine through a VM-shared bind mount that remapped ownership. `stat` succeeds
+  fine through a VM-shared bind mount that remapped ownership. `lstat` succeeds
   where `open` fails, so `OUTPUT_NOT_READABLE` can always name mode and owner;
   `--user` of the Orker's own UID reads its own `0600` file (§3.1).
 - **14.9 A `Struct` cannot carry byte-identical JSON.** A `Struct`/`protojson`

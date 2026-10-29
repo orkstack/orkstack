@@ -927,6 +927,26 @@ include breaking changes, and each is marked **BREAKING**.
   daemon cannot fail them for a step they do not test, and the history-guard
   CPU bound is scaled under the race detector like its siblings.
 
+### Security
+
+- A workload can no longer make the Orker read, commit or upload a file
+  outside its output directory. The Orker reads the output on the host, where
+  a symlink resolves in the Orker's own mount namespace: a `values.json` linked
+  to any JSON file the Orker could open (a registry login, another attempt's
+  `task.json`) was committed as the task's result, and an `output/artifacts`
+  replaced by a link to a host directory had every file in it uploaded as an
+  artifact, on the success path and on a failed attempt's alike. The Orker now
+  reads `/orkstack/output` only through a confined root opened on the
+  attempt's output directory, `lstat`s each name before it opens it, and
+  checks every open against that `lstat`. A symlinked `values.json` (whatever
+  its target, inside the tree or out) fails `VALUES_MALFORMED`; a symlinked or
+  non-directory `output/artifacts` fails `ARTIFACT_NOT_A_FILE` before any entry
+  is listed, where a file in its place used to fail `OUTPUT_NOT_READABLE`.
+  Both are contract violations, never retried, and name the container path,
+  never a host path. Removing an attempt's or a pin's tree also unseals it
+  through a confined root (docs/OCI_ACTIVITY_CONTRACT.md §9.5,
+  docs/SECURITY_MODEL.md, "What the Orker reads back").
+
 ### Added
 
 - `proofrun overhead` and `make proof-overhead FROM=proof/<name>`, which read
