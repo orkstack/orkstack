@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -102,6 +103,15 @@ type setupFailure struct {
 	Attempt    int    `json:"attempt"`
 	Step       string `json:"step"`
 	Conclusion string `json:"conclusion"`
+}
+
+// carriedJob is one part attempt whose job GitHub carried forward from an
+// earlier attempt without running it again: From is the attempt that ran it.
+// proof.json lists every such attempt under carried_forward.
+type carriedJob struct {
+	Part    string `json:"part"`
+	Attempt int    `json:"attempt"`
+	From    int    `json:"from"`
 }
 
 // degradedRunner is one metric one part attempt measured on the wrong side
@@ -203,9 +213,18 @@ type githubAttempt struct {
 }
 
 type githubJob struct {
-	Name        string       `json:"name"`
-	Part        string       `json:"part,omitempty"`
-	Conclusion  string       `json:"conclusion,omitempty"`
+	Name       string `json:"name"`
+	Part       string `json:"part,omitempty"`
+	Conclusion string `json:"conclusion,omitempty"`
+	// ID, RunAttempt, StartedAt, CompletedAt and RunnerName are GitHub's own
+	// fields of the job. A job "Re-run failed jobs" did not run again is
+	// listed in the later attempt under a new ID and that attempt's number,
+	// with the earlier attempt's times, runner and steps (carriedForward).
+	ID          int64        `json:"id,omitempty"`
+	RunAttempt  int          `json:"run_attempt,omitempty"`
+	StartedAt   string       `json:"started_at,omitempty"`
+	CompletedAt string       `json:"completed_at,omitempty"`
+	RunnerName  string       `json:"runner_name,omitempty"`
 	CheckRunID  int64        `json:"check_run_id,omitempty"`
 	Annotations []string     `json:"annotations,omitempty"`
 	Log         string       `json:"log,omitempty"`
@@ -218,8 +237,11 @@ type githubJob struct {
 }
 
 type githubStep struct {
-	Name       string `json:"name"`
-	Conclusion string `json:"conclusion"`
+	Name        string `json:"name"`
+	Number      int    `json:"number,omitempty"`
+	Conclusion  string `json:"conclusion"`
+	StartedAt   string `json:"started_at,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
 }
 
 var runnerLostMarker = regexp.MustCompile(`(?i)(the runner has received a shutdown signal|lost communication with the server)`)
@@ -541,6 +563,7 @@ type merger struct {
 	reruns            []rerunRecord
 	degraded          []degradedRunner
 	setupFailures     []setupFailure
+	carried           []carriedJob
 	health            []partHealth
 	proof             *proofRecord
 	unit              *ledger
@@ -980,6 +1003,7 @@ func (m *merger) merge(name string) {
 	m.proof.Reruns = m.reruns
 	m.proof.DegradedRunners = m.degraded
 	m.proof.SetupFailures = m.setupFailures
+	m.proof.CarriedForward = m.carried
 	m.proof.RunnerHealth = m.health
 	for _, part := range sortedPartKeys(m.parts) {
 		for _, reading := range m.resultReadings(part) {
@@ -1245,6 +1269,30 @@ func (m *merger) mergePart(part string) {
 		attempts[a] = r
 	}
 	jobs := m.attempts[part]
+	// A job GitHub carried forward into a later attempt is not an attempt of
+	// the part: its result is the attempt that ran it. One that left an
+	// artifact of the later attempt contradicts that record, and stays an
+	// attempt of its own, which the rules below judge as before.
+	if carried := carriedForward(jobs); len(carried) > 0 {
+		kept := map[int]githubJob{}
+		for a, j := range jobs {
+			kept[a] = j
+		}
+		nums := make([]int, 0, len(carried))
+		for a := range carried {
+			nums = append(nums, a)
+		}
+		sort.Ints(nums)
+		for _, a := range nums {
+			if _, ran := attempts[a]; ran {
+				m.ineligible = append(m.ineligible, fmt.Sprintf("part %s left an artifact of attempt %d, which GitHub's record says is attempt %d's job carried forward, not run again: it fails closed", part, a, carried[a]))
+				continue
+			}
+			delete(kept, a)
+			m.carried = append(m.carried, carriedJob{Part: part, Attempt: a, From: carried[a]})
+		}
+		jobs = kept
+	}
 	all := map[int]bool{}
 	for a := range attempts {
 		all[a] = true
@@ -1318,6 +1366,55 @@ func (m *merger) mergePart(part string) {
 	default:
 		m.problems = append(m.problems, fmt.Sprintf("part %s left no result (attempt %d, %s); it is not rerun-eligible (only a lost, degraded or setup-failed attempt is): start a new run", part, last, why))
 	}
+}
+
+// carriedForward maps each attempt of one part's jobs that GitHub carried
+// forward to the attempt that ran the job. "Re-run failed jobs" lists every
+// job of the run again in the new attempt, each under a new id and that
+// attempt's number, and a job it did not run keeps the earlier attempt's
+// start, end, conclusion, runner and steps, to the second. An attempt is
+// carried forward only when its record and the record of the attempt just
+// before it both name their own attempt, were read whole, and have a start,
+// an end, a conclusion and steps, and every one of those is the same in both
+// records; a job that ran again started later. Anything less is an attempt of
+// its own (classify), so a record missing a field, or a part's records kept
+// by a proof job older than these fields, fails closed as it always has.
+func carriedForward(jobs map[int]githubJob) map[int]int {
+	nums := make([]int, 0, len(jobs))
+	for a := range jobs {
+		nums = append(nums, a)
+	}
+	sort.Ints(nums)
+	out := map[int]int{}
+	for _, a := range nums {
+		earlier, ok := jobs[a-1]
+		if !ok || !sameExecution(earlier, a-1, jobs[a], a) {
+			continue
+		}
+		from := a - 1
+		if f, ok := out[a-1]; ok {
+			from = f
+		}
+		out[a] = from
+	}
+	return out
+}
+
+// sameExecution says the job GitHub recorded as later in attempt la is the
+// execution it recorded as earlier in attempt ea.
+func sameExecution(earlier githubJob, ea int, later githubJob, la int) bool {
+	for _, j := range []struct {
+		job     githubJob
+		attempt int
+	}{{earlier, ea}, {later, la}} {
+		if j.job.ReadError != "" || j.job.RunAttempt != j.attempt || j.job.StartedAt == "" || j.job.CompletedAt == "" ||
+			j.job.Conclusion == "" || len(j.job.Steps) == 0 {
+			return false
+		}
+	}
+	return earlier.Name == later.Name && earlier.StartedAt == later.StartedAt && earlier.CompletedAt == later.CompletedAt &&
+		earlier.Conclusion == later.Conclusion && earlier.RunnerName == later.RunnerName &&
+		earlier.FailedStep == later.FailedStep && slices.Equal(earlier.Steps, later.Steps)
 }
 
 // recordSetupFailure lists an attempt that failed in a setup step in
@@ -2529,6 +2626,13 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) error {
 		fmt.Fprintf(&b, "## Setup failures\n\nA part whose job failed in a fetch or install step before its proof step started (docs/PROOFS.md §5): no test of that attempt ran, and a part listed here without a later attempt has no result. Re-run that job alone (docs/PROOFS.md §10).\n\n")
 		for _, s := range r.SetupFailures {
 			fmt.Fprintf(&b, "- %s attempt %d: the step %q ended %s before the proof step started\n", s.Part, s.Attempt, s.Step, orDash(s.Conclusion))
+		}
+		fmt.Fprintln(&b)
+	}
+	if len(r.CarriedForward) > 0 {
+		fmt.Fprintf(&b, "## Carried forward\n\nA job \"Re-run failed jobs\" did not run again: GitHub lists it in the later attempt with the start, end, conclusion, runner and steps of the attempt that ran it, whose artifact is the part's result (docs/PROOFS.md §7.1).\n\n")
+		for _, c := range r.CarriedForward {
+			fmt.Fprintf(&b, "- %s attempt %d: attempt %d's job\n", c.Part, c.Attempt, c.From)
 		}
 		fmt.Fprintln(&b)
 	}

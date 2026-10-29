@@ -803,7 +803,10 @@ jobs:
           # check run's annotations (where GitHub says it lost the runner),
           # its log when it did not succeed (best effort), and read_error when
           # the job listing or the annotations could not be fetched, so the
-          # merger fails that job closed.
+          # merger fails that job closed. The job's and its steps' times and
+          # its runner are how the merger tells a job "Re-run failed jobs"
+          # carried forward from the attempt before, which GitHub lists again
+          # under a new id without running it (merge.go, carriedForward).
           set -uo pipefail
           dir="$RUNNER_TEMP/ci/jobs"
           work="$RUNNER_TEMP/ci/jobs-work"
@@ -842,9 +845,13 @@ jobs:
               fi
               jq -c --rawfile log "$work/log" --slurpfile ann "$work/ann" --arg err "$err" '
                 {name, conclusion: (.conclusion // ""),
+                 id: (.id // 0), run_attempt: (.run_attempt // 0),
+                 started_at: (.started_at // ""), completed_at: (.completed_at // ""),
+                 runner_name: (.runner_name // ""),
                  check_run_id: ((.check_run_url // "") | split("/") | last | tonumber? // 0),
                  annotations: $ann[0], log: $log,
-                 steps: [.steps[]? | {name, conclusion: (.conclusion // "")}],
+                 steps: [.steps[]? | {name, number: (.number // 0), conclusion: (.conclusion // ""),
+                                      started_at: (.started_at // ""), completed_at: (.completed_at // "")}],
                  failed_step: ([.steps[]? | select(.conclusion == "failure") | .name][0] // "")}
                 + (if $err == "" then {} else {read_error: $err} end)' <<<"$job" >>"$work/jobs-$n" ||
                 echo "{\"name\":$(jq '.name' <<<"$job"),\"read_error\":\"the record could not be assembled\"}" >>"$work/jobs-$n"

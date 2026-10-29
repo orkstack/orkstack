@@ -291,6 +291,18 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- "Re-run failed jobs" on a CI proof whose failed parts were all
+  rerun-eligible now yields a merge-eligible proof once those parts pass.
+  GitHub lists every job again in the new attempt, under a new id, and a job
+  it did not run keeps the earlier attempt's start, end, conclusion, runner
+  and steps; the merger read each of those as a second attempt that lost its
+  upload, after a first that recorded a result, and refused every part it did
+  not run again (CI run 40934338667, attempt 2). The proof job's job records
+  now keep those fields, the merger takes such a job's result from the attempt
+  that ran it, and `proof.json` lists it under `carried_forward`. Only a job
+  whose record matches the attempt before it in every one of those fields is
+  carried forward; anything else is an attempt of its own and fails closed as
+  before, so a part that recorded a result and ran again is still ineligible.
 - The unit gate gives each package's test binary a 15-minute `-timeout`
   instead of `go test`'s default ten. `internal/engine`'s unit suite took
   460 s on a 4-vCPU CI runner and passed ten minutes on a slower one (CI run

@@ -491,3 +491,196 @@ func TestSetupRetries(t *testing.T) {
 		})
 	}
 }
+
+// Run 40934338667 (2026-10-29): attempt 1's integration (8) failed in its
+// "fetch plan" step before its proof step started, and "Re-run failed jobs"
+// ran that job and the proof job again as attempt 2. GitHub's record of
+// attempt 2 lists every job again, under a new id and run_attempt 2, and a
+// job it did not run keeps attempt 1's start, end, conclusion, runner and
+// steps; only the job it ran left an artifact of attempt 2. The records under
+// testdata/rerun-40934338667 are what the proof job's "job records" step
+// writes for that run, trimmed to the jobs of the fixture's parts, and the
+// fixture's integration:2 stands in for the run's integration:8.
+func run40934338667(t *testing.T) map[int][]githubJob {
+	t.Helper()
+	out := map[int][]githubJob{}
+	for _, a := range []int{1, 2} {
+		var rec githubAttempt
+		if err := readJSON(filepath.Join("testdata", "rerun-40934338667", "attempt-"+itoa(a)+".json"), &rec); err != nil {
+			t.Fatal(err)
+		}
+		if rec.Attempt != a || len(rec.Jobs) == 0 {
+			t.Fatalf("attempt-%d.json records attempt %d with %d jobs", a, rec.Attempt, len(rec.Jobs))
+		}
+		for i := range rec.Jobs {
+			if rec.Jobs[i].Name == "integration (8)" {
+				rec.Jobs[i].Name = "integration (2)"
+			}
+		}
+		out[a] = rec.Jobs
+	}
+	return out
+}
+
+// jobNamed is the record of the job called name among jobs.
+func jobNamed(t *testing.T, jobs []githubJob, name string) *githubJob {
+	t.Helper()
+	for i := range jobs {
+		if jobs[i].Name == name {
+			return &jobs[i]
+		}
+	}
+	t.Fatalf("no job %q", name)
+	return nil
+}
+
+// mergeRun40934338667 lays the run out as its artifacts left it: every part
+// at attempt 1 but integration:2, whose attempt 1 left none and whose attempt
+// 2 passed; edit changes GitHub's records or the artifacts first.
+func mergeRun40934338667(t *testing.T, edit func(f *mergeFixture, jobs map[int][]githubJob)) (proofRecord, int, *mergeFixture) {
+	t.Helper()
+	f := newMergeFixture(t, tierFull, true)
+	f.writeCI()
+	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+	f.writeShard(2, []entry{passEntry("TestB")}, nil, 2)
+	jobs := run40934338667(t)
+	if edit != nil {
+		edit(f, jobs)
+	}
+	for a, js := range jobs {
+		f.writeJobs(a, js...)
+	}
+	r, code := f.merge()
+	return r, code, f
+}
+
+// A job GitHub carried forward into a re-run attempt was not run again: its
+// result is the attempt that ran it, so "Re-run failed jobs" after a
+// setup-failed part makes a merge-eligible proof once that part passes. It is
+// decided from GitHub's record alone, and only where the record says so in
+// every field it keeps; anything else is an attempt of its own, which the
+// rules judge as before, so a part that recorded a result and ran again is
+// still ineligible.
+func TestMerge_AJobGitHubCarriedForwardIsTheResultOfTheAttemptThatRanIt(t *testing.T) {
+	const fast = "fast"
+	ranAgain := []string{
+		"part fast left no usable result at attempt 2 (it ended success after its proof step started, and its result never reached its upload); it is not rerun-eligible: start a new run",
+		"part fast was run again (attempt 2) after attempt 1 recorded its result (it left its part.json)",
+	}
+	edit := func(fn func(j *githubJob)) func(*mergeFixture, map[int][]githubJob) {
+		return func(_ *mergeFixture, jobs map[int][]githubJob) { fn(jobNamed(t, jobs[2], fast)) }
+	}
+	cases := []struct {
+		name     string
+		edit     func(f *mergeFixture, jobs map[int][]githubJob)
+		pass     bool
+		eligible bool
+		carried  int      // carried_forward entries
+		want     []string // ineligible reasons, each a substring
+	}{
+		{name: "the run as GitHub recorded it", pass: true, eligible: true, carried: 10},
+		{name: "a third attempt that carries the second forward", pass: true, eligible: true, carried: 21,
+			edit: func(_ *mergeFixture, jobs map[int][]githubJob) {
+				for _, j := range jobs[2] {
+					j.ID, j.RunAttempt, j.CheckRunID = j.ID+1, 3, j.CheckRunID+1
+					jobs[3] = append(jobs[3], j)
+				}
+			}},
+		{name: "a later start", edit: edit(func(j *githubJob) { j.StartedAt = "2026-10-29T19:10:29Z" }), carried: 9, want: ranAgain},
+		{name: "a later end", edit: edit(func(j *githubJob) { j.CompletedAt = "2026-10-29T19:21:27Z" }), carried: 9, want: ranAgain},
+		{name: "another conclusion", edit: edit(func(j *githubJob) { j.Conclusion = "failure" }), carried: 9,
+			want: []string{"part fast was run again (attempt 2) after attempt 1 recorded its result (it left its part.json)"}},
+		{name: "another runner", edit: edit(func(j *githubJob) { j.RunnerName = "GitHub Actions 1000000704" }), carried: 9, want: ranAgain},
+		{name: "a step that ended later", edit: edit(func(j *githubJob) { j.Steps[3].CompletedAt = "2026-10-29T19:12:36Z" }), carried: 9, want: ranAgain},
+		{name: "a step fewer", edit: edit(func(j *githubJob) { j.Steps = j.Steps[:len(j.Steps)-1] }), carried: 9, want: ranAgain},
+		{name: "a record of another attempt", edit: edit(func(j *githubJob) { j.RunAttempt = 1 }), carried: 9, want: ranAgain},
+		{name: "a record that could not be read", edit: edit(func(j *githubJob) { j.ReadError = "annotations: the API call failed" }), carried: 9,
+			want: []string{"part fast left no usable result at attempt 2 (GitHub's record of it could not be read (annotations: the API call failed): it fails closed)"}},
+		{name: "a record without times, as the proof job wrote before it kept them", carried: 9, want: ranAgain,
+			edit: func(_ *mergeFixture, jobs map[int][]githubJob) {
+				for _, a := range []int{1, 2} {
+					j := jobNamed(t, jobs[a], fast)
+					j.StartedAt, j.CompletedAt = "", ""
+					for i := range j.Steps {
+						j.Steps[i].StartedAt, j.Steps[i].CompletedAt = "", ""
+					}
+				}
+			}},
+		{name: "no record of the attempt before", carried: 9, want: ranAgain,
+			edit: func(_ *mergeFixture, jobs map[int][]githubJob) {
+				kept := jobs[1][:0]
+				for _, j := range jobs[1] {
+					if j.Name != fast {
+						kept = append(kept, j)
+					}
+				}
+				jobs[1] = kept
+			}},
+		{name: "an artifact of the attempt GitHub says it carried forward", pass: true, carried: 9,
+			edit: func(f *mergeFixture, _ map[int][]githubJob) {
+				rec := f.basePart(fast)
+				rec.Attempt = 2
+				rec.Gates = fastGateRecords()
+				f.writePart(rec, map[string]any{"unit-tests.json": unitLedger()})
+			},
+			want: []string{
+				"part fast left an artifact of attempt 2, which GitHub's record says is attempt 1's job carried forward, not run again: it fails closed",
+				"part fast was run again (attempt 2) after attempt 1 recorded its result (it left its part.json)",
+			}},
+		{name: "a part with a result that ran again", pass: true, carried: 9,
+			edit: func(f *mergeFixture, jobs map[int][]githubJob) {
+				j := jobNamed(t, jobs[2], fast)
+				j.StartedAt, j.CompletedAt, j.RunnerName = "2026-10-29T19:10:29Z", "2026-10-29T19:25:01Z", "GitHub Actions 1000000706"
+				rec := f.basePart(fast)
+				rec.Attempt = 2
+				rec.Gates = fastGateRecords()
+				f.writePart(rec, map[string]any{"unit-tests.json": unitLedger()})
+			},
+			want: []string{"part fast was run again (attempt 2) after attempt 1 recorded its result (it left its part.json)"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r, code, f := mergeRun40934338667(t, c.edit)
+			reasons := strings.Join(r.Ineligible, "\n")
+			if (r.Result == "pass") != c.pass || (code == 0) != c.pass || r.MergeEligible != c.eligible {
+				t.Fatalf("code %d result %s eligible %v, want pass %v eligible %v:\n%s", code, r.Result, r.MergeEligible, c.pass, c.eligible, reasons)
+			}
+			for _, w := range c.want {
+				if !strings.Contains(reasons, w) {
+					t.Errorf("ineligible lacks %q:\n%s", w, reasons)
+				}
+			}
+			if c.eligible && len(r.Ineligible) != 0 {
+				t.Errorf("an eligible proof has reasons:\n%s", reasons)
+			}
+			if c.eligible {
+				readme, err := os.ReadFile(filepath.Join(f.out, "README.md"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(string(readme), "## Carried forward") || !strings.Contains(string(readme), "- fast attempt 2: attempt 1's job\n") {
+					t.Errorf("the README does not list the carried-forward jobs:\n%s", readme)
+				}
+			}
+			// The setup-failed part ran again whatever else changed.
+			if len(r.Reruns) != 1 || r.Reruns[0].Part != "integration:2" || r.Reruns[0].Attempt != 2 ||
+				len(r.Reruns[0].EarlierAttempts) != 1 || r.Reruns[0].EarlierAttempts[0] != 1 || r.Reruns[0].Reason != reasonSetupFailed {
+				t.Errorf("reruns = %+v", r.Reruns)
+			}
+			if len(r.SetupFailures) != 1 || r.SetupFailures[0] != (setupFailure{Part: "integration:2", Attempt: 1, Step: "fetch plan", Conclusion: "failure"}) {
+				t.Errorf("setup_failures = %+v", r.SetupFailures)
+			}
+			if len(r.CarriedForward) != c.carried {
+				t.Errorf("carried_forward has %d entries, want %d: %+v", len(r.CarriedForward), c.carried, r.CarriedForward)
+			}
+			for _, cf := range r.CarriedForward {
+				if cf.From >= cf.Attempt || (cf.Part == "integration:2" && cf.From != 2) || (cf.Part != "integration:2" && cf.From != 1) {
+					t.Errorf("carried_forward entry %+v names an attempt that did not run the job", cf)
+				}
+				if c.carried != 10 && c.carried != 21 && cf.Part == fast {
+					t.Errorf("fast's attempt 2 was carried forward: %+v", cf)
+				}
+			}
+		})
+	}
+}
