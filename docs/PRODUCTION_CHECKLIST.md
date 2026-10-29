@@ -1,6 +1,6 @@
 # Production checklist
 
-OrkStack is pre-release: stable, but breaking changes may be introduced until 1.0. [AGENTS.md](../AGENTS.md) §11 forbids calling OrkStack production-ready until its required failure and recovery scenarios are proven. This checklist is how to run OrkStack carefully while that proof is incomplete. It is not a readiness claim.
+OrkStack has not reached 1.0: until it does, any release may include breaking changes. [AGENTS.md](../AGENTS.md) §11 forbids calling OrkStack production-ready until its required failure and recovery scenarios are proven. This checklist is how to run OrkStack carefully while that proof is incomplete. It is not a readiness claim.
 
 Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because several items below work around one of its limits. Each item names the reference that holds the detail, and the commands are the ones those references give.
 

@@ -23,9 +23,9 @@
 </picture>
 </p>
 
-> **Status: pre-release.** Stable, but breaking changes may be introduced
-> until 1.0. Each one is listed in [CHANGELOG.md](./CHANGELOG.md), marked
-> **BREAKING**.
+> **Status: before 1.0.** v0.1.0 is the first release. Until 1.0, any release
+> may include breaking changes. Each one is listed in
+> [CHANGELOG.md](./CHANGELOG.md), marked **BREAKING**.
 
 ## What it is
 

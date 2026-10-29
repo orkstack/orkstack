@@ -54,7 +54,7 @@ This excerpt fans `convert` out over the array that `list` computes:
 
 ## Status
 
-OrkStack is pre-release. Breaking changes can still land before 1.0. Each one is listed in the [changelog](/docs/reference/changelog/), marked **BREAKING**.
+OrkStack has not reached 1.0. v0.1.0 is its first release, and until 1.0 any release may include breaking changes. Each one is listed in the [changelog](/docs/reference/changelog/), marked **BREAKING**.
 
 ## Where the details live
 

@@ -1,7 +1,7 @@
 ---
 // Status and contributing: the honest state of the project, and where to
-// take part. The stability line is the user's decision of 2026-10-15, word
-// for word as the README and the versioning page state it.
+// take part. The stability line says what the README and the versioning
+// page say: OrkStack has not reached 1.0, and any release may break.
 import { route, repoUrl, REPO } from '../../../site.config.mjs';
 
 const links = [
@@ -15,10 +15,10 @@ const links = [
 
 <section class="block status" aria-labelledby="status-title">
 	<header class="block-head">
-		<h2 id="status-title">Pre-release, and proven as it goes</h2>
+		<h2 id="status-title">Before 1.0, and proven as it goes</h2>
 		<p>
-			OrkStack has not reached 1.0 and is not yet ready for production. It is stable, but breaking changes may
-			be introduced until 1.0, and every one is marked <strong>BREAKING</strong> in the changelog. No change
+			OrkStack has not reached 1.0 and is not yet ready for production. v0.1.0 is its first release, and until
+			1.0 any release may include breaking changes, every one marked <strong>BREAKING</strong> in the changelog. No change
 			counts as done until the full proof passed on the exact tree that lands: every gate, with the integration
 			suites against a real Temporal cluster and object store.
 		</p>

@@ -4,9 +4,9 @@ Each limit on this page is deliberate: the engineering contract fixes it, or it 
 
 Deployment settings are the configuration keys of [DEPLOY.md](./DEPLOY.md), "1. Configuration", with their environment variables in capitals. Task settings, such as `retry:` and `timeout_seconds`, are written in the Orkflow. [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) is the generated reference for every default.
 
-## Pre-release status
+## Before 1.0
 
-OrkStack is pre-release: stable, but breaking changes may be introduced until 1.0. Each breaking change is marked **BREAKING** in [CHANGELOG.md](../CHANGELOG.md), and [UPGRADING.md](./UPGRADING.md) says what that means for an upgrade. No release or tag exists yet, and this page is not a claim that OrkStack is production-ready; [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) says what that would take.
+OrkStack has not reached 1.0. Its releases are on the [releases page](https://github.com/orkstack/orkstack/releases), the first of them v0.1.0, and until 1.0 any release may include breaking changes. Each breaking change is marked **BREAKING** in [CHANGELOG.md](../CHANGELOG.md), and [UPGRADING.md](./UPGRADING.md) says what that means for an upgrade. This page is not a claim that OrkStack is production-ready; [PRODUCTION_CHECKLIST.md](./PRODUCTION_CHECKLIST.md) says what that would take.
 
 ## Payloads and artifacts
 
@@ -147,7 +147,7 @@ These are deferred. Nothing on this list is promised by a date.
 
 - Temporal Cloud, with the authentication and TLS a hosted cluster needs.
 - Named, Orker-defined network profiles. Only `default` and `none` exist ([AGENTS.md](../AGENTS.md) §6).
-- Container runtimes other than Docker ([ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)").
+- Container runtimes other than Docker and Podman, such as containerd, Kubernetes Jobs, ECS Tasks or Nomad ([AGENTS.md](../AGENTS.md) §5; [ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)"). An Orker does run on Kubernetes, as a pod with a Docker engine of its own that runs its tasks' containers ([DEPLOY.md](./DEPLOY.md), "Orkers on Kubernetes").
 - A structured progress channel from a container. Plain stdout and stderr are the required interface, and the container implements no heartbeat ([AGENTS.md](../AGENTS.md) §3.3).
 - Reading cosign's newer signature bundle format. OrkStack reads the key-based `sha256-<hex>.sig` layout only. cosign 3 writes the bundle by default, and cosign 3.1 marks the flags that still write the `.sig` layout (and that the release signs with) deprecated ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy").
 - Automatic reclamation of workload artifact bytes by the cleanup worker. It would mean a scan of the whole reference index, so the cleanup worker does not do it, and a bucket lifecycle rule is the current answer ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").

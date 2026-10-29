@@ -28,7 +28,7 @@ OrkStack is described on its own terms. The site never names, compares to or pos
 - Vocabulary is the product's (AGENTS.md §7): Orkflow, Orker, pool, pin, release; no internal mechanism names in landing copy.
 
 ## Brand Commitments
-The name OrkStack and the words Orkflow, Orker, `ork` and `orkctl` are fixed. The product is pre-release: "stable, but breaking changes may be introduced until 1.0", and the site says so plainly. It never claims production readiness, exactly-once execution or Temporal Cloud support. No logo exists beyond the UI's wordmark.
+The name OrkStack and the words Orkflow, Orker, `ork` and `orkctl` are fixed. The product has not reached 1.0: v0.1.0 is its first release, any release may include breaking changes until 1.0, and the site says so plainly. It never claims production readiness, exactly-once execution or Temporal Cloud support. No logo exists beyond the UI's wordmark.
 
 ## Evidence on Hand
 - Real behaviour: the example Orkflows in `examples/`, the UI and CLI on the local stack (captured by `make site-media`).
