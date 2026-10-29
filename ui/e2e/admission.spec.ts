@@ -47,6 +47,9 @@ const BUCKET = ownBucket('admission');
 //   6. two tabs: a hold written from a second browser context after the
 //      first opened the edit form makes the first's save a stale-etag
 //      conflict, never a silent overwrite of the hold.
+//   7. a save from the edit form keeps the fair-share weight the form does
+//      not edit: the form replaces the whole document, so a weight it did not
+//      carry through would be reset to the default by any edit.
 //
 // Isolation (AGENTS.md §11.1): this spec's own Temporal namespace and its own
 // OrkStack namespace, on ports no other spec here uses.
@@ -313,4 +316,40 @@ test('6: a hold from a second tab turns the first tab’s save into a stale-etag
 	await rpc('NamespaceService/UpdateNamespace', {
 		namespace: { ...stored.namespace, hold: undefined }
 	});
+});
+
+test('7: a save from the edit form keeps the fair-share weight it does not edit', async ({ page }) => {
+	const WEIGHT = 2.5;
+	const before = await rpc<{ namespace: { maxRunning?: number; fairShareWeight?: number } }>(
+		'NamespaceService/GetNamespace',
+		{ name: NS }
+	);
+	await rpc('NamespaceService/UpdateNamespace', {
+		namespace: { ...before.namespace, fairShareWeight: WEIGHT }
+	});
+	const weighted = await rpc<{ namespace: { maxRunning?: number; fairShareWeight?: number } }>(
+		'NamespaceService/GetNamespace',
+		{ name: NS }
+	);
+	expect(weighted.namespace.fairShareWeight).toBe(WEIGHT);
+	expect(weighted.namespace.maxRunning ?? 0).not.toBe(3);
+	note(`weight ${weighted.namespace.fairShareWeight} set over the API; max_running ${weighted.namespace.maxRunning}`);
+
+	// The page is loaded after the weight was written, so the form is
+	// prefilled from a row that carries it.
+	await openAdmin(page);
+	await openNamespaceEdit(page, NS);
+	await page.getByTestId(`ns-edit-max-running-${NS}`).fill('3');
+	await page.getByTestId(`ns-edit-save-${NS}`).click();
+	await expect(page.getByTestId(`namespace-max-running-${NS}`)).toHaveText('3');
+	await page.screenshot({ path: out('screenshot-save-keeps-fair-share-weight.png'), fullPage: true });
+
+	const saved = await rpc<{ namespace: { maxRunning?: number; fairShareWeight?: number } }>(
+		'NamespaceService/GetNamespace',
+		{ name: NS }
+	);
+	// The positive control: the save reached the registry.
+	expect(saved.namespace.maxRunning).toBe(3);
+	expect(saved.namespace.fairShareWeight).toBe(WEIGHT);
+	note(`after the form's save: max_running ${saved.namespace.maxRunning}, weight ${saved.namespace.fairShareWeight}`);
 });
