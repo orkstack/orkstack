@@ -423,6 +423,27 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- `orkctl run watch` (and `run submit --watch`) no longer reports
+  `unavailable` for a run that succeeded. Temporal can answer a long poll of
+  a run's history with CurrentBranchChanged ("Current and request branch
+  tokens, or current and request versioned transitions, don't match."), seen
+  as the run completed; the engine ended the stream there, and the API
+  answered `unavailable`. The engine now restarts that history read from the
+  execution's start and skips what it already delivered, so the stream has
+  no gap and no duplicate, up to three times in a row without a new event; a
+  persistent answer still ends the stream with that error, and every other
+  error ends it as before. The answer is matched on its error detail, never
+  its text. `orkctl run watch` also resumes a stream that ends `unavailable`,
+  as the UI's run page does: from the last event it printed, saying so on
+  stderr, up to six times in a row that deliver no event. Found by the
+  nightly `TestIntegration_SoakFanOut`; proven by
+  `TestTemporalRunReader_StreamRestartsAHistoryThatChangedUnderIt`,
+  `TestTemporalRunReader_StreamEndsWhenTheHistoryKeepsChanging`,
+  `TestTemporalRunReader_OtherHistoryErrorsStillEndTheStream`,
+  `TestTemporalRunReader_RestartThatLandsOnTheSuccessorHasNoGap`,
+  `TestHistoryBranchChanged_MatchesOnlyTheClusterDetail` and
+  `TestRunWatch_ResumesAnUnavailableStreamFromTheLastEvent` with its
+  siblings in `cmd/orkctl/watch_resume_test.go`.
 - Admin → Namespaces' **Reload latest and re-apply my edit**, offered when a
   save loses to a change made underneath the open form, now re-applies only
   the fields the reader changed, onto the namespace as it is stored now. It
