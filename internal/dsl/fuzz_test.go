@@ -585,6 +585,7 @@ func FuzzCheckJSONText(f *testing.F) {
 		`{}`, `"a"`, `"😀"`, `"\ud800"`, `"\udc00"`, `"\ud800A"`, `"\ud800x"`, `"\\ud800"`, `"\\\ud800"`, `"\ud800𐀀"`,
 		`"\uD800"`, `"􏿿"`, `"\uDC00\uD800"`, `{"\ud800":"\udc00"}`, `["\u0000","\u001f","�"]`, `"\ud800`, `"\ud80`, `"\u"`, `"\ud800\u`,
 		"\"\xff\"", "\"\xed\xa0\x80\"", "\"é\"", `[1,"\ud83d",2]`, `"\ud83d😀"`, "", `x`,
+		`"\ufffd"`, `"\uFFFD"`, `"\udbff\udfff"`,
 	} {
 		f.Add([]byte(seed))
 	}
@@ -608,12 +609,13 @@ func FuzzCheckJSONText(f *testing.F) {
 		}
 		if err == nil {
 			// What it lets through, Go's decoder reads back whole: a
-			// replacement character appears only where the text spells one.
+			// replacement character appears only where the text spells one,
+			// as the escape \ufffd in either case or as the character itself.
 			var decoded any
 			if json.Unmarshal(data, &decoded) != nil {
 				return
 			}
-			if holdsReplacement(decoded) && !strings.Contains(strings.ToLower(string(data)), `�`) && !strings.Contains(string(data), "�") {
+			if holdsReplacement(decoded) && !strings.Contains(strings.ToLower(string(data)), `\ufffd`) && !strings.Contains(string(data), string(utf8.RuneError)) {
 				t.Fatalf("CheckJSONText accepted %q, which Go reads with a replacement character it does not spell", data)
 			}
 		}
