@@ -234,6 +234,13 @@ include breaking changes, and each is marked **BREAKING**.
   site serves every recording as MP4 only (a WebM of it was no smaller),
   within its media budget of 2.5 MiB a recording: `make site-media` encodes
   a take a step coarser until it fits.
+- The README leads with what OrkStack is, the quickstart and its recording,
+  the UI demo, and the core concepts (an Orkflow as a DAG, a task as an image
+  that reads and writes files, Orkers, the durable commit), then what you get,
+  what it does not do, and every document.
+- `docs/GETTING_STARTED.md` shows its screenshots and the UI demo on GitHub,
+  where its `site-media` markers drew nothing (the site does not port that
+  page); the Orkflow page's screenshot, `ui-orkflow`, is taken again.
 - The first-party images and the example images declare their interfaces in
   an `interface.ork.yaml` each, and their Dockerfiles' interface `LABEL` line
   is generated from it by `go run ./internal/schemas/cmd/genschemas`. The
