@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -160,11 +161,14 @@ func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T)
 	// rootless Podman socket, run by a non-root Orker (the Orker as root
 	// inside the runtime is that shape's supported form).
 	ownUserLands := os.Geteuid() == 0 || !info.Rootless || info.CLI == orker.CLIPodman
-	// Without --pids-limit a container on the Podman socket gets pids.max 1,
-	// so its init cannot even fork: still refused, in the runtime's words.
+	// Without --pids-limit a container gets its engine's default: no limit
+	// on Docker and on a rootful Podman socket ("max", which the probe names),
+	// and on a rootless Podman socket a limit of 1, under which the probe's
+	// init cannot even fork. Either is refused, in the probe's words or the
+	// runtime's; which one depends on the host's engine, not on the probe.
 	noPidsSays := []string{"pids.max"}
 	if podman && info.CLI == orker.CLIDocker {
-		noPidsSays = []string{"failed to fork"}
+		noPidsSays = []string{"pids.max|failed to fork"}
 	}
 	noSeccomp := struct{ replace, prepend string }{replace: "seccomp=" + orker.SeccompBuiltin + "\tseccomp=unconfined\n"}
 	writableRoot := []string{"/ is writable", "/run is writable", "/var/tmp is writable"}
@@ -183,8 +187,8 @@ func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T)
 		prepend   string
 		elsewhere bool // bind the probe's sources from another root, created on the way
 		force     bool
-		// wantReason is "" for a boot; wantSays are in the refusal, and
-		// mustNotSay never is.
+		// wantReason is "" for a boot; wantSays are in the refusal (one of
+		// the |-separated alternatives each), and mustNotSay never is.
 		wantReason string
 		wantSays   []string
 		mustNotSay string
@@ -275,7 +279,9 @@ func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T)
 				t.Fatalf("Boot = %v; want a refusal starting %s:", err, tt.wantReason)
 			}
 			for _, want := range tt.wantSays {
-				if !strings.Contains(err.Error(), want) {
+				if !slices.ContainsFunc(strings.Split(want, "|"), func(alternative string) bool {
+					return strings.Contains(err.Error(), alternative)
+				}) {
 					t.Errorf("Boot = %v; want the refusal to name %q", err, want)
 				}
 			}
