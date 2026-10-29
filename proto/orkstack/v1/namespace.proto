@@ -171,6 +171,19 @@ message Namespace {
   // run still in flight, and submits racing the check. A lock would remove
   // the margin and AGENTS.md §2.1 forbids building one.
   Budget budget = 15;
+
+  // fair_share_weight is this namespace's share of dispatch when tasks of
+  // several namespaces wait for the same pool's Orkers: every task of a run
+  // carries its namespace as a fairness key, and the cluster dispatches the
+  // keys in proportion to their weights. 0, the default, is a weight of 1;
+  // otherwise from 0.001 to 1000.
+  //
+  // It is pinned in each run's plan at submit, so a change applies to runs
+  // submitted after it and never reorders work already waiting. It takes
+  // effect only on a cluster whose operator enabled fair dispatch
+  // (docs/DEPLOY.md, "Fair dispatch across namespaces"); without it dispatch
+  // is first in, first out, whatever the weights.
+  double fair_share_weight = 16;
 }
 
 // NamespaceHold stops this namespace ACCEPTING new runs. It is an admission

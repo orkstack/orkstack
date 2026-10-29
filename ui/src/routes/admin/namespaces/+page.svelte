@@ -428,6 +428,10 @@
 	let editTelemetryAttributesText = $state('');
 	let editHoldReason = $state('');
 	let editMaxRunning = $state('');
+	// Not edited here (orkctl namespace update --fair-share-weight sets it),
+	// but carried through: UpdateNamespace replaces the document, so leaving
+	// it out would silently reset the namespace to the default weight.
+	let editFairShareWeight = $state(0);
 	let editAllowedSecrets = $state('');
 	let editBudgetCpuSeconds = $state('');
 	let editBudgetGibSeconds = $state('');
@@ -458,6 +462,7 @@
 			: '';
 		editHoldReason = ns.hold?.reason ?? '';
 		editMaxRunning = ns.maxRunning > 0 ? String(ns.maxRunning) : '';
+		editFairShareWeight = ns.fairShareWeight;
 		editAllowedSecrets = ns.allowedSecrets.join('\n');
 		editBudgetCpuSeconds = ns.budget && ns.budget.cpuSeconds > 0n ? String(ns.budget.cpuSeconds) : '';
 		editBudgetGibSeconds = ns.budget && ns.budget.gibSeconds > 0n ? String(ns.budget.gibSeconds) : '';
@@ -560,6 +565,7 @@
 					// reason on save is a deliberate release, not an omission.
 					hold: holdRequest(editHoldReason),
 					maxRunning: maxRunningRequest(editMaxRunning),
+					fairShareWeight: editFairShareWeight,
 					// Prefilled one entry per line from the row: blank on save
 					// sends an empty list, a deliberate choice of unrestricted,
 					// not an omission — the rule run retention follows above.

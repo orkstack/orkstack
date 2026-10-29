@@ -502,6 +502,7 @@ Flags:
 - `--budget-period STRING` — the rolling period a budget is held against, e.g. 720h (1h0m0s to 744h0m0s)
 - `--default-pool STRING` — pool a task of this namespace runs on when it names none (default "main")
 - `--description STRING` — human description
+- `--fair-share-weight FLOAT64` — this namespace's share of dispatch when several namespaces' tasks wait for one pool, pinned into each run at submit; 0 = the default weight of 1, else 0.001 to 1000. It takes effect only where the cluster has fair dispatch enabled
 - `--hold STRING` — close this namespace to new runs, with the reason the next operator reads (runs already accepted finish untouched)
 - `--label STRINGARRAY` — label as key=value (repeatable)
 - `--max-running INT32` — most runs of this namespace in flight at once (0 = unlimited)
@@ -617,6 +618,7 @@ Flags:
 - `--clear-require-signed-by` — stop requiring a signature: the deployment image policy alone applies
 - `--default-pool STRING` — pool a task of this namespace runs on when it names none (default "main")
 - `--description STRING` — human description
+- `--fair-share-weight FLOAT64` — this namespace's share of dispatch when several namespaces' tasks wait for one pool, pinned into each run at submit; 0 = the default weight of 1, else 0.001 to 1000. It takes effect only where the cluster has fair dispatch enabled
 - `--hold STRING` — close this namespace to new runs, with the reason the next operator reads (runs already accepted finish untouched)
 - `--label STRINGARRAY` — label as key=value (repeatable)
 - `--max-running INT32` — most runs of this namespace in flight at once (0 = unlimited)

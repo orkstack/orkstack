@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"io"
+	"math"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -49,6 +51,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		telemetryAttributes []string
 		holdReason          string
 		maxRunning          int32
+		fairShareWeight     float64
 		budget              budgetFlagValues
 		requireSignedBy     string
 	)
@@ -73,7 +76,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 				return err
 			}
 			admission := &orkstackv1.Namespace{}
-			if err := applyAdmissionFlags(cmd, admission, holdReason, maxRunning); err != nil {
+			if err := applyAdmissionFlags(cmd, admission, holdReason, maxRunning, fairShareWeight); err != nil {
 				return err
 			}
 			if err := checkAllowSecretFlags(allowedSecrets); err != nil {
@@ -101,6 +104,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 					Telemetry:       telemetry,
 					Hold:            admission.GetHold(),
 					MaxRunning:      admission.GetMaxRunning(),
+					FairShareWeight: admission.GetFairShareWeight(),
 					RequireSignedBy: requireSignedBy,
 					Budget:          budgetSpec,
 				}},
@@ -121,7 +125,7 @@ func newNamespaceCreateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &allowedSecrets, &labels, &runRetention,
-		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &requireSignedBy, &budget)
+		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &fairShareWeight, &requireSignedBy, &budget)
 	return cmd
 }
 
@@ -206,6 +210,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		telemetryAttributes []string
 		holdReason          string
 		maxRunning          int32
+		fairShareWeight     float64
 		releaseHold         bool
 		clearSecrets        bool
 		requireSignedBy     string
@@ -251,7 +256,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 			// The admission flags are checked before any round trip, on a
 			// scratch document, so a blank reason or a negative cap is a local
 			// error; they are applied to the real one after it is read.
-			if err := applyAdmissionFlags(cmd, &orkstackv1.Namespace{}, holdReason, maxRunning); err != nil {
+			if err := applyAdmissionFlags(cmd, &orkstackv1.Namespace{}, holdReason, maxRunning, fairShareWeight); err != nil {
 				return err
 			}
 			parsed, err := parseLabels(labels)
@@ -303,7 +308,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 				edited.RunRetention = retention
 			}
 			edited.Telemetry = telemetry
-			if err := applyAdmissionFlags(cmd, edited, holdReason, maxRunning); err != nil {
+			if err := applyAdmissionFlags(cmd, edited, holdReason, maxRunning, fairShareWeight); err != nil {
 				return err
 			}
 			if releaseHold {
@@ -335,7 +340,7 @@ func newNamespaceUpdateCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	namespaceSpecFlags(cmd, &description, &defaultPool, &allowedPools, &allowedSecrets, &labels, &runRetention,
-		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &requireSignedBy, &budget)
+		&telemetrySink, &taskLogs, &telemetryAttributes, &holdReason, &maxRunning, &fairShareWeight, &requireSignedBy, &budget)
 	cmd.Flags().BoolVar(&clearBudget, "clear-budget", false,
 		"remove the namespace's budget, leaving it unbounded")
 	cmd.Flags().BoolVar(&releaseHold, "release-hold", false,
@@ -438,6 +443,7 @@ func namespaceSpecFlags(
 	telemetryAttributes *[]string,
 	holdReason *string,
 	maxRunning *int32,
+	fairShareWeight *float64,
 	requireSignedBy *string,
 	budget *budgetFlagValues,
 ) {
@@ -467,6 +473,10 @@ func namespaceSpecFlags(
 			"(runs already accepted finish untouched)")
 	cmd.Flags().Int32Var(maxRunning, "max-running", 0,
 		"most runs of this namespace in flight at once (0 = unlimited)")
+	cmd.Flags().Float64Var(fairShareWeight, "fair-share-weight", 0,
+		"this namespace's share of dispatch when several namespaces' tasks wait for one pool, "+
+			"pinned into each run at submit; 0 = the default weight of 1, else 0.001 to 1000. It takes effect "+
+			"only where the cluster has fair dispatch enabled")
 	cmd.Flags().StringVar(requireSignedBy, "require-signed-by", "",
 		"require every image executed in this namespace to carry a valid signature, as cosign:KEY "+
 			"naming a key of 'orkctl admin image-policy get' (tightens the deployment policy; never loosens it)")
@@ -576,12 +586,12 @@ func checkAllowSecretFlags(entries []string) error {
 	return nil
 }
 
-// applyAdmissionFlags writes --hold and --max-running onto ns, each only when
+// applyAdmissionFlags writes --hold, --max-running and --fair-share-weight onto ns, each only when
 // its flag was given — the "a flag left out keeps its current value" rule
 // every other update flag follows. A blank reason and a negative cap are
 // refused here, before any round trip; the registry refuses both again.
 // The hold's since is never sent: the registry stamps it.
-func applyAdmissionFlags(cmd *cobra.Command, ns *orkstackv1.Namespace, holdReason string, maxRunning int32) error {
+func applyAdmissionFlags(cmd *cobra.Command, ns *orkstackv1.Namespace, holdReason string, maxRunning int32, fairShareWeight float64) error {
 	if cmd.Flags().Changed("hold") {
 		if strings.TrimSpace(holdReason) == "" {
 			return fmt.Errorf("--hold needs a reason: the next operator has to decide whether to release it")
@@ -595,6 +605,14 @@ func applyAdmissionFlags(cmd *cobra.Command, ns *orkstackv1.Namespace, holdReaso
 			return fmt.Errorf("--max-running must be 0 (unlimited) or positive, got %d", maxRunning)
 		}
 		ns.MaxRunning = maxRunning
+	}
+	if cmd.Flags().Changed("fair-share-weight") {
+		if fairShareWeight != 0 && (math.IsNaN(fairShareWeight) || fairShareWeight < artifacts.MinFairShareWeight ||
+			fairShareWeight > artifacts.MaxFairShareWeight) {
+			return fmt.Errorf("--fair-share-weight must be 0 (the default weight of 1) or from %g to %g, got %g",
+				artifacts.MinFairShareWeight, artifacts.MaxFairShareWeight, fairShareWeight)
+		}
+		ns.FairShareWeight = fairShareWeight
 	}
 	return nil
 }
@@ -740,6 +758,9 @@ func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	fmt.Fprintf(table, "Run retention:\t%s\n", runRetentionLabel(ns))
 	fmt.Fprintf(table, "Hold:\t%s\n", holdLabel(ns))
 	fmt.Fprintf(table, "Max running:\t%s\n", maxRunningLabel(ns))
+	if w := ns.GetFairShareWeight(); w != 0 {
+		fmt.Fprintf(table, "Fair share weight:\t%s\n", strconv.FormatFloat(w, 'f', -1, 64))
+	}
 	fmt.Fprintf(table, "Require signed by:\t%s\n", requireSignedByLabel(ns))
 	fmt.Fprintf(table, "Budget:\t%s\n", budgetLabel(ns.GetBudget()))
 	fmt.Fprintf(table, "Telemetry sink:\t%s\n", telemetrySinkLabel(ns))

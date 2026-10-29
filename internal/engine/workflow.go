@@ -1925,6 +1925,9 @@ func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstac
 		// Orker has finished killing the container and cleaning up.
 		WaitForCancellation: true,
 		RetryPolicy:         retryPolicyFor(t),
+		// The run's namespace as a fairness key (fairness.go): the cluster
+		// orders this channel's waiting tasks by it where fairness is on.
+		Priority: s.priorityFor(activityBase),
 	})
 }
 

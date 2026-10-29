@@ -517,6 +517,14 @@ func TestPrepare_SetsRunTreeLimitsOnTheTopLevelPlanOnly(t *testing.T) {
 	if n := strings.Count(string(encoded), `"history"`); n != 1 {
 		t.Fatalf("the encoded plan carries %d history entries, want exactly one for the tree", n)
 	}
+	// Fairness is a run-tree value too: the top-level plan carries the
+	// namespace's, and no nested child plan spends bytes on a copy.
+	if plan.Fairness == nil || plan.Fairness.Key != plan.Namespace {
+		t.Fatalf("top-level plan fairness = %+v, want namespace %q's", plan.Fairness, plan.Namespace)
+	}
+	if n := strings.Count(string(encoded), `"fairness"`); n != 1 {
+		t.Fatalf("the encoded plan carries %d fairness entries, want exactly one for the tree", n)
+	}
 }
 
 func TestSubmitRun_ChildVersionDeletedIsFailedPrecondition(t *testing.T) {

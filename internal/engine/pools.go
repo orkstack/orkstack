@@ -717,7 +717,7 @@ func (r *PoolResolver) Plan(
 		pinnedTasksByPool[route.Pool] = append(pinnedTasksByPool[route.Pool], t.GetId())
 	}
 
-	plan := RunPlan{Namespace: namespaceName(ns), Routes: routes}
+	plan := RunPlan{Namespace: namespaceName(ns), Routes: routes, Fairness: fairnessFor(ns)}
 	telemetry, err := telemetryFor(ns, wf)
 	if err != nil {
 		return nil, RunPlan{}, err

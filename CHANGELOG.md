@@ -10,6 +10,14 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Added
 
+- Fair dispatch across namespaces: when tasks of several namespaces wait for
+  one pool, each namespace is served in proportion to its new
+  `fair_share_weight` (`orkctl namespace update --fair-share-weight`, the
+  `fair_share_weight` setting of an automation document; 0 is the default
+  weight of 1, otherwise from 0.001 to 1000), pinned in each run at submit. It
+  takes effect where the operator enables fair dispatch on the cluster;
+  without it dispatch stays first in, first out (docs/DEPLOY.md, "Fair
+  dispatch across namespaces").
 - An Orker can declare a capacity, `orker.capacity.cpu` and
   `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`, `_MEMORY`), and then
   admits no task that would take its reservations above it: every poll

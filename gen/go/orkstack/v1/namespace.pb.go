@@ -180,9 +180,21 @@ type Namespace struct {
 	// a bounded margin: the runs that finished inside one cache lifetime, every
 	// run still in flight, and submits racing the check. A lock would remove
 	// the margin and AGENTS.md §2.1 forbids building one.
-	Budget        *Budget `protobuf:"bytes,15,opt,name=budget,proto3" json:"budget,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Budget *Budget `protobuf:"bytes,15,opt,name=budget,proto3" json:"budget,omitempty"`
+	// fair_share_weight is this namespace's share of dispatch when tasks of
+	// several namespaces wait for the same pool's Orkers: every task of a run
+	// carries its namespace as a fairness key, and the cluster dispatches the
+	// keys in proportion to their weights. 0, the default, is a weight of 1;
+	// otherwise from 0.001 to 1000.
+	//
+	// It is pinned in each run's plan at submit, so a change applies to runs
+	// submitted after it and never reorders work already waiting. It takes
+	// effect only on a cluster whose operator enabled fair dispatch
+	// (docs/DEPLOY.md, "Fair dispatch across namespaces"); without it dispatch
+	// is first in, first out, whatever the weights.
+	FairShareWeight float64 `protobuf:"fixed64,16,opt,name=fair_share_weight,json=fairShareWeight,proto3" json:"fair_share_weight,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *Namespace) Reset() {
@@ -318,6 +330,13 @@ func (x *Namespace) GetBudget() *Budget {
 		return x.Budget
 	}
 	return nil
+}
+
+func (x *Namespace) GetFairShareWeight() float64 {
+	if x != nil {
+		return x.FairShareWeight
+	}
+	return 0
 }
 
 // NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
@@ -601,7 +620,7 @@ var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\xd9\x05\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\x85\x06\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -621,7 +640,8 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"maxRunning\x12'\n" +
 	"\x0fallowed_secrets\x18\r \x03(\tR\x0eallowedSecrets\x12*\n" +
 	"\x11require_signed_by\x18\x0e \x01(\tR\x0frequireSignedBy\x12+\n" +
-	"\x06budget\x18\x0f \x01(\v2\x13.orkstack.v1.BudgetR\x06budget\x1a9\n" +
+	"\x06budget\x18\x0f \x01(\v2\x13.orkstack.v1.BudgetR\x06budget\x12*\n" +
+	"\x11fair_share_weight\x18\x10 \x01(\x01R\x0ffairShareWeight\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +

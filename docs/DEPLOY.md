@@ -2015,6 +2015,35 @@ Every cordon and uncordon is an audit record (`orker.cordon`,
 `orker.uncordon`, target the Orker id, the reason in its detail, no
 namespace).
 
+### Fair dispatch across namespaces
+
+When tasks of several namespaces wait for the same pool's Orkers, the cluster
+can dispatch them fairly rather than first in, first out. Every task activity
+of a run carries its namespace as a fairness key, and the namespace's
+`fair_share_weight` (`orkctl namespace update NS --fair-share-weight 3`; 0, the
+default, is a weight of 1, otherwise from 0.001 to 1000) as its weight. Both are decided at
+submit and pinned in the run, so a changed weight moves only the runs
+submitted after it. A namespace name longer than 64 bytes is keyed by a
+readable prefix and a SHA-256 suffix.
+
+It is Temporal's own task-queue fairness, never an OrkStack queue, and it takes
+effect only where the operator enables it on the Temporal cluster:
+`matching.enableFairness=true` in the server's dynamic configuration, for the
+Temporal namespace OrkStack uses, or globally. That is a setting of the
+deployment's Temporal, not an OrkStack dependency; OrkStack cannot detect it.
+Without it the keys are ignored and dispatch stays first in, first out.
+
+What fairness does and does not do:
+
+- it orders the tasks waiting on one pool's channel, per partition of that
+  channel, so the effect is real but moderate, and it never moves a task to
+  another pool;
+- a weight pinned at submit never reorders a backlog already queued;
+- during a release rollout it holds among the tasks queued for one worker
+  version;
+- the cluster keeps the state of at most its top 100 keys across a server
+  restart.
+
 ### Namespace admission: `hold` and `max_running`
 
 Two fields of a namespace's own document decide whether it admits a new run.

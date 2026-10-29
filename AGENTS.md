@@ -581,7 +581,8 @@ serves it, refuses a task whose declared request exceeds its pool's per-task
 cap, which is a pool-wide setting, asking the pool's Orkers over their own
 control channels, and then decides the
 image-policy selection, telemetry selection, cache plan, every composed
-child's plan, the origin and any await callback tokens. All of it rides the
+child's plan, the origin, any await callback tokens, and each task's
+fairness key (its namespace) and weight. All of it rides the
 replay-pinned `RunPlan` and is never re-read. Every refusal happens before a
 run ID is minted or an idempotency key claimed, so a refused submission leaves
 nothing behind. Admission is never retroactive. A guard that reads the
@@ -690,7 +691,7 @@ history replays unchanged without a version marker — or by a plan field the
 submitting engine sets together with a `workflow.GetVersion` gate asked lazily
 where the path first diverges (`lean-event-path`, `run-history-guard`,
 `continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
-`snapshot-overlay`), so a history recorded before the gate
+`snapshot-overlay`, `fairness-keys`), so a history recorded before the gate
 replays its `DefaultVersion` branch; each new command path gets its own
 recorded history fixture. Every tunable number that decides whether, which,
 how many or where workflow code issues a command — a history ceiling or
@@ -768,6 +769,11 @@ completion: a Temporal Timer for its deadline and a Signal for its resolution,
 and no container. A schedule is a Temporal Schedule; a composed task is a
 Temporal child workflow of the same `RunWorkflow` interpreter; a fan-out's
 items are ordinary activities in the interpreter's own in-flight set.
+
+Fair dispatch across namespaces is Temporal's task-queue fairness, keyed
+by namespace and pinned in the plan; it is never an OrkStack queue.
+Enabling it is a Temporal setting of the deployment; without it dispatch
+stays first-in first-out per queue.
 
 ## 9. First-party activities
 
