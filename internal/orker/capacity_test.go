@@ -3,13 +3,17 @@ package orker
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// The ledger as a state machine, driven in every order the SDK and the
+// The ledger as a state machine, driven through the orders the SDK and the
 // dispatcher can produce: reserve (before a poll), markUsed (a task was
 // delivered), admit (the interceptor has the task), the container's creation
 // and removal, Done (the activity returned) and release (the SDK frees the
@@ -167,9 +171,9 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 			c := newTestCapacity()
 			steps(t, c)
 			wantReserved(t, c, "the end", amount{})
-			if c.issued != 0 || c.unclaimed != 0 || c.claimed != 0 || len(c.unremoved) != 0 || c.pinned != (amount{}) {
-				t.Fatalf("the ledger did not return to rest: issued %d unclaimed %d claimed %d unremoved %d pinned %s",
-					c.issued, c.unclaimed, c.claimed, len(c.unremoved), c.pinned)
+			if c.issued != 0 || c.unclaimed != 0 || c.claimed != 0 || len(c.unremoved) != 0 {
+				t.Fatalf("the ledger did not return to rest: issued %d unclaimed %d claimed %d unremoved %d",
+					c.issued, c.unclaimed, c.claimed, len(c.unremoved))
 			}
 		})
 	}
@@ -211,6 +215,25 @@ func TestCapacity_SeededOrphansHoldTheirShareUntilReaped(t *testing.T) {
 	wantReserved(t, c, "the reap", amount{})
 }
 
+// awaitWaiting blocks until n polls are parked in reserve, so a test frees
+// capacity only once a poll is really waiting for it.
+func awaitWaiting(t *testing.T, c *Capacity, n int) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		c.mu.Lock()
+		waiting := c.waiting
+		c.mu.Unlock()
+		if waiting == n {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d polls waiting, want %d", waiting, n)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 func TestCapacity_AWaitingPollIsGrantedWhenCapacityFrees(t *testing.T) {
 	c := newTestCapacity()
 	first, second := mustReserve(t, c), mustReserve(t, c)
@@ -218,14 +241,77 @@ func TestCapacity_AWaitingPollIsGrantedWhenCapacityFrees(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	go func() {
-		permit, _ := c.reserve(ctx)
+		permit, _ := c.reserve(ctx, nil)
 		granted <- permit
 	}()
+	awaitWaiting(t, c, 1)
 	c.release(first)
 	if permit := <-granted; permit == nil {
 		t.Fatal("the waiting poll was never granted once a cap's worth was free")
 	}
 	c.release(second)
+}
+
+// A poll that waited for capacity is not granted past a cordon set while it
+// waited: it goes back to waiting on the cordon, and is granted once the
+// cordon clears.
+func TestCapacity_APollParkedForCapacityStillMeetsALaterCordon(t *testing.T) {
+	c := newTestCapacity()
+	cordon := NewCordon()
+	supplier := &capacitySlotSupplier{c: c, cordon: cordon}
+	first, second := mustReserve(t, c), mustReserve(t, c)
+	granted := make(chan *worker.SlotPermit, 1)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	go func() {
+		permit, _ := supplier.ReserveSlot(ctx, nil)
+		granted <- permit
+	}()
+	awaitWaiting(t, c, 1)
+	cordon.Set("patch window", time.Now())
+	c.release(first)
+	awaitWaiting(t, c, 0) // it woke, and went back to the cordon
+	c.mu.Lock()
+	issued := c.issued
+	c.mu.Unlock()
+	if issued != 1 {
+		t.Fatalf("%d permits out after the cordon; the parked poll was granted past it", issued)
+	}
+	cordon.Clear()
+	if permit := <-granted; permit == nil {
+		t.Fatal("the poll was never granted once the cordon cleared")
+	}
+	c.release(second)
+}
+
+func TestExecuteTaskRequest_ReservesTheRequestAndNeverLessThanItCannotRead(t *testing.T) {
+	policy := DefaultSecurityPolicy() // a cap of 8 cpu, 16Gi; a default of 1 cpu, 1Gi
+	ceiling, _ := policy.ceiling()
+	for name, tc := range map[string]struct {
+		args []any
+		want amount
+	}{
+		"a request":            {[]any{&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "1.5", Memory: "512Mi"}}}, amount{1500, 512 << 20}},
+		"no request":           {[]any{&orkstackv1.ExecuteTaskInput{}}, amount{1000, 1 << 30}},
+		"a request it refuses": {[]any{&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "64"}}}, amount{}},
+		"no arguments":         {nil, ceiling},
+		"an input of no shape": {[]any{"not an input"}, ceiling},
+	} {
+		if got := executeTaskRequest(policy, &interceptor.ExecuteActivityInput{Args: tc.args}); got != tc.want {
+			t.Errorf("%s: reserves %s, want %s", name, got, tc.want)
+		}
+	}
+}
+
+func TestBoot_RefusesACapacityItCannotHonour(t *testing.T) {
+	policy := DefaultSecurityPolicy()
+	activities := NewActivitiesWithOptions(nil, Options{
+		Policy: &policy, Runtime: &layoutProbeRuntime{}, OrkerID: "o1", CapacityCPU: "4", TaskQueue: "q",
+	})
+	err := activities.Boot(context.Background())
+	if err == nil || !strings.Contains(err.Error(), ReasonCapacityInvalid) {
+		t.Fatalf("Boot = %v, want %s for a capacity below the per-task cap", err, ReasonCapacityInvalid)
+	}
 }
 
 func TestCapacity_ACordonStillRefusesFirst(t *testing.T) {

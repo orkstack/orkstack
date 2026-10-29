@@ -25,10 +25,14 @@ include breaking changes, and each is marked **BREAKING**.
   `CAPACITY` and `RESERVED` columns. New reasons: `RESOURCE_ADMISSION_MISMATCH`
   (a guard that cannot fire while caps are honoured) and the boot refusal
   `ORKER_CAPACITY_INVALID` (docs/DEPLOY.md, "Declaring an Orker's capacity").
-- A submit refuses a task whose `resources:` request is above the per-task
-  cap of every answering Orker of its pool, with `RESOURCES_UNSATISFIABLE`
-  (`failed_precondition`), before a run id is minted. It used to be accepted
-  and fail its first attempt `RESOURCE_REQUEST_REFUSED`.
+- **BREAKING:** A submit refuses a task whose `resources:` request is above
+  the per-task cap of every answering Orker of its pool, with
+  `RESOURCES_UNSATISFIABLE` (`failed_precondition`), before a run id is
+  minted. It used to be accepted and fail when that task was dispatched,
+  `RESOURCE_REQUEST_REFUSED`, so a run whose oversized task never ran (a
+  failure handler of a run that succeeded) used to succeed and is now
+  refused. Such a submit reads the Orker inventory, one describe per live
+  Orker.
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
   panics: the list-filter grammar, compiler and matcher (a compiled set is a

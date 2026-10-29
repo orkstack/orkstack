@@ -184,7 +184,7 @@ func (a *Activities) WorkerTuner() (worker.WorkerTuner, error) {
 	if a.capacity != nil {
 		// A declared capacity replaces the fixed count with the ledger,
 		// which holds both the count and the capacity (capacity.go).
-		activitySlots = &capacitySlotSupplier{c: a.capacity}
+		activitySlots = &capacitySlotSupplier{c: a.capacity, cordon: a.cordon}
 	}
 	localSlots, err := fixed(sdkDefaultSlots)
 	if err != nil {
@@ -352,14 +352,16 @@ func (a *Activities) admit(queue string, request amount) (*Admission, error) {
 
 // executeTaskRequest is what an ExecuteTask attempt reserves: its resolved
 // request, or nothing for a request the policy refuses, because the attempt
-// fails RESOURCE_REQUEST_REFUSED before any container exists.
+// fails RESOURCE_REQUEST_REFUSED before any container exists. An input this
+// cannot read keeps the whole per-task cap: unknown is never nothing.
 func executeTaskRequest(policy SecurityPolicy, in *interceptor.ExecuteActivityInput) amount {
-	if len(in.Args) == 0 {
-		return amount{}
+	var input *orkstackv1.ExecuteTaskInput
+	if len(in.Args) > 0 {
+		input, _ = in.Args[0].(*orkstackv1.ExecuteTaskInput)
 	}
-	input, ok := in.Args[0].(*orkstackv1.ExecuteTaskInput)
-	if !ok {
-		return amount{}
+	if input == nil {
+		ceiling, _ := policy.ceiling()
+		return ceiling
 	}
 	return amountFromProto(policy.ReservedResources(input.GetResources()))
 }

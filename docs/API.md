@@ -1822,8 +1822,9 @@ Orker is one execution process, observed live.
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment this Orker was observed polling. It answers "how fresh is this row", never "when did this Orker die". |
 | `unavailable_reason` | `string` | unavailable_reason says this Orker COULD NOT BE ASKED, and why — the same three-state distinction Pool.unavailable_reason makes, for the same reason: "not measured" rendered as "measured zero" sends an operator to stop a host that may be mid-task. When set, fields 2–9 and 12 are unset: nothing was measured, so there is no number to report. |
 | `pins` | repeated [`OpenPin`](#openpin) |  |
-| `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity and reserved are DescribeOrkerResult's: what this Orker admits tasks within, and what stands reserved against it. Both unset when it declares no capacity. |
+| `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity and reserved are DescribeOrkerResult's: what this Orker admits tasks within, and what stands reserved against it, each outstanding poll counted at the per-task cap. Both unset when it declares no capacity. |
 | `reserved` | [`ResourceQuantity`](#resourcequantity) |  |
+| `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is DescribeOrkerResult's: the per-task cap, the largest request this Orker runs, which submit holds a task's declared request to. |
 
 ### Orkflow
 

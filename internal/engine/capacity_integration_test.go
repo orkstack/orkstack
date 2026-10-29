@@ -178,11 +178,20 @@ func TestIntegration_ACapacityAdmitsAFanOutWithinItAndSubmitRefusesARequestNoOrk
 	if most < 2 {
 		t.Fatalf("at most %d item ran at once; two fit in 4 cpu, so the capacity was never filled", most)
 	}
-	row := d.one(o.id)
+	// At rest the ledger holds exactly its idle polls, each at the per-task
+	// cap: any reservation the run leaked would keep it from ever getting
+	// back there, because a poll is granted only while a whole cap is free.
+	idle := float64(orker.TaskPollers) * 2
+	rows := d.awaitFleet(orkersWhere("orker_id", o.id), time.Minute, "the ledger back at its idle polls",
+		func(rows []*orkstackv1.Orker) bool {
+			if len(rows) != 1 {
+				return false
+			}
+			r := rows[0].GetReserved()
+			return r.GetCpu() == idle && r.GetMemoryBytes() == int64(orker.TaskPollers)<<30
+		})
+	row := rows[0]
 	d.transcript.line("after the run: %s reserved of %s", row.GetReserved(), row.GetCapacity())
-	if r := row.GetReserved(); r == nil || r.GetCpu() > 4 {
-		t.Fatalf("after the run the Orker reports %v reserved of 4 cpu", r)
-	}
 	t.Logf("EVIDENCE capacity: refused %v; 40 items ran at most %d at once; at rest %v reserved",
 		refused, most, row.GetReserved())
 }

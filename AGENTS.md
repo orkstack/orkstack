@@ -280,12 +280,11 @@ below explicit failure.
 The Orker is responsible for:
 
 ```text
-poll Temporal
+poll Temporal, within its declared capacity
 resolve the activity specification
 check the completion commit
 check the run's image policy
 check a cached task's memo
-admit the task within its declared capacity
 resolve the OCI image and digest
 create an isolated workspace
 materialize input artifacts
@@ -578,7 +577,7 @@ process configuration, or the cluster. `SubmitRun`'s preparation resolves the
 namespace and Orkflow, applies the admission gate (hold, then `max_running`,
 then an enforced budget), resolves each task's pool against the namespace's
 allow-list and checks, from the Orker inventory, that a live, capable Orker
-serves it, refuses a task whose effective request exceeds its pool's per-task
+serves it, refuses a task whose declared request exceeds its pool's per-task
 cap, which is a pool-wide setting, asking the pool's Orkers over their own
 control channels, and then decides the
 image-policy selection, telemetry selection, cache plan, every composed

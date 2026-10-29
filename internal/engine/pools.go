@@ -348,9 +348,9 @@ func (e *PoolResourcesUnsatisfiableError) Error() string {
 	if e.Memory != "" {
 		asked = append(asked, fmt.Sprintf("memory %s", e.Memory))
 	}
-	return fmt.Sprintf("%s: task %q requests %s, which no Orker of pool %q (namespace %q) runs: the largest "+
-		"per-task cap there is %g cpu and %d bytes of memory. Ask for less, or run the task on a pool whose "+
-		"Orkers set larger caps (orker.resources.max_cpu, orker.resources.max_memory)",
+	return fmt.Sprintf("%s: task %q requests %s, which no Orker of pool %q (namespace %q) runs: its largest "+
+		"per-task caps are %g cpu and %d bytes of memory, not always on one Orker. Ask for less, or run the task "+
+		"on a pool whose Orkers set larger caps (orker.resources.max_cpu, orker.resources.max_memory)",
 		ReasonResourcesUnsatisfiable, e.Task, strings.Join(asked, " and "), e.Pool, e.Namespace,
 		e.Largest.GetCpu(), e.Largest.GetMemoryBytes())
 }

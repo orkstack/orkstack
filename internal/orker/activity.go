@@ -561,6 +561,12 @@ func (a *Activities) Boot(ctx context.Context) error {
 		return err
 	}
 	a.startCapacityReap()
+	if a.capacity != nil {
+		limit, reserved := a.capacity.snapshot()
+		a.dispatcher.logger().Info("capacity declared",
+			"capacity", limit.String(), "per_task_cap", a.capacity.ceiling.String(),
+			"reserved_by_orphans", reserved.String(), "orphans_pending_removal", a.capacity.pendingRemovals())
+	}
 	// And its own previous life's pin directories, beside the containers, for
 	// the same reason and with a stronger guarantee: a pin cannot outlive the
 	// worker process that opened its session, so every ork-pin-* under the work
@@ -657,7 +663,12 @@ func (a *Activities) startCapacityReap() {
 					continue
 				}
 				reapCtx, done := context.WithTimeout(ctx, controlTimeout)
-				a.capacity.reap(reapCtx, a.dispatcher.Runtime.Remove)
+				for _, err := range a.capacity.reap(reapCtx, a.dispatcher.Runtime.Remove) {
+					// Each still holds its reservation, and so still keeps
+					// this Orker from polling for that much work.
+					a.dispatcher.logger().Warn("capacity: a container could not be removed, so it "+
+						"keeps its reservation", "error", err, "pending", a.capacity.pendingRemovals())
+				}
 				done()
 			}
 		}

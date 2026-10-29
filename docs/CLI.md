@@ -742,7 +742,9 @@ listed as `unknown (unreachable)` with the reason under the table: its load
 is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.
 PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker
 declaring one admits tasks within, and RESERVED what stands reserved against
-it, pinned members included; both are - for an Orker that declares none.
+it, pinned members included and each outstanding poll counted at the per-task
+cap, so an idle Orker shows its pollers' share; both are - for an Orker that
+declares none.
 
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD      OPERATORS       VALUES

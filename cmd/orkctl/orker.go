@@ -99,7 +99,9 @@ func newOrkerListCommand(g *globalFlags) *cobra.Command {
 			"is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.\n" +
 			"PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker\n" +
 			"declaring one admits tasks within, and RESERVED what stands reserved against\n" +
-			"it, pinned members included; both are - for an Orker that declares none.",
+			"it, pinned members included and each outstanding poll counted at the per-task\n" +
+			"cap, so an idle Orker shows its pollers' share; both are - for an Orker that\n" +
+			"declares none.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			filters, err := parseFilterFlags(*filterTexts)

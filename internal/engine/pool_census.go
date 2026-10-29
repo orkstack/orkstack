@@ -25,8 +25,10 @@ import (
 // records still can, and both are asked.
 //
 // It is read at most once, and only when a question needs it: a submit that
-// finds its pools' channels polled and needs no capability probe never reads
-// it, so it costs such a submit nothing.
+// finds its pools' channels polled and carries no pinned, fan-out, cached,
+// failure-handler or sized task never reads it, so it costs such a submit
+// nothing. One that does pays one describe per live Orker, together, each
+// bounded by orkerDescribeTimeout.
 type poolCensus struct {
 	fleet FleetReader
 

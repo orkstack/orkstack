@@ -789,8 +789,11 @@ message Orker {
   string unavailable_reason = 11;
   repeated OpenPin pins = 12;
   // capacity and reserved are DescribeOrkerResult's: what this Orker admits
-  // tasks within, and what stands reserved against it. Both unset when it
-  // declares no capacity.
+  // tasks within, and what stands reserved against it, each outstanding poll
+  // counted at the per-task cap. Both unset when it declares no capacity.
   ResourceQuantity capacity = 13;
   ResourceQuantity reserved = 14;
+  // max_request is DescribeOrkerResult's: the per-task cap, the largest
+  // request this Orker runs, which submit holds a task's declared request to.
+  ResourceQuantity max_request = 15;
 }

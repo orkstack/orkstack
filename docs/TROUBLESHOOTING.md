@@ -43,7 +43,7 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 **Cause.** The task declares a `resources:` request above the per-task cap of every Orker of its pool that answered (`orker.resources.max_cpu`, `orker.resources.max_memory`). An Orker refuses such a request after dispatch, terminally (`RESOURCE_REQUEST_REFUSED`), so the run is refused at submit instead, before a run id exists, and `--allow-empty-pool` does not change that (`internal/engine/pools.go`, `PoolResourcesUnsatisfiableError`). The message names the largest cap the pool reported ([DEPLOY.md](./DEPLOY.md), "Declaring an Orker's capacity").
 
-**Confirm.** `orkctl orker list --filter pool=<pool>` lists the pool's Orkers; their caps are in `orkctl orker get <orker-id> --json` (`maxRequest`).
+**Confirm.** `orkctl orker list --filter pool=<pool>` lists the pool's Orkers; each one's cap is in `orkctl orker get <orker-id> --json` (`maxRequest`).
 
 **Fix.** Lower the task's request, or move the task to a pool whose Orkers set larger caps. The cap is a pool-wide setting: set the same one on every Orker of a pool.
 

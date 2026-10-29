@@ -3028,10 +3028,13 @@ type Orker struct {
 	UnavailableReason string     `protobuf:"bytes,11,opt,name=unavailable_reason,json=unavailableReason,proto3" json:"unavailable_reason,omitempty"`
 	Pins              []*OpenPin `protobuf:"bytes,12,rep,name=pins,proto3" json:"pins,omitempty"`
 	// capacity and reserved are DescribeOrkerResult's: what this Orker admits
-	// tasks within, and what stands reserved against it. Both unset when it
-	// declares no capacity.
-	Capacity      *ResourceQuantity `protobuf:"bytes,13,opt,name=capacity,proto3" json:"capacity,omitempty"`
-	Reserved      *ResourceQuantity `protobuf:"bytes,14,opt,name=reserved,proto3" json:"reserved,omitempty"`
+	// tasks within, and what stands reserved against it, each outstanding poll
+	// counted at the per-task cap. Both unset when it declares no capacity.
+	Capacity *ResourceQuantity `protobuf:"bytes,13,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	Reserved *ResourceQuantity `protobuf:"bytes,14,opt,name=reserved,proto3" json:"reserved,omitempty"`
+	// max_request is DescribeOrkerResult's: the per-task cap, the largest
+	// request this Orker runs, which submit holds a task's declared request to.
+	MaxRequest    *ResourceQuantity `protobuf:"bytes,15,opt,name=max_request,json=maxRequest,proto3" json:"max_request,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3160,6 +3163,13 @@ func (x *Orker) GetCapacity() *ResourceQuantity {
 func (x *Orker) GetReserved() *ResourceQuantity {
 	if x != nil {
 		return x.Reserved
+	}
+	return nil
+}
+
+func (x *Orker) GetMaxRequest() *ResourceQuantity {
+	if x != nil {
+		return x.MaxRequest
 	}
 	return nil
 }
@@ -3423,7 +3433,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"expires_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\texpiresAt\"F\n" +
 	"\x10CordonOrkerInput\x12\x1a\n" +
 	"\bcordoned\x18\x01 \x01(\bR\bcordoned\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"\xc9\x04\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"\x89\x05\n" +
 	"\x05Orker\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x12\x12\n" +
 	"\x04pool\x18\x02 \x01(\tR\x04pool\x12\x19\n" +
@@ -3440,7 +3450,9 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\x12unavailable_reason\x18\v \x01(\tR\x11unavailableReason\x12(\n" +
 	"\x04pins\x18\f \x03(\v2\x14.orkstack.v1.OpenPinR\x04pins\x129\n" +
 	"\bcapacity\x18\r \x01(\v2\x1d.orkstack.v1.ResourceQuantityR\bcapacity\x129\n" +
-	"\breserved\x18\x0e \x01(\v2\x1d.orkstack.v1.ResourceQuantityR\breserved*\\\n" +
+	"\breserved\x18\x0e \x01(\v2\x1d.orkstack.v1.ResourceQuantityR\breserved\x12>\n" +
+	"\vmax_request\x18\x0f \x01(\v2\x1d.orkstack.v1.ResourceQuantityR\n" +
+	"maxRequest*\\\n" +
 	"\vNetworkMode\x12\x1c\n" +
 	"\x18NETWORK_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14NETWORK_MODE_DEFAULT\x10\x01\x12\x15\n" +
@@ -3590,11 +3602,12 @@ var file_orkstack_v1_activity_proto_depIdxs = []int32{
 	27, // 65: orkstack.v1.Orker.pins:type_name -> orkstack.v1.OpenPin
 	26, // 66: orkstack.v1.Orker.capacity:type_name -> orkstack.v1.ResourceQuantity
 	26, // 67: orkstack.v1.Orker.reserved:type_name -> orkstack.v1.ResourceQuantity
-	68, // [68:68] is the sub-list for method output_type
-	68, // [68:68] is the sub-list for method input_type
-	68, // [68:68] is the sub-list for extension type_name
-	68, // [68:68] is the sub-list for extension extendee
-	0,  // [0:68] is the sub-list for field type_name
+	26, // 68: orkstack.v1.Orker.max_request:type_name -> orkstack.v1.ResourceQuantity
+	69, // [69:69] is the sub-list for method output_type
+	69, // [69:69] is the sub-list for method input_type
+	69, // [69:69] is the sub-list for extension type_name
+	69, // [69:69] is the sub-list for extension extendee
+	0,  // [0:69] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_proto_init() }

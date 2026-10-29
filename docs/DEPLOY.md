@@ -518,7 +518,9 @@ one bound it knows in advance, the per-task cap (`orker.resources.max_cpu`,
   remove it again every 30 seconds.
 
 `orkctl orker list` shows `CAPACITY` and `RESERVED` for each Orker that declares
-one. Boot refuses a capacity that does not read, or that the per-task cap does
+one. `RESERVED` counts each outstanding poll at the per-task cap, so an idle
+Orker shows its two pollers' share; a container that could not be removed is
+logged on every reap that fails, with its id. Boot refuses a capacity that does not read, or that the per-task cap does
 not fit in (`ORKER_CAPACITY_INVALID`). `max_concurrent` stays a count ceiling
 beside it.
 
@@ -541,8 +543,11 @@ that much headroom on a pin host. A hard bound for pins is not provided.
 **The cap is a pool-wide setting**, as pin hosting is. A submit asks every
 uncordoned Orker of a task's pool for its cap, on its own channel, and refuses
 a task that declares a request above every one of them
-(`RESOURCES_UNSATISFIABLE`), before a run id exists. Capacity may differ per
-Orker, but every Orker of a pool should set the same cap and default.
+(`RESOURCES_UNSATISFIABLE`), before a run id exists. That read costs a submit
+whose tasks declare `resources:` one describe per live Orker of the deployment,
+together, each bounded at five seconds; a submit that declares none pays
+nothing for it. Capacity may differ per Orker, but every Orker of a pool should
+set the same cap and default.
 
 **After a crash**, the Orker's restart reaps its previous life's containers.
 One it could not remove still holds its host, so a declared capacity starts

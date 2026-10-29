@@ -340,3 +340,18 @@ func TestPoolResolver_DoesNotJudgeSizesItCannotMeasure(t *testing.T) {
 		t.Fatalf("Plan: %v", err)
 	}
 }
+
+// A request fits only an Orker whose cap holds every dimension of it: one
+// Orker with the cpu and another with the memory hold nothing between them.
+func TestPoolResolver_ARequestMustFitOneOrkerInEveryDimension(t *testing.T) {
+	gpuQueue, _ := task.QueueForPool("gpu", "")
+	resolver := &engine.PoolResolver{
+		Probe: livePools{gpuQueue: 2},
+		Fleet: fleetOf(cappedOrker("gpu-1", "gpu", 16, 16<<30), cappedOrker("gpu-2", "gpu", 8, 64<<30)),
+	}
+	_, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "ml"}, compile(t, sizedDocument), false)
+	var refused *engine.PoolResourcesUnsatisfiableError
+	if !errors.As(err, &refused) || refused.Task != "train" {
+		t.Fatalf("Plan = %v; 12 cpu and 32Gi fit gpu-1's cpu and gpu-2's memory, never one Orker", err)
+	}
+}

@@ -2,6 +2,7 @@ package orker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sync"
@@ -140,9 +141,9 @@ type Capacity struct {
 	// need not know WHICH permit it is, only how many of each state remain.
 	unclaimed int
 	claimed   int
-	pinned    amount                 // the part of reserved held by pinned members
 	unremoved map[ContainerID]amount // containers whose removal has not yet succeeded
 	changed   chan struct{}
+	waiting   int // polls parked in reserve, for a test to know one waits
 }
 
 func newCapacity(limit, ceiling amount, slots int) *Capacity {
@@ -174,21 +175,37 @@ func (c *Capacity) grant() *worker.SlotPermit {
 	return &worker.SlotPermit{UserData: &capacityPermit{}}
 }
 
-// reserve blocks until a poll fits, then reserves the ceiling for it.
-func (c *Capacity) reserve(ctx context.Context) (*worker.SlotPermit, error) {
+// errRefusedWhileWaiting is reserve's answer when a poll became grantable
+// while refuse said no: the caller waits on what refused it, then asks again.
+var errRefusedWhileWaiting = errors.New("the poll was refused while it waited for capacity")
+
+// reserve blocks until a poll fits, then reserves the ceiling for it. refuse,
+// when set, is asked at the moment a poll would be granted: a poll that waited
+// for capacity must not be granted past a cordon set while it waited.
+func (c *Capacity) reserve(ctx context.Context, refuse func() bool) (*worker.SlotPermit, error) {
 	for {
 		c.mu.Lock()
 		if c.grantable() {
+			if refuse != nil && refuse() {
+				c.mu.Unlock()
+				return nil, errRefusedWhileWaiting
+			}
 			permit := c.grant()
 			c.mu.Unlock()
 			return permit, nil
 		}
 		changed := c.changed
+		c.waiting++
 		c.mu.Unlock()
 		select {
 		case <-changed:
 		case <-ctx.Done():
-			return nil, ctx.Err()
+		}
+		c.mu.Lock()
+		c.waiting--
+		c.mu.Unlock()
+		if err := ctx.Err(); err != nil {
+			return nil, err
 		}
 	}
 }
@@ -251,9 +268,8 @@ func (c *Capacity) admit(polled bool, request amount) (*Admission, error) {
 		// Unclaimed is zero only for an activity that holds no permit of
 		// this ledger; counting it is the conservative reading.
 		c.reserved = c.reserved.add(request)
-		c.pinned = c.pinned.add(request)
 		c.broadcast()
-		return &Admission{c: c, held: request, pinned: true}, nil
+		return &Admission{c: c, held: request}, nil
 	}
 	c.unclaimed--
 	c.claimed++
@@ -285,8 +301,10 @@ func (c *Capacity) seed(id ContainerID) {
 }
 
 // reap tries again to remove every container whose removal has not yet
-// succeeded, releasing each one's reservation once it is gone.
-func (c *Capacity) reap(ctx context.Context, remove func(context.Context, ContainerID) error) {
+// succeeded, releasing each one's reservation once it is gone, and returns
+// each removal that failed again, so the caller can say which container still
+// holds what.
+func (c *Capacity) reap(ctx context.Context, remove func(context.Context, ContainerID) error) (failed []error) {
 	c.mu.Lock()
 	pending := make([]ContainerID, 0, len(c.unremoved))
 	for id := range c.unremoved {
@@ -295,6 +313,7 @@ func (c *Capacity) reap(ctx context.Context, remove func(context.Context, Contai
 	c.mu.Unlock()
 	for _, id := range pending {
 		if err := remove(ctx, id); err != nil {
+			failed = append(failed, fmt.Errorf("container %s: %w", id, err))
 			continue
 		}
 		c.mu.Lock()
@@ -305,6 +324,7 @@ func (c *Capacity) reap(ctx context.Context, remove func(context.Context, Contai
 		}
 		c.mu.Unlock()
 	}
+	return failed
 }
 
 // pendingRemovals is how many containers still hold a reservation without an
@@ -328,7 +348,6 @@ func (c *Capacity) snapshot() (limit, reserved amount) {
 type Admission struct {
 	c         *Capacity
 	held      amount
-	pinned    bool
 	container ContainerID
 	done      bool // the reservation has left the attempt: freed, or handed to unremoved
 }
@@ -386,18 +405,12 @@ func (a *Admission) Done() {
 func (a *Admission) keep() {
 	a.done = true
 	a.c.unremoved[a.container] = a.held
-	if a.pinned {
-		a.c.pinned = a.c.pinned.sub(a.held)
-	}
 }
 
 // free returns the reservation. Locked.
 func (a *Admission) free() {
 	a.done = true
 	a.c.reserved = a.c.reserved.sub(a.held)
-	if a.pinned {
-		a.c.pinned = a.c.pinned.sub(a.held)
-	}
 	a.c.broadcast()
 }
 
@@ -416,16 +429,44 @@ func admissionFrom(ctx context.Context) *Admission {
 // capacitySlotSupplier is the task worker's activity supplier when this Orker
 // declares a capacity: max_concurrent slots, each granted only while the
 // per-task cap fits beside what is reserved (Capacity). It replaces the fixed
-// supplier, inside the cordon's wrapper, so a cordon still refuses first.
-type capacitySlotSupplier struct{ c *Capacity }
+// supplier, inside the cordon's wrapper, so a cordon still refuses first; and
+// because a poll can wait here for capacity long after it passed that wrapper,
+// the cordon is asked again at the moment a poll would be granted, and a
+// cordoned Orker's poll goes back to waiting on the cordon.
+type capacitySlotSupplier struct {
+	c      *Capacity
+	cordon *Cordon
+}
 
 var _ worker.SlotSupplier = (*capacitySlotSupplier)(nil)
 
+func (s *capacitySlotSupplier) cordoned() bool {
+	if s.cordon == nil {
+		return false
+	}
+	cordoned, _, _ := s.cordon.State()
+	return cordoned
+}
+
 func (s *capacitySlotSupplier) ReserveSlot(ctx context.Context, _ worker.SlotReservationInfo) (*worker.SlotPermit, error) {
-	return s.c.reserve(ctx)
+	for {
+		if s.cordon != nil {
+			if err := s.cordon.Wait(ctx); err != nil {
+				return nil, err
+			}
+		}
+		permit, err := s.c.reserve(ctx, s.cordoned)
+		if errors.Is(err, errRefusedWhileWaiting) {
+			continue
+		}
+		return permit, err
+	}
 }
 
 func (s *capacitySlotSupplier) TryReserveSlot(worker.SlotReservationInfo) *worker.SlotPermit {
+	if s.cordoned() {
+		return nil
+	}
 	return s.c.tryReserve()
 }
 
