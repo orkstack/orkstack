@@ -263,7 +263,8 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
 6. Update the docs the change makes false, and add the CHANGELOG.md
-   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1). The
+   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1; "The
+   changelog", below). The
    site's pages (`site/content/`) are short pages written for readers that
    cite the repository docs they summarise: update the page that describes a
    behaviour you change, and give a new doc under `docs/` a site page that
@@ -280,6 +281,23 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    `main` buildable.
 9. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate; a
    local `make proof` is the equivalent path.
+
+## The changelog
+
+CHANGELOG.md follows Keep a Changelog 1.1.0. A user-visible change adds its
+entry under `## [Unreleased]` in the same pull request, in the subsection of
+its kind (`### Added`, `### Changed`, `### Deprecated`, `### Removed`,
+`### Fixed` or `### Security`), and marks a breaking change **BREAKING**
+(AGENTS.md §11.1, step 7). Write it for the people who read the release: at a
+release the `[Unreleased]` section becomes the version's own,
+`## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
+section's text is the GitHub release's notes, word for word. Link to a
+document by its absolute URL: a relative link does not resolve on the release
+page. `make check` refuses a heading or a subsection of any other shape
+(`internal/docscheck`), and `release.yml` refuses a release while entries are
+still under `[Unreleased]`; docs/PROOFS.md §10, "Write the release notes", is
+the release's side of it. 0.1.0, the first release, says only "First
+release.".
 
 ## Fuzzing
 

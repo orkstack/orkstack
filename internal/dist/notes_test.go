@@ -190,3 +190,106 @@ func TestReleaseNotes_LineEndings(t *testing.T) {
 		t.Fatalf("CRLF notes %q (%v), want %q", got, err, want)
 	}
 }
+
+// laterSection is a release section as a later release writes it: Keep a
+// Changelog's subsections, a **BREAKING** entry, a nested list, a second
+// paragraph, a link and a code fence. The notes are exactly these bytes.
+const laterSection = "### Added\n\n" +
+	"- `orkctl run tail` follows a run's events ([docs/CLI.md](https://github.com/orkstack/orkstack/blob/main/docs/CLI.md)).\n" +
+	"  - It resumes by sequence from any replica.\n\n" +
+	"### Changed\n\n" +
+	"- **BREAKING** `orkctl apply` refuses a file with no `kind:`. Give every\n" +
+	"  file one:\n\n" +
+	"  ```yaml\n  kind: Orkflow\n  ```\n\n" +
+	"### Fixed\n\n" +
+	"- A cancelled task's container hears SIGTERM before SIGKILL.\n"
+
+// TestReleaseNotes_AreTheSectionWordForWord: what the release page shows is
+// the version's section as written, without its heading, for the first
+// release's one line and for a later release's full section; a version the
+// changelog does not name has no notes.
+func TestReleaseNotes_AreTheSectionWordForWord(t *testing.T) {
+	t.Parallel()
+	changelog := "# Changelog\n\nA preamble.\n\n" +
+		"## [Unreleased]\n\n" +
+		"## [0.2.0] - 2026-11-20\n\n" + laterSection + "\n" +
+		"## [0.1.0] - 2026-10-29\n\nFirst release.\n"
+	tests := []struct {
+		name      string
+		version   string
+		want      string
+		wantInErr string
+	}{
+		{"the first release", "v0.1.0", "First release.\n", ""},
+		{"a later release", "v0.2.0", laterSection, ""},
+		{"a version the changelog does not name", "v0.3.0", "", "[0.3.0]"},
+	}
+	for _, tc := range tests {
+		got, err := notesFor(t, changelog, tc.version)
+		if tc.wantInErr != "" {
+			if err == nil || got != "" || !strings.Contains(err.Error(), tc.wantInErr) {
+				t.Errorf("%s: notes %q, error %v; want no notes and a refusal naming %s", tc.name, got, err, tc.wantInErr)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("%s: %v", tc.name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: notes\n got: %q\nwant: %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestCheckNothingUnreleased: a release leaves nothing under [Unreleased],
+// because what is there would ship without being in its notes. The refusal
+// names the section, the entry it found and the version's section.
+func TestCheckNothingUnreleased(t *testing.T) {
+	t.Parallel()
+	release := "## [1.0.0] - 2026-12-01\n\n- one\n"
+	tests := []struct {
+		name      string
+		changelog string
+		wantInErr []string
+	}{
+		{"an empty Unreleased", "# Changelog\n\n## [Unreleased]\n\n" + release, nil},
+		{"only blank lines", "## [Unreleased]\n\n   \n\n" + release, nil},
+		{"no Unreleased section", release, nil},
+		{"Unreleased last", release + "\n## [Unreleased]\n", nil},
+		{"an Unreleased heading inside a fence",
+			"## [1.0.0]\n\n```markdown\n## [Unreleased]\n\n- an example\n```\n", nil},
+		{"an entry left behind", "## [Unreleased]\n\n### Added\n\n- not in 1.0.0\n\n" + release,
+			[]string{`"## [Unreleased]"`, `"### Added"`, `"## [1.0.0]"`, "CHANGELOG.md"}},
+		{"a line with no subsection", "## [Unreleased]\n- stray\n" + release, []string{`"- stray"`}},
+	}
+	for _, tc := range tests {
+		err := dist.CheckNothingUnreleased([]byte(tc.changelog), mustVersion(t, "v1.0.0"))
+		if tc.wantInErr == nil {
+			if err != nil {
+				t.Errorf("%s: %v", tc.name, err)
+			}
+			continue
+		}
+		if err == nil {
+			t.Errorf("%s: accepted, want a refusal", tc.name)
+			continue
+		}
+		for _, want := range tc.wantInErr {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: refusal %q does not mention %s", tc.name, err, want)
+			}
+		}
+	}
+}
+
+// TestRepository_TheFirstReleaseSaysFirstRelease: 0.1.0's notes are the one
+// line the first release says, so the changes folded into it at merge are
+// dropped, not moved under its heading.
+func TestRepository_TheFirstReleaseSaysFirstRelease(t *testing.T) {
+	t.Parallel()
+	got, err := dist.ReleaseNotes(readRepoFile(t, dist.ChangelogFile), mustVersion(t, "v0.1.0"))
+	if err != nil || got != "First release.\n" {
+		t.Fatalf("CHANGELOG.md's 0.1.0 notes are %q (%v), want %q", got, err, "First release.\n")
+	}
+}

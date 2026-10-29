@@ -59,8 +59,16 @@ func repoWith(t *testing.T, changelog string) string {
 	return root
 }
 
+// changelogFor is a changelog as a release leaves it: nothing under
+// [Unreleased], and the version's section below it.
 func changelogFor(version string) string {
-	return "# Changelog\n\n## [Unreleased]\n\n- later\n\n## [" + version + "] - 2026-10-24\n\n- What this release did.\n"
+	return "# Changelog\n\n## [Unreleased]\n\n## [" + version + "] - 2026-10-24\n\n- What this release did.\n"
+}
+
+// withUnreleased adds an entry under the changelog's [Unreleased], as a merge
+// after the release's section was written does.
+func withUnreleased(changelog string) string {
+	return strings.Replace(changelog, "## [Unreleased]\n", "## [Unreleased]\n\n### Added\n\n- later\n", 1)
 }
 
 func TestRun_UsageErrorsExitTwo(t *testing.T) {
@@ -144,6 +152,14 @@ func TestRun_Check(t *testing.T) {
 			t.Fatalf("exit %d, stderr %q; want 1 naming CHANGELOG.md", got.code, got.stderr)
 		}
 	})
+	t.Run("an entry left under Unreleased", func(t *testing.T) {
+		t.Parallel()
+		root := repoWith(t, withUnreleased(changelogFor(series+".4")))
+		got := invoke(t, nil, nil, "check", "-version", version, "-root", root)
+		if got.code != 1 || !strings.Contains(got.stderr, "[Unreleased]") || !strings.Contains(got.stderr, "### Added") {
+			t.Fatalf("exit %d, stderr %q; want 1 naming [Unreleased] and its entry", got.code, got.stderr)
+		}
+	})
 	t.Run("no changelog file", func(t *testing.T) {
 		t.Parallel()
 		got := invoke(t, nil, nil, "check", "-version", version, "-root", t.TempDir())
@@ -153,9 +169,11 @@ func TestRun_Check(t *testing.T) {
 	})
 }
 
+// TestRun_Notes: notes prints any version's section, so an entry merged under
+// [Unreleased] since does not change it; check is what refuses that release.
 func TestRun_Notes(t *testing.T) {
 	t.Parallel()
-	root := repoWith(t, changelogFor("1.2.3"))
+	root := repoWith(t, withUnreleased(changelogFor("1.2.3")))
 	got := invoke(t, nil, nil, "notes", "-version", "v1.2.3", "-root", root)
 	if got.code != 0 || got.stdout != "- What this release did.\n" {
 		t.Fatalf("exit %d, stdout %q (stderr %q), want the section", got.code, got.stdout, got.stderr)

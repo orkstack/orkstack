@@ -126,4 +126,4 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 ## Before you depend on it
 
 - [ ] Rehearse, in a deployment that carries no real work, each procedure this checklist relies on: a rollout and a rollback, an Orker drain, and a cleanup pass with retention enabled. Do not rely on a procedure under pressure until you have run it ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
-- [ ] Re-read [LIMITATIONS.md](./LIMITATIONS.md) and the [CHANGELOG.md](../CHANGELOG.md) `[Unreleased]` section before each upgrade, because breaking changes are announced there ([UPGRADING.md](./UPGRADING.md), "The pre-1.0 promise").
+- [ ] Before each upgrade, re-read [LIMITATIONS.md](./LIMITATIONS.md) and, in [CHANGELOG.md](../CHANGELOG.md), the section of every release after the one you run, because breaking changes are announced there ([UPGRADING.md](./UPGRADING.md), "The pre-1.0 promise").

@@ -8,17 +8,9 @@ OrkStack is pre-release: stable, but breaking changes may be introduced until 1.
 
 - Every breaking change is listed in [CHANGELOG.md](../CHANGELOG.md), in the **Changed** or **Removed** section, and marked **BREAKING**. The changelog follows the Keep a Changelog 1.1.0 format named in its header.
 - OrkStack makes no promise of deprecation windows beyond that listing.
-- This repository has no release tags yet, and the changelog has only an `[Unreleased]` section. Once releases exist they follow Semantic Versioning from the first one ([CHANGELOG.md](../CHANGELOG.md), header).
+- Releases follow Semantic Versioning from the first, 0.1.0 ([CHANGELOG.md](../CHANGELOG.md), header). Its section says only "First release.": there is no earlier release to upgrade from, so it lists no breaking change. No release is tagged yet.
 
-Before you upgrade, read the **BREAKING** entries in the `[Unreleased]` section. At the time of writing they are these:
-
-| Entry | What to do |
-|---|---|
-| Every Orkflow begins with `apiVersion: orkstack/v1` and `kind: Orkflow`. A document without them is refused at validate, apply and plan ([DSL.md](./DSL.md), "The document header") | Add the two lines to the top of the document, after any comments |
-| `orkctl apply` decides what a file is by its `kind:` and refuses a file with neither ([CHANGELOG.md](../CHANGELOG.md), Changed) | Give every file a `kind:`: `Orkflow`, or `Automation` for an automation document |
-| An automation document's schedule `input:` is a YAML mapping. A JSON object written as a string is refused ([CHANGELOG.md](../CHANGELOG.md), Changed; [JSON.md](./JSON.md), "Data written in an authored document") | Remove the quotes, so that `input:` is a mapping |
-| Data written in an Orkflow (`inputs:`, `with:`, `await.schema`) becomes JSON through one strict mapping. A plain `yes`, `on`, `0755`, `1:30`, `1e3` or date is refused, naming the path ([JSON.md](./JSON.md), "Data written in an authored document") | Quote the value if you mean a string, or write the number the way JSON writes it |
-| An unpinned Orkflow's derived version now covers the whole source, header included. Applying a pinned version again with only its header changed is refused ([CHANGELOG.md](../CHANGELOG.md), Changed) | Give an edited document a new `version:`, or remove `version:` and let the source name one |
+Before you upgrade, read the **BREAKING** entries in the section of every release after the one you run. Each release's section is also the notes on its GitHub release page.
 
 ## Release artifacts
 
@@ -56,8 +48,9 @@ hand.
 The built-in activity catalog names the activity images by their `X.Y` tag,
 so a release's `ork` resolves `uses: shell` to that release line's image at
 apply time and pins its digest; `release.yml` refuses a version whose `X.Y`
-the catalog does not name. The release notes are the version's
-`## [X.Y.Z]` section of [CHANGELOG.md](../CHANGELOG.md).
+the catalog does not name. The notes on the GitHub release page are the
+version's `## [X.Y.Z]` section of [CHANGELOG.md](../CHANGELOG.md), word for
+word, without its heading.
 
 Running the published images is set out in [DEPLOY.md](./DEPLOY.md),
 "Running the published images". A deployment that turns versioning on sets
