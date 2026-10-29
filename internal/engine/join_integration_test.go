@@ -18,7 +18,6 @@ import (
 	"go.temporal.io/api/temporalproto"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
-	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -1205,20 +1204,10 @@ func TestIntegration_JoinSubmitRefusesAPoolWhoseOrkerPredatesJoins(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := worker.New(j.temporal, queue, worker.Options{DisableRegistrationAliasing: true, DisableWorkflowWorker: true})
-	w.RegisterActivityWithOptions(func(context.Context) (*orkstackv1.DescribeOrkerResult, error) {
-		return &orkstackv1.DescribeOrkerResult{OrkerId: "old-orker", BuildId: "2026.09.01", Pool: pool,
-			EachSupported: true, CacheSupported: true}, nil
-	}, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-	w.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-		return nil, temporal.NewNonRetryableApplicationError("never", "ActivityFailed", nil)
-	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(w.Stop)
+	startStandInOrker(t, j.temporal, queue, &orkstackv1.DescribeOrkerResult{
+		OrkerId: "old-orker", BuildId: "2026.09.01", Pool: pool, EachSupported: true, CacheSupported: true})
 	starter := engine.NewTemporalStarterWithOrkerQueue(j.temporal, j.runQueue, j.orkerQueue)
-	resolver := &engine.PoolResolver{Probe: engine.NewTemporalPoolProbe(j.temporal), Orkers: starter}
+	resolver := &engine.PoolResolver{Probe: engine.NewTemporalPoolProbe(j.temporal), Fleet: starter}
 	ns := &orkstackv1.Namespace{Name: "default", DefaultPool: pool}
 	wf := j.example(nil)
 	deadline := time.Now().Add(time.Minute)

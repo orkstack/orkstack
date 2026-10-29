@@ -181,9 +181,11 @@ needs `ORK_S3_*` either way.
   give an operator two pools to size and two to drain when there is one, and
   tell a client a task ran on `main` while gpu's Orkers ran it.
 - **A submit into a pool with no live Orkers is refused, at submit.** The
-  engine asks Temporal which workers are polling the pool's channel and
-  refuses the submission when the answer is none, naming the pool, the tasks
-  and the fix:
+  engine asks Temporal which workers are polling the pool's channel. When the
+  answer is none it asks the Orker inventory — the presence channel, and each
+  Orker on its own control channel, the read `orkctl orker list` makes — and
+  refuses the submission only when no uncordoned Orker of the pool answers
+  there either, naming the pool, the tasks and the fix:
 
   ```
   pool "gpu" (namespace "payments", tasks: settle) has no live Orkers, so nothing
@@ -205,6 +207,30 @@ needs `ORK_S3_*` either way.
   version is being promoted, so the count is per worker identity, not per
   record.
 
+  The second question is what keeps a busy pool live. An Orker polls its
+  pool's channel only while it has a free task slot, so a pool whose every
+  Orker is running `ORK_ORKER_MAX_CONCURRENT` tasks shows no poller there once
+  their last polls are 90 seconds old. Its presence and control channels have
+  workers and slots of their own, so a busy Orker still answers there. A
+  submit reads the inventory only when a pool's channel shows no poller or a
+  capability probe (below) needs it, once per submit and once more for each
+  composed child it plans; `orkctl pool list` reads it once per call. An Orker
+  that does not answer within five seconds says nothing about which pool it
+  serves, so it is not counted, and when the pool then reads empty the engine
+  logs `a pool reads empty while some live Orkers did not answer when asked`.
+  It is not made a "cannot tell": a stopped Orker's presence record stays
+  fresh for up to 90 seconds and never answers, so that would tell every
+  submit into an empty pool to ask again after any Orker anywhere stopped. A
+  busy pool on a cluster too slow to answer a describe in five seconds
+  therefore still reads empty.
+
+  An Orker is matched to a pool by the pool it reports. Two raw
+  `ORK_ORKER_QUEUE` channels in one Temporal namespace both report the default
+  pool, so when the engine's own channel shows no poller, an Orker polling the
+  other raw channel keeps the default pool live and the submit waits rather
+  than being refused. Give each raw channel its own Temporal namespace, as the
+  test harnesses do (AGENTS.md §11.1).
+
   The residue is bounded and deliberate: inside those 90 seconds a stale record
   can still say "live" just after an Orker stopped. That degrades to the old
   behaviour — a run that waits — never to a false rejection of a healthy
@@ -215,8 +241,12 @@ needs `ORK_S3_*` either way.
   A cluster that cannot be asked is a third answer, and it is kept apart from
   the other two. "No Orkers" is `failed_precondition` — start one, or take the
   override. A probe that got no reply at all (Temporal unreachable, or slower
-  than its five-second bound) measured nothing, and the submission it refuses
-  may be perfectly good, so it is `unavailable`: ask again. Reported as
+  than its five-second bound, for the pool's channel or for the inventory)
+  measured nothing, and the submission it refuses may be perfectly good, so it
+  is `unavailable`: ask again. `allow_empty_pool` does not change that for the
+  pool's channel; for the inventory alone it does, because the override would
+  accept the pool busy or empty, and the engine logs `whether a pool with no
+  poller is busy is unknown`. Reported as
   `invalid_argument` it would send every client off to fix a request with
   nothing wrong with it for as long as the cluster was unwell.
 - **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
@@ -248,7 +278,9 @@ needs `ORK_S3_*` either way.
   reports each pool from the same channel a submit dispatches it to, so an
   engine using the `ORK_ORKER_QUEUE` escape hatch reports its default pool
   from that raw queue — the Orkers it accepts runs onto are the Orkers it
-  says the pool has.
+  says the pool has, except for the busy-pool question above, which matches
+  Orkers by the pool they report and so cannot tell two raw channels of one
+  Temporal namespace apart.
 - **Under versioning, every pool a release dispatches to needs an Orker of that
   release's version.** A pool left on the old build is not "lagging": it is the
   pinned-activity exception (§2) firing, which sends that queue's tasks to
@@ -331,6 +363,7 @@ then the variable it becomes.
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal in the daemon's own words, or a container that exits non-zero, is still `WORKDIR_NOT_BINDABLE`. A daemon that never answers holds boot for up to three times this plus a minute (7 minutes at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
+| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, as before. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
@@ -418,7 +451,8 @@ file is the reference, not something to copy and edit by hand.
 
 ### Sizing an Orker's task ceiling
 
-`orker.max_concurrent` is how many task containers one Orker runs at once.
+`orker.max_concurrent` is how many task containers one Orker runs at once,
+pinned members aside (they run in their pin's own slots).
 Past it the Orker stops polling: further tasks wait in its pool for this Orker
 or another to free a slot, which is the right place for them to wait — a
 container the host cannot afford to run is a task that fails `OOMKilled` or
@@ -440,14 +474,97 @@ every item is dispatched at once, and only this ceiling decides how many of
 them one Orker takes. The value is logged at boot (`max_concurrent`) and
 reported by Admin → Activities.
 
+**The ceiling counts tasks, not their size.** Each slot can be taken by a task
+of any request up to the per-task caps, `orker.resources.max_cpu` (`8`) and
+`orker.resources.max_memory` (`16Gi`), so with the defaults one Orker can
+reserve `16 × 8 = 128` cpus. To rule out over-commit by unpinned tasks, size
+the ceiling by the caps rather than the defaults:
+
+```
+max_concurrent ≤ min(host cpus ÷ max_cpu, host memory ÷ max_memory)
+```
+
+A pin's members do not take these slots: they run in the pin's own, beside
+the ceiling, so a pin host also needs room for `ORK_ORKER_MAX_PINS` pins'
+members running at once, each up to the caps. The bound is pessimistic: a 16-CPU
+host with the default 8-cpu cap runs 2 tasks at once, however small they are.
+Recover concurrency by lowering the caps to what the pool's tasks really ask
+for, and give the rare large task a pool of its own whose Orkers set larger
+caps and a smaller ceiling. Set the same caps on every Orker of a pool: a task
+above the cap of the Orker that takes it fails `RESOURCE_REQUEST_REFUSED`, so a
+pool whose Orkers disagree runs a task or fails it depending on which one
+polled first.
+
+### Declaring an Orker's capacity
+
+`orker.capacity.cpu` and `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`,
+`ORK_ORKER_CAPACITY_MEMORY`) declare what one Orker admits tasks within, in the
+Kubernetes spelling: `"16"` and `"64Gi"`. Unset, the default, the Orker admits
+by `max_concurrent` alone, exactly as before. Either may be set alone; the
+other dimension is then not bounded.
+
+An Orker that declares a capacity admits no task that would take its
+reservations above it. A Temporal worker reserves a slot before it polls and
+cannot see the task until it has taken it, so the Orker holds each poll to the
+one bound it knows in advance, the per-task cap (`orker.resources.max_cpu`,
+`max_memory`):
+
+- every poll for a task reserves the cap, and is granted only while that fits
+  beside everything already reserved;
+- once the task is in hand, its reservation is trimmed to the task's own
+  resolved request, and an activity that runs no container to nothing;
+- the reservation is freed when the attempt's container is **removed**. A
+  container whose removal failed keeps its reservation, and the Orker tries to
+  remove it again every 30 seconds.
+
+`orkctl orker list` shows `CAPACITY` and `RESERVED` for each Orker that declares
+one. `RESERVED` counts each outstanding poll at the per-task cap, so an idle
+Orker shows its two pollers' share; a container that could not be removed is
+logged on every reap that fails, with its id. Boot refuses a capacity that does not read, or that the per-task cap does
+not fit in (`ORKER_CAPACITY_INVALID`). `max_concurrent` stays a count ceiling
+beside it.
+
+**What it costs.** A poll needs a whole cap free, so an Orker whose capacity
+equals its cap runs one task at a time, whatever their size: with the default
+8-cpu cap, a 16-cpu Orker holds at most two polls. Keep the cap small relative
+to the Orkers that serve a pool, and give the rare large task a pool of its
+own. A cache hit or an adopted commit starts no container, but it is admitted
+like any task, so under pressure it waits for a cap's worth too; it is priced
+as today, reservation × held time.
+
+**Pinned members are counted, not gated.** A pin's members run in the pin's own
+slots, which no capacity can gate without breaking the pin's heartbeats or
+deadlocking two pins, so a member's request joins the ledger on arrival and may
+push it over capacity. While the reservations stand at or over capacity the
+Orker grants no poll, so ordinary work yields and the overshoot drains. The
+overshoot is bounded by `ORK_ORKER_MAX_PINS` × what one pin runs at once: leave
+that much headroom on a pin host. A hard bound for pins is not provided.
+
+**The cap is a pool-wide setting**, as pin hosting is. A submit asks every
+uncordoned Orker of a task's pool for its cap, on its own channel, and refuses
+a task that declares a request above every one of them
+(`RESOURCES_UNSATISFIABLE`), before a run id exists. That read costs a submit
+whose tasks declare `resources:` one describe per live Orker of the deployment,
+together, each bounded at five seconds; a submit that declares none pays
+nothing for it. Capacity may differ per Orker, but every Orker of a pool should
+set the same cap and default.
+
+**After a crash**, the Orker's restart reaps its previous life's containers.
+One it could not remove still holds its host, so a declared capacity starts
+with that container's cap reserved, and frees it once a later reap removes it.
+
+The ledger is held in the process, as a cordon is: never stored, never shared,
+gone with the process. It is admission, not placement: Temporal decides which
+polling Orker receives a task.
+
 ### Pin hosting is a pool-wide setting
 
 Pin hosting is a property of a **pool**, not of a process: set the same
-`ORK_ORKER_MAX_PINS` on every Orker of a pool, because the submit-time probe
-that refuses a pin with no host to open it on asks one Orker of the pool and
-takes that answer as representative — a mixed pool is refused or accepted
-depending on who answered, and a pin accepted onto Orkers that in fact set `0`
-waits for a slot that never appears and then fails the run.
+`ORK_ORKER_MAX_PINS` on every Orker of a pool. The submit-time probe that
+refuses a pin with no host to open it on asks every uncordoned Orker of the
+pool, each on its own control channel, and accepts the pin when any one of
+them hosts pins; a pin accepted that way still opens only on a pin host, so in
+a mixed pool it waits for that host's slots alone.
 
 The refusal is `failed_precondition`, the same code as an empty pool, and it
 names the pool, the pins, the tasks and the fix:
@@ -460,7 +577,7 @@ for one
 ```
 
 `allow_empty_pool` downgrades it to a logged warning, as it does for an empty
-pool. A pool Orker that does not answer the describe probe is not a refusal —
+pool. A pool none of whose Orkers answers the probe is not a refusal —
 the submit proceeds and, if no host can open the pin, the triggering task
 fails `PIN_UNAVAILABLE` after the pin creation timeout
 (`engine.pin_creation_timeout`, five minutes by default; `docs/DSL.md`,
@@ -477,20 +594,22 @@ neither.
 An Orkflow with a fan-out (`each:`, `docs/DSL.md` "Fan-out") needs Orkers that
 understand items: an Orker built before fan-out would run an item without its
 `task.json` `each` object, and would stage nothing for a fan-out's direct
-dependent — a silently wrong result. So submit asks one Orker of the pool of
-every fan-out and of every direct dependent of one whether it supports
-fan-out, and refuses the run with `FailedPrecondition` naming the pool, the
-tasks, the Orker and its build when it does not; `allow_empty_pool` does not
-override that. Like pin hosting, the answer of one Orker stands for its pool:
-run every Orker of one pool on one release.
+dependent — a silently wrong result. So submit asks every uncordoned Orker of
+the pool of every fan-out and of every direct dependent of one, each on its
+own control channel, whether it supports fan-out, and refuses the run with
+`FailedPrecondition` naming the pool, the tasks, and the first Orker (by id)
+that does not and its build; `allow_empty_pool` does not override that. Any
+Orker of the pool may take an item, so one old Orker refuses the pool: run
+every Orker of one pool on one release, or cordon the old ones while they
+drain.
 
 Caching (`cache:`, `docs/DSL.md` "Caching") is the same: an Orker built before
 caching cannot even decode a cached task's input — the SDK's payload converter
 refuses the unknown field — and would fail every attempt for a reason that has
-nothing to do with the task. So submit asks one Orker of the pool of every
-cached task (a cached fan-out's items run on the fan-out's pool) whether it
-implements caching, and refuses with `FailedPrecondition` naming the pool, the
-tasks, the Orker and its build when it does not; neither `allow_empty_pool` nor
+nothing to do with the task. So submit asks every uncordoned Orker of the
+pool of every cached task (a cached fan-out's items run on the fan-out's pool)
+whether it implements caching, and refuses with `FailedPrecondition` naming
+the pool, the tasks, and the first Orker that does not and its build; neither `allow_empty_pool` nor
 `no_cache` overrides that (a bypass still sends the cache context). Memos live
 under `metadata/memo/` and need no setting of their own.
 
@@ -498,17 +617,20 @@ Failure handlers (`join: any_failed` or `all_done`, `docs/DSL.md` "Joins and
 failure handlers") are the same: an Orker built before join policies cannot
 decode a failure handler's input — the SDK's payload converter refuses the
 unknown field — and would fail the compensation step of a run that is
-already failing. So submit asks one Orker of the pool of every failure
-handler that runs a container whether it reads join policies, and refuses
-with `FailedPrecondition` naming the pool, the tasks, the Orker and its
-build when it does not; `allow_empty_pool` does not override that. A
+already failing. So submit asks every uncordoned Orker of the pool of every
+failure handler that runs a container whether it reads join policies, and
+refuses with `FailedPrecondition` naming the pool, the tasks, and the first
+Orker that does not and its build; `allow_empty_pool` does not override that. A
 `none_failed` join needs nothing from an Orker.
 
-All three probes are best-effort: a pool whose Orker does not answer within
-the describe timeout is not refused — nothing was measured — and the engine
-logs a warning (`submit: a live pool with … did not answer the describe-orker
-probe`). The probe is a guard for a mixed rollout, not a substitute for
-running every Orker of a pool on one release.
+All four probes ask each Orker on its own control channel, never on the
+pool's channel, so a pool whose every task slot is taken answers them like an
+idle one. They are best-effort: a pool none of whose uncordoned Orkers answers
+within the describe timeout is not refused — nothing was measured — and the
+engine logs a warning (`submit: no uncordoned Orker of a live pool with …
+answered on its own channel, so whether … is unknown`). The probe is a guard
+for a mixed rollout, not a substitute for running every Orker of a pool on one
+release.
 
 ### Pins on a versioned deployment
 
@@ -1784,9 +1906,11 @@ What that costs, stated so nobody has to discover it:
 
 - **There is no per-pool inventory of what a pool can run.** An activity is an
   OCI image, and which images a deployment can run is engine configuration
-  (`orkctl activity list`), not something an Orker reports. A pool's Orkers
-  still prove they are alive by answering `DescribeOrker` on the pool's own
-  channel; that probe is what `LAST SEEN` and the count are built from.
+  (`orkctl activity list`), not something an Orker reports. The count and
+  `LAST SEEN` come from the pool's channel and from the Orker inventory: the
+  larger of the channel's live pollers and the pool's uncordoned Orkers that
+  answer on their own channels, so a pool whose every Orker is busy, and so
+  polls nothing on its channel, still reports them.
 - **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
   minutes after its worker died, so a record older than the freshness window is
   dropped before anything is counted or timestamped. A pool whose Orkers have
@@ -1859,10 +1983,12 @@ What a cordon does, precisely:
 - **Everything in flight** is untouched: running containers finish, and open
   pins keep executing their remaining members, their release, and their
   completion on this host.
-- **The pool probe.** A cordoned Orker stops answering `DescribeOrker` on its
-  pool channel (only its own control channel still answers), so a pool whose
-  every Orker is cordoned reports its poller-derived count for the freshness
-  window and zero after it.
+- **The pool probe.** A cordoned Orker stops polling its pool's channel but
+  still answers on its own control channel, where submit's probes and the
+  inventory read it as an Orker that takes no new task. So a pool whose every
+  Orker is cordoned reports its poller-derived count for the freshness window
+  and zero after it, and a cordoned Orker never keeps a pool live or speaks for
+  what it can run.
 
 `SIGTERM` stops polling and cancels in-flight work; the Orker does not cordon
 itself on it. An operator who wants in-flight work to finish first cordons
@@ -1892,6 +2018,35 @@ cordon` answers `NotFound`.
 Every cordon and uncordon is an audit record (`orker.cordon`,
 `orker.uncordon`, target the Orker id, the reason in its detail, no
 namespace).
+
+### Fair dispatch across namespaces
+
+When tasks of several namespaces wait for the same pool's Orkers, the cluster
+can dispatch them fairly rather than first in, first out. Every task activity
+of a run carries its namespace as a fairness key, and the namespace's
+`fair_share_weight` (`orkctl namespace update NS --fair-share-weight 3`; 0, the
+default, is a weight of 1, otherwise from 0.001 to 1000) as its weight. Both are decided at
+submit and pinned in the run, so a changed weight moves only the runs
+submitted after it. A namespace name longer than 64 bytes is keyed by a
+readable prefix and a SHA-256 suffix.
+
+It is Temporal's own task-queue fairness, never an OrkStack queue, and it takes
+effect only where the operator enables it on the Temporal cluster:
+`matching.enableFairness=true` in the server's dynamic configuration, for the
+Temporal namespace OrkStack uses, or globally. That is a setting of the
+deployment's Temporal, not an OrkStack dependency; OrkStack cannot detect it.
+Without it the keys are ignored and dispatch stays first in, first out.
+
+What fairness does and does not do:
+
+- it orders the tasks waiting on one pool's channel, per partition of that
+  channel, so the effect is real but moderate, and it never moves a task to
+  another pool;
+- a weight pinned at submit never reorders a backlog already queued;
+- during a release rollout it holds among the tasks queued for one worker
+  version;
+- the cluster keeps the state of at most its top 100 keys across a server
+  restart.
 
 ### Namespace admission: `hold` and `max_running`
 

@@ -331,10 +331,10 @@ func newPinChaosClusterWithCreationTimeout(t *testing.T, ctx context.Context, ma
 		// pin-host describe that reads max_concurrent_pins off the Orker itself.
 		// A pinned submit that reached the workflow without passing these would
 		// be proving something weaker than the deployment does.
-		Pools:      engine.NewTemporalPoolProbe(c.temporal),
-		PoolOrkers: starter,
-		Artifacts:  cfg,
-		Limits:     engine.DefaultLimits(),
+		Pools:     engine.NewTemporalPoolProbe(c.temporal),
+		Fleet:     starter,
+		Artifacts: cfg,
+		Limits:    engine.DefaultLimits(),
 
 		PinCreationTimeout: creationTimeout,
 	})

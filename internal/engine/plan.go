@@ -195,6 +195,16 @@ type RunPlan struct {
 	// takes whatever this says (pinCreationTimeoutFor). omitempty, so a plan
 	// with none encodes exactly as it did before the field existed.
 	PinCreationTimeoutSeconds int32 `json:"pin_creation_timeout_seconds,omitempty"`
+
+	// Fairness is the fairness key and weight every task activity of this
+	// run is dispatched with (fairness.go): the run's namespace and its
+	// fair_share_weight, decided at submit because the namespace document is
+	// registry state workflow code may not read. A run-tree value: set on the
+	// top-level plan, cleared from each nested child plan and copied into a
+	// child's start plan by childStartPlan, since a child runs in its
+	// parent's namespace. Nil on every plan built before it, which schedules
+	// with no priority and asks no gate.
+	Fairness *FairnessSelection `json:"fairness,omitempty"`
 }
 
 // OverlayPolicy is a run's snapshot-overlay thresholds, pinned per run

@@ -281,7 +281,6 @@ func TestListPools_Filters(t *testing.T) {
 	svc := api.NewService(api.Config{
 		Namespaces: registry{"default": {Name: "default", AllowedPools: []string{"main", "gpu", "cold"}}},
 		Pools:      livePools{task.DefaultQueue: 2, gpu: 1},
-		PoolOrkers: poolOrkers{task.DefaultQueue: {}, gpu: {}},
 	})
 	pools := func(texts ...string) string {
 		t.Helper()

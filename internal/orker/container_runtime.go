@@ -226,6 +226,9 @@ var ErrProbeTimedOut = errors.New("the bind probe timed out")
 // stuck in removal must not stop an Orker from starting.
 type ReapIncompleteError struct {
 	Failures []error
+	// Containers names each container that could not be removed, so an Orker
+	// declaring a capacity can keep it reserved until a later reap.
+	Containers []ContainerID
 }
 
 func (e *ReapIncompleteError) Error() string {

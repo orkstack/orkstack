@@ -13,6 +13,7 @@ import (
 	"unicode/utf8"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/quantity"
 )
 
 // FuzzRenderer_ARenderedValueIsTheValue: a value reaches a rendered string
@@ -289,17 +290,17 @@ func FuzzResolveResources_AnAcceptedRequestIsALimitWithinTheCap(f *testing.F) {
 			return
 		}
 
-		capCPU, err := parseCPU(policy.MaxCPU)
-		if err != nil || !isPositiveFinite(capCPU) {
+		capCPU, err := quantity.ParseCPU(policy.MaxCPU)
+		if err != nil || !quantity.PositiveFinite(capCPU) {
 			t.Fatalf("accepted cpu %q under the cap %q, which is not a limit (%v)", gotCPU, policy.MaxCPU, err)
 		}
-		capBytes, err := parseMemory(policy.MaxMemory)
+		capBytes, err := quantity.ParseMemory(policy.MaxMemory)
 		if err != nil || capBytes < 1 {
 			t.Fatalf("accepted memory %q under the cap %q, which is not a limit (%v)", gotMemory, policy.MaxMemory, err)
 		}
 
 		renderedCPU, err := strconv.ParseFloat(dockerCPUs(gotCPU), 64)
-		if err != nil || !isPositiveFinite(renderedCPU) || renderedCPU > capCPU {
+		if err != nil || !quantity.PositiveFinite(renderedCPU) || renderedCPU > capCPU {
 			t.Fatalf("cpu %q renders as %q, not a positive limit within %q (%v)", gotCPU, dockerCPUs(gotCPU), policy.MaxCPU, err)
 		}
 		renderedBytes, err := strconv.ParseInt(dockerMemory(gotMemory), 10, 64)
@@ -343,41 +344,41 @@ func FuzzQuantities_ARenderedLimitIsTheQuantityTheCapsWereCheckedWith(f *testing
 	} {
 		f.Add(seed)
 	}
-	f.Fuzz(func(t *testing.T, quantity string) {
-		cpus, cpuErr := parseCPU(quantity)
-		bytes, memErr := parseMemory(quantity)
+	f.Fuzz(func(t *testing.T, raw string) {
+		cpus, cpuErr := quantity.ParseCPU(raw)
+		bytes, memErr := quantity.ParseMemory(raw)
 
 		if cpuErr == nil {
-			rendered := dockerCPUs(quantity)
-			if isPositiveFinite(cpus) {
+			rendered := dockerCPUs(raw)
+			if quantity.PositiveFinite(cpus) {
 				if back, err := strconv.ParseFloat(rendered, 64); err != nil || back != cpus {
-					t.Fatalf("cpu %q is %v and renders as %q (%v)", quantity, cpus, rendered, err)
+					t.Fatalf("cpu %q is %v and renders as %q (%v)", raw, cpus, rendered, err)
 				}
-			} else if rendered != quantity {
-				t.Fatalf("cpu %q is %v, no limit, yet renders as %q", quantity, cpus, rendered)
+			} else if rendered != raw {
+				t.Fatalf("cpu %q is %v, no limit, yet renders as %q", raw, cpus, rendered)
 			}
-			if cpuReadsAsUnlimited(quantity) == isPositiveFinite(cpus) {
-				t.Fatalf("cpuReadsAsUnlimited(%q) disagrees with the number %v", quantity, cpus)
+			if cpuReadsAsUnlimited(raw) == quantity.PositiveFinite(cpus) {
+				t.Fatalf("cpuReadsAsUnlimited(%q) disagrees with the number %v", raw, cpus)
 			}
 		}
 		if memErr == nil {
-			rendered := dockerMemory(quantity)
-			if isByteCount(bytes) {
+			rendered := dockerMemory(raw)
+			if quantity.ByteCount(bytes) {
 				if n, err := strconv.ParseInt(rendered, 10, 64); err != nil || n < 1 || float64(n) > bytes || bytes-float64(n) >= 1 {
-					t.Fatalf("memory %q is %v bytes and renders as %q (%v)", quantity, bytes, rendered, err)
+					t.Fatalf("memory %q is %v bytes and renders as %q (%v)", raw, bytes, rendered, err)
 				}
-			} else if rendered != quantity {
-				t.Fatalf("memory %q is %v bytes, no limit, yet renders as %q", quantity, bytes, rendered)
+			} else if rendered != raw {
+				t.Fatalf("memory %q is %v bytes, no limit, yet renders as %q", raw, bytes, rendered)
 			}
-			if memoryReadsAsUnlimited(quantity) == isByteCount(bytes) {
-				t.Fatalf("memoryReadsAsUnlimited(%q) disagrees with the number %v", quantity, bytes)
+			if memoryReadsAsUnlimited(raw) == quantity.ByteCount(bytes) {
+				t.Fatalf("memoryReadsAsUnlimited(%q) disagrees with the number %v", raw, bytes)
 			}
 		}
 
 		spec := validSpec()
-		spec.CPUs, spec.Memory = quantity, quantity
-		if _, err := dockerCreateArgs(spec); err == nil && (cpuErr == nil && !isPositiveFinite(cpus) || memErr == nil && !isByteCount(bytes)) {
-			t.Fatalf("dockerCreateArgs rendered cpus and memory %q, which the runtime reads as unlimited", quantity)
+		spec.CPUs, spec.Memory = raw, raw
+		if _, err := dockerCreateArgs(spec); err == nil && (cpuErr == nil && !quantity.PositiveFinite(cpus) || memErr == nil && !quantity.ByteCount(bytes)) {
+			t.Fatalf("dockerCreateArgs rendered cpus and memory %q, which the runtime reads as unlimited", raw)
 		}
 	})
 }

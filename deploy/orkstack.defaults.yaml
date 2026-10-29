@@ -95,6 +95,9 @@ orker:
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
   max_concurrent: 16  # orker
+  capacity:
+    cpu: ""  # orker
+    memory: ""  # orker
   pins:
     max_concurrent: 0  # orker
   log:

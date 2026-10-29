@@ -21,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/quantity"
 )
 
 // DockerBinVar names the environment variable that overrides the docker CLI to
@@ -833,6 +835,7 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 	var (
 		removed  int
 		failures []error
+		stayed   []ContainerID
 	)
 	for _, id := range strings.Fields(out) {
 		// One container that cannot be removed (a removal already in
@@ -841,12 +844,13 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 		// together.
 		if err := d.Remove(ctx, ContainerID(id)); err != nil {
 			failures = append(failures, fmt.Errorf("reap container %s: %w", id, err))
+			stayed = append(stayed, ContainerID(id))
 			continue
 		}
 		removed++
 	}
 	if len(failures) > 0 {
-		return removed, &ReapIncompleteError{Failures: failures}
+		return removed, &ReapIncompleteError{Failures: failures, Containers: stayed}
 	}
 	return removed, nil
 }
@@ -1118,13 +1122,13 @@ func sortedKeys[V any](m map[string]V) []string {
 // OCI runtime boundary to stay clean, and a runtime's flag grammar is the
 // runtime's business: a future Podman or containerd implementation renders the
 // same contract quantity its own way.
-func dockerMemory(quantity string) string {
-	bytes, err := parseMemory(quantity)
-	if err != nil || !isByteCount(bytes) {
+func dockerMemory(raw string) string {
+	bytes, err := quantity.ParseMemory(raw)
+	if err != nil || !quantity.ByteCount(bytes) {
 		// The policy already validated this, so a parse failure here means
 		// the two disagree. Pass it through and let the daemon say so rather
 		// than silently substituting a limit nobody asked for.
-		return quantity
+		return raw
 	}
 	return strconv.FormatInt(int64(bytes), 10)
 }
@@ -1133,10 +1137,10 @@ func dockerMemory(quantity string) string {
 //
 // The contract also allows the Kubernetes millicpu spelling ("500m"), which
 // Docker does not parse. 500m is 0.5 CPUs.
-func dockerCPUs(quantity string) string {
-	cpus, err := parseCPU(quantity)
-	if err != nil || !isPositiveFinite(cpus) {
-		return quantity
+func dockerCPUs(raw string) string {
+	cpus, err := quantity.ParseCPU(raw)
+	if err != nil || !quantity.PositiveFinite(cpus) {
+		return raw
 	}
 	return strconv.FormatFloat(cpus, 'f', -1, 64)
 }
@@ -1144,15 +1148,15 @@ func dockerCPUs(quantity string) string {
 // cpuReadsAsUnlimited reports whether a cpu quantity parses to a number that
 // is no limit to the runtime: zero, negative, NaN or infinite. A quantity
 // that does not parse is not judged here; the daemon refuses it by name.
-func cpuReadsAsUnlimited(quantity string) bool {
-	cpus, err := parseCPU(quantity)
-	return err == nil && !isPositiveFinite(cpus)
+func cpuReadsAsUnlimited(raw string) bool {
+	cpus, err := quantity.ParseCPU(raw)
+	return err == nil && !quantity.PositiveFinite(cpus)
 }
 
 // memoryReadsAsUnlimited is cpuReadsAsUnlimited for memory: a quantity that
 // parses to less than one byte, or to more than an int64 holds, is not a
 // byte count the runtime can be handed.
-func memoryReadsAsUnlimited(quantity string) bool {
-	bytes, err := parseMemory(quantity)
-	return err == nil && !isByteCount(bytes)
+func memoryReadsAsUnlimited(raw string) bool {
+	bytes, err := quantity.ParseMemory(raw)
+	return err == nil && !quantity.ByteCount(bytes)
 }

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"sort"
@@ -356,6 +357,7 @@ func ValidateNamespaceSpec(ns *orkstackv1.Namespace) error {
 		ValidNamespaceSigner,
 		validNamespaceHold,
 		validNamespaceMaxRunning,
+		validNamespaceFairShareWeight,
 		validNamespaceBudget,
 	} {
 		if err := check(ns); err != nil {
@@ -562,6 +564,28 @@ func validNamespaceMaxRunning(ns *orkstackv1.Namespace) error {
 	if ns.GetMaxRunning() < 0 {
 		return fmt.Errorf("artifacts: namespace %q max_running %d must be 0 (unlimited) or positive: %w",
 			ns.GetName(), ns.GetMaxRunning(), ErrInvalidNamespace)
+	}
+	return nil
+}
+
+// MinFairShareWeight and MaxFairShareWeight bound Namespace.fair_share_weight,
+// the range the cluster honours a weight within. Exported so the CLI and an
+// automation document refuse what the registry would before a round trip.
+const (
+	MinFairShareWeight float64 = 0.001
+	MaxFairShareWeight float64 = 1000
+)
+
+// validNamespaceFairShareWeight refuses a weight that is not 0 (the default
+// weight of 1) or a number from MinFairShareWeight to MaxFairShareWeight.
+func validNamespaceFairShareWeight(ns *orkstackv1.Namespace) error {
+	w := ns.GetFairShareWeight()
+	if w == 0 {
+		return nil
+	}
+	if math.IsNaN(w) || w < MinFairShareWeight || w > MaxFairShareWeight {
+		return fmt.Errorf("artifacts: namespace %q fair_share_weight %g must be 0 (the default weight of 1) "+
+			"or from %g to %g: %w", ns.GetName(), w, MinFairShareWeight, MaxFairShareWeight, ErrInvalidNamespace)
 	}
 	return nil
 }

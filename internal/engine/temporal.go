@@ -243,9 +243,9 @@ func (s *TemporalStarter) DescribeOrker(ctx context.Context) (*orkstackv1.Descri
 	return s.describeOrkerOn(ctx, s.orkerQueue, 10*time.Second)
 }
 
-// describeOrkerOn asks one execution channel's Orkers who they are. It is the
-// shared half of DescribeOrker and the per-pool report (OrkerOnPool): the
-// question is the same activity, the channel is what differs.
+// describeOrkerOn asks one channel's Orkers who they are. It is the shared
+// half of DescribeOrker and DescribeOrkerByID: the question is the same
+// activity, the channel is what differs.
 func (s *TemporalStarter) describeOrkerOn(
 	ctx context.Context,
 	queue string,

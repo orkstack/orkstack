@@ -42,7 +42,37 @@ include breaking changes, and each is marked **BREAKING**.
 - `go run ./internal/schemas/cmd/genschemas` also writes the Orkflow and
   automation schemas to `ui/src/lib/schemas/`, the UI's copy of
   `docs/schemas/`.
-
+- Fair dispatch across namespaces: when tasks of several namespaces wait for
+  one pool, each namespace is served in proportion to its new
+  `fair_share_weight` (`orkctl namespace update --fair-share-weight`, the
+  `fair_share_weight` setting of an automation document; 0 is the default
+  weight of 1, otherwise from 0.001 to 1000), pinned in each run at submit. It
+  takes effect where the operator enables fair dispatch on the cluster;
+  without it dispatch stays first in, first out (docs/DEPLOY.md, "Fair
+  dispatch across namespaces").
+- An Orker can declare a capacity, `orker.capacity.cpu` and
+  `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`, `_MEMORY`), and then
+  admits no task that would take its reservations above it: every poll
+  reserves the per-task cap, the reservation is trimmed to the task's
+  effective request once it arrives, and it is freed when the container is
+  removed. A pinned member is counted but never made to wait, so a pin host
+  can exceed its capacity by what its pins run at once, and polls for no new
+  task until the overshoot drains. A container that could not be removed,
+  including an orphan a restart could not reap, keeps its reservation until a
+  later removal succeeds. Unset keeps today's behaviour. `DescribeOrkerResult`
+  gains `capacity`, `reserved`, `max_request` and `default_request`, the
+  `Orker` row `capacity` and `reserved`, and `orkctl orker list` the
+  `CAPACITY` and `RESERVED` columns. New reasons: `RESOURCE_ADMISSION_MISMATCH`
+  (a guard that cannot fire while caps are honoured) and the boot refusal
+  `ORKER_CAPACITY_INVALID` (docs/DEPLOY.md, "Declaring an Orker's capacity").
+- **BREAKING:** A submit refuses a task whose `resources:` request is above
+  the per-task cap of every answering Orker of its pool, with
+  `RESOURCES_UNSATISFIABLE` (`failed_precondition`), before a run id is
+  minted. It used to be accepted and fail when that task was dispatched,
+  `RESOURCE_REQUEST_REFUSED`, so a run whose oversized task never ran (a
+  failure handler of a run that succeeded) used to succeed and is now
+  refused. Such a submit reads the Orker inventory, one describe per live
+  Orker.
 - Fuzz targets for the inputs OrkStack accepts from outside, each stating the
   invariants the code or its reference doc claims and not only that nothing
   panics: the list-filter grammar, compiler and matcher (a compiled set is a
@@ -291,6 +321,38 @@ include breaking changes, and each is marked **BREAKING**.
 
 ### Fixed
 
+- A pool whose every Orker is busy is no longer refused at submit as empty,
+  and submit's capability probes no longer skip it. An Orker polls its pool's
+  channel only while it has a free task slot, so once every Orker of a pool
+  had run `ORK_ORKER_MAX_CONCURRENT` tasks for 90 seconds the channel showed
+  no poller: a submit was refused `has no live Orkers` while the Orkers were
+  doing the pool's work, and the pin-host, fan-out, caching and failure
+  handler probes, sent as activities on that same channel, waited behind the
+  busy slots and were skipped with a warning. When a pool's channel shows no
+  poller, submit now asks the Orker inventory (the presence channel, and each
+  Orker on its own control channel, the read `orkctl orker list` makes), and
+  every probe asks each uncordoned Orker of the pool on its own control
+  channel. A probe now judges every such Orker, so one Orker of an older
+  release refuses its pool rather than only when it happened to answer, and
+  one pin host is enough to open a pin. `ListPools` counts a busy pool's
+  Orkers the same way. Found by reading the code; reproduced by
+  `TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes`, which
+  failed on the empty-pool refusal and, with only presence fixed, on the
+  skipped pin-host probe.
+- **BREAKING:** A task's `resources.cpu` and `resources.memory` are refused
+  at validate and apply, with their path, when they do not read as a limit in the
+  Kubernetes spelling (`docs/DSL.md` rule 6d): `cpu: "banana"` or
+  `memory: 4GB` used to be accepted and stored, then fail every attempt
+  `RESOURCE_REQUEST_REFUSED` at dispatch. The DSL and the Orker now read a
+  request with one grammar (`internal/quantity`).
+- The Orker's task worker sets its poller count explicitly (2, the SDK's
+  default). Left at the default, a Temporal namespace that advertises poller
+  autoscaling auto-enrolled it, and a pin host's session worker with it, so
+  how many polls an Orker held was a server setting.
+- `docs/TROUBLESHOOTING.md` no longer says a task waiting for a busy pool
+  stays `PENDING`. It is `RUNNING` from dispatch, with `waiting for an orker`
+  in `orkctl run inspect` and on the run page; `PENDING` is only the engine's
+  own hold (the in-flight cap, the history hold line, a pin opening).
 - The unit gate gives each package's test binary a 15-minute `-timeout`
   instead of `go test`'s default ten. `internal/engine`'s unit suite took
   460 s on a 4-vCPU CI runner and passed ten minutes on a slower one (CI run

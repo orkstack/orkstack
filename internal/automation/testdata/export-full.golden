@@ -16,6 +16,7 @@ settings:
     attributes:
       cost_center: "42"
   max_running: 5
+  fair_share_weight: 0
   allowed_secrets: ['env:PAYMENTS_*']
   require_signed_by: cosign:release
   budget:

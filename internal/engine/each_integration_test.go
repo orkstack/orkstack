@@ -560,8 +560,8 @@ func TestIntegration_EachHistoryStaysInsideTheBudgetAtTheCeiling(t *testing.T) {
 	}
 }
 
-// A stand-in DescribeOrker answering each_supported: false on the pool's
-// channel refuses the submit.
+// A stand-in Orker answering each_supported: false on its own channel
+// refuses the submit.
 func TestIntegration_EachSubmitRefusesAPoolWhoseOrkerPredatesFanOut(t *testing.T) {
 	e := startEachE2E(t, false)
 	pool := fmt.Sprintf("old-%d", time.Now().UnixNano()%1_000_000)
@@ -569,19 +569,10 @@ func TestIntegration_EachSubmitRefusesAPoolWhoseOrkerPredatesFanOut(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	w := worker.New(e.temporal, queue, worker.Options{DisableRegistrationAliasing: true, DisableWorkflowWorker: true})
-	w.RegisterActivityWithOptions(func(context.Context) (*orkstackv1.DescribeOrkerResult, error) {
-		return &orkstackv1.DescribeOrkerResult{OrkerId: "old-orker", BuildId: "2026.09.01", Pool: pool}, nil
-	}, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-	w.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-		return nil, temporal.NewNonRetryableApplicationError("never", "ActivityFailed", nil)
-	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(w.Stop)
+	startStandInOrker(t, e.temporal, queue,
+		&orkstackv1.DescribeOrkerResult{OrkerId: "old-orker", BuildId: "2026.09.01", Pool: pool})
 	starter := engine.NewTemporalStarterWithOrkerQueue(e.temporal, e.runQueue, e.orkerQueue)
-	resolver := &engine.PoolResolver{Probe: engine.NewTemporalPoolProbe(e.temporal), Orkers: starter}
+	resolver := &engine.PoolResolver{Probe: engine.NewTemporalPoolProbe(e.temporal), Fleet: starter}
 	inputs, _ := structpbStruct(map[string]any{"n": map[string]any{"type": "array"}})
 	wf := &orkstackv1.Orkflow{Name: "each-i7", Version: "1.0.0", Inputs: inputs, Tasks: []*orkstackv1.Task{{
 		Id: "convert", Uses: "x", Pool: pool,

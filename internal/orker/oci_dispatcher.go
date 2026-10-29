@@ -742,14 +742,20 @@ func (d *OCIDispatcher) execute(
 		return nil, d.runtimeFailure(err, "create the container")
 	}
 	beat.Container(id)
+	// A declared capacity frees this attempt's reservation when the
+	// container is removed, never before (capacity.go).
+	admission := admissionFrom(ctx)
+	admission.ContainerCreated(id)
 	// Remove runs on a DETACHED context: cleanup must survive the
 	// cancellation that caused it (§6.3).
 	defer func() {
 		removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
 		defer cancel()
-		if err := d.Runtime.Remove(removeCtx, id); err != nil {
+		err := d.Runtime.Remove(removeCtx, id)
+		if err != nil {
 			sink.Write(fmt.Sprintf("[ork] container %s could not be removed: %v", id, err))
 		}
+		admission.ContainerRemoved(err)
 	}()
 
 	// STEP 9-10. Run, stream, and wait for exit, cancellation or the task

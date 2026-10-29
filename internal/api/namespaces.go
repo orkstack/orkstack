@@ -310,6 +310,9 @@ func specDifference(stored, requested *orkstackv1.Namespace) string {
 	if got, want := stored.GetMaxRunning(), requested.GetMaxRunning(); got != want {
 		return fmt.Sprintf("max_running is %d, not %d", got, want)
 	}
+	if got, want := stored.GetFairShareWeight(), requested.GetFairShareWeight(); got != want {
+		return fmt.Sprintf("fair_share_weight is %g, not %g", got, want)
+	}
 	if got, want := budgetLabel(stored.GetBudget()), budgetLabel(requested.GetBudget()); got != want {
 		return fmt.Sprintf("budget is %s, not %s", got, want)
 	}

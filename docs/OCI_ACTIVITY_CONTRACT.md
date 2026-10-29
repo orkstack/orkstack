@@ -103,7 +103,8 @@ old histories replay unchanged. Submit asks the task's pool what it can run
 no pins (`max_concurrent_pins` 0), and a fan-out, a cached task or a container
 failure handler on a pool whose Orker predates the feature (`each_supported`,
 `cache_supported`, `join_supported` false) and could not decode its context.
-The probe reaches one Orker, so every Orker of a pool must run a release that
+The probe asks every uncordoned Orker of the pool, and one that lacks the
+feature refuses the pool, so every Orker of a pool must run a release that
 supports what the pool is sent (`docs/DEPLOY.md`, §1).
 
 ### 2.2 `proto/orkstack/v1/activity.proto`
@@ -1383,12 +1384,19 @@ host's disk, and `ORK_ORKER_TMPFS_BYTES` does not apply (it is a bind mount).
 
 ### 6.5 Pool liveness
 
-`DescribeOrker` is the pool-liveness probe: the engine dispatches it as a
-Temporal activity on the pool's own channel (5 s / 10 s timeouts,
-`MaximumAttempts: 2`), so a pool proves it is alive only when an Orker is
-actually polling it. Its result also carries the Orker's runtime, security
+`DescribeOrker` is the pool-liveness probe. The engine dispatches it as a
+Temporal activity on one Orker's own control channel (5 s timeout,
+`MaximumAttempts: 2`), once for each Orker the presence channel lists, so an
+Orker proves it is alive only when it answers. The control channel has its
+own worker and slots, so an Orker whose every task slot is taken answers like
+an idle one. A pool whose every Orker is busy therefore still reads as live at
+submit, though its own channel shows no poller (`docs/DEPLOY.md`, "Running M
+Orker pools"). Its result also carries the Orker's pool, runtime, security
 profile, concurrency, pin capacity, cordon state, and the capability flags
-submit reads (§2.1). The Admin **Activities** page and `orkctl activity list`
+submit reads (§2.1). One caller still asks a pool's own channel:
+`ActivityService.DescribeOrker`, the Admin **Activities** page's Orker panel,
+dispatches it on the default pool's channel, so on a pool whose every task
+slot is taken it waits for a free one and can time out. The Admin **Activities** page and `orkctl activity list`
 render the engine's catalog, because that is engine configuration, not
 something to ask an Orker.
 
@@ -1591,6 +1599,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | the Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed |
 | `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor (`docs/DEPLOY.md`, "Secrets on a shared pool") |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | the request exceeds the Orker's cap, or is not a positive finite quantity |
+| `RESOURCE_ADMISSION_MISMATCH` | ContractViolation | no | on an Orker declaring a capacity, the resolved request is larger than the reservation it was polled under and free capacity cannot cover it; it cannot happen while every poll reserves the per-task cap |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | the requested mode is not `default` or `none` |
 | `COMMIT_READ_FAILED` | InfrastructureError | yes | commit store unreadable at step 0 |
 | `COMMIT_WRITE_FAILED` | InfrastructureError | yes | conditional PUT failed for a non-precondition reason |
@@ -1742,6 +1751,18 @@ refuses rather than running uncapped, and a cap or default that is not a
 positive, finite quantity stops the Orker at boot. **No workload ever
 receives unlimited resources**, including one that requested nothing. The
 effective values reach the workload in `task.json` and the attempt record.
+The grammar is one package (`internal/quantity`) that the DSL also reads a
+request with at validate and apply (`docs/DSL.md` rule 6d), so a spelling
+apply accepts is never one the Orker cannot read.
+
+An Orker may also declare a **capacity** (`ORK_ORKER_CAPACITY_CPU`,
+`ORK_ORKER_CAPACITY_MEMORY`) and then admits no task beyond it: each poll
+reserves the per-task cap, the reservation is trimmed to the task's effective
+request once the task is in hand, and it is freed when the container is
+removed. The container sees none of this; its limits are its effective
+request, as without a capacity (`docs/DEPLOY.md`, "Declaring an Orker's
+capacity"). A submit refuses a task whose request is above every answering
+Orker's cap of its pool (`RESOURCES_UNSATISFIABLE`).
 
 ### 9.4 Secrets
 

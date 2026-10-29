@@ -618,23 +618,14 @@ func TestIntegration_CacheSubmitRefusesAPoolWhoseOrkerPredatesCaching(t *testing
 	token := time.Now().UnixNano()
 	orkerQueue := fmt.Sprintf("ork-cache-i13-tasks-%d", token)
 	// A stand-in Orker of an older build: it answers DescribeOrker without
-	// cache_supported, on the default pool's channel.
-	old := worker.New(temporalClient, orkerQueue, worker.Options{DisableRegistrationAliasing: true, DisableWorkflowWorker: true})
-	old.RegisterActivityWithOptions(func(context.Context) (*orkstackv1.DescribeOrkerResult, error) {
-		return &orkstackv1.DescribeOrkerResult{OrkerId: "old-orker", BuildId: "2026.09.01", EachSupported: true}, nil
-	}, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-	old.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-		return nil, errors.New("an older Orker would fail to decode a cached input")
-	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	if err := old.Start(); err != nil {
-		t.Fatal(err)
-	}
-	defer old.Stop()
+	// cache_supported, serving the default pool's channel.
+	startStandInOrker(t, temporalClient, orkerQueue, &orkstackv1.DescribeOrkerResult{
+		OrkerId: "old-orker", BuildId: "2026.09.01", Pool: task.DefaultPool, EachSupported: true})
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, fmt.Sprintf("ork-cache-i13-run-%d", token), orkerQueue)
 	reader := engine.NewTemporalRunReader(temporalClient)
 	svc := api.NewService(api.Config{
 		Starter: starter, Reader: reader, RawQueue: orkerQueue,
-		Pools: engine.NewTemporalPoolProbe(temporalClient), PoolOrkers: starter,
+		Pools: engine.NewTemporalPoolProbe(temporalClient), Fleet: starter,
 		NewRunID: func() string { return fmt.Sprintf("ork-cache-i13-%d", time.Now().UnixNano()) },
 	})
 	name := fmt.Sprintf("cached-i13-%d", token)

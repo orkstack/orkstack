@@ -1,8 +1,8 @@
-ORKER       POOL   BUILD            STATE                  TASKS  PINS  LAST SEEN
-orker-c001  -      -                unknown (unreachable)  -      -     2026-09-22T09:13:58Z
-orker-7f3a  build  2026.08.16-a1b2  cordoned               2      1/2   2026-09-22T09:14:02Z
-orker-91c0  build  2026.08.16-a1b2  ready                  0      0/2   2026-09-22T09:14:04Z
-orker-b45e  build  2026.08.09-9f8e  ready                  3      -     2026-09-22T09:14:01Z
+ORKER       POOL   BUILD            STATE                  TASKS  PINS  CAPACITY      RESERVED         LAST SEEN
+orker-c001  -      -                unknown (unreachable)  -      -     -             -                2026-09-22T09:13:58Z
+orker-7f3a  build  2026.08.16-a1b2  cordoned               2      1/2   -             -                2026-09-22T09:14:02Z
+orker-91c0  build  2026.08.16-a1b2  ready                  0      0/2   16 cpu, 64Gi  2.5 cpu, 2560Mi  2026-09-22T09:14:04Z
+orker-b45e  build  2026.08.09-9f8e  ready                  3      -     -             -                2026-09-22T09:14:01Z
 
 1 orker is cordoned and is accepting no new work:
   orker-7f3a: "CVE-2026-1234 runtime patch", since 2026-09-22T08:52:10Z

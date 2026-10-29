@@ -210,6 +210,8 @@ type Config struct {
 	// Fleet answers ActivityService.ListOrkers and CordonOrker: the presence
 	// channel's poller records and one Orker's own control channel
 	// (docs/DEPLOY.md "Removing an Orker safely: cordon and drain"). Nil answers both Unavailable.
+	// The same inventory is what a submit asks of a pool whose channel shows
+	// no poller, and where its capability probes go; nil asks neither.
 	Fleet engine.OrkerFleet
 
 	// Releases answers SystemService's ListReleases, RampRelease and
@@ -251,9 +253,6 @@ type Config struct {
 	// Nil disables the check: there is no authority to ask, and inventing an
 	// answer would either refuse every submit or vouch for every pool.
 	Pools engine.PoolProbe
-
-	// PoolOrkers describes a pool's Orkers, for ListPools' liveness report.
-	PoolOrkers engine.PoolOrkerDescriber
 
 	// RawQueue is the operator escape hatch (ORK_ORKER_QUEUE): the execution
 	// channel a task that names no pool is dispatched to. Empty routes the
@@ -618,9 +617,11 @@ func NewService(cfg Config) *Service {
 	}
 	svc.pools = &engine.PoolResolver{
 		Namespaces: cfg.Namespaces,
-		Orkers:     cfg.PoolOrkers,
-		RawQueue:   cfg.RawQueue,
-		Logger:     svc.logger,
+		// The inventory ListOrkers lists is the one submit's pool checks
+		// ask and ListPools counts (engine.ReadFleet).
+		Fleet:    cfg.Fleet,
+		RawQueue: cfg.RawQueue,
+		Logger:   svc.logger,
 		// The same clock the rest of the Service stamps with. Pool liveness
 		// is judged against it — an observation is live only if it is recent
 		// — so a test that fixes the clock and states an observation at that
@@ -1835,6 +1836,12 @@ func poolPlanError(err error) error {
 	// failure handler's input, so the run is refused before any id is minted.
 	var noJoin *engine.PoolNoJoinSupportError
 	if errors.As(err, &noJoin) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	// A task larger than any Orker of its pool runs: the request is well
+	// formed and the pool cannot hold it (RESOURCES_UNSATISFIABLE).
+	var unsatisfiable *engine.PoolResourcesUnsatisfiableError
+	if errors.As(err, &unsatisfiable) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	var unreachable *engine.PoolUnreachableError
