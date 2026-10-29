@@ -23,6 +23,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fillYaml, yamlValue } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('version-editor');
@@ -229,7 +230,7 @@ test("editing the current version opens ITS source, and applying forks forward f
 	// With no version selected the base is the head — the default: head is
 	// the lineage's tip, and selecting is explicit.
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
-	await page.getByTestId('editor-yaml').fill(orkflowYaml('0.2.0', 'second revision', 'echo two'));
+	await fillYaml(page, 'editor-yaml', orkflowYaml('0.2.0', 'second revision', 'echo two'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
 	await openVersions(page);
@@ -260,10 +261,10 @@ test("editing the current version opens ITS source, and applying forks forward f
 	//    and the box holds CURRENT's source — not head's.
 	await editCurrent.click();
 	await openEditor(page);
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(/first revision/);
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(/echo one/);
-	await expect(page.getByTestId('editor-yaml')).not.toHaveValue(/second revision/);
-	await expect(page.getByTestId('editor-yaml')).not.toHaveValue(/echo two/);
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/first revision/);
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/echo one/);
+	await expect(yamlValue(page, 'editor-yaml')).not.toHaveValue(/second revision/);
+	await expect(yamlValue(page, 'editor-yaml')).not.toHaveValue(/echo two/);
 
 	// And it says so: derived from 0.1.0, over a head that is 0.2.0 — the two
 	// tokens the apply carries, both on screen before it is sent.
@@ -275,7 +276,7 @@ test("editing the current version opens ITS source, and applying forks forward f
 
 	// 5. Edit it and apply. base=0.1.0 (provenance), expected_head=0.2.0 (the
 	//    CAS token).
-	await page.getByTestId('editor-yaml').fill(orkflowYaml('0.3.0', 'forked from current', 'echo three'));
+	await fillYaml(page, 'editor-yaml', orkflowYaml('0.3.0', 'forked from current', 'echo three'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
 	await openVersions(page);
@@ -323,13 +324,13 @@ test('applying an unchanged document is a visible no-op, and stores nothing', as
 	await shot(page, 'screenshot-editor-noop.png');
 
 	// Typing clears it: the no-op is about what was applied, not a sticky sign.
-	await page.getByTestId('editor-yaml').fill(orkflowYaml('0.1.0', 'first revision', 'echo one\n'));
+	await fillYaml(page, 'editor-yaml', orkflowYaml('0.1.0', 'first revision', 'echo one\n'));
 	await expect(page.getByTestId('editor-noop')).toHaveCount(0);
 
 	// 2. A document that DOES reach the engine and stores nothing, because it
 	//    is byte-identical to a version already there: created=false renders
 	//    the same way, and still no new version.
-	await page.getByTestId('editor-yaml').fill(orkflowYaml('0.2.0', 'second revision', 'echo two'));
+	await fillYaml(page, 'editor-yaml', orkflowYaml('0.2.0', 'second revision', 'echo two'));
 	await page.getByTestId('editor-apply').click();
 	await expect(page.getByTestId('editor-noop')).toBeVisible();
 	await expect(page.getByTestId('editor-noop')).toContainText('0.2.0');
@@ -359,7 +360,7 @@ test('a head that moved mid-edit is refused naming both versions, and the edit s
 	});
 	note('0.4.0 applied out of band while the editor held base=0.1.0, expected head=0.3.0');
 
-	await page.getByTestId('editor-yaml').fill(orkflowYaml('0.3.5', 'my edit', 'echo mine'));
+	await fillYaml(page, 'editor-yaml', orkflowYaml('0.3.5', 'my edit', 'echo mine'));
 	await page.getByTestId('editor-apply').click();
 
 	// The refusal names three things: where the edit came from, the head it was
@@ -379,7 +380,7 @@ test('a head that moved mid-edit is refused naming both versions, and the edit s
 		'0.3.0',
 		'0.4.0'
 	]);
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(/my edit/);
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/my edit/);
 
 	// The way forward is offered, not taken: the diff of what arrived is the
 	// server's, between the two HEADS — the base is not what changed.
@@ -391,7 +392,7 @@ test('a head that moved mid-edit is refused naming both versions, and the edit s
 	await page.getByTestId('editor-conflict-rebase').click();
 	await expect(page.getByTestId('editor-head-version')).toHaveText('0.4.0');
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(/my edit/);
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/my edit/);
 
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
@@ -421,7 +422,7 @@ test('a selected version the engine will not answer is reported, not replaced by
 	// error above is about the version and not about the tab.
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${NS}&version=0.2.0&tab=edit`);
 	await openEditor(page);
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(/second revision/);
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/second revision/);
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.2.0');
 	note('an unknown selected version is reported by name; a stored one loads');
 });

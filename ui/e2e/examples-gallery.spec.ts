@@ -24,6 +24,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { yamlValue } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('examples-gallery');
@@ -184,7 +185,7 @@ test('P1b: the page carries no example YAML; one example is fetched on demand', 
 	await expect(page.getByTestId('apply-examples')).toBeVisible();
 	expect(fetched).toEqual([]);
 	await page.getByTestId('apply-example-use-decide-and-route').click();
-	await expect(page.getByTestId('apply-yaml')).toHaveValue(/name: decide-and-route/);
+	await expect(yamlValue(page, 'apply-yaml')).toHaveValue(/name: decide-and-route/);
 	expect(fetched).toEqual(['/apply/examples/decide-and-route']);
 	note(`P1b page HTML ${html.length} bytes with no example document; one fetch on choosing: ${fetched.join(', ')}`);
 });
@@ -192,7 +193,7 @@ test('P1b: the page carries no example YAML; one example is fetched on demand', 
 test('P2: a new example applies, plans and runs from the browser', async ({ page }) => {
 	await page.goto(`${UI}/apply?ns=${NS}`);
 	await page.getByTestId('apply-example-use-decide-and-route').click();
-	await expect(page.getByTestId('apply-yaml')).toHaveValue(/name: decide-and-route/);
+	await expect(yamlValue(page, 'apply-yaml')).toHaveValue(/name: decide-and-route/);
 	await page.getByTestId('apply-validate').click();
 	await expect(page.getByTestId('apply-validate')).toHaveText('Validate');
 	await expect(page.getByTestId('apply-validation-issue')).toHaveCount(0);

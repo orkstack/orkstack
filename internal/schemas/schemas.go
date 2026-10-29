@@ -4,6 +4,12 @@
 // selects one by kind. They are generated,
 // never hand-written: `go run ./internal/schemas/cmd/genschemas` writes them,
 // and TestSchemas_AreGenerated refuses a stale one.
+//
+// The generator also writes the Orkflow and Automation schemas into the UI
+// (ui/src/lib/schemas/), byte for byte: the UI's editor validates, completes
+// and explains from them, and the UI is built from ui/ alone
+// (deploy/Dockerfile). Not under ui/src/lib/gen, which `make proto` empties
+// (buf.gen.yaml, clean: true).
 package schemas
 
 import (
@@ -23,6 +29,9 @@ import (
 // Dir is where the schemas live, relative to the repository root.
 const Dir = "docs/schemas"
 
+// UIDir is the UI's generated copy of UIFiles, relative to the repository root.
+const UIDir = "ui/src/lib/schemas"
+
 // The files, under Dir.
 const (
 	OrkflowFile           = "orkflow.v1.json"
@@ -30,6 +39,12 @@ const (
 	ActivityInterfaceFile = "activityinterface.v1.json"
 	DispatcherFile        = "orkstack.v1.json"
 )
+
+// UIFiles are the schemas the UI's editor reads: one per kind it edits
+// (Orkflow and Automation; an activity interface is authored beside an
+// image, never in the UI). The dispatcher is for editors that do not know a
+// document's kind; the UI always does.
+var UIFiles = []string{OrkflowFile, AutomationFile}
 
 // InterfaceDocument is the file an image directory declares its with:
 // contract in (docs/ACTIVITY_IMAGES.md, "Declaring the interface").
@@ -206,7 +221,8 @@ func Encode(schema map[string]any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// Files returns every generated schema, keyed by its path under docs/schemas/.
+// Files returns every generated file, keyed by its path from the repository
+// root: each schema under Dir, and UIFiles again under UIDir.
 func Files(repoRoot string) (map[string][]byte, error) {
 	trees, err := Trees(repoRoot)
 	if err != nil {
@@ -219,6 +235,9 @@ func Files(repoRoot string) (map[string][]byte, error) {
 			return nil, fmt.Errorf("schemas: encode %s: %w", name, err)
 		}
 		out[strings.TrimPrefix(filepath.ToSlash(filepath.Join(Dir, name)), "./")] = encoded
+	}
+	for _, name := range UIFiles {
+		out[UIDir+"/"+name] = out[Dir+"/"+name]
 	}
 	return out, nil
 }

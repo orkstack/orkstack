@@ -133,7 +133,27 @@ rejected from outside the run.
 
 In `with:` and `condition:`, a template reads only the tasks in `needs:`, directly or through them. `outputs:` may read any task except a fan-out.
 
+## Check a document as you write it
+
+The UI's YAML editor checks an Orkflow as you type. It is on the Apply page and
+on an Orkflow's Edit tab; Admin → Automation uses it for automation documents.
+
+- **Keys and types, at once.** An unknown key, a wrong type or a missing key is
+  underlined on its line, against the same JSON Schema as below. An unknown key
+  comes with the key it was probably meant to be.
+- **Everything else, from the engine, when you pause.** The engine checks the
+  [strict YAML-to-JSON rules](https://github.com/orkstack/orkstack/blob/main/docs/JSON.md#data-written-in-an-authored-document)
+  for data such as `with:` (quote `yes` for the string), `needs:` that name no
+  task, pools, secrets and image policy.
+- **Only the engine says a document has no problems.** The line under the
+  editor says so only after the engine has checked exactly the text on screen.
+
+Ctrl-Space suggests the keys a position takes. Hovering a key, or
+Ctrl-Shift-Space on its line, shows what it does. F8 goes to the next problem.
+Tab indents; to leave the editor with the keyboard, press Escape, then Tab.
+
 ## See also
 
 - [DSL reference](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md): every rule, default and validation
 - [JSON Schema](https://github.com/orkstack/orkstack/blob/main/docs/schemas/orkflow.v1.json): for editor completion
+- [Editor support](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#editor-support): what the schema checks, and what only the engine can

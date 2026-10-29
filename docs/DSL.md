@@ -143,10 +143,23 @@ choice:
 | D | an `inputs:` declaration key or `type` word it does not know | ignores the key, compares the word as written |
 
 A first-party `with:` value of an undeclared type is an error in the editor
-and a warning at validate. The docs site will serve the schemas at
-`/schemas/orkflow/v1.json`, `/schemas/automation/v1.json`,
-`/schemas/activityinterface/v1.json` and `/schemas/orkstack/v1.json`; until
-it does, point at the files in a checkout.
+and a warning at validate.
+
+The UI's YAML editor — the Apply page, an Orkflow's Edit tab and
+Admin → Automation — uses the same Orkflow and Automation schemas, which the
+generator also writes to `ui/src/lib/schemas/` (the UI is built from `ui/`
+alone; `TestSchemas_AreGenerated` refuses a stale copy and
+`ui/test/yamlSchemaSource.test.ts` one that differs from `docs/schemas/`). It
+underlines a schema finding on its line as the document is typed, and asks the
+engine (`ValidateOrkflow`, or a plan for an automation document) once typing
+pauses, for everything the schema cannot express — the strict YAML-to-JSON
+rules among them; the editor does not decide those itself. Only the engine's
+answer says a document has no problems; once the engine has found none, the
+schema's stricter findings above are shown as warnings.
+
+The docs site will serve the schemas at `/schemas/orkflow/v1.json`,
+`/schemas/automation/v1.json`, `/schemas/activityinterface/v1.json` and
+`/schemas/orkstack/v1.json`; until it does, point at the files in a checkout.
 
 ### `namespace`
 

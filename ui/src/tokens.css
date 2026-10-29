@@ -181,6 +181,15 @@
 	/* --color-fg is the one permanent alias: run-page-pins.spec.ts reads it
 	   by name, and it has always meant "the ink". */
 	--color-fg: var(--color-ink);
+
+	/* Syntax — the colours of an authored document (the YAML editor, the
+	   read-only YAML views, and every code block on the site). Keys are the
+	   ink, set at weight; comments and punctuation the muted ink. The values
+	   take the syntax pencils of each theme below. Never status, never
+	   decoration, never outside code. */
+	--color-syntax-key: var(--color-ink);
+	--color-syntax-comment: var(--color-ink-muted);
+	--color-syntax-punctuation: var(--color-ink-muted);
 }
 
 /* ------------------------------------------------------------------ */
@@ -249,6 +258,16 @@
 	--color-pin-f-line: #6a6f2e;
 	--color-pin-f-fill: #f5f6ee;
 
+	/* Syntax pencils: the pin pencils taken down to text weight, at least
+	   5:1 on every ground code is drawn on. Strings teal, numbers ochre,
+	   true/false/null olive, {{ templates }} violet, anchors, aliases and
+	   tags slate. Blue, green and red never colour code. */
+	--color-syntax-string: #006b65;
+	--color-syntax-number: #824f00;
+	--color-syntax-literal: #5e6115;
+	--color-syntax-template: #6d4697;
+	--color-syntax-meta: #425f7d;
+
 	/* Shadows: overlays only, ink-tinted, an offset and a soft blur. */
 	--shadow-overlay: 0 8px 24px -6px rgb(20 33 61 / 0.22), 0 2px 6px -2px rgb(20 33 61 / 0.12);
 	--shadow-lift: 0 -6px 14px -10px rgb(20 33 61 / 0.32);
@@ -306,6 +325,12 @@
 	--color-pin-e-fill: #191c21;
 	--color-pin-f-line: #b0b47c;
 	--color-pin-f-fill: #1c1e16;
+
+	--color-syntax-string: #81c3bc;
+	--color-syntax-number: #d8aa79;
+	--color-syntax-literal: #b5ba81;
+	--color-syntax-template: #c2a4ea;
+	--color-syntax-meta: #9eb7d2;
 
 	--shadow-overlay: 0 10px 28px -6px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.45);
 	--shadow-lift: 0 -6px 16px -10px rgb(0 0 0 / 0.7);

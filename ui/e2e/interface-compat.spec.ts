@@ -23,6 +23,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fillYaml } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('interface-compat');
@@ -317,7 +318,7 @@ test('callers lists the composing orkflow, the trigger and the schedule', async 
 // moves nothing; its warnings are the engine's comparison against 2.1.0.
 test('apply shows breaking warnings against the current version', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill(block('3.0.0'));
+	await fillYaml(page, 'apply-yaml', block('3.0.0'));
 	await page.getByTestId('apply-validate').click();
 	const issues = page.getByTestId('apply-validation-issues');
 	await expect(issues).toBeVisible();

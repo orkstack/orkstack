@@ -11,7 +11,8 @@
  * they are not identity, and media queries cannot read var().
  *
  * Runtime-only tokens (not registered; read with var() from CSS or an
- * inline style): the pin accents --color-pin-*, the rule widths --rule-*,
+ * inline style): the pin accents --color-pin-*, the syntax colours
+ * --color-syntax-* (app.css's .syntax-* and the editor's theme), the rule widths --rule-*,
  * the durations --duration-*, the DAG grid's --grid-pitch-*, --underline-offset
  * and the opacities --opacity-*.
  * ui/test/tokens.test.ts holds this file and tokens.css to the same names.

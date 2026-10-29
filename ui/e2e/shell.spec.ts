@@ -25,6 +25,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { editorReady } from './yaml';
 
 // The drawing office's shell (UI revamp, stage 1), against a real engine and
 // Orker on real Temporal and MinIO:
@@ -213,6 +214,7 @@ test('palette: opens from a page and from a text field, moves, and opens a page,
 
 	// From inside a text field: Apply's YAML editor.
 	await page.goto(`${UI_ORIGIN}/apply?ns=default`);
+	await editorReady(page, 'apply-yaml');
 	await page.getByTestId('apply-yaml').click();
 	await openPalette(page);
 	await input.fill(FLOW);
@@ -286,6 +288,7 @@ test('palette on an Apple platform: ⌘K opens it, and Ctrl+K is left to the tex
 	const page = await context.newPage();
 	await page.goto(`${UI_ORIGIN}/apply?ns=default`);
 	await expect(page.getByTestId('command-palette-open')).toContainText('⌘K');
+	await editorReady(page, 'apply-yaml');
 	const yaml = page.getByTestId('apply-yaml');
 	await yaml.click();
 	await page.evaluate(() => {

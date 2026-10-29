@@ -26,6 +26,7 @@ import {
 	waitForEngine
 } from './harness';
 import { adminNamespaceUrl } from './uiHelpers';
+import { fillYaml } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('secret-policy');
@@ -205,7 +206,7 @@ test('2: the form refuses a traversal locally, and a save of two entries shows b
 test('3: Validate anchors the refusal to its field, and Apply is refused and stores nothing', async ({ page }) => {
 	const sentence = `namespace "${NS}" may not resolve "env:PROD_DB_PASSWORD" (task "fetch", secret "token"); allowed: env:SANDBOX_*, env:E2E_*`;
 	await page.goto(`${UI_ORIGIN}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill(EXFIL);
+	await fillYaml(page, 'apply-yaml', EXFIL);
 	await page.getByTestId('apply-validate').click();
 	const issues = page.getByTestId('apply-validation-issues');
 	await expect(issues).toContainText(`tasks[0].secrets[0].source: ${sentence}`);
@@ -223,7 +224,7 @@ test('4: a permitted secret runs, its sha256 is in the log pane and the token is
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/apply?ns=${NS}`);
-	await page.getByTestId('apply-yaml').fill(FETCH);
+	await fillYaml(page, 'apply-yaml', FETCH);
 	await page.getByTestId('apply-submit').click();
 	await page.waitForURL(/\/orkflows\/fetch/);
 

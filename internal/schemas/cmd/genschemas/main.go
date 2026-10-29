@@ -1,7 +1,8 @@
 // Command genschemas writes the JSON Schemas of the authored documents to
-// docs/schemas/ (internal/schemas), and regenerates the interface LABEL line
-// of every Dockerfile built beside an interface.ork.yaml from that document.
-// Run it from the repository root:
+// docs/schemas/, and the Orkflow and Automation schemas again to the UI's copy
+// in ui/src/lib/schemas/ (internal/schemas), and regenerates the interface
+// LABEL line of every Dockerfile built beside an interface.ork.yaml from that
+// document. Run it from the repository root:
 //
 //	go run ./internal/schemas/cmd/genschemas
 package main

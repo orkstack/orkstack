@@ -9,8 +9,9 @@ import (
 )
 
 // TestGenschemas_WritesTheCommittedSchemas: the command writes exactly the
-// files docs/schemas/ holds and the interface LABEL of every Dockerfile
-// built beside an interface.ork.yaml, and names each one it wrote.
+// files docs/schemas/ and the UI's generated copy hold and the interface
+// LABEL of every Dockerfile built beside an interface.ork.yaml, and names
+// each one it wrote.
 func TestGenschemas_WritesTheCommittedSchemas(t *testing.T) {
 	const root = "../../../.."
 	dest := t.TempDir()
@@ -19,8 +20,8 @@ func TestGenschemas_WritesTheCommittedSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	written := strings.Fields(out.String())
-	if len(written) != 12 {
-		t.Fatalf("wrote %v, want the four schemas and the eight Dockerfiles", written)
+	if len(written) != 14 {
+		t.Fatalf("wrote %v, want the four schemas, the UI's copies of the two kinds' and the eight Dockerfiles", written)
 	}
 	for _, path := range written {
 		got, err := os.ReadFile(filepath.Join(dest, path))

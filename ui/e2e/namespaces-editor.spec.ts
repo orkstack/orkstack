@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild } from './harness';
 import { expectNamespace, selectNamespace } from './uiHelpers';
+import { fillYaml, yamlValue } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('namespaces-editor');
@@ -402,12 +403,12 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	// The editor opens on the head version's stored YAML and says which version
 	// the edit is derived from — that value is the base_version it sends.
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(/first revision/);
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/first revision/);
 	await shot(page, 'screenshot-editor.png');
 
 	// 1. A document the compiler rejects: the message is the engine's, and
 	//    nothing is stored.
-	await page.getByTestId('editor-yaml').fill('apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "9.9.9"\ntasks: []\n');
+	await fillYaml(page, 'editor-yaml', 'apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "9.9.9"\ntasks: []\n');
 	await page.getByTestId('editor-apply').click();
 	await expect(page.getByTestId('editor-error')).toBeVisible();
 	await expect(page.getByTestId('editor-error')).toContainText(/task/i);
@@ -419,7 +420,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	expect(afterInvalid.versions.map((v) => v.version)).toEqual(['0.1.0']);
 
 	// 2. A good edit lands as a NEW version; the old one is untouched.
-	await page.getByTestId('editor-yaml').fill(orkflowYaml(ORKFLOW, '0.2.0', 'second revision'));
+	await fillYaml(page, 'editor-yaml', orkflowYaml(ORKFLOW, '0.2.0', 'second revision'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
 	await openVersions(page);
@@ -435,7 +436,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 		yaml: orkflowYaml(ORKFLOW, '0.3.0', 'applied by somebody else'),
 		namespace: ALPHA
 	});
-	await page.getByTestId('editor-yaml').fill(orkflowYaml(ORKFLOW, '0.2.5', 'my edit'));
+	await fillYaml(page, 'editor-yaml', orkflowYaml(ORKFLOW, '0.2.5', 'my edit'));
 	await page.getByTestId('editor-apply').click();
 
 	// The refusal is reported, names both versions, and nothing was written.
@@ -452,7 +453,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	);
 	expect(afterStale.versions.map((v) => v.version).sort()).toEqual(['0.1.0', '0.2.0', '0.3.0']);
 	// The edit is still in the box: the conflict path never discards the work.
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(/my edit/);
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/my edit/);
 
 	// The conflict offers the diff of what arrived underneath, from the server.
 	await page.getByTestId('editor-conflict-diff').click();
@@ -599,14 +600,12 @@ test('the Edit tab recovers its document and its base version on retry', async (
 	// given it: the head version as its base_version token, and the stored
 	// document in the box.
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.2.5');
-	await expect(page.getByTestId('editor-yaml')).toHaveValue(new RegExp(`name: ${ORKFLOW}`));
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(new RegExp(`name: ${ORKFLOW}`));
 	await shot(page, 'screenshot-editor-retry.png');
 
 	// And it applies, which is what proves the token came back: without one the
 	// editor refuses itself with "reload before applying" and stores nothing.
-	await page
-		.getByTestId('editor-yaml')
-		.fill(orkflowYaml(ORKFLOW, '0.4.0', 'applied after a retry'));
+	await fillYaml(page, 'editor-yaml', orkflowYaml(ORKFLOW, '0.4.0', 'applied after a retry'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);
 	await openVersions(page);

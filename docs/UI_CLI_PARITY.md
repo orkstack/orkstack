@@ -99,7 +99,10 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   3.
 - **The browser invents no validation the CLI bypasses**, and typed input
   controls are a presentation of declared inputs, not a schema language (see
-  "Baseline operator flows").
+  "Baseline operator flows"). The YAML editor checks a document only against
+  the generated JSON Schemas (`docs/schemas/`, the ones an editor with a YAML
+  language server reads); whether it validates is the engine's answer,
+  `orkctl orkflow validate`'s own.
 
 ### Navigation and the command palette
 
@@ -382,8 +385,13 @@ write boundary. Warnings stay visible after validation and after a successful
 apply.
 
 CLI: `orkctl orkflow validate FILE [--json]` exits non-zero only for an ERROR.
-UI: **Validate** on the Apply page and in the editor; validation alone never
-clears the editor's dirty state.
+UI: **Validate** on the Apply page and in the editor, and the editor asks on
+its own once typing pauses (never for a document that does not parse, never
+twice for the same text). Each issue is listed as the engine wrote it and
+placed on its line: on the node its field names, on the line its message names
+when the field resolves elsewhere, or on the nearest key that is written. A
+check that could not run is said, and the document is then not shown as valid.
+Validation alone never clears the editor's dirty state.
 
 ### Interface compatibility
 

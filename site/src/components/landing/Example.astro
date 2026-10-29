@@ -9,6 +9,7 @@ import ThemeShot from '../shared/ThemeShot.astro';
 import { shot } from '../../lib/media';
 import { example, lineOf } from '../../lib/example';
 import codeThemes from '../../styles/generated/code-themes.json';
+import { templateInjection } from '../../lib/template-grammar.mjs';
 import { route, repoUrl } from '../../../site.config.mjs';
 
 const each = lineOf(/^\s+each:/);
@@ -83,6 +84,7 @@ const code = example.lines.join('\n');
 			<Code
 				code={code}
 				lang="yaml"
+				embeddedLangs={[templateInjection as any]}
 				themes={codeThemes as any}
 				defaultColor={false}
 				class="listing-code"

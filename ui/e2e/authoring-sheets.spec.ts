@@ -24,6 +24,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { fillYaml } from './yaml';
 
 // The authoring sheets (UI revamp, stage 3), against a real engine and Orker
 // on real Temporal and MinIO:
@@ -404,7 +405,7 @@ test('apply: issues carry their severity classes; the examples are a ruled list'
 		await expect(items.nth(i).getByRole('button', { name: 'Use this example' })).toHaveCount(1);
 	}
 	const name = `${SAGA}-iface`;
-	await page.getByTestId('apply-yaml').fill(
+	await fillYaml(page, 'apply-yaml', 
 		['apiVersion: orkstack/v1', 'kind: Orkflow', `name: ${name}`, 'version: "1.0.0"', 'tasks:', '  - id: copy', '    uses: file', '    with:', '      op: copy', '      srcs: [why]', ''].join('\n')
 	);
 	await page.getByTestId('apply-validate').click();

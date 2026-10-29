@@ -16,6 +16,10 @@
 	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
 	import ScopeNote from '$lib/components/ScopeNote.svelte';
 	import SheetHeader from '$lib/components/SheetHeader.svelte';
+	import YamlCode from '$lib/yaml/YamlCode.svelte';
+	import YamlField from '$lib/yaml/YamlField.svelte';
+	import YamlProblems from '$lib/yaml/YamlProblems.svelte';
+	import { YamlSession } from '$lib/yaml/session.svelte';
 	import { errorMessage } from '$lib/client';
 	import { automationClient } from '$lib/clients/automation';
 	import { namespaceClient } from '$lib/clients/namespaces';
@@ -68,6 +72,14 @@
 	let planning = $state(false);
 	let planError = $state('');
 	let stale = $state(false);
+
+	// The document's live check: a plan of the document as typed, read for its
+	// issues only. It never replaces the plan shown below, its steps or its
+	// once-shown secrets; that plan is made only by Plan.
+	const session = new YamlSession(async (text, ns, signal) => {
+		const res = await automationClient(fetch).planAutomation({ yaml: text, namespace: namespaceLabel(ns), prune }, { signal });
+		return res.issues;
+	}, 'Plan shows each step an apply would take; a step can still be refused when it runs.');
 
 	// secret_env entries: the signing secret the CLI would read from $VAR.
 	let secrets = $state<Record<string, string>>({});
@@ -311,9 +323,11 @@
 		<div class="mt-3"><ErrorPanel testid="automation-export-error" message={exportError} /></div>
 	{/if}
 	{#if exported}
-		<pre
-			data-testid="automation-export-yaml"
-			class="mt-3 max-h-96 overflow-auto border border-rule bg-paper-sunken p-3 font-mono text-xs text-ink">{exported.yaml}</pre>
+		<YamlCode
+			text={exported.yaml}
+			testid="automation-export-yaml"
+			class="mt-3 max-h-96 overflow-auto border border-rule bg-paper-sunken p-3 font-mono text-xs text-ink"
+		/>
 		{#if exported.unmanaged.length > 0}
 			<div
 				data-testid="automation-unmanaged"
@@ -344,18 +358,22 @@
 
 <section class="region mb-10 pt-3">
 	<div class="flex flex-wrap items-center justify-between gap-3">
-		<h2 class="text-md font-semibold text-ink">Document</h2>
+		<h2 id="automation-document-heading" class="text-md font-semibold text-ink">Document</h2>
 		<CliEquivalent command={automationPlanCli(namespaceLabel(namespace), prune)} testid="automation-plan-cli" />
 	</div>
-	<textarea
-		data-testid="automation-yaml"
-		aria-label="Automation document"
-		bind:value={yaml}
-		rows="16"
-		spellcheck="false"
-		placeholder={automationPlaceholder(namespaceLabel(namespace))}
-		class="field mt-3 w-full p-3 font-mono text-xs"
-	></textarea>
+	<div class="mt-3">
+		<YamlField
+			bind:value={yaml}
+			kind="Automation"
+			{namespace}
+			{session}
+			testid="automation-yaml"
+			label="Automation document"
+			labelledby="automation-document-heading"
+			placeholder={automationPlaceholder(namespaceLabel(namespace))}
+			rows={16}
+		/>
+	</div>
 	<div class="mt-3 flex flex-wrap items-center gap-4">
 		<label class="text-sm font-semibold text-ink-secondary">
 			Import a file
@@ -380,6 +398,9 @@
 		>
 			{planning ? 'Planning…' : 'Plan'}
 		</button>
+	</div>
+	<div class="mt-4">
+		<YamlProblems {session} listTestid="automation-document-issues" issueTestid="automation-document-issue" testid="automation-yaml" level={3} />
 	</div>
 </section>
 
