@@ -364,7 +364,7 @@ func FuzzParseFailureCategory(f *testing.F) {
 func FuzzBuildAssumedOutputs(f *testing.F) {
 	for _, seed := range []string{
 		`flaky={"exitCode":1}`, `flaky={"a":{"b":[1,"x",null]}}`, `flaky=[1]`, `flaky`, `=1`, `flaky=null`, `flaky={"a":"x\ud800y"}`, "flaky={\"a\":\"p\xffq\"}",
-		`flaky={"a":"😀"}`, `flaky={"a":"�"}`, `a=b={}`, `flaky={}{}`, `flaky={"a":1e999}`,
+		`flaky={"a":"😀"}`, `flaky={"a":"�"}`, `flaky={"a":"\uFFFD"}`, `a=b={}`, `flaky={}{}`, `flaky={"a":1e999}`,
 	} {
 		f.Add(seed, `{"flaky":{"exitCode":2},"warmup":{"ok":true}}`)
 		f.Add(seed, ``)
@@ -374,7 +374,7 @@ func FuzzBuildAssumedOutputs(f *testing.F) {
 	f.Add(``, `null`)
 	f.Add(``, `{"flaky":null}`)
 	spellsReplacement := func(text string) bool {
-		return strings.Contains(text, "�") || strings.Contains(strings.ToLower(text), `�`)
+		return strings.Contains(text, string(utf8.RuneError)) || strings.Contains(strings.ToLower(text), `\ufffd`)
 	}
 	f.Fuzz(func(t *testing.T, pair, file string) {
 		var pairs []string
@@ -403,7 +403,7 @@ func FuzzBuildAssumedOutputs(f *testing.F) {
 			if err != nil {
 				t.Fatalf("the assumed output of %q does not encode: %v", id, err)
 			}
-			if strings.Contains(string(encoded), "�") && !spellsReplacement(pair) && !spellsReplacement(file) {
+			if strings.Contains(string(encoded), string(utf8.RuneError)) && !spellsReplacement(pair) && !spellsReplacement(file) {
 				t.Fatalf("buildAssumedOutputs(%q, %q) put a replacement character in %s without the text spelling one", pairs, file, encoded)
 			}
 		}
