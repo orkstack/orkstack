@@ -2,6 +2,7 @@ package dist_test
 
 import (
 	"encoding/json"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -176,13 +177,13 @@ func publishedStages(t *testing.T, stages []dfStage) []dfStage {
 	return published
 }
 
-// externalImages are the stages whose base is an image pull, not an earlier
-// stage.
+// externalImages are the stages whose base is an image pull: not an earlier
+// stage, and not scratch, Docker's empty base, which pulls nothing.
 func externalImages(stages []dfStage) []dfStage {
 	earlier := map[string]bool{}
 	var out []dfStage
 	for _, s := range stages {
-		if !earlier[s.image] {
+		if !earlier[s.image] && s.image != "scratch" {
 			out = append(out, s)
 		}
 		if s.name != "" {
@@ -245,7 +246,7 @@ func linuxArchitectures() []string {
 	return arches
 }
 
-func TestReleaseDockerfile_TargetsAreTheFourPublishedImages(t *testing.T) {
+func TestReleaseDockerfile_TargetsAreTheThreePublishedImages(t *testing.T) {
 	t.Parallel()
 	stages := dockerfileStages(t)
 	seen := map[string]bool{}
@@ -324,7 +325,7 @@ func effectiveUser(s dfStage) string {
 func TestReleaseDockerfile_OnlyTheOrkerRunsAsRoot(t *testing.T) {
 	t.Parallel()
 	stages := dockerfileStages(t)
-	want := map[string]string{"ork": "nonroot", "orkctl": "nonroot", "ui": "node", "orker": "root"}
+	want := map[string]string{"ork": "nonroot", "orkctl": "nonroot", "orker": "root"}
 	published := publishedStages(t, stages)
 	for _, s := range published {
 		got, known := want[s.name]
@@ -346,12 +347,8 @@ func TestReleaseDockerfile_OnlyTheOrkerRunsAsRoot(t *testing.T) {
 			t.Errorf("target %s sets USER; its base's nonroot user is the contract", name)
 		}
 	}
-	// The ui ends with USER node, and the orker says it runs as root: that
-	// is a stated fact (docs/DEPLOY.md), not the base image's accident.
-	ui := stageNamed(t, stages, "ui").all("USER")
-	if len(ui) == 0 || ui[len(ui)-1].args != "node" {
-		t.Errorf("the ui target does not end with USER node: %v", ui)
-	}
+	// The orker says it runs as root: that is a stated fact
+	// (docs/DEPLOY.md), not the base image's accident.
 	orker := stageNamed(t, stages, "orker").all("USER")
 	if len(orker) != 1 || orker[0].args != "root" {
 		t.Errorf("the orker target must state USER root exactly once: %v", orker)
@@ -413,24 +410,6 @@ func TestReleaseDockerfile_NoRunStepRunsOnTheTargetPlatform(t *testing.T) {
 	}
 }
 
-func TestReleaseDockerfile_InstallsFromTheLockfile(t *testing.T) {
-	t.Parallel()
-	installs := 0
-	for _, s := range dockerfileStages(t) {
-		for _, run := range s.all("RUN") {
-			if strings.Contains(run.args, "bun install") {
-				installs++
-				if !strings.Contains(run.args, "--frozen-lockfile") {
-					t.Errorf("stage %s: %q can change the dependencies; install with --frozen-lockfile", s.name, run.args)
-				}
-			}
-		}
-	}
-	if installs == 0 {
-		t.Error("no stage installs the UI's dependencies")
-	}
-}
-
 // proofPin reads the single value of a setup action's version input from
 // proof.yml.
 func proofPin(t *testing.T, key string) string {
@@ -449,42 +428,43 @@ func proofPin(t *testing.T, key string) string {
 	return ""
 }
 
-func TestReleaseDockerfile_ToolchainsMatchTheWorkflowPins(t *testing.T) {
+// TestDockerfiles_ToolchainsMatchTheWorkflowPins: the release images carry
+// no UI toolchain and no UI runtime, because `make dist` builds the UI first
+// (make ui) and compiles it into ork, whose image copies that binary. The
+// source build makes the UI with the bun the workflows build it with, and no
+// image of either runs node: the UI is a static build that ork serves.
+func TestDockerfiles_ToolchainsMatchTheWorkflowPins(t *testing.T) {
 	t.Parallel()
-	bun, node := proofPin(t, "bun-version"), proofPin(t, "node-version")
-	var bunStages, nodeStages int
-	seen := map[string]bool{}
-	for _, s := range externalImages(dockerfileStages(t)) {
-		if seen[s.image] {
-			continue
-		}
-		seen[s.image] = true
-		ref, err := dsl.ParseReference(s.image)
-		if err != nil {
-			t.Fatalf("%s:%d: %v", dockerfilePath, s.line, err)
-		}
-		switch ref.Repository {
-		case "oven/bun":
-			bunStages++
-			if ref.Tag != bun {
-				t.Errorf("%s:%d: the bun image is %s, but the workflows build the UI with bun %s (proof.yml bun-version)",
-					dockerfilePath, s.line, ref.Tag, bun)
+	bun := proofPin(t, "bun-version")
+	for _, file := range []struct {
+		path   string
+		stages []dfStage
+		bun    int // the distinct bun images the file may pull
+	}{
+		{dockerfilePath, dockerfileStages(t), 0},
+		{sourceDockerfilePath, sourceStages(t), 1},
+	} {
+		bunImages := map[string]bool{}
+		for _, s := range externalImages(file.stages) {
+			ref, err := dsl.ParseReference(s.image)
+			if err != nil {
+				t.Fatalf("%s:%d: %v", file.path, s.line, err)
 			}
-		case "library/node":
-			nodeStages++
-			if version, _, _ := strings.Cut(ref.Tag, "-"); version != node {
-				t.Errorf("%s:%d: the node image is %s, but the workflows run the UI on node %s (proof.yml node-version)",
-					dockerfilePath, s.line, ref.Tag, node)
+			switch ref.Repository {
+			case "oven/bun":
+				bunImages[s.image] = true
+				if ref.Tag != bun {
+					t.Errorf("%s:%d: the bun image is %s, but the workflows build the UI with bun %s (proof.yml bun-version)",
+						file.path, s.line, ref.Tag, bun)
+				}
+			case "library/node":
+				t.Errorf("%s:%d: stage %s runs %s; the UI is a static build that ork serves, so no image runs node",
+					file.path, s.line, s.name, s.image)
 			}
 		}
-	}
-	// Both stages that run bun are on one image.
-	stages := dockerfileStages(t)
-	if a, b := stageNamed(t, stages, "ui-build").image, stageNamed(t, stages, "ui-deps").image; a != b {
-		t.Errorf("ui-build is on %s but ui-deps on %s; they must install with one bun", a, b)
-	}
-	if bunStages != 1 || nodeStages != 1 {
-		t.Errorf("found %d distinct bun image(s) and %d node image(s), want one of each", bunStages, nodeStages)
+		if len(bunImages) != file.bun {
+			t.Errorf("%s pulls %d distinct bun image(s) %v, want %d", file.path, len(bunImages), slices.Sorted(maps.Keys(bunImages)), file.bun)
+		}
 	}
 }
 
@@ -519,7 +499,7 @@ func builtLinuxBinaries(t *testing.T) []string {
 	return built
 }
 
-func TestReleaseDockerfile_CopiesTheDistBinariesAndTheExamples(t *testing.T) {
+func TestReleaseDockerfile_CopiesTheDistBinaries(t *testing.T) {
 	t.Parallel()
 	stages := dockerfileStages(t)
 	var copied []string
@@ -579,48 +559,6 @@ func TestReleaseDockerfile_CopiesTheDistBinariesAndTheExamples(t *testing.T) {
 		if !found {
 			t.Errorf("target %s does not copy LICENSE to /usr/share/doc/orkstack/LICENSE", s.name)
 		}
-	}
-
-	// The UI's gallery reads examples/ at build time, from outside ui/.
-	build := stageNamed(t, stages, "ui-build")
-	var workdir, examplesDest string
-	var copiesUI bool
-	buildStep := -1
-	for i, ins := range build.body {
-		switch ins.cmd {
-		case "WORKDIR":
-			workdir = ins.args
-		case "COPY":
-			sources, dest := copyOperands(ins)
-			if len(sources) == 1 && sources[0] == "examples/" {
-				examplesDest = path.Clean(dest)
-				if buildStep >= 0 {
-					t.Error("ui-build copies examples/ after it builds")
-				}
-			}
-			if len(sources) == 1 && sources[0] == "ui/" {
-				copiesUI = true
-			}
-		case "RUN":
-			if strings.Contains(ins.args, "bun run build") {
-				buildStep = i
-			}
-		}
-	}
-	if buildStep < 0 || !copiesUI || examplesDest == "" {
-		t.Fatalf("ui-build must COPY ui/ and examples/ and then run `bun run build` (ui %v, examples %q, build step %d)",
-			copiesUI, examplesDest, buildStep)
-	}
-	source := readRepoFile(t, "ui/src/lib/server/examples.ts")
-	glob := regexp.MustCompile(`import\.meta\.glob\('([^']+)'`).FindSubmatch(source)
-	if glob == nil {
-		t.Fatal("ui/src/lib/server/examples.ts no longer globs the examples; update this test with it")
-	}
-	// Vite resolves the glob against the file that holds it.
-	resolved := path.Dir(path.Join(workdir, "src/lib/server", string(glob[1])))
-	if resolved != examplesDest {
-		t.Errorf("the UI globs %s from %s, so it reads %s, but ui-build copies the examples to %s: "+
-			"the gallery would be empty", glob[1], "src/lib/server/examples.ts", resolved, examplesDest)
 	}
 }
 
@@ -765,7 +703,6 @@ func TestReleaseDockerignore_AdmitsOnlyWhatTheBuildCopies(t *testing.T) {
 	}
 
 	// Everything the Dockerfile copies from the context is admitted.
-	denied := []string{"node_modules", ".svelte-kit", "build", "e2e", "test", "test-results", "playwright-report"}
 	var admitted []string
 	for _, s := range dockerfileStages(t) {
 		for _, ins := range s.all("COPY") {
@@ -776,36 +713,10 @@ func TestReleaseDockerignore_AdmitsOnlyWhatTheBuildCopies(t *testing.T) {
 			for _, source := range sources {
 				for _, arch := range linuxArchitectures() {
 					source := strings.ReplaceAll(source, "${TARGETARCH}", arch)
-					switch source {
-					case "examples/":
-						matches, err := filepath.Glob(filepath.Join(repoRoot(t), "examples", "*.ork.yaml"))
-						if err != nil || len(matches) == 0 {
-							t.Fatalf("no examples/*.ork.yaml in the repository (%v)", err)
-						}
-						for _, m := range matches {
-							admitted = append(admitted, "examples/"+filepath.Base(m))
-						}
-					case "ui/":
-						entries, err := os.ReadDir(filepath.Join(repoRoot(t), "ui"))
-						if err != nil {
-							t.Fatal(err)
-						}
-						for _, e := range entries {
-							if slices.Contains(denied, e.Name()) {
-								continue
-							}
-							file := "ui/" + e.Name()
-							if e.IsDir() {
-								file += "/file"
-							}
-							admitted = append(admitted, file)
-						}
-					default:
-						if strings.HasSuffix(source, "/") {
-							t.Fatalf("the test cannot expand COPY source %q; teach it, or the ignore file is unchecked", source)
-						}
-						admitted = append(admitted, source)
+					if strings.HasSuffix(source, "/") {
+						t.Fatalf("the test cannot expand COPY source %q; teach it, or the ignore file is unchecked", source)
 					}
+					admitted = append(admitted, source)
 				}
 			}
 		}
@@ -815,25 +726,27 @@ func TestReleaseDockerignore_AdmitsOnlyWhatTheBuildCopies(t *testing.T) {
 			t.Errorf("%s leaves out %s, which the Dockerfile copies", dockerignorePath, file)
 		}
 	}
-	for _, file := range []string{"ui/package.json", "ui/bun.lock", "ui/bunfig.toml", "ui/src/lib/server/examples.ts",
+	for _, file := range []string{
 		"dist/bin/linux-amd64/ork", "dist/bin/linux-arm64/orker", "dist/bin/linux-arm64/orkctl", "LICENSE",
-		"examples/each-fan-out.ork.yaml"} {
+	} {
 		if rules.excluded(file) {
 			t.Errorf("%s leaves out %s", dockerignorePath, file)
 		}
 	}
 
 	// And nothing else is: not the source tree, not a secret, not a built
-	// archive beside the binaries, not the UI's own build products.
+	// archive beside the binaries, not the UI, whose build is inside ork.
 	for _, file := range []string{
 		".git/HEAD", ".env", "compose.yaml", ".claude/settings.json", "proof/x/proof.json", ".data/x",
 		"go.mod", "cmd/ork/main.go", "internal/dist/archive.go", "docs/README.md", "images/shell/Dockerfile",
 		"site/package.json", "scripts/quickstart-smoke.sh", "deploy/source/Dockerfile", "test/fixtures/bash/Dockerfile",
 		"dist/orkctl-linux-amd64.tar.gz", "dist/SHA256SUMS", "dist/meta/images.tsv", "dist/layouts/ork/index.json",
 		"dist/bin/windows-amd64/orkctl.exe", "dist/bin/linux-amd64/orkctl.exe", "dist/bin/linux-amd64/extra",
-		"examples/README.md", "examples/automation/examples.ork.yaml", "examples/custom-image/main.go",
-		"ui/node_modules/svelte/package.json", "ui/.svelte-kit/tsconfig.json", "ui/build/index.js",
+		"examples/README.md", "examples/each-fan-out.ork.yaml", "examples/automation/examples.ork.yaml",
+		"examples/custom-image/main.go", "ui/package.json", "ui/bun.lock", "ui/src/lib/server/examples.ts",
+		"ui/node_modules/svelte/package.json", "ui/.svelte-kit/tsconfig.json", "ui/build/index.html",
 		"ui/e2e/harness.ts", "ui/test/preload.ts", "ui/test-results/x", "ui/playwright-report/index.html",
+		"internal/webui/dist/index.html",
 	} {
 		if !rules.excluded(file) {
 			t.Errorf("%s admits %s, which no build step copies", dockerignorePath, file)
@@ -847,7 +760,7 @@ func TestReleaseDockerignore_AdmitsOnlyWhatTheBuildCopies(t *testing.T) {
 	}
 	for _, e := range entries {
 		switch e.Name() {
-		case "LICENSE", "dist", "examples", "ui":
+		case "LICENSE", "dist":
 			continue
 		}
 		file := e.Name()

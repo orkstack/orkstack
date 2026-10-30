@@ -20,10 +20,11 @@ SITE="$REPO/site"
 ENGINE="${ORK_SERVER:-http://127.0.0.1:8080}"
 # The capture drives the BUILT UI, as the UI's own e2e suite does: the dev
 # server's hundreds of module requests through the browser container's
-# tunnel take longer than the example's fan-out runs. It is served on
-# 127.0.0.1:5173, an origin make up's engine accepts for its live socket,
-# beside the dev server (which listens on localhost).
-UI_PORT="${SITE_MEDIA_UI_PORT:-5173}"
+# tunnel take longer than the example's fan-out runs. `vite preview` serves
+# the fresh build and proxies the API and the WebSockets to make up's engine
+# with the browser's Host intact (ui/vite.config.ts), so the page has one
+# origin and the engine admits its sockets as same-origin.
+UI_PORT="${SITE_MEDIA_UI_PORT:-4173}"
 UI="http://127.0.0.1:$UI_PORT"
 VHS_IMAGE="$(grep -v '^#' "$SITE/media/vhs-image.txt" | head -1)"
 
@@ -77,8 +78,7 @@ site_pw="$(node -p "require('$SITE/node_modules/@playwright/test/package.json').
 [ -x "$REPO/bin/orkctl" ] || need "bin/orkctl is missing: run make up"
 "$REPO/bin/orkctl" --server "$ENGINE" pool list --json 2>/dev/null | grep -q '"liveOrkerCount": [1-9]' ||
 	need "no engine with a live Orker at $ENGINE: run make infra-up, make -C images push, make up"
-curl -sf -o /dev/null "http://localhost:5173/orkflows" || need "the UI is not answering at localhost:5173: run make up"
-! curl -s -o /dev/null "$UI/" || need "something already answers at $UI; set SITE_MEDIA_UI_PORT to a port make up's engine accepts"
+! curl -s -o /dev/null "$UI/" || need "something already answers at $UI; set SITE_MEDIA_UI_PORT to a free port"
 docker image inspect "$VHS_IMAGE" >/dev/null 2>&1 || need "the VHS image is not on this host: docker pull $VHS_IMAGE"
 # No frame may show a real host name, and an Orker's default id embeds this
 # host's (internal/orker defaultOrkerID). Start the stack with a neutral id:
@@ -115,8 +115,8 @@ mkdir -p "$WORK"
 if [ "${SITE_MEDIA_ONLY:-}" != terminal ]; then
 echo "== UI build =="
 (cd "$REPO/ui" && bun run build >/dev/null)
-(cd "$REPO/ui" && HOST=127.0.0.1 PORT="$UI_PORT" ENGINE_API_URL="$ENGINE" PUBLIC_ENGINE_WS_URL="${ENGINE/http/ws}" \
-	exec node build >"$WORK/ui.log" 2>&1) &
+(cd "$REPO/ui" && ORK_SERVER="$ENGINE" \
+	exec bun run preview --host 127.0.0.1 --port "$UI_PORT" --strictPort >"$WORK/ui.log" 2>&1) &
 UI_PID=$!
 trap 'kill "$UI_PID" 2>/dev/null || true; rm -rf -- "$WORK"' EXIT
 for _ in $(seq 1 60); do curl -sf -o /dev/null "$UI/orkflows" && break; sleep 0.5; done

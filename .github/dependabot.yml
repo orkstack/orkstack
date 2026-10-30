@@ -34,9 +34,11 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
-  # The release images' Dockerfile and the quickstart's source build, which
-  # runs the same stages (TestSourceDockerfile_StagesAreTheReleasesOwn), so
-  # one update moves both. Two pins are held to pins another entry or file
+  # The release images' Dockerfile and the quickstart's source build, whose
+  # runtime stages are the release's own (TestSourceDockerfile_StagesAreTheReleasesOwn),
+  # so one update moves both; the source build alone also builds the web UI
+  # in oven/bun, held to the workflows' bun-version
+  # (TestDockerfiles_ToolchainsMatchTheWorkflowPins). Two pins are held to pins another entry or file
   # moves, and their update needs the other moved by hand in the same pull
   # request: the docker CLI, which the root compose.yaml's push step also
   # runs (TestQuickstartCompose_InfraPinsMatchTheDevStack), and golang, whose

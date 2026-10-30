@@ -20,14 +20,15 @@ const ImageNamespace = "orkstack"
 // image start with: the catalog's "shell" is the image "activity-shell".
 const ActivityPrefix = "activity-"
 
-// serviceImages are the four images of the platform itself.
-var serviceImages = []string{Ork, Orker, "ui", Orkctl}
+// serviceImages are the three images of the platform itself. The web UI has
+// none of its own: ork serves it, built into the binary (internal/webui).
+var serviceImages = []string{Ork, Orker, Orkctl}
 
 // activityNames are the catalog names of the first-party activities, in the
 // order the quickstart's compose file (compose.yaml) pushes them.
 var activityNames = []string{"shell", "http", "file", "json", "git", "template"}
 
-// ServiceImages returns the platform's images: ork, orker, ui and orkctl. The
+// ServiceImages returns the platform's images: ork, orker and orkctl. The
 // caller owns the returned slice.
 func ServiceImages() []string { return slices.Clone(serviceImages) }
 

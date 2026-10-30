@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The whole OrkStack dev stack, up or down in one command.
 #
-#   scripts/stack.sh up      infra + engine + orker + UI, then wait for health
+#   scripts/stack.sh up      infra + engine + orker + UI dev server, then wait for health
 #   scripts/stack.sh down    stop what up started (leaves data alone)
 #   scripts/stack.sh status  what is running, and where
 #
@@ -166,8 +166,8 @@ wait_for() {
 # it here, once, at startup, than to have it surface as a failed task twenty
 # minutes into a run.
 #
-# Never fatal: ork and the UI start without Docker; only task execution needs
-# it.
+# Never fatal: ork and the UI dev server start without Docker; only task
+# execution needs it.
 check_workdir_mountable() {
 	command -v docker >/dev/null 2>&1 || return 0
 	docker info >/dev/null 2>&1 || return 0
@@ -236,9 +236,10 @@ wants_admin_addr() {
 }
 
 # write_run_config BACKEND WORKDIR HTTP_ADDR WS_ORIGINS CATALOG — renders
-# .run/orkstack.yaml from exactly the five values `up` already computes
-# today (backend, workdir, http_addr, ws_allowed_origins, and the local
-# activity catalog), plus telemetry.admin_addr when wants_admin_addr says so.
+# .run/orkstack.yaml from exactly the five values `up` computes (backend,
+# workdir, http_addr, ws_allowed_origins — empty unless exported, which is the
+# engine's same-origin default — and the local activity catalog), plus
+# telemetry.admin_addr when wants_admin_addr says so.
 # Both binaries are started against this one file with --config; the
 # ambient environment still wins over anything it sets
 # (config.Document.Apply's precedence — docs/DEPLOY.md §1), so a variable
@@ -294,13 +295,13 @@ cmd_up() {
 	# the object store, archived runs on local disk, and `make reset` wiping the volume
 	# leaves runs that a fresh engine still lists.
 	local backend="${ORK_ARTIFACT_BACKEND:-s3}"
-	# The UI is served from one port and the engine listens on another, so every
-	# WebSocket the browser opens is cross-origin. The engine's default is
-	# same-origin only — right for production, fatal here: without this the
-	# upgrade is refused, the run page never goes live and its event log stays
-	# empty, while a refresh still works because that reads through the
-	# same-origin Connect proxy instead of the socket.
-	local ws_origins="${ORK_WS_ALLOWED_ORIGINS:-localhost:$UI_PORT,127.0.0.1:$UI_PORT}"
+	# The browser talks to one origin. Here that is the UI dev server, which
+	# proxies the Connect calls, /v1/ and the WebSockets to the engine with the
+	# browser's Host header intact (ui/vite.config.ts), so the engine sees each
+	# socket's Origin match its Host and admits it under its same-origin
+	# default, exactly as it admits the UI it serves itself. Nothing is allowed
+	# beyond that unless ORK_WS_ALLOWED_ORIGINS is exported.
+	local ws_origins="${ORK_WS_ALLOWED_ORIGINS:-}"
 	local catalog="${ORK_ACTIVITY_CATALOG:-$(local_activity_catalog)}"
 	if [ -z "$catalog" ]; then
 		say "  no first-party activity images in the local registry;"
@@ -323,34 +324,38 @@ cmd_up() {
 	wait_for "orker (via the engine's DescribeOrker probe)" 60 \
 		bash -c "\"$REPO/bin/orkctl\" --server \"$ENGINE_URL\" pool list --json | grep -q '\"liveOrkerCount\": [1-9]'"
 
-	say "== ui =="
+	say "== ui (dev server) =="
 	if [ ! -d "$REPO/ui/node_modules" ]; then
 		say "  installing ui dependencies"
 		(cd "$REPO/ui" && bun install >/dev/null)
 	fi
-	start ui env ENGINE_API_URL="$ENGINE_URL" \
+	# ORK_SERVER names the engine the dev server proxies to, as it does for
+	# orkctl.
+	start ui env ORK_SERVER="$ENGINE_URL" \
 		bash -c "cd '$REPO/ui' && exec bun run dev --port $UI_PORT --strictPort"
 	wait_for "ui" 90 curl -sf -o /dev/null "$UI_URL/orkflows"
 
-	# The browser's own handshake, made the way the browser makes it. Serving a
-	# page proves nothing about the socket that page opens: the UI can render
-	# perfectly while every run sits there never going live. A refused upgrade
-	# answers 403 here rather than 101.
+	# The browser's own handshake, made the way the browser makes it: to the
+	# dev server, from its origin, so the probe crosses the dev server's proxy
+	# to the engine as the run page's socket does. Serving a page proves
+	# nothing about the socket that page opens: the UI can render perfectly
+	# while every run sits there never going live. The probe's run does not
+	# exist, so an accepted upgrade answers 404; a refused one answers 403.
 	local ws_probe
 	ws_probe="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
 		-H 'Connection: Upgrade' -H 'Upgrade: websocket' \
 		-H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
 		-H "Origin: $UI_URL" \
-		"$ENGINE_URL/ws/runs/ork-probe-nonexistent?from_sequence=0" || true)"
+		"$UI_URL/ws/runs/ork-probe-nonexistent?from_sequence=0" || true)"
 	case "$ws_probe" in
-	404) say "  websocket ready (origin $UI_URL accepted)" ;;
-	403) die "the engine refuses websockets from $UI_URL (ORK_WS_ALLOWED_ORIGINS=$ws_origins); the UI would never go live" ;;
-	*) die "unexpected websocket probe response: $ws_probe" ;;
+	404) say "  websocket ready (through the dev server, origin $UI_URL accepted)" ;;
+	403) die "the engine refuses the websockets the dev server proxies from $UI_URL: the proxy must pass the browser's Host through (ui/vite.config.ts); the UI would never go live" ;;
+	*) die "unexpected websocket probe response through the dev server: $ws_probe" ;;
 	esac
 	say ""
 	say "OrkStack is up."
-	say "  UI             $UI_URL"
-	say "  Engine API     $ENGINE_URL"
+	say "  UI             $UI_URL  (the dev server, with hot reload)"
+	say "  Engine         $ENGINE_URL  (the API; the UI too, once built in with make ui)"
 	say "  Temporal UI    http://localhost:8233"
 	say "  SeaweedFS filer  http://localhost:8888  (S3 API: http://localhost:9000)"
 	say ""
@@ -396,7 +401,7 @@ cmd_status() {
 	done
 	say ""
 	"${COMPOSE[@]}" ps --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null || true
-	[ "$any" -eq 1 ] && say "" && say "  UI $UI_URL   engine $ENGINE_URL"
+	[ "$any" -eq 1 ] && say "" && say "  UI (dev server) $UI_URL   engine $ENGINE_URL"
 	return 0
 }
 

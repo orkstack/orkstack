@@ -357,7 +357,7 @@ jobs:
           [ -z "$dups" ] || { echo "listed more than once: $dups" >&2; exit 1; }
           n=0
           while IFS=$'\t' read -r name digest; do
-            [[ "$name" =~ ^(ork|orker|orkctl|ui|activity-(shell|http|file|json|git|template))$ ]] || { echo "image name: $name" >&2; exit 1; }
+            [[ "$name" =~ ^(ork|orker|orkctl|activity-(shell|http|file|json|git|template))$ ]] || { echo "image name: $name" >&2; exit 1; }
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "digest: $digest" >&2; exit 1; }
             index="layouts/$name/index.json"
             [ -f "$index" ] || { echo "no layout for $name" >&2; exit 1; }
@@ -370,7 +370,7 @@ jobs:
             [ "$platforms" = "linux/amd64,linux/arm64" ] || { echo "$name is built for '$platforms', want linux/amd64 and linux/arm64" >&2; exit 1; }
             n=$((n + 1))
           done <meta/images.tsv
-          [ "$n" -eq 10 ] || { echo "$n images, want 10" >&2; exit 1; }
+          [ "$n" -eq 9 ] || { echo "$n images, want 9" >&2; exit 1; }
       # Before anything is pushed: the key is present, opens with its
       # password, and is the private half of the committed deploy/cosign.pub,
       # because what it signs verifies with that file. cosign reads the key
