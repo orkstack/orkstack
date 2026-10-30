@@ -55,6 +55,24 @@ kubectl create secret generic orkstack-s3 --from-env-file=s3.env
 kubectl apply -k .
 ```
 
+## Give tasks their secrets
+
+The Orker pods hold no service-account token, and a task cannot read the Orker's own settings or its S3 keys. A task may name as a secret only a key of the `orkstack-task-secrets` Secret. Create it with one key for each value your tasks read:
+
+```bash
+kubectl create secret generic orkstack-task-secrets --from-file=db-password=./db-password
+```
+
+The bases mount that Secret in the Orker container at `/etc/orkstack/task-secrets`. A task names a key by its path there:
+
+```yaml
+secrets:
+  - name: db-password
+    source: file:/etc/orkstack/task-secrets/db-password
+```
+
+The Secret is optional, so the pods start without it. A task that names any other source fails with `SECRET_NOT_PERMITTED`. To name other task-secret sources, set `ORK_ORKER_SECRET_ALLOW` on the `orker` container in your overlay, as [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#secrets-on-a-shared-pool) describes.
+
 ## Check your cluster
 
 Before you send real runs to the cluster, run the repository's check against it, from a clone of the release you deploy. It needs the settings you just created:
@@ -88,6 +106,7 @@ CI runs the same check on a kind cluster, both shapes, on every change to what t
 ## See also
 
 - [DEPLOY.md, "Orkers on Kubernetes"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): the full reference, with sizing, the RuntimeClass and the proof
+- [DEPLOY.md, "Secrets on a shared pool"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#secrets-on-a-shared-pool): the secret floor, and how it combines with a namespace's own list
 - [SECURITY_MODEL.md, "The Orker's own access to the host"](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#the-orkers-own-access-to-the-host): how much each shape trusts its engine
 - [PROOFS.md, "5. The CI job graph"](https://github.com/orkstack/orkstack/blob/main/docs/PROOFS.md#5-the-ci-job-graph): where the kind check runs, beside the proof tiers
 - Next: [Deploy OrkStack](/docs/how-to/deploy/), [Choose where tasks run](/docs/how-to/pools-and-pins/)

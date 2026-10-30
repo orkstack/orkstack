@@ -71,6 +71,11 @@ trusts that engine depends on the shape. In a pod with its own user
 namespace, the engine is root of that namespace, which is an unprivileged uid
 range on the node. In the privileged fallback, the engine container is root
 on the node, and so is anything that escapes from a task's container to it.
+In both shapes the pod holds no service-account token, and the Orker's secret
+floor admits only the files of one Secret of task secrets, mounted in the
+Orker container alone. A task therefore cannot name the Orker's own settings,
+its object-store keys or a token as a secret ("Which sources may be named",
+below).
 
 ### What the Orker reads back
 

@@ -2087,7 +2087,8 @@ Each base is used from an overlay of your own. The overlay names the release's
 settings the Orker reads in the same namespace: the `orkstack` ConfigMap
 (`ORK_TEMPORAL_ADDRESS`, `ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_ENDPOINT`,
 `ORK_S3_BUCKET`, and the other settings of §1) and the `orkstack-s3` Secret
-(`ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`). Each base's `kustomization.yaml`
+(`ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`), and, when tasks read secrets, the
+`orkstack-task-secrets` Secret (below). Each base's `kustomization.yaml`
 shows the overlay.
 
 **What a pod holds.**
@@ -2106,6 +2107,54 @@ shows the overlay.
   socket and nothing else, and both containers' `DOCKER_HOST` points at it.
   `engine-data` is the engine's image cache and container layers at
   `/var/lib/docker`: a disposable cache, so a new pod pulls its images again.
+- One Secret volume, `task-secrets`: the optional `orkstack-task-secrets`
+  Secret, mounted read-only in the `orker` container alone, at
+  `/etc/orkstack/task-secrets`. The pod starts without it.
+- No service-account token. The pod sets
+  `automountServiceAccountToken: false`: the Orker drives its engine over the
+  shared socket, and neither container calls the Kubernetes API.
+
+**A task's secrets come from `orkstack-task-secrets`.** The bases set the
+Orker's secret floor ("Secrets on a shared pool", below) to
+`ORK_ORKER_SECRET_ALLOW=file:/etc/orkstack/task-secrets/*`. A task may name a
+key of that Secret as `file:/etc/orkstack/task-secrets/<key>`, and the Orker
+resolves no other source. Every other source fails the task with
+`SECRET_NOT_PERMITTED` before its image is pulled. That includes every
+variable of the Orker's own environment, which holds its settings and the
+`orkstack-s3` keys, and every other file of its container. Put the values
+your tasks read in that Secret, one key each:
+
+```bash
+kubectl create secret generic orkstack-task-secrets --from-file=db-password=./db-password
+```
+
+Kubernetes updates a mounted Secret after its Secret changes, with a delay,
+so a task that starts after the update reads the new value. A task names its
+secret by that path:
+
+```yaml
+tasks:
+  - id: migrate
+    uses: ghcr.io/acme/migrate@sha256:<digest>
+    secrets:
+      - name: db-password
+        source: file:/etc/orkstack/task-secrets/db-password
+```
+
+On a pool several namespaces share, every key of that Secret is open to each
+of them unless a namespace's own list narrows it. Prefix the keys by
+namespace, and give each namespace its own:
+`orkctl namespace update payments --allow-secret 'file:/etc/orkstack/task-secrets/payments-*'`.
+
+Name your other task-secret sources in the floor too: an overlay that admits
+another directory or an `env:` prefix patches `ORK_ORKER_SECRET_ALLOW` on the
+`orker` container, and mounts what that entry names. The base's own value
+overrides one in the `orkstack` ConfigMap, because a container's `env` takes
+precedence over its `envFrom`. The floor names the `file` scheme, so
+`ORK_ORKER_SECRET_SCHEMES`, if you set it, must keep `file`, or the Orker
+refuses to boot. A test holds both bases to this floor and checks that it
+admits none of the Orker's own credentials
+(`internal/dist/kubernetes_test.go`).
 
 **The work root is one path in both containers.** The engine bind-mounts each
 task's workspace from the path the Orker gives it, so the `work` volume must be
