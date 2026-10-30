@@ -15,7 +15,8 @@
 #      from its image, applies each-fan-out and watches a run of it to the end.
 # With --release VERSION [--layouts DIR]:
 #   1. make dist and make release-images (this machine's platform), unless
-#      --layouts DIR names layouts already built (release.yml builds them);
+#      --layouts DIR names layouts already built (release.yml builds them;
+#      a relative DIR is read from the caller's directory);
 #   2. the stack's own registry takes every image, copied byte for byte from
 #      its layout by the pinned skopeo image, and each pushed digest is
 #      checked against the layout's; each is then signed by digest with a
@@ -41,6 +42,8 @@
 # command). It stops nothing it did not start. Exit 0 pass, 1 a check failed,
 # 2 an invalid invocation, 77 a missing prerequisite.
 set -euo pipefail
+# A relative --layouts is the caller's, read before the script moves.
+CALLER="$PWD"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO="$PWD"
 
@@ -53,7 +56,7 @@ LAYOUTS=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--release) [ $# -ge 2 ] || usage; VERSION="$2"; shift 2 ;;
-	--layouts) [ $# -ge 2 ] || usage; LAYOUTS="$2"; shift 2 ;;
+	--layouts) [ $# -ge 2 ] && [ -n "$2" ] || usage; LAYOUTS="$2"; shift 2 ;;
 	*) usage ;;
 	esac
 done
@@ -63,6 +66,7 @@ elif [ -n "$LAYOUTS" ]; then
 	echo "quickstart-smoke: --layouts needs --release" >&2
 	exit 2
 fi
+[ -z "$LAYOUTS" ] || [[ "$LAYOUTS" == /* ]] || LAYOUTS="$CALLER/$LAYOUTS"
 
 need() {
 	printf 'quickstart-smoke: %s\n' "$*" >&2
@@ -103,7 +107,10 @@ ORKSTACK_DOCKER_SOCKET="$(docker context inspect --format '{{.Endpoints.docker.H
 
 TOKEN="qs-$$-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 PROJECT="orkstack-$TOKEN"
+# Absolute, as every path docker run -v mounts must be: a relative one is
+# read as a named volume.
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/orkstack-$TOKEN.XXXXXX")"
+WORK="$(cd "$WORK" && pwd -P)"
 free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
 
 export COMPOSE_PROJECT_NAME="$PROJECT"
@@ -199,6 +206,7 @@ else
 		make -s release-images VERSION="$VERSION" OUT="$LAYOUTS" PLATFORMS="linux/$(go env GOARCH)"
 	fi
 	[ -d "$LAYOUTS" ] || need "no layouts at $LAYOUTS"
+	LAYOUTS="$(cd "$LAYOUTS" && pwd -P)"
 	"${DIST_TOOL[@]}" digests -layouts "$LAYOUTS" >"$WORK/images.tsv"
 	say "$(wc -l <"$WORK/images.tsv" | tr -d ' ') images:"
 	sed 's/^/  /' "$WORK/images.tsv"

@@ -97,7 +97,12 @@ release signs.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
 runs both before it publishes anything, and `nightly.yml` runs the quickstart
-smoke on `main` every night ([docs/PROOFS.md](./docs/PROOFS.md)).
+smoke on `main` every night ([docs/PROOFS.md](./docs/PROOFS.md)). One
+dispatch of `release.yml` from `main` proves, builds and smokes a release,
+checks that the nightly of its commit passed, and then waits for one approval
+of the `release` environment before it tags and publishes; a dispatch from any
+other branch is a dry run that never asks (docs/PROOFS.md §10, "Tag a
+release").
 
 ## Fast checks (no Docker, under two minutes warm)
 
@@ -333,7 +338,8 @@ gate: the few scale tests listed in `scripts/proof-nightly-tests.txt`, and
 the specs listed in `scripts/proof-nightly-specs.txt`, run nightly and before
 a release. A failure there is a regression on `main`: fixing it, or reverting
 what broke it, is the next work, but it holds no other merge, and no release
-is tagged until the pre-release proof, which runs them all, passes. A feature
+is tagged until the pre-release proof, which runs them all, passes;
+`release.yml` also refuses a commit whose own nightly did not pass. A feature
 proof means "ready for the merge proof", never "done". No proof, not done.
 
 ## Style

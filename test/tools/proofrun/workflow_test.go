@@ -989,8 +989,8 @@ func TestWorkflows_NothingContinuesOnError(t *testing.T) {
 		{"a shard's proof step continues", func(w *wfFile) { stepNamed(w, "integration", "integration shard").ContinueOnError = true }},
 	})
 	expectEachMutationRefused(t, "release.yml", rule("release.yml"), []mutation{
-		{"the tag job continues", func(w *wfFile) { w.Jobs["tag"].ContinueOnError = true }},
-		{"the release verify continues", func(w *wfFile) { stepNamed(w, "tag", "verify the release proof").ContinueOnError = true }},
+		{"the publish job continues", func(w *wfFile) { w.Jobs["publish"].ContinueOnError = true }},
+		{"the release verify continues", func(w *wfFile) { stepNamed(w, "verify", "verify the release proof").ContinueOnError = true }},
 	})
 }
 
@@ -1738,7 +1738,12 @@ func releaseProblems(w *wfFile) []string {
 	for _, c := range []struct {
 		job   string
 		needs []string
-	}{{"gate", []string{"validate"}}, {"tag", []string{"validate", "gate"}}} {
+	}{
+		{"gate", []string{"validate"}},
+		{"verify", []string{"validate", "gate", "artifacts"}},
+		{"nightly", []string{"validate", "gate", "artifacts"}},
+		{"publish", []string{"validate", "verify", "nightly"}},
+	} {
 		job, ok := w.Jobs[c.job]
 		if !ok {
 			p = append(p, "release.yml has no "+c.job+" job")
@@ -1782,33 +1787,27 @@ func releaseProblems(w *wfFile) []string {
 	if !strings.Contains(check.Run, "exit 1") || !strings.Contains(check.Run, `version=$VERSION" >>"$GITHUB_OUTPUT"`) {
 		p = append(p, "jobs.validate does not refuse, or does not publish, the version")
 	}
-	// A tag is created from main and nowhere else: validate refuses a tagging
-	// dispatch on any other ref, and the tag job runs only on main's ref.
-	var refuse *wfStep
-	for i := range validate.Steps {
-		if strings.Contains(validate.Steps[i].Run, "refs/heads/main") {
-			refuse = &validate.Steps[i]
+	// A dispatch names a version and nothing else: whether it publishes is
+	// the ref it ran on and the release environment's approval, never an
+	// input. Only a dispatch on main reaches publish.
+	dispatch, _ := w.On["workflow_dispatch"].(map[string]any)
+	inputs, _ := dispatch["inputs"].(map[string]any)
+	if _, ok := inputs["version"]; !ok || len(inputs) != 1 {
+		var names []string
+		for name := range inputs {
+			names = append(names, name)
 		}
+		sort.Strings(names)
+		p = append(p, fmt.Sprintf("release.yml's dispatch takes inputs %v, want exactly version", names))
 	}
-	if refuse == nil {
-		p = append(p, "jobs.validate never refuses a tagging dispatch off refs/heads/main")
-	} else {
-		if envString(*refuse, "REF") != "${{ github.ref }}" || envString(*refuse, "WANT_TAG") != "${{ inputs.tag }}" {
-			p = append(p, "jobs.validate's main check does not read github.ref and inputs.tag from its env")
-		}
-		if !strings.Contains(refuse.Run, "exit 1") || !strings.Contains(refuse.Run, `"$WANT_TAG" = true`) ||
-			!strings.Contains(refuse.Run, `"$REF" != refs/heads/main`) {
-			p = append(p, "jobs.validate's main check does not fail a tagging dispatch off main")
-		}
-	}
-	if tag, ok := w.Jobs["tag"]; ok && !strings.Contains(tag.If, "github.ref == 'refs/heads/main'") {
-		p = append(p, fmt.Sprintf("jobs.tag.if = %q does not require github.ref == 'refs/heads/main'", tag.If))
+	if publish, ok := w.Jobs["publish"]; ok && !strings.Contains(normalizeIf(publish.If), "github.ref == 'refs/heads/main'") {
+		p = append(p, fmt.Sprintf("jobs.publish.if = %q does not require github.ref == 'refs/heads/main'", publish.If))
 	}
 	// Concurrency comes from the validated value, never the raw input.
 	if w.Concurrency != nil {
 		p = append(p, "release.yml has a workflow-level concurrency group, decided before validation")
 	}
-	for _, name := range []string{"gate", "tag"} {
+	for _, name := range []string{"gate", "verify", "nightly", "publish"} {
 		job, ok := w.Jobs[name]
 		if !ok {
 			continue
@@ -1824,9 +1823,10 @@ func releaseProblems(w *wfFile) []string {
 func TestWorkflows_ReleaseValidatesTheVersionFirst(t *testing.T) {
 	expectEachMutationRefused(t, "release.yml", releaseProblems, []mutation{
 		{"no validate job", func(w *wfFile) { delete(w.Jobs, "validate") }},
-		{"validate only when tagging", func(w *wfFile) { w.Jobs["validate"].If = "${{ inputs.tag }}" }},
+		{"validate only on main", func(w *wfFile) { w.Jobs["validate"].If = "${{ github.ref == 'refs/heads/main' }}" }},
 		{"gate does not wait for validate", func(w *wfFile) { w.Jobs["gate"].Needs = nil }},
-		{"tag does not wait for validate", func(w *wfFile) { w.Jobs["tag"].Needs = "gate" }},
+		{"verify does not wait for the gate", func(w *wfFile) { w.Jobs["verify"].Needs = []any{"validate", "artifacts"} }},
+		{"publish does not wait for verify", func(w *wfFile) { w.Jobs["publish"].Needs = []any{"validate", "gate", "artifacts"} }},
 		{"a looser pattern", func(w *wfFile) {
 			s := &w.Jobs["validate"].Steps[0]
 			s.Run = strings.Replace(s.Run, releaseVersionRE, `^v[0-9.]+`, 1)
@@ -1837,100 +1837,224 @@ func TestWorkflows_ReleaseValidatesTheVersionFirst(t *testing.T) {
 		{"workflow-level concurrency", func(w *wfFile) {
 			w.Concurrency = map[string]any{"group": "release-${{ inputs.version }}"}
 		}},
-		{"no refusal of a tag off main", func(w *wfFile) {
-			v := w.Jobs["validate"]
-			v.Steps = v.Steps[:1]
+		{"a tag input", func(w *wfFile) {
+			inputs := w.On["workflow_dispatch"].(map[string]any)["inputs"].(map[string]any)
+			inputs["tag"] = map[string]any{"type": "boolean", "default": false}
 		}},
-		{"the refusal never fails", func(w *wfFile) {
-			for i := range w.Jobs["validate"].Steps {
-				s := &w.Jobs["validate"].Steps[i]
-				if strings.Contains(s.Run, "refs/heads/main") {
-					s.Run = strings.Replace(s.Run, "exit 1", "exit 0", 1)
-				}
-			}
+		{"publish on any ref", func(w *wfFile) {
+			w.Jobs["publish"].If = strings.Replace(w.Jobs["publish"].If, "github.ref == 'refs/heads/main' && ", "", 1)
 		}},
-		{"the refusal reads the ref only on tag false", func(w *wfFile) {
-			for i := range w.Jobs["validate"].Steps {
-				s := &w.Jobs["validate"].Steps[i]
-				if strings.Contains(s.Run, "refs/heads/main") {
-					s.Env["WANT_TAG"] = "false"
-				}
-			}
+		{"publish's concurrency from the raw input", func(w *wfFile) {
+			w.Jobs["publish"].Concurrency["group"] = "release-publish-${{ inputs.version }}"
 		}},
-		{"the tag job on any ref", func(w *wfFile) { w.Jobs["tag"].If = "${{ inputs.tag }}" }},
 	})
 }
+
+// tagRef creates the version's tag ref through the API; nothing else in
+// release.yml may create or move a ref.
+const tagRef = `gh api "repos/$REPO/git/refs" -f ref="refs/tags/$VERSION" -f sha="$object"`
+
+// tagOfThisRun is how the tag step tells the tag this run made, kept on a
+// re-run of publish, from any other, which it refuses.
+var tagOfThisRun = []string{`[ "$type" = tag ]`, `.object.sha "$RUNNER_TEMP/tag.json")" = "$SHA" ]`, `grep -qxF "proof: $RUN_URL"`}
 
 // gitTagRE matches `git tag`, with or without `-c key=value` options before it.
 var gitTagRE = regexp.MustCompile(`git( -c '?[^ ]+'?)* tag\b`)
 
+// tagProblems: `verify` runs `proofrun verify -release` on the gate's proof,
+// on the commit the gate proved, and only publish, which needs it, creates
+// the tag: through the API, after it bound the proof it downloaded to this
+// commit, and never over a tag another run made.
 func tagProblems(w *wfFile) []string {
-	tag, ok := w.Jobs["tag"]
-	if !ok {
-		return []string{"release.yml has no tag job"}
-	}
 	var p []string
-	verifyAt, tagAt, pushAt := -1, -1, -1
-	for i, s := range tag.Steps {
-		if verifyAt < 0 && strings.Contains(s.Run, "proofrun verify -release") {
-			verifyAt = i
-		}
-		touches := gitTagRE.MatchString(s.Run) || strings.Contains(s.Run, "git push")
-		if touches && (verifyAt < 0 || i <= verifyAt) {
-			p = append(p, fmt.Sprintf("%s touches a tag before the proof is verified", s.label(i)))
-		}
-		if tagAt < 0 && gitTagRE.MatchString(s.Run) {
-			tagAt = i
-			// A runner has no committer identity: an annotated tag needs one.
-			if !strings.Contains(s.Run, "user.name=") || !strings.Contains(s.Run, "user.email=") {
-				p = append(p, fmt.Sprintf("%s creates an annotated tag with no explicit committer identity", s.label(i)))
-			}
-		}
-		if strings.Contains(s.Run, "git push") {
-			pushAt = i
-		}
+	verify, ok := w.Jobs["verify"]
+	if !ok {
+		return []string{"release.yml has no verify job"}
 	}
+	verifyAt := stepIndex(verify.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "proofrun verify -release") })
 	if verifyAt < 0 {
-		p = append(p, "the tag job never runs `proofrun verify -release`")
+		p = append(p, "jobs.verify never runs `proofrun verify -release`")
+	} else if r := verify.Steps[verifyAt].Run; !strings.Contains(r, `-tag "$VERSION"`) || !strings.Contains(r, `-proof "$RUNNER_TEMP/ci/proof"`) {
+		p = append(p, "jobs.verify does not verify the downloaded proof for the version")
 	}
-	if tagAt < 0 {
-		p = append(p, "the tag job never creates a tag")
-	}
-	if pushAt < 0 || pushAt < tagAt {
-		p = append(p, "the tag job never pushes the tag it created")
-	}
-	for i, s := range tag.Steps {
+	for i, s := range verify.Steps {
 		if isCheckout(s) && withString(s, "ref") != "${{ github.sha }}" {
-			p = append(p, fmt.Sprintf("%s checks out %q, not the commit the gate proved", s.label(i), withString(s, "ref")))
+			p = append(p, fmt.Sprintf("jobs.verify %s checks out %q, not the commit the gate proved", s.label(i), withString(s, "ref")))
 		}
 		// Repository code runs in this job (`go run`): no checkout leaves the
-		// token on disk for it, and only the step that pushes is handed it.
+		// token on disk for it, and no step that runs it holds one.
 		if isCheckout(s) && withString(s, "persist-credentials") != "false" {
-			p = append(p, fmt.Sprintf("%s persists credentials while the proof is verified", s.label(i)))
+			p = append(p, fmt.Sprintf("jobs.verify %s persists credentials while the proof is verified", s.label(i)))
 		}
-		if i != pushAt && (envString(s, "GH_TOKEN") != "" || envString(s, "GITHUB_TOKEN") != "") {
-			p = append(p, fmt.Sprintf("%s is handed a token and does not push", s.label(i)))
+		if holdsToken(s) && repoCodeInRun.MatchString(s.Run) {
+			p = append(p, fmt.Sprintf("jobs.verify %s is handed a token and runs repository code", s.label(i)))
 		}
 	}
+	publish, ok := w.Jobs["publish"]
+	if !ok {
+		return append(p, "release.yml has no publish job")
+	}
+	if !contains(publish.needs(), "verify") {
+		p = append(p, "jobs.publish does not need verify: a tag could be made from a proof nothing verified")
+	}
+	tagAt, created := -1, 0
+	for _, name := range w.jobNames() {
+		for i, s := range w.Jobs[name].Steps {
+			for _, line := range strings.Split(s.Run, "\n") {
+				line = strings.TrimSpace(line)
+				if strings.HasPrefix(line, "#") || strings.Contains(line, "git tag --list") {
+					continue
+				}
+				if gitTagRE.MatchString(line) || strings.Contains(line, "git push") {
+					p = append(p, fmt.Sprintf("jobs.%s %s makes or pushes a tag with git; publish makes it through the API", name, s.label(i)))
+				}
+			}
+			if strings.Contains(s.Run, "git/refs") || strings.Contains(s.Run, "git/tags\"") {
+				if name != "publish" {
+					p = append(p, fmt.Sprintf("jobs.%s %s writes a tag; only publish may", name, s.label(i)))
+				}
+				if strings.Contains(s.Run, tagRef) {
+					tagAt = i
+					created++
+				}
+				for _, move := range []string{"force=true", "-X PATCH", "--method PATCH", "-X DELETE", "--method DELETE"} {
+					if strings.Contains(s.Run, move) {
+						p = append(p, fmt.Sprintf("jobs.%s %s passes %s: a version tag never moves", name, s.label(i), move))
+					}
+				}
+			}
+		}
+	}
+	if created != 1 || tagAt < 0 {
+		return append(p, fmt.Sprintf("jobs.publish creates the tag with %q %d times, want once", tagRef, created))
+	}
+	tag := publish.Steps[tagAt]
+	for _, want := range tagOfThisRun {
+		if !strings.Contains(tag.Run, want) {
+			p = append(p, "the tag step accepts an existing tag without checking "+want)
+		}
+	}
+	for k, want := range map[string]string{
+		"SHA":     "${{ github.sha }}",
+		"RUN_URL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+		"VERSION": "${{ needs.validate.outputs.version }}",
+	} {
+		if envString(tag, k) != want {
+			p = append(p, fmt.Sprintf("the tag step's %s is %q, want %s", k, envString(tag, k), want))
+		}
+	}
+	// The proof publish downloads is the one verify accepted, bound to this
+	// commit before anything is pushed.
+	check := stepIndex(publish.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "sha256sum -c SHA256SUMS") })
+	switch {
+	case check < 0:
+		p = append(p, "jobs.publish has no check step")
+	case check > tagAt:
+		p = append(p, "jobs.publish tags before it checks what it publishes")
+	default:
+		r := publish.Steps[check].Run
+		for _, want := range []string{`jq -r .tier "$proof")" = release ]`, `jq -r .result "$proof")" = pass ]`, `jq -r .commit "$proof")" = "$SHA" ]`} {
+			if !strings.Contains(r, want) {
+				p = append(p, "publish's check does not bind the gate's proof to this commit: "+want)
+			}
+		}
+		if envString(publish.Steps[check], "SHA") != "${{ github.sha }}" {
+			p = append(p, "publish's check does not read SHA from github.sha")
+		}
+	}
+	if at := stepIndex(publish.Steps, func(s wfStep) bool { return withString(s, "name") == "${{ needs.gate.outputs.proof_artifact }}" }); at < 0 || at > check {
+		p = append(p, "jobs.publish does not download the gate's proof before its check")
+	}
 	return p
+}
+
+// TestWorkflows_TheReleaseIsTaggedOnlyAfterItsProofVerified: release.yml
+// creates a tag only in publish, which needs verify, only through the API,
+// and never moves one that another run made.
+func TestWorkflows_TheReleaseIsTaggedOnlyAfterItsProofVerified(t *testing.T) {
+	expectNoProblems(t, "release.yml", tagProblems(loadWorkflow(t, "release.yml")))
+	edit := func(w *wfFile, job, find, replace string) {
+		for i := range w.Jobs[job].Steps {
+			w.Jobs[job].Steps[i].Run = strings.ReplaceAll(w.Jobs[job].Steps[i].Run, find, replace)
+		}
+	}
+	step := func(w *wfFile, job, text string) *wfStep {
+		for i := range w.Jobs[job].Steps {
+			if strings.Contains(w.Jobs[job].Steps[i].Run, text) {
+				return &w.Jobs[job].Steps[i]
+			}
+		}
+		t.Fatalf("jobs.%s has no step running %q", job, text)
+		return nil
+	}
+	expectEachMutationRefused(t, "release.yml", tagProblems, []mutation{
+		{"verify removed", func(w *wfFile) { edit(w, "verify", "proofrun verify -release", "true") }},
+		{"verify of another proof", func(w *wfFile) { edit(w, "verify", `-proof "$RUNNER_TEMP/ci/proof"`, `-proof proof/x`) }},
+		{"checkout of the branch tip", func(w *wfFile) { delete(w.Jobs["verify"].Steps[0].With, "ref") }},
+		{"a checkout that keeps the token", func(w *wfFile) { w.Jobs["verify"].Steps[0].With["persist-credentials"] = true }},
+		{"the verify step handed the token", func(w *wfFile) {
+			step(w, "verify", "proofrun verify -release").Env["GH_TOKEN"] = "${{ github.token }}"
+		}},
+		{"publish without verify", func(w *wfFile) { w.Jobs["publish"].Needs = []any{"validate", "gate", "artifacts"} }},
+		{"a tag pushed with git", func(w *wfFile) {
+			s := step(w, "publish", tagRef)
+			s.Run += "\ngit push origin \"refs/tags/$VERSION\""
+		}},
+		{"the tag made in verify", func(w *wfFile) {
+			s := *step(w, "publish", tagRef)
+			w.Jobs["verify"].Steps = append(w.Jobs["verify"].Steps, s)
+		}},
+		{"no tag", func(w *wfFile) { edit(w, "publish", tagRef, "true") }},
+		{"a forced tag", func(w *wfFile) { edit(w, "publish", ` -f sha="$object"`, ` -f sha="$object" -F force=true`) }},
+		{"a moved tag", func(w *wfFile) {
+			edit(w, "publish", tagRef, tagRef+"\ngh api -X PATCH \"repos/$REPO/git/refs/tags/$VERSION\" -f sha=\"$object\"")
+		}},
+		{"any existing tag kept", func(w *wfFile) { edit(w, "publish", `grep -qxF "proof: $RUN_URL"`, "true") }},
+		{"an existing tag on another commit kept", func(w *wfFile) {
+			edit(w, "publish", `.object.sha "$RUNNER_TEMP/tag.json")" = "$SHA" ]`, `.object.sha "$RUNNER_TEMP/tag.json")" != "" ]`)
+		}},
+		{"the run URL of this attempt", func(w *wfFile) {
+			step(w, "publish", tagRef).Env["RUN_URL"] = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"
+		}},
+		{"a tag before the check", func(w *wfFile) {
+			steps := w.Jobs["publish"].Steps
+			c := stepIndex(steps, func(s wfStep) bool { return strings.Contains(s.Run, "sha256sum -c SHA256SUMS") })
+			g := stepIndex(steps, func(s wfStep) bool { return strings.Contains(s.Run, tagRef) })
+			steps[c], steps[g] = steps[g], steps[c]
+		}},
+		{"the proof of any commit", func(w *wfFile) {
+			edit(w, "publish", `jq -r .commit "$proof")" = "$SHA" ]`, `jq -r .commit "$proof")" != "" ]`)
+		}},
+		{"a failed proof", func(w *wfFile) {
+			edit(w, "publish", `jq -r .result "$proof")" = pass ]`, `jq -r .result "$proof")" != "" ]`)
+		}},
+		{"no proof downloaded", func(w *wfFile) {
+			steps := w.Jobs["publish"].Steps
+			at := stepIndex(steps, func(s wfStep) bool { return withString(s, "name") == "${{ needs.gate.outputs.proof_artifact }}" })
+			w.Jobs["publish"].Steps = append(steps[:at:at], steps[at+1:]...)
+		}},
+	})
 }
 
 // releaseVerdictProblems: the gate's merged proof is the release's verdict,
 // never the colour of its call. An excused Go runner-size miss leaves its
 // integration part red while the proof passes (docs/PROOFS.md §12), and a
-// job's implicit success() would then skip tag and publish. So both run
+// job's implicit success() would then skip verify and publish. So both run
 // unless the run was cancelled, on the named results of what they need, and
-// tag's `proofrun verify -release` is what refuses a failing proof.
+// verify's `proofrun verify -release` is what refuses a failing proof.
 func releaseVerdictProblems(w *wfFile) []string {
 	var p []string
 	for _, c := range []struct {
 		job  string
 		want []string
 	}{
-		{"tag", []string{"!cancelled()", "inputs.tag", "github.ref == 'refs/heads/main'",
+		{"verify", []string{"!cancelled()",
 			"needs.validate.result == 'success'", "needs.artifacts.result == 'success'", "needs.gate.outputs.proof_artifact != ''"}},
-		{"publish", []string{"!cancelled()", "inputs.tag", "github.ref == 'refs/heads/main'",
-			"needs.validate.result == 'success'", "needs.artifacts.result == 'success'", "needs.tag.result == 'success'"}},
+		{"nightly", []string{"!cancelled()", "github.ref == 'refs/heads/main'",
+			"needs.validate.result == 'success'", "needs.artifacts.result == 'success'", "needs.gate.outputs.proof_artifact != ''"}},
+		{"publish", []string{"!cancelled()", "github.ref == 'refs/heads/main'",
+			"needs.validate.result == 'success'", "needs.artifacts.result == 'success'", "needs.verify.result == 'success'",
+			"needs.nightly.result == 'success'"}},
 	} {
 		job, ok := w.Jobs[c.job]
 		if !ok {
@@ -1951,69 +2075,25 @@ func releaseVerdictProblems(w *wfFile) []string {
 }
 
 func TestWorkflows_TheReleaseVerdictIsTheProofNotTheGatesColour(t *testing.T) {
+	expectNoProblems(t, "release.yml", releaseVerdictProblems(loadWorkflow(t, "release.yml")))
+	drop := func(w *wfFile, job, clause string) {
+		w.Jobs[job].If = strings.Replace(w.Jobs[job].If, " && "+clause, "", 1)
+	}
 	expectEachMutationRefused(t, "release.yml", releaseVerdictProblems, []mutation{
-		{"tag on the implicit success of the gate", func(w *wfFile) {
-			w.Jobs["tag"].If = "${{ inputs.tag && github.ref == 'refs/heads/main' }}"
-		}},
+		{"verify on the implicit success of the gate", func(w *wfFile) { w.Jobs["verify"].If = "" }},
 		{"publish on the implicit success of the chain", func(w *wfFile) {
-			w.Jobs["publish"].If = "${{ inputs.tag && github.ref == 'refs/heads/main' }}"
+			w.Jobs["publish"].If = "${{ github.ref == 'refs/heads/main' }}"
 		}},
-		{"tag even when cancelled", func(w *wfFile) {
-			w.Jobs["tag"].If = strings.Replace(w.Jobs["tag"].If, "!cancelled()", "always()", 1)
+		{"verify even when cancelled", func(w *wfFile) {
+			w.Jobs["verify"].If = strings.Replace(w.Jobs["verify"].If, "!cancelled()", "always()", 1)
 		}},
-		{"tag without the gate's proof", func(w *wfFile) {
-			w.Jobs["tag"].If = strings.Replace(w.Jobs["tag"].If, " && needs.gate.outputs.proof_artifact != ''", "", 1)
-		}},
-		{"publish after a failed tag", func(w *wfFile) {
-			w.Jobs["publish"].If = strings.Replace(w.Jobs["publish"].If, " && needs.tag.result == 'success'", "", 1)
-		}},
-		{"tag without the artifacts", func(w *wfFile) {
-			w.Jobs["tag"].If = strings.Replace(w.Jobs["tag"].If, " && needs.artifacts.result == 'success'", "", 1)
-		}},
-	})
-}
-
-// TestWorkflows_TheTagJobVerifiesTheReleaseProofFirst: release.yml creates and
-// pushes a tag only after `proofrun verify -release` accepted a passing
-// release proof of the commit it checked out; no earlier step touches a tag.
-func TestWorkflows_TheTagJobVerifiesTheReleaseProofFirst(t *testing.T) {
-	expectEachMutationRefused(t, "release.yml", tagProblems, []mutation{
-		{"a tag without a committer identity", func(w *wfFile) {
-			for i := range w.Jobs["tag"].Steps {
-				s := &w.Jobs["tag"].Steps[i]
-				s.Run = strings.ReplaceAll(s.Run, "git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' tag", "git tag")
-			}
-		}},
-		{"a push before verify", func(w *wfFile) {
-			job := w.Jobs["tag"]
-			job.Steps = append([]wfStep{{Name: "early", Run: "git push origin v0.0.0"}}, job.Steps...)
-		}},
-		{"a tag before verify", func(w *wfFile) {
-			job := w.Jobs["tag"]
-			job.Steps = append([]wfStep{{Name: "early", Run: `git tag -a "$VERSION" -m x`}}, job.Steps...)
-		}},
-		{"verify removed", func(w *wfFile) {
-			for i := range w.Jobs["tag"].Steps {
-				w.Jobs["tag"].Steps[i].Run = strings.ReplaceAll(w.Jobs["tag"].Steps[i].Run, "proofrun verify -release", "true")
-			}
-		}},
-		{"verify and tag in one step", func(w *wfFile) {
-			steps := w.Jobs["tag"].Steps
-			last := steps[len(steps)-1]
-			for i := range steps {
-				if strings.Contains(steps[i].Run, "proofrun verify -release") {
-					steps[i].Run += "\n" + last.Run
-				}
-			}
-		}},
-		{"checkout of the branch tip", func(w *wfFile) { delete(w.Jobs["tag"].Steps[0].With, "ref") }},
-		{"a checkout that keeps the token", func(w *wfFile) { w.Jobs["tag"].Steps[0].With["persist-credentials"] = true }},
-		{"the verify step handed the token", func(w *wfFile) {
-			for i := range w.Jobs["tag"].Steps {
-				if s := &w.Jobs["tag"].Steps[i]; strings.Contains(s.Run, "proofrun verify -release") {
-					s.Env["GH_TOKEN"] = "${{ github.token }}"
-				}
-			}
+		{"verify without the gate's proof", func(w *wfFile) { drop(w, "verify", "needs.gate.outputs.proof_artifact != ''") }},
+		{"verify without the artifacts", func(w *wfFile) { drop(w, "verify", "needs.artifacts.result == 'success'") }},
+		{"publish after a failed verify", func(w *wfFile) { drop(w, "publish", "needs.verify.result == 'success'") }},
+		{"publish after a red nightly", func(w *wfFile) { drop(w, "publish", "needs.nightly.result == 'success'") }},
+		{"the nightly check on the implicit success of the gate", func(w *wfFile) { w.Jobs["nightly"].If = "" }},
+		{"publish on a dispatch or a failed validate", func(w *wfFile) {
+			w.Jobs["publish"].If = strings.Replace(w.Jobs["publish"].If, "needs.validate.result == 'success'", "(needs.validate.result == 'success' || true)", 1)
 		}},
 	})
 }
