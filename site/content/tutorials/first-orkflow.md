@@ -7,7 +7,7 @@ Clone OrkStack and start it with Docker, then apply an Orkflow, run it, and read
 - Docker, with Compose v2. Docker Engine or Docker Desktop.
 - git, to clone the repository.
 
-Nothing else is needed: no toolchain and no database. The compose file builds the whole stack in containers and starts Temporal, an S3-compatible object store, the engine, an Orker and the UI.
+Nothing else is needed: no toolchain and no database. The compose file builds the whole stack in containers and starts Temporal, an S3-compatible object store, the engine, which serves the UI, and an Orker.
 
 ## 1. Clone the repository
 
@@ -24,11 +24,11 @@ Run the rest of the steps in this folder.
 docker compose up --build -d --wait
 ```
 
-The first run builds every image from the clone, which takes a few minutes. The command returns when every service passes its health check. Open the UI at http://localhost:5173. The engine listens on port 8080 and the Temporal UI on 8233. All of them listen on this machine only.
+The first run builds every image from the clone, which takes a few minutes. The command returns when every service passes its health check. Open the UI at http://localhost:8080, where the engine serves it beside its API. The Temporal UI is on 8233. Both listen on this machine only.
 
 Listening on this machine only is not a login. Any program on it can start a run, and a run is a container on your Docker. Stop the stack with `docker compose down` when you are done.
 
-If a port is taken, set `ORKSTACK_UI_PORT` or `ORKSTACK_API_PORT` in a `.env` file in this folder.
+If port 8080 is taken, set `ORKSTACK_API_PORT` in a `.env` file in this folder. It moves the UI with the API.
 
 ## 3. Set up orkctl
 

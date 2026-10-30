@@ -15,11 +15,13 @@ import { ensureUIBuild } from './build-ui';
 //     exported as ORK_TEST_BIN_DIR; this only builds what is missing there.
 //     Outside a proof they go to a temporary directory global-teardown.ts
 //     removes. Never the repository's bin/ (AGENTS.md §11.1).
-//   - the UI, `vite build` into ui/build, which every spec serves with
-//     `node build` — rebuilt only when the hash of its inputs differs from
-//     the one the last build left beside it (build-hash.ts), so the second
-//     invocation of a proof's two, a run by hand after no change, and a
-//     proof that built it during its ordinary integration jobs
+//   - the UI, `vite build` into ui/build, the static build every spec's
+//     engine serves at its own origin (ORK_UI_DIR, harness.ts uiEnv), so the
+//     `ork` built above need not hold a UI of its own and the order of the
+//     two builds does not matter — rebuilt only when the hash of its inputs
+//     differs from the one the last build left beside it (build-hash.ts), so
+//     the second invocation of a proof's two, a run by hand after no change,
+//     and a proof that built it during its ordinary integration jobs
 //     (build-ui.ts) serve the build already there;
 //   - the browser server, in a container and so in a network namespace of
 //     its own (browser-server.ts says why), its endpoint exported as

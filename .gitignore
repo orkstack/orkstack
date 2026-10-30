@@ -20,6 +20,10 @@ node_modules/
 ui/.svelte-kit/
 ui/build/
 ui/dist/
+# The UI build ork embeds, written by `make ui`; .gitkeep keeps the directory,
+# so a binary built without the UI still compiles (internal/webui).
+/internal/webui/dist/*
+!/internal/webui/dist/.gitkeep
 .env
 .env.*
 !.env.example

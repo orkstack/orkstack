@@ -4,7 +4,7 @@ import { appendFileSync, createWriteStream, mkdirSync, writeFileSync } from 'nod
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild } from './harness';
+import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild, uiEnv } from './harness';
 import { selectNamespace } from './uiHelpers';
 import { fillYaml } from './yaml';
 
@@ -22,12 +22,12 @@ const BUCKET = ownBucket('logs-dashboard');
 // The topology is the point:
 //
 //   engine A (:18082)  every write that starts a run. Nothing reads it.
-//   engine B (:18083)  every read the browser makes, and the log socket. It
-//                      accepted no submission and holds nothing about these
-//                      runs in memory: it answers from Temporal and the
-//                      bucket, which are the only shared records there are.
-//   UI      (:14175)   the production build, proxying Connect to B and
-//                      pointing the browser's WebSockets at B.
+//   engine B (:18083)  the UI — the production build, which it serves at its
+//                      own origin — and so every read the browser makes,
+//                      and the log socket. It accepted no submission and
+//                      holds nothing about these runs in memory: it answers
+//                      from Temporal and the bucket, which are the only
+//                      shared records there are.
 //   orker main         the default pool
 //   orker gpu          ORK_ORKER_POOL=gpu
 //
@@ -43,8 +43,8 @@ const repoRoot = path.resolve(uiDir, '..');
 // directory without two of them fighting over a listener.
 const ENGINE_A = 'http://127.0.0.1:18082';
 const ENGINE_B = 'http://127.0.0.1:18083';
-const ENGINE_B_WS = 'ws://127.0.0.1:18083';
-const UI_ORIGIN = 'http://127.0.0.1:14175';
+// The UI is engine B's own origin: B serves the build beside its API.
+const UI_ORIGIN = ENGINE_B;
 const B_PORT = '18083';
 
 const TEMPORAL_NAMESPACE = temporalNamespace('logs-dashboard');
@@ -345,7 +345,7 @@ test.beforeAll(async () => {
 
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18082, 18083, 14175]) {
+	for (const port of [18082, 18083]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
@@ -382,8 +382,10 @@ test.beforeAll(async () => {
 		...catalogEnv,
 		...cluster,
 		...store,
-		ORK_HTTP_ADDR: '127.0.0.1:18083',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		// Every read the browser makes goes to B — the page, its Connect calls
+		// and its WebSockets all — because B serves the UI.
+		...uiEnv(),
+		ORK_HTTP_ADDR: '127.0.0.1:18083'
 	});
 	// Each Orker gets its OWN work root: it is the bind-mountable path the
 	// activity workspace needs, and it is also what the Orker derives its
@@ -415,21 +417,7 @@ test.beforeAll(async () => {
 		});
 	}
 
-	spawnLogged(
-		'ui.log',
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14175',
-			// Every read the browser makes goes to B — the RPC proxy and the
-			// WebSockets both.
-			ENGINE_API_URL: ENGINE_B,
-			PUBLIC_ENGINE_WS_URL: ENGINE_B_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui, served by engine B', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	// Two namespaces. Alpha names the two pools it may dispatch onto, which is
 	// also the authoring gate a disallowed pool would hit; beta is deliberately

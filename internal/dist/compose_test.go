@@ -180,7 +180,7 @@ func imageProblem(image string) string {
 
 // sourceTargets are the platform's services, each built from
 // deploy/source/Dockerfile's target of its own name.
-var sourceTargets = []string{"ork", "orker", "orkctl", "ui"}
+var sourceTargets = []string{"ork", "orker", "orkctl"}
 
 // activityImage is the name the stack builds a first-party activity as, and
 // pushes and pins it by: an image of its own registry, on the host port that
@@ -374,10 +374,11 @@ func TestQuickstartCompose_PublishesOnlyOnLoopback(t *testing.T) {
 			t.Errorf("service %s declares expose; nothing but the published ports is reachable", name)
 		}
 	}
-	// Exactly the Temporal UI, the API, the UI and the registry the host's
-	// daemon pulls the activities from: the admin listeners, the object store
-	// and the Temporal frontend stay inside the network.
-	want := map[string][]string{"temporal": {"8233"}, "ork": {"8080"}, "ui": {"5173"}, "registry": {"5000"}}
+	// Exactly the Temporal UI, the API (which serves the web UI) and the
+	// registry the host's daemon pulls the activities from: the admin
+	// listeners, the object store and the Temporal frontend stay inside the
+	// network.
+	want := map[string][]string{"temporal": {"8233"}, "ork": {"8080"}, "registry": {"5000"}}
 	if len(published) != len(want) {
 		t.Errorf("published ports %v, want %v", published, want)
 	}
@@ -686,22 +687,8 @@ func TestQuickstartCompose_HealthchecksUseTheImagesOwnProbes(t *testing.T) {
 			t.Errorf("service %s health check is %v, want %v: the image has no shell and no other tool", name, got, want)
 		}
 	}
-	// The ui probes the port its image listens on.
-	ui := stageNamed(t, stages, "ui")
-	var port string
-	for _, env := range ui.all("ENV") {
-		if m := regexp.MustCompile(`\bPORT=(\d+)`).FindStringSubmatch(env.args); m != nil {
-			port = m[1]
-		}
-	}
-	probe := strings.Join(doc.service(t, "ui").Healthcheck.Test, " ")
-	if port == "" || !strings.Contains(probe, "127.0.0.1:"+port+"/") {
-		t.Errorf("the ui health check %q does not probe the port %q its image listens on", probe, port)
-	}
-	if !slices.Equal(doc.service(t, "ui").Ports, []string{"127.0.0.1:${ORKSTACK_UI_PORT-5173}:" + port}) {
-		t.Errorf("the ui publishes %v, but its image listens on %s", doc.service(t, "ui").Ports, port)
-	}
-	// And the engine's API is on the port its image exposes.
+	// And the engine's API, and the web UI it serves, are on the port its
+	// image exposes.
 	expose := stageNamed(t, stages, "ork").all("EXPOSE")
 	if len(expose) != 1 {
 		t.Fatalf("the ork target has %d EXPOSE instructions, want 1", len(expose))
@@ -714,27 +701,29 @@ func TestQuickstartCompose_HealthchecksUseTheImagesOwnProbes(t *testing.T) {
 	}
 }
 
-// TestQuickstartCompose_TheBrowserReachesTheEngineWhereItIsPublished: the UI
-// runs in the user's browser, which reaches the engine at the port the engine
-// is published on, and the engine accepts the WebSocket only from the origin
-// the UI is published on. Both follow the variable that moves the port.
-func TestQuickstartCompose_TheBrowserReachesTheEngineWhereItIsPublished(t *testing.T) {
+// TestQuickstartCompose_TheBrowserHasOneOrigin: the engine serves the web UI
+// on its own published port, so the page, the API it calls and the
+// WebSockets it opens share one origin, which the bridge admits by default.
+// No service serves the UI apart from the engine, and nothing configures the
+// browser's way to it: no allowed origins, no second port, no engine URL.
+func TestQuickstartCompose_TheBrowserHasOneOrigin(t *testing.T) {
 	t.Parallel()
 	doc := loadCompose(t)
-	origins := strings.Split(doc.service(t, "ork").Environment["ORK_WS_ALLOWED_ORIGINS"], ",")
-	for _, host := range []string{"localhost", "127.0.0.1"} {
-		if want := host + ":${ORKSTACK_UI_PORT-5173}"; !slices.Contains(origins, want) {
-			t.Errorf("ORK_WS_ALLOWED_ORIGINS is %q, missing %s: the UI published on ORKSTACK_UI_PORT would be refused", origins, want)
+	if _, ok := doc.Services["ui"]; ok {
+		t.Error("compose.yaml declares a ui service; the engine serves the UI, built into ork")
+	}
+	if origins, ok := doc.service(t, "ork").Environment["ORK_WS_ALLOWED_ORIGINS"]; ok {
+		t.Errorf("the engine sets ORK_WS_ALLOWED_ORIGINS=%q; the UI is on the engine's own origin, "+
+			"which the bridge's default admits, and any other origin it named would be one more the bridge trusts", origins)
+	}
+	if _, ok := doc.service(t, "ork").Environment["ORK_UI_DIR"]; ok {
+		t.Error("the engine sets ORK_UI_DIR; the quickstart serves the UI built into ork")
+	}
+	text := string(readRepoFile(t, composePath))
+	for _, gone := range []string{"ORKSTACK_UI_PORT", "ENGINE_API_URL", "PUBLIC_ENGINE_WS_URL"} {
+		if strings.Contains(text, gone) {
+			t.Errorf("compose.yaml names %s, which belonged to the UI's own server; the engine serves the UI now", gone)
 		}
-	}
-	if len(origins) != 2 {
-		t.Errorf("ORK_WS_ALLOWED_ORIGINS allows %v; only the UI's own two spellings of this machine", origins)
-	}
-	if got, want := doc.service(t, "ui").Environment["PUBLIC_ENGINE_WS_URL"], "ws://localhost:${ORKSTACK_API_PORT-8080}"; got != want {
-		t.Errorf("PUBLIC_ENGINE_WS_URL is %q, want %q: the browser connects where the engine is published", got, want)
-	}
-	if got, want := doc.service(t, "ui").Environment["ENGINE_API_URL"], "http://ork:8080"; got != want {
-		t.Errorf("ENGINE_API_URL is %q, want %q: the UI's server reaches the engine over the compose network", got, want)
 	}
 }
 
@@ -749,7 +738,6 @@ func TestQuickstartCompose_StartupFollowsHealth(t *testing.T) {
 		// engine's container has started.
 		"registry-forward": {"registry": healthy, "ork": started},
 		"orker":            {"temporal": healthy, "seaweedfs": healthy},
-		"ui":               {"ork": healthy},
 		// orkctl depends on nothing: `docker compose run` would start what
 		// it depends on, the activities step included, on every command.
 	}

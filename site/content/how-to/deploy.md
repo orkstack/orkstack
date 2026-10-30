@@ -24,9 +24,6 @@ storage:
     secret_key:
       file: /run/secrets/s3_secret_key
     path_style: false
-engine:
-  ws_allowed_origins:  # only when the UI is on another origin
-    - https://orkstack.internal.example
 ```
 
 ```bash
@@ -48,15 +45,28 @@ export ORK_ORKER_WORKDIR=/srv/orkstack/work   # a path the Docker daemon can bin
 
 - **Temporal** keeps execution state: which runs exist, what each task is doing, and retries. Run it yourself. A hosted Temporal Cloud is not supported yet.
 - **S3-compatible object storage** holds Orkflow definitions, artifacts, task logs and finished runs. It must support conditional writes (`If-None-Match`). Each Orker checks this at boot and refuses to start without it.
-- **`ork`** is the engine: the API, and the WebSocket bridge for live run streams. Its replicas hold no state, so any replica answers for any run. Put one address in front of them.
+- **`ork`** is the engine: the API, the WebSocket bridge for live run streams, and the web UI, served at `/` on the same port. Its replicas hold no state, so any replica answers for any run. Put one address in front of them.
 - **`orker`** runs the containers. It joins one pool and runs its tasks on the Docker daemon of its own host, or on Podman: through the podman CLI (`ORK_DOCKER_CLI=podman`), or through Podman's Docker-compatible socket in place of Docker's ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-on-podman), "Running on Podman"). Rootful Podman under AppArmor 5 (Ubuntu 25.10 and later) needs one AppArmor rule added first, or the Orker refuses to start ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#rootful-podman-under-apparmor), "Rootful Podman under AppArmor").
-- **`ui`** is the web interface. Its server forwards API calls to `ork`. The browser opens live run streams to `ork` directly.
 
-Point `orkctl` at any replica with `--server` or `ORK_SERVER`.
+Point `orkctl` at any replica with `--server` or `ORK_SERVER`, and a browser at the same address for the UI.
+
+## The web UI
+
+Every `ork` replica serves the UI on its API port, so the browser's calls and live streams stay on one origin and need no setting. In front of the replicas:
+
+- Route the whole host to `ork`, not only the API's paths. The UI's pages and assets (`/`, `/_app/`) are on the same port.
+- Forward WebSocket upgrades on `/ws/`.
+- Keep the `Host` header the browser sent. A proxy that rewrites it makes the UI's live streams look cross-origin, and the engine refuses them. If it must, list the page's origin in `ORK_WS_ALLOWED_ORIGINS`.
+- Serve the UI at the root of a host, not under a sub-path.
+- Terminate TLS at the proxy. The engine serves plain HTTP.
+
+While replicas of two releases share one address during a rollout, a page can miss an asset on the other release's replica and have to load again. Session affinity avoids it.
+
+`ORK_UI_ENABLED=false` turns the UI off and leaves the port to the API.
 
 ## Images
 
-Each release publishes `ork`, `orker`, `orkctl`, `ui` and six first-party activity images to `ghcr.io/orkstack`, for linux/amd64 and linux/arm64. Deploy by digest, or by the `X.Y.Z` tag, which never moves.
+Each release publishes `ork`, `orker`, `orkctl` and six first-party activity images to `ghcr.io/orkstack`, for linux/amd64 and linux/arm64. The `ork` image serves the UI; there is no separate UI image. Deploy by digest, or by the `X.Y.Z` tag, which never moves.
 
 Releases are on the [releases page](https://github.com/orkstack/orkstack/releases), the first of them v0.1.0. Each tags its images with its version, such as `ghcr.io/orkstack/orker:0.1.0`, and attaches its binaries and their `SHA256SUMS`. [UPGRADING.md](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts), “Release artifacts”, lists everything a release publishes.
 
@@ -94,7 +104,6 @@ Never give an Orker pod the node's container runtime or its Docker socket. [Run 
 | `orker.capacity.cpu`, `memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | empty | orker. What the Orker admits tasks within; each poll then waits for a per-task cap's worth to be free. Empty admits by `max_concurrent` alone |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | orker. Above zero makes the Orker a pin host |
 | `deployment.build_id` | `ORK_BUILD_ID` | empty | both. Empty means versioning is off |
-| `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | empty | ork. Needed when the UI runs on another origin |
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | empty | both. Empty opens no listener |
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | ork. Off keeps every run; on retires runs by their namespace's retention |
 
@@ -119,6 +128,7 @@ The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/P
 ## See also
 
 - [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#0-topology--what-you-run-and-where-state-lives): the topology, in full
+- [DEPLOY.md, “The web UI”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-web-ui): what the engine serves at `/`, caching, and running it behind a proxy
 - [DEPLOY.md, “1. Configuration”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration): every key and its variable
 - [DEPLOY.md, “Orkers on Kubernetes”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): both shapes, sizing, the RuntimeClass and the proof
 - [PRODUCTION_CHECKLIST.md](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md): the full list of care items

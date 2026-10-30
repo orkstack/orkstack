@@ -22,6 +22,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -39,8 +40,8 @@ const BUCKET = ownBucket('orkflow-schedules');
 // This spec shares its host with other stacks, so it only ever signals the
 // processes it started (killStarted), never a name pattern.
 const ENGINE = 'http://127.0.0.1:18094';
-const ENGINE_WS = 'ws://127.0.0.1:18094';
-const UI = 'http://127.0.0.1:14192';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI = ENGINE;
 const TEMPORAL_NAMESPACE = `${temporalNamespace('schedules')}-ui-schedules`;
 const STAMP = Date.now().toString(36);
 const NS = `sched-${STAMP}`;
@@ -130,7 +131,7 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18094, 14192]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18094)) throw new Error('port 18094 already in use');
 
 	ensureActivityImages();
 
@@ -140,18 +141,15 @@ test.beforeAll(async () => {
 		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18094',
 		ORK_ADMIN_ADDR: '127.0.0.1:0',
-		ORK_WS_ALLOWED_ORIGINS: UI
+		...uiEnv()
 	});
 	startOrker();
-	spawnLogged(out('ui.log'), 'node', ['build'], {
-		HOST: '127.0.0.1', PORT: '14192', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
-	}, uiDir);
 	await waitForEngine(ENGINE);
-	await waitFor('UI', async () => (await fetch(`${UI}/orkflows`)).ok);
+	await waitFor('UI', async () => (await fetch(`${UI}/_app/version.json`)).ok);
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'orkflow schedules' } });
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: workflow(), namespace: NS });
 	await waitFor('the default pool reports a live Orker', async () => (await liveOrkers()) > 0);
-	note(`temporal namespace ${TEMPORAL_NAMESPACE}, namespace ${NS}, orkflow ${NAME}@0.1.0, engine ${ENGINE}, ui ${UI}`);
+	note(`temporal namespace ${TEMPORAL_NAMESPACE}, namespace ${NS}, orkflow ${NAME}@0.1.0, engine and ui ${ENGINE}`);
 });
 
 test.afterAll(async () => {

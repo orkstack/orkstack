@@ -20,6 +20,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -49,9 +50,10 @@ const BUCKET = ownBucket('admin-releases');
 const PORT_UI_ENGINE = 18461;
 const PORT_V1 = 18462;
 const PORT_V2 = 18463;
-const UI_PORT = 14461;
 const ENGINE = `http://127.0.0.1:${PORT_UI_ENGINE}`;
-const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
+// The UI is the unversioned engine's own origin: it serves the build beside
+// its API.
+const UI_ORIGIN = ENGINE;
 
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-releases-${STAMP}`;
@@ -91,13 +93,14 @@ const deploymentEnv = (build: string) => ({
 	ORK_BUILD_ID: build
 });
 
-async function startEngine(name: string, port: number, build: string): Promise<void> {
+/** startEngine starts one engine of the deployment; `serveUI` makes it the one the browser is driven against. */
+async function startEngine(name: string, port: number, build: string, serveUI = false): Promise<void> {
 	mine.push(
 		spawnLogged(outPath(`${name}.log`), bin('ork'), [], {
 			...deploymentEnv(build),
 			...catalogEnv,
-			ORK_HTTP_ADDR: `127.0.0.1:${port}`,
-			ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+			...(serveUI ? uiEnv() : {}),
+			ORK_HTTP_ADDR: `127.0.0.1:${port}`
 		})
 	);
 	await waitForEngine(`http://127.0.0.1:${port}`);
@@ -203,23 +206,14 @@ test.beforeAll(async () => {
 	);
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [PORT_UI_ENGINE, PORT_V1, PORT_V2, UI_PORT]) {
+	for (const port of [PORT_UI_ENGINE, PORT_V1, PORT_V2]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 	ensureActivityImages();
 
-	await startEngine('engine-unversioned', PORT_UI_ENGINE, '');
-	mine.push(
-		spawnLogged(
-			outPath('ui.log'),
-			'node',
-			['build'],
-			{ HOST: '127.0.0.1', PORT: String(UI_PORT), ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') },
-			uiDir
-		)
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
-	note(`ui at ${UI_ORIGIN}, reading ${ENGINE}`);
+	await startEngine('engine-unversioned', PORT_UI_ENGINE, '', true);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
+	note(`ui served by ${ENGINE}, the engine it reads`);
 });
 
 test.afterAll(async () => {

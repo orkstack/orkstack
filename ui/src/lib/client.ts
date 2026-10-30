@@ -2,8 +2,9 @@ import { ConnectError, type Transport } from '@connectrpc/connect';
 import { createConnectTransport } from '@connectrpc/connect-web';
 
 // All platform access goes through the clients generated from
-// proto/orkstack/v1 (see ui/src/lib/gen). The browser uses same-origin URLs;
-// src/hooks.server.ts proxies Connect requests to the engine.
+// proto/orkstack/v1 (see ui/src/lib/gen). The browser uses same-origin URLs:
+// the engine serves this UI and the Connect API on one listener
+// (internal/webui), and in development Vite proxies them (vite.config.ts).
 //
 // There is one client module per service, under src/lib/clients/ —
 // orkflowClient, runClient, activityClient, webhookClient, triggerClient,

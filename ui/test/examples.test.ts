@@ -1,9 +1,11 @@
 import { expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
-import { exampleHref, exampleResponse, exampleSources, gallery } from '../src/lib/examples';
+import { exampleHref, exampleResponse, exampleSources, gallery, galleryHref } from '../src/lib/examples';
 
 // F-ui-perf-5: the gallery carries names and descriptions, never documents;
-// a document is served one at a time, byte for byte, from examples/.
+// a document is served one at a time, byte for byte, from examples/. Both
+// are written into the static build as files (routes/apply/examples*), which
+// the engine serves as it serves any file of the build.
 const dir = `${import.meta.dir}/../../examples`;
 const files = readdirSync(dir).filter((name) => name.endsWith('.ork.yaml'));
 const raw = Object.fromEntries(files.map((name) => [`../../../../examples/${name}`, readFileSync(`${dir}/${name}`, 'utf8')]));
@@ -24,20 +26,26 @@ test('the gallery lists every example in directory order, with no YAML', () => {
 
 test('an example is served byte for byte as text/yaml', async () => {
 	for (const name of files) {
-		const slug = name.replace(/\.ork\.yaml$/, '');
-		const response = exampleResponse(sources, slug);
+		const response = exampleResponse(sources, name);
 		expect(response.status).toBe(200);
 		expect(response.headers.get('content-type')).toBe('text/yaml; charset=utf-8');
 		expect(await response.text()).toBe(readFileSync(`${dir}/${name}`, 'utf8'));
 	}
 });
 
-test('an unknown slug is 404, never another example', async () => {
-	const response = exampleResponse(sources, 'no-such-example');
+test('an unknown file is 404, never another example', async () => {
+	const response = exampleResponse(sources, 'no-such-example.ork.yaml');
 	expect(response.status).toBe(404);
 	expect(await response.text()).toContain('no-such-example');
 	expect(exampleResponse(sources, '../secrets').status).toBe(404);
-	expect(exampleHref('decide-and-route')).toBe('/apply/examples/decide-and-route');
+	// A slug alone is not a file name: the build writes each example under
+	// its file name, the URL the page asks for.
+	expect(exampleResponse(sources, 'decide-and-route').status).toBe(404);
+});
+
+test('the page asks for the files the build writes', () => {
+	expect(galleryHref).toBe('/apply/examples.json');
+	for (const source of sources) expect(exampleHref(source.slug)).toBe(`/apply/examples/${source.file}`);
 });
 
 test('only server code reads examples/ into the bundle', () => {

@@ -38,9 +38,6 @@ services:
       orker:
         condition: service_started
         restart: true
-  ui:
-    build: !reset null
-    image: ${SMOKE_UI_IMAGE:?}
   orkctl:
     build: !reset null
     image: ${SMOKE_ORKCTL_IMAGE:?}

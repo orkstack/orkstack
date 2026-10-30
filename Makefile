@@ -66,6 +66,24 @@ build: ## Build all binaries into ./bin
 	go build -ldflags '$(GO_LDFLAGS)' -o bin/orker    ./cmd/orker
 	go build -ldflags '$(GO_LDFLAGS)' -o bin/orkctl   ./cmd/orkctl
 
+# The web UI as ork embeds it (internal/webui): built in the pinned bun image
+# by deploy/source/Dockerfile's ui stage, the one the quickstart's ork
+# compiles in, so it needs Docker and no Bun here, and stamped with the
+# commit's time (SOURCE_DATE_EPOCH, below), so one commit builds the same
+# bytes. It replaces what internal/webui/dist holds but its committed
+# .gitkeep; an ork built without it serves a placeholder page, and `make
+# dist` runs it first, so a release's ork always carries it.
+.PHONY: ui
+ui: ## Build the web UI into internal/webui/dist, where ork embeds it
+	@set -euo pipefail; out="$$(mktemp -d)"; trap 'rm -rf "$$out"' EXIT; \
+	docker buildx build -f deploy/source/Dockerfile --target ui \
+	  $(if $(strip $(SOURCE_DATE_EPOCH)),--build-arg SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH)) \
+	  --output "type=local,dest=$$out" .; \
+	test -f "$$out/index.html" || { echo "make ui: the build wrote no index.html" >&2; exit 1; }; \
+	find internal/webui/dist -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec rm -rf {} +; \
+	cp -R "$$out/." internal/webui/dist/; \
+	echo "make ui: the UI's build is in internal/webui/dist; the next build of ork embeds it"
+
 .PHONY: tidy
 tidy: ## go mod tidy
 	go mod tidy
@@ -262,27 +280,29 @@ proof-release: ## The pre-release gate: every gate, observability always -> proo
 # Release artifacts (docs/UPGRADING.md, "Release artifacts"). release.yml
 # runs these for every release; each also runs by hand. VERSION must be
 # vMAJOR.MINOR.PATCH here.
-#   make dist             the binaries, their archives and SHA256SUMS -> dist/
-#   make release-images   the release images as OCI layouts -> OUT/<image>/
-#                         (needs make dist; PLATFORMS defaults to this machine)
+#   make dist             the web UI (make ui), then the binaries, their
+#                         archives and SHA256SUMS -> dist/; ork embeds the UI
+#   make release-images   the release images as OCI layouts -> OUT/<image>/:
+#                         ork, orker, orkctl and the activities (needs make
+#                         dist; PLATFORMS defaults to this machine)
 #   make release-smoke    builds both for this machine, runs compose.yaml on
 #                         those images and requires a finished run
 #   make quickstart-smoke runs the README's Quickstart as written on a fresh
 #                         clone of this working tree (no VERSION)
 DIST ?= dist
 PLATFORMS ?=
-RELEASE_IMAGES := ork orker orkctl ui
+RELEASE_IMAGES := ork orker orkctl
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null)
 # Every archive and image is stamped with the commit's time, never a clock's.
 need-commit-time = $(if $(strip $(SOURCE_DATE_EPOCH)),,$(error no commit time: run from a git checkout or set SOURCE_DATE_EPOCH))
 
 .PHONY: dist
-dist: ## Release binaries, archives and SHA256SUMS for VERSION=vX.Y.Z -> dist/ (gitignored)
+dist: ui ## The web UI (make ui), then release binaries, archives and SHA256SUMS for VERSION=vX.Y.Z -> dist/ (gitignored)
 	$(need-commit-time)
 	go run ./internal/dist/cmd/dist build -version $(VERSION) -out $(DIST) -commit-time $(SOURCE_DATE_EPOCH)
 
 .PHONY: release-images
-release-images: ## Release images (ork, orker, orkctl, ui, activities) as OCI layouts: VERSION=vX.Y.Z OUT=<dir> [PLATFORMS=linux/amd64,linux/arm64]
+release-images: ## Release images (ork, orker, orkctl, activities) as OCI layouts: VERSION=vX.Y.Z OUT=<dir> [PLATFORMS=linux/amd64,linux/arm64]
 	$(if $(strip $(OUT)),,$(error make release-images needs OUT=<directory> for the layouts))
 	$(need-commit-time)
 	@mkdir -p '$(abspath $(OUT))'

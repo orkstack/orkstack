@@ -47,12 +47,19 @@ func currentSeries(t *testing.T) string {
 	return tag
 }
 
-// repoWith writes a repository root holding a LICENSE and a CHANGELOG.md.
+// repoWith writes a repository root holding a LICENSE, a CHANGELOG.md and the
+// web UI build `make ui` writes for ork to embed.
 func repoWith(t *testing.T, changelog string) string {
 	t.Helper()
 	root := t.TempDir()
-	for name, body := range map[string]string{"LICENSE": "a licence\n", "CHANGELOG.md": changelog} {
-		if err := os.WriteFile(filepath.Join(root, name), []byte(body), 0o644); err != nil {
+	for name, body := range map[string]string{
+		"LICENSE": "a licence\n", "CHANGELOG.md": changelog, dist.UIIndex: "<!doctype html>\n",
+	} {
+		file := filepath.Join(root, filepath.FromSlash(name))
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -278,6 +285,26 @@ func TestRun_Build(t *testing.T) {
 			t.Error("the release directory was created before the commit time was known")
 		}
 	})
+	t.Run("a tree without the web UI build is exit 1, naming make ui", func(t *testing.T) {
+		t.Parallel()
+		root, out := repoWith(t, ""), filepath.Join(t.TempDir(), "dist")
+		if err := os.Remove(filepath.Join(root, filepath.FromSlash(dist.UIIndex))); err != nil {
+			t.Fatal(err)
+		}
+		var compiled []string
+		recording := func(_ context.Context, _ string, target dist.Target, _, _ string) error {
+			compiled = append(compiled, target.String())
+			return nil
+		}
+		got := invoke(t, map[string]string{"SOURCE_DATE_EPOCH": "1700000000"}, recording,
+			"build", "-version", "v0.1.0", "-out", out, "-root", root)
+		if got.code != 1 || !strings.Contains(got.stderr, "make ui") || !strings.Contains(got.stderr, dist.UIIndex) {
+			t.Errorf("exit %d, stderr %q; want 1 naming %s and make ui", got.code, got.stderr, dist.UIIndex)
+		}
+		if len(compiled) != 0 || got.stdout != "" {
+			t.Errorf("compiled %q and printed %q for a release that would ship no UI", compiled, got.stdout)
+		}
+	})
 	t.Run("a failing compile is exit 1", func(t *testing.T) {
 		t.Parallel()
 		root, out := repoWith(t, ""), filepath.Join(t.TempDir(), "dist")
@@ -326,8 +353,8 @@ func TestRun_Digests(t *testing.T) {
 			t.Fatalf("exit %d, stderr %q", got.code, got.stderr)
 		}
 		lines := strings.Split(strings.TrimSuffix(got.stdout, "\n"), "\n")
-		if len(lines) != 10 {
-			t.Fatalf("%d lines:\n%s", len(lines), got.stdout)
+		if len(lines) != len(dist.Images()) {
+			t.Fatalf("%d lines, want %d:\n%s", len(lines), len(dist.Images()), got.stdout)
 		}
 		for i, name := range dist.Images() {
 			if want := name + "\t" + digestOf(name); lines[i] != want {

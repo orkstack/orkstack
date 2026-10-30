@@ -20,6 +20,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -34,8 +35,8 @@ const BUCKET = ownBucket('artifact-provenance');
 // same orkflow writes identical bytes and still lists only itself — on the S3
 // layout an object key embeds its run id.
 const ENGINE = 'http://127.0.0.1:18098';
-const ENGINE_WS = 'ws://127.0.0.1:18098';
-const UI_ORIGIN = 'http://127.0.0.1:14198';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 const TEMPORAL_NAMESPACE = temporalNamespace('artifact-provenance');
 const NAME = `artifact-provenance-${Date.now().toString(36)}`;
 const PROOF_DIR = process.env.ORK_PROOF_DIR
@@ -69,20 +70,17 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18098, 14198]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18098)) throw new Error('port 18098 already in use');
 
 	ensureActivityImages();
 
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(out('engine.log'), bin('ork'), [], {
-		...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18098', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...catalogEnv, ...cluster, ...storeEnv(BUCKET), ...uiEnv(), ORK_HTTP_ADDR: '127.0.0.1:18098'
 	});
 	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('artifact-provenance') });
-	spawnLogged(out('ui.log'), 'node', ['build'], {
-		HOST: '127.0.0.1', PORT: '14198', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
-	}, uiDir);
 	await waitForEngine(ENGINE);
-	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
 		return (answer.pools ?? []).some((pool) => (pool.liveOrkerCount ?? 0) > 0);

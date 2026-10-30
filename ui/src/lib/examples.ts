@@ -1,10 +1,11 @@
 // The example gallery's catalogue: the repo's own `examples/` directory.
 //
 // The gallery shows a name and a description per example; the YAML itself is
-// fetched only when an example is chosen (routes/apply/examples/[slug]), so
-// twenty-odd documents are not inlined into the page's client chunk and its
-// server-rendered payload for a reader who opens none of them. The files are
-// read on the server (lib/server/examples.ts); this module is the pure half.
+// fetched only when an example is chosen (routes/apply/examples/[file]), so
+// twenty-odd documents are not inlined into the page's client chunk for a
+// reader who opens none of them. The files are read at build time
+// (lib/server/examples.ts) and written into the static build as files of
+// their own; this module is the pure half.
 
 export type OrkflowExample = {
 	/** Basename with `.ork.yaml` stripped — `hello.ork.yaml` is `hello`. Used for test ids. */
@@ -66,25 +67,24 @@ export function gallery(sources: ExampleSource[]): OrkflowExample[] {
 	return sources.map(({ slug, file, name, description }) => ({ slug, file, name, description }));
 }
 
-/** The one document a card's "Use this example" fetches; 404 for an unknown slug. */
-export function exampleResponse(sources: ExampleSource[], slug: string): Response {
-	const found = sources.find((source) => source.slug === slug);
+/** The one document a card's "Use this example" fetches, by its file name; 404 for any other. */
+export function exampleResponse(sources: ExampleSource[], file: string): Response {
+	const found = sources.find((source) => source.file === file);
 	if (!found) {
-		return new Response(`no example named ${JSON.stringify(slug)}\n`, {
+		return new Response(`no example named ${JSON.stringify(file)}\n`, {
 			status: 404,
 			headers: { 'content-type': 'text/plain; charset=utf-8' }
 		});
 	}
-	return new Response(found.yaml, {
-		headers: {
-			'content-type': 'text/yaml; charset=utf-8',
-			// The examples are part of the build: a deploy is what changes them.
-			'cache-control': 'public, max-age=300'
-		}
-	});
+	// The build writes the body; the engine that serves the file names its
+	// type and caching (internal/webui).
+	return new Response(found.yaml, { headers: { 'content-type': 'text/yaml; charset=utf-8' } });
 }
 
-/** Where the page fetches one example's YAML from. */
+/** Where the page fetches the gallery's cards from. */
+export const galleryHref = '/apply/examples.json';
+
+/** Where the page fetches one example's YAML from: its file, under the gallery. */
 export function exampleHref(slug: string): string {
-	return `/apply/examples/${encodeURIComponent(slug)}`;
+	return `/apply/examples/${encodeURIComponent(slug)}.ork.yaml`;
 }

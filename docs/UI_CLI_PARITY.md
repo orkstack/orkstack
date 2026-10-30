@@ -1416,10 +1416,10 @@ These are accepted exceptions, not gaps.
   FAILED task card carrying exactly `orkctl --namespace '<ns>' 'task' 'run'
   '--from-run' '<run>' '--task' '<task>'`, with no input, secret or path.
   Copying a command is assistance, not browser execution. Do not mount a
-  Docker socket into the UI or engine, accept arbitrary server host paths, or
-  invent a privileged activity runner to manufacture parity; a browser
-  execution equivalent needs its own accepted contract for build-context
-  transfer, isolation, registry credentials, artifact custody and
+  Docker socket into the engine (which serves the UI), accept arbitrary server
+  host paths, or invent a privileged activity runner to manufacture parity; a
+  browser execution equivalent needs its own accepted contract for
+  build-context transfer, isolation, registry credentials, artifact custody and
   cancellation.
 
 ### CLI-only operations

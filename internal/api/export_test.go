@@ -1,6 +1,9 @@
 package api
 
-import "context"
+import (
+	"context"
+	"net/http"
+)
 
 // SpecDifferenceForTest exposes specDifference to the external test package,
 // so the automation planner's settings comparison can be held to it.
@@ -19,3 +22,8 @@ func (s *Service) TaskIsTerminalForTest(ctx context.Context, runID, namespace, t
 // EachMaxItemsOfForTest exposes eachMaxItemsOf: Config.EachMaxItems as the
 // service reads it.
 var EachMaxItemsOfForTest = eachMaxItemsOf
+
+// MountReservedForTest mounts pattern the way NewMux mounts every API route.
+func MountReservedForTest(mux *http.ServeMux, pattern string) {
+	reservedMux{serveMux: mux}.Handle(pattern, http.NotFoundHandler())
+}

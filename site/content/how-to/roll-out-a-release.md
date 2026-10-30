@@ -26,7 +26,7 @@ orkctl release wait "$OLD" --timeout 2h   # exits 0 once the old release has dra
 
 ## The steps
 
-1. **Start the new release beside the old.** Keep the old processes running. The two releases share one address and one set of pools.
+1. **Start the new release beside the old.** Keep the old processes running. The two releases share one address and one set of pools. Each release's `ork` serves its own web UI, so a browser page can miss an asset on the other release's replica and have to load again; session affinity at the load balancer avoids it.
 2. **Check the new release.** `orkctl release status` shows `ready` when nothing blocks it.
 3. **Ramp, if you want to.** `orkctl release ramp "$NEW" --percent 10` sends 10% of new runs to the new release. Watch your error rate, then raise the share. `--percent 0` sends every new run back to the old release.
 4. **Promote.** `orkctl release promote "$NEW"` makes the new release take every new run. The command names the current release and asks first. In a script, add `--yes`.
@@ -61,5 +61,6 @@ Versioning on a system that already runs unversioned work is a separate procedur
 - [DEPLOY.md, “3. Rolling a release forward”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#3-rolling-a-release-forward): each step, with its output
 - [DEPLOY.md, “4. Rolling back”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#4-rolling-back): rollback and the runs that stay on the newer release
 - [DEPLOY.md, “3.5 Turning versioning on”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#35-turning-versioning-on-for-a-system-that-is-already-running): the first release on a running system
+- [DEPLOY.md, “The web UI”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-web-ui): the UI during a rollout
 - [UPGRADING.md, “Upgrading the deployment”](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#upgrading-the-deployment): the upgrade rules
 - Command reference: [orkctl](/docs/reference/cli/)

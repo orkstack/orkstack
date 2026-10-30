@@ -15,7 +15,6 @@ defineRunPageCeilingSpec({
 	title: 'the run page at a reduced task ceiling is interactive within 5 s, live and finished',
 	tasks: REDUCED_CEILING,
 	enginePort: 18474,
-	uiPort: 14474,
 	orkflowPrefix: 'run-page-reduced',
 	engineEnv: { ORK_ORKFLOW_MAX_TASKS: String(REDUCED_CEILING) },
 	sizeNote: `engine.orkflow_max_tasks lowered to ${REDUCED_CEILING}, the ceiling this run is at`

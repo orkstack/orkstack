@@ -19,6 +19,17 @@ export const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 
 export const repoRoot = path.resolve(uiDir, '..');
 
 /**
+ * The UI build every spec serves (ui/build, made once per run by
+ * global-setup.ts). The specs do not run a server of the UI's own: each
+ * engine serves this build at its own origin, beside its API and its
+ * sockets, exactly as a release engine serves the build compiled into it
+ * (internal/webui). Spread uiEnv() into the environment of the engine a spec
+ * drives the browser against, and open its pages at that engine's address.
+ */
+export const uiBuildDir = path.join(uiDir, 'build');
+export const uiEnv = (): Record<string, string> => ({ ORK_UI_DIR: uiBuildDir });
+
+/**
  * The processes this spec file started (spawnLogged, or a spec's own spawn
  * passed to trackChild), so killStarted can end exactly those. Nothing in the
  * e2e suite ever signals a process by name or pattern: several stacks, proofs
@@ -112,8 +123,10 @@ export async function waitFor(
 // succeeded and `ns-edit-allowed-secrets-<ns>` never appeared. Why that click
 // missed is NOT established: that run kept no trace (playwright.config.ts now
 // keeps a proof's failures), it did not reproduce in repeated runs, and it was
-// not a click before hydration — the Edit handler is attached by the time
-// `goto` returns, measured at 1x, 4x and 8x CPU throttling. So the click is
+// not a click before the page was drawn — `goto` returns only once the app
+// has drawn it (e2e/test.ts appDrawn), and the Edit handler is attached by
+// then (measured, when the server drew the page, at 1x, 4x and 8x CPU
+// throttling). So the click is
 // retried until this namespace's form is visible — never once it is, since
 // opening it again would reset what the form captured — and every assertion
 // about the form itself is untouched.

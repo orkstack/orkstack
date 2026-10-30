@@ -1,6 +1,7 @@
 # OrkStack built from this checkout, for the quickstart compose file at the
 # repository root (compose.yaml, docs/GETTING_STARTED.md): one target each for
-# ork, orker, orkctl and ui.
+# ork, orker and orkctl, with the web UI built into ork, which serves it on
+# its API port.
 #
 # The release images are deploy/Dockerfile's, built from the binaries
 # `make dist` writes; these compile the same commands here instead, so a
@@ -9,10 +10,32 @@
 # and every base is pinned by its multi-arch index digest (AGENTS.md §11.1).
 # deploy/source/Dockerfile.dockerignore admits only what these stages copy.
 
+# The web UI, built once on the build platform (its output is HTML,
+# JavaScript and CSS), with the repository's examples, which its gallery
+# reads at build time. Its version is the commit's time when
+# SOURCE_DATE_EPOCH is passed, as `make ui` passes it, so one commit builds
+# the same bytes.
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS ui-build
+WORKDIR /src/ui
+COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
+RUN bun install --frozen-lockfile
+COPY examples/ /src/examples/
+COPY ui/ ./
+ARG SOURCE_DATE_EPOCH
+RUN bun run build
+
+# The UI's build alone, at the root of an empty image: the binaries stage
+# compiles it into ork, and `make ui` exports it (--target ui, a local
+# output) into internal/webui/dist for an ork built outside Docker.
+FROM scratch AS ui
+COPY --from=ui-build /src/ui/build/ /
+
 # The three commands, compiled once on the build platform for the target's
 # architecture: static binaries, so the distroless bases run them as they are,
 # with the release's build tags (internal/dist BuildTags: the time zone
-# database linked in).
+# database linked in). The context never carries internal/webui/dist, so the
+# UI ork embeds (internal/webui) is always the ui stage's, never a build left
+# in the checkout.
 FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS binaries
 ARG TARGETARCH
 ARG VERSION=dev
@@ -22,6 +45,7 @@ COPY cmd/ cmd/
 COPY gen/go/ gen/go/
 COPY internal/ internal/
 COPY pkg/ pkg/
+COPY --from=ui / internal/webui/dist/
 RUN --mount=type=cache,target=/go/pkg/mod \
 	--mount=type=cache,target=/root/.cache/go-build \
 	CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH GOTOOLCHAIN=local \
@@ -50,29 +74,3 @@ COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=binaries /out/orker /usr/local/bin/orker
 USER root
 ENTRYPOINT ["/usr/local/bin/orker"]
-
-# The UI, with the repository's examples, which its gallery reads at build
-# time.
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS ui-build
-WORKDIR /src/ui
-COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
-RUN bun install --frozen-lockfile
-COPY examples/ /src/examples/
-COPY ui/ ./
-RUN bun run build
-
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS ui-deps
-WORKDIR /deps
-COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
-RUN bun install --frozen-lockfile --production
-
-FROM node:26.12.0-trixie-slim@sha256:e556a144463cc8dc53afe8de6d2fa0db5c132fd39ffa232c17641bd40df2bf11 AS ui
-WORKDIR /app
-COPY LICENSE /usr/share/doc/orkstack/LICENSE
-COPY --from=ui-deps /deps/node_modules ./node_modules
-COPY --from=ui-build /src/ui/package.json ./package.json
-COPY --from=ui-build /src/ui/build ./build
-ENV NODE_ENV=production HOST=0.0.0.0 PORT=5173
-USER node
-EXPOSE 5173
-ENTRYPOINT ["node", "build"]

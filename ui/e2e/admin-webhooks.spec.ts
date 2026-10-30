@@ -22,6 +22,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -51,8 +52,8 @@ const BUCKET = ownBucket('admin-webhooks');
 // (killStarted), never by name or pattern.
 
 const ENGINE = 'http://127.0.0.1:18093';
-const ENGINE_WS = 'ws://127.0.0.1:18093';
-const UI_ORIGIN = 'http://127.0.0.1:14187';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-admin-webhooks-${STAMP}`;
 const ORKFLOW = `webhook-scope-${STAMP}`;
@@ -146,7 +147,7 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18093, 14187]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18093)) throw new Error('port 18093 already in use');
 
 	receiver = createServer((req, res) => {
 		const chunks: Buffer[] = [];
@@ -164,17 +165,12 @@ test.beforeAll(async () => {
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	mine.push(
 		spawnLogged(out('engine.log'), bin('ork'), [], {
-			...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18093', ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+			...catalogEnv, ...cluster, ...storeEnv(BUCKET), ...uiEnv(), ORK_HTTP_ADDR: '127.0.0.1:18093'
 		})
 	);
 	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('admin-webhooks') }));
-	mine.push(
-		spawnLogged(out('ui.log'), 'node', ['build'], {
-			HOST: '127.0.0.1', PORT: '14187', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		}, uiDir)
-	);
 	await waitForEngine(ENGINE);
-	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/admin/webhooks`)).ok);
+	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
 		return (answer.pools ?? []).some((pool) => (pool.liveOrkerCount ?? 0) > 0);
@@ -324,9 +320,9 @@ test('an invalid scope is refused with the server\'s message', async ({ page }) 
 });
 
 // F-ui-ux-10: a failed subscriptions read offers Retry, and Retry re-reads in
-// place. The page is reached by a CLIENT navigation from the overview so the
-// loader runs in the browser, where page.route can fail its first read (a
-// server render's read never passes through the browser).
+// place. The page is reached by a CLIENT navigation from the overview, which
+// reads no webhook, so the route fails the Webhooks tab's own first read and
+// nothing else.
 test('a failed subscriptions read offers Retry, and Retry renders the list', async ({ page }) => {
 	expect(scopedId).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/admin`);

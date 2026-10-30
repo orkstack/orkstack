@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import AxeBuilder from '@axe-core/playwright';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	bin,
@@ -21,6 +21,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -63,8 +64,8 @@ import { taskMapCellCenter } from './uiHelpers';
 // it ends only the processes it started.
 const ENGINE_PORT = '18961';
 const ENGINE = `http://127.0.0.1:${ENGINE_PORT}`;
-const UI_PORT = '14961';
-const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
+// The UI is the engine's own origin: it serves the build beside its API.
+const UI_ORIGIN = ENGINE;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-run-sheet-${STAMP}`;
 const BUCKET = ownBucket('run-sheet');
@@ -187,9 +188,7 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [Number(ENGINE_PORT), Number(UI_PORT)]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(Number(ENGINE_PORT))) throw new Error(`port ${ENGINE_PORT} already in use (stray process?)`);
 	ensureActivityImages();
 	ensureBucket(BUCKET);
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
@@ -198,19 +197,12 @@ test.beforeAll(async () => {
 		...cluster,
 		...s3Env,
 		ORK_S3_BUCKET: BUCKET,
-		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`,
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv(),
+		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`
 	});
 	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...s3Env, ORK_S3_BUCKET: BUCKET, ...orkerEnv('run-sheet') });
-	spawnLogged(
-		out('ui.log'),
-		'node',
-		['build'],
-		{ HOST: '127.0.0.1', PORT: UI_PORT, ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') },
-		uiDir
-	);
 	await waitForEngine(ENGINE);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
 		return (answer.pools ?? []).some((p) => (p.liveOrkerCount ?? 0) > 0);
@@ -662,10 +654,13 @@ test('screens: both themes, desktop and 390 px; axe on the run page in both view
 });
 
 // DOM elements per task card on a 20-task run. With ORK_UI_BASELINE_BUILD
-// naming another UI build (`vite build` output of the tree to compare with),
-// the same run is opened there too and both counts are recorded: that is how
-// the stage's before/after is taken. A proof sets no baseline and records the
-// after alone.
+// naming another UI build (the `bun run build` output, a ui/build directory,
+// of the tree to compare with), the same run is opened there too and both
+// counts are recorded: that is how the stage's before/after is taken. The
+// baseline is served as this tree's build is, by an engine: a second replica
+// on this spec's Temporal namespace and bucket, started with ORK_UI_DIR set
+// to it, which answers for the run as any replica does. A proof sets no
+// baseline and records the after alone.
 async function domPerCard(page: Page, origin: string): Promise<{ cards: number; elements: number; perCard: number; max: number }> {
 	await page.goto(`${origin}/runs/${twentyRun}?ns=default`);
 	await expect(page.locator('[data-testid^="task-deep-link-"]')).toHaveCount(20);
@@ -706,10 +701,23 @@ test('DOM per task card is recorded', async ({ page }) => {
 	record.documentListeners = closed;
 	const baseline = process.env.ORK_UI_BASELINE_BUILD;
 	if (baseline) {
-		const port = String(Number(UI_PORT) + 1);
-		spawnLogged(out('ui-baseline.log'), 'node', [baseline], { HOST: '127.0.0.1', PORT: port, ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') }, uiDir);
+		const dir = path.resolve(baseline);
+		if (!existsSync(path.join(dir, 'index.html'))) {
+			throw new Error(`ORK_UI_BASELINE_BUILD=${baseline} holds no index.html: name a static UI build (bun run build's ui/build)`);
+		}
+		const port = String(Number(ENGINE_PORT) + 1);
+		if (await tcpOpen(Number(port))) throw new Error(`port ${port} already in use (stray process?)`);
+		spawnLogged(out('engine-baseline.log'), bin('ork'), [], {
+			...catalogEnv,
+			...clusterEnv(TEMPORAL_NAMESPACE),
+			...s3Env,
+			ORK_S3_BUCKET: BUCKET,
+			ORK_UI_DIR: dir,
+			ORK_HTTP_ADDR: `127.0.0.1:${port}`
+		});
 		const origin = `http://127.0.0.1:${port}`;
-		await waitFor('baseline ui', async () => (await fetch(`${origin}/orkflows`).catch(() => null))?.ok ?? false);
+		await waitForEngine(origin);
+		await waitFor('baseline ui', async () => (await fetch(`${origin}/_app/version.json`)).ok);
 		record.before = await domPerCard(page, origin);
 		record.baseline = baseline;
 		note(`DOM per task card (20-task run), baseline ${baseline}: ${JSON.stringify(record.before)}`);

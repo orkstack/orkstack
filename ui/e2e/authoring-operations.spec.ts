@@ -20,6 +20,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -32,7 +33,8 @@ const BUCKET = ownBucket('authoring-operations');
 // and replaying a prior run all address the same immutable definition. This
 // uses the built UI and a live engine/Orker, not mocked client responses.
 const ENGINE = 'http://127.0.0.1:18089';
-const UI = 'http://127.0.0.1:14182';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI = ENGINE;
 const TEMPORAL_NAMESPACE = temporalNamespace('authoring');
 const NS = 'authoring-ops';
 const FLOW = `authoring-${Date.now().toString(36)}`;
@@ -77,16 +79,16 @@ test.beforeAll(async () => {
 	mkdirSync(proof('..'), { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18089, 14182]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18089)) throw new Error('port 18089 already in use');
 	ensureActivityImages();
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
-	spawnLogged(proof('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18089', ORK_WS_ALLOWED_ORIGINS: UI });
+	spawnLogged(proof('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...storeEnv(BUCKET), ...uiEnv(), ORK_HTTP_ADDR: '127.0.0.1:18089' });
 	spawnLogged(proof('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('authoring-operations') });
 	await waitForEngine(ENGINE);
-	spawnLogged(proof('ui.log'), 'node', ['build'], { HOST: '127.0.0.1', PORT: '14182', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') }, uiDir);
-	// A readiness probe only: any always-present route answers it, and this one
+	// A readiness probe only: version.json is in ui/build and not in the
+	// placeholder, so it answers once the engine serves this build, and it
 	// needs no namespace to exist yet (CreateNamespace is the next line).
-	await waitFor('built UI', async () => (await fetch(`${UI}/orkflows`)).ok);
+	await waitFor('built UI', async () => (await fetch(`${UI}/_app/version.json`)).ok);
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'authoring operations' } });
 	await waitFor('a live default pool', async () => {
 		const answer = await rpc<{ pools: { liveOrkerCount: number }[] }>('NamespaceService/ListPools', { namespace: NS });

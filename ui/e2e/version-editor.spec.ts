@@ -20,6 +20,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -51,8 +52,8 @@ const BUCKET = ownBucket('version-editor');
 
 // Ports of this spec's own, so the whole e2e directory runs in one invocation.
 const ENGINE = 'http://127.0.0.1:18087';
-const ENGINE_WS = 'ws://127.0.0.1:18087';
-const UI_ORIGIN = 'http://127.0.0.1:14185';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 
 const TEMPORAL_NAMESPACE =
 	temporalNamespace('version-editor');
@@ -163,9 +164,7 @@ test.beforeAll(async () => {
 	// reaches here and a failure here is never an absence (AGENTS.md §11.1).
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18087, 14185]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(18087)) throw new Error('port 18087 already in use (stray process?)');
 
 	// The first-party images, built and PUSHED: `uses: shell` is a
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
@@ -180,23 +179,11 @@ test.beforeAll(async () => {
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18087',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv()
 	});
 	await waitForEngine(ENGINE);
 
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14185',
-			ENGINE_API_URL: ENGINE,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	// CreateNamespace is idempotent for an identical spec, so the registry does
 	// not grow by one on every run.

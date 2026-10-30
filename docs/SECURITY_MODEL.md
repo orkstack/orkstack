@@ -13,7 +13,7 @@ Orker is the security boundary), §6 (security and resource controls) and §15
 
 ```text
 caller ──> gateway (authenticates; asserts Ork-Principal) ──> ork API port
-                                                                │ Connect RPCs; OrkStack does not authenticate them
+                                                                │ Connect RPCs and the web UI; OrkStack does not authenticate them
 bearer holder ──> trigger invoke, await callback (plain HTTP) ──┤ checked against a salted digest
                                                                 │
 ork ──> Temporal ──> orker ──> OCI runtime ──> container        │ the container holds no platform credential
@@ -398,6 +398,23 @@ its own writes (`internal/api/audit.go`). A record is written once to
 - **The API listener is plain HTTP.** The engine serves HTTP/1.1 and unencrypted
   HTTP/2 (h2c) on one address (`internal/api/server.go`, `NewServer`). It has no
   TLS listener.
+- **The web UI shares the API's origin.** The engine serves the UI's static
+  build at `/` on that same listener (`internal/webui`), so the browser's
+  Connect calls and its run and task-log sockets are same-origin. That is where
+  the page comes from, not a check: the Connect API still answers a request from
+  any origin (below). The bridge's default, with `ORK_WS_ALLOWED_ORIGINS` unset,
+  admits a socket only from the engine's own origin, and that is all the UI
+  needs; the setting is only for a page served from another origin. Every UI
+  response carries `X-Content-Type-Options: nosniff`, and the page refuses to be
+  framed (`Content-Security-Policy: frame-ancestors 'none'`,
+  `X-Frame-Options: DENY`), because it carries the operator's destructive
+  controls. The build holds no credential, and the engine serves only its files:
+  no listing, no dot file, nothing outside the build (a directory named by
+  `ORK_UI_DIR` is opened so that a link leading out of it is never followed),
+  and never a path the API owns. Serving the UI adds no authentication: the
+  engine still authenticates no caller, a browser's calls are a caller's like
+  any other, and the UI is reached through the same gateway as the API
+  ([DEPLOY.md](DEPLOY.md), "The web UI").
 - **The admin listener is separate.** `ORK_ADMIN_ADDR` opens a listener only when it
   is set. It serves `/healthz` and `/readyz`, and `/metrics` when Prometheus is
   asked for. `/debug/pprof/` is mounted only when `ORK_PPROF_ENABLED=true`
@@ -427,10 +444,10 @@ its own writes (`internal/api/audit.go`). A record is written once to
 ## What this model does not cover
 
 - **Caller authentication and authorisation.** The gateway does them. That covers
-  who may reach the Connect API, who may register or change a webhook, and what
-  the gateway lets a bearer-token holder reach. OrkStack does not configure any of
-  it ([ARCHITECTURE.md](../ARCHITECTURE.md), "API"; [DEPLOY.md](DEPLOY.md), "Ops
-  notes").
+  who may reach the Connect API and the UI, who may register or change a
+  webhook, and what the gateway lets a bearer-token holder reach. OrkStack does
+  not configure any of it ([ARCHITECTURE.md](../ARCHITECTURE.md), "API";
+  [DEPLOY.md](DEPLOY.md), "Ops notes").
 - **Transport security.** The engine serves plain HTTP, and the configuration has
   no TLS setting for Temporal. Encryption of the listeners and of the connections to
   Temporal and to object storage is the deployment's to provide.

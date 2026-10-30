@@ -1,10 +1,12 @@
 import { defineConfig } from '@playwright/test';
 import path from 'node:path';
 
-// The e2e specs drive the BUILT UI (adapter-node) against a real engine +
-// Orker on live local infra: Temporal (the proof's own, at
-// ORK_TEMPORAL_ADDRESS, or `make infra-up`'s :7233) and MinIO :9000.
-// Processes are started and always killed by each spec itself.
+// The e2e specs drive the BUILT UI (the static build in ui/build, served by
+// each spec's own engine at its own origin, as a release engine serves the
+// build compiled into it) against a real engine + Orker on live local infra:
+// Temporal (the proof's own, at ORK_TEMPORAL_ADDRESS, or `make infra-up`'s
+// :7233) and the object store at :9000. Processes are started and always
+// killed by each spec itself.
 //
 // Spec files run several at a time (`workers`; scripts/proof.sh passes
 // PROOF_UI_WORKERS). The browser runs in a network namespace of its own
@@ -28,13 +30,14 @@ const proofDir = process.env.ORK_PROOF_DIR;
 // The browser server e2e/global-setup.ts started (e2e/browser-server.ts): a
 // Chromium in a network namespace of its own. Every worker connects to it, and
 // `exposeNetwork: '<loopback>'` carries the browser's requests to 127.0.0.1 —
-// the engine and UI each spec starts on the host — back over the connection,
-// so a spec's URLs are unchanged. The runner's own locale and time zone are
-// pinned on the browser, because the container's are en-US and UTC and a
-// rendered timestamp must read as it did when Chromium ran on this host.
-// This config is evaluated again in every worker, after global setup set the
-// variable; in the runner process it is still unset, and the runner opens no
-// browser. ORK_E2E_BROWSER=host leaves it unset and drives the host's Chromium.
+// the engine each spec starts on the host, and the UI it serves — back over
+// the connection, so a spec's URLs are unchanged. The runner's own locale and
+// time zone are pinned on the browser, because the container's are en-US and
+// UTC and a rendered timestamp must read as it did when Chromium ran on this
+// host. This config is evaluated again in every worker, after global setup
+// set the variable; in the runner process it is still unset, and the runner
+// opens no browser. ORK_E2E_BROWSER=host leaves it unset and drives the
+// host's Chromium.
 const browserWS = process.env.ORK_E2E_BROWSER_WS;
 const hostIntl = Intl.DateTimeFormat().resolvedOptions();
 /** The connection to the isolated browser, for the projects that use it. */

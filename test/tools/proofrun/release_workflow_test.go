@@ -22,9 +22,10 @@ import (
 // returns its problems, and a companion test shows that it bites on a mutated
 // copy.
 
-// releaseImageNames is every image a release publishes.
+// releaseImageNames is every image a release publishes. The web UI is none
+// of them: ork serves it, built into the binary.
 var releaseImageNames = []string{
-	"ork", "orker", "orkctl", "ui",
+	"ork", "orker", "orkctl",
 	"activity-shell", "activity-http", "activity-file", "activity-json", "activity-git", "activity-template",
 }
 
@@ -284,7 +285,7 @@ func publishProblems(w *wfFile) []string {
 					p = append(p, "the image list check refuses "+n)
 				}
 			}
-			for _, bad := range []string{"activity-evil", "ork orker", "../ork", "ork;true", "", "orkx"} {
+			for _, bad := range []string{"activity-evil", "ork orker", "../ork", "ork;true", "", "orkx", "ui"} {
 				if re.MatchString(bad) {
 					p = append(p, fmt.Sprintf("the image list check accepts %q", bad))
 				}
@@ -368,10 +369,11 @@ func TestWorkflows_PublishRunsNoRepositoryCodeAndHoldsTheOnlyPackageWrite(t *tes
 		{"a moved version tag", func(w *wfFile) { edit(w, `[ "$have" = "$digest" ]`, "true") }},
 		{"no digest check after the push", func(w *wfFile) { edit(w, `[ "$got" = "$digest" ]`, "true") }},
 		{"a looser name check", func(w *wfFile) {
-			edit(w, `^(ork|orker|orkctl|ui|activity-(shell|http|file|json|git|template))$`, `^[a-z-]+$`)
+			edit(w, `^(ork|orker|orkctl|activity-(shell|http|file|json|git|template))$`, `^[a-z-]+$`)
 		}},
 		{"a looser digest check", func(w *wfFile) { edit(w, `^sha256:[0-9a-f]{64}$`, `^sha256:`) }},
-		{"any number of images", func(w *wfFile) { edit(w, "-eq 10", "-ge 1") }},
+		{"the retired ui image", func(w *wfFile) { edit(w, `orkctl|activity-(`, `orkctl|ui|activity-(`) }},
+		{"any number of images", func(w *wfFile) { edit(w, "-eq 9", "-ge 1") }},
 		{"an image listed twice", func(w *wfFile) { edit(w, "uniq -d", "uniq -u") }},
 		{"no layout digest check", func(w *wfFile) { edit(w, `.manifests[0].digest`, `.manifests[0].size`) }},
 		{"no blob hash", func(w *wfFile) { edit(w, `blobs/sha256/${digest#sha256:}`, `index.json`) }},

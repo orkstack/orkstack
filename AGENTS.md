@@ -38,7 +38,9 @@ YAML Orkflow ──apply──> ork ──compile──> Temporal ──dispatch
 
 The `ork` engine, `orkctl` CLI, SvelteKit UI, Connect API, WebSocket bridge,
 Orkers, and artifact store support this contract. They must not add another
-durable execution authority.
+durable execution authority. The UI is not a process of its own: it is a
+static build embedded in `ork`, which serves it on the API's own listener and
+origin.
 
 ## 2. Core architecture and ownership
 
@@ -1094,8 +1096,9 @@ Linux) the Go cost tests fall back to the wall clock.
 Integration tests use `-tags=integration`, `make infra-up`, and `infraAbsent`; a
 missing prerequisite skips, and becomes a failure under `ORK_REQUIRE_INFRA=1`
 (`make test-integration` sets it). Browser end-to-end tests live in `ui/e2e`
-(Playwright, `cd ui && bun run test`) and drive the built UI against a real
-engine, Orker, Temporal, and the dev object store; the activity fixtures live in
+(Playwright, `cd ui && bun run test`) and drive the built UI, served by the
+engine under test from `ORK_UI_DIR` (`ui/build`), against that real engine, an
+Orker, Temporal, and the dev object store; the activity fixtures live in
 `test/fixtures` and `test/tools` holds helpers those suites build. Do not use
 sleeps for synchronization; use deadlines or test helpers. A skip is never a
 pass: a harness must probe its prerequisites itself and fail, not skip, once
@@ -1468,6 +1471,7 @@ cmd/orker/             Orker entrypoint
 cmd/orkctl/            CLI entrypoint
 internal/engine/       Temporal workflows and activities
 internal/api/          Connect services and WebSocket bridge
+internal/webui/        The web UI's build embedded into ork, and the handler that serves it at /
 internal/dsl/          YAML parse, validation, and Orkflow compilation
 internal/orker/        Orker runtime and OCI activity dispatch; the runtime files
                        (runtime_docker.go, runtime_dialect.go) alone name Docker or Podman
@@ -1492,7 +1496,8 @@ pkg/logstream/         Live task-log line framing
 pkg/triggers/          Inbound trigger registry and token hashing
 pkg/webhooks/          Run-event webhook registry, signing, and delivery
 pkg/schedules/         Schedule id shape (the schedule itself lives in Temporal)
-ui/                    SvelteKit, Vite, Tailwind, and generated TS clients
+ui/                    SvelteKit, Vite, Tailwind, and generated TS clients, built as a static SPA
+                       that ork embeds (internal/webui)
 site/                  The landing page and docs site (Astro, Starlight): styled by ui/src/tokens.css,
                        its docs written for readers and citing this repository's docs
 deploy/                The development stack (Temporal, object storage, registry), the release images'
@@ -1507,8 +1512,9 @@ scripts/               Development helpers (`make up`, `make reset`) and the pro
 
 Use Go 1.27, one module `github.com/orkstack/orkstack`, `gofmt`, `go vet`, and
 wrapped errors. Prefer `context.Context` first and no panics in library code.
-Connect serves h2c on `:8080` by default and the WebSocket bridge serves
-`/ws/runs/{id}`. The UI uses Bun and Svelte 5 runes; generated clients live in
+Connect serves h2c on `:8080` by default, the WebSocket bridge serves
+`/ws/runs/{id}`, and the UI is served at `/` on the same listener. The UI uses
+Bun and Svelte 5 runes; generated clients live in
 `ui/src/lib/gen`. The CLI uses Cobra and human output by default, with `--json`
 for machine output. Configuration is one YAML file shared by both binaries
 (`--config PATH`; the schema is `internal/config`, documented in
@@ -1556,7 +1562,7 @@ Agent ownership is split as follows:
 - coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, `.github/`,
   the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`,
   `internal/listfilter` and `internal/enumname` (engine and CLI agents share
-  both), and this file.
+  both), `internal/webui` (UI and engine agents share it), and this file.
 
 Use Conventional Commits such as `feat(engine): ...`, `fix(orker): ...`,
 `test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. Keep commits scoped and

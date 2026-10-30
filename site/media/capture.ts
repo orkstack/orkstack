@@ -35,8 +35,9 @@ const repo = path.resolve(import.meta.dirname, '..', '..');
 const assets = path.join(repo, 'site', 'src', 'assets', 'media');
 const publicMedia = path.join(repo, 'site', 'public', 'media');
 const work = path.join(repo, 'site', '.media-work');
-// media/run.sh serves the built UI and says where.
-const UI = process.env.ORK_UI_URL ?? 'http://127.0.0.1:5173';
+// media/run.sh serves the built UI (vite preview, which proxies the API to the
+// engine) and says where.
+const UI = process.env.ORK_UI_URL ?? 'http://127.0.0.1:4173';
 const ENGINE = process.env.ORK_SERVER ?? 'http://127.0.0.1:8080';
 const NS = 'examples';
 const FANOUT = 'examples/each-fan-out.ork.yaml';

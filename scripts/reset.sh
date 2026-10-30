@@ -11,7 +11,9 @@
 #   - the object store's volume: every artifact, every archived run, and the orkflow
 #     catalogue itself — an applied orkflow lives in the bucket, so after
 #     this the engine boots with nothing to run.
-#   - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results.
+#   - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results, and the UI
+#     build `make ui` copied into internal/webui/dist (its committed .gitkeep
+#     stays).
 #   - .data/: the local artifact store AND the Orker's work directory
 #     (.data/work), which `make up` recreates on the next start.
 #
@@ -32,7 +34,7 @@ if [ "$force" -ne 1 ]; then
 	say "This deletes ALL local OrkStack state:"
 	say "  - Temporal history and worker deployment versions (docker volume)"
 	say "  - object-store data: artifacts, archived runs, and the orkflow catalogue"
-	say "  - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results"
+	say "  - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results, internal/webui/dist's UI build"
 	say ""
 	say "The repository itself is untouched."
 	say ""
@@ -52,6 +54,9 @@ say "== removing containers and their volumes =="
 
 say "== removing build output and run state =="
 rm -rf "$REPO/bin" "$REPO/.run" "$REPO/ui/build" "$REPO/ui/.svelte-kit" "$REPO/ui/test-results"
+# The UI build ork embeds; .gitkeep is committed, so a fresh ork still
+# compiles (and serves its placeholder page).
+find "$REPO/internal/webui/dist" -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec rm -rf {} + 2>/dev/null || true
 
 # The local-filesystem store. This is the one that bites: the default backend
 # is local (artifacts.DefaultLocalDir = ./.data/artifacts, pkg/artifacts/config.go),

@@ -28,12 +28,12 @@ Two things a neighbouring product could not truthfully copy, both to be shown by
 - Routes today: runs (list, run page, compare), Orkflows (list, detail), Apply, and admin (namespaces, pools, activities, releases, retention, usage, cache, image policy, webhooks, audit, automation).
 
 ## Capabilities and Constraints
-- SvelteKit with Svelte 5 runes, Vite, Tailwind 4 and Bun, with generated Connect clients under `ui/src/lib/gen`, one client module per service. All design tokens are to live in one file under `ui/` (light and dark colours, fonts, monospace, radii, spacing), importable by other surfaces.
+- SvelteKit with Svelte 5 runes, Vite, Tailwind 4 and Bun, with generated Connect clients under `ui/src/lib/gen`, one client module per service. The UI is a static single-page app (`adapter-static`) that `ork` embeds and serves at `/` on its API port: there is no UI server and no server-side proxy, and every page calls Connect and opens its sockets on its own origin. All design tokens are to live in one file under `ui/` (light and dark colours, fonts, monospace, radii, spacing), importable by other surfaces.
 - Vocabulary is deliberate (AGENTS.md §7). The UI never names a queue, session, generation, checkpoint, task queue, workflow id, search attribute or any other Temporal mechanism. A run is one run: it "carries on", and its checkpoint is its "saved state". Use Orkflow, pool, pin, schedule, trigger, fire, origin, release and the other defined words as defined.
 - The principal is asserted by a gateway, not authenticated. No surface may present it as a verified identity; every rendering says it was asserted.
 - A bearer credential (a trigger token, an await callback token) is shown once and never again.
 - Non-goals: a visual workflow designer, an AI agent builder, a forms platform. The UI is not an editor of a graph canvas.
-- The UI is tested by Playwright specs against a real engine, Orker, Temporal and MinIO; browser-only behaviour is proven with a spec and screenshots.
+- The UI is tested by Playwright specs against a real engine, Orker, Temporal and SeaweedFS, the engine under test serving the built UI from `ORK_UI_DIR`; browser-only behaviour is proven with a spec and screenshots.
 - Undecided: a final product name treatment and logo (OrkStack as a name is binding), and any accessibility standard beyond good practice.
 
 ## Brand Commitments

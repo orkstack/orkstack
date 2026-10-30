@@ -8,7 +8,7 @@ OrkStack has four parts. Each does one job, and no OrkStack process holds the on
 
 **Temporal** keeps the state of every run. It schedules tasks, applies their retries and timeouts, holds deadlines and approvals, and cancels work. A run's progress lives in Temporal, not in any OrkStack process.
 
-**The engine** (`ork`) takes your Orkflows and your run requests. It checks them, starts runs in Temporal, and answers reads. Any engine replica answers for any run.
+**The engine** (`ork`) takes your Orkflows and your run requests. It checks them, starts runs in Temporal, and answers reads. It also serves the web UI, on the same port as its API. Any engine replica answers for any run.
 
 **Orkers** run each task's container. An Orker holds no durable state, so a task from a lost Orker can go to another Orker of its pool. Pinned tasks are the exception: they stay on the Orker that started them.
 

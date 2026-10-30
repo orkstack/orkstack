@@ -21,6 +21,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -51,8 +52,8 @@ const BUCKET = ownBucket('budgets');
 // request (ORK_USAGE_CACHE_TTL=0). Only the processes this spec started are
 // stopped afterwards.
 const ENGINE = 'http://127.0.0.1:18421';
-const ENGINE_WS = 'ws://127.0.0.1:18421';
-const UI_ORIGIN = 'http://127.0.0.1:14421';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = process.env.ORK_TEMPORAL_NAMESPACE
 	? `${process.env.ORK_TEMPORAL_NAMESPACE}-budgets-${STAMP}`
@@ -95,7 +96,7 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18421, 14421]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18421)) throw new Error('port 18421 already in use');
 
 	ensureActivityImages();
 
@@ -104,20 +105,13 @@ test.beforeAll(async () => {
 		...catalogEnv,
 		...cluster,
 		...storeEnv(BUCKET),
+		...uiEnv(),
 		ORK_HTTP_ADDR: '127.0.0.1:18421',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
 		ORK_USAGE_CACHE_TTL: '0'
 	});
 	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('budgets') });
-	spawnLogged(
-		out('ui.log'),
-		'node',
-		['build'],
-		{ HOST: '127.0.0.1', PORT: '14421', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS },
-		uiDir
-	);
 	await waitForEngine(ENGINE);
-	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
 		return (answer.pools ?? []).some((pool) => (pool.liveOrkerCount ?? 0) > 0);
@@ -244,8 +238,8 @@ test('5b: Admin → Usage pages its namespaces and measures only the page shown'
 		}
 		await expect(page.getByTestId(`usage-ns-${names[10]}`)).toHaveCount(0);
 		await expect(page.getByTestId('usage-namespaces-page-status')).toContainText('10 namespaces');
-		// The first page was rendered on the server; its client-side measurement
-		// is the browser's own, one call per row.
+		// The page's load reads only the list; each row shown is measured by
+		// its own call from the browser, one call per row.
 		await expect.poll(() => new Set(asked).size).toBe(10);
 		expect(asked.every((name) => names.slice(0, 10).includes(name))).toBe(true);
 		await page.screenshot({ path: out('screenshot-admin-usage-page-1.png'), fullPage: true });

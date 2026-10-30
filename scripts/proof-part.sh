@@ -68,7 +68,7 @@ part_require() {
 		part_need "docker on PATH" command -v docker
 		part_need "docker compose" docker compose version
 		part_need "bun on PATH" command -v bun
-		part_need "node on PATH (Playwright and the built UI run on it)" command -v node
+		part_need "node on PATH (Playwright runs on it)" command -v node
 		part_need "the temporal CLI on PATH (ui/e2e/admin.spec.ts)" command -v temporal
 		part_need "jq on PATH (the shard's file list)" command -v jq
 		part_need "flock on PATH (the Playwright gate's host lock)" command -v flock

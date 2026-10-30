@@ -22,6 +22,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -53,8 +54,8 @@ const BUCKET = ownBucket('run-page-pins');
 
 // Ports of this spec's own, so the whole e2e directory can run in one go.
 const ENGINE = 'http://127.0.0.1:18092';
-const ENGINE_WS = 'ws://127.0.0.1:18092';
-const UI_ORIGIN = 'http://127.0.0.1:14186';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 
 const TEMPORAL_NAMESPACE = temporalNamespace('run-pins');
 const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
@@ -187,9 +188,7 @@ test.beforeAll(async () => {
 	// (AGENTS.md §11.1).
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18092, 14186]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(18092)) throw new Error('port 18092 already in use (stray process?)');
 
 	ensureActivityImages();
 
@@ -200,7 +199,7 @@ test.beforeAll(async () => {
 		...cluster,
 		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18092',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv()
 	});
 	// The one Orker is a PIN HOST: ORK_ORKER_MAX_PINS defaults to 0, and an
 	// engine refuses a document that pins at SUBMIT time until an operator has
@@ -215,19 +214,7 @@ test.beforeAll(async () => {
 	});
 	await waitForEngine(ENGINE);
 
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14186',
-			ENGINE_API_URL: ENGINE,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	// The engine refuses a submission whose pool has nobody serving it, so the
 	// Orker has to be polling before anything is started.

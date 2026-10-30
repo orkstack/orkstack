@@ -197,8 +197,11 @@ does not launch falls back to `--with-deps`, each install in the two
 bounded attempts `proof-fetch` makes (180 s, then 360 s) under a 10-minute
 step, and a browser that still does not launch fails the step before the
 part.
-The gate starts one browser server for both invocations, and the second reuses
-the first's UI build when the hash of the build's inputs
+The UI the specs drive is the static build in `ui/build`, served by each
+spec's own engine from `ORK_UI_DIR` on the engine's API port, so a spec runs
+no UI server of its own and its page is on the engine's origin. The gate
+starts one browser server for both invocations, and the second reuses the
+first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
 runs both integration and Playwright makes that build earlier, while its
 ordinary integration jobs run: once `integration-heavy-done` exists (the
@@ -705,7 +708,8 @@ reach, which fail nothing.
 `quickstart` is independent of the proof too: it runs the README's Quickstart
 as written on a clone of the commit, where the root `compose.yaml` builds the
 stack from source, and checks that a run of `each-fan-out` succeeds and that
-the UI answers (`make quickstart-smoke`). No proof gate runs that path, and
+the engine serves the UI's build, not the placeholder, on its own port
+(`make quickstart-smoke`). No proof gate runs that path, and
 `release.yml` › `artifacts` runs it only before a release, so this job is what
 finds a break on `main` within a day: a directory the source Dockerfile copies
 that `deploy/source/Dockerfile.dockerignore` does not admit, a Go or UI build
@@ -774,7 +778,7 @@ after that nightly passes finishes the release.
 one approval, and a dispatch off `main` never asks. Before anything leaves it,
 it checks that the gate's proof is a passing release proof of this commit,
 that the assets are exactly what the artifact's `SHA256SUMS` sums and match
-it, that the image list names each of the ten images once, that each layout's
+it, that the image list names each of the nine images once, that each layout's
 index names that digest, and that its bytes hash to it and list linux/amd64
 and linux/arm64; it signs `SHA256SUMS` with the release key and verifies that
 signature with the committed `deploy/cosign.pub`, so a missing key, a wrong
@@ -1526,8 +1530,8 @@ git rev-parse main
 - Only `nightly.yml` › `quickstart` failed: the README's Quickstart no longer
   works on a clone of `headSha`, which is a regression on `main` too. The
   job's log names the Quickstart command that failed, or the check, and on a
-  failure ends with the last 80 lines of the stack's `activities`, `ork`,
-  `orker` and `ui` logs. `make quickstart-smoke` on that commit reproduces it.
+  failure ends with the last 80 lines of the stack's `activities`, `ork` and
+  `orker` logs. `make quickstart-smoke` on that commit reproduces it.
 - Only `runner-degraded` parts failed: a runner failure, not a regression
   (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree.
 
@@ -1668,7 +1672,7 @@ failed jobs" on a run `artifacts` cancelled re-runs the failed job and every
 cancelled one, the gate included; one whose `artifacts` failed in a setup
 step, and so cancelled nothing, re-runs `artifacts` and what needs it.
 
-**After the first publish,** make the ten packages public: each new
+**After the first publish,** make the nine packages public: each new
 `ghcr.io/orkstack/<image>` starts private, and an anonymous pull fails until
 it is public (on each package's settings page).
 

@@ -56,11 +56,12 @@ commands:
                                   lists (one per line) is a higher release; refuse a version
                                   below a released tag of its own X.Y
   build -version vX.Y.Z -out DIR  build every release binary, pack the archives into DIR
-                                  and the linux binaries into DIR/bin/linux-<arch>/
+                                  and the linux binaries into DIR/bin/linux-<arch>/; refuse
+                                  a tree without the web UI build ork embeds (make ui)
   sums DIR                        write DIR/SHA256SUMS for the files in DIR
   notes -version vX.Y.Z           print the "## [X.Y.Z]" section of CHANGELOG.md, without its
                                   heading: the GitHub release's notes, word for word
-  digests -layouts DIR            print "<image><TAB><digest>" for each of the ten OCI image layouts
+  digests -layouts DIR            print "<image><TAB><digest>" for each of the nine OCI image layouts
                                   in DIR, sorted: the digest skopeo pushes each under
 
 Run it from the repository root, or name the root with -root.

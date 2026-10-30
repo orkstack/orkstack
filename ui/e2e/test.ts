@@ -20,8 +20,8 @@ export { expect, type Page } from "@playwright/test";
 // fails. A page load of the built UI asks for some forty chunks at once
 // against a six-connection-per-host limit, so most of them are waiting; when
 // a container starts or stops in that window, the chunks waiting die, the
-// module graph cannot link, SvelteKit cannot hydrate, and the page is its
-// 500 screen. That is the browser reporting the host, not the UI reporting
+// module graph cannot link, SvelteKit cannot start, and the page is its
+// error screen. That is the browser reporting the host, not the UI reporting
 // anything, and it failed a different spec in a different place in half the
 // proofs of this tree (browsing-operations, admission, run origin,
 // logs-dashboard), always at a navigation, always with this error code in the
@@ -32,17 +32,17 @@ export { expect, type Page } from "@playwright/test";
 // up to NAVIGATION_ATTEMPTS times, and each repeat is printed so it appears in
 // the suite's log. "During" lasts until the page's own code has arrived, not
 // only until the navigation resolves: the `load` event does not wait for a
-// script the page imports dynamically, and a page rendered in the browser
-// only (the run page, `ssr = false`) is still fetching most of its chunks
-// when `goto` returns — a network change in that window left the run-origin
+// script the page imports dynamically, and every page renders in the
+// browser only (the UI is a static single-page app), so it is still fetching
+// most of its chunks when `goto` returns — a network change in that window left the run-origin
 // spec a 500 screen after a navigation the guard had already passed. So the
 // guard waits, after the navigation, until no script or stylesheet the page
 // requested is still in flight (and the page has had a turn to request the
 // next), bounded by CODE_SETTLE_MS, and judges the whole window. That is all:
 //
-//   - only that error code. Every other failure — a 500 from the server, a
-//     chunk that 404s, a refused connection — reaches the spec exactly as it
-//     did, because those are things the UI did;
+//   - only that error code. Every other failure — an error from the engine
+//     that serves the page, a chunk that 404s, a refused connection — reaches
+//     the spec exactly as it did, because those are things the UI did;
 //   - only the page's own code. A fetch or XHR the app makes is the app's
 //     business; how it reports a lost request is behavior a spec may assert,
 //     so it is never retried here;
@@ -66,7 +66,14 @@ export const NETWORK_CHANGED = "net::ERR_NETWORK_CHANGED";
  */
 export const CODE_SETTLE_MS = 30_000;
 
-/** The resource types whose loss leaves a page that cannot hydrate. */
+/**
+ * How long, after a navigation resolves, the guard waits for the app to draw
+ * the page it opened (appDrawn). Past it the spec's own assertions see
+ * whatever is there.
+ */
+export const APP_DRAWN_MS = 30_000;
+
+/** The resource types whose loss leaves a page that cannot start. */
 const PAGE_CODE = new Set(["document", "script", "stylesheet"]);
 
 const guardedPages = new WeakSet<Page>();
@@ -108,6 +115,7 @@ export async function navigateThroughNetworkChanges(
     try {
       response = await navigate();
       await pageCodeSettled(page, inFlight, Date.now() + CODE_SETTLE_MS);
+      await appDrawn(page, Date.now() + APP_DRAWN_MS);
     } catch (err) {
       // The document itself can be the request that was waiting. Any
       // other navigation error is the spec's to see.
@@ -167,6 +175,38 @@ async function pageCodeSettled(
       page.on("requestfailed", done);
       page.on("close", done);
     });
+  }
+}
+
+/**
+ * appDrawn returns once the UI has drawn the page a navigation opened, or at
+ * `deadline`. The UI is a static single-page app: the engine answers every
+ * route with the same index.html, and the page is drawn in the browser, into
+ * the element app.html gives SvelteKit, only once the root layout's and the
+ * route's loads have answered — after `goto` has resolved on the document's
+ * `load` event. Every spec was written against a page that was already drawn
+ * when the navigation returned, as it was when a server rendered it, and
+ * acting on the empty document in between finds nothing, measures nothing
+ * and screenshots nothing. So a navigation is not over until the app has
+ * drawn. A document that is not the app's (a JSON or YAML file of the build,
+ * the placeholder page, an error from the engine) is drawn as it arrives,
+ * and a page that never draws is left to the spec's own assertions, which
+ * then see it.
+ */
+async function appDrawn(page: Page, deadline: number): Promise<void> {
+  try {
+    await page.waitForFunction(
+      () => {
+        const app = document.querySelector('link[href*="/_app/immutable/entry/start."]');
+        if (!app) return true;
+        const root = document.querySelector('body > div[style*="display: contents"]');
+        return !!root && [...root.children].some((el) => el.tagName !== "SCRIPT");
+      },
+      undefined,
+      { timeout: Math.max(1, deadline - Date.now()) },
+    );
+  } catch {
+    // Closed, navigated away, or never drawn: the spec's assertions decide.
   }
 }
 

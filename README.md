@@ -47,8 +47,8 @@ Underneath, OrkStack is a thin contract between three boring parts:
 </picture>
 
 The `orkctl` CLI, the browser UI and any program of yours speak the same
-Connect API. [ARCHITECTURE.md](./ARCHITECTURE.md) shows how a run flows
-through the pieces.
+Connect API, and `ork` serves the UI itself, on the same port.
+[ARCHITECTURE.md](./ARCHITECTURE.md) shows how a run flows through the pieces.
 
 ## Quickstart
 
@@ -64,7 +64,7 @@ orkctl apply examples/each-fan-out.ork.yaml
 orkctl run submit each-fan-out --watch
 ```
 
-Then open the UI at http://localhost:5173. [Getting started](./docs/GETTING_STARTED.md)
+Then open the UI at http://localhost:8080. [Getting started](./docs/GETTING_STARTED.md)
 walks through each step, and how to update and stop the stack.
 
 The same Orkflow applied, planned, run and read on the local stack:

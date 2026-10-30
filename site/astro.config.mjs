@@ -114,7 +114,7 @@ export default defineConfig({
 			plugins: [starlightLinksValidator({
 					errorOnFallbackPages: false,
 					errorOnInvalidHashes: true,
-					// The docs name the local stack's own addresses (localhost:5173 …).
+					// The docs name the local stack's own addresses (localhost:8080 …).
 					errorOnLocalLinks: false,
 				}),
 			],

@@ -2,13 +2,11 @@ import { plugin } from 'bun';
 
 // `bun test` runs these modules outside Vite, so SvelteKit's virtual modules
 // have to be provided. Only one is reachable from the code under test:
-// $env/dynamic/public, which ui/src/lib/ws.ts reads to decide where a
-// WebSocket goes, and $app/navigation, which ui/src/lib/dirtyGuard.ts
-// registers with.
+// $app/navigation, which ui/src/lib/dirtyGuard.ts registers with.
 //
-// Naming an engine here is what keeps the unit tests off `location`: with
-// PUBLIC_ENGINE_WS_URL set, wsBaseUrl() never touches the DOM, and the URL a
-// test asserts on is the URL a deployment with a configured engine produces.
+// There is no `location` outside a browser either, and ui/src/lib/ws.ts
+// reads it to open a socket on the page's own origin: the tests run as a
+// page served from 127.0.0.1:19999.
 plugin({
 	name: 'sveltekit-env',
 	setup(build) {
@@ -23,9 +21,12 @@ plugin({
 			},
 			loader: 'object'
 		}));
-		build.module('$env/dynamic/public', () => ({
-			exports: { env: { PUBLIC_ENGINE_WS_URL: 'ws://127.0.0.1:19999' } },
-			loader: 'object'
-		}));
 	}
 });
+
+if (!('location' in globalThis)) {
+	Object.defineProperty(globalThis, 'location', {
+		value: { protocol: 'http:', host: '127.0.0.1:19999', hostname: '127.0.0.1', port: '19999' },
+		configurable: true
+	});
+}
