@@ -23,6 +23,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -43,8 +44,8 @@ import { taskMapCellCenter } from './uiHelpers';
 // test's own work counted against the page, and a trace setting can only be
 // changed for a whole file.
 //
-// Topology: one engine, one Orker, the production UI build, a Temporal
-// namespace of its own, and a stamped Orkflow name.
+// Topology: one engine, one Orker, the production UI build served by that
+// engine, a Temporal namespace of its own, and a stamped Orkflow name.
 
 export interface RunPageCeiling {
 	/** The spec's name: its bucket, Temporal namespace, Orker and transcript (at most 20 characters, ownBucket's bound). */
@@ -55,8 +56,8 @@ export interface RunPageCeiling {
 	title: string;
 	/** The flat stage's size, the ceiling the page is measured at. */
 	tasks: number;
+	/** The engine's port; it serves the UI too, so the page is opened there. */
 	enginePort: number;
-	uiPort: number;
 	/** The Orkflow's name before its stamp. */
 	orkflowPrefix: string;
 	/** The engine's own settings beyond the harness's (a lowered ceiling). */
@@ -73,8 +74,8 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 	test.describe.configure({ mode: 'serial' });
 
 	const ENGINE = `http://127.0.0.1:${c.enginePort}`;
-	const ENGINE_WS = `ws://127.0.0.1:${c.enginePort}`;
-	const UI_ORIGIN = `http://127.0.0.1:${c.uiPort}`;
+	// The UI is the engine's own origin: it serves the build beside its API.
+	const UI_ORIGIN = ENGINE;
 	const TEMPORAL_NAMESPACE = temporalNamespace(c.name);
 
 	const STAMP = Date.now().toString(36);
@@ -129,29 +130,20 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		// Prerequisites, stated as failures rather than skips (AGENTS.md §11.1).
 		if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 		if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-		for (const port of [c.enginePort, c.uiPort]) {
-			if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-		}
+		if (await tcpOpen(c.enginePort)) throw new Error(`port ${c.enginePort} already in use (stray process?)`);
 		ensureActivityImages();
 		const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 		spawnLogged(outPath('engine.log'), bin('ork'), [], {
 			...catalogEnv,
 			...cluster,
 			...storeEnv(BUCKET),
+			...uiEnv(),
 			ORK_HTTP_ADDR: `127.0.0.1:${c.enginePort}`,
-			ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
 			...c.engineEnv
 		});
 		spawnLogged(outPath('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv(c.name) });
 		await waitForEngine(ENGINE);
-		spawnLogged(
-			outPath('ui.log'),
-			'node',
-			['build'],
-			{ HOST: '127.0.0.1', PORT: String(c.uiPort), ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS },
-			uiDir
-		);
-		await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+		await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 		await waitFor('the default pool reports a live Orker', async () => {
 			const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
 			return (answer.pools ?? []).some((p) => (p.liveOrkerCount ?? 0) > 0);

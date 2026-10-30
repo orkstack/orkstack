@@ -21,6 +21,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -37,14 +38,15 @@ const BUCKET = ownBucket('each-fan-out-ceiling');
 // quiet host, so this file runs ALONE (ui/playwright.config.ts, `projects`),
 // and only the test that asserts the budget should pay for running alone.
 //
-// Topology: one engine, one Orker, the production UI build. Isolation per
-// AGENTS.md §11.1 — ports, a bucket, a Temporal namespace and an Orker work
-// root of this file's own, and a stamped Orkflow name.
+// Topology: one engine, one Orker, the production UI build served by that
+// engine. Isolation per AGENTS.md §11.1 — a port, a bucket, a Temporal
+// namespace and an Orker work root of this file's own, and a stamped Orkflow
+// name.
 
-// Ports of this spec's own, so the whole e2e directory can run in one go.
+// A port of this spec's own, so the whole e2e directory can run in one go.
 const ENGINE = 'http://127.0.0.1:18598';
-const ENGINE_WS = 'ws://127.0.0.1:18598';
-const UI_ORIGIN = 'http://127.0.0.1:14598';
+// The UI is the engine's own origin: it serves the build beside its API.
+const UI_ORIGIN = ENGINE;
 
 const TEMPORAL_NAMESPACE = temporalNamespace('each-fan-out-ceiling');
 
@@ -123,9 +125,7 @@ test.beforeAll(async () => {
 	// Prerequisites, stated as failures rather than skips (AGENTS.md §11.1).
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18598, 14598]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(18598)) throw new Error('port 18598 already in use (stray process?)');
 
 	ensureActivityImages();
 
@@ -134,8 +134,8 @@ test.beforeAll(async () => {
 		...catalogEnv,
 		...cluster,
 		...storeEnv(BUCKET),
+		...uiEnv(),
 		ORK_HTTP_ADDR: '127.0.0.1:18598',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
 		ORK_EACH_MAX_ITEMS: String(GATED_ITEMS)
 	});
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
@@ -144,20 +144,7 @@ test.beforeAll(async () => {
 		...orkerEnv('each-fan-out-ceiling')
 	});
 	await waitForEngine(ENGINE);
-
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14598',
-			ENGINE_API_URL: ENGINE,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	// Submit refuses a pool with no live Orker — and, for a fan-out, one
 	// whose Orker predates fan-out — so the Orker must be polling first.

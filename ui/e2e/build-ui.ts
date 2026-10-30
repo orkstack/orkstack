@@ -16,24 +16,26 @@ const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * ensureUIBuild serves ui/build when the hash beside it is its inputs' hash
- * and it holds the server entry; otherwise it builds, and writes the hash
- * only once the build has produced that entry. The old hash is removed
- * before a build starts, so a build cut short never leaves a matching hash
- * beside a half-written directory.
+ * and it holds the page every route boots from (index.html, the SPA
+ * fallback); otherwise it builds, and writes the hash only once the build
+ * has produced that page. The old hash is removed before a build starts, so
+ * a build cut short never leaves a matching hash beside a half-written
+ * directory.
  */
 export function ensureUIBuild(dir: string = uiDir): 'reused' | 'built' {
 	const buildDir = path.join(dir, 'build');
 	const hashFile = path.join(buildDir, BUILD_HASH_FILE);
+	const fallback = path.join(buildDir, 'index.html');
 	const hash = buildInputsHash(dir);
 	const previous = existsSync(hashFile) ? readFileSync(hashFile, 'utf8').trim() : '';
-	if (previous === hash && existsSync(path.join(buildDir, 'index.js'))) {
+	if (previous === hash && existsSync(fallback)) {
 		console.log(`e2e: ui/build is this tree's own (inputs ${hash.slice(0, 12)}): not rebuilt`);
 		return 'reused';
 	}
 	rmSync(hashFile, { force: true });
 	execFileSync('bun', ['run', 'build'], { cwd: dir, stdio: 'inherit' });
-	if (!existsSync(path.join(buildDir, 'index.js'))) {
-		throw new Error('UI build output missing: ui/build/index.js');
+	if (!existsSync(fallback)) {
+		throw new Error('UI build output missing: ui/build/index.html');
 	}
 	writeFileSync(hashFile, hash + '\n');
 	console.log(`e2e: built ui/build (inputs ${hash.slice(0, 12)})`);

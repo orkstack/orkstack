@@ -26,8 +26,8 @@ import { fileURLToPath } from 'node:url';
 // exactly the one the client speaks, and exports its endpoint as
 // ORK_E2E_BROWSER_WS. playwright.config.ts connects every worker to it with
 // `connectOptions.exposeNetwork: '<loopback>'`, so a spec's
-// `http://127.0.0.1:<port>` reaches the engine and UI that spec started on the
-// host, through the connection, with nothing in the spec changed. The
+// `http://127.0.0.1:<port>` reaches the engine (which serves the UI) that spec
+// started on the host, through the connection, with nothing in the spec changed. The
 // container is this run's own — labelled with the proof id and the runner's
 // pid and start time, the same labels scripts/proof.sh gives a proof's Temporal
 // — stopped by e2e/global-teardown.ts by its recorded id, and reaped by the

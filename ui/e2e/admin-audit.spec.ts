@@ -18,6 +18,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -31,8 +32,7 @@ import { OP, addListFilter, adminNamespaceUrl } from './uiHelpers';
 //      because nothing asserted a principal, under the caption that says the
 //      principal is an assertion OrkStack does not authenticate;
 //   2. an Ork-Principal header set IN FRONT of the browser (as a gateway
-//      would) reaches the engine through the SvelteKit proxy unchanged and is
-//      recorded verbatim;
+//      would) reaches the engine unchanged and is recorded verbatim;
 //   A1 the trail is every namespace by default, deployment-wide writes
 //      included;
 //   A2 `namespace =` (empty) shows only the deployment-wide writes, and
@@ -42,23 +42,25 @@ import { OP, addListFilter, adminNamespaceUrl } from './uiHelpers';
 //   A5 pagination walks newest first without repeats, and a reload keeps the
 //      page and Previous;
 //   A6 the CLI equivalent is `orkctl admin audit --filter …`, never -n;
-//   - a failed read is an ErrorPanel with Retry, never an empty table.
+//   - a failed read is an ErrorPanel with Retry, never an empty table, and
+//     Retry recovers once the engine is back.
 //
 // The filters are the one filter component (ListFilter, `filter`
 // parameters; docs/UI_CLI_PARITY.md "Filtering lists").
 //
-// Topology: ONE engine, no Orker (nothing here runs a task), on a Temporal
-// namespace and a bucket this run creates and alone writes to — the retention
-// maximum is one deployment-wide document, and the trail of a fresh bucket
-// holds exactly this run's writes, so every count below is exact.
+// Topology: ONE engine, which serves the UI too, and no Orker (nothing here
+// runs a task), on a Temporal namespace and a bucket this run creates and
+// alone writes to — the retention maximum is one deployment-wide document,
+// and the trail of a fresh bucket holds exactly this run's writes, so every
+// count below is exact.
 //
 // Process hygiene: this spec kills ONLY the processes it started, by handle.
 // No e2e spec ever kills by name or pattern (harness.ts, killStarted).
 
 const ENGINE_PORT = '18096';
 const ENGINE = `http://127.0.0.1:${ENGINE_PORT}`;
-const UI_PORT = '14190';
-const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
+// The UI is the engine's own origin: it serves the build beside its API.
+const UI_ORIGIN = ENGINE;
 
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-audit-${STAMP}`;
@@ -86,8 +88,8 @@ function startEngine(): ChildProcess {
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...s3Env,
 		ORK_S3_BUCKET: BUCKET,
-		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`,
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv(),
+		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`
 	});
 	mine.push(child);
 	return child;
@@ -151,24 +153,13 @@ test.beforeAll(async () => {
 	);
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [Number(ENGINE_PORT), Number(UI_PORT)]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(Number(ENGINE_PORT))) throw new Error(`port ${ENGINE_PORT} already in use (stray process?)`);
 	ensureBucket(BUCKET);
 
 	engineProc = startEngine();
 	await waitForEngine(ENGINE);
-	mine.push(
-		spawnLogged(
-			outPath('ui.log'),
-			'node',
-			['build'],
-			{ HOST: '127.0.0.1', PORT: UI_PORT, ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') },
-			uiDir
-		)
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
-	note(`engine up at ${ENGINE}; ui at ${UI_ORIGIN}`);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
+	note(`engine up at ${ENGINE}, serving the ui`);
 });
 
 test.afterAll(async () => {
@@ -205,8 +196,9 @@ test('Admin → Audit lists a write the UI just made, unattributed, with the cap
 });
 
 test('an Ork-Principal header set in front of the browser is recorded', async ({ browser }) => {
-	// A gateway in front of the UI adds the header to every browser request;
-	// the SvelteKit proxy must forward it to the engine untouched.
+	// A gateway in front of the engine adds the header to every browser
+	// request, the page's Connect calls among them, and the engine records it
+	// untouched.
 	const context = await browser.newContext({ extraHTTPHeaders: { 'Ork-Principal': 'e2e-operator' } });
 	const page = await context.newPage();
 	try {
@@ -346,9 +338,18 @@ test('A5: pagination walks newest first without repeats and reload restores the 
 });
 
 test('a failed audit read reports and retries', async ({ page }) => {
+	// The engine serves the page as well as the read, so the page is opened
+	// while it is up and the read that fails is the open page's next one: a
+	// filter applied in the tab, a read made in the browser with no document
+	// to fetch, against an engine that is gone.
+	await page.goto(`${UI_ORIGIN}/admin/audit?ns=default`);
+	await expect(page.getByTestId('audit-row').first()).toBeVisible();
+	await page.waitForLoadState('networkidle');
+	await addListFilter(page, 'audit', { field: 'action', op: OP.prefix, value: 'namespace.' });
 	await stop(engineProc);
 	await waitFor('engine port closed', async () => !(await tcpOpen(Number(ENGINE_PORT))));
-	await page.goto(`${UI_ORIGIN}/admin/audit?ns=default`);
+	await page.getByTestId('audit-filters-apply').click();
+	await expect.poll(() => urlFilters(page)).toEqual(['action^namespace.']);
 	await expect(page.getByTestId('audit-error')).toBeVisible();
 	await expect(page.getByTestId('audit-table')).toHaveCount(0);
 	await expect(page.getByTestId('audit-empty')).toHaveCount(0);
@@ -361,6 +362,7 @@ test('a failed audit read reports and retries', async ({ page }) => {
 	await page.getByTestId('audit-error-retry').click();
 	await expect(page.getByTestId('audit-table')).toBeVisible();
 	await expect(page.getByTestId('audit-error')).toHaveCount(0);
+	expect((await actions(page)).every((action) => action.startsWith('namespace.'))).toBe(true);
 	await shot(page, 'admin-audit-read-recovered.png');
 	note(`engine restarted; retry rendered ${(await rowIds(page)).length} rows`);
 });

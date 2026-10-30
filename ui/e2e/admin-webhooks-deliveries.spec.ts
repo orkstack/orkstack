@@ -24,6 +24,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -61,10 +62,9 @@ const BUCKET = ownBucket('admin-webhooks-deliv');
 // by PID.
 
 const ENGINE_PORT = 18331;
-const UI_PORT = 14331;
 const ENGINE = `http://127.0.0.1:${ENGINE_PORT}`;
-const ENGINE_WS = `ws://127.0.0.1:${ENGINE_PORT}`;
-const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
+// The UI is the engine's own origin: it serves the build beside its API.
+const UI_ORIGIN = ENGINE;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-deliveries-${STAMP}`;
 const ORKFLOW = `deliveries-${STAMP}`;
@@ -127,8 +127,8 @@ function startEngine(): ChildProcess {
 		...catalogEnv,
 		...cluster,
 		...storeEnv(BUCKET),
-		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`,
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv(),
+		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`
 	});
 	mine.push(child);
 	return child;
@@ -216,7 +216,7 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [ENGINE_PORT, UI_PORT]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(ENGINE_PORT)) throw new Error(`port ${ENGINE_PORT} already in use`);
 
 	receiver = createServer((req, res) => {
 		const chunks: Buffer[] = [];
@@ -234,13 +234,8 @@ test.beforeAll(async () => {
 
 	engine = startEngine();
 	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('admin-deliveries') }));
-	mine.push(
-		spawnLogged(out('ui.log'), 'node', ['build'], {
-			HOST: '127.0.0.1', PORT: String(UI_PORT), ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		}, uiDir)
-	);
 	await waitForEngine(ENGINE);
-	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/admin/webhooks`)).ok);
+	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answered = await rpc<{ pools?: { liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
 		return (answered.pools ?? []).some((pool) => (pool.liveOrkerCount ?? 0) > 0);
@@ -529,9 +524,16 @@ test('a failed deliveries read shows an error beside an intact webhook table', a
 	await page.unroute('**/orkstack.v1.WebhookService/ListDeliveries');
 
 	// The engine itself down: the read fails with Retry; back up, Retry renders.
-	await stop(engine);
-	await page.reload();
+	// The engine serves the page as well as the read, so the page stays open
+	// and the read that fails is its next one, made in the browser: the
+	// filter changed in the tab, with no document to fetch.
 	await page.waitForLoadState('networkidle');
+	await expect(page.getByTestId('deliveries-filter-field-0')).toHaveText('Delivered (delivered)');
+	await selectOption(page, 'deliveries-filter-value-0', 'false');
+	await stop(engine);
+	await waitFor('engine port closed', async () => !(await tcpOpen(ENGINE_PORT)));
+	await page.getByTestId('deliveries-filters-apply').click();
+	await expect.poll(() => deliveryFilters(page)).toEqual(['delivered=false', `webhook_id=${webhookId}`]);
 	await expect(page.getByTestId('deliveries-error')).toBeVisible();
 	await expect(page.getByTestId('deliveries-error-retry')).toBeVisible();
 	await page.screenshot({ path: out('deliveries-read-failed.png'), fullPage: true });

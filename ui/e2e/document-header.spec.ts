@@ -19,6 +19,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -35,7 +36,8 @@ const BUCKET = ownBucket('document-header');
 // editor opens on the stored source with its header; and Admin → Automation's
 // placeholder is the automation document's own header.
 const ENGINE = 'http://127.0.0.1:18102';
-const UI = 'http://127.0.0.1:14200';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI = ENGINE;
 const TEMPORAL_NAMESPACE = temporalNamespace('document-header');
 const NS = `document-header-${Date.now().toString(36)}`;
 const proof = proofOut(
@@ -66,25 +68,18 @@ test.beforeAll(async () => {
 	mkdirSync(proof('..'), { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('the object store is not reachable on 127.0.0.1:9000');
-	for (const port of [18102, 14200]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18102)) throw new Error('port 18102 already in use');
 	ensureActivityImages();
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
 	spawnLogged(proof('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...cluster,
 		...storeEnv(BUCKET),
-		ORK_HTTP_ADDR: '127.0.0.1:18102',
-		ORK_WS_ALLOWED_ORIGINS: UI
+		...uiEnv(),
+		ORK_HTTP_ADDR: '127.0.0.1:18102'
 	});
 	await waitForEngine(ENGINE);
-	spawnLogged(
-		proof('ui.log'),
-		'node',
-		['build'],
-		{ HOST: '127.0.0.1', PORT: '14200', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') },
-		uiDir
-	);
-	await waitFor('built UI', async () => (await fetch(`${UI}/orkflows`)).ok);
+	await waitFor('built UI', async () => (await fetch(`${UI}/_app/version.json`)).ok);
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'document header' } });
 });
 
@@ -145,7 +140,7 @@ test('the header is required, shown and offered by every authoring surface', asy
 
 	// 5. Admin → Automation offers the automation document's own header.
 	// The layout restores the remembered namespace from localStorage and may
-	// rewrite a bare URL before hydration; name the namespace instead of
+	// rewrite a bare URL as the page starts; name the namespace instead of
 	// racing that restore (the behaviour is documented, the test was racy).
 	await page.goto(`${UI}/admin/automation?ns=default`);
 	await editorReady(page, 'automation-yaml');

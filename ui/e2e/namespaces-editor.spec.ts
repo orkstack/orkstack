@@ -4,7 +4,7 @@ import { createWriteStream, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild } from './harness';
+import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild, uiEnv } from './harness';
 import { expectNamespace, selectNamespace } from './uiHelpers';
 import { fillYaml, yamlValue } from './yaml';
 
@@ -29,8 +29,8 @@ const repoRoot = path.resolve(uiDir, '..');
 // Ports of their own: this spec and e2e/realtime.spec.ts must be able to run in
 // one `playwright test` invocation without fighting over a listener.
 const ENGINE_HTTP = 'http://127.0.0.1:18081';
-const ENGINE_WS = 'ws://127.0.0.1:18081';
-const UI_ORIGIN = 'http://127.0.0.1:14174';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE_HTTP;
 
 const TEMPORAL_NAMESPACE =
 	temporalNamespace('namespaces-editor');
@@ -119,9 +119,8 @@ function tcpOpen(port: number, host = '127.0.0.1'): Promise<boolean> {
 	});
 }
 
-// rpc calls the engine through the UI's own same-origin proxy: the exact path
-// the browser takes, so a fixture cannot be set up over a route the app does
-// not have.
+// rpc calls the engine at the page's own origin: the exact path the browser
+// takes, so a fixture cannot be set up over a route the app does not have.
 async function rpc<T>(method: string, body: unknown): Promise<T> {
 	const res = await fetch(`${UI_ORIGIN}/orkstack.v1.${method}`, {
 		method: 'POST',
@@ -208,7 +207,6 @@ test.beforeAll(async () => {
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	if (await tcpOpen(18081)) throw new Error('port 18081 already in use (stray engine?)');
-	if (await tcpOpen(14174)) throw new Error('port 14174 already in use (stray UI?)');
 
 	// The first-party images, built and PUSHED: `uses: shell` is a
 	// catalog name resolved by a real registry GET at apply time (§4.3), so an
@@ -223,7 +221,7 @@ test.beforeAll(async () => {
 		ORK_TEMPORAL_ADDRESS: temporalAddress(),
 		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE,
 		ORK_HTTP_ADDR: '127.0.0.1:18081',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
+		...uiEnv(),
 		ORK_ARTIFACT_BACKEND: 's3',
 		ORK_S3_ENDPOINT: 'http://127.0.0.1:9000',
 		ORK_S3_REGION: 'us-east-1',
@@ -241,19 +239,7 @@ test.beforeAll(async () => {
 		return res.ok;
 	});
 
-	spawnLogged(
-		'ui.log',
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14174',
-			ENGINE_API_URL: ENGINE_HTTP,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	// Two namespaces (CreateNamespace is idempotent for an identical spec) and
 	// one orkflow in each, so "scoped" is falsifiable: alpha's page must not

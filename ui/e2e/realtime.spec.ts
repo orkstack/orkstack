@@ -5,7 +5,7 @@ import { createServer, type Server } from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bin, catalogEnv, containerHost, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, storeEnv, temporalAddress, temporalReachable, trackChild } from './harness';
+import { bin, catalogEnv, containerHost, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, storeEnv, temporalAddress, temporalReachable, trackChild, uiEnv } from './harness';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('realtime');
@@ -19,8 +19,8 @@ const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const repoRoot = path.resolve(uiDir, '..');
 
 const ENGINE_HTTP = 'http://127.0.0.1:18080';
-const ENGINE_WS = 'ws://127.0.0.1:18080';
-const UI_ORIGIN = 'http://127.0.0.1:14173';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE_HTTP;
 
 // The Temporal namespace this spec's engine and Orker share: its own, so no
 // other engine on the cluster can take its workflow or activity tasks
@@ -109,7 +109,6 @@ test.beforeAll(async () => {
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
 	if (await tcpOpen(18080)) throw new Error('port 18080 already in use (stray engine?)');
-	if (await tcpOpen(14173)) throw new Error('port 14173 already in use (stray UI?)');
 
 	// Build the real binaries and the production UI.
 	// The first-party images, built and PUSHED: `uses: shell` is a
@@ -131,7 +130,8 @@ test.beforeAll(async () => {
 	if (!addr || typeof addr === 'string') throw new Error('stub server has no port');
 	stubPort = addr.port;
 
-	// Engine: Connect API + WS bridge, with the UI origin allowed for the WS.
+	// Engine: Connect API, WS bridge and the built UI, on one origin, so the
+	// page's own sockets are same-origin and need no allowed origin.
 	//
 	// It is given the SAME artifact backend as the Orker below, and that is
 	// load-bearing rather than tidiness. The engine resolves the run's commit
@@ -146,7 +146,7 @@ test.beforeAll(async () => {
 		ORK_TEMPORAL_ADDRESS: temporalAddress(),
 		ORK_TEMPORAL_NAMESPACE: TEMPORAL_NAMESPACE,
 		ORK_HTTP_ADDR: '127.0.0.1:18080',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv()
 	});
 	await waitFor('engine connect api', async () => {
 		const res = await fetch(`${ENGINE_HTTP}/orkstack.v1.OrkflowService/ListOrkflows`, {
@@ -165,20 +165,9 @@ test.beforeAll(async () => {
 		...orkerEnv('realtime')
 	});
 
-	// Built UI served by adapter-node, proxying RPC to the engine.
-	spawnLogged(
-		'ui.log',
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14173',
-			ENGINE_API_URL: ENGINE_HTTP,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	// The built UI, from the engine: the placeholder page a binary without a
+	// UI serves has no /_app/version.json.
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	// The engine refuses a submit to a pool with no live Orker, and the Orker
 	// polls only after its boot probes, so the first submit waits for it.
@@ -193,7 +182,7 @@ test.beforeAll(async () => {
 		return answer.pools?.some((p) => p.name === 'main' && (p.liveOrkerCount ?? 0) > 0) ?? false;
 	});
 
-	// Register hello-ork through the UI proxy (the same path the browser uses),
+	// Register hello-ork through the page's own origin (the path the browser uses),
 	// into the spec's own namespace, created first. The namespace is new on
 	// every run, so the example applies exactly as written: no version this
 	// namespace already holds can collide with it.

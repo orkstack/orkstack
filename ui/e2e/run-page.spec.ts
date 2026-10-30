@@ -24,6 +24,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -53,8 +54,8 @@ const BUCKET = ownBucket('run-page');
 
 // Ports of this spec's own, so the whole e2e directory can run in one go.
 const ENGINE = 'http://127.0.0.1:18084';
-const ENGINE_WS = 'ws://127.0.0.1:18084';
-const UI_ORIGIN = 'http://127.0.0.1:14176';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 
 const TEMPORAL_NAMESPACE =
 	temporalNamespace('run-page');
@@ -420,9 +421,7 @@ test.beforeAll(async () => {
 	// (AGENTS.md §11.1).
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18084, 14176]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(18084)) throw new Error('port 18084 already in use (stray process?)');
 	// The retry stub: hermetic, on a port the OS picks, and deterministic —
 	// the first request loses its connection, every one after it is answered.
 	probeServer = createServer((req, res) => {
@@ -451,7 +450,7 @@ test.beforeAll(async () => {
 		...cluster,
 		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18084',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv()
 	});
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
@@ -460,19 +459,7 @@ test.beforeAll(async () => {
 	});
 	await waitForEngine(ENGINE);
 
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14176',
-			ENGINE_API_URL: ENGINE,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	// The engine refuses a submission whose pool has nobody serving it, so the
 	// Orker has to be polling before anything is started.

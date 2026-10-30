@@ -25,9 +25,10 @@ import { expect, guardPage, NETWORK_CHANGED, type Page } from "./test";
 //       navigation is made again, exactly once, and every one of the page's
 //       scripts ran.
 //   N3  (the cause, after `load`) a page that imports its code dynamically —
-//       as a page rendered in the browser only does — has its navigation
-//       resolve while that code is still in flight, and a network change in
-//       that window loses it after the navigation was over;
+//       as a page rendered in the browser only does, and every page of the
+//       UI is one — has its navigation resolve while that code is still in
+//       flight, and a network change in that window loses it after the
+//       navigation was over;
 //   N4  (the guard, after `load`) the same load through the guarded page
 //       waits for that code, sees the loss, and navigates again: the page the
 //       spec gets ran every script.

@@ -18,6 +18,7 @@ import {
   temporalNamespace,
   temporalReachable,
   uiDir,
+  uiEnv,
   waitFor,
   waitForEngine,
 } from "./harness";
@@ -29,8 +30,8 @@ const BUCKET = ownBucket('orkflow-delete');
 // states use targeted ListRuns responses; successful deletion uses the real
 // Temporal-backed ListRuns check and the real S3-backed DeleteOrkflow RPC.
 const ENGINE = "http://127.0.0.1:18091";
-const ENGINE_WS = "ws://127.0.0.1:18091";
-const UI_ORIGIN = "http://127.0.0.1:14188";
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 const TEMPORAL_NAMESPACE = temporalNamespace('orkflow-delete');
 const NS = "ui-delete";
 const STAMP = Date.now().toString(36);
@@ -70,34 +71,20 @@ test.beforeAll(async () => {
   if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
   if (!(await tcpOpen(9000)))
     throw new Error("MinIO is not reachable on 127.0.0.1:9000");
-  for (const port of [18091, 14188]) {
-    if (await tcpOpen(port))
-      throw new Error(`port ${port} already in use (stray process?)`);
-  }
+  if (await tcpOpen(18091))
+    throw new Error("port 18091 already in use (stray process?)");
 
   spawnLogged(outPath("engine.log"), bin("ork"), [], {
     ...catalogEnv,
     ...clusterEnv(TEMPORAL_NAMESPACE),
     ...storeEnv(BUCKET),
     ORK_HTTP_ADDR: "127.0.0.1:18091",
-    ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN,
+    ...uiEnv(),
   });
   await waitForEngine(ENGINE);
-  spawnLogged(
-    outPath("ui.log"),
-    "node",
-    ["build"],
-    {
-      HOST: "127.0.0.1",
-      PORT: "14188",
-      ENGINE_API_URL: ENGINE,
-      PUBLIC_ENGINE_WS_URL: ENGINE_WS,
-    },
-    uiDir,
-  );
   await waitFor(
     "built ui",
-    async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok,
+    async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok,
   );
 
   await rpc("NamespaceService/CreateNamespace", {
