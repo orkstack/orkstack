@@ -370,6 +370,50 @@ func TestTriggerInvoke_OnlyPostIsServed(t *testing.T) {
 	}
 }
 
+// The invoke route reads its body whatever type it declares. The bearer token
+// keeps a cross-site page out: a page can set an Authorization header on a
+// request to another site only after a preflight, and the engine grants none
+// (TestAPIRoutes_GrantNoCrossOriginPreflight). A required declaration would
+// only refuse callers that never sent one: curl -d declares
+// application/x-www-form-urlencoded, and a CI hook may declare nothing.
+func TestTriggerInvoke_ReadsTheBodyWhateverTypeItDeclares(t *testing.T) {
+	f := newFixture(t)
+	f.applyHello(t)
+	trigger, secret := f.createTrigger(t, &orkstackv1.CreateTriggerRequest{OrkflowName: "hello-ork"})
+	path := strings.Replace(api.TriggerInvokePath, "{id}", trigger.GetId(), 1)
+
+	declared := []string{"", "application/x-www-form-urlencoded", "text/plain"}
+	for _, contentType := range declared {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.baseURL+path,
+			strings.NewReader(`{"url":"https://example.test/declared"}`))
+		if err != nil {
+			t.Fatalf("build request: %v", err)
+		}
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		req.Header.Set("Authorization", "Bearer "+secret)
+		resp, err := f.client.Do(req)
+		if err != nil {
+			t.Fatalf("POST %s: %v", path, err)
+		}
+		payload, _ := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Errorf("Content-Type %q: status = %d, want 201: %s", contentType, resp.StatusCode, payload)
+		}
+	}
+	inputs := f.starter.startedInputs()
+	if len(inputs) != len(declared) {
+		t.Fatalf("started %d runs, want %d", len(inputs), len(declared))
+	}
+	for _, input := range inputs {
+		if input["url"] != "https://example.test/declared" {
+			t.Errorf("started input = %v, want the body's url", input)
+		}
+	}
+}
+
 func TestCreateTrigger_RefusesAnOrkflowOrVersionThatDoesNotExist(t *testing.T) {
 	f := newFixture(t)
 	f.applyHello(t)
