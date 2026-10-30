@@ -14,6 +14,13 @@
 #
 #   kubectl create configmap orkstack --from-env-file=orkstack.env
 #   kubectl create secret generic orkstack-s3 --from-env-file=s3.env
+#
+# The values tasks may read as secrets go in a Secret of their own, one key
+# each; a task names one as file:/etc/orkstack/task-secrets/<key>, and the
+# Orker resolves no other source:
+#
+#   kubectl create secret generic orkstack-task-secrets \
+#     --from-literal=db-password=...
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:

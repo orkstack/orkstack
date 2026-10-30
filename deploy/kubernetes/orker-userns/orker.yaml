@@ -5,9 +5,12 @@
 #
 # Needs: user namespaces (hostUsers: false) and the orkstack-engine
 # RuntimeClass (runtimeclass.yaml), whose containerd handler gives the pod's
-# root its own cgroup so the engine can enforce each task's limits. Set the
-# orker image by digest and create the orkstack ConfigMap and the
-# orkstack-s3 Secret first (kustomization.yaml says how).
+# root its own cgroup so the engine can enforce each task's limits. The pod
+# holds no service-account token, and a task may name as a secret only a key
+# of the orkstack-task-secrets Secret (ORK_ORKER_SECRET_ALLOW, below). Set
+# the orker image by digest and create the orkstack ConfigMap and the
+# orkstack-s3 Secret first, and orkstack-task-secrets if tasks read secrets
+# (kustomization.yaml says how).
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,6 +29,10 @@ spec:
     spec:
       hostUsers: false
       runtimeClassName: orkstack-engine
+      # Neither the Orker nor its engine calls the Kubernetes API (the
+      # Orker drives the engine over their shared socket), so the pod holds
+      # no service-account token.
+      automountServiceAccountToken: false
       # Longer than the longest cancellation grace a task may ask for: a
       # stopped Orker cancels each running task with its own grace (30 s by
       # default) before the engine stops.
@@ -143,6 +150,15 @@ spec:
               value: 8Gi
             - name: ORK_ADMIN_ADDR
               value: 127.0.0.1:9464
+            # The secret floor: a task's secrets may name only a file of the
+            # task-secrets volume below, and never this Orker's own
+            # environment or files (its settings, the orkstack-s3 keys). A
+            # task names a key of the orkstack-task-secrets Secret as
+            # file:/etc/orkstack/task-secrets/<key>. Set here, the value
+            # overrides one in the orkstack ConfigMap; an overlay that admits
+            # other sources patches it.
+            - name: ORK_ORKER_SECRET_ALLOW
+              value: file:/etc/orkstack/task-secrets/*
           startupProbe:
             exec:
               command:
@@ -168,6 +184,9 @@ spec:
               mountPath: /var/lib/orkstack/work
             - name: engine-socket
               mountPath: /var/lib/orkstack/engine
+            - name: task-secrets
+              mountPath: /etc/orkstack/task-secrets
+              readOnly: true
       volumes:
         # Task workspaces: ephemeral execution directories (AGENTS.md §5).
         - name: work
@@ -182,3 +201,10 @@ spec:
         - name: engine-data
           emptyDir:
             sizeLimit: 20Gi
+        # The values tasks may name as secrets, for the Orker alone: each key
+        # of the operator's orkstack-task-secrets Secret is a file here. It is
+        # optional, so the pod starts before that Secret exists.
+        - name: task-secrets
+          secret:
+            secretName: orkstack-task-secrets
+            optional: true
