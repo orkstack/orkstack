@@ -130,6 +130,8 @@ var Schema = []Var{
 
 	{Path: "engine.http_addr", Env: "ORK_HTTP_ADDR", Binaries: usesOrk, Kind: KindString, Default: api.DefaultHTTPAddr},
 	{Path: "engine.ws_allowed_origins", Env: "ORK_WS_ALLOWED_ORIGINS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault},
+	{Path: "engine.ui.enabled", Env: "ORK_UI_ENABLED", Binaries: usesOrk, Kind: KindBool, Default: formatBool(api.DefaultUIEnabled)},
+	{Path: "engine.ui.dir", Env: "ORK_UI_DIR", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "the build compiled into ork"},
 	// ORK_IDEMPOTENCY_TTL's fallback is engine.DefaultClaimTTL, the same
 	// constant idempotency.go binds a non-positive ttl to.
 	{Path: "engine.idempotency_ttl", Env: "ORK_IDEMPOTENCY_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultClaimTTL)},

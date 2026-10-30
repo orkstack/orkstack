@@ -631,7 +631,7 @@ func TestTraceAPIRequest_ExcludesWebSocketUpgrades(t *testing.T) {
 		{"task log socket", "/ws/runs/abc123/tasks/build/logs", false},
 		{"connect rpc", "/orkstack.v1.SystemService/GetSystemInfo", true},
 		{"admin healthz", "/healthz", true},
-		{"root", "/", true},
+		{"root, the web UI's", "/", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest(http.MethodGet, tc.path, nil)

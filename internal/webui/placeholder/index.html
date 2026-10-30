@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<title>OrkStack — this engine was built without its web UI</title>
+		<style>
+			body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 3rem auto; padding: 0 1rem; color: #1a1a1a; background: #fafaf7; }
+			code { font-family: ui-monospace, monospace; font-size: 0.95em; }
+			@media (prefers-color-scheme: dark) { body { color: #ececec; background: #161616; } }
+		</style>
+	</head>
+	<body>
+		<h1>This engine was built without its web UI</h1>
+		<p>
+			The <code>ork</code> binary serving this page was compiled without the UI's build, so it serves
+			this page in its place. The Connect API, the WebSocket bridge and the plain-HTTP routes on this port
+			work as they always do.
+		</p>
+		<ul>
+			<li>Build the UI into <code>ork</code>: run <code>make ui</code>, then build <code>ork</code> again (<code>make build</code>). The release binaries and images, and <code>docker compose up</code>, already carry it.</li>
+			<li>Serve a UI build from disk instead: <code>cd ui &amp;&amp; bun run build</code>, then start <code>ork</code> with <code>ORK_UI_DIR</code> naming <code>ui/build</code>.</li>
+			<li>Working on the UI itself: <code>make up</code> serves it with hot reload at <code>http://localhost:5173</code>, proxying the API to this engine.</li>
+		</ul>
+	</body>
+</html>

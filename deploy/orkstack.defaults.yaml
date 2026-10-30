@@ -46,6 +46,9 @@ storage:
 engine:
   http_addr: :8080  # ork
   ws_allowed_origins: []  # ork
+  ui:
+    enabled: true  # ork
+    dir: ""  # ork; the build compiled into ork
   idempotency_ttl: 24h  # ork
   registry_auth_file: ""  # ork
   stats_cache_ttl: 5s  # ork
