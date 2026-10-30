@@ -1,20 +1,26 @@
 name: release
 
-# The pre-release gate, and the release itself. `validate` refuses a version
-# that is not vMAJOR.MINOR.PATCH, or that the built-in activity catalog and
-# CHANGELOG.md do not name, before anything else runs. `gate` runs the
-# release tier: every gate, the scale and soak tests included, observability
-# always. `artifacts`, beside it, builds what a release publishes (the
-# archives and the multi-arch images as OCI layouts), runs the quickstart's
-# compose file on those images end to end, and runs the README's Quickstart
-# as written on a clone of the commit. `tag` creates the release tag only
-# after `proofrun verify -release` accepts that proof for the exact commit,
-# and `publish` then pushes the images to ghcr.io byte for byte, signs each by
-# digest and SHA256SUMS with the release's cosign key, and creates the GitHub
-# release, running no repository code (docs/PROOFS.md §10). The private key is
-# a secret of the `release` environment, which only `publish` names; its
-# public half is deploy/cosign.pub. `tag: false` is a full dry run that
-# publishes nothing. Nothing here dispatches itself; the user runs it.
+# The pre-release gate, and the release itself, in one run that asks for one
+# approval. `validate` refuses a version that is not vMAJOR.MINOR.PATCH, or
+# that the built-in activity catalog and CHANGELOG.md do not name, before
+# anything else runs. `gate` runs the release tier: every gate, the scale and
+# soak tests included, observability always. `artifacts`, beside it, builds
+# what a release publishes (the archives and the multi-arch images as OCI
+# layouts), runs the quickstart's compose file on those images end to end,
+# and runs the README's Quickstart as written on a clone of the commit; when
+# one of those steps fails it cancels the run, so the gate stops too. `verify`
+# runs `proofrun verify -release` on the gate's proof for the exact commit,
+# and, on main, `nightly` waits for the nightly of this commit and refuses
+# one that did not pass, so a nightly dispatched beside the release has time
+# to finish. Only then, and only on main, `publish` asks for the `release`
+# environment's approval; once approved it signs SHA256SUMS
+# with the release's cosign key, creates the tag, pushes the images to
+# ghcr.io byte for byte, signs each by digest, and creates the GitHub
+# release, running no repository code (docs/PROOFS.md §10). The private key
+# is a secret of that environment, which only `publish` names; its public
+# half is deploy/cosign.pub. A dispatch off main is a dry run: everything but
+# `publish`, which it never asks to approve. Nothing here dispatches itself;
+# the user runs it.
 #
 # `gate` runs on the hosted ubuntu-24.04 runners (4 vCPUs). A wall-clock
 # budget calibrated on the 16-CPU reference host that one of them misses is
@@ -28,14 +34,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "the tag to create, vX.Y.Z"
+        description: "the tag to create, vX.Y.Z (from main it is published once the release environment approves)"
         required: true
         type: string
-      tag:
-        description: "create and push the tag after the gate passes"
-        required: false
-        type: boolean
-        default: false
 
 permissions:
   contents: read
@@ -46,8 +47,8 @@ permissions:
 # other.
 
 jobs:
-  # First, and on every dispatch, `tag: false` included: nothing runs for a
-  # version that is not vMAJOR.MINOR.PATCH.
+  # First, and on every dispatch: nothing runs for a version that is not
+  # vMAJOR.MINOR.PATCH.
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -70,18 +71,6 @@ jobs:
             exit 1
           fi
           echo "version=$VERSION" >>"$GITHUB_OUTPUT"
-      - name: refuse a tag off main
-        timeout-minutes: 1
-        shell: bash
-        env:
-          WANT_TAG: ${{ inputs.tag }}
-          REF: ${{ github.ref }}
-        run: |
-          set -euo pipefail
-          if [ "$WANT_TAG" = true ] && [ "$REF" != refs/heads/main ]; then
-            echo "a tag is created only from a dispatch on main; this one ran on $REF" >&2
-            exit 1
-          fi
       - uses: actions/checkout@v7.0.1
         timeout-minutes: 5
         with:
@@ -157,10 +146,13 @@ jobs:
       group: release-artifacts-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 240
+    timeout-minutes: 245
     permissions:
       contents: read
-    # The name publish downloads, so a re-run of publish finds this upload.
+      # Only the last step uses it, to cancel the run.
+      actions: write
+    # The name publish downloads, so a re-run of publish finds this upload,
+    # for as long as it is kept: the approval comes within its 7 days.
     outputs:
       artifact: release-${{ needs.validate.outputs.version }}-${{ github.run_id }}-a${{ github.run_attempt }}
     steps:
@@ -189,12 +181,14 @@ jobs:
         with:
           driver-opts: image=moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea
       - name: the binaries and their archives
+        id: dist
         timeout-minutes: 20
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: make dist VERSION="$VERSION"
       - name: the images, linux/amd64 and linux/arm64
+        id: images
         timeout-minutes: 90
         shell: bash
         env:
@@ -205,16 +199,19 @@ jobs:
       # that requires that key: OrkStack's own verifier accepts what the
       # release writes.
       - name: smoke the release before anything is published
+        id: smoke
         timeout-minutes: 30
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: scripts/quickstart-smoke.sh --release "$VERSION" --layouts dist/layouts
       - name: the README's Quickstart, as written, on a clone of this commit
+        id: quickstart
         timeout-minutes: 40
         shell: bash
         run: scripts/quickstart-smoke.sh
       - name: the checksums, the notes and the image list
+        id: meta
         timeout-minutes: 5
         shell: bash
         env:
@@ -240,31 +237,50 @@ jobs:
             dist/layouts/
           if-no-files-found: error
           retention-days: 7
+      # GitHub cancels no sibling job: a release that cannot build or smoke
+      # would leave the gate running for an hour. A failure of this job's own
+      # build, smoke or verification steps cancels the run. A failure in
+      # checkout, a toolchain or QEMU/buildx setup, or the upload, which a
+      # lost or flaky runner explains, cancels nothing: "Re-run failed jobs",
+      # once the run completes, re-runs this job and what needs it, and the
+      # gate is never run again for it. The gate itself cancels nothing: an
+      # excused runner-size miss leaves it red while its proof passes.
+      - name: cancel the run, which cannot be released
+        if: ${{ failure() && (steps.dist.outcome == 'failure' || steps.images.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.quickstart.outcome == 'failure' || steps.meta.outcome == 'failure') }}
+        timeout-minutes: 3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          echo "artifacts could not build or smoke the release: cancelling the run, so the gate stops too"
+          gh run cancel "$RUN_ID" --repo "$REPO"
 
-  tag:
+  # The release proof, judged by repository code before the approval is
+  # asked for: a proof that does not verify never asks.
+  verify:
     needs: [validate, gate, artifacts]
-    # The gate's merged proof is the verdict, never the colour of the call: an
-    # excused runner-size miss leaves an integration part red while the proof
-    # passes (docs/PROOFS.md §12), and the implicit success() would skip this
-    # job. So it runs unless cancelled, once validate and artifacts succeeded
-    # and the gate named its proof, and `proofrun verify -release` below
+    # The gate's merged proof is the verdict, never the colour of the call
+    # (above), and the implicit success() would skip this job on an excused
+    # miss. So it runs unless cancelled, once validate and artifacts
+    # succeeded and the gate named its proof, and `proofrun verify -release`
     # refuses anything but a passing release proof of this exact commit.
-    if: ${{ !cancelled() && inputs.tag && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.gate.outputs.proof_artifact != '' }}
+    if: ${{ !cancelled() && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.gate.outputs.proof_artifact != '' }}
     concurrency:
-      group: release-tag-${{ needs.validate.outputs.version }}
+      group: release-verify-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
-      contents: write
+      contents: read
       actions: read
     steps:
       - uses: actions/checkout@v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
-          # No checkout keeps a credential: the proof is verified (and repository
-          # code run) before the push step is handed the token.
           persist-credentials: false
       - uses: actions/setup-go@v7.0.0
         timeout-minutes: 5
@@ -284,46 +300,94 @@ jobs:
         run: |
           set -euo pipefail
           go run ./test/tools/proofrun verify -release -tag "$VERSION" -proof "$RUNNER_TEMP/ci/proof"
-      - name: tag
+
+  # A release is not tagged while the nightly of its commit is red
+  # (AGENTS.md §11). On main only: off main a dispatch is a dry run, and no
+  # nightly measures a branch's commit. It needs the gate and the artifacts
+  # so that a nightly dispatched beside the release (about two hours, against
+  # the gate's and the build's two to three) has finished by now; one still
+  # running is waited for, up to 60 minutes. The latest completed nightly.yml
+  # run on main whose head is this commit is judged by its proof.json as
+  # `make merge-check NIGHTLY=` judges one, never by the proof's colour, and
+  # by the jobs outside its proof.
+  nightly:
+    needs: [validate, gate, artifacts]
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.gate.outputs.proof_artifact != '' }}
+    concurrency:
+      group: release-nightly-${{ needs.validate.outputs.version }}
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-go@v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+          cache: false
+      - name: fetch the nightly of this commit, waiting for one still running
+        timeout-minutes: 70
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          # The newest nightly.yml run on main of this commit, waited for while
+          # it runs: 60 polls a minute apart.
+          for poll in $(seq 60) last; do
+            gh run list --repo "$REPO" --workflow nightly.yml --branch main --commit "$SHA" --limit 1 --json databaseId,status --jq '.[] | [.databaseId, .status] | @tsv' >"$RUNNER_TEMP/nightly-run.tsv"
+            IFS=$'\t' read -r run status <"$RUNNER_TEMP/nightly-run.tsv" || { echo "no nightly.yml run on main measured $SHA: dispatch one (gh workflow run nightly.yml --ref main), and re-run this job once it passes" >&2; exit 1; }
+            [ "$status" != completed ] || break
+            [ "$poll" != last ] || { echo "the nightly of $SHA ($GITHUB_SERVER_URL/$REPO/actions/runs/$run) is still $status after 60 minutes: re-run this job once it completes" >&2; exit 1; }
+            echo "the nightly of $SHA ($GITHUB_SERVER_URL/$REPO/actions/runs/$run) is $status; polling again in a minute ($poll of 60)"
+            sleep 60
+          done
+          echo "the nightly of $SHA: $GITHUB_SERVER_URL/$REPO/actions/runs/$run"
+          gh run view "$run" --repo "$REPO" --json jobs --jq '.jobs[] | [.name, .conclusion] | @tsv' >"$RUNNER_TEMP/nightly-jobs.tsv"
+          name="$(gh api "repos/$REPO/actions/runs/$run/artifacts?per_page=100" --jq "[.artifacts[] | select(.expired | not) | .name | select(test(\"^proof-$run-a[0-9]+\$\"))] | sort_by(ltrimstr(\"proof-$run-a\") | tonumber) | last // empty")"
+          [ -n "$name" ] || { echo "the nightly run $run of $SHA kept no proof: dispatch a new one (gh workflow run nightly.yml --ref main), and re-run this job once it passes" >&2; exit 1; }
+          gh run download "$run" --repo "$REPO" -n "$name" -D "$RUNNER_TEMP/nightly"
+      - name: the nightly of this commit passed
         timeout-minutes: 5
         shell: bash
         env:
-          VERSION: ${{ needs.validate.outputs.version }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          commit="$(jq -r .commit "$RUNNER_TEMP/ci/proof/proof.json")"
-          tree="$(jq -r .tree "$RUNNER_TEMP/ci/proof/proof.json")"
-          result="$(jq -r .result "$RUNNER_TEMP/ci/proof/proof.json")"
-          git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' tag -a "$VERSION" -m "OrkStack $VERSION
-          proof: $RUN_URL
-          commit: $commit
-          tree: $tree
-          result: $result"
-          auth="$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 -w0)"
-          echo "::add-mask::$auth"
-          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${GITHUB_SERVER_URL}/.extraheader" GIT_CONFIG_VALUE_0="AUTHORIZATION: basic $auth"
-          git push origin "refs/tags/$VERSION"
+          go run ./test/tools/proofrun verify -commit "$SHA" -nightly "$RUNNER_TEMP/nightly" -nightly-jobs "$RUNNER_TEMP/nightly-jobs.tsv"
 
-  # The release: the images to ghcr.io, each signed by digest, then the GitHub
-  # release with its assets, SHA256SUMS signed. It runs no repository code and
-  # checks out nothing: it holds the only package write, the only contents
-  # write that touch a release and the only signing key, so every step is a
-  # fixed command over the artifacts job's output, which it verifies first.
+  # The release: one job, so one approval. The `release` environment asks
+  # its required reviewers before the job starts; it holds the signing key
+  # and deploys from main only. Then: SHA256SUMS signed, the tag, the images
+  # to ghcr.io, each signed by digest, and the GitHub release with its
+  # assets. It runs no repository code and checks out nothing: it holds the
+  # only package write, the only contents write and the only signing key, so
+  # every step is a fixed command over the artifacts job's output and the
+  # gate's proof, which it checks first. Nothing leaves it, the tag
+  # included, before the key has signed and verified SHA256SUMS.
   publish:
-    needs: [validate, artifacts, tag]
+    needs: [validate, gate, artifacts, verify, nightly]
     # Named results, not the implicit success(), which would also read the
-    # gate's colour through tag (above).
-    if: ${{ !cancelled() && inputs.tag && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.tag.result == 'success' }}
+    # gate's colour (above).
+    if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.verify.result == 'success' && needs.nightly.result == 'success' }}
     # The signing key's secrets live in this environment and reach no other
-    # job; protect it to main (docs/PROOFS.md §10, "Set up release signing").
+    # job; it deploys from main only (docs/PROOFS.md §10, "Set up release
+    # signing").
     environment: release
     concurrency:
       group: release-publish-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 130
+    timeout-minutes: 140
     permissions:
       contents: write
       packages: write
@@ -333,6 +397,11 @@ jobs:
         with:
           name: ${{ needs.artifacts.outputs.artifact }}
           path: ${{ runner.temp }}/release
+      - uses: actions/download-artifact@v8.0.2
+        timeout-minutes: 3
+        with:
+          name: ${{ needs.gate.outputs.proof_artifact }}
+          path: ${{ runner.temp }}/proof
       # Everything is checked before anything is pushed: a version tag, once
       # pushed, never moves.
       - name: check what the artifacts job built
@@ -340,8 +409,12 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ needs.validate.outputs.version }}
+          SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          # The proof verify accepted: a passing release proof of this commit.
+          proof="$RUNNER_TEMP/proof/proof.json"
+          [ "$(jq -r .tier "$proof")" = release ] && [ "$(jq -r .result "$proof")" = pass ] && [ "$(jq -r .commit "$proof")" = "$SHA" ] || { echo "the gate's proof is not a passing release proof of $SHA" >&2; exit 1; }
           cd "$RUNNER_TEMP/release"
           sha256sum -c SHA256SUMS
           # The assets released are exactly the files SHA256SUMS sums.
@@ -389,6 +462,35 @@ jobs:
           cos() { docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e COSIGN_PRIVATE_KEY -e COSIGN_PASSWORD -v "$PWD:/release" -w /release "$cosign" "$@"; }
           cos sign-blob --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes --output-signature SHA256SUMS.sig SHA256SUMS
           cos verify-blob --key meta/cosign.pub --insecure-ignore-tlog=true --signature SHA256SUMS.sig SHA256SUMS
+      # The annotated tag, made through the API: this job checks out nothing.
+      # A version tag never moves: creating its ref fails when it exists, and
+      # one that exists is accepted only when this run made it, on this
+      # commit (a re-run of this job), and refused otherwise.
+      - name: tag
+        timeout-minutes: 5
+        shell: bash
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          SHA: ${{ github.sha }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if ref="$(gh api "repos/$REPO/git/ref/tags/$VERSION" --jq '[.object.type, .object.sha] | @tsv' 2>/dev/null)"; then
+            IFS=$'\t' read -r type object <<<"$ref"
+            [ "$type" = tag ] || { echo "$VERSION already names $type $object, not an annotated tag this run made" >&2; exit 1; }
+            gh api "repos/$REPO/git/tags/$object" >"$RUNNER_TEMP/tag.json"
+            [ "$(jq -r .object.sha "$RUNNER_TEMP/tag.json")" = "$SHA" ] && grep -qxF "proof: $RUN_URL" <<<"$(jq -r .message "$RUNNER_TEMP/tag.json")" || { echo "$VERSION already exists and was not created by this run on $SHA: a version tag never moves" >&2; exit 1; }
+            echo "$VERSION: this run's tag on $SHA, kept"
+            exit 0
+          fi
+          proof="$RUNNER_TEMP/proof/proof.json"
+          message="$(printf 'OrkStack %s\nproof: %s\ncommit: %s\ntree: %s\nresult: %s\n' "$VERSION" "$RUN_URL" "$(jq -r .commit "$proof")" "$(jq -r .tree "$proof")" "$(jq -r .result "$proof")")"
+          object="$(gh api "repos/$REPO/git/tags" -f tag="$VERSION" -f message="$message" -f object="$SHA" -f type=commit \
+            -f 'tagger[name]=github-actions[bot]' -f 'tagger[email]=41898282+github-actions[bot]@users.noreply.github.com' --jq .sha)"
+          gh api "repos/$REPO/git/refs" -f ref="refs/tags/$VERSION" -f sha="$object" >/dev/null
+          echo "$VERSION: tagged $SHA"
       - name: push the images to ghcr.io, byte for byte
         timeout-minutes: 60
         shell: bash
@@ -414,9 +516,10 @@ jobs:
             # A version tag never moves: one that already holds this digest
             # (a re-run of this job) is left alone, and any other is refused.
             # An inspect that fails for any reason is taken for "absent": the
-            # tag job pushed this version's git tag in this run, which fails
-            # for a version released before, so the only image this tag can
-            # hold is this run's own, and the check after the copy proves it.
+            # tag step made this version's git tag in this run, or found this
+            # run's own, and refuses one any other run made, so the only image
+            # this tag can hold is this run's own, and the check after the
+            # copy proves it.
             if sk inspect --raw --authfile /auth.json "docker://$ref:$full" >"$RUNNER_TEMP/have.json" 2>/dev/null; then
               have="sha256:$(sha256sum <"$RUNNER_TEMP/have.json" | cut -d' ' -f1)"
               [ "$have" = "$digest" ] || { echo "$ref:$full already holds $have, not $digest" >&2; exit 1; }

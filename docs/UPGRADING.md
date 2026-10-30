@@ -13,8 +13,9 @@ Before you upgrade, read the **BREAKING** entries in the section of every releas
 ## Release artifacts
 
 Each release is published by `release.yml`, and only after its pre-release
-proof passed, the quickstart's compose file ran end to end on the images it
-publishes, and the README's Quickstart ran as written on a clone of its commit
+proof passed, the nightly of its commit passed, the quickstart's compose file
+ran end to end on the images it publishes, the README's Quickstart ran as
+written on a clone of its commit, and a maintainer approved the publication
 ([PROOFS.md](./PROOFS.md) §5). It publishes:
 
 - **On the GitHub release**, under names that carry no version, so that

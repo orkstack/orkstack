@@ -981,7 +981,11 @@ release tag requires a passing pre-release proof, which runs every deferred
 test, so no tag is made while one fails, and a failing pre-release proof holds
 its release the same way. The pre-release proof runs neither the nightly's own
 lanes nor its vulnerability scan, so a release is not tagged while either is
-red: that is a rule, not a check. A nightly's verdict is its `proof.json`,
+red, and `release.yml` checks it: before it asks for the approval, it refuses
+a commit whose latest completed nightly on `main` did not pass, or that no
+nightly measured, waiting a bounded time for one still running. (`make
+release-tag`, which publishes nothing, leaves it a rule.) A nightly's verdict
+is its `proof.json`,
 not the run's colour (docs/PROOFS.md §10, §12). A nightly part whose runner measured below the
 runner-health floor (`scripts/proof-runner-floors.tsv`) before any test ran is
 a runner failure, not a regression: the proof records that part as
@@ -1263,6 +1267,10 @@ the reference for what each tier runs.
   proof is a passing nightly proof of `main`'s tip.
 - A release tag is created only through `make release-tag` or `release.yml`,
   and both refuse without a passing pre-release proof of the exact commit.
+  `release.yml` also refuses a commit whose nightly did not pass, and it tags
+  and publishes only from `main`, in one job, after one approval of its
+  `release` environment; `make release-tag` tags locally and publishes
+  nothing.
 - A skip is never a pass. The ledgers list every test the binaries report; a
   listed test without an outcome, an unlisted test, and an allowance naming
   no test all fail the gate.

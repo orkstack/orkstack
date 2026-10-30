@@ -16,11 +16,11 @@ import (
 // release.yml builds what a release publishes in `artifacts`, read-only and
 // before anything is tagged, runs the quickstart's compose file on it end to
 // end, and runs the README's Quickstart as written on a clone of the commit;
-// then
-// `publish`, which holds the only package write, pushes the images and creates
-// the GitHub release without checking out or running any repository code
-// (docs/PROOFS.md §10). Each rule returns its problems, and a companion test
-// shows that it bites on a mutated copy.
+// then `publish`, after the one approval, which holds the only package write,
+// tags the commit, pushes the images and creates the GitHub release without
+// checking out or running any repository code (docs/PROOFS.md §10). Each rule
+// returns its problems, and a companion test shows that it bites on a mutated
+// copy.
 
 // releaseImageNames is every image a release publishes.
 var releaseImageNames = []string{
@@ -63,11 +63,13 @@ func releaseArtifactsProblems(w *wfFile) []string {
 	if !contains(job.needs(), "validate") {
 		p = append(p, "jobs.artifacts does not need validate")
 	}
-	if tag, ok := w.Jobs["tag"]; !ok || !contains(tag.needs(), "artifacts") {
-		p = append(p, "jobs.tag does not need artifacts: a version could be tagged that never built or ran")
+	for _, name := range []string{"verify", "publish"} {
+		if job, ok := w.Jobs[name]; !ok || !contains(job.needs(), "artifacts") {
+			p = append(p, "jobs."+name+" does not need artifacts: a version could be tagged that never built or ran")
+		}
 	}
-	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
-		p = append(p, fmt.Sprintf("jobs.artifacts.permissions = %v, want contents: read alone", job.Permissions))
+	if len(job.Permissions) != 2 || job.Permissions["contents"] != "read" || job.Permissions["actions"] != "write" {
+		p = append(p, fmt.Sprintf("jobs.artifacts.permissions = %v, want contents: read, and actions: write for its cancel step", job.Permissions))
 	}
 	p = append(p, validatedGroupProblem("artifacts", job)...)
 	smoke := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "scripts/quickstart-smoke.sh --release") })
@@ -95,8 +97,8 @@ func releaseArtifactsProblems(w *wfFile) []string {
 		if isCheckout(s) && (withString(s, "ref") != "${{ github.sha }}" || withString(s, "persist-credentials") != "false") {
 			p = append(p, fmt.Sprintf("jobs.artifacts %s does not check out github.sha without credentials", s.label(i)))
 		}
-		if holdsToken(s) {
-			p = append(p, fmt.Sprintf("jobs.artifacts %s is handed a token", s.label(i)))
+		if holdsToken(s) && (!strings.Contains(s.Run, cancelRun) || repoCodeInRun.MatchString(s.Run)) {
+			p = append(p, fmt.Sprintf("jobs.artifacts %s is handed a token and does not only cancel the run", s.label(i)))
 		}
 	}
 	return p
@@ -107,7 +109,8 @@ func TestWorkflows_ReleaseBuildsAndSmokesBeforeAnythingIsTagged(t *testing.T) {
 	expectEachMutationRefused(t, "release.yml", releaseArtifactsProblems, []mutation{
 		{"no artifacts job", func(w *wfFile) { delete(w.Jobs, "artifacts") }},
 		{"artifacts can write", func(w *wfFile) { w.Jobs["artifacts"].Permissions["contents"] = "write" }},
-		{"the tag does not wait for artifacts", func(w *wfFile) { w.Jobs["tag"].Needs = []any{"validate", "gate"} }},
+		{"verify does not wait for artifacts", func(w *wfFile) { w.Jobs["verify"].Needs = []any{"validate", "gate"} }},
+		{"publish does not wait for artifacts", func(w *wfFile) { w.Jobs["publish"].Needs = []any{"validate", "gate", "verify"} }},
 		{"no smoke", func(w *wfFile) {
 			job := w.Jobs["artifacts"]
 			for i := range job.Steps {
@@ -183,13 +186,13 @@ func publishProblems(w *wfFile) []string {
 		return []string{"release.yml has no publish job"}
 	}
 	var p []string
-	for _, n := range []string{"validate", "artifacts", "tag"} {
+	for _, n := range []string{"validate", "gate", "artifacts", "verify"} {
 		if !contains(job.needs(), n) {
 			p = append(p, "jobs.publish does not need "+n)
 		}
 	}
 	cond := normalizeIf(job.If)
-	for _, want := range []string{"inputs.tag", "github.ref == 'refs/heads/main'"} {
+	for _, want := range []string{"github.ref == 'refs/heads/main'"} {
 		if !strings.Contains(cond, want) {
 			p = append(p, fmt.Sprintf("jobs.publish.if = %q lacks %q", job.If, want))
 		}
@@ -202,11 +205,13 @@ func publishProblems(w *wfFile) []string {
 	}
 	p = append(p, validatedGroupProblem("publish", job)...)
 	for _, name := range w.jobNames() {
-		if name != "publish" && permLevel(w.Jobs[name].Permissions["packages"]) > 1 {
-			p = append(p, fmt.Sprintf("jobs.%s writes packages; only publish may", name))
+		for _, perm := range []string{"packages", "contents"} {
+			if name != "publish" && permLevel(w.Jobs[name].Permissions[perm]) > 1 {
+				p = append(p, fmt.Sprintf("jobs.%s writes %s; only publish may", name, perm))
+			}
 		}
 	}
-	download, check, push, sign, release := -1, -1, -1, -1, -1
+	download, check, tag, push, sign, release := -1, -1, -1, -1, -1, -1
 	for i, s := range job.Steps {
 		if isCheckout(s) || strings.HasPrefix(s.Uses, "./") {
 			p = append(p, fmt.Sprintf("jobs.publish %s checks out or runs repository code", s.label(i)))
@@ -221,6 +226,8 @@ func publishProblems(w *wfFile) []string {
 			download = i
 		case check < 0 && strings.Contains(s.Run, "sha256sum -c SHA256SUMS"):
 			check = i
+		case tag < 0 && strings.Contains(s.Run, tagRef):
+			tag = i
 		case push < 0 && strings.Contains(s.Run, "copy --all --preserve-digests"):
 			push = i
 		case sign < 0 && strings.Contains(s.Run, imageSignCommand):
@@ -228,13 +235,13 @@ func publishProblems(w *wfFile) []string {
 		case release < 0 && strings.Contains(s.Run, "gh release create"):
 			release = i
 		}
-		if holdsToken(s) && i != push && i != sign && i != release {
-			p = append(p, fmt.Sprintf("jobs.publish %s is handed a token and neither pushes, signs nor releases", s.label(i)))
+		if holdsToken(s) && i != tag && i != push && i != sign && i != release {
+			p = append(p, fmt.Sprintf("jobs.publish %s is handed a token and neither tags, pushes, signs nor releases", s.label(i)))
 		}
 	}
-	if download < 0 || check <= download || push <= check || sign <= push || release <= sign {
-		p = append(p, fmt.Sprintf("jobs.publish runs download %d, checksums %d, push %d, signing %d, release %d: want each, in that order",
-			download, check, push, sign, release))
+	if download < 0 || check <= download || tag <= check || push <= tag || sign <= push || release <= sign {
+		p = append(p, fmt.Sprintf("jobs.publish runs download %d, checksums %d, tag %d, push %d, signing %d, release %d: want each, in that order",
+			download, check, tag, push, sign, release))
 	}
 	if release >= 0 {
 		r := job.Steps[release].Run
@@ -344,9 +351,19 @@ func TestWorkflows_PublishRunsNoRepositoryCodeAndHoldsTheOnlyPackageWrite(t *tes
 			s[push], s[release] = s[release], s[push]
 		}},
 		{"no checksum check", func(w *wfFile) { edit(w, "sha256sum -c SHA256SUMS", "true") }},
-		{"publish on any ref", func(w *wfFile) { w.Jobs["publish"].If = "${{ inputs.tag }}" }},
-		{"publish without the tag", func(w *wfFile) { w.Jobs["publish"].Needs = []any{"validate", "artifacts"} }},
+		{"publish on any ref", func(w *wfFile) { w.Jobs["publish"].If = "${{ !cancelled() }}" }},
+		{"publish without verify", func(w *wfFile) { w.Jobs["publish"].Needs = []any{"validate", "gate", "artifacts"} }},
 		{"another job writes packages", func(w *wfFile) { w.Jobs["artifacts"].Permissions["packages"] = "write" }},
+		{"another job writes contents", func(w *wfFile) { w.Jobs["verify"].Permissions["contents"] = "write" }},
+		{"the tag after the push", func(w *wfFile) {
+			s := steps(w)
+			tag := stepIndex(s, func(s wfStep) bool { return strings.Contains(s.Run, tagRef) })
+			push := stepIndex(s, func(s wfStep) bool { return strings.Contains(s.Run, "copy --all --preserve-digests") })
+			s[tag], s[push] = s[push], s[tag]
+		}},
+		{"a token in the SHA256SUMS signing", func(w *wfFile) {
+			steps(w)[stepIndex(steps(w), func(s wfStep) bool { return strings.Contains(s.Run, blobSignCommand) })].Env["GH_TOKEN"] = "${{ github.token }}"
+		}},
 		{"publish cannot write packages", func(w *wfFile) { delete(w.Jobs["publish"].Permissions, "packages") }},
 		{"a moved version tag", func(w *wfFile) { edit(w, `[ "$have" = "$digest" ]`, "true") }},
 		{"no digest check after the push", func(w *wfFile) { edit(w, `[ "$got" = "$digest" ]`, "true") }},
@@ -492,10 +509,12 @@ func releaseSigningProblems(w *wfFile) []string {
 	runs := func(text string) int {
 		return stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, text) })
 	}
-	blob, push, sign, release := runs(blobSignCommand), runs("copy --all --preserve-digests"), runs(imageSignCommand), runs("gh release create")
+	blob, tag, push, sign, release := runs(blobSignCommand), runs(tagRef), runs("copy --all --preserve-digests"), runs(imageSignCommand), runs("gh release create")
 	switch {
 	case blob < 0:
 		p = append(p, "jobs.publish never signs SHA256SUMS with: "+blobSignCommand)
+	case tag < 0 || blob > tag:
+		p = append(p, "jobs.publish signs SHA256SUMS after the tag: a missing or wrong key would be found once the tag is out")
 	case push < 0 || blob > push:
 		p = append(p, "jobs.publish signs SHA256SUMS after the push: a missing or wrong key would be found once the images are out")
 	}
@@ -595,6 +614,7 @@ func TestWorkflows_ReleaseSignsWhatItPublishes(t *testing.T) {
 		{"no cosign pin handed on", func(w *wfFile) { edit(w, "cp deploy/cosign-image.txt dist/meta/", "true ") }},
 		{"SHA256SUMS unsigned", func(w *wfFile) { edit(w, blobSignCommand, "true") }},
 		{"SHA256SUMS signed after the push", func(w *wfFile) { swap(w, blobSignCommand, "copy --all --preserve-digests") }},
+		{"SHA256SUMS signed after the tag", func(w *wfFile) { swap(w, blobSignCommand, tagRef) }},
 		{"the images unsigned", func(w *wfFile) { edit(w, imageSignCommand, "true") }},
 		{"the images signed before the push", func(w *wfFile) { swap(w, imageSignCommand, "copy --all --preserve-digests") }},
 		{"the release before the signing", func(w *wfFile) { swap(w, imageSignCommand, "gh release create") }},
@@ -624,7 +644,9 @@ func TestWorkflows_ReleaseSignsWhatItPublishes(t *testing.T) {
 	})
 
 	// The key's two secrets are named only where publish signs: four
-	// references in the whole file, at any level a job or step could set env.
+	// references in the whole file, at any level a job or step could set env,
+	// and no other secret: the tag, the push and the release use the job's
+	// own token.
 	raw := workflowFile(t, "release.yml")
 	secrets := regexp.MustCompile(`secrets\.[A-Za-z0-9_]+`).FindAllString(raw, -1)
 	if strings.Join(secrets, " ") != "secrets.COSIGN_PRIVATE_KEY secrets.COSIGN_PASSWORD secrets.COSIGN_PRIVATE_KEY secrets.COSIGN_PASSWORD" {
@@ -729,13 +751,17 @@ func releaseRerunProblems(w *wfFile, proof *wfFile) []string {
 			}
 		}
 	}
-	tag, ok := w.Jobs["tag"]
-	if !ok {
-		return append(p, "release.yml has no tag job")
-	}
-	if at := stepIndex(tag.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/download-artifact@") }); at < 0 ||
-		withString(tag.Steps[at], "name") != "${{ needs.gate.outputs.proof_artifact }}" {
-		p = append(p, "jobs.tag does not download the proof by needs.gate.outputs.proof_artifact")
+	for _, name := range []string{"verify", "publish"} {
+		job, ok := w.Jobs[name]
+		if !ok {
+			p = append(p, "release.yml has no "+name+" job")
+			continue
+		}
+		if stepIndex(job.Steps, func(s wfStep) bool {
+			return strings.HasPrefix(s.Uses, "actions/download-artifact@") && withString(s, "name") == "${{ needs.gate.outputs.proof_artifact }}"
+		}) < 0 {
+			p = append(p, "jobs."+name+" does not download the proof by needs.gate.outputs.proof_artifact")
+		}
 	}
 	call, _ := proof.On["workflow_call"].(map[string]any)
 	outputs, _ := call["outputs"].(map[string]any)
@@ -767,8 +793,8 @@ func TestWorkflows_ReleaseRerunsFindTheirArtifacts(t *testing.T) {
 	expectEachMutationRefused(t, "release.yml", rule, []mutation{
 		{"no output for the upload", func(w *wfFile) { delete(w.Jobs["artifacts"].Outputs, "artifact") }},
 		{"the output is not the upload's name", func(w *wfFile) { w.Jobs["artifacts"].Outputs["artifact"] = "release-x" }},
-		{"the tag reads this attempt's proof", func(w *wfFile) {
-			job := w.Jobs["tag"]
+		{"verify reads this attempt's proof", func(w *wfFile) {
+			job := w.Jobs["verify"]
 			job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/download-artifact@") })].
 				With["name"] = "proof-${{ github.run_id }}-a${{ github.run_attempt }}"
 		}},
@@ -1001,4 +1027,337 @@ func TestWorkflows_ReleaseKnowsWhetherItIsTheLatest(t *testing.T) {
 			delete(job.Steps[stepIndex(job.Steps, isCheckout)].With, "fetch-depth")
 		}},
 	})
+}
+
+// ---- one approval, and a run that stops at its first failure --------------------
+//
+// A dispatch runs validate, then gate and artifacts side by side, then verify,
+// and only on main asks once, for publish, which tags and publishes. GitHub
+// cancels no sibling job, so a small job cancels the run when artifacts fails
+// or the gate's proof did not pass.
+
+// releaseApprovalProblems: exactly one job names an environment, publish, and
+// it is `release`: one job, so one approval. It runs only on main, so a
+// dispatch elsewhere is a dry run that never asks.
+func releaseApprovalProblems(w *wfFile) []string {
+	var p []string
+	for _, name := range w.jobNames() {
+		if env := w.Jobs[name].environment(); env != "" && name != "publish" {
+			p = append(p, fmt.Sprintf("jobs.%s runs in environment %q: a second approval, or a secret outside publish", name, env))
+		}
+	}
+	job, ok := w.Jobs["publish"]
+	if !ok {
+		return append(p, "release.yml has no publish job")
+	}
+	if job.environment() != "release" {
+		p = append(p, fmt.Sprintf("jobs.publish runs in environment %q, not release", job.environment()))
+	}
+	cond := normalizeIf(job.If)
+	if !strings.Contains(cond, "github.ref == 'refs/heads/main'") {
+		p = append(p, fmt.Sprintf("jobs.publish.if = %q runs off main, where a dispatch is a dry run", job.If))
+	}
+	if strings.Contains(cond, "inputs.") {
+		p = append(p, fmt.Sprintf("jobs.publish.if = %q reads an input: the ref and the approval decide, nothing typed", job.If))
+	}
+	// What the tag and the publication need, in the one job.
+	for _, want := range []string{tagRef, "copy --all --preserve-digests", imageSignCommand, "gh release create"} {
+		if stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, want) }) < 0 {
+			p = append(p, "jobs.publish never runs "+want+": the release would need a second job, and a second approval")
+		}
+	}
+	return p
+}
+
+func TestWorkflows_ReleaseAsksForOneApproval(t *testing.T) {
+	expectNoProblems(t, "release.yml", releaseApprovalProblems(loadWorkflow(t, "release.yml")))
+	expectEachMutationRefused(t, "release.yml", releaseApprovalProblems, []mutation{
+		{"no environment", func(w *wfFile) { w.Jobs["publish"].Environment = nil }},
+		{"verify asks too", func(w *wfFile) { w.Jobs["verify"].Environment = "release" }},
+		{"publish off main", func(w *wfFile) {
+			w.Jobs["publish"].If = strings.Replace(w.Jobs["publish"].If, "github.ref == 'refs/heads/main' && ", "", 1)
+		}},
+		{"publish behind an input", func(w *wfFile) {
+			w.Jobs["publish"].If = strings.Replace(w.Jobs["publish"].If, "!cancelled() && ", "!cancelled() && inputs.tag && ", 1)
+		}},
+		{"the tag in a job of its own", func(w *wfFile) {
+			job := w.Jobs["publish"]
+			at := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, tagRef) })
+			w.Jobs["tag"] = &wfJob{Environment: "release", Steps: []wfStep{job.Steps[at]}}
+			job.Steps = append(job.Steps[:at:at], job.Steps[at+1:]...)
+		}},
+	})
+}
+
+// cancelRun is the one command that stops the run.
+const cancelRun = `gh run cancel "$RUN_ID" --repo "$REPO"`
+
+// outcomeFailed matches one `steps.<id>.outcome == 'failure'` clause.
+var outcomeFailed = regexp.MustCompile(`steps\.([a-z0-9_-]+)\.outcome == 'failure'`)
+
+// releaseFailFastProblems: only artifacts stops the run, from its last step,
+// and only when one of its own build, smoke or verification steps (every
+// `run:` step before it, each with an id) failed: never on a checkout, a
+// setup or the upload (`uses:` steps), which a rerun of artifacts alone
+// answers, and never on the gate, whose colour is not its verdict.
+func releaseFailFastProblems(w *wfFile) []string {
+	var p []string
+	for _, name := range w.jobNames() {
+		job := w.Jobs[name]
+		if name != "artifacts" && permLevel(job.Permissions["actions"]) > 1 {
+			p = append(p, fmt.Sprintf("jobs.%s writes actions; only artifacts' cancel step needs to", name))
+		}
+		for i, s := range job.Steps {
+			if strings.Contains(s.Run, cancelRun) && name != "artifacts" {
+				p = append(p, fmt.Sprintf("jobs.%s %s cancels the run; only artifacts may, on its own failures", name, s.label(i)))
+			}
+		}
+	}
+	job, ok := w.Jobs["artifacts"]
+	if !ok {
+		return append(p, "release.yml has no artifacts job")
+	}
+	at := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, cancelRun) })
+	if at < 0 {
+		return append(p, "jobs.artifacts never cancels the run: a release that cannot build leaves the gate running for nothing")
+	}
+	if at != len(job.Steps)-1 {
+		p = append(p, "jobs.artifacts' cancel step is not its last")
+	}
+	s := job.Steps[at]
+	if envString(s, "RUN_ID") != "${{ github.run_id }}" || envString(s, "REPO") != "${{ github.repository }}" || envString(s, "GH_TOKEN") != "${{ github.token }}" {
+		p = append(p, "jobs.artifacts cancels without this run's id, repository and token")
+	}
+	cond := normalizeIf(s.If)
+	if !strings.HasPrefix(cond, "failure() && (") || strings.Contains(cond, "always()") || strings.Contains(cond, "success()") {
+		p = append(p, fmt.Sprintf("the cancel step's if = %q is not failure() && (one of artifacts' own steps failed)", s.If))
+	}
+	wired := map[string]bool{}
+	for _, m := range outcomeFailed.FindAllStringSubmatch(cond, -1) {
+		wired[m[1]] = true
+	}
+	if rest := strings.TrimSpace(outcomeFailed.ReplaceAllString(strings.TrimPrefix(cond, "failure() && "), "")); strings.Trim(strings.ReplaceAll(rest, "||", ""), "() ") != "" {
+		p = append(p, fmt.Sprintf("the cancel step's if = %q holds more than failed-step clauses", s.If))
+	}
+	for i, st := range job.Steps[:at] {
+		switch {
+		case st.Run != "" && st.ID == "":
+			p = append(p, fmt.Sprintf("jobs.artifacts %s builds, smokes or verifies and has no id, so its failure cancels nothing", st.label(i)))
+		case st.Run != "" && !wired[st.ID]:
+			p = append(p, fmt.Sprintf("jobs.artifacts %s (%s) failing does not cancel the run", st.label(i), st.ID))
+		case st.Uses != "" && st.ID != "" && wired[st.ID]:
+			p = append(p, fmt.Sprintf("jobs.artifacts %s (%s) is a checkout, setup or upload: its failure is for a rerun, never a cancel", st.label(i), st.ID))
+		}
+		delete(wired, st.ID)
+	}
+	for id := range wired {
+		p = append(p, fmt.Sprintf("the cancel step reads steps.%s, which is no step of artifacts before it", id))
+	}
+	return p
+}
+
+func TestWorkflows_ReleaseStopsOnlyOnAFailureARerunWouldRepeat(t *testing.T) {
+	expectNoProblems(t, "release.yml", releaseFailFastProblems(loadWorkflow(t, "release.yml")))
+	cancel := func(w *wfFile) *wfStep {
+		job := w.Jobs["artifacts"]
+		return &job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, cancelRun) })]
+	}
+	setup := func(w *wfFile, prefix string) *wfStep {
+		job := w.Jobs["artifacts"]
+		return &job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, prefix) })]
+	}
+	expectEachMutationRefused(t, "release.yml", releaseFailFastProblems, []mutation{
+		{"no cancel", func(w *wfFile) {
+			job := w.Jobs["artifacts"]
+			job.Steps = job.Steps[:len(job.Steps)-1]
+		}},
+		{"the gate cancels too", func(w *wfFile) {
+			c := *cancel(w)
+			w.Jobs["cancel-on-gate-failure"] = &wfJob{Needs: "gate", If: "${{ failure() }}", Permissions: map[string]string{"actions": "write"}, Steps: []wfStep{c}}
+		}},
+		{"a cancel on any failure, setup included", func(w *wfFile) { cancel(w).If = "${{ failure() }}" }},
+		{"a cancel on every outcome", func(w *wfFile) {
+			cancel(w).If = strings.Replace(cancel(w).If, "failure() && (", "always() && (", 1)
+		}},
+		{"a QEMU setup failure cancels", func(w *wfFile) {
+			setup(w, "docker/setup-qemu-action@").ID = "qemu"
+			cancel(w).If = strings.Replace(cancel(w).If, "steps.dist.outcome == 'failure'", "steps.qemu.outcome == 'failure' || steps.dist.outcome == 'failure'", 1)
+		}},
+		{"an upload failure cancels", func(w *wfFile) {
+			setup(w, "actions/upload-artifact@").ID = "upload"
+			cancel(w).If = strings.Replace(cancel(w).If, "steps.meta.outcome == 'failure'", "steps.meta.outcome == 'failure' || steps.upload.outcome == 'failure'", 1)
+		}},
+		{"the image build not wired", func(w *wfFile) {
+			cancel(w).If = strings.Replace(cancel(w).If, " || steps.images.outcome == 'failure'", "", 1)
+		}},
+		{"a smoke with no id", func(w *wfFile) {
+			job := w.Jobs["artifacts"]
+			job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return s.ID == "smoke" })].ID = ""
+		}},
+		{"a clause on a step that does not exist", func(w *wfFile) {
+			cancel(w).If = strings.Replace(cancel(w).If, "steps.meta.outcome", "steps.metadata.outcome", 1)
+		}},
+		{"the cancel before the upload", func(w *wfFile) {
+			job := w.Jobs["artifacts"]
+			n := len(job.Steps)
+			job.Steps[n-1], job.Steps[n-2] = job.Steps[n-2], job.Steps[n-1]
+		}},
+		{"another job writes actions", func(w *wfFile) { w.Jobs["publish"].Permissions["actions"] = "write" }},
+	})
+}
+
+// The release's nightly check: the fetch, holding only a read token, which
+// waits for a nightly of this commit that is still running, and the
+// judgement, holding none.
+const (
+	nightlyFetch = `gh run list --repo "$REPO" --workflow nightly.yml --branch main --commit "$SHA" --limit 1`
+	nightlyJudge = `go run ./test/tools/proofrun verify -commit "$SHA" -nightly "$RUNNER_TEMP/nightly" -nightly-jobs "$RUNNER_TEMP/nightly-jobs.tsv"`
+)
+
+// releaseNightlyProblems: one job, `nightly`, checks the nightly of this exact
+// commit on main, after the gate and the artifacts, so that a nightly
+// dispatched beside the release has had their time to finish, and publish
+// needs it. No job before the gate checks it. The jobs the check names are
+// nightly.yml's, and the proof artifact it reads is the name proof.yml
+// uploads.
+func releaseNightlyProblems(w, nightly, proof *wfFile) []string {
+	var p []string
+	for _, name := range w.jobNames() {
+		for i, s := range w.Jobs[name].Steps {
+			if name != "nightly" && (strings.Contains(s.Run, "nightly.yml") || strings.Contains(s.Run, nightlyJudge)) {
+				p = append(p, fmt.Sprintf("jobs.%s %s checks the nightly; only the nightly job, after the gate and the artifacts, does", name, s.label(i)))
+			}
+		}
+	}
+	job, ok := w.Jobs["nightly"]
+	if !ok {
+		return append(p, "release.yml has no nightly job")
+	}
+	for _, n := range []string{"validate", "gate", "artifacts"} {
+		if !contains(job.needs(), n) {
+			p = append(p, "jobs.nightly does not need "+n+": a nightly dispatched beside the release would not have finished")
+		}
+	}
+	cond := normalizeIf(job.If)
+	for _, want := range []string{"!cancelled()", "github.ref == 'refs/heads/main'", "needs.validate.result == 'success'", "needs.artifacts.result == 'success'"} {
+		if !strings.Contains(cond, want) {
+			p = append(p, fmt.Sprintf("jobs.nightly.if = %q does not require %s", job.If, want))
+		}
+	}
+	if strings.Contains(cond, "always()") || strings.Contains(cond, "||") {
+		p = append(p, fmt.Sprintf("jobs.nightly.if = %q can run past a cancel or a failed need", job.If))
+	}
+	if publish, ok := w.Jobs["publish"]; !ok || !contains(publish.needs(), "nightly") ||
+		!strings.Contains(normalizeIf(publish.If), "needs.nightly.result == 'success'") {
+		p = append(p, "jobs.publish does not need the nightly job's success")
+	}
+	if permLevel(job.Permissions["actions"]) != 1 || permLevel(job.Permissions["contents"]) != 1 || len(job.Permissions) != 2 {
+		p = append(p, fmt.Sprintf("jobs.nightly.permissions = %v, want contents: read and actions: read", job.Permissions))
+	}
+	fetch := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, nightlyFetch) })
+	judge := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, nightlyJudge) })
+	goAt := stepIndex(job.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/setup-go@") })
+	if fetch < 0 || judge < 0 {
+		return append(p, fmt.Sprintf("jobs.nightly does not fetch and judge the nightly of this commit (fetch %d, judge %d)", fetch, judge))
+	}
+	if goAt < 0 || judge < fetch || judge < goAt {
+		p = append(p, "jobs.nightly judges the nightly before it fetched it or set up Go")
+	}
+	f, j := job.Steps[fetch], job.Steps[judge]
+	for _, s := range []wfStep{f, j} {
+		if envString(s, "SHA") != "${{ github.sha }}" {
+			p = append(p, fmt.Sprintf("jobs.nightly %q reads SHA %q, not github.sha", s.Name, envString(s, "SHA")))
+		}
+	}
+	if holdsToken(j) {
+		p = append(p, "jobs.nightly hands the judgement, which runs repository code, a token")
+	}
+	if envString(f, "GH_TOKEN") != "${{ github.token }}" || repoCodeInRun.MatchString(f.Run) {
+		p = append(p, "jobs.nightly's fetch is not gh alone with the job's token")
+	}
+	for _, want := range []struct{ text, says string }{
+		{"for poll in $(seq 60) last; do", "polls at most 60 times"},
+		{"sleep 60", "waits a minute between polls"},
+		{`[ "$status" != completed ] || break`, "waits only while the newest run of the commit is not completed"},
+		{"after 60 minutes: re-run this job", "says to re-run the job once the wait runs out"},
+		{"dispatch one (gh workflow run nightly.yml --ref main)", "says to dispatch a nightly when none measured the commit"},
+		{"select(.expired | not)", "skips an expired proof"},
+		{`"^proof-$run-a[0-9]+\$\"`, "reads the run's own proof-<run>-a<n>"},
+		{"--json jobs", "reads the run's jobs"},
+	} {
+		if !strings.Contains(f.Run, want.text) {
+			p = append(p, "the nightly fetch never "+want.says+" ("+want.text+")")
+		}
+	}
+	if t, ok := f.Timeout.(int); !ok || t < 65 {
+		p = append(p, fmt.Sprintf("the nightly fetch's timeout-minutes = %v, below its 60-minute wait", f.Timeout))
+	}
+	for _, name := range nightlyRunJobs {
+		if _, ok := nightly.Jobs[name]; !ok {
+			p = append(p, "nightly.yml has no job "+name+", which the release's nightly check requires")
+		}
+	}
+	if job, ok := nightly.Jobs["nightly"]; !ok || job.Uses != "./.github/workflows/proof.yml" {
+		p = append(p, "nightly.yml's nightly job does not call proof.yml, whose proof.json the check judges")
+	}
+	if job, ok := proof.Jobs["proof"]; !ok || job.Outputs["proof_artifact"] != "proof-${{ github.run_id }}-a${{ github.run_attempt }}" {
+		p = append(p, "proof.yml's merged proof is not proof-<run>-a<attempt>, the name the nightly check downloads")
+	}
+	return p
+}
+
+func TestWorkflows_ReleaseChecksTheNightlyOfItsCommit(t *testing.T) {
+	nightly, proof := loadWorkflow(t, "nightly.yml"), loadWorkflow(t, "proof.yml")
+	rule := func(w *wfFile) []string { return releaseNightlyProblems(w, nightly, proof) }
+	expectNoProblems(t, "release.yml", rule(loadWorkflow(t, "release.yml")))
+	edit := func(w *wfFile, find, replace string) {
+		for i := range w.Jobs["nightly"].Steps {
+			w.Jobs["nightly"].Steps[i].Run = strings.ReplaceAll(w.Jobs["nightly"].Steps[i].Run, find, replace)
+		}
+	}
+	step := func(w *wfFile, text string) *wfStep {
+		job := w.Jobs["nightly"]
+		return &job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, text) })]
+	}
+	expectEachMutationRefused(t, "release.yml", rule, []mutation{
+		{"no nightly job", func(w *wfFile) { delete(w.Jobs, "nightly") }},
+		{"the check in validate", func(w *wfFile) {
+			w.Jobs["validate"].Steps = append(w.Jobs["validate"].Steps, *step(w, nightlyFetch))
+		}},
+		{"the check before the gate ends", func(w *wfFile) { w.Jobs["nightly"].Needs = []any{"validate"} }},
+		{"publish without the check", func(w *wfFile) { w.Jobs["publish"].Needs = []any{"validate", "gate", "artifacts", "verify"} }},
+		{"publish after a failed check", func(w *wfFile) {
+			w.Jobs["publish"].If = strings.Replace(w.Jobs["publish"].If, " && needs.nightly.result == 'success'", "", 1)
+		}},
+		{"the check on every ref", func(w *wfFile) {
+			w.Jobs["nightly"].If = strings.Replace(w.Jobs["nightly"].If, "github.ref == 'refs/heads/main' && ", "", 1)
+		}},
+		{"the check after a failed build", func(w *wfFile) {
+			w.Jobs["nightly"].If = strings.Replace(w.Jobs["nightly"].If, " && needs.artifacts.result == 'success'", "", 1)
+		}},
+		{"any commit's nightly", func(w *wfFile) { edit(w, ` --commit "$SHA"`, "") }},
+		{"a branch's nightly", func(w *wfFile) { edit(w, " --branch main", " --branch dev") }},
+		{"no wait", func(w *wfFile) { edit(w, "sleep 60", "true") }},
+		{"an unbounded wait", func(w *wfFile) { edit(w, "for poll in $(seq 60) last; do", "for poll in $(seq 100000) last; do") }},
+		{"a judgement of a run still going", func(w *wfFile) { edit(w, `[ "$status" != completed ] || break`, "break") }},
+		{"no re-run hint", func(w *wfFile) { edit(w, "after 60 minutes: re-run this job", "after 60 minutes") }},
+		{"a step limit below the wait", func(w *wfFile) { step(w, nightlyFetch).Timeout = 30 }},
+		{"the judgement handed a token", func(w *wfFile) { step(w, nightlyJudge).Env["GH_TOKEN"] = "${{ github.token }}" }},
+		{"another commit's sha", func(w *wfFile) { step(w, nightlyFetch).Env["SHA"] = "${{ github.event.after }}" }},
+		{"an expired proof", func(w *wfFile) { edit(w, "select(.expired | not) | ", "") }},
+		{"no jobs read", func(w *wfFile) { edit(w, "--json jobs", "--json url") }},
+		{"no dispatch hint", func(w *wfFile) { edit(w, "dispatch one (gh workflow run nightly.yml --ref main)", "no nightly") }},
+		{"the check cannot read actions", func(w *wfFile) { delete(w.Jobs["nightly"].Permissions, "actions") }},
+	})
+	for _, m := range []mutation{
+		{"no vuln job", func(w *wfFile) { delete(w.Jobs, "vuln") }},
+		{"no quickstart job", func(w *wfFile) { delete(w.Jobs, "quickstart") }},
+		{"the nightly proof from elsewhere", func(w *wfFile) { w.Jobs["nightly"].Uses = "./.github/workflows/other.yml" }},
+	} {
+		mutated := loadWorkflow(t, "nightly.yml")
+		m.mutate(mutated)
+		if len(releaseNightlyProblems(loadWorkflow(t, "release.yml"), mutated, proof)) == 0 {
+			t.Errorf("nightly.yml mutation %q is not refused", m.name)
+		}
+	}
 }
