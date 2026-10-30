@@ -385,6 +385,9 @@ its own writes (`internal/api/audit.go`). A record is written once to
 
 - The trail records writes only. Reads, `SubmitRun`, trigger invocations and
   await callbacks are not recorded.
+- A request refused for the type its body declares is not a write and is not
+  recorded: a Connect call in a codec the API does not serve, and a webhook
+  registration whose body is not declared `application/json`.
 - No record carries a secret or a token. The extractors never read a webhook
   secret or a trigger token.
 - The write is best-effort. A failed audit write is logged and counted, and the
@@ -415,6 +418,28 @@ its own writes (`internal/api/audit.go`). A record is written once to
   engine still authenticates no caller, a browser's calls are a caller's like
   any other, and the UI is reached through the same gateway as the API
   ([DEPLOY.md](DEPLOY.md), "The web UI").
+- **A page on another site cannot make the engine act.** The engine grants no
+  CORS preflight: it answers one without an `Access-Control-Allow-Origin`. A
+  browser therefore sends a request to another site only when it needs no
+  preflight: a `GET`, `HEAD` or `POST` with no header beyond the CORS-safelisted
+  ones and a body declared `text/plain`, `application/x-www-form-urlencoded` or
+  `multipart/form-data`, or not declared at all. The API acts on no such
+  request:
+  - a Connect call needs a body declared as one of its codecs, JSON or proto,
+    and anything else is `415` before any handler runs;
+  - `POST /v1/webhooks` needs a body declared `application/json`, and anything
+    else is `415` before the body is read (`internal/api/webhooks.go`,
+    `declaresJSON`; [WEBHOOKS.md](WEBHOOKS.md), "Management");
+  - trigger invoke and the await callback need an `Authorization: Bearer`
+    header, which a page can set on a request to another site only after a
+    preflight, so they read a body whatever type it declares ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md),
+    "Invoking a trigger");
+  - a browser never sends a `DELETE` to another site without a preflight, and
+    no `GET` changes anything.
+
+  Such a page cannot read a response either, since none grants it. This holds
+  for a page on another origin only: a page that reaches the engine by DNS
+  rebinding has the engine's own origin (below).
 - **The admin listener is separate.** `ORK_ADMIN_ADDR` opens a listener only when it
   is set. It serves `/healthz` and `/readyz`, and `/metrics` when Prometheus is
   asked for. `/debug/pprof/` is mounted only when `ORK_PPROF_ENABLED=true`

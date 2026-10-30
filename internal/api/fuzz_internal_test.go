@@ -155,10 +155,12 @@ func FuzzOriginReference(f *testing.F) {
 	})
 }
 
-// FuzzRegisterWebhook posts bodies to the webhook registration door: a 201
-// is only ever one JSON object in UTF-8 whose scope, names and URL satisfy
-// the rules, stored exactly as written with its secret disclosed once; every
-// other outcome is a 400 with the error envelope and stores nothing.
+// FuzzRegisterWebhook posts bodies to the webhook registration door: a body
+// whose declared type is not application/json (any parameters, any case) is
+// a 415 with the error envelope and stores nothing; a 201 is only ever one
+// JSON object in UTF-8 whose scope, names and URL satisfy the rules, stored
+// exactly as written with its secret disclosed once; every other outcome is a
+// 400 with the error envelope and stores nothing.
 func FuzzRegisterWebhook(f *testing.F) {
 	for _, seed := range []string{
 		`{"url":"https://example.test/hooks"}`,
@@ -169,17 +171,47 @@ func FuzzRegisterWebhook(f *testing.F) {
 		`{"url":"https://example.test","secret":"s\ud800"}`, "{\"url\":\"https://example.test/\xff\",\"secret\":\"s\xff\"}", `{"url":"https://example.test","events":null}`,
 		`null`, `[]`, `"x"`, `{`, ``, `{"url":"https://example.test","namespace":"Bad"}`, `{"url":"https://example.test","UNKNOWN":1,"URL":"https://x.test"}`,
 	} {
-		f.Add([]byte(seed))
+		f.Add("application/json", []byte(seed))
 	}
-	f.Fuzz(func(t *testing.T, body []byte) {
+	for _, contentType := range []string{
+		"", "text/plain", "text/plain;charset=UTF-8", "application/x-www-form-urlencoded", "multipart/form-data; boundary=x",
+		"application/json; charset=utf-8", "Application/JSON", " application/json ;charset=utf-8", "application/json; charset",
+		"application/json, text/plain", "application/merge-patch+json", "application/json\x00", "application/jſon",
+	} {
+		f.Add(contentType, []byte(`{"url":"https://example.test/hooks"}`))
+	}
+	f.Fuzz(func(t *testing.T, contentType string, body []byte) {
 		registry := webhooks.NewRegistry()
 		handler := NewWebhookHandler(registry, nil)
 		request := httptest.NewRequest(http.MethodPost, WebhookCollectionPath, bytes.NewReader(body))
+		if contentType != "" {
+			request.Header.Set("Content-Type", contentType)
+		}
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, request)
 		stored := registry.List()
 
+		// The declared essence, read without the parser the door uses: the
+		// media type before any parameter, trimmed and lowercased.
+		essence, _, _ := strings.Cut(contentType, ";")
+		declaredJSON := strings.ToLower(strings.TrimSpace(essence)) == "application/json"
+		if !declaredJSON && recorder.Code != http.StatusUnsupportedMediaType {
+			t.Fatalf("Content-Type %q is not application/json, but the door answered %d: %s", contentType, recorder.Code, recorder.Body.Bytes())
+		}
+		if contentType == "application/json" && recorder.Code == http.StatusUnsupportedMediaType {
+			t.Fatalf("a body declared exactly application/json was refused as an unsupported type")
+		}
+
 		switch recorder.Code {
+		case http.StatusUnsupportedMediaType:
+			var envelope webhookErrorEnvelope
+			if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil || envelope.Error.Code != "invalid_argument" ||
+				!strings.Contains(envelope.Error.Message, "application/json") {
+				t.Fatalf("a 415 must carry the error envelope naming application/json: %s (%v)", recorder.Body.Bytes(), err)
+			}
+			if len(stored) != 0 {
+				t.Fatalf("Content-Type %q was refused, but %+v was stored", contentType, stored)
+			}
 		case http.StatusBadRequest:
 			var envelope webhookErrorEnvelope
 			if err := json.Unmarshal(recorder.Body.Bytes(), &envelope); err != nil || envelope.Error.Code != "invalid_argument" || envelope.Error.Message == "" {
@@ -231,7 +263,7 @@ func FuzzRegisterWebhook(f *testing.F) {
 				}
 			}
 		default:
-			t.Fatalf("body %q answered %d: %s", body, recorder.Code, recorder.Body.Bytes())
+			t.Fatalf("Content-Type %q, body %q answered %d: %s", contentType, body, recorder.Code, recorder.Body.Bytes())
 		}
 	})
 }

@@ -114,6 +114,17 @@ subscription and its secret, `GET /v1/webhooks` lists, and
 adapter has no update. Its writes are audited by the adapter itself. Clients
 use the generated Connect types.
 
+A `POST /v1/webhooks` body must be declared `Content-Type: application/json`.
+Parameters such as `; charset=utf-8` are allowed, and the type is read in any
+case. A body declared as anything else, not declared, or declared with a
+malformed `Content-Type` (such as `application/json; charset`) is `415` with the
+error envelope (`invalid_argument`): it is refused before it is read, so it
+registers nothing and is not recorded in the audit trail. A browser sends a
+body declared `application/json` to another site only after a CORS preflight,
+and the engine grants none, so a page on another site cannot register a
+subscription ([SECURITY_MODEL.md](SECURITY_MODEL.md), "Transport, listeners and
+configuration").
+
 - **Register** validates the events, the URL, the scope and the name, in that
   order, before any write. A refused registration writes nothing. A name another
   subscription of the same namespace scope holds is `AlreadyExists` (`409` on the

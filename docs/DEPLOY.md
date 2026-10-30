@@ -2610,6 +2610,10 @@ does it, so no handler can forget; the classification table is
 `auditedProcedures` (`internal/api/audit.go`), and the recorded actions are
 listed in [UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Control-plane audit trail"
 (webhook writes are recorded over the legacy `/v1/webhooks` routes too).
+A request refused for the type its body declares (`415`: a Connect call in a
+codec the API does not serve, or a `POST /v1/webhooks` body not declared
+`application/json`) is refused before any write is attempted and is not
+recorded.
 Reads are never recorded, and neither is `SubmitRun` nor a trigger or await
 callback invocation: a run's own record and origin are already the durable
 fact, and an object per submit would make the trail a log pipeline.

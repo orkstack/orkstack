@@ -130,7 +130,14 @@ order:
 4. The body **is** the run's input object, not an envelope: `{"count": 3}`
    arrives as `data.count == 3`. It is bounded at 1 MiB (the bound every
    plain-HTTP route on the port shares), must be exactly one JSON object, and
-   an empty body means no input — the declared defaults apply.
+   an empty body means no input — the declared defaults apply. The body is
+   read as JSON whatever `Content-Type` it declares: `curl -d` declares
+   `application/x-www-form-urlencoded`, and a caller may declare none.
+   Declare `application/json` anyway. The route needs no declaration because
+   the bearer token keeps a page on another site out: a page can set an
+   `Authorization` header on a request to another site only after a CORS
+   preflight, and the engine grants none ([SECURITY_MODEL.md](SECURITY_MODEL.md),
+   "Transport, listeners and configuration").
 5. `Ork-Origin-Reference` is validated (at most 256 bytes, no control
    character) before anything is minted; an invalid one is `400`.
 6. The run is started through the ordinary submit path with the namespace,

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strings"
 	"time"
@@ -86,6 +87,17 @@ type registerWebhookRequest struct {
 func NewWebhookHandler(registry *webhooks.Registry, recorder *AuditRecorder) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST "+WebhookCollectionPath, func(w http.ResponseWriter, r *http.Request) {
+		// A body not declared JSON is refused before it is read. A browser
+		// sends a body declared otherwise, or not declared at all, to another
+		// site without asking first; one declared JSON it sends only after a
+		// CORS preflight, which this server never grants. The refusal is not a
+		// write and is not recorded, as Connect's own refusal of a codec it
+		// does not serve never reaches the audit interceptor.
+		if !declaresJSON(r) {
+			writeWebhookError(w, http.StatusUnsupportedMediaType, "invalid_argument",
+				"the request body must be declared Content-Type: application/json")
+			return
+		}
 		status := &statusWriter{ResponseWriter: w}
 		entry := registerWebhook(status, r, registry)
 		recordLegacyWebhook(r, recorder, "POST "+WebhookCollectionPath, entry, status.status())
@@ -192,6 +204,14 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 	entry.Target = hook.ID
 	writeWebhookJSON(w, http.StatusCreated, webhookEnvelope{Webhook: hook})
 	return entry
+}
+
+// declaresJSON reports whether r declares its body application/json, with any
+// parameters (such as charset) and in any case. A missing or malformed
+// Content-Type declares nothing.
+func declaresJSON(r *http.Request) bool {
+	mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	return err == nil && mediaType == "application/json"
 }
 
 // statusWriter remembers the status a handler wrote, so the adapter can
