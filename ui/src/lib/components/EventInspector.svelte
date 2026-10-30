@@ -143,9 +143,9 @@
 		{#if events.length === 0 && streamBroken}
 			<p data-testid="event-log-offline" class="px-1 py-1 text-ink-secondary">
 				Not receiving events. The engine refused or dropped this page's websocket, so this
-				run cannot update live — reload to see its current state. If the engine serves the UI
-				from another origin, it needs
-				<code class="text-ink-secondary">ORK_WS_ALLOWED_ORIGINS</code> to include it.
+				run cannot update live — reload to see its current state. If a proxy in front of the
+				engine changes the Host header, the engine needs
+				<code class="text-ink-secondary">ORK_WS_ALLOWED_ORIGINS</code> to include this page's origin.
 			</p>
 		{:else if events.length === 0}
 			<p data-testid="event-log-waiting" class="px-1 py-1 text-ink-muted">Waiting for events…</p>

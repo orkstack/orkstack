@@ -4,6 +4,11 @@ import type { Budget, NamespaceHold } from "$lib/gen/orkstack/v1/namespace_pb";
 import { namespaceFrom, namespaceLabel } from "$lib/namespace";
 import type { LayoutLoad } from "./$types";
 
+// The UI is a static single-page app the engine serves (internal/webui):
+// every route renders in the browser, from index.html, and no load ever runs
+// on a server.
+export const ssr = false;
+
 // The namespace picker is in the layout because the namespace scopes every
 // page under it. Loading the list here also means an engine that has only the
 // default namespace still renders the control, showing the one name there is
