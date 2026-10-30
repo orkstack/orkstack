@@ -15,7 +15,7 @@
 # reads at build time. Its version is the commit's time when
 # SOURCE_DATE_EPOCH is passed, as `make ui` passes it, so one commit builds
 # the same bytes.
-FROM --platform=$BUILDPLATFORM oven/bun:1.4.3@sha256:ec06c3b6cea04192ae6770c434f668ca41d343ad19fa6472216c7b48be39c598 AS ui-build
+FROM --platform=$BUILDPLATFORM oven/bun:1.4.4@sha256:1d22548f177f4ff38e0c15baa3c2c46c6c2060ba2d1bc573bb4720b407548f1d AS ui-build
 WORKDIR /src/ui
 COPY ui/package.json ui/bun.lock ui/bunfig.toml ./
 RUN bun install --frozen-lockfile
