@@ -372,14 +372,15 @@ beside it.
 
 ### `docker compose up` fails while building
 
-**Cause.** The first build downloads the toolchain images (Go, Bun, Node), the
-Go modules, the UI's packages and the activities' Alpine packages, so it needs
-the network, and a few GB free for Docker. A build also fails when Docker's
-build cache holds a broken layer, or when the clone was edited into a state
-that does not compile.
+**Cause.** The first build downloads the toolchain images (Go, Bun), the Go
+modules, the UI's packages and the activities' Alpine packages, so it needs the
+network, and a few GB free for Docker. A build also fails when Docker's build
+cache holds a broken layer, or when the clone was edited into a state that does
+not compile.
 
-**Confirm.** The output names the failing service and step, for example
-`ork` and its `go build`, or `activity-template` and its download.
+**Confirm.** The output names the failing service and step, for example `ork`
+and its `go build` or the UI's build before it, or `activity-template` and its
+download.
 
 **Fix.** Run the same command again once the network is back. For a broken
 cache, `docker builder prune` and run it again. For a clone that does not
@@ -388,13 +389,13 @@ to the committed code.
 
 ### `docker compose up` stops with "port is already allocated"
 
-**Cause.** The quickstart publishes the UI on 5173, the engine on 8080, the
-Temporal UI on 8233 and its activity registry on 5002, on `127.0.0.1`. The
+**Cause.** The quickstart publishes the engine, and the UI it serves, on 8080,
+the Temporal UI on 8233 and its activity registry on 5002, on `127.0.0.1`. The
 development stack (`make up`) and many other tools use the same ports.
 
-**Fix.** Stop what holds the port, or set `ORKSTACK_UI_PORT`,
-`ORKSTACK_API_PORT`, `ORKSTACK_TEMPORAL_UI_PORT` or `ORKSTACK_REGISTRY_PORT`
-in `.env` and run `docker compose up --build -d --wait` again.
+**Fix.** Stop what holds the port, or set `ORKSTACK_API_PORT` (which moves the
+UI with the API), `ORKSTACK_TEMPORAL_UI_PORT` or `ORKSTACK_REGISTRY_PORT` in
+`.env` and run `docker compose up --build -d --wait` again.
 
 ### `orkctl apply` cannot resolve `127.0.0.1:5002/orkstack/activity-…`
 
@@ -452,11 +453,11 @@ run, and where state lives").
 
 ## The local stack
 
-These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](../Makefile), "up"). The script starts the infrastructure in Docker Compose, then the engine (`ork`), an Orker and the UI as host processes, and waits for each one to answer ([stack.sh](../scripts/stack.sh), `cmd_up`).
+These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](../Makefile), "up"). The script starts the infrastructure in Docker Compose, then the engine (`ork`), an Orker and the UI's dev server as host processes, and waits for each one to answer ([stack.sh](../scripts/stack.sh), `cmd_up`).
 
 ### `make up` times out or stops with "timed out waiting for …"
 
-**Cause.** The script waits for each stage in turn, and gives up when one does not answer in time. The waits are: the Temporal server (60 seconds), the object store (60 seconds), the engine API (60 seconds), the Orker's own answer to the engine (60 seconds), the UI (90 seconds), and finally one check of the browser's socket. A process that exits within two seconds of starting is restarted up to three times, and its last log line is printed each time. The script's comment notes that an Orker losing a race to reach Temporal is the failure it sees most in practice ([stack.sh](../scripts/stack.sh), `start`).
+**Cause.** The script waits for each stage in turn, and gives up when one does not answer in time. The waits are: the Temporal server (60 seconds), the object store (60 seconds), the engine API (60 seconds), the Orker's own answer to the engine (60 seconds), the UI's dev server (90 seconds), and finally one check of the browser's socket, opened through the dev server. A process that exits within two seconds of starting is restarted up to three times, and its last log line is printed each time. The script's comment notes that an Orker losing a race to reach Temporal is the failure it sees most in practice ([stack.sh](../scripts/stack.sh), `start`).
 
 **Confirm.** `make status` shows which processes are running and the state of the containers. Infrastructure has no `.run` log, so use `make infra-logs`. Process logs are `.run/ork.log`, `.run/orker.log` and `.run/ui.log`, and `make logs` follows them.
 
@@ -514,23 +515,31 @@ make down && make up
 
 **Fix.** Push all six images, then `make down && make up`.
 
+### The engine's port shows "This engine was built without its web UI"
+
+**Cause.** The `ork` binary was compiled without the UI's build, so it serves a placeholder page at `/` in its place. `go build ./cmd/ork` builds such a binary, and so does `make build`, which `make up` runs, until `make ui` has written the UI's build into `internal/webui/dist/`. The API on the same port works as always. The release binaries and images, and the quickstart, carry the UI ([DEPLOY.md](./DEPLOY.md), "The web UI").
+
+**Confirm.** The engine's boot log has a `web UI` line with `source=placeholder` (`.run/ork.log` under `make up`).
+
+**Fix.** To work on the UI, open its dev server instead, at http://localhost:5173, which `make up` starts. To have the engine serve the UI, run `make ui` and build `ork` again (`make down && make up` does it), or run `cd ui && bun run build` and start the engine with `ORK_UI_DIR` naming that `ui/build` directory. A release image or `docker compose up` needs neither.
+
 ### The run page never goes live (no events, the log stays empty)
 
-**Cause.** The browser's socket is refused. The UI is served from a different port than the engine, so every WebSocket is cross-origin. The engine accepts only the origins listed in `ORK_WS_ALLOWED_ORIGINS`, and its default is same-origin only. The local stack allows `localhost` and `127.0.0.1` on the UI's port. The page still renders and a refresh still works, because a refresh reads through the same-origin Connect proxy. The refused upgrade is logged as `websocket upgrade refused` (`internal/api/ws.go`, `NewWebSocketBridge`; [stack.sh](../scripts/stack.sh), `cmd_up`; [DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas").
+**Cause.** The browser's socket is refused. The engine admits a socket from its own origin only, unless `ORK_WS_ALLOWED_ORIGINS` lists another: it compares the host of the request's `Origin` with the request's `Host`. The UI the engine serves is on its own origin, and the UI's dev server forwards its sockets keeping the `Host` header, so neither needs the setting. The usual cause is something between the browser and the engine that rewrites `Host`, such as a reverse proxy or an ingress, or a page served from another origin. The page still renders and a refresh still works, because a refresh reads through Connect rather than the socket. The refused upgrade is logged as `websocket upgrade refused`, with the origin and the host it compared (`internal/api/ws.go`, `NewWebSocketBridge`; [DEPLOY.md](./DEPLOY.md), "The web UI").
 
-**Confirm.** `make up` prints `websocket ready` when the origin is accepted, and stops with "the engine refuses websockets from …" when it is not. To run the same probe by hand, the stack's request is:
+**Confirm.** The engine's log (`.run/ork.log` under `make up`) has `websocket upgrade refused`. `make up` checks the socket once, through the dev server: it prints `websocket ready` when the socket is accepted, and stops with "the engine refuses the websockets the dev server proxies from …" when it is not ([stack.sh](../scripts/stack.sh), `cmd_up`). To ask the engine directly, send it a socket request with the `Origin` the browser sends and the `Host` it reaches the engine with. A same-origin request is accepted:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 \
   -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
   -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-  -H 'Origin: http://localhost:5173' \
+  -H 'Origin: http://127.0.0.1:8080' \
   'http://127.0.0.1:8080/ws/runs/ork-probe-nonexistent?from_sequence=0'
 ```
 
 A `404` means the origin is accepted, because the probe run does not exist. A `403` means it is refused.
 
-**Fix.** Add the UI's origin to `ORK_WS_ALLOWED_ORIGINS`, as a comma-separated list of `host:port` or `scheme://host:port` values. Then run `make down && make up`, because the running engine keeps the setting it started with. A deployment sets `engine.ws_allowed_origins` on every replica ([DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas").
+**Fix.** Have the proxy keep the `Host` header the browser sent ([DEPLOY.md](./DEPLOY.md), "The web UI"), or add the page's origin to `ORK_WS_ALLOWED_ORIGINS`, as a comma-separated list of `host:port` or `scheme://host:port` values, and restart the engine, which keeps the setting it started with (`make down && make up` under `make up`). A deployment sets `engine.ws_allowed_origins` on every replica ([DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas").
 
 ### `host.docker.internal` does not resolve inside a container (Linux)
 

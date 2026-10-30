@@ -19,11 +19,16 @@ git clone https://github.com/orkstack/orkstack.git
 cd orkstack
 make infra-up          # Temporal, an object store and a local registry, in Docker
 make -C images push    # build the first-party activity images into that registry
-make up                # build ork, orker and orkctl; start them and the UI
+make up                # build ork, orker and orkctl; start them and the UI's dev server
 ```
 
-The UI is at http://localhost:5173. Use `./bin/orkctl` wherever these docs
-say `orkctl`. `make down` stops what `make up` started.
+The UI is at http://localhost:5173, served by its dev server with hot reload;
+its API and live-stream calls go to the engine on 8080. Use `./bin/orkctl`
+wherever these docs say `orkctl`. `make down` stops what `make up` started.
+
+The engine serves the UI built into `bin/ork` at http://localhost:8080. A
+build from Go alone serves a placeholder page there: `make ui` builds the UI
+into `ork`, in Docker, and `make build` then embeds it.
 
 ## Check a change
 

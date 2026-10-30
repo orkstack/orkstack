@@ -42,22 +42,21 @@ https://github.com/orkstack/orkstack.git`).
 docker compose up --build -d --wait
 ```
 
-[`compose.yaml`](../compose.yaml), at the root of the clone, builds the
-engine, the Orker, the UI, `orkctl` and the six first-party activity images
-from the clone, then starts Temporal, SeaweedFS as the S3-compatible object
-store, an image registry for the activities, the engine, one Orker and the UI.
-It returns once each one passes its health check. The first build downloads
-the toolchains' images and the dependencies and takes a few minutes; later
-builds reuse Docker's build cache. Everything listens on this machine's
-loopback only:
+[`compose.yaml`](../compose.yaml), at the root of the clone, builds the engine
+(with the UI built into it), the Orker, `orkctl` and the six first-party
+activity images from the clone, then starts Temporal, SeaweedFS as the
+S3-compatible object store, an image registry for the activities, the engine,
+which serves the UI, and one Orker. It returns once each one passes its health
+check. The first build downloads the toolchains' images and the dependencies
+and takes a few minutes; later builds reuse Docker's build cache. Everything
+listens on this machine's loopback only:
 
 | What | Where |
 |---|---|
-| UI | http://localhost:5173 |
-| Engine API | http://localhost:8080 |
+| UI and engine API | http://localhost:8080 |
 | Temporal UI | http://localhost:8233 |
 
-If a port is taken, set `ORKSTACK_UI_PORT`, `ORKSTACK_API_PORT`,
+If a port is taken, set `ORKSTACK_API_PORT` (which moves the UI with the API),
 `ORKSTACK_TEMPORAL_UI_PORT` or `ORKSTACK_REGISTRY_PORT` (the registry, 5002)
 in a `.env` file beside `compose.yaml`. `docker compose ps` shows what is
 running, and `docker compose logs -f ork orker` follows the engine's and the

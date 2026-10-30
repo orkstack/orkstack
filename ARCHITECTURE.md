@@ -54,10 +54,13 @@ Trigger, Schedule, Stats, Cache, Automation, Audit) on one h2c port, plus
 `/ws/runs/{id}` and the per-task log socket, and two plain-HTTP route families
 meant for callers outside the operator's boundary: trigger invoke
 (`POST /v1/triggers/{id}`) and the await callback door
-(`POST /v1/runs/{run}/awaits/{task}[/reject]`). OrkStack does not
-authenticate callers; the deployment's gateway does, and may assert a
-principal in `Ork-Principal`. An interceptor writes one immutable audit record
-for every control-plane write.
+(`POST /v1/runs/{run}/awaits/{task}[/reject]`). The same port serves the web
+UI at `/` (`internal/webui`): its static build, compiled into `ork` or read
+from `ORK_UI_DIR`, where a path that names no file is a route of the app and
+gets its page, and a path the API owns (`/orkstack.v1.*`, `/v1/`, `/ws/`)
+never does. OrkStack does not authenticate callers; the deployment's gateway
+does, and may assert a principal in `Ork-Principal`. An interceptor writes one
+immutable audit record for every control-plane write.
 
 **Submit preparation** is the last point where anything outside the
 definition can shape a run, because workflow code may read nothing but its
@@ -184,8 +187,10 @@ retention plus a margin, and is never a user setting.
 ### Clients (`cmd/orkctl`, `ui/`)
 
 `orkctl` is a Cobra CLI with human output by default and `--json` for
-automation; the SvelteKit UI uses the generated Connect clients. Both perform
-the same operations with the same selectors and errors
+automation; the UI is a static SvelteKit app that `ork` embeds and serves at
+`/` on its API port, so it calls the generated Connect clients and opens its
+sockets on its own origin, with no server of its own and no proxy. Both
+perform the same operations with the same selectors and errors
 ([docs/UI_CLI_PARITY.md](docs/UI_CLI_PARITY.md)). `orkctl apply` also applies
 automation documents by planning against `AutomationService` and sending each
 planned write to its ordinary RPC.
