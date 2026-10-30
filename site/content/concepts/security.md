@@ -40,6 +40,10 @@ OrkStack does not authenticate callers. Your gateway does. The gateway may asser
 
 Trigger tokens and await callback tokens are shown once. OrkStack stores only a salted hash of each.
 
+## The web UI
+
+The engine serves the web UI on its own API port, so the UI's calls and live streams are same-origin. The engine admits a live stream from its own origin only, unless `ORK_WS_ALLOWED_ORIGINS` lists another, and the UI needs no entry. The UI's page refuses to be framed by another site. Serving the UI adds no login: a browser reaches it through the same gateway as any other caller.
+
 ## What this does not cover
 
 - Who may reach the API, and what they may do. That is your gateway's job. Listening on loopback, as the quickstart does, is not a login: any program on the machine, or a web page using DNS rebinding, can reach it.
@@ -53,4 +57,5 @@ Trigger tokens and await callback tokens are shown once. OrkStack stores only a 
 - [docs/SECURITY_MODEL.md, Who holds what](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#who-holds-what): what each component holds, and what it never holds.
 - [docs/SECURITY_MODEL.md, What the Orker refuses](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#what-the-orker-refuses): the refusals, and the container profile.
 - [docs/SECURITY_MODEL.md, Secrets](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#secrets): sources, lists and refusals.
+- [docs/SECURITY_MODEL.md, Transport, listeners and configuration](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#transport-listeners-and-configuration): the API listener, the web UI on it, and the admin listener.
 - [docs/SECURITY_MODEL.md, What this model does not cover](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#what-this-model-does-not-cover): the areas left to the deployment.

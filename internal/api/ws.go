@@ -63,7 +63,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 				"origin", r.Header.Get("Origin"),
 				"host", r.Host,
 				"allowed_origins", allowedOrigins,
-				"hint", "set ORK_WS_ALLOWED_ORIGINS to the origin serving the UI")
+				"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin")
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
 		}
@@ -98,7 +98,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 				"origin", r.Header.Get("Origin"),
 				"host", r.Host,
 				"allowed_origins", allowedOrigins,
-				"hint", "set ORK_WS_ALLOWED_ORIGINS to the origin serving the UI",
+				"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin",
 				"error", err)
 			return
 		}
@@ -289,7 +289,7 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 				"run_id", runID, "task_id", taskID,
 				"origin", r.Header.Get("Origin"), "host", r.Host,
 				"allowed_origins", allowedOrigins,
-				"hint", "set ORK_WS_ALLOWED_ORIGINS to the origin serving the UI")
+				"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin")
 			http.Error(w, "origin not allowed", http.StatusForbidden)
 			return
 		}
@@ -316,7 +316,7 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 				"run_id", runID, "task_id", taskID,
 				"origin", r.Header.Get("Origin"), "host", r.Host,
 				"allowed_origins", allowedOrigins,
-				"hint", "set ORK_WS_ALLOWED_ORIGINS to the origin serving the UI",
+				"hint", "the engine serves its UI on its own origin; a page on another origin, or a proxy that rewrites Host, needs ORK_WS_ALLOWED_ORIGINS to name the page's origin",
 				"error", err)
 			return
 		}

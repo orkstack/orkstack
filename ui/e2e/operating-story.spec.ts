@@ -24,6 +24,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -49,9 +50,9 @@ const BUCKET = ownBucket('operating-story');
 //                        those are store writes any replica may serve
 //                        (AGENTS.md §7), which is the same reasoning
 //                        logs-dashboard.spec.ts test 3 already rests on for
-//                        an orkflow edit.
-//   UI       (:14181)   the production build, proxying Connect to B and
-//                        pointing the browser's WebSockets at B.
+//                        an orkflow edit. B also serves the UI, the
+//                        production build, at its own origin, so the
+//                        browser's Connect calls and WebSockets reach B.
 //   orker main           the default pool — runs the chatty container task.
 //   orker batch           ORK_ORKER_POOL=batch — the second pool this run's
 //                        own namespace's pool policy names.
@@ -64,8 +65,8 @@ const BUCKET = ownBucket('operating-story');
 
 const ENGINE_A = 'http://127.0.0.1:18190';
 const ENGINE_B = 'http://127.0.0.1:18191';
-const ENGINE_B_WS = 'ws://127.0.0.1:18191';
-const UI_ORIGIN = 'http://127.0.0.1:14181';
+// The UI is engine B's own origin: B serves the build beside its API.
+const UI_ORIGIN = ENGINE_B;
 
 const TEMPORAL_NAMESPACE = temporalNamespace('operating-story');
 // The image every container task here runs. It is activity-shell rather than a
@@ -213,7 +214,7 @@ test.beforeAll(async () => {
 
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18190, 18191, 14181]) {
+	for (const port of [18190, 18191]) {
 		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
 	}
 
@@ -237,8 +238,8 @@ test.beforeAll(async () => {
 		...catalogEnv,
 		...cluster,
 		...storeEnv(BUCKET),
-		ORK_HTTP_ADDR: '127.0.0.1:18191',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv(),
+		ORK_HTTP_ADDR: '127.0.0.1:18191'
 	});
 	// Each Orker gets its own work root, which is both the bind-mountable
 	// workspace path and what its identity lock is keyed on (see orkerEnv).
@@ -257,19 +258,7 @@ test.beforeAll(async () => {
 	await waitForEngine(ENGINE_B);
 	note(`engine A up at ${ENGINE_A} (starts runs only); engine B up at ${ENGINE_B} (every read)`);
 
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14181',
-			ENGINE_API_URL: ENGINE_B,
-			PUBLIC_ENGINE_WS_URL: ENGINE_B_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui, proxied to engine B', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui, served by engine B', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	await waitFor('the main pool reports a live Orker', async () => {
 		const answer = await rpcB<{ pools?: { name: string; liveOrkerCount?: number }[] }>(
@@ -324,8 +313,8 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 			`reported ${statusWhileFollowing.run.status} — the CLI follow saw bytes before the run ended`
 	);
 
-	// The browser half, pointed at engine B throughout — the UI server was
-	// started proxying Connect and WebSockets to B alone.
+	// The browser half, pointed at engine B throughout — B serves the UI, so
+	// the page's Connect calls and WebSockets reach B alone.
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-id')).toHaveText(run);
 	await page.evaluate(() => {

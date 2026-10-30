@@ -12,7 +12,6 @@ defineRunPageCeilingSpec({
 	title: 'the run page at the gated task size is interactive within 5 s, live and finished',
 	tasks: Number(process.env.ORK_SOAK_TASKS ?? 4000),
 	enginePort: 18471,
-	uiPort: 14471,
 	orkflowPrefix: 'run-page-gated',
 	sizeNote: 'the deployment default engine.orkflow_max_tasks; the engine runs at its defaults'
 });

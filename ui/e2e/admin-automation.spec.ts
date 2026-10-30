@@ -22,6 +22,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -56,8 +57,8 @@ const BUCKET = ownBucket('admin-automation');
 // POSTs to it. Cleanup stops exactly the processes this spec started, by PID.
 
 const ENGINE = 'http://127.0.0.1:18101';
-const ENGINE_WS = 'ws://127.0.0.1:18101';
-const UI_ORIGIN = 'http://127.0.0.1:14201';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-admin-automation-${STAMP}`;
 const NS = `auto-${STAMP}`;
@@ -149,7 +150,7 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18101, 14201]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18101)) throw new Error('port 18101 already in use');
 
 	receiver = createServer((req, res) => {
 		const chunks: Buffer[] = [];
@@ -170,22 +171,13 @@ test.beforeAll(async () => {
 			...catalogEnv,
 			...cluster,
 			...storeEnv(BUCKET),
-			ORK_HTTP_ADDR: '127.0.0.1:18101',
-			ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+			...uiEnv(),
+			ORK_HTTP_ADDR: '127.0.0.1:18101'
 		})
 	);
 	mine.push(spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('admin-automation') }));
-	mine.push(
-		spawnLogged(
-			out('ui.log'),
-			'node',
-			['build'],
-			{ HOST: '127.0.0.1', PORT: '14201', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS },
-			uiDir
-		)
-	);
 	await waitForEngine(ENGINE);
-	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/admin/automation`)).ok);
+	await waitFor('UI', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { liveOrkerCount?: number }[] }>('NamespaceService/ListPools', {});
 		return (answer.pools ?? []).some((pool) => (pool.liveOrkerCount ?? 0) > 0);

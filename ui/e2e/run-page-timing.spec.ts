@@ -25,6 +25,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -53,8 +54,8 @@ const BUCKET = ownBucket('run-page-timing');
 // namespace of this spec's own (AGENTS.md §11.1).
 
 const ENGINE = 'http://127.0.0.1:18293';
-const ENGINE_WS = 'ws://127.0.0.1:18293';
-const UI_ORIGIN = 'http://127.0.0.1:14293';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 
 const TEMPORAL_NAMESPACE = temporalNamespace('run-timing');
 const STAMP = Date.now().toString(36);
@@ -178,9 +179,7 @@ test.beforeAll(async () => {
 	// Prerequisites are failures, never skips (AGENTS.md §11.1).
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18293, 14293]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(18293)) throw new Error('port 18293 already in use (stray process?)');
 
 	// The retry stub: the first request loses its connection, every later one
 	// is answered — deterministic, no clock.
@@ -206,17 +205,10 @@ test.beforeAll(async () => {
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18293',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv()
 	});
 	await waitForEngine(ENGINE);
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{ HOST: '127.0.0.1', PORT: '14293', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE_WS },
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: waitOrkflow() });
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: flakyOrkflow() });
@@ -341,11 +333,11 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 		}
 		await route.continue();
 	});
-	// The browser's own GetRun reads: the first loader answer is the server's,
-	// so one here is the re-read the socket's replayed RUN_SUCCEEDED starts.
-	let rereads = 0;
+	// The browser's GetRun reads, the reload's own load first among them:
+	// each is a loader answer the seed has to survive.
+	let runReads = 0;
 	page.on('request', (request) => {
-		if (request.url().endsWith('/orkstack.v1.RunService/GetRun')) rereads++;
+		if (request.url().endsWith('/orkstack.v1.RunService/GetRun')) runReads++;
 	});
 	await page.reload();
 	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED');
@@ -354,12 +346,12 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 	await expect(page.getByTestId('task-flaky-retries')).toHaveCount(0);
 	await shot(page, 'timing-before-seed.png');
 	await expect(page.getByTestId('task-flaky-retries')).toBeVisible({ timeout: 30_000 });
-	// Once, though the socket's replayed RUN_SUCCEEDED re-reads the run: a
-	// finished run's timeline is final, so that later loader answer keeps it.
-	await expect.poll(() => rereads, { timeout: 30_000 }).toBeGreaterThan(0);
+	// Once, however many loader answers the page merges: a finished run's
+	// timeline is final, so a later loader answer keeps it.
+	await expect.poll(() => runReads, { timeout: 30_000 }).toBeGreaterThan(0);
 	await page.waitForLoadState('networkidle');
 	expect(seedAsked).toBe(1);
-	note(`P5 one seed read across ${rereads + 1} loader answers (the server's and ${rereads} re-read)`);
+	note(`P5 one seed read across ${runReads} loader answers`);
 	await page.getByTestId('task-inspect-toggle-flaky').click();
 	await expect(page.getByTestId('task-flaky-attempts')).toBeVisible();
 	await expect(page.getByTestId('attempt-flaky-2-phases')).toBeVisible({ timeout: 30_000 });

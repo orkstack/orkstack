@@ -1110,7 +1110,9 @@ awaiting.
   `callback: true`, with that await's own token, and answers `202` once the
   resolution is recorded in the run's history. The token is the capability:
   it resolves exactly the await it was minted for, in the run's own
-  namespace, and nothing else, and it grants no read.
+  namespace, and nothing else, and it grants no read. The body is read as
+  JSON whatever `Content-Type` it declares, as on the trigger route
+  ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md), "Invoking a trigger").
 
 A completion's values are bounded by the deployment's values limit and stored
 as an immutable object; they reach a downstream container only as its

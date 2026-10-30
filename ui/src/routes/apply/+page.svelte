@@ -199,9 +199,9 @@
 </form>
 
 <!--
-	The gallery is the repo's `examples/` directory, read at build time by
-	+page.server.ts; an example's YAML is fetched from /apply/examples/[slug]
-	only when it is chosen. "Use this example" is then the same plain
+	The gallery is the repo's `examples/` directory, read at build time into
+	/apply/examples.json (the cards) and one /apply/examples/[file] per
+	document; an example's YAML is fetched only when it is chosen. "Use this example" is then the same plain
 	assignment `importYaml` makes, so it flows through the existing dirty
 	check: the change is flagged as unsaved and the guardUnsaved guard still
 	protects it, but loading an example is not itself a navigation and does
@@ -230,6 +230,9 @@
 			</div>
 		{/each}
 	</div>
+	{#if data.examplesError}
+		<div class="mt-3"><ErrorPanel testid="apply-examples-error" message={data.examplesError} /></div>
+	{/if}
 	{#if exampleError}
 		<div class="mt-3"><ErrorPanel testid="apply-example-error" message={exampleError} /></div>
 	{/if}

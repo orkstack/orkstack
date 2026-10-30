@@ -23,6 +23,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -86,8 +87,8 @@ import { OP, addListFilter, adminNamespaceUrl, expectNamespace, selectNamespace 
 //     lever reproduces that failure (see the comment on that test).
 
 const ENGINE = 'http://127.0.0.1:18085';
-const ENGINE_WS = 'ws://127.0.0.1:18085';
-const UI_ORIGIN = 'http://127.0.0.1:14177';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 
 const STAMP = Date.now().toString(36);
 // Owned by this invocation, never taken from ORK_TEMPORAL_NAMESPACE: the
@@ -223,9 +224,7 @@ test.beforeAll(async () => {
 
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18085, 14177]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(18085)) throw new Error('port 18085 already in use (stray process?)');
 	// A genuine pool-unavailable proof (the last test below) deletes this
 	// run's OWN Temporal namespace through the `temporal` CLI's operator
 	// commands — the same tool the versioning integration tests already
@@ -256,8 +255,8 @@ test.beforeAll(async () => {
 		...catalogEnv,
 		...cluster,
 		...store,
-		ORK_HTTP_ADDR: '127.0.0.1:18085',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv(),
+		ORK_HTTP_ADDR: '127.0.0.1:18085'
 	});
 	// The default pool's Orker — captured so the last-but-one test can kill
 	// THIS process alone, not the `gpu` one, and not through killStarted's
@@ -302,19 +301,7 @@ test.beforeAll(async () => {
 		ORK_DEAF_QUEUE: 'ork-pool-deaf'
 	});
 
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14177',
-			ENGINE_API_URL: ENGINE,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	// Both Orkers have to be polling before pool health can show live counts.
 	await waitFor('the main pool reports a live Orker', async () => {
@@ -948,9 +935,9 @@ test('pool health is namespace-scoped, and reports live Orker counts for every p
 //
 // The delay is injected on the BROWSER's own fetch (`page.route`), exactly
 // as the existing "a failed Admin read…" test at the bottom of this file
-// does, and for the identical reason: a client-side navigation's `load`
-// runs in the browser, unlike the first request of a `page.goto`, which
-// runs on the Node SSR server where `page.route` cannot see it.
+// does, and only once the first page is on screen: every `load` runs in the
+// browser, a `page.goto`'s too, so a route installed earlier would gate the
+// page this test starts from rather than the navigation it measures.
 test('a client-side navigation between Admin tabs shows a loading state until the destination is ready', async ({
 	page
 }) => {
@@ -1347,9 +1334,8 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 
 	// A client-side navigation forces the re-fetch this assertion depends
 	// on: SvelteKit does not always re-run `load` for a URL already visited
-	// in this session, and page.route (unused here) would not see the Node
-	// SSR server's first fetch of a page.goto anyway. The namespace picker's
-	// switch handler already calls goto(..., { invalidateAll: true }).
+	// in this session. The namespace picker's switch handler already calls
+	// goto(..., { invalidateAll: true }).
 	const pools = ['main', 'cpu', 'gpu', 'deaf'];
 	await waitFor(
 		'pool health reports every pool as unavailable once Temporal is gone',
@@ -1390,13 +1376,14 @@ test('a pool health read that cannot reach the cluster reports every pool as unk
 // touches Temporal (internal/api/namespaces.go reads only the durable
 // registry), so this still works after the real outage above.
 test('a failed Admin read reports the failure and retries', async ({ page }) => {
-	// Navigate to a neutral page on a normal fetch first, THEN break the read
-	// and go client-side (a link click): `load` for the FIRST request of a
-	// browser navigation runs on the Node SSR server, invisible to
-	// page.route, which only sees the browser's own fetch — the same
-	// reason the pool-health fault injection above uses a link click rather
-	// than page.goto.
+	// Navigate to a neutral page on a normal fetch first, and wait until it is
+	// on screen, THEN break the read and go client-side (a link click): the
+	// root layout reads ListNamespaces too, in the browser, and a page is
+	// drawn only once its loads have answered, so a route installed before
+	// the tabs show could fail the page this test starts from rather than the
+	// Namespaces tab it measures.
 	await page.goto(`${UI_ORIGIN}/admin?ns=default`);
+	await expect(page.getByTestId('admin-tab-namespaces')).toBeVisible();
 	await page.route('**/orkstack.v1.NamespaceService/ListNamespaces', (route) => route.abort());
 	await page.getByTestId('admin-tab-namespaces').click();
 

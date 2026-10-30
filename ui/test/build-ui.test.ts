@@ -23,7 +23,7 @@ function setScript(dir: string, script: string): void {
 	writeFileSync(`${dir}/package.json`, JSON.stringify({ name: 'fake-ui', scripts: { build: script } }));
 }
 
-const builds = 'echo run >> runs.txt && mkdir -p build && echo server > build/index.js';
+const builds = 'echo run >> runs.txt && mkdir -p build && echo page > build/index.html';
 const runs = (dir: string) => (existsSync(`${dir}/runs.txt`) ? readFileSync(`${dir}/runs.txt`, 'utf8').trim().split('\n').length : 0);
 const marker = (dir: string) => `${dir}/build/${BUILD_HASH_FILE}`;
 
@@ -47,10 +47,10 @@ test('it builds once, writes the inputs hash, and reuses the build while the inp
 		writeFileSync(`${dir}/src/app.txt`, 'two');
 		expect(ensureUIBuild(dir)).toBe('built');
 		expect(runs(dir)).toBe(2);
-		// A stale hash, and a build with no server entry: built again.
+		// A stale hash, and a build with no fallback page: built again.
 		writeFileSync(marker(dir), 'stale\n');
 		expect(ensureUIBuild(dir)).toBe('built');
-		rmSync(`${dir}/build/index.js`);
+		rmSync(`${dir}/build/index.html`);
 		expect(ensureUIBuild(dir)).toBe('built');
 		expect(runs(dir)).toBe(4);
 	} finally {
@@ -67,9 +67,9 @@ test('a failed build throws and leaves no hash, so the next caller builds again'
 		setScript(dir, 'echo run >> runs.txt && exit 1');
 		expect(throws(() => ensureUIBuild(dir))).toBe(true);
 		expect(existsSync(marker(dir))).toBe(false);
-		// A build that exits 0 and writes no server entry fails too.
+		// A build that exits 0 and writes no fallback page fails too.
 		setScript(dir, 'echo run >> runs.txt && mkdir -p build');
-		rmSync(`${dir}/build/index.js`);
+		rmSync(`${dir}/build/index.html`);
 		expect(throws(() => ensureUIBuild(dir))).toBe(true);
 		expect(existsSync(marker(dir))).toBe(false);
 		// The positive control: a working build after both is built and marked.

@@ -12,22 +12,24 @@ Developing it needs:
 - **Docker** with Compose v2, for the infrastructure, every task and the
   integration suites;
 - **Go**, the version in [`go.mod`](./go.mod), to build `ork`, `orker` and
-  `orkctl`;
-- **Bun**, the version `.github/workflows/proof.yml` pins, for the UI and the
-  site;
+  `orkctl`. A Go-only build of `ork` serves a placeholder page in place of
+  the UI until `make ui` builds the UI into it, in Docker;
+- **Bun**, the version `.github/workflows/proof.yml` pins, for the UI's dev
+  server, checks and tests, and the site;
 - **make**, **git** and **curl**.
 
 ## The local development stack
 
 The stack built from this checkout, for working on OrkStack itself: the
-engine, the Orker and the UI run on the host, so a change is a rebuild away.
-It uses the quickstart's ports (5173, 8080, 8233), so stop one before
-starting the other:
+engine, the Orker and the UI's dev server run on the host, so a change is a
+rebuild away, and a change to the UI is on the page as soon as it is saved.
+It uses the quickstart's ports (8080, 8233), and 5173 for the UI's dev
+server, so stop one before starting the other:
 
 ```bash
 make infra-up        # Temporal, SeaweedFS and a local registry, in Docker
 make -C images push  # the first-party activity images, into that registry
-make up              # build ork, orker and orkctl; start them and the UI
+make up              # build ork, orker and orkctl; start them and the UI's dev server
 ```
 
 `make infra-up` starts [`deploy/docker-compose.yml`](./deploy/docker-compose.yml):
@@ -39,14 +41,14 @@ S3-compatible object store, and a local OCI registry on `localhost:5001`.
 points the activity catalog at them, so an Orkflow that `uses: shell` runs
 the images this checkout built.
 `make up` builds `bin/ork`, `bin/orker` and `bin/orkctl`, starts the engine,
-one Orker and the UI, and waits until each one answers: the engine's API, an
-Orker polling its pool, the UI and its live-event socket. When it prints
-"OrkStack is up":
+one Orker and the UI's dev server (Vite, with hot reload), and waits until
+each one answers: the engine's API, an Orker polling its pool, the dev server
+and a live-event socket opened through it. When it prints "OrkStack is up":
 
 | What | Where |
 |---|---|
-| UI | http://localhost:5173 |
-| Engine API | http://localhost:8080 |
+| UI (Vite dev server, hot reload; API and WebSocket calls go to the engine) | http://localhost:5173 |
+| Engine API, and the UI built into `bin/ork` at `/` (a placeholder until `make ui`) | http://localhost:8080 |
 | Temporal UI | http://localhost:8233 |
 | SeaweedFS filer | http://localhost:8888 (S3 API on http://localhost:9000) |
 
@@ -70,9 +72,21 @@ The individual steps are there when you want them: `make tools`,
 `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
 `make infra-up-observability` adds a local Grafana stack
 ([deploy/observability](./deploy/observability/README.md)).
-To run the UI by hand, `cd ui && bun run dev`: its server proxies Connect calls
-to `ENGINE_API_URL` (default `http://127.0.0.1:8080`), and the browser opens
-WebSockets to `PUBLIC_ENGINE_WS_URL` (default the page's host on `:8080`).
+To run the UI by hand, `cd ui && bun run dev`: Vite serves it with hot
+reload on port 5173 and forwards the Connect calls (`/orkstack.v1.`), the
+plain-HTTP routes (`/v1/`) and the WebSockets (`/ws/`) to the engine
+`ORK_SERVER` names (default `http://127.0.0.1:8080`, as for `orkctl`). It
+keeps the `Host` header, so the engine admits the page's sockets as
+same-origin, as it does for the UI it serves itself.
+
+The engine serves the UI at `/` on its own port, from the build compiled into
+`bin/ork`. `make ui` writes that build: it builds the UI in Docker, in the
+pinned Bun image (`deploy/source/Dockerfile`, its `ui` stage), into
+`internal/webui/dist/`, and the next `make build` embeds it; it needs no Bun
+on the host. To serve a build from disk instead, run `cd ui && bun run build`
+and start the engine with `ORK_UI_DIR=ui/build`. A `bin/ork` built with
+neither serves a placeholder page at `/` that says this, and its API works as
+always ([docs/DEPLOY.md](./docs/DEPLOY.md), "The web UI").
 
 Configuration needs nothing for a laptop: `make up` runs on defaults alone.
 Past that, `ork` and `orker` read one shared YAML file (`--config PATH`), with
@@ -84,10 +98,12 @@ Past that, `ork` and `orker` read one shared YAML file (`--config PATH`), with
 
 `make dist VERSION=vX.Y.Z` builds what a release publishes as files: `orkctl`
 for Linux, macOS and Windows, `ork` and `orker` for Linux, each archived, and
-`SHA256SUMS`, under `dist/`. `make release-images VERSION=vX.Y.Z OUT=<dir>`
-builds the release images (`ork`, `orker`, `orkctl`, `ui` and the six
-activities) as OCI layouts from those binaries, for this machine unless
-`PLATFORMS` says otherwise. `make release-smoke VERSION=vX.Y.Z` builds both
+`SHA256SUMS`, under `dist/`. It runs `make ui` first, because `ork` carries
+the UI, and refuses to build an `ork` without it.
+`make release-images VERSION=vX.Y.Z OUT=<dir>` builds the release images
+(`ork`, `orker`, `orkctl` and the six activities; there is no UI image) as
+OCI layouts from those binaries, for this machine unless `PLATFORMS` says
+otherwise. `make release-smoke VERSION=vX.Y.Z` builds both
 for this machine and runs the quickstart's `compose.yaml` on those images end
 to end, by digest, in a compose project, registry and ports of its own. It
 signs each image with a throwaway key, by the cosign image and flags the
@@ -97,7 +113,12 @@ release signs.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
 runs both before it publishes anything, and `nightly.yml` runs the quickstart
-smoke on `main` every night ([docs/PROOFS.md](./docs/PROOFS.md)).
+smoke on `main` every night ([docs/PROOFS.md](./docs/PROOFS.md)). One
+dispatch of `release.yml` from `main` proves, builds and smokes a release,
+checks that the nightly of its commit passed, and then waits for one approval
+of the `release` environment before it tags and publishes; a dispatch from any
+other branch is a dry run that never asks (docs/PROOFS.md §10, "Tag a
+release").
 
 ## Fast checks (no Docker, under two minutes warm)
 
@@ -333,7 +354,8 @@ gate: the few scale tests listed in `scripts/proof-nightly-tests.txt`, and
 the specs listed in `scripts/proof-nightly-specs.txt`, run nightly and before
 a release. A failure there is a regression on `main`: fixing it, or reverting
 what broke it, is the next work, but it holds no other merge, and no release
-is tagged until the pre-release proof, which runs them all, passes. A feature
+is tagged until the pre-release proof, which runs them all, passes;
+`release.yml` also refuses a commit whose own nightly did not pass. A feature
 proof means "ready for the merge proof", never "done". No proof, not done.
 
 ## Style

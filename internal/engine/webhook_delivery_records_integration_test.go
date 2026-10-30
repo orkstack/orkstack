@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -156,6 +157,7 @@ type recordsHarness struct {
 	subscriber *switchableSubscriber
 	hook       webhooks.Webhook
 	orkflow    string
+	events     []string
 }
 
 func startRecordsHarness(t *testing.T, ctx context.Context, fail bool, subscriberStatus int, events ...string) *recordsHarness {
@@ -185,6 +187,7 @@ func startRecordsHarness(t *testing.T, ctx context.Context, fail bool, subscribe
 		cfg: cfg, raw: newRawS3ClientForCommitE2E(t, cfg), store: store,
 		subscriber: newSwitchableSubscriber(t, subscriberStatus),
 		orkflow:    fmt.Sprintf("records-%d", time.Now().UnixNano()%1_000_000_000),
+		events:     events,
 	}
 	h.engine = startScopedEngine(t, scopedEngineConfig{
 		temporal: temporalClient, runQueue: queue, registry: webhooks.NewDurableRegistry(webhookStore),
@@ -226,8 +229,49 @@ func (h *recordsHarness) run(t *testing.T, ctx context.Context, marker string) *
 		t.Fatalf("SubmitRun: %v", err)
 	}
 	run := h.engine.drainRun(t, ctx, submitted.Msg.GetRun().GetId(), "")
+	// The stream ends at the terminal event in the run's history, and the
+	// notifier hears that event from the event projection, which may come
+	// later: settle waits only for deliveries already queued, so first wait
+	// for the terminal event's first attempt when this harness subscribed to it.
+	if terminal := terminalEvent(run.GetStatus()); terminal != "" && slices.Contains(h.events, string(terminal)) {
+		h.awaitAttempt(t, ctx, run.GetId(), terminal)
+	}
 	h.engine.settle(t)
 	return run
+}
+
+func terminalEvent(status orkstackv1.Status) webhooks.Event {
+	switch status {
+	case orkstackv1.Status_STATUS_SUCCEEDED:
+		return webhooks.EventRunSucceeded
+	case orkstackv1.Status_STATUS_FAILED:
+		return webhooks.EventRunFailed
+	case orkstackv1.Status_STATUS_CANCELED:
+		return webhooks.EventRunCanceled
+	}
+	return ""
+}
+
+// awaitAttempt waits until the subscriber has read one request for the run
+// carrying event.
+func (h *recordsHarness) awaitAttempt(t *testing.T, ctx context.Context, runID string, event webhooks.Event) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		for _, req := range h.subscriber.forRun(runID) {
+			if req.headers.Get(webhooks.EventHeader) == string(event) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s: no %s delivery reached the subscriber within 30s", runID, event)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(ctx.Err())
+		case <-time.After(100 * time.Millisecond):
+		}
+	}
 }
 
 func (h *recordsHarness) list(t *testing.T, ctx context.Context, runID string) []*orkstackv1.Delivery {

@@ -1,7 +1,9 @@
 # The build context of deploy/source/Dockerfile is the repository root, and
 # this file admits only what its stages copy (BuildKit reads
 # <Dockerfile>.dockerignore): the Go module without its tests, the UI's
-# sources and the examples.
+# sources and the examples. A UI build in the checkout (ui/build, or the copy
+# `make ui` leaves in internal/webui/dist) never enters it: ork embeds the one
+# the ui-build stage makes.
 *
 !LICENSE
 !go.mod
@@ -14,6 +16,7 @@
 !ui/
 **/*_test.go
 **/testdata
+internal/webui/dist
 ui/node_modules
 ui/.svelte-kit
 ui/build

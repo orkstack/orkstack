@@ -21,11 +21,15 @@ export const BUILD_HASH_FILE = '.orkstack-build-hash';
 /**
  * The build's inputs, relative to ui/: directories are walked, files are
  * taken as they are. Generated clients live under src/lib/gen, so a proto
- * change reaches the hash through them.
+ * change reaches the hash through them. The repository's examples/ is one
+ * too: the build writes the example gallery from it, the cards and each
+ * document as a file of its own (src/routes/apply/examples*), so an edited
+ * example is a different build.
  */
 export const BUILD_INPUTS = [
 	'src',
 	'static',
+	'../examples',
 	'svelte.config.js',
 	'vite.config.ts',
 	'tsconfig.json',

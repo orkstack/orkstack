@@ -36,10 +36,19 @@ func (f *fakeBuilder) build(_ context.Context, root string, target dist.Target, 
 	return os.WriteFile(out, []byte("binary:"+target.String()+":"+version), 0o755)
 }
 
+// fakeRoot is a repository root as `make dist` finds it: a LICENSE, and the
+// web UI build `make ui` wrote for ork to embed.
 func fakeRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "LICENSE"), fakeLicense, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(root, filepath.FromSlash(dist.UIIndex))
+	if err := os.MkdirAll(filepath.Dir(index), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(index, []byte("<!doctype html>\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	return root
@@ -196,11 +205,52 @@ func TestBuild_IsRepeatable(t *testing.T) {
 	}
 }
 
-// TestBuild_Refuses: a missing LICENSE, a missing commit time or a failed
-// compile stops the build with a reason that names the cause, and a failed
-// build leaves no archive for the target that failed.
+// TestBuild_Refuses: a missing LICENSE, a missing web UI build, a missing
+// commit time or a failed compile stops the build with a reason that names
+// the cause, and a failed build leaves no archive for the target that failed.
 func TestBuild_Refuses(t *testing.T) {
 	t.Parallel()
+	t.Run("no web UI build", func(t *testing.T) {
+		t.Parallel()
+		// A root as a fresh clone leaves it: the UI's directory holds only
+		// its .gitkeep, so ork would embed nothing and serve the placeholder.
+		without := fakeRoot(t)
+		index := filepath.Join(without, filepath.FromSlash(dist.UIIndex))
+		if err := os.Remove(index); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(filepath.Dir(index), ".gitkeep"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// And one whose index.html is a directory, not the page.
+		directory := fakeRoot(t)
+		index = filepath.Join(directory, filepath.FromSlash(dist.UIIndex))
+		if err := os.Remove(index); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Mkdir(index, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, root := range map[string]string{"no index.html": without, "index.html is a directory": directory} {
+			fake := &fakeBuilder{}
+			out := filepath.Join(t.TempDir(), "dist")
+			_, err := dist.Build(context.Background(), dist.BuildOptions{
+				Root: root, Out: out, Version: mustVersion(t, "v0.1.0"), CommitTime: commitTime, Builder: fake.build,
+			})
+			if err == nil || !strings.Contains(err.Error(), dist.UIIndex) || !strings.Contains(err.Error(), "make ui") {
+				t.Errorf("%s: error %v, want one naming %s and make ui", name, err, dist.UIIndex)
+			}
+			if len(fake.calls) != 0 {
+				t.Errorf("%s: built %q before noticing the UI was missing", name, fake.calls)
+			}
+			if _, statErr := os.Stat(out); statErr == nil {
+				t.Errorf("%s: the release directory was created for a build that could not ship the UI", name)
+			}
+		}
+		if err := dist.CheckUI(fakeRoot(t)); err != nil {
+			t.Errorf("CheckUI refuses a root with the UI build: %v", err)
+		}
+	})
 	t.Run("no LICENSE", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeBuilder{}

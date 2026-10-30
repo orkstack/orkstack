@@ -1,18 +1,12 @@
-import { env } from '$env/dynamic/public';
-
-// Where this browser's WebSockets go.
+// Where this browser's WebSockets go: the origin the page came from.
 //
-// The engine serves both sockets — the run's event stream and a task's log
-// stream — on its own HTTP server, not through the UI's same-origin Connect
-// proxy: a proxy would have to hold one upstream socket open per browser
-// socket for as long as a run lasts, and the bridge already answers browsers
-// directly (internal/api/ws.go, ORK_WS_ALLOWED_ORIGINS).
-//
-// PUBLIC_ENGINE_WS_URL names it when the engine is not on this host's :8080 —
-// which is every deployment that is not a laptop, and every test that runs two
-// replicas on two ports.
-export function wsBaseUrl(): string {
-	if (env.PUBLIC_ENGINE_WS_URL) return env.PUBLIC_ENGINE_WS_URL.replace(/\/$/, '');
-	const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-	return `${scheme}://${location.hostname}:8080`;
+// The engine serves the UI, the Connect API and both sockets — the run's
+// event stream and a task's log stream — on one listener (internal/webui), so
+// a socket opened to the page's own host is same-origin, which the bridge
+// admits with no configuration (internal/api/ws.go). In development the Vite
+// server proxies /ws/ to the engine (vite.config.ts), the same way it
+// proxies the Connect calls, so the rule holds there too.
+export function wsBaseUrl(at: Pick<Location, 'protocol' | 'host'> = location): string {
+	const scheme = at.protocol === 'https:' ? 'wss' : 'ws';
+	return `${scheme}://${at.host}`;
 }

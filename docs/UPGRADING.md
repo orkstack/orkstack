@@ -13,8 +13,9 @@ Before you upgrade, read the **BREAKING** entries in the section of every releas
 ## Release artifacts
 
 Each release is published by `release.yml`, and only after its pre-release
-proof passed, the quickstart's compose file ran end to end on the images it
-publishes, and the README's Quickstart ran as written on a clone of its commit
+proof passed, the nightly of its commit passed, the quickstart's compose file
+ran end to end on the images it publishes, the README's Quickstart ran as
+written on a clone of its commit, and a maintainer approved the publication
 ([PROOFS.md](./PROOFS.md) §5). It publishes:
 
 - **On the GitHub release**, under names that carry no version, so that
@@ -23,7 +24,8 @@ publishes, and the README's Quickstart ran as written on a clone of its commit
   - `orkctl-linux-amd64.tar.gz`, `orkctl-linux-arm64.tar.gz`,
     `orkctl-darwin-amd64.tar.gz`, `orkctl-darwin-arm64.tar.gz`,
     `orkctl-windows-amd64.zip`, `orkctl-windows-arm64.zip`;
-  - `ork-linux-amd64.tar.gz`, `ork-linux-arm64.tar.gz`,
+  - `ork-linux-amd64.tar.gz`, `ork-linux-arm64.tar.gz` (the `ork` binary
+    carries the web UI and serves it on its API port),
     `orker-linux-amd64.tar.gz`, `orker-linux-arm64.tar.gz`;
   - `SHA256SUMS`, over every file above: `sha256sum --ignore-missing -c
     SHA256SUMS` checks the ones you downloaded;
@@ -31,11 +33,11 @@ publishes, and the README's Quickstart ran as written on a clone of its commit
     and `cosign.pub`, that key's public half: the same file as
     `deploy/cosign.pub` at the release's tag.
 - **On `ghcr.io/orkstack`**, for linux/amd64 and linux/arm64: `ork`, `orker`,
-  `orkctl`, `ui`, and the six first-party activity images `activity-shell`,
+  `orkctl`, and the six first-party activity images `activity-shell`,
   `activity-http`, `activity-file`, `activity-json`, `activity-git` and
-  `activity-template`. Each is tagged `X.Y.Z`, which never moves, and `X.Y`,
-  which moves to each patch release of that line. Deploy by digest, or by
-  `X.Y.Z`.
+  `activity-template`. There is no UI image: `ork` serves the UI. Each is
+  tagged `X.Y.Z`, which never moves, and `X.Y`, which moves to each patch
+  release of that line. Deploy by digest, or by `X.Y.Z`.
 
 Each image is signed by its digest with the release key, in the layout
 OrkStack's image policy verifies, so a namespace can require that key
@@ -105,7 +107,7 @@ Steps 0, 2, 3, 4 and 5 are `orkctl release` commands, and any `ork` replica answ
 
    `promote` is refused while the release cannot carry new runs, and the refusal names what to start.
 
-1. **Start the new release alongside the old.** Run every `ork` replica of the new build, and an `orker` in every pool the release dispatches to. Where the old release hosts pins, the new one needs a pin host too. Do not stop anything yet.
+1. **Start the new release alongside the old.** Run every `ork` replica of the new build, and an `orker` in every pool the release dispatches to. Where the old release hosts pins, the new one needs a pin host too. Do not stop anything yet. While both releases' replicas serve the web UI behind one address, a page of one release can miss an asset on a replica of the other and have to load again; session affinity avoids it ([DEPLOY.md](./DEPLOY.md), "The web UI").
 
 2. **Check that the new release can carry the work.**
 

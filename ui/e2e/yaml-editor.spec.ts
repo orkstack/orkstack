@@ -21,6 +21,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -37,7 +38,8 @@ import { editorReady, fillYaml, yamlValue } from './yaml';
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('yaml-editor');
 const ENGINE = 'http://127.0.0.1:18479';
-const UI = 'http://127.0.0.1:14479';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI = ENGINE;
 const TEMPORAL_NAMESPACE = temporalNamespace('yaml-editor');
 const NS = `yaml-editor-${Date.now().toString(36)}`;
 const proof = proofOut(
@@ -79,24 +81,17 @@ test.beforeAll(async () => {
 	mkdirSync(proof('..'), { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('the object store is not reachable on 127.0.0.1:9000');
-	for (const port of [18479, 14479]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18479)) throw new Error('port 18479 already in use');
 	ensureActivityImages();
 	spawnLogged(proof('engine.log'), bin('ork'), [], {
 		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18479',
-		ORK_WS_ALLOWED_ORIGINS: UI
+		...uiEnv()
 	});
 	await waitForEngine(ENGINE);
-	spawnLogged(
-		proof('ui.log'),
-		'node',
-		['build'],
-		{ HOST: '127.0.0.1', PORT: '14479', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') },
-		uiDir
-	);
-	await waitFor('built UI', async () => (await fetch(`${UI}/orkflows`)).ok);
+	await waitFor('built UI', async () => (await fetch(`${UI}/_app/version.json`)).ok);
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'yaml editor' } });
 });
 

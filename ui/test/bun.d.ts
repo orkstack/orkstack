@@ -50,6 +50,8 @@ declare module 'node:fs' {
 	/** Without an encoding: the file's bytes (e2e/build-hash.ts hashes them). */
 	export function readFileSync(path: string): Uint8Array;
 	export function readdirSync(path: string, options?: { recursive?: boolean }): string[];
+	/** yamlSchemaSource.test.ts reads files, not the route directories named like one. */
+	export function statSync(path: string): { isFile(): boolean };
 	export function writeFileSync(path: string, data: string): void;
 	// e2e/build-ui.ts and its test (build-ui.test.ts): the build's marker,
 	// and the test's own temporary UI directory.

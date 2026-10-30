@@ -14,8 +14,11 @@
 #      empty directory: the clone builds and starts the stack, and orkctl,
 #      from its image, applies each-fan-out and watches a run of it to the end.
 # With --release VERSION [--layouts DIR]:
-#   1. make dist and make release-images (this machine's platform), unless
-#      --layouts DIR names layouts already built (release.yml builds them);
+#   1. make dist, which builds the web UI into ork first (make ui, in the
+#      pinned bun image), and make release-images (this machine's
+#      platform), unless --layouts DIR names layouts already built
+#      (release.yml builds them; a relative DIR is read from the caller's
+#      directory);
 #   2. the stack's own registry takes every image, copied byte for byte from
 #      its layout by the pinned skopeo image, and each pushed digest is
 #      checked against the layout's; each is then signed by digest with a
@@ -31,9 +34,10 @@
 # OrkStack's own verifier accepts those signatures: with the throwaway key in
 # the image policy, each-fan-out runs to SUCCEEDED in a namespace that
 # requires it, and is refused in one that requires a key that signed nothing;
-# the UI answers, lists the example, and the engine accepts its WebSocket; and
-# the script removes what it started, by its own names and labels, whatever
-# happened.
+# the engine serves the web UI on its own port, the real build and not the
+# placeholder, the build's gallery lists the example, and the engine accepts
+# the UI's WebSocket from its own origin; and the script removes what it
+# started, by its own names and labels, whatever happened.
 #
 # Everything it creates carries its token: the compose project, the images it
 # builds or pulls, the Orker's id and work directory, and free ports (set
@@ -41,6 +45,8 @@
 # command). It stops nothing it did not start. Exit 0 pass, 1 a check failed,
 # 2 an invalid invocation, 77 a missing prerequisite.
 set -euo pipefail
+# A relative --layouts is the caller's, read before the script moves.
+CALLER="$PWD"
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO="$PWD"
 
@@ -53,7 +59,7 @@ LAYOUTS=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--release) [ $# -ge 2 ] || usage; VERSION="$2"; shift 2 ;;
-	--layouts) [ $# -ge 2 ] || usage; LAYOUTS="$2"; shift 2 ;;
+	--layouts) [ $# -ge 2 ] && [ -n "$2" ] || usage; LAYOUTS="$2"; shift 2 ;;
 	*) usage ;;
 	esac
 done
@@ -63,6 +69,7 @@ elif [ -n "$LAYOUTS" ]; then
 	echo "quickstart-smoke: --layouts needs --release" >&2
 	exit 2
 fi
+[ -z "$LAYOUTS" ] || [[ "$LAYOUTS" == /* ]] || LAYOUTS="$CALLER/$LAYOUTS"
 
 need() {
 	printf 'quickstart-smoke: %s\n' "$*" >&2
@@ -103,13 +110,15 @@ ORKSTACK_DOCKER_SOCKET="$(docker context inspect --format '{{.Endpoints.docker.H
 
 TOKEN="qs-$$-$(od -An -N3 -tx1 /dev/urandom | tr -d ' \n')"
 PROJECT="orkstack-$TOKEN"
+# Absolute, as every path docker run -v mounts must be: a relative one is
+# read as a named volume.
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/orkstack-$TOKEN.XXXXXX")"
+WORK="$(cd "$WORK" && pwd -P)"
 free_port() { python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()'; }
 
 export COMPOSE_PROJECT_NAME="$PROJECT"
-export ORKSTACK_API_PORT ORKSTACK_UI_PORT ORKSTACK_TEMPORAL_UI_PORT ORKSTACK_REGISTRY_PORT
+export ORKSTACK_API_PORT ORKSTACK_TEMPORAL_UI_PORT ORKSTACK_REGISTRY_PORT
 ORKSTACK_API_PORT="$(free_port)"
-ORKSTACK_UI_PORT="$(free_port)"
 ORKSTACK_TEMPORAL_UI_PORT="$(free_port)"
 ORKSTACK_REGISTRY_PORT="$(free_port)"
 export ORKSTACK_ORKER_ID="$TOKEN"
@@ -132,7 +141,7 @@ cleanup() {
 	local rc=$?
 	set +e
 	if [ -f "$STACK/compose.yaml" ]; then
-		[ "$rc" -eq 0 ] || dc logs --no-color --tail 80 activities ork orker ui >&2 2>/dev/null
+		[ "$rc" -eq 0 ] || dc logs --no-color --tail 80 activities ork orker >&2 2>/dev/null
 		# --rmi local removes the images compose built and named after the
 		# project; the activities it built are named by the registry's port.
 		dc down -v --remove-orphans --rmi local --timeout 50 >/dev/null 2>&1
@@ -193,12 +202,13 @@ else
 	export SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$REPO" log -1 --format=%ct)}"
 	DIST_TOOL=(go run ./internal/dist/cmd/dist)
 	if [ -z "$LAYOUTS" ]; then
-		say "== build: make dist, make release-images"
+		say "== build: make dist (the UI, then the binaries), make release-images"
 		make -s dist VERSION="$VERSION"
 		LAYOUTS="$WORK/layouts"
 		make -s release-images VERSION="$VERSION" OUT="$LAYOUTS" PLATFORMS="linux/$(go env GOARCH)"
 	fi
 	[ -d "$LAYOUTS" ] || need "no layouts at $LAYOUTS"
+	LAYOUTS="$(cd "$LAYOUTS" && pwd -P)"
 	"${DIST_TOOL[@]}" digests -layouts "$LAYOUTS" >"$WORK/images.tsv"
 	say "$(wc -l <"$WORK/images.tsv" | tr -d ' ') images:"
 	sed 's/^/  /' "$WORK/images.tsv"
@@ -301,17 +311,27 @@ if [ -n "$VERSION" ]; then
 fi
 
 say "== ui"
-UI="http://127.0.0.1:$ORKSTACK_UI_PORT"
+# The engine serves the UI on its own port: a client route boots from the
+# build's index.html, whose scripts are the build's content-hashed files
+# under /_app/immutable/. The placeholder an ork built without the UI serves
+# names none, so this tells the real build from it.
+UI="http://127.0.0.1:$ORKSTACK_API_PORT"
 [ "$(curl -s -o /dev/null -w '%{http_code}' "$UI/orkflows")" = 200 ] || fail "$UI/orkflows does not answer 200"
 # Read whole before grep, so grep's early exit cannot fail curl under pipefail.
-gallery="$(curl -s "$UI/apply")"
-grep -q 'each-fan-out' <<<"$gallery" || fail "the UI's example gallery does not list each-fan-out"
+page="$(curl -s "$UI/orkflows")"
+grep -qF '/_app/immutable/' <<<"$page" || fail "$UI/orkflows is not the UI's build (no /_app/immutable/ in it): ork serves the placeholder"
+gallery="$(curl -s "$UI/apply/examples.json")"
+grep -q 'each-fan-out' <<<"$gallery" || fail "the UI's example gallery ($UI/apply/examples.json) does not list each-fan-out"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$UI/apply/examples/each-fan-out.ork.yaml")" = 200 ] ||
+	fail "$UI/apply/examples/each-fan-out.ork.yaml does not answer 200"
+# The browser's handshake from the page's own origin, the host it connects
+# to: the bridge's default admits it. A refused upgrade answers 403.
 ws="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
 	-H 'Connection: Upgrade' -H 'Upgrade: websocket' \
 	-H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
-	-H "Origin: http://localhost:$ORKSTACK_UI_PORT" \
-	"http://127.0.0.1:$ORKSTACK_API_PORT/ws/runs/ork-probe-nonexistent?from_sequence=0" || true)"
-[ "$ws" = 404 ] || fail "the engine answers the UI's WebSocket with $ws (403 means it refuses the UI's origin)"
-say "  /orkflows 200, the gallery lists each-fan-out, the WebSocket origin is accepted"
+	-H "Origin: $UI" \
+	"$UI/ws/runs/ork-probe-nonexistent?from_sequence=0" || true)"
+[ "$ws" = 404 ] || fail "the engine answers the UI's WebSocket with $ws (403 means it refuses its own origin)"
+say "  /orkflows is the UI's build, the gallery lists each-fan-out, the WebSocket from the UI's origin is accepted"
 
 say "quickstart-smoke: PASS (${VERSION:-quickstart}, $TOKEN)"

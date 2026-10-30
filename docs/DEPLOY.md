@@ -47,9 +47,9 @@ the built binaries (`cmd/orkctl/tworeplica_read_integration_test.go`,
                     definitions · artifacts · finished runs
 ```
 
-Two independent dials. **Replicas** carry the API and the run workflows;
-**Orker pools** carry task execution. Neither holds state, so both scale by
-adding processes and both survive losing one.
+Two independent dials. **Replicas** carry the API, the web UI and the run
+workflows; **Orker pools** carry task execution. Neither holds state, so both
+scale by adding processes and both survive losing one.
 
 ### Nothing durable lives in a process
 
@@ -116,26 +116,123 @@ needs `ORK_S3_*` either way.
   claim. The authoritative probe is a cheap unary call that touches the
   bucket, `orkctl --server … orkflow list` (`OrkflowService.ListOrkflows`);
   `scripts/stack.sh` gates on exactly that.
-- **The UI reaches the engine at two addresses.** Its server proxies every
-  Connect call (same origin for the browser, so no CORS) to `ENGINE_API_URL`
-  (default `http://127.0.0.1:8080`); the browser opens the run and task-log
-  WebSockets directly to the engine at `PUBLIC_ENGINE_WS_URL` (default
-  `ws(s)://<page host>:8080`). Set both whenever the engine is not on the UI
-  host's `:8080`.
-- **Browser clients need `ORK_WS_ALLOWED_ORIGINS`** set on every replica, since
-  any of them may take the socket. Unset, the engine allows same-origin only,
-  which is right for production and wrong the moment the UI is served from its
-  own port: the upgrade is refused with 403, the run page never goes live and
-  its event log stays empty, while a page refresh still works because that
-  reads through Connect rather than the socket. The engine logs
+- **Every replica serves the UI, on its own origin.** The engine serves the
+  web UI at `/` on `ORK_HTTP_ADDR`, beside the Connect API and the WebSocket
+  bridge, so the browser makes its Connect calls and opens its run and
+  task-log sockets on the address the page came from, whichever replica
+  answers them. There is nothing to configure ("The web UI", below).
+- **`ORK_WS_ALLOWED_ORIGINS` is for a page on another origin.** Unset, the
+  engine admits a socket only from its own origin — the `Origin` header's
+  host equal to the request's `Host` — which is all the UI it serves needs.
+  Set it, on every replica since any of them may take the socket, when a
+  browser page served from another origin opens the sockets, or when a proxy
+  in front rewrites `Host`. A refused upgrade is a 403: the run page never
+  goes live and its event log stays empty, while a page refresh still works
+  because that reads through Connect rather than the socket. The engine logs
   `websocket upgrade refused` with the origin, the host and this variable's
-  value, and `make up` probes the handshake and refuses to report a stack the
-  browser cannot stream from.
+  value.
 - **Every replica is also a worker host.** It polls `ork-tasks` (run workflows
   and idempotency claims) and `ork-engine-events` (projection). Adding a
   replica therefore adds workflow capacity as well as API capacity, and it is
   why a run outlives the replica that started it: the next workflow task goes
   to another replica's poller.
+
+### The web UI
+
+Every `ork` replica serves the web UI at `/` on its API listener
+(`ORK_HTTP_ADDR`), beside the Connect API (`/orkstack.v1.*`), the plain-HTTP
+routes (`/v1/`) and the WebSocket bridge (`/ws/`). There is no UI process and
+no UI image: one process and one origin, so the browser calls the API and
+opens its sockets where the page came from, nothing proxies, nothing needs
+CORS, and the bridge's same-origin default admits the UI with no
+`ORK_WS_ALLOWED_ORIGINS` (`internal/webui`; `internal/api/server.go`,
+`NewMux`).
+
+- **What it serves.** The UI is a static single-page app: SvelteKit built
+  with `adapter-static`, compiled into the `ork` binary. A file of the build
+  is served as it is. Any other path is a route of the app and gets
+  `index.html`, the page every route boots from — unless it names a file (its
+  last segment has an extension) or lies under `/_app/`, which are 404, so a
+  missing asset is never answered with a page a browser would keep as the
+  asset. A dot file is never served, and only `GET` and `HEAD` are answered
+  (405 otherwise).
+- **It never takes a path of the API.** A path whose first segment is `v1`,
+  `ws`, `healthz`, `readyz`, `metrics` or `debug`, or begins `orkstack.`,
+  belongs to the API or to the admin listener: one that no route took is a
+  404 from the UI, never the app's page, so a mistyped API call, or a probe
+  aimed at this port instead of `ORK_ADMIN_ADDR`, fails plainly. The engine
+  refuses to mount an API route outside those paths (`webui.Reserved`). Any
+  other extension-less path is the app's page with a `200`, so a load
+  balancer's health check belongs on `/readyz` of `ORK_ADMIN_ADDR`, never on
+  this port.
+- **Caching.** A file under `/_app/immutable/` is named by its content hash
+  and sent `Cache-Control: public, max-age=31536000, immutable`. Everything
+  else — `index.html`, `/_app/version.json`, the example gallery — is sent
+  `Cache-Control: no-cache` with a strong `ETag`, so a browser revalidates it
+  on every use (a `304` when it is unchanged) and picks up a new release at
+  its next page load. An error from the UI (a `404`, a `405`) is sent
+  `Cache-Control: no-store`, so no cache keeps the 404 of an asset asked for
+  during a rollout. Content types come from a fixed table, never the host's
+  MIME database.
+- **Compression.** The build holds a Brotli (`.br`) and a gzip (`.gz`) twin
+  of each HTML, JavaScript, CSS, JSON and SVG file, and the engine sends one
+  when the request's `Accept-Encoding` names it (`Content-Encoding`,
+  `Vary: Accept-Encoding`), so nothing in front needs to compress the UI. The
+  example gallery's YAML files and the fonts are sent as they are.
+- **Headers.** Every UI response carries `X-Content-Type-Options: nosniff`.
+  The page also carries `Content-Security-Policy: frame-ancestors 'none'`,
+  `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`: the UI holds
+  the operator's destructive controls, so no other origin may frame it
+  ([SECURITY_MODEL.md](SECURITY_MODEL.md), "Transport, listeners and
+  configuration").
+
+**Settings.** `ORK_UI_ENABLED` (`engine.ui.enabled`, default `true`) set to
+`false` leaves the listener the API alone, and `/` is a 404. `ORK_UI_DIR`
+(`engine.ui.dir`) serves the UI build in that directory instead of the one
+compiled in — `ui/build`, which `cd ui && bun run build` writes. The engine
+opens it so that a link leading out of it is never followed, and refuses at
+boot a directory with no `index.html`, and the setting itself while
+`ORK_UI_ENABLED=false` (§1). The boot logs where the UI comes from:
+`web UI source=embedded`, `directory`, `placeholder` or `off`.
+
+**A binary built without the UI** — `go build ./cmd/ork`, or `make build`
+before `make ui` has written the UI's build into `internal/webui/dist/` —
+serves a placeholder page at `/` saying how to build the UI or point
+`ORK_UI_DIR` at a build; the API on the same port is unaffected. The release
+binaries and the `ork` image carry the UI — the release build refuses to make
+an `ork` without it — and so does the quickstart's source build
+(`deploy/source/Dockerfile`).
+
+**Behind a reverse proxy or an ingress.** One address serves the UI and the
+API, so route the whole host to `ork`, not only the API's paths:
+
+- forward WebSocket upgrades on `/ws/` (the `Upgrade` and `Connection`
+  headers);
+- keep the `Host` header the browser sent, or set `ORK_WS_ALLOWED_ORIGINS`
+  to the page's origin: the bridge compares the socket's `Origin` with the
+  `Host` it receives, so a proxy that rewrites `Host` makes the UI's own
+  sockets look cross-origin and refused;
+- terminate TLS at the proxy as for any other service. The page derives its
+  socket's address from its own, so an `https` page opens `wss` to the same
+  host, and the engine behind the proxy stays plain HTTP;
+- serve it at the root of a host. The page names its assets by absolute
+  paths (`/_app/…`), so a proxy that mounts `ork` under a sub-path breaks it.
+
+A gateway that authenticates callers covers the UI with the same rule: the
+browser's calls reach the engine through it like any other caller's, and
+carry the `Ork-Principal` it asserts (§5, "Attributing control-plane
+writes").
+
+**During a rollout.** Replicas of two releases behind one address each serve
+their own release's UI. A page loaded from one release may ask a replica of
+the other for one of its content-hashed assets, which that replica does not
+have: a 404. When that happens on a navigation, SvelteKit reads
+`/_app/version.json` and, when it names another build, reloads the page; a
+page whose first load meets the miss does not start until it is loaded again,
+and until every replica runs one release a reload can meet the same miss.
+Session affinity at the load balancer while two releases are behind one
+address avoids it, and nothing is lost either way: the UI keeps no run state
+of its own, so a reload only redraws what the API already holds.
 
 ### Running M Orker pools
 
@@ -389,8 +486,10 @@ then the variable it becomes.
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no extra pollers; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
-| `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API + WebSocket bridge |
-| `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` (space around an entry and empty entries are ignored) |
+| `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API, WebSocket bridge, plain-HTTP routes and the web UI at `/` (§ "The web UI") |
+| `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` (space around an entry and empty entries are ignored). Empty admits the engine's own origin only, which is all the UI it serves needs; list a page served from another origin, or the browser's origin behind a proxy that rewrites `Host` |
+| `engine.ui.enabled` | `ORK_UI_ENABLED` | `true` | `ork` | serve the web UI at `/` on the API listener, beside the Connect API and the WebSocket bridge; `false` leaves the listener the API alone (§ "The web UI") |
+| `engine.ui.dir` | `ORK_UI_DIR` | *(empty: the build compiled into `ork`)* | `ork` | serve the UI build in this directory (`ui/build`, written by `cd ui && bun run build`) instead of the one compiled into `ork`; refused at boot if it holds no `index.html`, or if `ORK_UI_ENABLED=false` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
 | `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Default 1000. Lowers it, or raises it up to the built-in 10,000; above 1,000 it needs `engine.continuation.enabled` (refused at boot otherwise, naming both keys). Checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value. A submit that needs more than 1,000 items is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs a release older than the one that raised the maximum; a draining older build does not block it (§5, "Engine capabilities and the fleet check"). Before rolling back below that release, lower it to 1,000 and wait for such runs (§4) |
 | `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `4000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, apply and plan, and again at submit, so lowering it refuses new runs of an Orkflow applied above the new value. A deployment lowers or raises it. The default is the largest size the task soak measured (its per-generation history, snapshot, in-flight, workflow-code, read-latency and run-page thresholds, with plain tasks and small outputs); above it a deployment runs unmeasured, and the boot warns naming the measured size. The task soak runs in the nightly and pre-release proofs, not in every merge proof (docs/PROOFS.md). Independently, a stage of more than X plain tasks that start together may stop `RUN_HISTORY_LIMIT` in its first history, explicitly, and the boot warns when this is above X. X is a size to stay within, not a promise: at or below it a flat stage of plain tasks cannot reach that limit before it carries on, and other limits still apply. X is 4,222 at the defaults and moves with `engine.history.max_events`, `engine.continuation.events`, `engine.continuation.bytes`, `engine.continuation.restore_timeout` and `engine.run_max_in_flight`; §5, "Task ceiling and the flat-stage bound", gives its closed form. With `engine.continuation.enabled` off a run has one history: an unset key defaults to the smaller of 4,000 and `engine.history.max_events / 50` (1,024 at the default limit; the boot logs the effective value), and an explicit value above that quotient is refused at boot, naming the three keys |
@@ -1627,7 +1726,10 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   that await's one-time bearer token. Both are plain JSON on the API port, and
   the same advice holds for both: what to expose, to whom and how fast is the
   gateway's decision — OrkStack queues nothing, retries nothing and rate-limits
-  nothing on either. Every other route is the operator surface.
+  nothing on either. Every other route is the operator surface, and that
+  includes the web UI on the same port: `/`, its assets under `/_app/` and
+  every route of the app, so a gateway that routes by path sends those to
+  `ork` too (§0, "The web UI").
 - **Run ids** are `ork-{timestamp}-{sequence}` and single-use for all time.
   Nothing may parse one or derive meaning from its parts — the sequence
   carries a per-process nonce in its high half (`internal/engine/runid.go`),
@@ -1764,11 +1866,12 @@ engine boot, no Temporal connection, no store.
 
 ### Running the published images
 
-Each release publishes `ork`, `orker`, `orkctl` and `ui` images to
+Each release publishes `ork`, `orker` and `orkctl` images to
 `ghcr.io/orkstack`, for linux/amd64 and linux/arm64, beside the first-party
-activity images ([UPGRADING.md](UPGRADING.md), "Release artifacts").
-The quickstart's [`compose.yaml`](../compose.yaml) runs the same four
-services on one machine, built from a clone from the same stages
+activity images ([UPGRADING.md](UPGRADING.md), "Release artifacts"): nine
+images in all. There is no UI image: `ork` serves the web UI itself (§0, "The
+web UI"). The quickstart's [`compose.yaml`](../compose.yaml) runs the same
+three services on one machine, built from a clone from the same stages
 ([`deploy/source/Dockerfile`](../deploy/source/Dockerfile)), and is the worked
 example of what follows. It is checked by `internal/dist`'s tests, and run end
 to end on a release's own images, by digest, by
@@ -1777,10 +1880,9 @@ anything.
 
 | Image | Runs | User | Settings it needs in a container |
 |---|---|---|---|
-| `ork` | `/usr/local/bin/ork` | non-root | the API on `ORK_HTTP_ADDR` (default `:8080`, every interface), Temporal (`ORK_TEMPORAL_ADDRESS`), the store (`ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_*`), `ORK_WS_ALLOWED_ORIGINS` naming the UI's origin, and `ORK_ADMIN_ADDR` for a health check |
+| `ork` | `/usr/local/bin/ork`, which serves the web UI at `/` on its API port | non-root | the API on `ORK_HTTP_ADDR` (default `:8080`, every interface), Temporal (`ORK_TEMPORAL_ADDRESS`), the store (`ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_*`), and `ORK_ADMIN_ADDR` for a health check. The UI it serves needs no setting |
 | `orker` | `/usr/local/bin/orker`, with the `docker` CLI | root | the Docker socket (or Podman's Docker-compatible one, [Running on Podman](#running-on-podman)) and a work directory, below; Temporal and the store as for `ork` |
 | `orkctl` | `/usr/local/bin/orkctl` | non-root | `ORK_SERVER`; its working directory is `/work` |
-| `ui` | `node build` on port 5173 | non-root | `ENGINE_API_URL` (where its server reaches the engine) and `PUBLIC_ENGINE_WS_URL` (where a browser reaches the engine's WebSockets) |
 
 **The Orker in a container.** The Orker starts each task's container through
 the host's Docker daemon, so its container needs that daemon's socket
@@ -1985,7 +2087,8 @@ Each base is used from an overlay of your own. The overlay names the release's
 settings the Orker reads in the same namespace: the `orkstack` ConfigMap
 (`ORK_TEMPORAL_ADDRESS`, `ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_ENDPOINT`,
 `ORK_S3_BUCKET`, and the other settings of §1) and the `orkstack-s3` Secret
-(`ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`). Each base's `kustomization.yaml`
+(`ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`), and, when tasks read secrets, the
+`orkstack-task-secrets` Secret (below). Each base's `kustomization.yaml`
 shows the overlay.
 
 **What a pod holds.**
@@ -2004,6 +2107,54 @@ shows the overlay.
   socket and nothing else, and both containers' `DOCKER_HOST` points at it.
   `engine-data` is the engine's image cache and container layers at
   `/var/lib/docker`: a disposable cache, so a new pod pulls its images again.
+- One Secret volume, `task-secrets`: the optional `orkstack-task-secrets`
+  Secret, mounted read-only in the `orker` container alone, at
+  `/etc/orkstack/task-secrets`. The pod starts without it.
+- No service-account token. The pod sets
+  `automountServiceAccountToken: false`: the Orker drives its engine over the
+  shared socket, and neither container calls the Kubernetes API.
+
+**A task's secrets come from `orkstack-task-secrets`.** The bases set the
+Orker's secret floor ("Secrets on a shared pool", below) to
+`ORK_ORKER_SECRET_ALLOW=file:/etc/orkstack/task-secrets/*`. A task may name a
+key of that Secret as `file:/etc/orkstack/task-secrets/<key>`, and the Orker
+resolves no other source. Every other source fails the task with
+`SECRET_NOT_PERMITTED` before its image is pulled. That includes every
+variable of the Orker's own environment, which holds its settings and the
+`orkstack-s3` keys, and every other file of its container. Put the values
+your tasks read in that Secret, one key each:
+
+```bash
+kubectl create secret generic orkstack-task-secrets --from-file=db-password=./db-password
+```
+
+Kubernetes updates a mounted Secret after its Secret changes, with a delay,
+so a task that starts after the update reads the new value. A task names its
+secret by that path:
+
+```yaml
+tasks:
+  - id: migrate
+    uses: ghcr.io/acme/migrate@sha256:<digest>
+    secrets:
+      - name: db-password
+        source: file:/etc/orkstack/task-secrets/db-password
+```
+
+On a pool several namespaces share, every key of that Secret is open to each
+of them unless a namespace's own list narrows it. Prefix the keys by
+namespace, and give each namespace its own:
+`orkctl namespace update payments --allow-secret 'file:/etc/orkstack/task-secrets/payments-*'`.
+
+Name your other task-secret sources in the floor too: an overlay that admits
+another directory or an `env:` prefix patches `ORK_ORKER_SECRET_ALLOW` on the
+`orker` container, and mounts what that entry names. The base's own value
+overrides one in the `orkstack` ConfigMap, because a container's `env` takes
+precedence over its `envFrom`. The floor names the `file` scheme, so
+`ORK_ORKER_SECRET_SCHEMES`, if you set it, must keep `file`, or the Orker
+refuses to boot. A test holds both bases to this floor and checks that it
+admits none of the Orker's own credentials
+(`internal/dist/kubernetes_test.go`).
 
 **The work root is one path in both containers.** The engine bind-mounts each
 task's workspace from the path the Orker gives it, so the `work` volume must be
@@ -2508,6 +2659,10 @@ does it, so no handler can forget; the classification table is
 `auditedProcedures` (`internal/api/audit.go`), and the recorded actions are
 listed in [UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Control-plane audit trail"
 (webhook writes are recorded over the legacy `/v1/webhooks` routes too).
+A request refused for the type its body declares (`415`: a Connect call in a
+codec the API does not serve, or a `POST /v1/webhooks` body not declared
+`application/json`) is refused before any write is attempted and is not
+recorded.
 Reads are never recorded, and neither is `SubmitRun` nor a trigger or await
 callback invocation: a run's own record and origin are already the durable
 fact, and an object per submit would make the trail a log pipeline.
@@ -2532,8 +2687,9 @@ OrkStack records it and does not authenticate it.
   which both clients render as `unattributed`.
 - **A gateway that authenticates callers must OVERWRITE `Ork-Principal`**
   with the identity it established, never pass a client's value through —
-  otherwise any caller can claim any name. The UI's server forwards the
-  header a gateway sets on browser requests to the engine unchanged.
+  otherwise any caller can claim any name. The UI's calls go from the
+  browser through the gateway to the engine like any other caller's, so the
+  gateway sets the header on them the same way.
 - **`ORK_PRINCIPAL` makes `orkctl` assert one.** Set in `orkctl`'s
   environment, every request it sends carries `Ork-Principal:
   $ORK_PRINCIPAL`. It is an assertion like any other: useful on a `make up`

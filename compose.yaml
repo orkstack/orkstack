@@ -5,16 +5,21 @@
 #   docker compose run --rm orkctl <command>     orkctl, from the image it built
 #   docker compose down                          stop (object store data kept)
 #
-# ork, orker, orkctl and ui are built from deploy/source/Dockerfile, and the
-# six first-party activities from images/. An Orkflow pins every task's image
-# by its registry digest at apply time (docs/OCI_ACTIVITY_CONTRACT.md §4.6),
-# so the activities are pushed to a registry of the stack's own. The one
-# address both the host's Docker daemon (which pulls them for the Orker) and
-# the engine (which pins them) reach is loopback: the registry is published on
-# the host's 127.0.0.1, and a forwarder in the engine's own network namespace
-# serves the same port on its 127.0.0.1. Temporal and the object store are the
-# development stack's own (deploy/docker-compose.yml), pinned for the same
-# reasons. Everything is published on 127.0.0.1 only.
+# ork, orker and orkctl are built from deploy/source/Dockerfile, and the six
+# first-party activities from images/. The web UI is built into ork, which
+# serves it on its API port beside the API and the WebSockets the UI opens:
+# http://localhost:8080 (ORKSTACK_API_PORT). The browser has one origin to
+# talk to, so nothing is configured for it.
+#
+# An Orkflow pins every task's image by its registry digest at apply time
+# (docs/OCI_ACTIVITY_CONTRACT.md §4.6), so the activities are pushed to a
+# registry of the stack's own. The one address both the host's Docker daemon
+# (which pulls them for the Orker) and the engine (which pins them) reach is
+# loopback: the registry is published on the host's 127.0.0.1, and a
+# forwarder in the engine's own network namespace serves the same port on its
+# 127.0.0.1. Temporal and the object store are the development stack's own
+# (deploy/docker-compose.yml), pinned for the same reasons. Everything is
+# published on 127.0.0.1 only.
 #
 # The Orker runs each task's image on this host's Docker daemon, through the
 # socket mounted below; the activities step pushes through it too. Whoever
@@ -136,7 +141,6 @@ services:
       # The admin listener answers the health check inside the container and
       # is never published.
       ORK_ADMIN_ADDR: 127.0.0.1:9464
-      ORK_WS_ALLOWED_ORIGINS: localhost:${ORKSTACK_UI_PORT-5173},127.0.0.1:${ORKSTACK_UI_PORT-5173}
       ORK_ACTIVITY_CATALOG: |
         activities:
           shell: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-shell:local
@@ -145,6 +149,7 @@ services:
           json: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-json:local
           git: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-git:local
           template: 127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}/orkstack/activity-template:local
+    # The web UI and the API, on one port.
     ports:
       - "127.0.0.1:${ORKSTACK_API_PORT-8080}:8080"
     depends_on:
@@ -204,24 +209,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 30
-
-  ui:
-    build:
-      <<: *source
-      target: ui
-    environment:
-      ENGINE_API_URL: http://ork:8080
-      PUBLIC_ENGINE_WS_URL: ws://localhost:${ORKSTACK_API_PORT-8080}
-    ports:
-      - "127.0.0.1:${ORKSTACK_UI_PORT-5173}:5173"
-    depends_on:
-      ork:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:5173/_app/version.json').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
-      interval: 5s
-      timeout: 5s
-      retries: 20
 
   # orkctl without installing it: `docker compose run --rm orkctl apply
   # examples/each-fan-out.ork.yaml`. `up` builds it and starts nothing

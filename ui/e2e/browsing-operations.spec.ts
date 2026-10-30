@@ -20,6 +20,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -44,7 +45,8 @@ const BUCKET = ownBucket('browsing-operations');
 // earlier cursors rode along in a `history=` parameter — is only visible from
 // the second Next onwards.
 const ENGINE = 'http://127.0.0.1:18090';
-const UI = 'http://127.0.0.1:14184';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI = ENGINE;
 const TEMPORAL_NAMESPACE = temporalNamespace('browsing');
 // One namespace per execution: R1-R3 count every run of a status, of a
 // contains match or of a window across the whole namespace, and the shared
@@ -98,14 +100,13 @@ test.beforeAll(async () => {
 	writeFileSync(out('session.txt'), `browsing operations\nnamespace=${NS}\nflow=${FLOW}\n`);
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18090, 14184]) if (await tcpOpen(port)) throw new Error(`port ${port} already in use`);
+	if (await tcpOpen(18090)) throw new Error('port 18090 already in use');
 	ensureActivityImages();
 	const cluster = clusterEnv(TEMPORAL_NAMESPACE);
-	spawnLogged(out('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...storeEnv(BUCKET), ORK_HTTP_ADDR: '127.0.0.1:18090', ORK_WS_ALLOWED_ORIGINS: UI });
+	spawnLogged(out('engine.log'), bin('ork'), [], { ...catalogEnv, ...cluster, ...storeEnv(BUCKET), ...uiEnv(), ORK_HTTP_ADDR: '127.0.0.1:18090' });
 	spawnLogged(out('orker.log'), bin('orker'), [], { ...cluster, ...storeEnv(BUCKET), ...orkerEnv('browsing-operations') });
 	await waitForEngine(ENGINE);
-	spawnLogged(out('ui.log'), 'node', ['build'], { HOST: '127.0.0.1', PORT: '14184', ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: 'ws://127.0.0.1:18090' }, uiDir);
-	await waitFor('UI', async () => (await fetch(`${UI}/runs?ns=${NS}`)).ok);
+	await waitFor('UI', async () => (await fetch(`${UI}/_app/version.json`)).ok);
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'browsing operations' } });
 	await waitFor('a live pool', async () => (await rpc<{ pools: { liveOrkerCount: number }[] }>('NamespaceService/ListPools', { namespace: NS })).pools.some((pool) => pool.liveOrkerCount > 0));
 	await rpc('OrkflowService/ApplyOrkflow', { namespace: NS, yaml: workflow() });
@@ -178,11 +179,11 @@ test('R5: runs keep their filters in the URL, page under them, and a pasted late
 	await expect(page.getByTestId('runs-previous')).toHaveAttribute('aria-disabled', 'true');
 	await expect(page.getByTestId('runs-next')).toHaveAttribute('aria-disabled', 'false');
 
-	// Next records the cursor it is leaving as it is followed, so the page has
-	// to be hydrated for the path back to exist: before hydration the anchor is
-	// an ordinary link and the browser simply goes. The built UI this spec
-	// drives hydrates immediately — Apply filters above already proves it — and
-	// waiting is a second of insurance rather than a fix.
+	// Next records the cursor it is leaving as it is followed, in the page's
+	// own click handler, so the path back exists only once that handler is
+	// attached. The page is drawn in the browser with its handlers attached —
+	// Apply filters above already proves it — and waiting is a second of
+	// insurance rather than a fix.
 	await page.waitForLoadState('networkidle');
 	await page.getByTestId('runs-next').click();
 	await expect(page).toHaveURL(/cursor=/);
@@ -377,8 +378,8 @@ test('the orkflows page size applies with Apply filters and writes one size to t
 	// carried `size=25`, so the URL is also held to exactly one size key.
 	await page.goto(`${UI}/orkflows?ns=${NS}`);
 	await expect(page.getByTestId('orkflow-list')).toBeVisible();
-	// The picker is a button and a listbox, so it needs the page hydrated
-	// before the panel can open at all.
+	// The picker is a button and a listbox, opened by its own handler; the
+	// page attaches it as it draws, so waiting here is insurance, not a fix.
 	await page.waitForLoadState('networkidle');
 	const before = page.url();
 	await selectOption(page, 'orkflow-page-size', '50');
@@ -408,8 +409,8 @@ test('dashboard presets and custom since are visible, addressable, and export a 
 	// `YYYY-MM-DDTHH:mm` is what the input holds and what sinceInputValue
 	// produces, and the segment states the same instant back.
 	const since = new Date(Date.now() - 5 * 60_000 - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
-	// The segment is a popover trigger, so it answers a click only once the
-	// page is hydrated.
+	// The segment is a popover trigger, opened by its own handler; the page
+	// attaches it as it draws, so waiting here is insurance, not a fix.
 	await page.waitForLoadState('networkidle');
 	await page.getByTestId('dashboard-window-custom').click();
 	await expect(page.getByTestId('dashboard-window-custom-popover')).toBeVisible();

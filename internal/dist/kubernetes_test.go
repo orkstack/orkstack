@@ -12,6 +12,9 @@ import (
 	"testing"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/orkstack/orkstack/internal/config"
+	orkerpkg "github.com/orkstack/orkstack/internal/orker"
 )
 
 // deploy/kubernetes/ holds the two supported shapes of an Orker on
@@ -20,8 +23,9 @@ import (
 // manifests to what that section promises: the work root and the engine's
 // socket are one volume at one path in both containers, the engine is a
 // native sidecar that outlives the Orker, every image is pinned, the engine's
-// limits cover the Orker's capacity, and the two shapes differ in privilege
-// and nothing else; and they hold the check (deploy/kubernetes/check) to
+// limits cover the Orker's capacity, the pod holds no service-account token,
+// a task may name as a secret only what the operator gave tasks, and the two
+// shapes differ in privilege and nothing else; and they hold the check (deploy/kubernetes/check) to
 // what it says it does to a cluster. scripts/k8s-orker-check.sh, which
 // scripts/kind-orker.sh runs on kind, is the proof that they also run.
 
@@ -42,6 +46,7 @@ type k8sDeployment struct {
 type k8sPodSpec struct {
 	HostUsers                     *bool          `yaml:"hostUsers"`
 	RuntimeClassName              string         `yaml:"runtimeClassName"`
+	AutomountServiceAccountToken  *bool          `yaml:"automountServiceAccountToken"`
 	TerminationGracePeriodSeconds int            `yaml:"terminationGracePeriodSeconds"`
 	InitContainers                []k8sContainer `yaml:"initContainers"`
 	Containers                    []k8sContainer `yaml:"containers"`
@@ -67,6 +72,7 @@ type k8sContainer struct {
 	VolumeMounts []struct {
 		Name      string `yaml:"name"`
 		MountPath string `yaml:"mountPath"`
+		ReadOnly  bool   `yaml:"readOnly"`
 	} `yaml:"volumeMounts"`
 }
 
@@ -83,8 +89,21 @@ type k8sEnv struct {
 type k8sVolume struct {
 	Name     string         `yaml:"name"`
 	EmptyDir map[string]any `yaml:"emptyDir"`
-	Extra    map[string]any `yaml:",inline"`
+	Secret   *struct {
+		SecretName string         `yaml:"secretName"`
+		Optional   *bool          `yaml:"optional"`
+		Extra      map[string]any `yaml:",inline"`
+	} `yaml:"secret"`
+	Extra map[string]any `yaml:",inline"`
 }
+
+// The one volume of a base that is not an emptyDir: the operator's Secret of
+// task secrets, mounted for the Orker alone, which the Orker's secret floor
+// names and nothing else does.
+const (
+	taskSecretsVolume = "task-secrets"
+	taskSecretsSecret = "orkstack-task-secrets"
+)
 
 // orkerDeployment reads one shape's orker.yaml: its pod, its engine sidecar
 // and its Orker container.
@@ -196,7 +215,7 @@ func TestKubernetesOrker_EngineAndOrkerShareTheWorkRootAndTheSocket(t *testing.T
 			t.Errorf("%s: the engine's data is not an emptyDir, a disposable cache (AGENTS.md §5)", shape)
 		}
 		for _, v := range pod.Volumes {
-			if v.EmptyDir == nil {
+			if v.EmptyDir == nil && v.Name != taskSecretsVolume {
 				t.Errorf("%s: volume %s is not an emptyDir; no host path, and nothing of the node, reaches this pod", shape, v.Name)
 			}
 		}
@@ -233,6 +252,167 @@ func TestKubernetesOrker_TheEngineIsANativeSidecarThatOutlivesTheOrker(t *testin
 			name.ValueFrom == nil || name.ValueFrom.FieldRef == nil || name.ValueFrom.FieldRef.FieldPath != "metadata.name" ||
 			namespace.ValueFrom == nil || namespace.ValueFrom.FieldRef == nil || namespace.ValueFrom.FieldRef.FieldPath != "metadata.namespace" {
 			t.Errorf("%s: ORK_ORKER_ID is %q, want $(POD_NAME).$(POD_NAMESPACE) from the pod's own name and namespace", shape, id.Value)
+		}
+	}
+}
+
+// TestKubernetesOrker_ThePodHoldsNoServiceAccountToken: the Orker drives its
+// engine over their shared socket, and neither of them calls the Kubernetes
+// API, so the pod is given no service-account token for a task to name as a
+// secret. Its volumes are emptyDirs and the one Secret of task secrets, so
+// no token is projected by hand either.
+func TestKubernetesOrker_ThePodHoldsNoServiceAccountToken(t *testing.T) {
+	t.Parallel()
+	for _, shape := range kubernetesShapes {
+		pod, _, _ := orkerDeployment(t, shape)
+		if a := pod.AutomountServiceAccountToken; a == nil || *a {
+			t.Errorf("%s: automountServiceAccountToken is not false, so every container of the pod holds its service-account token", shape)
+		}
+	}
+}
+
+// TestKubernetesOrker_TheSecretFloorAdmitsOnlyTheTaskSecrets: the Orker
+// resolves a task's secret from its own environment and filesystem, so each
+// base sets its floor (ORK_ORKER_SECRET_ALLOW) to the files of the
+// operator's orkstack-task-secrets Secret, mounted read-only in the Orker
+// alone. It admits a file there, and none of the Orker's own credentials:
+// any variable of its environment (the orkstack-s3 Secret's keys, every
+// setting, ORK_* and OTEL_*), /proc, a service-account token, the engine's
+// socket or data, or a task's workspace. The check's component keeps it.
+func TestKubernetesOrker_TheSecretFloorAdmitsOnlyTheTaskSecrets(t *testing.T) {
+	t.Parallel()
+	var s3 struct {
+		SecretGenerator []struct {
+			Name     string   `yaml:"name"`
+			Literals []string `yaml:"literals"`
+		} `yaml:"secretGenerator"`
+	}
+	const infra = "deploy/kubernetes/kind/infra/kustomization.yaml"
+	if err := yaml.Unmarshal(readRepoFile(t, infra), &s3); err != nil {
+		t.Fatalf("%s: %v", infra, err)
+	}
+	var s3Keys []string
+	for _, g := range s3.SecretGenerator {
+		for _, literal := range g.Literals {
+			if key, _, ok := strings.Cut(literal, "="); ok && g.Name == "orkstack-s3" {
+				s3Keys = append(s3Keys, key)
+			}
+		}
+	}
+	if len(s3Keys) == 0 {
+		t.Fatalf("%s generates no orkstack-s3 Secret to hold the floor against", infra)
+	}
+
+	for _, shape := range kubernetesShapes {
+		pod, engine, orker := orkerDeployment(t, shape)
+		v, ok := volumeOf(pod, taskSecretsVolume)
+		if !ok || v.Secret == nil || v.EmptyDir != nil || len(v.Extra) != 0 {
+			t.Fatalf("%s: no volume %s holding only a Secret", shape, taskSecretsVolume)
+		}
+		if v.Secret.SecretName != taskSecretsSecret || v.Secret.Optional == nil || !*v.Secret.Optional || len(v.Secret.Extra) != 0 {
+			t.Errorf("%s: volume %s is the Secret %q (optional %v, and %v), want the whole of the optional Secret %s, so a pod starts before the operator creates it",
+				shape, taskSecretsVolume, v.Secret.SecretName, v.Secret.Optional, v.Secret.Extra, taskSecretsSecret)
+		}
+		dir, ok := mountOf(orker, taskSecretsVolume)
+		if !ok || !strings.HasPrefix(dir, "/") || strings.HasSuffix(dir, "/") {
+			t.Fatalf("%s: the orker mounts the %s volume at %q, want an absolute directory", shape, taskSecretsVolume, dir)
+		}
+		// The floor is safe only while its directory holds the Secret and
+		// nothing else: no other mount may sit at it, inside it, or around it.
+		for _, m := range orker.VolumeMounts {
+			switch {
+			case m.Name == taskSecretsVolume:
+				if !m.ReadOnly {
+					t.Errorf("%s: the orker mounts the %s volume writable", shape, taskSecretsVolume)
+				}
+			case m.MountPath == dir || strings.HasPrefix(m.MountPath, dir+"/") || strings.HasPrefix(dir, m.MountPath+"/"):
+				t.Errorf("%s: the orker mounts %s at %q, which overlaps the task secrets' %q", shape, m.Name, m.MountPath, dir)
+			}
+		}
+		if got, ok := mountOf(engine, taskSecretsVolume); ok {
+			t.Errorf("%s: the engine mounts the %s volume at %q; only the Orker reads a task's secrets", shape, taskSecretsVolume, got)
+		}
+		_, checked := withCheckComponent(t, engine, orker)
+
+		for _, c := range []struct {
+			what  string
+			orker k8sContainer
+		}{
+			{shape, orker},
+			{shape + " under deploy/kubernetes/check/common", checked},
+		} {
+			floor, ok := envOf(c.orker, orkerpkg.SecretAllowVar)
+			if !ok || strings.TrimSpace(floor.Value) == "" || floor.ValueFrom != nil {
+				t.Errorf("%s: the orker sets no %s of its own, so a task may name any variable or file the Orker can read", c.what, orkerpkg.SecretAllowVar)
+				continue
+			}
+			// Kubernetes applies the last of two entries of one name, and
+			// envOf reads the first.
+			seen := map[string]bool{}
+			for _, e := range c.orker.Env {
+				if seen[e.Name] {
+					t.Errorf("%s: the orker sets %s twice", c.what, e.Name)
+				}
+				seen[e.Name] = true
+			}
+			if _, ok := envOf(c.orker, orkerpkg.SecretSchemesVar); ok {
+				t.Errorf("%s: the orker sets %s; the floor is written against the default schemes", c.what, orkerpkg.SecretSchemesVar)
+			}
+			// The Orker's own reading: split as it splits, and refused at boot
+			// as it refuses.
+			policy := orkerpkg.DefaultSecurityPolicy()
+			for _, entry := range strings.Split(floor.Value, ",") {
+				if entry = strings.TrimSpace(entry); entry != "" {
+					policy.SecretAllow = append(policy.SecretAllow, entry)
+				}
+			}
+			if err := policy.Validate(); err != nil {
+				t.Errorf("%s: the Orker refuses to boot with %s=%q: %v", c.what, orkerpkg.SecretAllowVar, floor.Value, err)
+				continue
+			}
+			for _, entry := range policy.SecretAllow {
+				name, inDir := strings.CutPrefix(entry, "file:"+dir+"/")
+				if !inDir || strings.Contains(name, "/") {
+					t.Errorf("%s: %s entry %q is not a file directly in %s, the task secrets' mount", c.what, orkerpkg.SecretAllowVar, entry, dir)
+				}
+			}
+			if err := policy.AllowsSecretSource("file:" + dir + "/db-password"); err != nil {
+				t.Errorf("%s: the floor refuses a task secret the operator put in %s: %v", c.what, taskSecretsSecret, err)
+			}
+
+			var refused []string
+			for _, key := range s3Keys {
+				refused = append(refused, "env:"+key)
+			}
+			for _, e := range c.orker.Env {
+				refused = append(refused, "env:"+e.Name)
+			}
+			for _, setting := range config.Schema {
+				if setting.Env != "" {
+					refused = append(refused, "env:"+setting.Env)
+				}
+			}
+			refused = append(refused,
+				"env:ORK_ANYTHING", "env:OTEL_EXPORTER_OTLP_HEADERS", "env:OTEL_ANYTHING",
+				"env:AWS_ACCESS_KEY_ID", "env:AWS_SECRET_ACCESS_KEY", "env:KUBERNETES_SERVICE_HOST",
+				"file:/proc/self/environ", "file:/proc/1/environ", "file:/proc/self/root"+dir+"/db-password",
+				"file:/var/run/secrets/kubernetes.io/serviceaccount/token",
+				"file:/run/secrets/kubernetes.io/serviceaccount/token",
+				"file:/var/run/secrets/kubernetes.io/serviceaccount/ca.crt",
+				"file:"+dir+"/../../../proc/self/environ",
+			)
+			for _, container := range []k8sContainer{engine, c.orker} {
+				for _, m := range container.VolumeMounts {
+					if m.Name != taskSecretsVolume {
+						refused = append(refused, "file:"+m.MountPath+"/docker.sock", "file:"+m.MountPath+"/ork-run/task/values.json")
+					}
+				}
+			}
+			for _, source := range refused {
+				if err := policy.AllowsSecretSource(source); err == nil {
+					t.Errorf("%s: %s=%q admits %q, one of the Orker's own credentials", c.what, orkerpkg.SecretAllowVar, floor.Value, source)
+				}
+			}
 		}
 	}
 }

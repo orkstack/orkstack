@@ -16,7 +16,7 @@ make up
 
 - `make infra-up` starts Temporal, SeaweedFS and a registry on `localhost:5001`.
 - `make -C images push` builds the first-party activities and pushes them to that registry. The example Orkflow in step 7 uses them.
-- `make up` builds `./bin/ork`, `./bin/orker` and `./bin/orkctl`, and starts them with the UI. It prints `OrkStack is up` when every part answers.
+- `make up` builds `./bin/ork`, `./bin/orker` and `./bin/orkctl`, and starts them with the UI's dev server on http://localhost:5173. It prints `OrkStack is up` when every part answers.
 
 The steps below use `./bin/orkctl`.
 

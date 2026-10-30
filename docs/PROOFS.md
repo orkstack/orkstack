@@ -54,7 +54,8 @@ the merge gate runs `run-page-reduced-ceiling.spec.ts`, the same measurement
 with `engine.orkflow_max_tasks` lowered to 1,000.
 The pre-release gate is the full tier with nothing deferred, the race gate
 included. A tag requires a passing release proof of the exact commit: `make
-release-tag` and the workflow both refuse without one.
+release-tag` and the workflow both refuse without one, and the workflow also
+refuses a commit whose nightly did not pass (§5).
 
 The feature tier is never merge evidence, and it is optional: a scoped check
 of a change on its branch that gates nothing (AGENTS.md §11.1). A local full, release or nightly
@@ -196,8 +197,11 @@ does not launch falls back to `--with-deps`, each install in the two
 bounded attempts `proof-fetch` makes (180 s, then 360 s) under a 10-minute
 step, and a browser that still does not launch fails the step before the
 part.
-The gate starts one browser server for both invocations, and the second reuses
-the first's UI build when the hash of the build's inputs
+The UI the specs drive is the static build in `ui/build`, served by each
+spec's own engine from `ORK_UI_DIR` on the engine's API port, so a spec runs
+no UI server of its own and its page is on the engine's origin. The gate
+starts one browser server for both invocations, and the second reuses the
+first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
 runs both integration and Playwright makes that build earlier, while its
 ordinary integration jobs run: once `integration-heavy-done` exists (the
@@ -599,9 +603,9 @@ flowchart LR
   base & plan & build & fast & race & race_repeat & fuzz & integration & ui_e2e & activity_fixture & observability --> proof
   nightly["nightly.yml › nightly"] -. calls .-> callee["proof.yml"]
   gate["release.yml › gate"] -. calls .-> callee
-  validate["release.yml › validate"] --> gate --> tag["release.yml › tag"]
-  validate --> artifacts["release.yml › artifacts"] --> tag --> publish["release.yml › publish"]
-  artifacts --> publish
+  validate["release.yml › validate"] --> gate --> verify["release.yml › verify"]
+  validate --> artifacts["release.yml › artifacts"] --> verify --> publish["release.yml › publish"]
+  gate & artifacts --> release_nightly["release.yml › nightly"] --> publish
   nightly --> flakes["nightly.yml › flakes"]
 ```
 
@@ -630,7 +634,7 @@ repository is private, carries the `ci:proof` label.
 `proof` is the single required check. Its last step judges each tier by its
 own rule: a full proof must say `result: pass` and `merge_eligible: true`; a
 release proof must pass `proofrun verify -release -proof DIR` against the
-commit the job checked out, the rule the `tag` job applies; a nightly proof
+commit the job checked out, the rule `release.yml` › `verify` applies; a nightly proof
 must say `result: pass` and `eligible_but_for_tier: true`, a pass with every
 identity rule held and its tier the only thing it is not. The last step reads
 the tier from `proof.json` and dispatches on it, so the full branch alone
@@ -704,7 +708,8 @@ reach, which fail nothing.
 `quickstart` is independent of the proof too: it runs the README's Quickstart
 as written on a clone of the commit, where the root `compose.yaml` builds the
 stack from source, and checks that a run of `each-fan-out` succeeds and that
-the UI answers (`make quickstart-smoke`). No proof gate runs that path, and
+the engine serves the UI's build, not the placeholder, on its own port
+(`make quickstart-smoke`). No proof gate runs that path, and
 `release.yml` › `artifacts` runs it only before a release, so this job is what
 finds a break on `main` within a day: a directory the source Dockerfile copies
 that `deploy/source/Dockerfile.dockerignore` does not admit, a Go or UI build
@@ -712,9 +717,10 @@ that fails in `deploy/source/Dockerfile`, a `compose.yaml` key the runner's
 Compose refuses, or a stack that never turns healthy. It needs only what the
 runner image has (Docker with Compose, git, curl and python3), and a failure
 is a regression on `main` like any red nightly (§6).
-`release.yml` holds five: `release.yml` › `validate` runs first on every
-dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses
-`tag: true` from any ref but `main`, and refuses a version whose `X.Y` the
+`release.yml` holds six, and a dispatch names only a `version`:
+`release.yml` › `validate` runs first on every
+dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses a
+version whose `X.Y` the
 built-in activity catalog does not name, which CHANGELOG.md has no
 `## [X.Y.Z]` section for, or whose CHANGELOG.md still holds entries under
 `## [Unreleased]` (`dist check`, `dist notes`), and decides from the
@@ -727,23 +733,60 @@ its runner-size budgets cannot hold (§10, "Run the release gate"); `release.yml
 › `artifacts`, beside it and read-only, builds what the release publishes — `make dist` (the
 archives and `SHA256SUMS`) and `make release-images` for linux/amd64 and
 linux/arm64 as OCI layouts — runs `scripts/quickstart-smoke.sh --release
---layouts` on them (the root `compose.yaml` on those images, by digest), and
+--layouts` on them (the root `compose.yaml` on those images, by digest; the
+script resolves a relative `--layouts` to an absolute path before docker
+mounts it), and
 runs `scripts/quickstart-smoke.sh` (the README's Quickstart as written, on a
 clone of the commit, built from source) before it uploads anything.
 It restores no cache, and runs QEMU's installer and BuildKit from images
 pinned by digest in `with:`, which Dependabot does not see, so those two pins
-are moved by hand;
-`release.yml` › `tag` waits for both and runs only with `tag: true`, and
-creates and pushes the tag only after `proofrun verify -release` accepts a
-passing release proof of the exact commit; and `release.yml` › `publish`, also
-only with `tag: true` on `main`, verifies before anything is pushed that the
-assets are exactly what the artifact's `SHA256SUMS` sums and match it, that
-the image list names each of the ten images once, that each layout's index
-names that digest, and that its bytes hash to it and list linux/amd64 and
-linux/arm64; it signs `SHA256SUMS` with the release key and verifies that
+are moved by hand. GitHub cancels no sibling job, so `artifacts` stops the run
+itself, from its last step (`gh run cancel`, the one step given its `actions:
+write`), but only when one of its own build, smoke or verification steps
+failed — the archives, the images, either smoke, or the checksums, notes and
+image list (each named by `steps.<id>.outcome`), which a rerun on the same
+commit would only repeat. A failure in its checkout, its Go, QEMU or buildx
+setup, or its upload, which a lost or flaky runner explains, cancels nothing:
+the gate runs on, and "Re-run failed jobs" once the run completes re-runs
+`artifacts` and the jobs that need it, never the gate. The gate never cancels
+the run: its colour is not its verdict (an excused runner-size miss leaves it
+red while its merged proof passes, §12), and a rerun-eligible part (a lost or
+degraded runner, a setup step, §11.2 of `AGENTS.md`) is answered by re-running
+that part alone. "Re-run failed jobs" on a run `artifacts` cancelled re-runs
+the failed job and every cancelled one, the gate included.
+`release.yml` › `verify` waits for both and runs `proofrun verify -release` on
+the gate's proof for the exact commit, so a proof that does not verify never
+asks for the approval.
+`release.yml` › `nightly`, on `main` only (off `main` a dispatch is a dry run
+and no nightly measures its commit), waits for both too, so a nightly
+dispatched beside the release on a new tip of `main` (about two hours, against
+the gate's and the multi-arch build's two to three) has finished by then; it
+refuses a commit whose nightly did not pass. It finds the newest `nightly.yml`
+run on `main` whose head is this exact commit (`gh run list --commit`); while
+that run is still queued or in progress it polls once a minute, up to 60
+times, and then refuses with a message to re-run the job once the nightly
+completes. It downloads the completed run's newest unexpired
+`proof-<run>-a<n>` artifact and judges it with `proofrun verify -commit SHA
+-nightly DIR -nightly-jobs FILE`: the rule `make merge-check NIGHTLY=`
+applies (a passing nightly proof, eligible but for its tier, clean, of this
+commit's tree), plus the conclusions of the run's `vuln` and `quickstart`
+jobs, which the proof does not hold. No nightly run of the commit, or one that
+kept no proof, is a refusal that says to dispatch one; re-running the job
+after that nightly passes finishes the release.
+`release.yml` › `publish` runs only on `main`, after `verify` and `nightly`, in the
+`release` environment, whose required reviewers approve it once: one job, so
+one approval, and a dispatch off `main` never asks. Before anything leaves it,
+it checks that the gate's proof is a passing release proof of this commit,
+that the assets are exactly what the artifact's `SHA256SUMS` sums and match
+it, that the image list names each of the nine images once, that each layout's
+index names that digest, and that its bytes hash to it and list linux/amd64
+and linux/arm64; it signs `SHA256SUMS` with the release key and verifies that
 signature with the committed `deploy/cosign.pub`, so a missing key, a wrong
-password or a key that is not that file's pair stops it before anything is
-pushed; it then pushes each layout to `ghcr.io/orkstack/<image>` byte for byte
+password or a key that is not that file's pair stops it before the tag or any
+image is out. It then creates the annotated tag through the API (`gh api`, the
+ref created, never moved: a tag this run made on this commit is kept on a
+re-run, and any other is refused), pushes each layout to
+`ghcr.io/orkstack/<image>` byte for byte
 (`skopeo copy --all --preserve-digests`, from the image
 `deploy/skopeo-image.txt` pins) under `X.Y.Z` and `X.Y`, checks each digest
 after the push, refuses to move an `X.Y.Z` that holds another digest, signs
@@ -758,18 +801,21 @@ pre-release, so `releases/latest/download/` names the newest release), with
 `SHA256SUMS.sig` and `cosign.pub` beside the archives. `validate` refuses a
 dispatch whose `deploy/cosign.pub` is not committed, and the `--release`
 smoke signs every image with a throwaway key by the same image and flags and
-runs an Orkflow in a namespace that requires that key. `tag` and `publish`
+runs an Orkflow in a namespace that requires that key. `verify` and `publish`
 download what `gate` and `artifacts` uploaded by the names those jobs output,
-so a re-run of either finds the first attempt's artifact.
+so a re-run of either finds the first attempt's artifact; `artifacts` keeps
+its upload 7 days, so the approval must come within them.
 `publish` checks out nothing and runs no repository code; it holds the only
-`packages: write`, and runs in the `release` environment, which alone holds
-the signing key. The tag job's checkout keeps no credential, only the steps
-that push, sign images and release are given the token, and only the two
+`packages: write` and the only `contents: write`, and its environment alone
+holds the signing key. `verify`'s checkout keeps no credential, and no step
+that runs repository code holds a token; in `publish` only the steps that
+tag, push, sign images and release are given the token, and only the two
 signing steps the key, which cosign reads from the environment
 (`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a concurrency group named
 from the validated version, so two dispatches of one version run one after the
-other. A dispatch with `tag: false` builds, smokes and proves, and publishes
-nothing.
+other. A dispatch off `main` builds, smokes, proves and verifies, and
+publishes nothing; one on `main` whose approval is rejected publishes nothing
+either.
 
 No `run:` step splices a workflow input or an event field into its shell; each
 reaches the step through `env:`. Every action is pinned to an exact release of
@@ -957,8 +1003,8 @@ reports `nightly.yml`'s state, and `gh workflow enable nightly.yml` is the
 fix.
 
 The pre-release gate is the release tier. A tag pushed by hand is outside
-both paths; `make release-tag` and the `tag` job are the only sanctioned
-paths, and no tag ruleset backs them: none has been applied. One would block
+both paths; `make release-tag` and `release.yml` › `publish` are the only
+sanctioned paths, and no tag ruleset backs them: none has been applied. One would block
 `release.yml`'s own push unless it named a bypass actor for it, and which actor
 the Actions app's token can be on this organization-owned repository is not
 verified.
@@ -1484,8 +1530,8 @@ git rev-parse main
 - Only `nightly.yml` › `quickstart` failed: the README's Quickstart no longer
   works on a clone of `headSha`, which is a regression on `main` too. The
   job's log names the Quickstart command that failed, or the check, and on a
-  failure ends with the last 80 lines of the stack's `activities`, `ork`,
-  `orker` and `ui` logs. `make quickstart-smoke` on that commit reproduces it.
+  failure ends with the last 80 lines of the stack's `activities`, `ork` and
+  `orker` logs. `make quickstart-smoke` on that commit reproduces it.
 - Only `runner-degraded` parts failed: a runner failure, not a regression
   (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree.
 
@@ -1526,10 +1572,11 @@ would ship in the release without being in its notes: an entry merged after
 the cut moves into the section before the dispatch. The first release, 0.1.0,
 says only "First release.": everything built before it is that release.
 
-**Run the release gate.** Dispatch `release.yml` from `main` with `version`
-set and `tag: false`; `release.yml` › `validate` refuses a malformed version
-before any job starts, and `release.yml` › `gate` runs the release tier on the
-chosen branch's tip. Locally, `make proof-release` on a clean tree.
+**Run the release gate.** Dispatch `release.yml` with `version` set from
+any branch but `main` for a dry run: `validate`, `gate`, `artifacts` and
+`verify` run on the branch's tip, and `publish` never asks for its approval
+(`gh workflow run release.yml --ref <branch> -f version=vX.Y.Z`). Locally,
+`make proof-release` on a clean tree.
 
 `release.yml` › `gate` runs on `ubuntu-24.04` (4 vCPUs) and excuses a
 runner-size miss exactly as the merge gate does (§12, "Runner-size known
@@ -1542,22 +1589,40 @@ A release no longer waits for a runner as large as the 16-CPU reference, so
 its tag does not rest on budgets that held on the reference class; a local
 `make proof-release` on the reference host still enforces them.
 
-**Tag a release.** Either dispatch `release.yml` with `tag: true` — the `tag`
-job checks out the proved commit, runs `proofrun verify -release -tag vX.Y.Z
--proof DIR` on the gate's artifact, and only then creates the annotated tag
-and pushes it, and `publish` then pushes the images and creates the GitHub
-release — or, locally, `make release-tag VERSION=vX.Y.Z
-PROOF=proof/<release>`, which applies the same check to `HEAD`, tags it and
-does not push; a tag made that way publishes nothing, because `release.yml` is
-the only path that publishes. Only a `release.yml` run whose `gate` passed
-publishes. Neither path stops a
+**Tag a release.** `release.yml` refuses a commit whose nightly did not
+pass, so a release of a new tip of `main` needs a nightly of that tip too.
+Dispatch both at once: the release's `nightly` job waits for that nightly
+after the gate and the build, and up to 60 minutes more.
+
+```bash
+gh workflow run nightly.yml --ref main   # unless the latest nightly's headSha is main's tip
+gh workflow run release.yml --ref main -f version=vX.Y.Z
+gh run list --workflow release.yml --branch main -L 1 --json databaseId   # <id>
+gh run watch <id>
+```
+
+`validate` refuses a malformed version and a missing changelog section before
+anything else starts; `gate` and `artifacts` run side by side, and `artifacts`
+cancels the run when it cannot build or smoke the release (§5); `verify` runs
+`proofrun verify -release -tag vX.Y.Z -proof DIR` on the gate's proof, and
+`nightly` judges the nightly of the commit, waiting for it while it runs.
+Only then does `publish` wait for the `release`
+environment's approval: a required reviewer approves it once, on the run's
+page (Review deployments → `release` → Approve and deploy), within the 7 days
+`artifacts` keeps its upload. Approved, it signs `SHA256SUMS`, creates the
+annotated tag, pushes and signs the images and creates the GitHub release;
+rejected, it publishes nothing. Locally, `make release-tag VERSION=vX.Y.Z
+PROOF=proof/<release>` applies the same proof check to `HEAD`, tags it and
+does not push; a tag made that way publishes nothing, because `release.yml`
+is the only path that publishes, and it does not check the nightly, which
+`release.yml` does. Neither path stops a
 person with write access from pushing a `v*` tag by hand (§12). Before
 dispatching, write the version's section ("Write the release notes", above):
 it becomes the release notes, and `validate` refuses a version without one.
 
 **Set up release signing.** Once, before the first release (done on
 2026-10-29: `deploy/cosign.pub` is committed, and the environment holds both
-secrets, deploys from `main` only and has one required reviewer): a release signs
+secrets, deploys from `main` only and has required reviewers): a release signs
 what it publishes, so `validate` refuses every dispatch until
 `deploy/cosign.pub` is committed, and `publish` pushes nothing until the
 `release` environment holds the private half. A repository administrator runs,
@@ -1592,14 +1657,22 @@ already published stays signed by the key its own tag carries, and each
 deployment that trusts OrkStack's releases registers the new key before it
 runs a release signed with it.
 
-**Recover a failed publish.** `publish` is safe to re-run: an image tag that
-already holds this release's digest is left alone, an image whose signature
-already verifies is not signed again, and the release itself is created
-last. Re-run the failed job from the run's page while the
-`artifacts` job's upload is kept (7 days); after that, dispatch again with a
-new patch version.
+**Recover a failed publish.** `publish` is safe to re-run: the tag step
+keeps the tag this run made on this commit and refuses any other, an image tag
+that already holds this release's digest is left alone, an image whose
+signature already verifies is not signed again, and the release itself is
+created last. Re-run the failed job from the run's page while the
+`artifacts` job's upload is kept (7 days); the re-run asks for the approval
+again. A run that stopped before its tag step can be dispatched again with
+the same version; once a run has made the tag, only a re-run of that run can
+finish it, and after the 7 days a new patch version is dispatched instead.
+A `nightly` job that refused because the nightly was still running, or had not
+been dispatched, is re-run the same way once that nightly passes. "Re-run
+failed jobs" on a run `artifacts` cancelled re-runs the failed job and every
+cancelled one, the gate included; one whose `artifacts` failed in a setup
+step, and so cancelled nothing, re-runs `artifacts` and what needs it.
 
-**After the first publish,** make the ten packages public: each new
+**After the first publish,** make the nine packages public: each new
 `ghcr.io/orkstack/<image>` starts private, and an anonymous pull fails until
 it is public (on each package's settings page).
 
@@ -1729,7 +1802,7 @@ listing with no bucket at all.
 | `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-observability-required`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-setup-log FILE`, `-runner-health FILE`, `-select FILE`, `-status N` |
 | `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-host-speed FILE`, `-runner-floors FILE`, `-nightly-specs FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
 | `flakes` | `-from GLOB`, `-repo DIR`, `-window N`, `-out FILE`, `-md FILE`, `-min-runs N` |
-| `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S` |
+| `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S`; or, for `release.yml`'s nightly check, `-commit SHA` with `-nightly DIR` and `-nightly-jobs FILE` |
 | `temporal-args` | `-compose FILE` |
 | `costs` | `-from DIR`, `-costs-out FILE`, `-slow-out FILE`, `-ui-costs-out FILE`, `-threshold SECONDS` |
 | `overhead` | `-from DIR`, `-out FILE`, `-config FILE` |
@@ -1980,14 +2053,14 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   shard itself excuses nothing (a UI shard does: `proofrun ui-ledger` exits
   cleanly on a miss it re-derives as excused). A run with such a miss
   therefore concludes `failure` while its `proof.json` passes. The verdict is
-  the proof: the required check is the `proof` job, `release.yml`'s `tag` and
-  `publish` read the release proof and the named results of what they need
-  rather than the gate's colour (2026-10-28), and a nightly is read by its
-  `proof.json` (§10). Excusing the miss in the shard, as the UI ledger does,
+  the proof: the required check is the `proof` job, `release.yml`'s `verify`
+  and `publish` read the release proof and the named results of what they need
+  rather than the gate's colour (2026-10-28), so a red gate cancels nothing,
+  and a nightly is read by its `proof.json` (§10). Excusing the miss in the shard, as the UI ledger does,
   would make the colours agree; it is not done.
 - **The observability gate has not run on GitHub.** The first release run,
   which always runs it, is its calibration.
-- **`release.yml` has not run on GitHub yet.**
+- **`release.yml` has not passed on GitHub yet.**
   `nightly.yml` has four jobs, `nightly`, `vuln`, `quickstart` and `flakes`;
   `nightly` and `flakes` have run, and so has `proof.yml` as a reusable
   workflow through them (`workflow_call`; the flakes job passed in run
@@ -1995,14 +2068,19 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   same smoke in `release.yml`: the first scheduled or dispatched nightly after
   it lands is the smoke's first run on a hosted runner, and its time there,
   for which the job allows 40 minutes, is not measured (5 minutes cold on the
-  16-CPU reference host). `release.yml`'s
-  `artifacts` and `publish` jobs were added after the last `actionlint` pass;
-  the workflow rules in `test/tools/proofrun` hold their shape, and `make
+  16-CPU reference host). Its first
+  dispatch (run 40979860354, a dry run on `main` under the old `tag` input)
+  failed in `artifacts`, at the release smoke: the script handed docker the
+  relative `dist/layouts`, which docker reads as a volume name; the script now
+  resolves it (`TestReleaseSmoke_MountsTheLayoutsByAnAbsolutePath`). The
+  one-approval job graph, `artifacts`' cancel step, the `nightly` job and its
+  wait, and the tag made through the API have not run on GitHub; `actionlint` 1.7.7 reports
+  only the `A && B || fail` idiom (SC2015) the workflow uses throughout, the
+  workflow rules in `test/tools/proofrun` hold their shape, and `make
   release-smoke` and `make quickstart-smoke` run their build and both smokes
-  on a developer's host. The first
-  `tag: false` dispatch is their first run on GitHub. Its `gate` excuses a
-  runner-size miss as the merge gate does (§10, "Run the release gate"), so
-  the hosted runners' size alone no longer fails it.
+  on a developer's host. The next dispatch is their first run there. Its
+  `gate` excuses a runner-size miss as the merge gate does (§10, "Run the
+  release gate"), so the hosted runners' size alone no longer fails it.
 - **The proof's `race` part has not run on GitHub.** The `race` part of the
   full and release tiers is on the same footing as the observability gate:
   it is proven on a developer's host and by the workflow rules in
@@ -2046,9 +2124,9 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
 - **Base-cache sizing is unmeasured at concurrency.** The 8-entry, 128 MiB
   cache is documented arithmetic, not a measured miss rate; a setting needs a
   measurement first, with the user's approval.
-- **A tag pushed by hand is outside both paths.** `make release-tag` and the
-  `tag` job are the only paths that check a release proof; GitHub itself does
-  not refuse a hand-pushed tag.
+- **A tag pushed by hand is outside both paths.** `make release-tag` and
+  `release.yml` › `publish` are the only paths that check a release proof;
+  GitHub itself does not refuse a hand-pushed tag.
 - **§11 3j**: no run moves an image tag between two attempts. The digest is
   pinned at apply, so a moved tag never reaches a stored version; the claim is
   a known gap rather than a test.

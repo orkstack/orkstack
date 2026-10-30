@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { SCHEMAS } from '../src/lib/yaml/schemas';
 
 // The drift test. The editor validates, completes and explains from the
@@ -34,7 +34,10 @@ test('the editor reads exactly those files', () => {
 
 test('no other schema, and no hand-made key table, lives in ui/src', () => {
 	const found: string[] = [];
-	const files = readdirSync(`${ui}/src`, { recursive: true }).filter((f) => /\.(?:ts|svelte|js|json|css|html)$/.test(f));
+	// Files only: a route directory may carry an extension (routes/apply/examples.json).
+	const files = readdirSync(`${ui}/src`, { recursive: true }).filter(
+		(f) => /\.(?:ts|svelte|js|json|css|html)$/.test(f) && statSync(`${ui}/src/${f}`).isFile()
+	);
 	expect(files.length > 100).toBe(true);
 	for (const file of files) {
 		if (file.startsWith('lib/schemas/')) continue;

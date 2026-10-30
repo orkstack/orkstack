@@ -528,15 +528,27 @@ func writeVerdict(w io.Writer, r *proofRecord) {
 // commit the tag names (or HEAD, before the tag exists). -nightly is optional:
 // a merge needs no nightly proof (the nightly of main is GitHub's, AGENTS.md
 // §11), but one that is named must be a passing nightly proof of main's tip.
+//
+// With -commit instead of -proof it is release.yml's nightly check, before
+// the release asks for its approval: -nightly is the proof of the latest
+// completed nightly.yml run on main whose head is that commit, and
+// -nightly-jobs lists that run's jobs and their conclusions.
 func cmdVerify(args []string) int {
 	fs := flag.NewFlagSet("verify", flag.ContinueOnError)
 	dir := fs.String("proof", "", "the proof directory")
 	release := fs.Bool("release", false, "verify a pre-release proof for a tag")
 	tag := fs.String("tag", "", "with -release: the tag the proof must cover")
 	nightlyDir := fs.String("nightly", "", "optional: a nightly proof of main's tip, verified when given (a merge needs none)")
-	if err := fs.Parse(args); err != nil || *dir == "" || fs.NArg() > 0 {
+	commit := fs.String("commit", "", "instead of -proof: the commit a release names, whose nightly proof -nightly is")
+	jobsFile := fs.String("nightly-jobs", "", "with -commit: the nightly run's jobs, one name<TAB>conclusion per line")
+	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || (*dir == "") == (*commit == "") ||
+		(*commit != "" && (*release || *tag != "" || *nightlyDir == "" || *jobsFile == "")) {
 		fmt.Fprintln(os.Stderr, "proofrun verify -proof proof/<name> [-release -tag vX.Y.Z] [-nightly DIR]")
+		fmt.Fprintln(os.Stderr, "proofrun verify -commit SHA -nightly DIR -nightly-jobs FILE")
 		return 2
+	}
+	if *commit != "" {
+		return verifyNightlyOf(*nightlyDir, *commit, *jobsFile)
 	}
 	if *release {
 		return verifyRelease(*dir, *tag)
@@ -673,6 +685,12 @@ func verifyNightlyProblems(nightlyDir, mainTip string) []string {
 // identity rule but its tier, was clean, and measured main's tip tree. No
 // directory is no proof asked for.
 func nightlyProofProblems(nightlyDir, mainTree string) []string {
+	return nightlyProofOfTreeProblems(nightlyDir, mainTree, mainBranch+"'s tip tree")
+}
+
+// nightlyProofOfTreeProblems is nightlyProofProblems against any tree, named
+// in its refusal as treeName.
+func nightlyProofOfTreeProblems(nightlyDir, tree, treeName string) []string {
 	if nightlyDir == "" {
 		return nil
 	}
@@ -699,11 +717,84 @@ func nightlyProofProblems(nightlyDir, mainTree string) []string {
 		}
 		p = append(p, "the nightly proof is not eligible evidence: "+orDash(strings.Join(reasons, "; ")))
 	}
-	if r.Tree == "" || r.Tree != mainTree {
-		p = append(p, fmt.Sprintf("the nightly proof measured tree %s, and %s's tip tree is %s", orDash(short(r.Tree)), mainBranch, orDash(short(mainTree))))
+	if r.Tree == "" || r.Tree != tree {
+		p = append(p, fmt.Sprintf("the nightly proof measured tree %s, and %s is %s", orDash(short(r.Tree)), treeName, orDash(short(tree))))
 	}
 	if !r.CleanStart || !r.CleanEnd || r.Tree != r.TreeEnd {
 		p = append(p, "the nightly proof's tree was not clean")
+	}
+	return p
+}
+
+// nightlyRunJobs are the jobs of nightly.yml outside its proof, whose own
+// conclusion is their verdict: the vulnerability scan and the README's
+// Quickstart. The proof's own jobs are judged by its proof.json, never by
+// their colour (an excused timing miss leaves a part red while the proof
+// passes); `flakes` reports and gates nothing.
+var nightlyRunJobs = []string{"vuln", "quickstart"}
+
+// verifyNightlyOf is release.yml's nightly check: the release is not tagged
+// while the nightly of its commit is red (AGENTS.md §11).
+func verifyNightlyOf(nightlyDir, commit, jobsFile string) int {
+	tree, err := gitOut("rev-parse", "--verify", "--quiet", commit+"^{tree}")
+	if err != nil {
+		fmt.Printf("release-nightly: the tree of %s cannot be read: %v\n", commit, err)
+		return 1
+	}
+	jobs, err := readNightlyJobs(jobsFile)
+	if err != nil {
+		fmt.Printf("release-nightly: %v\n", err)
+		return 1
+	}
+	if problems := nightlyReleaseProblems(nightlyDir, strings.TrimSpace(tree), jobs); len(problems) > 0 {
+		fmt.Printf("release-nightly: the nightly of %s did not pass; a release of it is not tagged until a later nightly of it passes (dispatch one: gh workflow run nightly.yml --ref main):\n", short(commit))
+		for _, p := range problems {
+			fmt.Println("  -", p)
+		}
+		return 1
+	}
+	fmt.Printf("release-nightly: %s is a passing nightly proof of %s (tree %s), and its run's %s passed.\n",
+		nightlyDir, short(commit), short(strings.TrimSpace(tree)), strings.Join(nightlyRunJobs, " and "))
+	return 0
+}
+
+// readNightlyJobs reads `name<TAB>conclusion` lines, as `gh run view --json
+// jobs` prints them through release.yml's jq.
+func readNightlyJobs(path string) (map[string]string, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("the nightly run's jobs: %w", err)
+	}
+	jobs := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if line == "" {
+			continue
+		}
+		name, conclusion, ok := strings.Cut(line, "\t")
+		if !ok {
+			return nil, fmt.Errorf("the nightly run's jobs: %q is not name<TAB>conclusion", line)
+		}
+		jobs[name] = conclusion
+	}
+	return jobs, nil
+}
+
+// nightlyReleaseProblems is verifyNightlyOf's rule, pure: a passing nightly
+// proof of the release commit's tree, and every job of nightlyRunJobs
+// concluded success in the run that made it. A release always asks for one,
+// so no directory is a refusal.
+func nightlyReleaseProblems(nightlyDir, tree string, jobs map[string]string) []string {
+	if nightlyDir == "" {
+		return []string{"no nightly proof was named"}
+	}
+	p := nightlyProofOfTreeProblems(nightlyDir, tree, "the release commit's tree")
+	for _, name := range nightlyRunJobs {
+		switch c, ok := jobs[name]; {
+		case !ok:
+			p = append(p, "the nightly run has no "+name+" job")
+		case c != "success":
+			p = append(p, fmt.Sprintf("the nightly run's %s job concluded %s", name, orDash(c)))
+		}
 	}
 	return p
 }

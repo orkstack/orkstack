@@ -23,6 +23,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -45,8 +46,8 @@ const BUCKET = ownBucket('run-evidence');
 // and stamped orkflow names.
 
 const ENGINE = 'http://127.0.0.1:18537';
-const ENGINE_WS = 'ws://127.0.0.1:18537';
-const UI_ORIGIN = 'http://127.0.0.1:14537';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 
 const TEMPORAL_NAMESPACE = temporalNamespace('run-evidence');
 const IMAGE = process.env.ORK_TEST_CONTAINER_IMAGE ?? activityRef('shell');
@@ -143,9 +144,7 @@ test.beforeAll(async () => {
 	// Prerequisites are failures, not skips (AGENTS.md §11.1).
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18537, 14537]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(18537)) throw new Error('port 18537 already in use (stray process?)');
 
 	ensureActivityImages();
 
@@ -155,7 +154,7 @@ test.beforeAll(async () => {
 		...cluster,
 		...storeEnv(BUCKET),
 		ORK_HTTP_ADDR: '127.0.0.1:18537',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv()
 	});
 	spawnLogged(outPath('orker.log'), bin('orker'), [], {
 		...cluster,
@@ -164,19 +163,7 @@ test.beforeAll(async () => {
 	});
 	await waitForEngine(ENGINE);
 
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14537',
-			ENGINE_API_URL: ENGINE,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	await waitFor('the default pool reports a live Orker', async () => {
 		const answer = await rpc<{ pools?: { name: string; liveOrkerCount?: number }[] }>(

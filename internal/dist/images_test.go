@@ -55,16 +55,18 @@ func layoutsOf(t *testing.T, names []string) string {
 	return dir
 }
 
-func TestImages_AreTheTenTheReleasePublishes(t *testing.T) {
+// TestImages_AreTheNineTheReleasePublishes: the platform's three and the six
+// first-party activities. The web UI is no image of its own: ork serves it.
+func TestImages_AreTheNineTheReleasePublishes(t *testing.T) {
 	t.Parallel()
 	want := []string{
 		"activity-file", "activity-git", "activity-http", "activity-json", "activity-shell", "activity-template",
-		"ork", "orkctl", "orker", "ui",
+		"ork", "orkctl", "orker",
 	}
 	if got := dist.Images(); !slices.Equal(got, want) {
 		t.Errorf("Images() = %q, want %q (sorted)", got, want)
 	}
-	if got := sorted(dist.ServiceImages()); !slices.Equal(got, []string{"ork", "orkctl", "orker", "ui"}) {
+	if got := sorted(dist.ServiceImages()); !slices.Equal(got, []string{"ork", "orkctl", "orker"}) {
 		t.Errorf("ServiceImages() = %q", got)
 	}
 	if got := sorted(dist.ActivityNames()); !slices.Equal(got, []string{"file", "git", "http", "json", "shell", "template"}) {
@@ -109,7 +111,7 @@ func TestImages_ActivitiesAreTheBuiltinCatalog(t *testing.T) {
 }
 
 // TestImages_AgreeWithTheMakefiles: the two Makefiles that build the images
-// name the same lists, so a release cannot build ten images and publish nine.
+// name the same lists, so a release cannot build nine images and publish eight.
 func TestImages_AgreeWithTheMakefiles(t *testing.T) {
 	t.Parallel()
 	list := func(file, variable string) []string {
@@ -134,8 +136,8 @@ func TestDigests_ReadEachLayoutsSingleIndexEntry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 10 {
-		t.Fatalf("read %d images, want 10: %v", len(got), got)
+	if len(got) != len(dist.Images()) {
+		t.Fatalf("read %d images, want %d: %v", len(got), len(dist.Images()), got)
 	}
 	for _, image := range got {
 		if want := fakeDigest(image.Name); image.Digest != want {
@@ -162,11 +164,12 @@ func TestDigests_AreSortedByName(t *testing.T) {
 	}
 	text := dist.FormatImages(got)
 	lines := strings.Split(strings.TrimSuffix(text, "\n"), "\n")
-	if len(lines) != 10 || !strings.HasSuffix(text, "\n") {
+	if len(lines) != len(dist.Images()) || !strings.HasSuffix(text, "\n") {
 		t.Fatalf("FormatImages wrote %d lines, final newline %v:\n%s", len(lines), strings.HasSuffix(text, "\n"), text)
 	}
-	if lines[0] != "activity-file\t"+fakeDigest("activity-file") || lines[9] != "ui\t"+fakeDigest("ui") {
-		t.Errorf("lines are not name<TAB>digest: first %q, last %q", lines[0], lines[9])
+	last := len(lines) - 1
+	if lines[0] != "activity-file\t"+fakeDigest("activity-file") || lines[last] != "orker\t"+fakeDigest("orker") {
+		t.Errorf("lines are not name<TAB>digest: first %q, last %q", lines[0], lines[last])
 	}
 }
 
@@ -230,7 +233,7 @@ func TestDigests_RefuseUnexpectedAndMissingNames(t *testing.T) {
 	t.Parallel()
 	t.Run("an image the release does not publish", func(t *testing.T) {
 		t.Parallel()
-		for _, extra := range []string{"activity-curl", "docker-cli", "ORK", "activity-", "ork-2"} {
+		for _, extra := range []string{"activity-curl", "docker-cli", "ORK", "activity-", "ork-2", "ui"} {
 			dir := layoutsOf(t, dist.Images())
 			writeLayout(t, dir, extra, indexOf(fakeDigest(extra)))
 			_, err := dist.ReadLayouts(dir)
@@ -268,11 +271,11 @@ func TestDigests_RefuseABrokenDirectory(t *testing.T) {
 	t.Run("a layout without an index", func(t *testing.T) {
 		t.Parallel()
 		dir := layoutsOf(t, dist.Images())
-		if err := os.Remove(filepath.Join(dir, "ui", "index.json")); err != nil {
+		if err := os.Remove(filepath.Join(dir, "orker", "index.json")); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := dist.ReadLayouts(dir); err == nil || !strings.Contains(err.Error(), "ui") {
-			t.Errorf("error %v; want a refusal naming ui", err)
+		if _, err := dist.ReadLayouts(dir); err == nil || !strings.Contains(err.Error(), "orker") {
+			t.Errorf("error %v; want a refusal naming orker", err)
 		}
 	})
 	t.Run("a stray file beside the layouts", func(t *testing.T) {

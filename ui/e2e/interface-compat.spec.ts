@@ -20,6 +20,7 @@ import {
 	temporalNamespace,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -43,8 +44,8 @@ const BUCKET = ownBucket('interface-compat');
 // by a name pattern.
 
 const ENGINE = 'http://127.0.0.1:18307';
-const ENGINE_WS = 'ws://127.0.0.1:18307';
-const UI_ORIGIN = 'http://127.0.0.1:14307';
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 
 const TEMPORAL_NAMESPACE = temporalNamespace('interface-compat');
 const NS = 'interface-compat';
@@ -190,9 +191,7 @@ test.beforeAll(async () => {
 
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [18307, 14307]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(18307)) throw new Error('port 18307 already in use (stray process?)');
 
 	ensureActivityImages();
 
@@ -201,23 +200,11 @@ test.beforeAll(async () => {
 		...catalogEnv,
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...storeEnv(BUCKET),
-		ORK_HTTP_ADDR: '127.0.0.1:18307',
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv(),
+		ORK_HTTP_ADDR: '127.0.0.1:18307'
 	});
 	await waitForEngine(ENGINE);
-	spawnLogged(
-		outPath('ui.log'),
-		'node',
-		['build'],
-		{
-			HOST: '127.0.0.1',
-			PORT: '14307',
-			ENGINE_API_URL: ENGINE,
-			PUBLIC_ENGINE_WS_URL: ENGINE_WS
-		},
-		uiDir
-	);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	await rpc('NamespaceService/CreateNamespace', {
 		namespace: { name: NS, description: 'interface compatibility gate' }

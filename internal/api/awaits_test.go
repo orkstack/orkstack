@@ -803,6 +803,43 @@ func TestAwaitDoor_RefusalsStoreAndSendNothing(t *testing.T) {
 	}
 }
 
+// The callback door reads its body whatever type it declares, on the trigger
+// door's reasoning (TestTriggerInvoke_ReadsTheBodyWhateverTypeItDeclares): the
+// bearer token, which a page can set on a cross-site request only after a
+// preflight, keeps a cross-site page out.
+func TestAwaitDoor_ReadsTheBodyWhateverTypeItDeclares(t *testing.T) {
+	const run = "ork-door-declared"
+	for _, c := range []struct{ path, body string }{
+		{awaitPath(run, "gate"), `{"approved":true}`},
+		{awaitPath(run, "gate") + "/reject", `{"reason":"upstream job cancelled"}`},
+	} {
+		for _, contentType := range []string{"", "application/x-www-form-urlencoded", "text/plain"} {
+			f := newAwaitFixture(t)
+			f.seedRun(t, run, "", map[string]orkstackv1.Status{"gate": orkstackv1.Status_STATUS_AWAITING})
+			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.baseURL+c.path, strings.NewReader(c.body))
+			if err != nil {
+				t.Fatalf("build request: %v", err)
+			}
+			if contentType != "" {
+				req.Header.Set("Content-Type", contentType)
+			}
+			req.Header.Set("Authorization", "Bearer "+awaitToken)
+			resp, err := f.client.Do(req)
+			if err != nil {
+				t.Fatalf("POST %s: %v", c.path, err)
+			}
+			payload, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusAccepted {
+				t.Errorf("POST %s, Content-Type %q: status = %d, want 202: %s", c.path, contentType, resp.StatusCode, payload)
+			}
+			if signals := f.starter.delivered(); len(signals) != 1 {
+				t.Errorf("POST %s, Content-Type %q: %d resolutions delivered, want 1", c.path, contentType, len(signals))
+			}
+		}
+	}
+}
+
 func TestStreamTaskLogs_RefusesAnAwaitedTask(t *testing.T) {
 	run := runningRun("ork-logs-await", "gate")
 	run.TaskRuns[0].Status = orkstackv1.Status_STATUS_AWAITING

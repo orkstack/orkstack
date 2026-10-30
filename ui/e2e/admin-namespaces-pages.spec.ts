@@ -18,6 +18,7 @@ import {
 	temporalAddress,
 	temporalReachable,
 	uiDir,
+	uiEnv,
 	waitFor,
 	waitForEngine
 } from './harness';
@@ -48,8 +49,8 @@ import { OP, addListFilter, selectOption } from './uiHelpers';
 // started (killStarted), never anything by name.
 const ENGINE_PORT = '18473';
 const ENGINE = `http://127.0.0.1:${ENGINE_PORT}`;
-const UI_PORT = '14473';
-const UI_ORIGIN = `http://127.0.0.1:${UI_PORT}`;
+// The engine serves the UI (harness.ts uiEnv), so the page's origin is its own.
+const UI_ORIGIN = ENGINE;
 const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-ns-pages-${STAMP}`;
 const BUCKET = ownBucket('ns-pages');
@@ -82,27 +83,18 @@ test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
 	if (!(await temporalReachable())) throw new Error(`Temporal is not reachable on ${temporalAddress()}`);
 	if (!(await tcpOpen(9000))) throw new Error('MinIO is not reachable on 127.0.0.1:9000');
-	for (const port of [Number(ENGINE_PORT), Number(UI_PORT)]) {
-		if (await tcpOpen(port)) throw new Error(`port ${port} already in use (stray process?)`);
-	}
+	if (await tcpOpen(Number(ENGINE_PORT))) throw new Error(`port ${ENGINE_PORT} already in use (stray process?)`);
 	ensureBucket(BUCKET);
 
 	spawnLogged(out('engine.log'), bin('ork'), [], {
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...s3Env,
 		ORK_S3_BUCKET: BUCKET,
-		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`,
-		ORK_WS_ALLOWED_ORIGINS: UI_ORIGIN
+		...uiEnv(),
+		ORK_HTTP_ADDR: `127.0.0.1:${ENGINE_PORT}`
 	});
-	spawnLogged(
-		out('ui.log'),
-		'node',
-		['build'],
-		{ HOST: '127.0.0.1', PORT: UI_PORT, ENGINE_API_URL: ENGINE, PUBLIC_ENGINE_WS_URL: ENGINE.replace('http', 'ws') },
-		uiDir
-	);
 	await waitForEngine(ENGINE);
-	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/orkflows`)).ok);
+	await waitFor('built ui', async () => (await fetch(`${UI_ORIGIN}/_app/version.json`)).ok);
 
 	for (const name of SEEDED) {
 		await rpc('NamespaceService/CreateNamespace', {

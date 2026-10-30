@@ -637,11 +637,19 @@ func TestIntegration_CacheSubmitRefusesAPoolWhoseOrkerPredatesCaching(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The pool must read live before the describe question is asked.
+	// The pool must read live before the describe question is asked. Until
+	// the stand-in answers on its own channel, a submit is admitted (a pool
+	// none of whose Orkers answers is logged, not refused), so the runs the
+	// wait admitted are its own, not the refusal's.
 	deadline := time.Now().Add(time.Minute)
 	var submitErr error
+	admitted := map[string]bool{}
 	for time.Now().Before(deadline) {
-		_, submitErr = svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name}))
+		var submitted *connect.Response[orkstackv1.SubmitRunResponse]
+		submitted, submitErr = svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name}))
+		if submitErr == nil {
+			admitted[submitted.Msg.GetRun().GetId()] = true
+		}
 		if connect.CodeOf(submitErr) == connect.CodeFailedPrecondition && strings.Contains(submitErr.Error(), "predates task caching") {
 			break
 		}
@@ -658,8 +666,18 @@ func TestIntegration_CacheSubmitRefusesAPoolWhoseOrkerPredatesCaching(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(after) != len(before) {
-		t.Fatalf("a refused submission left %d runs behind", len(after)-len(before))
+	known := map[string]bool{}
+	for _, run := range before {
+		known[run.GetId()] = true
+	}
+	var left []string
+	for _, run := range after {
+		if !known[run.GetId()] && !admitted[run.GetId()] {
+			left = append(left, run.GetId())
+		}
+	}
+	if len(left) != 0 {
+		t.Fatalf("a refused submission left %d runs behind: %v", len(left), left)
 	}
 	proof.Write(t, "engine", "cache-I13.txt", []byte(submitErr.Error()+"\n"))
 }

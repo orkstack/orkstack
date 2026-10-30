@@ -45,7 +45,7 @@ on:
         default: 105m
     outputs:
       # The merged proof's artifact name, so a caller's re-run job finds the
-      # attempt that uploaded it (release.yml › tag).
+      # attempt that uploaded it (release.yml › verify and publish).
       proof_artifact:
         value: ${{ jobs.proof.outputs.proof_artifact }}
 
@@ -958,8 +958,8 @@ jobs:
             ;;
           release)
             # Never merge evidence, but a tag precondition: judged by the same
-            # rule the tag job applies, identity included (docs/PROOFS.md §6),
-            # against the commit this job checked out.
+            # rule release.yml › verify applies, identity included
+            # (docs/PROOFS.md §6), against the commit this job checked out.
             go run ./test/tools/proofrun verify -release -proof "$proof"
             ;;
           nightly)

@@ -39,6 +39,7 @@ import (
 	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/internal/webui"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -56,6 +57,10 @@ type config struct {
 	temporalNamespace string
 	httpAddr          string
 	allowedOrigins    []string
+	// ui is engine.ui.* (uiFromEnv): whether, and from where, the API
+	// listener serves the web UI. uiErr is a refused pair, reported at boot.
+	ui    uiConfig
+	uiErr error
 	// pool is the OrkStack name for where this engine dispatches a task that
 	// names no pool of its own; orkerQueue is the raw execution channel that
 	// pool resolves to. See task.ResolvePoolBinding for the five ways the two
@@ -205,6 +210,7 @@ func loadConfig() config {
 	if origins := env("ORK_WS_ALLOWED_ORIGINS", ""); origins != "" {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
+	cfg.ui, cfg.uiErr = uiFromEnv()
 	return cfg
 }
 
@@ -840,6 +846,22 @@ func warnUndeclaredNamespaceSinks(
 	}
 }
 
+// traceAPIRequest is apiHandler's otelhttp filter: it reports whether a
+// request should carry a span and an http.server.request.duration sample.
+// Only the API's own request/response routes are traced — the paths
+// webui.Reserved claims for it — minus the WebSocket routes:
+//
+//   - a WebSocket upgrade's ServeHTTP blocks for the life of the connection,
+//     so tracing it would produce a span, and a duration sample, as long as
+//     the viewer keeps the run's log stream open, describing a browsing
+//     session, not a request;
+//   - the web UI's files (everything else on this listener) are not API
+//     requests: one page load's thirty asset fetches would swamp the API's
+//     latency metrics with static-file timings.
+func traceAPIRequest(r *http.Request) bool {
+	return webui.Reserved(r.URL.Path) && !strings.HasPrefix(r.URL.Path, wsPathPrefix)
+}
+
 // wsPathPrefix is the prefix common to every WebSocket upgrade route NewMux
 // registers (internal/api/server.go): "/ws/runs/{id}" and
 // api.TaskLogSocketPath ("/ws/runs/{id}/tasks/{task}/logs") both start with
@@ -847,25 +869,14 @@ func warnUndeclaredNamespaceSinks(
 // literal has to stay in lockstep with NewMux's own routes by hand.
 const wsPathPrefix = "/ws/"
 
-// traceAPIRequest is apiHandler's otelhttp filter: it reports whether a
-// request should carry a span and an http.server.request.duration sample. A
-// WebSocket upgrade's ServeHTTP blocks for the life of the connection, so
-// tracing it would produce a span — and a duration sample — as long as the
-// viewer keeps the run's log stream open, polluting API latency metrics and
-// traces with numbers that describe a browsing session, not a request. Every
-// other route is an ordinary request/response and is traced.
-func traceAPIRequest(r *http.Request) bool {
-	return !strings.HasPrefix(r.URL.Path, wsPathPrefix)
-}
-
 // apiHandler wraps mux with OpenTelemetry HTTP instrumentation when traces or
 // metrics are on, so a request into the Connect API and WebSocket bridge
 // carries a span and RED metrics on the same default-sink providers every
 // other process-level signal uses. With both off it returns mux itself,
 // unchanged — the zero-config path serves the exact *http.ServeMux this
 // binary always served, not a handler wrapping one. traceAPIRequest keeps the
-// two long-lived WebSocket routes out of tracing and metrics regardless: see
-// its doc comment.
+// two long-lived WebSocket routes and the web UI's files out of tracing and
+// metrics regardless: see its doc comment.
 func apiHandler(tcfg telemetry.Config, sinks *telemetry.Sinks, mux *http.ServeMux) http.Handler {
 	if !tcfg.TracesEnabled() && !tcfg.MetricsEnabled() {
 		return mux
@@ -936,6 +947,17 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if cfg.catalogErr != nil {
 		return cfg.catalogErr
 	}
+	// The UI is resolved before anything dials out, so a directory that is
+	// not a UI build stops the boot with the variable named, rather than an
+	// engine that answers every page with a 404.
+	if cfg.uiErr != nil {
+		return cfg.uiErr
+	}
+	ui, uiSource, err := uiHandler(cfg.ui)
+	if err != nil {
+		return err
+	}
+	logger.Info("web UI", "source", uiSource, "dir", cfg.ui.dir)
 
 	namespaces, err := openNamespaceStore(ctx, logger)
 	if err != nil {
@@ -1447,6 +1469,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 
 	mux := api.NewMux(svc, api.MuxOptions{
 		AllowedOrigins: cfg.allowedOrigins,
+		UI:             ui,
 	})
 	server := api.NewServer(cfg.httpAddr, apiHandler(tcfg, sinks, mux))
 	cancelServerHandlers := installServerShutdownContext(server)
