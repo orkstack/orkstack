@@ -748,8 +748,8 @@ func TestSecurityPolicy_TheOrkersOwnFilesAreRefusedByNameAndByLink(t *testing.T)
 	)
 
 	// Every refusal of a file says the same thing: never which of the
-	// Orker's files a name is, nor where a link led, so a task cannot learn
-	// the Orker's paths by trying names.
+	// Orker's files a name is, nor where a link led, so a task that tries
+	// names learns which are the Orker's own but not which path made one so.
 	for _, source := range own {
 		err := policy.AllowsSecretSource(source)
 		want := fmt.Sprintf("%q is this orker's own (one of its files), which no secret floor admits", source)

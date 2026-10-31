@@ -313,8 +313,9 @@ type OwnVar struct {
 // ownFileLabel and ownVarLabel are what a task's refusal says of every file
 // and every variable of the Orker's own: one label for each scheme, never
 // which file or variable it is, which rule or setting made it the Orker's,
-// nor where a link led, so a task cannot learn the Orker's configuration by
-// trying names.
+// nor where a link led. A task that tries names still learns which are the
+// Orker's own, since those are refused; what a refusal never tells it is
+// which rule, setting or path made one so.
 const (
 	ownFileLabel = "one of its files"
 	ownVarLabel  = "one of its variables"
