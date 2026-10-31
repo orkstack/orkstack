@@ -409,3 +409,30 @@ func TestSharedInventory_AHungReadEndsAtItsBound(t *testing.T) {
 		t.Fatalf("presence reads = %d after two hung reads, want 2: each started its own", observes)
 	}
 }
+
+// The read ends at the inventory's own bound, not at the default: a
+// replica given another bound waits that long, and no longer.
+func TestSharedInventory_AReadEndsAtTheBoundItWasGiven(t *testing.T) {
+	fleet := newHangingFleet()
+	t.Cleanup(fleet.unhang)
+	inv, clock, timer := testInventory(fleet)
+	const bound = 3 * time.Second
+	inv.bound = bound
+	asked := clock.current()
+	result := make(chan error, 1)
+	go func() {
+		_, err := inv.read(context.Background())
+		result <- err
+	}()
+	awaitSignal(t, fleet.hung, "the hung describe to begin")
+	if got := timer.bounds(); len(got) != 1 || got[0] != bound {
+		t.Fatalf("read bounds set = %v, want one at %s", got, bound)
+	}
+	timer.fire(t, 0)
+	if err := awaitSignal(t, result, "the caller of a hung read"); err == nil {
+		t.Fatal("a read that never finished answered without an error")
+	}
+	if elapsed := clock.current().Sub(asked); elapsed != bound {
+		t.Fatalf("the caller was answered %s after it asked, want at the %s bound", elapsed, bound)
+	}
+}
