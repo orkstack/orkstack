@@ -2164,7 +2164,8 @@ func TestIntegration_ContinuationChaosC18_ForgedCarriesEndExplicitly(t *testing.
 // keeps them, and its terminal rows are the switch snapshot's, with the
 // unfinished ones CANCELED.
 func TestIntegration_ContinuationChaosC18_MalformedSavedStateEndsExplicitly(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	// Four runs one after another, each allowed two minutes to close.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 	s := newChaosStack(t, ctx, "C18/malformed")
 	s.startReplica("replica-a", replicaOptions{})
