@@ -118,7 +118,8 @@ last 16 MiB (`-max-bytes`), after a line saying how much of its start was left
 out; at the `warn` level the compose file sets, a part's log is far below
 that. A history-read error a test saw (a stream ended on "branch tokens don't
 match", say) is traced there. Keeping it is best effort: a log docker cannot
-give is reported and fails nothing.
+give within 20 s (`-timeout`) is reported and fails nothing, and the stop
+follows, so a cancel never waits on it longer.
 
 The **site gate** runs `bun run check && bun run build` in `site/`, logged to
 `site.log`: the docs sync, the design-token drift check and `astro check`, then
@@ -1888,7 +1889,7 @@ listing with no bucket at all.
 | `flakes` | `-from GLOB`, `-repo DIR`, `-window N`, `-out FILE`, `-md FILE`, `-min-runs N` |
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S`; or, for `release.yml`'s nightly check, `-commit SHA` with `-nightly DIR` and `-nightly-jobs FILE` |
 | `temporal-args` | `-compose FILE` |
-| `temporal-log` | `-container NAME`, `-out FILE`, `-max-bytes N` |
+| `temporal-log` | `-container NAME`, `-out FILE`, `-max-bytes N`, `-timeout D` |
 | `costs` | `-from DIR`, `-costs-out FILE`, `-slow-out FILE`, `-ui-costs-out FILE`, `-threshold SECONDS` |
 | `overhead` | `-from DIR`, `-out FILE`, `-config FILE` |
 | `push-layout` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |

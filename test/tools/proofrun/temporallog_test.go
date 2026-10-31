@@ -7,9 +7,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // A proof part's own Temporal is a container started with --rm, so stopping
@@ -117,6 +119,46 @@ func TestTemporalLog_WritesNothingWhenDockerHasNoLog(t *testing.T) {
 	}
 }
 
+// A part's cleanup and a local proof's exit keep the log with TERM, INT and
+// HUP ignored, before they stop the container: a `docker logs` that does not
+// answer must not hold the stop, or a cancel leaves the Temporal running. It
+// gives up after its timeout, even on a docker whose child still holds the
+// pipes, and writes nothing.
+func TestTemporalLog_GivesUpOnADockerThatDoesNotAnswer(t *testing.T) {
+	quiet(t)
+	dir := t.TempDir()
+	pidfile := filepath.Join(dir, "sleep.pid")
+	script := "#!/bin/sh\nsleep 120 &\necho $! >'" + pidfile + "'\nwait\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Cleanup(func() {
+		if b, err := os.ReadFile(pidfile); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
+				_ = syscall.Kill(pid, syscall.SIGKILL)
+			}
+		}
+	})
+	outDir := t.TempDir()
+	out := filepath.Join(outDir, "temporal-server.log.gz")
+	started := time.Now()
+	code := cmdTemporalLog([]string{"-container", "c1", "-out", out, "-timeout", "1s"})
+	if elapsed := time.Since(started); elapsed > 20*time.Second {
+		t.Errorf("temporal-log took %v with a 1s timeout", elapsed)
+	}
+	if code != 1 {
+		t.Errorf("exit %d, want 1", code)
+	}
+	if entries, _ := os.ReadDir(outDir); len(entries) != 0 {
+		t.Errorf("a read that timed out left %v", entries)
+	}
+	// The scripts take the default, which a cancel must outlast by little.
+	if temporalLogTimeout < 10*time.Second || temporalLogTimeout > 30*time.Second {
+		t.Errorf("the default timeout is %v, want 10 to 30 s", temporalLogTimeout)
+	}
+}
+
 func TestTemporalLog_RefusesAnInvalidInvocation(t *testing.T) {
 	quiet(t)
 	calls := fakeDockerLogs(t, "x\n", "", 0)
@@ -128,6 +170,7 @@ func TestTemporalLog_RefusesAnInvalidInvocation(t *testing.T) {
 		{"-container", "--help", "-out", out},
 		{"-container", "c1;rm", "-out", out},
 		{"-container", "c1", "-out", out, "-max-bytes", "0"},
+		{"-container", "c1", "-out", out, "-timeout", "0s"},
 		{"-container", "c1", "-out", out, "extra"},
 	} {
 		if code := cmdTemporalLog(args); code != 2 {
