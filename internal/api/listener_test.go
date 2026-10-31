@@ -126,6 +126,51 @@ func openSlowHeader(t *testing.T, addr string) (net.Conn, time.Time) {
 	return conn, start
 }
 
+// openSlowH2Header opens an h2c connection with prior knowledge, settles
+// its settings as a client does, and starts its first request with a header
+// block that never ends: a HEADERS frame without END_HEADERS, and no
+// CONTINUATION after it. It returns a time no later than when the server
+// began counting the connection idle: before the dial.
+func openSlowH2Header(t *testing.T, addr string) (net.Conn, time.Time) {
+	t.Helper()
+	const (
+		frameHeaders  = 0x1
+		frameSettings = 0x4
+		flagAck       = 0x1
+	)
+	frame := func(kind, flags byte, stream uint32, payload []byte) []byte {
+		header := []byte{byte(len(payload) >> 16), byte(len(payload) >> 8), byte(len(payload)), kind, flags,
+			byte(stream>>24) & 0x7f, byte(stream >> 16), byte(stream >> 8), byte(stream)}
+		return append(header, payload...)
+	}
+	start := time.Now()
+	conn := dialRaw(t, addr)
+	if _, err := conn.Write(append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), frame(frameSettings, 0, 0, nil)...)); err != nil {
+		t.Fatal(err)
+	}
+	// The server's SETTINGS comes first; a client acknowledges it before
+	// it sends anything else.
+	if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
+		t.Fatal(err)
+	}
+	header := make([]byte, 9)
+	if _, err := io.ReadFull(conn, header); err != nil {
+		t.Fatalf("read the server's first frame: %v", err)
+	}
+	if header[3] != frameSettings || header[4]&flagAck != 0 {
+		t.Fatalf("the server's first frame is type %d flags %d, want SETTINGS", header[3], header[4])
+	}
+	if _, err := io.CopyN(io.Discard, conn, int64(header[0])<<16|int64(header[1])<<8|int64(header[2])); err != nil {
+		t.Fatal(err)
+	}
+	// :method GET, :scheme http, :path / (HPACK static table 2, 6, 4).
+	stalled := append(frame(frameSettings, flagAck, 0, nil), frame(frameHeaders, 0, 1, []byte{0x82, 0x86, 0x84})...)
+	if _, err := conn.Write(stalled); err != nil {
+		t.Fatal(err)
+	}
+	return conn, start
+}
+
 // The listener bounds what a client may make it wait for and hold, and
 // nothing that would end a request already being answered: no whole-request
 // read deadline and no write deadline, either of which would cut a run's
@@ -172,6 +217,15 @@ func TestAPIListener_ClosesASlowHeaderAnIdleConnectionAndRefusesOversizedHeaders
 	t.Run("a keep-alive connection left idle", func(t *testing.T) {
 		conn, reader, idleSince := openIdleConnection(t, addr, "/")
 		requireClosedByBound(t, conn, reader, idleSince, testIdleTimeout)
+	})
+
+	// Go's HTTP/2 server does not apply ReadHeaderTimeout. A first request
+	// whose header block never ends opens no stream, so the connection
+	// carries none, and the idle bound closes it: GOAWAY at the bound, and
+	// the connection a second later.
+	t.Run("an h2c request whose header block never ends", func(t *testing.T) {
+		conn, start := openSlowH2Header(t, addr)
+		requireClosedByBound(t, conn, conn, start, testIdleTimeout)
 	})
 
 	t.Run("headers over the bound", func(t *testing.T) {
@@ -354,17 +408,22 @@ func TestAPIListener_LongLivedStreamsOutliveItsBounds(t *testing.T) {
 		}
 	}
 
-	// The silence. On each server, a keep-alive connection and a request
-	// whose headers never end are closed by the bounds while it lasts.
-	for _, addr := range []string{eventsAddr, logsAddr} {
-		slow, slowSince := openSlowHeader(t, addr)
-		idle, idleReader, idleSince := openIdleConnection(t, addr, "/ws/")
-		requireClosedByBound(t, slow, slow, slowSince, testHeaderTimeout)
-		requireClosedByBound(t, idle, idleReader, idleSince, testIdleTimeout)
+	// The silence. It lasts outlast, and it is held by watching the bounds
+	// act rather than by a sleep: on each server, a keep-alive connection
+	// and a request whose headers never end are opened and closed by the
+	// bounds, round after round, until the silence has outlasted them. Every
+	// moment the streams must survive is one in which the listener was seen
+	// enforcing its bounds, so a slow host cannot make the test pass.
+	rounds := 0
+	for deadline := opened.Add(outlast); rounds == 0 || time.Now().Before(deadline); rounds++ {
+		for _, addr := range []string{eventsAddr, logsAddr} {
+			slow, slowSince := openSlowHeader(t, addr)
+			idle, idleReader, idleSince := openIdleConnection(t, addr, "/ws/")
+			requireClosedByBound(t, slow, slow, slowSince, testHeaderTimeout)
+			requireClosedByBound(t, idle, idleReader, idleSince, testIdleTimeout)
+		}
 	}
-	if rest := outlast - time.Since(opened); rest > 0 {
-		time.Sleep(rest)
-	}
+	t.Logf("the bounds closed %d rounds of connections during %s of silence", rounds, time.Since(opened).Round(time.Millisecond))
 
 	publish(orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, "fetch")
 	logs.write(ref, 2, "after\n")

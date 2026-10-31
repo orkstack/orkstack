@@ -215,7 +215,7 @@ func loadConfig() config {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
 	cfg.ui, cfg.uiErr = uiFromEnv()
-	cfg.listener, cfg.listenerErr = listenerFromEnv()
+	cfg.listener, cfg.listenerErr = listenerFromEnv(tasks.value)
 	return cfg
 }
 
@@ -1489,6 +1489,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"idle_timeout", cfg.listener.idleTimeout,
 		"request_max_bytes", cfg.listener.requestMaxBytes,
 		"allowed_hosts", cfg.listener.allowedHosts)
+	for _, warning := range cfg.listener.warnings {
+		logger.Warn(warning)
+	}
 	cancelServerHandlers := installServerShutdownContext(server)
 	defer cancelServerHandlers()
 

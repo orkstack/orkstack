@@ -43,7 +43,6 @@ const defaultsHeader = `# OrkStack configuration file — generated defaults.
 // would write). Every entry here is, like every Var.Default, bound to the
 // same code constant the binary itself falls back to — see config.go.
 var rawMachineOverride = map[string]string{
-	"ORK_REQUEST_MAX_BYTES":              strconv.FormatInt(api.DefaultRequestMaxBytes, 10),
 	"ORK_VALUES_MAX_BYTES":               strconv.FormatInt(engine.DefaultValuesMaxBytes, 10),
 	"ORK_ARTIFACT_MAX_BYTES":             strconv.FormatInt(engine.DefaultArtifactMaxBytes, 10),
 	"ORK_LOG_MAX_BYTES":                  strconv.FormatInt(engine.DefaultLogMaxBytes, 10),

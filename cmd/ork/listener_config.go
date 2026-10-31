@@ -9,8 +9,10 @@ import (
 )
 
 // maxRequestMaxBytes is the largest ORK_REQUEST_MAX_BYTES the engine
-// accepts: 1 GiB. A Connect message is held in memory whole, and again once
-// decompressed, so a cap above that bounds nothing a process can afford.
+// accepts while the task ceiling needs less: 1 GiB. A Connect message is
+// held in memory whole, and again once decompressed, so a cap above that
+// bounds nothing a process can afford. A ceiling that needs more gets what
+// it needs, warned at boot, and may be given up to twice that.
 const maxRequestMaxBytes = 1 << 30
 
 // listenerConfig is the API listener's own settings (listenerFromEnv):
@@ -23,14 +25,20 @@ type listenerConfig struct {
 	requestMaxBytes int64
 	allowedHosts    []string
 	hosts           api.HostPolicy
+	// warnings are logged at boot, Warn, one line each.
+	warnings []string
 }
 
-// listenerFromEnv reads the API listener's settings. A malformed value, an
-// idle timeout under a second, a read cap outside 1 MiB … 1 GiB and an
-// allowed host that is not a name or a pattern are refused at boot: each
-// would bound something other than what the operator wrote.
-func listenerFromEnv() (listenerConfig, error) {
-	cfg := listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: api.DefaultRequestMaxBytes}
+// listenerFromEnv reads the API listener's settings for an engine whose
+// task ceiling is maxTasks. Unset, the read cap is what an apply at that
+// ceiling needs (api.RequestMaxBytesFor). A malformed value, an idle timeout
+// under a second, a read cap under that need or over 1 GiB (twice the need
+// when the need is more, which is warned), and an allowed host that is not a name or a pattern are refused at boot:
+// each would bound something other than what the operator wrote, and a cap
+// under the need would turn a transport bound into a definition limit.
+func listenerFromEnv(maxTasks int32) (listenerConfig, error) {
+	need := api.RequestMaxBytesFor(maxTasks)
+	cfg := listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: need}
 	for _, entry := range strings.Split(env("ORK_ALLOWED_HOSTS", ""), ",") {
 		if entry = strings.TrimSpace(entry); entry != "" {
 			cfg.allowedHosts = append(cfg.allowedHosts, entry)
@@ -51,13 +59,26 @@ func listenerFromEnv() (listenerConfig, error) {
 		}
 		cfg.idleTimeout = parsed
 	}
-	requestMaxBytes, err := envInt64("ORK_REQUEST_MAX_BYTES", api.DefaultRequestMaxBytes)
+	requestMaxBytes, err := envInt64("ORK_REQUEST_MAX_BYTES", need)
 	if err != nil {
 		return cfg, err
 	}
-	if requestMaxBytes < api.MinRequestMaxBytes || requestMaxBytes > maxRequestMaxBytes {
-		return cfg, fmt.Errorf("ORK_REQUEST_MAX_BYTES=%d must be between %d (1 MiB) and %d (1 GiB)",
-			requestMaxBytes, api.MinRequestMaxBytes, maxRequestMaxBytes)
+	if requestMaxBytes < need {
+		return cfg, fmt.Errorf("ORK_REQUEST_MAX_BYTES=%d (engine.request_max_bytes) is under %d, what an apply at "+
+			"engine.orkflow_max_tasks (ORK_ORKFLOW_MAX_TASKS=%d) may need (%d bytes and %d a task): raise it, "+
+			"or unset it to take that need", requestMaxBytes, need, maxTasks, api.RequestBaseBytes, api.RequestBytesPerTask)
+	}
+	limit := int64(maxRequestMaxBytes)
+	if need > maxRequestMaxBytes {
+		limit = 2 * need
+		cfg.warnings = append(cfg.warnings, fmt.Sprintf("engine.orkflow_max_tasks (ORK_ORKFLOW_MAX_TASKS=%d) needs a "+
+			"read cap of %d bytes, over 1 GiB: the engine holds one such request in memory, and again once "+
+			"decompressed, per request in flight", maxTasks, need))
+	}
+	if requestMaxBytes > limit {
+		return cfg, fmt.Errorf("ORK_REQUEST_MAX_BYTES=%d (engine.request_max_bytes) is over %d: a read cap above "+
+			"1 GiB, or above twice what engine.orkflow_max_tasks (ORK_ORKFLOW_MAX_TASKS=%d) needs when that is "+
+			"more, bounds nothing a process can afford", requestMaxBytes, limit, maxTasks)
 	}
 	cfg.requestMaxBytes = requestMaxBytes
 	return cfg, nil

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/webui"
 )
 
@@ -59,6 +61,9 @@ type MuxOptions struct {
 func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	serveMux := http.NewServeMux()
 	mux := reservedMux{serveMux: serveMux}
+	// No Connect request carries more than one message (the API has no
+	// client stream), so every Connect route's body is bounded at
+	// ConnectBodyFactor times the read cap (reservedMux.Handle).
 	// Every handler shares one interceptor chain: the audit interceptor sees
 	// every unary call, records the audited writes, and passes everything else
 	// through untouched (audit.go). HandlerOptions itself is unchanged, so its
@@ -72,6 +77,7 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	if requestMaxBytes <= 0 {
 		requestMaxBytes = DefaultRequestMaxBytes
 	}
+	mux.connectBodyMax = ConnectBodyFactor * requestMaxBytes
 	handlerOptions := append(HandlerOptions(),
 		connect.WithInterceptors(svc.auditInterceptor()),
 		connect.WithReadMaxBytes(int(requestMaxBytes)),
@@ -215,11 +221,25 @@ func (d *boundedGzip) Close() error { return d.reader.Close() }
 
 // reservedMux mounts API routes, each of which must be reserved from the UI.
 // It offers Handle alone, so no route reaches the mux around the check.
-type reservedMux struct{ serveMux *http.ServeMux }
+//
+// Every Connect route (a pattern under /orkstack.) reads a body no further
+// than connectBodyMax, when it is set. Past it the listener stops reading
+// once Connect has answered, and closes an HTTP/1.1 connection or resets an
+// h2c stream: Connect reads an over-cap message's rest away so its client
+// is answered, and without the bound a body that never ends would be read
+// for as long as its client sends. It is applied here, not by each mount,
+// so a service added later cannot be mounted without it.
+type reservedMux struct {
+	serveMux       *http.ServeMux
+	connectBodyMax int64
+}
 
 func (m reservedMux) Handle(pattern string, handler http.Handler) {
 	if !webui.Reserved(pattern) {
 		panic(fmt.Sprintf("api: route %q is not reserved from the web UI (internal/webui Reserved)", pattern))
+	}
+	if m.connectBodyMax > 0 && strings.HasPrefix(pattern, "/orkstack.") {
+		handler = http.MaxBytesHandler(handler, m.connectBodyMax)
 	}
 	m.serveMux.Handle(pattern, handler)
 }
@@ -247,20 +267,41 @@ const (
 	// first and never sends a request down one the engine is closing.
 	DefaultIdleTimeout = 15 * time.Minute
 
-	// DefaultRequestMaxBytes is ORK_REQUEST_MAX_BYTES's default: the largest
-	// Connect request message the engine reads, 16 MiB. The largest
-	// legitimate requests measured are an apply of an Orkflow at the default
-	// task ceiling written heavily, about 920 bytes a task (3.8 MB as JSON),
-	// and the plan of an automation document of a thousand schedules and a
-	// thousand triggers (0.5 MB); the cap is four times the larger
-	// (TestDefaultRequestMaxBytes_IsFourTimesTheLargestMeasuredRequest).
-	DefaultRequestMaxBytes = 16 << 20
+	// ConnectBodyFactor bounds a Connect request's body at this many times
+	// the read cap: room for the one message a request carries, as sent and
+	// enveloped, with the cap's own margin to spare.
+	ConnectBodyFactor = 2
 
-	// MinRequestMaxBytes is the smallest ORK_REQUEST_MAX_BYTES the engine
-	// accepts: 1 MiB, the bound the plain-HTTP routes already read under,
-	// and room for a run's input at its own 256 KiB bound in either encoding.
-	MinRequestMaxBytes = 1 << 20
+	// RequestBaseBytes is the part of the read cap no task ceiling scales:
+	// 1 MiB, the bound the plain-HTTP routes read under. It holds a run's
+	// input at its own 256 KiB bound in either encoding, and the plan of an
+	// automation document of a thousand schedules and a thousand triggers
+	// (0.5 MB measured) with half again to spare.
+	RequestBaseBytes = 1 << 20
+
+	// RequestBytesPerTask is what the read cap allows a task of the task
+	// ceiling: 4 KiB. The heaviest task measured adds about 920 bytes to an
+	// apply in either encoding, so an Orkflow at the ceiling whose tasks
+	// average four times that still fits
+	// (TestRequestMaxBytesFor_IsFourTimesAnApplyAtEveryTaskCeiling).
+	RequestBytesPerTask = 4 << 10
+
+	// DefaultRequestMaxBytes is the read cap of an engine at the default
+	// task ceiling: RequestMaxBytesFor(engine.DefaultOrkflowMaxTasks),
+	// 17,432,576 bytes (about 16.6 MiB).
+	DefaultRequestMaxBytes = RequestBaseBytes + RequestBytesPerTask*int64(engine.DefaultOrkflowMaxTasks)
 )
+
+// RequestMaxBytesFor is the read cap an engine whose task ceiling
+// (engine.orkflow_max_tasks) is maxTasks needs: RequestBaseBytes plus
+// RequestBytesPerTask a task. It is a transport bound that scales with the
+// ceiling, never a definition limit (AGENTS.md §7): ORK_REQUEST_MAX_BYTES
+// defaults to it and may only be set above it, so raising the ceiling
+// raises the cap, and no Orkflow the ceiling admits is refused for the
+// size of the request that applies it unless its tasks average over 4 KiB.
+func RequestMaxBytesFor(maxTasks int32) int64 {
+	return RequestBaseBytes + RequestBytesPerTask*int64(max(maxTasks, 0))
+}
 
 // ServerOptions tunes the API listener (NewServerWith). A zero field takes
 // its default.

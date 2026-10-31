@@ -1,40 +1,71 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
 )
 
 func TestListenerFromEnv(t *testing.T) {
+	ceiling := engine.DefaultOrkflowMaxTasks
+	derived := api.RequestMaxBytesFor(ceiling)
 	for _, tc := range []struct {
 		name, idle, maxBytes string
+		maxTasks             int32
 		want                 listenerConfig
-		wantErr              string
+		wantErr              []string
 	}{
-		{name: "unset: the defaults",
-			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: api.DefaultRequestMaxBytes}},
-		{name: "both set", idle: "11m", maxBytes: "33554432",
+		{name: "unset: the defaults, the cap derived from the task ceiling", maxTasks: ceiling,
+			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: derived}},
+		{name: "unset under a raised task ceiling: the cap rises with it", maxTasks: 20_000,
+			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: api.RequestMaxBytesFor(20_000)}},
+		{name: "unset under a lowered task ceiling: the cap falls with it", maxTasks: 10,
+			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: api.RequestMaxBytesFor(10)}},
+		{name: "both set", idle: "11m", maxBytes: "33554432", maxTasks: ceiling,
 			want: listenerConfig{idleTimeout: 11 * time.Minute, requestMaxBytes: 32 << 20}},
-		{name: "the smallest cap", maxBytes: "1048576",
-			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: api.MinRequestMaxBytes}},
-		{name: "the largest cap", maxBytes: "1073741824",
+		{name: "a cap exactly what the ceiling needs", maxBytes: strconv.FormatInt(derived, 10), maxTasks: ceiling,
+			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: derived}},
+		{name: "the largest cap", maxBytes: "1073741824", maxTasks: ceiling,
 			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: maxRequestMaxBytes}},
-		{name: "an idle timeout that is not a duration", idle: "soon", wantErr: "ORK_HTTP_IDLE_TIMEOUT"},
-		{name: "an idle timeout under a second", idle: "500ms", wantErr: "ORK_HTTP_IDLE_TIMEOUT"},
-		{name: "a cap that is not a number", maxBytes: "16MiB", wantErr: "ORK_REQUEST_MAX_BYTES"},
-		{name: "a cap under 1 MiB", maxBytes: "1048575", wantErr: "ORK_REQUEST_MAX_BYTES"},
-		{name: "a cap over 1 GiB", maxBytes: "1073741825", wantErr: "ORK_REQUEST_MAX_BYTES"},
+		{name: "a ceiling that needs more than 1 GiB gets what it needs, warned", maxTasks: 300_000,
+			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: api.RequestMaxBytesFor(300_000),
+				warnings: []string{"ORK_ORKFLOW_MAX_TASKS=300000"}}},
+		{name: "a ceiling that needs more than 1 GiB may be given twice that", maxTasks: 300_000,
+			maxBytes: strconv.FormatInt(2*api.RequestMaxBytesFor(300_000), 10),
+			want: listenerConfig{idleTimeout: api.DefaultIdleTimeout, requestMaxBytes: 2 * api.RequestMaxBytesFor(300_000),
+				warnings: []string{"over 1 GiB"}}},
+		{name: "a ceiling that needs more than 1 GiB, given more than twice that", maxTasks: 300_000,
+			maxBytes: strconv.FormatInt(2*api.RequestMaxBytesFor(300_000)+1, 10),
+			wantErr:  []string{"ORK_REQUEST_MAX_BYTES", "twice"}},
+		{name: "an idle timeout that is not a duration", idle: "soon", maxTasks: ceiling,
+			wantErr: []string{"ORK_HTTP_IDLE_TIMEOUT"}},
+		{name: "an idle timeout under a second", idle: "500ms", maxTasks: ceiling, wantErr: []string{"ORK_HTTP_IDLE_TIMEOUT"}},
+		{name: "a cap that is not a number", maxBytes: "16MiB", maxTasks: ceiling, wantErr: []string{"ORK_REQUEST_MAX_BYTES"}},
+		{name: "a cap one byte under what the ceiling needs", maxBytes: strconv.FormatInt(derived-1, 10), maxTasks: ceiling,
+			wantErr: []string{"ORK_REQUEST_MAX_BYTES", "engine.request_max_bytes", "ORK_ORKFLOW_MAX_TASKS=4000",
+				"engine.orkflow_max_tasks", strconv.FormatInt(derived, 10)}},
+		{name: "the old 16 MiB default under the default ceiling", maxBytes: "16777216", maxTasks: ceiling,
+			wantErr: []string{"ORK_REQUEST_MAX_BYTES", "ORK_ORKFLOW_MAX_TASKS"}},
+		{name: "a 32 MiB cap under a ceiling that needs more", maxBytes: "33554432", maxTasks: 20_000,
+			wantErr: []string{"ORK_REQUEST_MAX_BYTES", "ORK_ORKFLOW_MAX_TASKS=20000"}},
+		{name: "a cap over 1 GiB", maxBytes: "1073741825", maxTasks: ceiling, wantErr: []string{"ORK_REQUEST_MAX_BYTES"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("ORK_HTTP_IDLE_TIMEOUT", tc.idle)
 			t.Setenv("ORK_REQUEST_MAX_BYTES", tc.maxBytes)
-			got, err := listenerFromEnv()
-			if tc.wantErr != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-					t.Fatalf("err = %v, want one naming %s", err, tc.wantErr)
+			got, err := listenerFromEnv(tc.maxTasks)
+			if len(tc.wantErr) > 0 {
+				if err == nil {
+					t.Fatalf("err = nil, want one naming %q", tc.wantErr)
+				}
+				for _, want := range tc.wantErr {
+					if !strings.Contains(err.Error(), want) {
+						t.Errorf("err = %v, want one naming %s", err, want)
+					}
 				}
 				return
 			}
@@ -42,7 +73,15 @@ func TestListenerFromEnv(t *testing.T) {
 				t.Fatal(err)
 			}
 			if got.idleTimeout != tc.want.idleTimeout || got.requestMaxBytes != tc.want.requestMaxBytes {
-				t.Errorf("listenerFromEnv() = %+v, want %+v", got, tc.want)
+				t.Errorf("listenerFromEnv(%d) = %+v, want %+v", tc.maxTasks, got, tc.want)
+			}
+			if len(got.warnings) != len(tc.want.warnings) {
+				t.Fatalf("warnings %q, want %d naming %q", got.warnings, len(tc.want.warnings), tc.want.warnings)
+			}
+			for i, want := range tc.want.warnings {
+				if !strings.Contains(got.warnings[i], want) {
+					t.Errorf("warning %q, want one naming %q", got.warnings[i], want)
+				}
 			}
 		})
 	}
@@ -54,7 +93,7 @@ func TestListenerFromEnv(t *testing.T) {
 func TestListenerFromEnv_AllowedHosts(t *testing.T) {
 	t.Setenv("ORK_HTTP_ADDR", "ork.internal:8080")
 	t.Setenv("ORK_ALLOWED_HOSTS", " orkstack.example.com, ,*.corp.example ")
-	got, err := listenerFromEnv()
+	got, err := listenerFromEnv(engine.DefaultOrkflowMaxTasks)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,12 +110,12 @@ func TestListenerFromEnv_AllowedHosts(t *testing.T) {
 	}
 
 	t.Setenv("ORK_ALLOWED_HOSTS", "https://orkstack.example.com")
-	if _, err := listenerFromEnv(); err == nil || !strings.Contains(err.Error(), "ORK_ALLOWED_HOSTS") {
+	if _, err := listenerFromEnv(engine.DefaultOrkflowMaxTasks); err == nil || !strings.Contains(err.Error(), "ORK_ALLOWED_HOSTS") {
 		t.Errorf("a URL for a host: err = %v, want a refusal naming ORK_ALLOWED_HOSTS", err)
 	}
 	t.Setenv("ORK_ALLOWED_HOSTS", "")
 	t.Setenv("ORK_HTTP_ADDR", "")
-	got, err = listenerFromEnv()
+	got, err = listenerFromEnv(engine.DefaultOrkflowMaxTasks)
 	if err != nil || !got.hosts.Allows("localhost:8080") || got.hosts.Allows("evil.example") {
 		t.Errorf("unset: %v; want the default policy", err)
 	}

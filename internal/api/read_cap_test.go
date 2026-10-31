@@ -1,14 +1,17 @@
 package api_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -100,35 +103,75 @@ func largeAutomationDoc(n int) string {
 	return b.String()
 }
 
-// The largest legitimate requests, measured: an apply of an Orkflow at the
-// deployment's default task ceiling, every task written heavily, and the plan
-// of an automation document of a thousand schedules and a thousand triggers.
-// The default read cap is at least four times the larger of them in either
-// encoding a client sends — JSON from the UI, proto from orkctl — so a
-// document twice as heavy, at twice the ceiling, still fits. A change that
-// shrinks the default below that fails here.
-func TestDefaultRequestMaxBytes_IsFourTimesTheLargestMeasuredRequest(t *testing.T) {
-	apply := &orkstackv1.ApplyOrkflowRequest{Yaml: heavyOrkflowDoc("heavy", int(engine.DefaultOrkflowMaxTasks))}
-	plan := &orkstackv1.PlanAutomationRequest{Yaml: largeAutomationDoc(1000)}
-	for _, tc := range []struct {
-		name    string
-		request proto.Message
-	}{
-		{fmt.Sprintf("apply of %d heavy tasks", engine.DefaultOrkflowMaxTasks), apply},
-		{"plan of 1000 schedules and 1000 triggers", plan},
-	} {
-		asJSON, err := protojson.Marshal(tc.request)
-		if err != nil {
-			t.Fatal(err)
-		}
-		asProto := proto.Size(tc.request)
-		t.Logf("%s: %d bytes as JSON, %d as proto", tc.name, len(asJSON), asProto)
-		for encoding, size := range map[string]int{"JSON": len(asJSON), "proto": asProto} {
-			if size*4 > api.DefaultRequestMaxBytes {
-				t.Errorf("%s as %s is %d bytes; the default read cap %d is less than four times it",
-					tc.name, encoding, size, api.DefaultRequestMaxBytes)
+// requestSizes is a request's size in either encoding a client sends: JSON
+// from the UI, proto from orkctl.
+func requestSizes(t *testing.T, request proto.Message) map[string]int64 {
+	t.Helper()
+	asJSON, err := protojson.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return map[string]int64{"JSON": int64(len(asJSON)), "proto": int64(proto.Size(request))}
+}
+
+// The read cap scales with the task ceiling, so it is never a definition
+// limit (AGENTS.md §7): an apply at any ceiling, every task written heavily,
+// is at most a quarter of the cap that ceiling derives, in either encoding.
+// The heaviest task measured costs a request about 920 bytes; the cap allows
+// four times that a task, over a base that holds the plan of an automation
+// document of a thousand schedules and a thousand triggers with half again
+// to spare. A
+// change that shrinks either below that fails here.
+func TestRequestMaxBytesFor_IsFourTimesAnApplyAtEveryTaskCeiling(t *testing.T) {
+	ceilings := []int32{1, 10, 500, engine.DefaultOrkflowMaxTasks}
+	sizes := make(map[int32]map[string]int64, len(ceilings))
+	for _, ceiling := range ceilings {
+		sizes[ceiling] = requestSizes(t, &orkstackv1.ApplyOrkflowRequest{Yaml: heavyOrkflowDoc("heavy", int(ceiling))})
+		limit := api.RequestMaxBytesFor(ceiling)
+		for encoding, size := range sizes[ceiling] {
+			t.Logf("apply of %d heavy tasks: %d bytes as %s; the cap at that ceiling is %d", ceiling, size, encoding, limit)
+			if size*4 > limit {
+				t.Errorf("apply of %d heavy tasks as %s is %d bytes; the cap %d at that ceiling is less than four times it",
+					ceiling, encoding, size, limit)
 			}
 		}
+	}
+	first, last := ceilings[0], ceilings[len(ceilings)-1]
+	for encoding := range sizes[last] {
+		perTask := (sizes[last][encoding] - sizes[first][encoding]) / int64(last-first)
+		t.Logf("one heavy task adds %d bytes as %s", perTask, encoding)
+		if perTask*4 > api.RequestBytesPerTask {
+			t.Errorf("one heavy task adds %d bytes as %s; RequestBytesPerTask %d is less than four times it",
+				perTask, encoding, api.RequestBytesPerTask)
+		}
+	}
+	for encoding, size := range requestSizes(t, &orkstackv1.PlanAutomationRequest{Yaml: largeAutomationDoc(1000)}) {
+		t.Logf("plan of 1000 schedules and 1000 triggers: %d bytes as %s", size, encoding)
+		if size*3/2 > api.RequestBaseBytes {
+			t.Errorf("plan of 1000 schedules and 1000 triggers as %s is %d bytes; RequestBaseBytes %d is less than half again over it",
+				encoding, size, api.RequestBaseBytes)
+		}
+	}
+}
+
+// The cap is the base plus a fixed allowance a task, so raising the ceiling
+// raises it in step, and the default is the cap of the default ceiling.
+func TestRequestMaxBytesFor_GrowsWithTheTaskCeiling(t *testing.T) {
+	for _, tc := range []struct {
+		ceiling int32
+		want    int64
+	}{
+		{ceiling: 1, want: 1<<20 + 4<<10},
+		{ceiling: 1000, want: 1<<20 + 1000*4<<10},
+		{ceiling: engine.DefaultOrkflowMaxTasks, want: 17_432_576},
+		{ceiling: 100_000, want: 1<<20 + 100_000*4<<10},
+	} {
+		if got := api.RequestMaxBytesFor(tc.ceiling); got != tc.want {
+			t.Errorf("RequestMaxBytesFor(%d) = %d, want %d", tc.ceiling, got, tc.want)
+		}
+	}
+	if got, want := int64(api.DefaultRequestMaxBytes), api.RequestMaxBytesFor(engine.DefaultOrkflowMaxTasks); got != want {
+		t.Errorf("DefaultRequestMaxBytes = %d, want RequestMaxBytesFor(%d) = %d", got, engine.DefaultOrkflowMaxTasks, want)
 	}
 }
 
@@ -271,4 +314,115 @@ func TestDefaultRequestMaxBytes_AdmitsAnApplyAtTheTaskCeilingOverTheWire(t *test
 	if issues := planned.Msg.GetIssues(); len(issues) != 0 {
 		t.Fatalf("plan issues: %v", issues)
 	}
+}
+
+// endlessReader is a request body that never ends; it counts what it gave.
+type endlessReader struct{ given atomic.Int64 }
+
+func (r *endlessReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	r.given.Add(int64(len(p)))
+	return len(p), nil
+}
+
+// A body that never ends cannot hold a connection, on any Connect route:
+// Connect reads an over-cap message's rest away so its client is answered,
+// and the listener stops that reading at twice the cap, answers
+// resource_exhausted, and then closes an HTTP/1.1 connection or resets an
+// h2c stream, however long the client goes on sending. One procedure of
+// every service is tried, so a service mounted without the bound fails here.
+func TestNewMux_AnEndlessBodyIsCutAtTwiceTheCap(t *testing.T) {
+	const limit = 64 << 10
+	baseURL, h2c := serveCapped(t, api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore()}), limit)
+	addr := strings.TrimPrefix(baseURL, "http://")
+	for _, procedure := range []string{
+		orkstackv1connect.ActivityServiceListActivitiesProcedure,
+		orkstackv1connect.AuditServiceListAuditRecordsProcedure,
+		orkstackv1connect.AutomationServicePlanAutomationProcedure,
+		orkstackv1connect.CacheServiceGetCacheStatsProcedure,
+		orkstackv1connect.NamespaceServiceGetNamespaceProcedure,
+		orkstackv1connect.OrkflowServiceValidateOrkflowProcedure,
+		orkstackv1connect.RunServiceGetArtifactProvenanceProcedure,
+		orkstackv1connect.ScheduleServiceGetScheduleProcedure,
+		orkstackv1connect.StatsServiceGetFailureBreakdownProcedure,
+		orkstackv1connect.SystemServiceGetImagePolicyProcedure,
+		orkstackv1connect.TriggerServiceListTriggersProcedure,
+		orkstackv1connect.WebhookServiceGetDeliveryProcedure,
+	} {
+		t.Run(procedure+" over HTTP/1.1", func(t *testing.T) {
+			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			if _, err := io.WriteString(conn, "POST "+procedure+" HTTP/1.1\r\nHost: "+addr+
+				"\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"); err != nil {
+				t.Fatal(err)
+			}
+			// The client sends a chunk at a time until the connection
+			// fails, and counts what it sent: the positive control that the
+			// body never ended.
+			var sent atomic.Int64
+			go func() {
+				chunk := fmt.Sprintf("%x\r\n%s\r\n", 16<<10, strings.Repeat("x", 16<<10))
+				for {
+					n, err := io.WriteString(conn, chunk)
+					sent.Add(int64(n))
+					if err != nil {
+						return
+					}
+				}
+			}()
+			_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+			reader := bufio.NewReader(conn)
+			res, err := http.ReadResponse(reader, nil)
+			if err != nil {
+				t.Fatalf("no answer to an endless body within 15s (%d bytes sent): %v", sent.Load(), err)
+			}
+			body, err := io.ReadAll(res.Body)
+			if err != nil {
+				t.Fatalf("read the answer: %v", err)
+			}
+			if res.StatusCode != http.StatusTooManyRequests || !strings.Contains(string(body), "resource_exhausted") {
+				t.Fatalf("an endless body: %s %q, want 429 and a resource_exhausted Connect error", res.Status, body)
+			}
+			if !res.Close {
+				t.Errorf("an endless body: the answer keeps the connection open, want Connection: close")
+			}
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			if _, err := reader.ReadByte(); !errors.Is(err, io.EOF) {
+				t.Errorf("after the answer the connection gave %v, want EOF: the engine did not close it", err)
+			}
+			if n := sent.Load(); n <= 2*limit {
+				t.Errorf("only %d bytes were sent before the answer; the body did not outrun twice the cap (%d)", n, 2*limit)
+			}
+		})
+	}
+	t.Run("over h2c", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		body := &endlessReader{}
+		request, err := http.NewRequestWithContext(ctx, http.MethodPost,
+			baseURL+orkstackv1connect.OrkflowServiceValidateOrkflowProcedure, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Content-Type", "application/json")
+		res, err := h2c.Do(request)
+		if err != nil {
+			t.Fatalf("no answer to an endless body over h2c (%d bytes sent): %v", body.given.Load(), err)
+		}
+		answer, err := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if err != nil || res.ProtoMajor != 2 || res.StatusCode != http.StatusTooManyRequests ||
+			!strings.Contains(string(answer), "resource_exhausted") {
+			t.Fatalf("an endless body over h2c: HTTP/%d %s %q (%v), want HTTP/2 429 resource_exhausted",
+				res.ProtoMajor, res.Status, answer, err)
+		}
+		if n := body.given.Load(); n <= 2*limit {
+			t.Errorf("only %d bytes were sent before the answer; the body did not outrun twice the cap (%d)", n, 2*limit)
+		}
+	})
 }

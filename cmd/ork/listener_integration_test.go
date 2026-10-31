@@ -53,15 +53,15 @@ func statusUnder(t *testing.T, address, host, path string) int {
 	return response.StatusCode
 }
 
-// TestIntegration_EngineBoundsItsAPIListener: the real ork binary takes its
-// read cap, its idle timeout and its Host allowlist from
-// ORK_REQUEST_MAX_BYTES, ORK_HTTP_IDLE_TIMEOUT and ORK_ALLOWED_HOSTS. A
-// request over the cap is refused resource_exhausted naming it, and the next
-// request on the same client is served; a keep-alive connection is closed
-// once idle for the timeout; a Host that is neither one the engine always
-// admits nor listed is refused 403 on every route; and a cap outside its
-// bounds or an allowed host that is not a name stops the boot naming the
-// variable.
+// TestIntegration_EngineBoundsItsAPIListener: the real ork binary derives
+// its read cap from ORK_ORKFLOW_MAX_TASKS and takes its idle timeout and its
+// Host allowlist from ORK_HTTP_IDLE_TIMEOUT and ORK_ALLOWED_HOSTS. A request
+// over the cap is refused resource_exhausted naming it, and the next request
+// on the same client is served; a keep-alive connection is closed once idle
+// for the timeout; a Host that is neither one the engine always admits nor
+// listed is refused 403 on every route; and a cap under what the task
+// ceiling needs, or an allowed host that is not a name, stops the boot
+// naming the settings.
 func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 	temporal := requireTemporal(t)
 	_ = requireObjectStore(t)
@@ -72,9 +72,9 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 
 	address, orkflows, log := bootEngine(ctx, t, binary, temporal, "engine-listener",
 		"ORK_TEMPORAL_NAMESPACE="+listenerNamespace("listener"),
-		"ORK_REQUEST_MAX_BYTES=1048576", "ORK_HTTP_IDLE_TIMEOUT="+idle.String(),
+		"ORK_ORKFLOW_MAX_TASKS=1", "ORK_HTTP_IDLE_TIMEOUT="+idle.String(),
 		"ORK_ALLOWED_HOSTS=orkstack.example.com, *.corp.example")
-	if !strings.Contains(log.String(), "request_max_bytes=1048576") || !strings.Contains(log.String(), "allowed_hosts") {
+	if !strings.Contains(log.String(), "request_max_bytes=1052672") || !strings.Contains(log.String(), "allowed_hosts") {
 		t.Fatalf("the boot log does not state the listener's settings:\n%s", log.String())
 	}
 
@@ -99,7 +99,7 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 	}
 
 	_, err = orkflows.ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: paddedDoc(2 << 20)}))
-	if connect.CodeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "configured max 1048576") {
+	if connect.CodeOf(err) != connect.CodeResourceExhausted || !strings.Contains(err.Error(), "configured max 1052672") {
 		t.Fatalf("a 2 MiB request under a 1 MiB cap: %v, want resource_exhausted naming the cap", err)
 	}
 	if _, err := orkflows.ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: paddedDoc(512 << 10)})); err != nil {
@@ -137,14 +137,18 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 	}
 
 	_, refused := startEngine(ctx, t, binary, temporal, "engine-listener-refused",
-		"ORK_TEMPORAL_NAMESPACE="+listenerNamespace("listener-refused"), "ORK_REQUEST_MAX_BYTES=1024")
+		"ORK_TEMPORAL_NAMESPACE="+listenerNamespace("listener-refused"), "ORK_ORKFLOW_MAX_TASKS=1",
+		"ORK_REQUEST_MAX_BYTES=1048576")
 	select {
 	case <-refused.done:
 	case <-ctx.Done():
-		t.Fatalf("an engine with ORK_REQUEST_MAX_BYTES=1024 did not stop:\n%s", refused.log.String())
+		t.Fatalf("an engine with a read cap under its task ceiling's need did not stop:\n%s", refused.log.String())
 	}
-	if code := refused.cmd.ProcessState.ExitCode(); code == 0 || !strings.Contains(refused.log.String(), "ORK_REQUEST_MAX_BYTES=1024 must be between") {
-		t.Fatalf("an engine with ORK_REQUEST_MAX_BYTES=1024 exited %d; want a refusal naming it:\n%s", code, refused.log.String())
+	if code := refused.cmd.ProcessState.ExitCode(); code == 0 ||
+		!strings.Contains(refused.log.String(), "ORK_REQUEST_MAX_BYTES=1048576 (engine.request_max_bytes) is under 1052672") ||
+		!strings.Contains(refused.log.String(), "ORK_ORKFLOW_MAX_TASKS=1") {
+		t.Fatalf("an engine with a read cap under its task ceiling's need exited %d; want a refusal naming both settings:\n%s",
+			code, refused.log.String())
 	}
 
 	_, refusedHosts := startEngine(ctx, t, binary, temporal, "engine-listener-hosts",
