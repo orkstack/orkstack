@@ -2083,11 +2083,11 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   The release `gate` excuses a runner-size miss as the merge gate does (§10,
   "Run the release gate"), so the hosted runners' size alone does not fail
   it.
-- **The proof's `race` part has not run on GitHub.** The `race` part of the
-  full and release tiers is on the same footing as the observability gate:
-  it is proven on a developer's host and by the workflow rules in
-  `test/tools/proofrun`, not on a hosted runner, so the first CI full proof
-  that carries it is its calibration. The other lanes have run there: the
+- **The proof's `race` part has run on GitHub.** The `race` part of the
+  full and release tiers passed on hosted runners in the release dry run
+  40979860354 on 2026-10-30, in the CI full proof 41001701958 of
+  `validate/full/v0.1.0-4`, and in every attempt of release run 41080710050,
+  v0.1.0's. The other lanes have run there too: the
   `vuln` jobs of `ci.yml` (run 40706033375) and `nightly.yml`, and the
   nightly's `race-repeat` part, passed in their first runs on 2026-10-28, and
   its `fuzz` part ran its whole 105-minute budget in nightly 40706217000 and
