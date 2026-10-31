@@ -2,6 +2,8 @@ package engine_test
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -58,6 +60,23 @@ func TestCheckAllowedSecrets_ReturnsTheFirstRefusalInDocumentOrder(t *testing.T)
 	var policy *dsl.SecretSourceRefusal
 	if !errors.As(err, &policy) || policy.Why != "" {
 		t.Fatalf("Unwrap() does not reach the dsl refusal: %v", err)
+	}
+}
+
+// TestCheckAllowedSecrets_QuotesALongSourceByItsHead: a source is the task
+// author's to write, of any length, so the refusal quotes a long one as every
+// secret refusal does (dsl.QuoteSecretSource), by its head and its length.
+func TestCheckAllowedSecrets_QuotesALongSourceByItsHead(t *testing.T) {
+	ns := &orkstackv1.Namespace{Name: "sandbox", AllowedSecrets: sandboxSecrets}
+	source := "env:PROD_" + strings.Repeat("A", 200<<10)
+	wf := &orkstackv1.Orkflow{Name: "exfil", Tasks: []*orkstackv1.Task{
+		secretTask("grab", &orkstackv1.SecretRef{Name: "db", Source: source}),
+	}}
+	err := engine.CheckAllowedSecrets(ns, wf)
+	want := fmt.Sprintf(`namespace "sandbox" may not resolve %q… (%d bytes) (task "grab", secret "db"); allowed: `+
+		`env:SANDBOX_*, file:/etc/orkstack/secrets/sandbox/*`, source[:64], len(source))
+	if err == nil || err.Error() != want {
+		t.Fatalf("Error() = %d bytes, want\n%s", len(fmt.Sprint(err)), want)
 	}
 }
 

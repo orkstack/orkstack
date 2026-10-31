@@ -750,15 +750,33 @@ func FuzzEngineFromComponents(f *testing.F) {
 // OrkStack's to choose. Whatever they say, judging them never panics; an
 // ORK_* or OTEL_* variable is always refused as the Orker's own; a file under
 // /proc, /dev or a path the policy holds as its own is always refused as the
-// Orker's own, and a file named by anything but a plain absolute path is
-// always refused; and an entry ownEntry says admits only the Orker's own
-// admits no source a task could write that matches it, under that floor or
-// any other.
+// Orker's own, and so is every name beneath a link to /proc/self or a link
+// into the work root that leads nowhere yet, two links of a small farm the
+// fuzzer's names can run through; a file named by anything but a plain
+// absolute path is always refused; and an entry ownEntry says admits only
+// the Orker's own admits no source a task could write that matches it, under
+// that floor or any other.
 func FuzzSecurityPolicy_TheOrkersOwnSourcesAreNeverAdmitted(f *testing.F) {
 	work := f.TempDir()
+	farm := f.TempDir()
+	self, next := filepath.Join(farm, "self"), filepath.Join(farm, "next")
+	_, procErr := os.Stat("/proc/self")
+	for link, target := range map[string]string{
+		self: "/proc/self",
+		next: filepath.Join(work, "ork-run-task-9-z", "secrets", "db"),
+	} {
+		if err := os.Symlink(target, link); err != nil {
+			f.Fatal(err)
+		}
+	}
 	policy := DefaultSecurityPolicy().WithWorkRoot(work).
 		WithOwnVars(OwnVar{Name: "VENDOR_KEY", Why: "its telemetry credentials"})
 	for _, seed := range []struct{ source, entry, fill string }{
+		{"file:" + self + "/environ", "file:" + farm + "/*/environ", "self"},
+		{"file:" + self + "/fd/0", "file:" + farm + "/*", "next"},
+		{"file:" + self, "file:" + farm + "/*", "self"},
+		{"file:" + next, "file:" + farm + "/*", "next"},
+		{"file:" + next + "/deeper", "file:" + next + "/*", "deeper"},
 		{"env:ORK_S3_SECRET_KEY", "env:ORK_*", "S3_SECRET_KEY"},
 		{"env:OTEL_EXPORTER_OTLP_HEADERS", "env:OTEL_*", "EXPORTER_OTLP_HEADERS"},
 		{"env:ork_s3_secret_key", "env:*", "ORK_X"},
@@ -797,6 +815,11 @@ func FuzzSecurityPolicy_TheOrkersOwnSourcesAreNeverAdmitted(f *testing.F) {
 			}
 			if plain && (within(locator, "/proc") || within(locator, "/dev") || within(locator, work)) && !errors.As(err, &own) {
 				t.Fatalf("AllowsSecretSource(%q) = %v, want it refused as the Orker's own", clip(source), err)
+			}
+			linked := within(locator, next) || procErr == nil && within(locator, self)
+			if plain && linked && !errors.As(err, &own) {
+				t.Fatalf("AllowsSecretSource(%q) = %v, want a name through the farm's links refused as the Orker's own",
+					clip(source), err)
 			}
 		}
 

@@ -2,6 +2,7 @@ package dsl
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -233,25 +234,46 @@ type SecretSourceRefusal struct {
 //	"file:/zz/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a"… is a path of 5000 bytes; a file source's path is at most 4096 bytes, the longest the kernel opens
 //
 // (patterns joined with ", " in the order given). A path too long is quoted
-// by its head alone, so the sentence stays short whatever the task wrote.
+// by its head alone, and any other source as QuoteSecretSource quotes it, so
+// the sentence stays short whatever the task wrote.
 func (r *SecretSourceRefusal) Error() string {
 	switch r.Why {
 	case "":
-		return fmt.Sprintf("%q matches none of %s", r.Source, strings.Join(r.Patterns, ", "))
+		return fmt.Sprintf("%s matches none of %s", QuoteSecretSource(r.Source), strings.Join(r.Patterns, ", "))
 	case "relative":
-		return fmt.Sprintf("%q is not an absolute path", r.Source)
+		return fmt.Sprintf("%s is not an absolute path", QuoteSecretSource(r.Source))
 	case "too long":
 		_, locator, _ := strings.Cut(r.Source, ":")
 		head := r.Source[:min(len(r.Source), secretSourceHeadBytes)]
 		return fmt.Sprintf("%q… is a path of %d bytes; a file source's path is at most %d bytes, the longest the kernel opens",
 			head, len(locator), MaxSecretPathBytes)
 	default:
-		return fmt.Sprintf("%q has %s, which is refused rather than normalized", r.Source, SecretRefusalPhrase(r.Why))
+		return fmt.Sprintf("%s has %s, which is refused rather than normalized", QuoteSecretSource(r.Source),
+			SecretRefusalPhrase(r.Why))
 	}
 }
 
 // secretSourceHeadBytes is how much of a source too long a refusal quotes.
 const secretSourceHeadBytes = 64
+
+// maxQuotedSourceBytes is the longest source a refusal quotes in full: a
+// file source whose path is MaxSecretPathBytes long, the longest one read.
+const maxQuotedSourceBytes = len("file:") + MaxSecretPathBytes
+
+// QuoteSecretSource is source as a sentence that refuses it names it: quoted
+// in full when it is no longer than the longest file source an Orker reads,
+// and otherwise by its first 64 bytes and its length,
+//
+//	"env:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"… (204808 bytes)
+//
+// A variable's name has no bound of its own, so without this a refusal of
+// one would be as long as whatever a task wrote.
+func QuoteSecretSource(source string) string {
+	if len(source) <= maxQuotedSourceBytes {
+		return strconv.Quote(source)
+	}
+	return fmt.Sprintf("%q… (%d bytes)", source[:secretSourceHeadBytes], len(source))
+}
 
 // SecretRefusalPhrase names what a Why value refused, as the noun phrase a
 // caller's sentence embeds: `a ".." segment`, `a "." segment`, `an empty

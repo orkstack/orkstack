@@ -281,8 +281,10 @@ pattern, and `*` is the only wildcard. It does not cross `/`.
   one check no client can bypass ([DEPLOY.md](DEPLOY.md), "Secrets on a shared
   pool").
 - A refusal names the source string and what refused it: the floor's entries,
-  the path rule, or which kind of the Orker's own the source is. Nothing
-  stores, logs or compares a value.
+  the path rule, or that the source is one of the Orker's own, in the same
+  words for every variable and for every file, never which one. A source
+  longer than the longest `file:` source (4101 bytes) is quoted by its first
+  64 bytes and its length. Nothing stores, logs or compares a value.
 
 ### The Orker's own sources
 
@@ -312,7 +314,7 @@ only the Orker's own sources stops the Orker at boot
 | the files `ORK_ORKER_REGISTRY_AUTH_FILE`, `ORK_REGISTRY_AUTH_FILE` and `OTEL_EXPORTER_OTLP_*CERTIFICATE`, `*_CLIENT_KEY` name | registry credentials, and the exporters' TLS files |
 | `ORK_ARTIFACT_DIR`, when the artifact backend is `local` | every run's artifacts, commits and logs, of every namespace |
 | `DOCKER_CONFIG`, `DOCKER_CERT_PATH`, `REGISTRY_AUTH_FILE`, `CONTAINER_SSHKEY`, `~/.docker`, `~/.dockercfg`, `~/.ssh`, `~/.config/containers` (or `$XDG_CONFIG_HOME/containers`), `$XDG_RUNTIME_DIR/containers`, `/run/containers` | the container CLI's registry credentials, TLS key and SSH identity |
-| the files `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS` and `AZURE_FEDERATED_TOKEN_FILE` name, `~/.aws`, `~/.azure`, `~/.config/gcloud` | the credential helpers' cloud credentials |
+| the files and directories `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG`, `AZURE_FEDERATED_TOKEN_FILE`, `AZURE_CONFIG_DIR` and `AZURE_CLIENT_CERTIFICATE_PATH` name, `~/.aws`, `~/.azure`, `~/.config/gcloud` | the credential helpers' cloud credentials |
 | `/var/lib/docker`, `/var/lib/containerd`, `/var/lib/containers`, `/run/docker`, `/run/containerd`, `~/.local/share/docker`, `~/.local/share/containers` (or under `$XDG_DATA_HOME`) | the container engine's state: images, layers and every container's log, other tasks' among them |
 
 A file is named by the path itself and everything beneath it. A `file:` source
@@ -320,17 +322,23 @@ must be a plain absolute path, with no `..`, `.` or empty segment, of at most
 4096 bytes, under any floor, empty included: the kernel applies `..` after it
 follows a link, so a name with one need not be the file read, and it is
 refused as a floor refuses it; a longer name is one the kernel never opens
-(`internal/dsl/secret_policy.go`, `CheckSecretPath`). A plain path is judged
-by its name and by where its symbolic links lead, followed one name at a time
-as the kernel follows them, a link that leads nowhere yet included, so no
-symbolic link reaches one of these under another name, including a Kubernetes
-ConfigMap or Secret mounted as links into a dated directory. Judging a name
-costs the Orker one look at each name it passes through, whatever the task
-wrote. The Orker resolves its own paths once, when it starts: a link an
-operator makes at one of them later is seen when the Orker next starts. A
-refusal of a file says only that it is one of the Orker's files, the same
-words for each, never which one or where a link led, so a task cannot learn
-the Orker's paths by trying names.
+(`internal/dsl/secret_policy.go`, `CheckSecretPath`). A plain path is
+followed as the kernel follows it to open it, one name at a time, a link that
+leads nowhere yet included, and it is the Orker's own when its name, any
+directory its way looks a name up in, or the file it ends at is one of these:
+by name, or as the file system holds that path when the source is judged, the
+same file or directory under any name. So no symbolic link reaches one of them
+under another name; a link through `/proc`, such as one to a descriptor of the
+Orker's, is the Orker's own wherever its text points; a way that passes
+through one of the Orker's directories is refused even when a link's `..`
+leads out of it again; a Kubernetes ConfigMap or Secret mounted as links into
+a dated directory stays the Orker's own after an update swaps the links to a
+new directory; and a hard link to one of the Orker's own files is that file.
+Judging a name costs the Orker one look at each name it passes through,
+whatever the task wrote, and one look at each of its own paths. A refusal says
+only that the source is one of the Orker's files, or one of its variables, the
+same words for each, never which one, which setting named it or where a link
+led, so a task cannot learn the Orker's configuration by trying names.
 
 Paths are compared byte for byte, as a case-sensitive file system names them.
 On a file system that folds case, `/PROC/self/environ` opens
@@ -339,15 +347,21 @@ file system is case-sensitive; an Orker whose work root or task-secret
 directories sit on one that is not (a macOS default volume, some mounted
 shares) should set a floor that lists only directories of the tasks' own.
 
-Some ways of reaching a file are out of the check's reach, by design: a hard
-link, a bind mount, and a symbolic link swapped between the check and the read.
-Each needs write access outside the task's workspace, where no task writes —
-the workspace lies under the work root, which is the Orker's own — and
-[AGENTS.md](../AGENTS.md) §6 forbids host mounts. For the same reason the
-Orker checks a name and then reads it, rather than opening the file and judging
-the descriptor it holds: such a read would close a window no task can reach,
-at the cost of a second, platform-specific reading of every path, and it is
-not planned.
+Some ways of reaching a file are out of the check's reach, by design: a file
+beneath one of the Orker's directories that a bind mount or a hard link shows
+under another name, another mount of the process or device file system than
+`/proc` and `/dev`, and a symbolic link swapped between the check and the
+read. Each needs write access outside the task's workspace, where no task
+writes — the workspace lies under the work root, which is the Orker's own —
+and [AGENTS.md](../AGENTS.md) §6 forbids host mounts. A Kubernetes update
+swaps a mount's links while the Orker runs, so a name such as
+`..data/orker.yaml` names the Orker's file before the update and after it:
+the Orker looks at its own files before it follows a name and again after,
+so an update that lands while a name is judged is seen either way.
+For the same reason the Orker checks a name and then reads it, rather than
+opening the file and judging the descriptor it holds: such a read would close
+a window no task can reach, at the cost of a second, platform-specific
+reading of every path, and it is not planned.
 
 An Orker's own object-store client signs only with `ORK_S3_ACCESS_KEY` and
 `ORK_S3_SECRET_KEY` (`pkg/artifacts/s3.go`). The cloud credentials above are

@@ -267,8 +267,8 @@ func TestDispatcher_ASecretRefusalSaysWhichRuleRefusedIt(t *testing.T) {
 	}{
 		{[]string{"env:SANDBOX_*"}, "env:PROD_DB", `secret "s": "env:PROD_DB" matches none of env:SANDBOX_* ` +
 			`(this orker's ORK_ORKER_SECRET_ALLOW); a source outside that floor is refused before anything runs`},
-		{nil, "env:ORK_S3_SECRET_KEY", fmt.Sprintf(own, "env:ORK_S3_SECRET_KEY", "its OrkStack settings, ORK_*")},
-		{[]string{"env:*"}, "env:ORK_S3_SECRET_KEY", fmt.Sprintf(own, "env:ORK_S3_SECRET_KEY", "its OrkStack settings, ORK_*")},
+		{nil, "env:ORK_S3_SECRET_KEY", fmt.Sprintf(own, "env:ORK_S3_SECRET_KEY", "one of its variables")},
+		{[]string{"env:*"}, "env:ORK_S3_SECRET_KEY", fmt.Sprintf(own, "env:ORK_S3_SECRET_KEY", "one of its variables")},
 		{nil, "file:/proc/self/environ", fmt.Sprintf(own, "file:/proc/self/environ", "one of its files")},
 		{nil, "file:/etc/orkstack/../db", fmt.Sprintf(path, "file:/etc/orkstack/../db")},
 		{[]string{"file:/etc/*/*"}, "file:/etc/orkstack/../db", fmt.Sprintf(path, "file:/etc/orkstack/../db")},
@@ -296,7 +296,7 @@ func TestDispatcher_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAnythingRuns(
 	value := mintSecret(t)
 	t.Setenv("ORK_S3_SECRET_KEY", value)
 	for _, tc := range []struct{ source, want string }{
-		{"env:ORK_S3_SECRET_KEY", `secret "s3": "env:ORK_S3_SECRET_KEY" is this orker's own (its OrkStack settings, ORK_*), which no secret floor admits`},
+		{"env:ORK_S3_SECRET_KEY", `secret "s3": "env:ORK_S3_SECRET_KEY" is this orker's own (one of its variables), which no secret floor admits`},
 		{"file:/proc/self/environ", `secret "s3": "file:/proc/self/environ" is this orker's own (one of its files), which no secret floor admits`},
 	} {
 		t.Run(tc.source, func(t *testing.T) {

@@ -3061,10 +3061,12 @@ source with a `..`, `.` or empty segment is refused outright rather than
 normalized, so `file:/etc/orkstack/secrets/sandbox/../payments/db` never sits
 inside `file:/etc/orkstack/secrets/sandbox/*`. The policy bounds the NAME a
 tenant may write. A symbolic link under a tenant's directory is a grant the
-operator made, and the Orker reads it where it leads, unless it leads to one of
-the Orker's own files, which is refused as the Orker's own name is. Nothing
-here stores, logs or compares a secret value; a refusal carries the source
-string and what refused it, never a value.
+operator made, and the Orker reads it where it leads, unless it leads to or
+through one of the Orker's own files or directories, which is refused as the
+Orker's own name is — judged against what those are when the task's secret is
+resolved, so a Kubernetes update of the Orker's own mounted configuration is
+seen at once. Nothing here stores, logs or compares a secret value; a refusal
+carries the source string and what refused it, never a value.
 
 During a rolling upgrade the namespace list is enforced only by engine
 replicas that know it; the Orker floor is unaffected by the rollout.

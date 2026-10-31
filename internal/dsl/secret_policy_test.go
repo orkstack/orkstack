@@ -3,6 +3,7 @@ package dsl
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -134,6 +135,34 @@ func TestSecretSourceRefusal_RendersEachShape(t *testing.T) {
 		if err == nil || err.Error() != want {
 			t.Errorf("CheckSecretSource(%q) = %v\nwant %s", source, err, want)
 		}
+	}
+}
+
+// TestSecretSourceRefusal_QuotesALongSourceByItsHead: a variable's name has
+// no bound of its own, and a namespace's list is matched without the file
+// path's bound, so a refusal quotes a source in full only up to the longest
+// file source an Orker reads, and a longer one by its first 64 bytes and its
+// length, whatever refused it.
+func TestSecretSourceRefusal_QuotesALongSourceByItsHead(t *testing.T) {
+	patterns := []string{"env:SANDBOX_*", "file:/etc/orkstack/secrets/sandbox/*"}
+	longest := "file:/" + strings.Repeat("a", MaxSecretPathBytes-1)
+	if err := CheckSecretSource(patterns, longest); err == nil || !strings.HasPrefix(err.Error(), strconv.Quote(longest)+" ") {
+		t.Errorf("CheckSecretSource(the longest file source) = %v, want it quoted in full", err)
+	}
+	for _, source := range []string{
+		"env:PROD_" + strings.Repeat("A", 200<<10),
+		"file:/" + strings.Repeat("a/", 100<<10) + "../db",
+		"file:" + strings.Repeat("a", 100<<10),
+		strings.Repeat("x", 100<<10),
+	} {
+		err := CheckSecretSource(patterns, source)
+		head := fmt.Sprintf("%q… (%d bytes) ", source[:64], len(source))
+		if err == nil || !strings.HasPrefix(err.Error(), head) || len(err.Error()) > 512 {
+			t.Errorf("CheckSecretSource(%d bytes) = %d bytes, want a sentence beginning %s", len(source), len(err.Error()), head)
+		}
+	}
+	if got, want := QuoteSecretSource("env:SANDBOX_DB"), `"env:SANDBOX_DB"`; got != want {
+		t.Errorf("QuoteSecretSource(a short source) = %s, want %s", got, want)
 	}
 }
 

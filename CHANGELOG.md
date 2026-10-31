@@ -32,7 +32,11 @@ word for word.
   its container's credentials under `/run/secrets` and `/var/run/secrets`, its
   work root, its configuration file and each file that reads, its telemetry
   sinks' header sources, the container engine's state, and the credential
-  files its settings name. The work root is the temp directory when
+  files its settings name. A `file:` source is the Orker's own when the way
+  the kernel takes to open it passes through or ends at one of these, by name
+  or as the file is when the source is judged, so a link, a hard link to an
+  own file and a Kubernetes mount updated after boot reach none of them. The
+  work root is the temp directory when
   `ORK_ORKER_WORKDIR` is unset, so there a `file:/tmp/…` source is refused and
   a floor entry under `/tmp` stops the Orker at boot. A task that names one
   fails `SECRET_NOT_PERMITTED` where the floor is checked, after the commit
@@ -40,8 +44,12 @@ word for word.
   `orkctl task run` as on an Orker; give the task the value under a source of
   its own. A floor entry that can match only such sources stops the Orker at
   boot, and an Orker whose floor is empty logs a
-  warning at boot that names `ORK_ORKER_SECRET_ALLOW`
-  ([SECURITY_MODEL.md](docs/SECURITY_MODEL.md), "The Orker's own sources").
+  warning at boot that names `ORK_ORKER_SECRET_ALLOW`. The refusal says only
+  that the source is one of the Orker's variables or one of its files, never
+  which ([SECURITY_MODEL.md](docs/SECURITY_MODEL.md), "The Orker's own
+  sources").
+- A secret refusal, the namespace's and the Orker's alike, quotes a source
+  longer than 4101 bytes by its first 64 bytes and its length.
 - **BREAKING:** A `file:` secret source must be a plain absolute path, with
   no `..`, `.` or empty segment, of at most 4096 bytes, under every secret
   floor, the empty one included. Any other name fails `SECRET_NOT_PERMITTED`,

@@ -544,6 +544,9 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(dir, "gcp.json"))
 	t.Setenv("AZURE_FEDERATED_TOKEN_FILE", filepath.Join(dir, "azure-token"))
 	t.Setenv("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", filepath.Join(dir, "eks-pod-identity-token"))
+	t.Setenv("CLOUDSDK_CONFIG", filepath.Join(dir, "gcloud-config"))
+	t.Setenv("AZURE_CONFIG_DIR", filepath.Join(dir, "azure-config"))
+	t.Setenv("AZURE_CLIENT_CERTIFICATE_PATH", filepath.Join(dir, "azure-client.pem"))
 	policy := SecurityPolicyFromEnv()
 
 	assertOwn(t, policy,
@@ -555,6 +558,9 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 		"env:CLOUDSDK_AUTH_ACCESS_TOKEN_FILE", "env:CLOUDSDK_CONFIG",
 		"file:"+filepath.Join(dir, "aws-credentials"),
 		"file:"+filepath.Join(dir, "eks-pod-identity-token"),
+		"file:"+filepath.Join(dir, "gcloud-config", "credentials.db"),
+		"file:"+filepath.Join(dir, "azure-config", "msal_token_cache.json"),
+		"file:"+filepath.Join(dir, "azure-client.pem"),
 		"file:"+filepath.Join(home, ".dockercfg"),
 		"file:"+filepath.Join(dir, "gcp.json"),
 		"file:"+filepath.Join(dir, "azure-token"),

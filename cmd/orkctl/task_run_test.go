@@ -521,7 +521,7 @@ func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 		{"unset secret variable", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=env:TEST_TASK_RUN_UNSET_VARIABLE"}, nil,
 			"--secret tok: environment variable TEST_TASK_RUN_UNSET_VARIABLE is not set"},
 		{"the machine's own variable", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=env:ORK_TEST_TASK_RUN_OWN_VARIABLE"}, nil,
-			`--secret tok: "env:ORK_TEST_TASK_RUN_OWN_VARIABLE" is this orker's own (its OrkStack settings, ORK_*), which no secret floor admits; a local run refuses it as an Orker does`},
+			`--secret tok: "env:ORK_TEST_TASK_RUN_OWN_VARIABLE" is this orker's own (one of its variables), which no secret floor admits; a local run refuses it as an Orker does`},
 		{"the machine's own file", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=file:/proc/self/environ"}, nil,
 			`--secret tok: "file:/proc/self/environ" is this orker's own (one of its files), which no secret floor admits; a local run refuses it as an Orker does`},
 		{"secret scheme", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=vault:x"}, nil,

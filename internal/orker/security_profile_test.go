@@ -690,7 +690,8 @@ func TestSecurityPolicy_AFileSourceIsReadOnlyByAPlainAbsoluteName(t *testing.T) 
 // Orker's own configuration names is refused under its own name, under any
 // name that links to it, and — mounted the way Kubernetes mounts a ConfigMap
 // or a Secret, as a link into a dated directory — under the names of that
-// directory too. The refusal says why, never where a link led.
+// directory too. The refusal says only that the source is one of the
+// Orker's files, never which one or where a link led.
 func TestSecurityPolicy_TheOrkersOwnFilesAreRefusedByNameAndByLink(t *testing.T) {
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config")
@@ -784,6 +785,188 @@ func TestSecurityPolicy_AnOwnPathIsResolvedAsTheKernelOpensIt(t *testing.T) {
 		"file:"+filepath.Join(deep, "secret"),
 		"file:"+filepath.Join(dir, "a", "key"),
 	)
+}
+
+// TestSecurityPolicy_AnOwnFileIsJudgedAsItIsWhenTheSourceIsJudged: an own
+// file is compared with what it is when a source is judged, not only with
+// what its name led to when the Orker started. Kubernetes updates a mounted
+// ConfigMap or Secret by writing a new dated directory, pointing ..data at it
+// and removing the old one; after that, every name of the new directory that
+// reaches the Orker's file is still the Orker's own. So is a hard link to it,
+// which is the same file under a name no link resolves.
+func TestSecurityPolicy_AnOwnFileIsJudgedAsItIsWhenTheSourceIsJudged(t *testing.T) {
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "config")
+	dated := func(stamp string) string {
+		d := filepath.Join(cfg, "..2026_10_31_00_00_00."+stamp)
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"orker.yaml", "other.yaml"} {
+			if err := os.WriteFile(filepath.Join(d, name), []byte(stamp), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return d
+	}
+	first := dated("000000001")
+	if err := os.Symlink(filepath.Base(first), filepath.Join(cfg, "..data")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"orker.yaml", "other.yaml"} {
+		if err := os.Symlink(filepath.Join("..data", name), filepath.Join(cfg, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy := DefaultSecurityPolicy().WithOwnPaths(OwnPath{Path: filepath.Join(cfg, "orker.yaml"), Why: "its configuration"})
+
+	// The update, as the kubelet makes it: a new directory, ..data swapped to
+	// it by a rename, the old one removed.
+	second := dated("000000002")
+	if err := os.Symlink(filepath.Base(second), filepath.Join(cfg, "..data_tmp")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(filepath.Join(cfg, "..data_tmp"), filepath.Join(cfg, "..data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(first); err != nil {
+		t.Fatal(err)
+	}
+	elsewhere := filepath.Join(dir, "elsewhere")
+	if err := os.Symlink(filepath.Join(second, "orker.yaml"), elsewhere); err != nil {
+		t.Fatal(err)
+	}
+	hard := filepath.Join(dir, "hard")
+	if err := os.Link(filepath.Join(second, "orker.yaml"), hard); err != nil {
+		t.Fatal(err)
+	}
+	// An own path written with ".." after a link is the file the kernel opens
+	// for it, not the file its cleaned name names, and so is a hard link to it.
+	inner := filepath.Join(dir, "deep", "inner")
+	if err := os.MkdirAll(inner, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(inner, filepath.Join(dir, "via")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "deep", "key"), []byte("k"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(dir, "deep", "key"), filepath.Join(dir, "hard-key")); err != nil {
+		t.Fatal(err)
+	}
+	policy = policy.WithOwnPaths(OwnPath{Path: filepath.Join(dir, "via") + "/../key", Why: "its credentials"})
+	assertOwn(t, policy,
+		"file:"+filepath.Join(cfg, "orker.yaml"),
+		"file:"+filepath.Join(cfg, "..data", "orker.yaml"),
+		"file:"+filepath.Join(second, "orker.yaml"),
+		"file:"+elsewhere,
+		"file:"+hard,
+		"file:"+filepath.Join(dir, "hard-key"),
+	)
+	assertNotOwn(t, policy,
+		"file:"+filepath.Join(cfg, "other.yaml"),
+		"file:"+filepath.Join(cfg, "..data", "other.yaml"),
+		"file:"+filepath.Join(second, "other.yaml"),
+	)
+}
+
+// TestSecurityPolicy_ASourceWhoseWayPassesThroughAnOwnDirectoryIsTheOrkers: a
+// source is the Orker's own when the kernel, opening it, looks a name up in
+// one of the Orker's directories, wherever it ends. A link to one of the
+// Orker's descriptors ends at a name the link's text gives, a deleted file's
+// for instance, that lies in none of them; the way there passes through
+// /proc, so it is the Orker's own. The rule is the same for every own
+// directory, the work root included, and for a way that leaves one again by
+// a link's "..": no lookup in one is judged by what it reads.
+func TestSecurityPolicy_ASourceWhoseWayPassesThroughAnOwnDirectoryIsTheOrkers(t *testing.T) {
+	if _, err := os.Stat("/proc/self/fd"); err != nil {
+		t.Skip("no /proc/self/fd on this host")
+	}
+	dir := t.TempDir()
+	gone, err := os.CreateTemp(dir, "deleted-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gone.Close() })
+	if err := os.Remove(gone.Name()); err != nil {
+		t.Fatal(err)
+	}
+	descriptor := filepath.Join(dir, "descriptor")
+	if err := os.Symlink(fmt.Sprintf("/proc/self/fd/%d", gone.Fd()), descriptor); err != nil {
+		t.Fatal(err)
+	}
+	devfd := filepath.Join(dir, "devfd")
+	if err := os.Symlink(fmt.Sprintf("/dev/fd/%d", gone.Fd()), devfd); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(dir, "work")
+	if err := os.MkdirAll(filepath.Join(work, "ork-run-task-1-x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plain := filepath.Join(dir, "plain")
+	if err := os.WriteFile(plain, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	through := filepath.Join(dir, "through")
+	if err := os.Symlink(filepath.Join(work, "ork-run-task-1-x")+"/../../plain", through); err != nil {
+		t.Fatal(err)
+	}
+	policy := DefaultSecurityPolicy().WithWorkRoot(work)
+	assertOwn(t, policy, "file:"+descriptor, "file:"+devfd, "file:"+through)
+	assertNotOwn(t, policy, "file:"+plain)
+}
+
+// TestSecurityPolicy_ARefusalOfAnOwnSourceNamesNoRule: a task's refusal of
+// one of the Orker's own sources says the same words for every variable, as
+// for every file, never which rule or setting made it the Orker's: what the
+// Orker's configuration names is the Orker's to know.
+func TestSecurityPolicy_ARefusalOfAnOwnSourceNamesNoRule(t *testing.T) {
+	policy := DefaultSecurityPolicy().WithOwnVars(OwnVar{Name: "VENDOR_KEY", Why: "its telemetry credentials"})
+	for source, label := range map[string]string{
+		"env:ORK_S3_SECRET_KEY":          "one of its variables",
+		"env:OTEL_EXPORTER_OTLP_HEADERS": "one of its variables",
+		"env:HTTPS_PROXY":                "one of its variables",
+		"env:AWS_SECRET_ACCESS_KEY":      "one of its variables",
+		"env:VENDOR_KEY":                 "one of its variables",
+		"file:/proc/self/environ":        "one of its files",
+	} {
+		want := fmt.Sprintf("%q is this orker's own (%s), which no secret floor admits", source, label)
+		if err := policy.AllowsSecretSource(source); err == nil || err.Error() != want {
+			t.Errorf("AllowsSecretSource(%q) = %v, want %q", source, err, want)
+		}
+	}
+}
+
+// TestSecurityPolicy_ARefusalQuotesALongSourceByItsHead: a variable's name
+// has no bound of its own, so a refusal quotes a source in full only up to
+// the longest file source the Orker reads, and a longer one by its head and
+// its length, whichever rule refused it.
+func TestSecurityPolicy_ARefusalQuotesALongSourceByItsHead(t *testing.T) {
+	long := strings.Repeat("A", 200<<10)
+	floor := DefaultSecurityPolicy()
+	floor.SecretAllow = []string{"env:SANDBOX_*"}
+	for _, tc := range []struct {
+		policy SecurityPolicy
+		source string
+	}{
+		{DefaultSecurityPolicy(), "env:ORK_" + long},
+		{floor, "env:PROD_" + long},
+	} {
+		err := tc.policy.AllowsSecretSource(tc.source)
+		if err == nil {
+			t.Fatalf("AllowsSecretSource(%d bytes) = nil, want a refusal", len(tc.source))
+		}
+		head := fmt.Sprintf("%q… (%d bytes)", tc.source[:64], len(tc.source))
+		if len(err.Error()) > 512 || !strings.HasPrefix(err.Error(), head) {
+			t.Errorf("AllowsSecretSource(%d bytes) = %d bytes beginning %q, want it to begin %s",
+				len(tc.source), len(err.Error()), clip(err.Error()), head)
+		}
+	}
+	fileSource := "file:/" + strings.Repeat("a", dsl.MaxSecretPathBytes-1)
+	if err := floor.AllowsSecretSource(fileSource); err == nil || !strings.Contains(err.Error(), fmt.Sprintf("%q", fileSource)) {
+		t.Errorf("AllowsSecretSource(a file source of %d bytes) = %v, want it quoted in full", len(fileSource), err)
+	}
 }
 
 // TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName: a task

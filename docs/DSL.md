@@ -491,8 +491,9 @@ pulled, with `SECRET_NOT_PERMITTED`:
 - a source outside its own floor (`ORK_ORKER_SECRET_ALLOW`);
 - one of the Orker's own sources, under any floor: its settings
   (`env:ORK_*`, `env:OTEL_*`), its process (`file:/proc`), its work root and
-  its credentials ([SECURITY_MODEL.md](SECURITY_MODEL.md), "The Orker's own
-  sources").
+  its credentials, by their own names or through a link that leads to or
+  through one of them ([SECURITY_MODEL.md](SECURITY_MODEL.md), "The Orker's
+  own sources").
 
 Name a source the operator set aside for tasks, such as a file under a
 directory the floor lists.

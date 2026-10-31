@@ -123,7 +123,8 @@ type SecurityPolicy struct {
 	// own are the files and directories this process's own settings name —
 	// its work root, its configuration and the files that read, its
 	// credential files — beside the fixed ones every Orker holds (ownFiles),
-	// each resolved once, when the policy took it (WithOwnPaths). They, and
+	// each resolved by name once, when the policy took it (WithOwnPaths), and
+	// looked at as it is whenever a source is judged (ownNow). They, and
 	// everything beneath them, are the Orker's own: no floor admits one as a
 	// task's source, empty or not (AllowsSecretSource).
 	// SecurityPolicyFromEnv adds what the environment names; a caller adds
@@ -279,12 +280,17 @@ func (p SecurityPolicy) AllowsSecretSource(source string) error {
 //
 // It bounds names, as the floor does, and reads no value. A file: source is
 // a plain absolute path of at most PATH_MAX bytes (dsl.CheckSecretPath),
-// judged by its name and by where its links lead, and an own path by both of
-// its own, so a symbolic link does not reach an own file under another name.
-// What a symbolic link cannot express is out of its reach and of this
-// check's: a hard link, a bind mount, or a link swapped between the check and
-// the read each needs write access outside the task's workspace, which no
-// task has (AGENTS.md §6 forbids host mounts).
+// followed as the kernel follows it to open it, and it is the Orker's own
+// when its name, a directory its way passes through or the file it ends at
+// is one of the Orker's own, by name or as the file system holds it at that
+// moment (reachesOwn). So a symbolic link does not reach an own file under
+// another name, a Kubernetes mount whose links an update swaps after boot
+// does not either, and a hard link to an own file is that file. What the way
+// there cannot show is out of this check's reach: a file beneath an own
+// directory that a bind mount or a hard link shows under another name, and a
+// link swapped between the check and the read. Each needs write access
+// outside the task's workspace, which no task has (AGENTS.md §6 forbids host
+// mounts).
 
 // OwnPath is a file or directory of the Orker's own: it and everything
 // beneath it. Why says what it is in the boot refusal of a floor entry that
@@ -296,23 +302,32 @@ type OwnPath struct {
 }
 
 // OwnVar is an environment variable of the Orker's own, by its exact name.
-// Why names it in a refusal.
+// Why names it in the boot refusal of a floor entry that admits only it; a
+// task's refusal says only that the source is one of the Orker's variables
+// (ownVarLabel).
 type OwnVar struct {
 	Name string
 	Why  string
 }
 
-// ownFileLabel is what a task's refusal says of every file of the Orker's
-// own: one label, never which file it is nor where a link led, so a task
-// cannot learn the Orker's paths by trying names.
-const ownFileLabel = "one of its files"
+// ownFileLabel and ownVarLabel are what a task's refusal says of every file
+// and every variable of the Orker's own: one label for each scheme, never
+// which file or variable it is, which rule or setting made it the Orker's,
+// nor where a link led, so a task cannot learn the Orker's configuration by
+// trying names.
+const (
+	ownFileLabel = "one of its files"
+	ownVarLabel  = "one of its variables"
+)
 
-// ownRoot is an OwnPath as the policy compares it: by its name made absolute
-// and cleaned, and by where that name leads as the kernel follows it
-// (resolvePath), both worked out once, when the policy took it.
+// ownRoot is an OwnPath as the policy compares it. By name: its name made
+// absolute and cleaned, and where that name led as the kernel follows it
+// (resolvePath), both worked out once, when the policy took it. As it is:
+// opened, its name made absolute as a read of it opens it, never cleaned,
+// which each judgement of a source looks at afresh (ownNow).
 type ownRoot struct {
 	OwnPath
-	named, resolved string
+	opened, named, resolved string
 }
 
 // newOwnRoot resolves own: a relative path from this process's working
@@ -327,15 +342,16 @@ func newOwnRoot(own OwnPath) (ownRoot, error) {
 		}
 		raw = wd + "/" + raw
 	}
-	return ownRoot{OwnPath: own, named: filepath.Clean(raw), resolved: resolvePath(raw)}, nil
+	return ownRoot{OwnPath: own, opened: raw, named: filepath.Clean(raw), resolved: resolvePath(raw)}, nil
 }
 
 // WithOwnPaths returns the policy with paths among the Orker's own, each
-// resolved now, so judging a source re-resolves only the source. A link an
-// operator makes at one of these names later is seen when the Orker next
-// starts; a task makes no link outside its own workspace. An empty path
-// names nothing and is skipped; a relative one that cannot be placed is an
-// error Validate reports. The caller's policy is not changed.
+// resolved now for the comparison by name. What each one is — the file or
+// directory its name leads to — is looked at again whenever a source is
+// judged, so a link an operator or Kubernetes swaps at one of these names
+// later is seen at once. An empty path names nothing and is skipped; a
+// relative one that cannot be placed is an error Validate reports. The
+// caller's policy is not changed.
 func (p SecurityPolicy) WithOwnPaths(paths ...OwnPath) SecurityPolicy {
 	own := append([]ownRoot(nil), p.own...)
 	for _, path := range paths {
@@ -469,21 +485,20 @@ func (p SecurityPolicy) WithWorkRoot(root string) SecurityPolicy {
 // OwnSourceRefusal is why a source was refused as one of the Orker's own.
 type OwnSourceRefusal struct {
 	Source string
-	// Why is what the source is: for a variable, e.g. "its OrkStack
-	// settings, ORK_*"; for every file, ownFileLabel.
+	// Why is the label of what the source is: ownVarLabel for every
+	// variable, ownFileLabel for every file.
 	Why string
 }
 
-// Error renders, for example:
+// Error renders exactly one of:
 //
-//	"env:ORK_S3_SECRET_KEY" is this orker's own (its OrkStack settings, ORK_*), which no secret floor admits
+//	"env:ORK_S3_SECRET_KEY" is this orker's own (one of its variables), which no secret floor admits
 //	"file:/proc/self/environ" is this orker's own (one of its files), which no secret floor admits
 //
-// It names the source a task wrote and the label of what it is. A file's
-// label is the same for every file, whether the name or a link led there,
-// and never says which file or where a link led.
+// It names the source a task wrote, quoted as dsl.QuoteSecretSource quotes
+// it, and one label per scheme: never which of the Orker's own it is.
 func (r *OwnSourceRefusal) Error() string {
-	return fmt.Sprintf("%q is this orker's own (%s), which no secret floor admits", r.Source, r.Why)
+	return fmt.Sprintf("%s is this orker's own (%s), which no secret floor admits", dsl.QuoteSecretSource(r.Source), r.Why)
 }
 
 // ownSource reports which of the Orker's own sources source is, or nil.
@@ -491,11 +506,11 @@ func (p SecurityPolicy) ownSource(source string) *OwnSourceRefusal {
 	scheme, locator := SplitSecretSource(source)
 	switch scheme {
 	case "env":
-		if why := p.ownVar(locator, false); why != "" {
-			return &OwnSourceRefusal{Source: source, Why: why}
+		if p.ownVar(locator, false) != "" {
+			return &OwnSourceRefusal{Source: source, Why: ownVarLabel}
 		}
 	case "file":
-		if _, ok := p.ownFile(locator, true); ok {
+		if p.reachesOwn(locator) {
 			return &OwnSourceRefusal{Source: source, Why: ownFileLabel}
 		}
 	}
@@ -524,25 +539,85 @@ func (p SecurityPolicy) ownVar(name string, prefix bool) string {
 	return ""
 }
 
-// ownFile reports which own path holds path, an absolute path: by its name,
-// and, with follow set, by where its links lead (resolvePath). A path that
-// is not absolute is no own path's; AllowsSecretSource refuses it before it
-// gets here.
-func (p SecurityPolicy) ownFile(path string, follow bool) (ownRoot, bool) {
+// ownNamed reports which own path holds path, an absolute path, by its name
+// alone. A path that is not absolute is no own path's; AllowsSecretSource
+// refuses it before it gets here.
+func (p SecurityPolicy) ownNamed(path string) (ownRoot, bool) {
 	if !filepath.IsAbs(path) {
 		return ownRoot{}, false
 	}
-	named := filepath.Clean(path)
-	if root, ok := p.holds(named); ok || !follow {
-		return root, ok
-	}
-	if resolved := resolvePath(path); resolved != "" && resolved != named {
-		return p.holds(resolved)
-	}
-	return ownRoot{}, false
+	return p.holds(filepath.Clean(path))
 }
 
-// holds reports which own path path, absolute and clean, lies within.
+// reachesOwn reports whether reading path, an absolute path, would reach the
+// Orker's own: whether its name lies within an own path, or the way the
+// kernel takes to open it (walkPath) looks a name up in, or ends at, one of
+// the Orker's own — by name, or as the file system holds that own path at
+// this moment (ownNow), which is what makes a Kubernetes mount whose links
+// an update has swapped since boot, and a hard link to an own file, the
+// Orker's own too. A way that passes through an own directory is the
+// Orker's own even when it leaves it again by a link's "..": no lookup in
+// one is judged by what it reads.
+//
+// The own paths are looked at once before the walk and, for the file it
+// ends at, once after, so an update that swaps a mount while the walk runs
+// is seen either way. A path whose links go on past maxLinks is one no read
+// opens, and is left to the read to refuse.
+func (p SecurityPolicy) reachesOwn(path string) bool {
+	if _, ok := p.ownNamed(path); ok {
+		return true
+	}
+	before := p.ownNow()
+	end, last, stopped := walkPath(path, func(at string, info fs.FileInfo) bool {
+		_, named := p.holds(at)
+		return named || before.holds(info)
+	})
+	if stopped {
+		return true
+	}
+	if end == "" {
+		return false
+	}
+	// A name the walk could not look at is judged by its name, so a link that
+	// leads nowhere yet is seen by where it would lead.
+	if _, ok := p.holds(end); ok {
+		return true
+	}
+	return last != nil && p.ownNow().holds(last)
+}
+
+// ownNodes is what the Orker's own paths are at one moment: each one's name,
+// as a read of it opens it, followed to the file or directory it leads to
+// (os.Stat). A path that is not there, or cannot be looked at, has none and
+// is compared by name alone.
+type ownNodes []fs.FileInfo
+
+// ownNow is the Orker's own paths, fixed and configured, as the file system
+// holds them now.
+func (p SecurityPolicy) ownNow() ownNodes {
+	var nodes ownNodes
+	for _, roots := range [][]ownRoot{fixedOwnRoots(), p.own} {
+		for _, root := range roots {
+			if info, err := os.Stat(root.opened); err == nil {
+				nodes = append(nodes, info)
+			}
+		}
+	}
+	return nodes
+}
+
+// holds reports whether info is one of the nodes: the same file or
+// directory, whatever names lead to it (os.SameFile).
+func (n ownNodes) holds(info fs.FileInfo) bool {
+	for _, own := range n {
+		if os.SameFile(own, info) {
+			return true
+		}
+	}
+	return false
+}
+
+// holds reports which own path path, absolute and clean, lies within by name.
 func (p SecurityPolicy) holds(path string) (ownRoot, bool) {
 	for _, roots := range [][]ownRoot{fixedOwnRoots(), p.own} {
 		for _, root := range roots {
@@ -578,7 +653,7 @@ func (p SecurityPolicy) ownEntry(entry string) string {
 			// the cut keeps at least "/".
 			dir = literal[:strings.LastIndexByte(literal, '/')+1]
 		}
-		if root, ok := p.ownFile(dir, false); ok {
+		if root, ok := p.ownNamed(dir); ok {
 			return root.Why
 		}
 	}
@@ -591,17 +666,31 @@ func (p SecurityPolicy) ownEntry(entry string) string {
 // full; a name past the bound is one no read opens.
 const maxLinks = 255
 
-// resolvePath is where path leads as the kernel follows it to open it: from
-// the root, one name at a time, a link replaced by its target and a ".."
-// taken from where the path has led so far. Where a name does not exist, or
-// cannot be looked at, it and the rest of path are kept as named, so a link
-// that leads nowhere yet is seen by where it would lead. It is "" for a path
-// that is not absolute, or whose links go on past maxLinks. Each name is
-// looked at once, so the cost is bounded by path's length and maxLinks link
-// targets, never by how many of its prefixes exist.
+// resolvePath is where path leads as the kernel follows it to open it
+// (walkPath), or "" for a path that is not absolute or whose links go on past
+// maxLinks.
 func resolvePath(path string) string {
+	end, _, _ := walkPath(path, nil)
+	return end
+}
+
+// walkPath follows path as the kernel follows it to open it: from the root,
+// one name at a time, a link replaced by its target and a ".." taken from
+// where the path has led so far. It calls reached, when it is not nil, with
+// every name it comes to that is not a link — each directory the way looks a
+// name up in, and the file it ends at — and what Lstat said of it, and stops
+// the first time reached returns true, reporting stopped. Where a name does
+// not exist, or cannot be looked at, it and the rest of path are kept as
+// named, so a link that leads nowhere yet is seen by where it would lead.
+//
+// It returns where path leads, "" for a path that is not absolute or whose
+// links go on past maxLinks, and what Lstat said of the name it ends at, nil
+// when that is not there or was reached by a "..". Each name is looked at
+// once, so the cost is bounded by path's length and maxLinks link targets,
+// never by how many of its prefixes exist.
+func walkPath(path string, reached func(at string, info fs.FileInfo) bool) (end string, last fs.FileInfo, stopped bool) {
 	if !strings.HasPrefix(path, "/") {
-		return ""
+		return "", nil, false
 	}
 	resolved, rest, links := "/", path[1:], 0
 	for rest != "" {
@@ -611,31 +700,34 @@ func resolvePath(path string) string {
 		case "", ".":
 			continue
 		case "..":
-			resolved = filepath.Dir(resolved)
+			resolved, last = filepath.Dir(resolved), nil
 			continue
 		}
 		next := filepath.Join(resolved, name)
 		info, err := os.Lstat(next)
 		if err != nil {
-			return filepath.Join(next, rest)
+			return filepath.Join(next, rest), nil, false
 		}
 		if info.Mode()&fs.ModeSymlink == 0 {
-			resolved = next
+			resolved, last = next, info
+			if reached != nil && reached(next, info) {
+				return next, info, true
+			}
 			continue
 		}
 		if links++; links > maxLinks {
-			return ""
+			return "", nil, false
 		}
 		target, err := os.Readlink(next)
 		if err != nil {
-			return filepath.Join(next, rest)
+			return filepath.Join(next, rest), nil, false
 		}
 		if strings.HasPrefix(target, "/") {
-			resolved = "/"
+			resolved, last = "/", nil
 		}
 		rest = target + "/" + rest
 	}
-	return resolved
+	return resolved, last, false
 }
 
 // within reports whether path is root or lies beneath it. An empty side is

@@ -1102,7 +1102,9 @@ var runtimeOwnEnv = []ownName{
 // their own, where getenv places them: the CLI's registry credentials (the
 // docker CLI's config.json and its older ~/.dockercfg, the podman CLI's
 // auth.json, rootful podman's under /run/containers) and its credential
-// helpers' cloud credentials and tokens, the
+// helpers' cloud credentials and tokens — the gcloud SDK's and the Azure
+// CLI's configuration directories wherever CLOUDSDK_CONFIG and
+// AZURE_CONFIG_DIR move them, and an Azure client certificate — the
 // daemon's TLS client key, the SSH identity a remote engine
 // (DOCKER_HOST=ssh://…, a podman connection) authenticates with, and the
 // engine's own state — images, layers and every container's log, other
@@ -1119,7 +1121,8 @@ func runtimeOwnPaths(getenv func(string) string) []OwnPath {
 	const creds, state = "its container CLI's credentials", "its container engine's state"
 	for _, name := range []string{"DOCKER_CONFIG", "DOCKER_CERT_PATH", "REGISTRY_AUTH_FILE", "CONTAINER_SSHKEY",
 		"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
-		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_FEDERATED_TOKEN_FILE"} {
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG",
+		"AZURE_FEDERATED_TOKEN_FILE", "AZURE_CONFIG_DIR", "AZURE_CLIENT_CERTIFICATE_PATH"} {
 		add(getenv(name), creds)
 	}
 	add("/run/containers", creds)
