@@ -80,6 +80,23 @@ func TestUnknownKey_NamesTheKeyWhereItStandsAndTheDocument(t *testing.T) {
 			wantAllowed: "source",
 		},
 		{
+			name:        "every unknown key, the first in the sentence and the rest after it",
+			parse:       compile,
+			source:      orkflow + "tsks: 1\n\"a\\nb\": 2\npinz: 3\n",
+			wantField:   "tsks",
+			wantPrefix:  `line 4: unknown key "tsks" at the top level of the Orkflow (and 2 more unknown keys: "a\nb" at line 5, "pinz" at line 6); allowed: `,
+			wantAllowed: "tasks",
+		},
+		{
+			name:  "a second unknown key, deeper and later",
+			parse: compile,
+			source: orkflow + "tasks:\n  - id: a\n    uses: shell\n    with: {command: \"echo a\"}\n" +
+				"    retry:\n      max_attempts: 3\n    timeout_second: 60\n",
+			wantField:   "tasks[0].retry.max_attempts",
+			wantPrefix:  `line 9: unknown key "max_attempts" in tasks[0].retry of the Orkflow (and 1 more unknown key: "timeout_second" at line 10); allowed: `,
+			wantAllowed: "maximum_attempts",
+		},
+		{
 			name:        "a top-level key of an activity interface",
 			parse:       parseInterface,
 			source:      iface + "field:\n  a:\n    type: string\n",
@@ -152,35 +169,42 @@ func contains(values []string, want string) bool {
 	return false
 }
 
-// TestUnknownKey_NamesOnlyAKeyTheDecoderRefused: the walk names a key only
-// when the decoder refused that key at that line. A key written as an alias,
-// a null key the decoder ignores, or a key delivered by a merge is never
-// reported under a name the decoder did not refuse, and never hides the
-// decoder's real refusal.
+// TestUnknownKey_NamesOnlyAKeyTheDecoderRefused: a key is named only as the
+// decoder refused it — its line and its key, never the Go type it would have
+// decoded into. A key written as an alias is named as the name it resolves
+// to, at the alias's line; a null key the decoder ignores is never named, and
+// the decoder's own refusal stands; a key a merge delivered, which no path
+// of the document holds, is named by its line alone.
 func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 	t.Parallel()
 	const orkflow = "apiVersion: orkstack/v1\nkind: Orkflow\nname: typo\n"
 	tests := []struct {
-		name     string
-		source   string
-		mustHave string // what the refusal must still say
+		name      string
+		source    string
+		wantField string
+		// want is the whole refusal when wantAllowed is empty, and the
+		// sentence up to the allowed keys when it is not.
+		want        string
+		wantAllowed string
 	}{
 		{
-			name: "an alias used as a key, beside a value of the wrong type",
-			source: orkflow + "tasks:\n  - &k id: a\n    uses: shell\n    with: {command: \"echo a\"}\n" +
+			name: "an alias used as a key, resolving to an unknown name",
+			source: orkflow + "tasks:\n  - id: a\n    uses: shell\n    with: {command: &k bogus}\n" +
 				"  - *k : b\n    uses: shell\n    timeout_seconds: abc\n",
-			mustHave: "abc",
+			wantField:   "tasks[1].bogus",
+			want:        `line 8: unknown key "bogus" in tasks[1] of the Orkflow; allowed: `,
+			wantAllowed: "needs",
 		},
 		{
-			name:     "a null key yaml.v3 ignores, beside a value of the wrong type",
-			source:   orkflow + "tasks:\n  - id: a\n    uses: shell\n    ~: x\n    timeout_seconds: abc\n",
-			mustHave: "abc",
+			name:   "a null key yaml.v3 ignores, beside a value of the wrong type",
+			source: orkflow + "tasks:\n  - id: a\n    uses: shell\n    ~: x\n    timeout_seconds: abc\n",
+			want:   "parse yaml: yaml: unmarshal errors:\n  line 8: cannot unmarshal !!str `abc` into int32",
 		},
 		{
 			name: "an unknown key delivered by a merge",
 			source: orkflow + "tasks:\n  - id: a\n    uses: shell\n    with: &w {id: b, uses: shell, bogus: 1}\n" +
 				"  - <<: *w\n",
-			mustHave: "bogus",
+			want: `line 7: unknown key "bogus" in the Orkflow`,
 		},
 	}
 	for _, tc := range tests {
@@ -190,11 +214,32 @@ func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 			if err == nil {
 				t.Fatal("the document compiled")
 			}
-			if strings.Contains(err.Error(), "unknown key") {
-				t.Fatalf("error %q names a key the decoder did not refuse", err)
+			message := err.Error()
+			if tc.wantAllowed == "" && message != tc.want {
+				t.Fatalf("error = %q\nwant %q", message, tc.want)
 			}
-			if !strings.Contains(err.Error(), tc.mustHave) {
-				t.Fatalf("error %q hides the decoder's refusal of %q", err, tc.mustHave)
+			if tc.wantAllowed != "" {
+				rest, ok := strings.CutPrefix(message, tc.want)
+				if !ok {
+					t.Fatalf("error = %q\nwant it to begin %q", message, tc.want)
+				}
+				if !contains(strings.Split(rest, ", "), tc.wantAllowed) {
+					t.Errorf("the allowed keys %q do not offer %q", rest, tc.wantAllowed)
+				}
+			}
+			if strings.Contains(message, "unknown key") {
+				for _, internal := range []string{"not found in type", "dsl.", "Document"} {
+					if strings.Contains(message, internal) {
+						t.Errorf("error %q names the decoder's internals (%q)", message, internal)
+					}
+				}
+			}
+			var validation *dsl.ValidationError
+			if errors.As(err, &validation) != strings.Contains(message, "unknown key") {
+				t.Fatalf("error %q: a ValidationError is %v, want it exactly when a key is named", message, !strings.Contains(message, "unknown key"))
+			}
+			if validation != nil && validation.Field != tc.wantField {
+				t.Errorf("field = %q, want %q", validation.Field, tc.wantField)
 			}
 		})
 	}

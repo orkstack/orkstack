@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -212,10 +213,12 @@ func FuzzParseCatalog(f *testing.F) {
 }
 
 // FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused: for any document
-// the strict decode refuses, strictDecodeError never panics, and either
-// returns the decoder's own refusal unchanged or names, in its one sentence,
-// a key the decoder refused at the same line, at that key's field path, with
-// the keys its position takes, sorted and distinct.
+// the strict decode refuses, strictDecodeError never panics; when the decoder
+// refused no key as undeclared it returns the decoder's own refusal
+// unchanged, and otherwise its one sentence names, first, the earliest key
+// the decoder refused, at that key's line — at the key's field path, with the
+// keys its position takes, sorted, distinct and without the key, or by its
+// line alone — and then every other key the decoder refused, each once.
 func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 	const orkflow = "apiVersion: orkstack/v1\nkind: Orkflow\nname: typo\n"
 	const iface = "apiVersion: orkstack/v1\nkind: ActivityInterface\n"
@@ -225,10 +228,12 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 	}{
 		{orkflow + "tasks:\n  - id: a\n    uses: shell\n    need: [a]\n", false},
 		{orkflow + "tsks:\n  - id: a\n", false},
+		{orkflow + "tsks: 1\n\"a\\nb\": 2\npinz: 3\n", false},
 		{orkflow + "pins:\n  build:\n    timeout_second: 60\n", false},
 		{orkflow + "tasks:\n  - id: a\n    retry:\n      max_attempts: 3\n", false},
 		{orkflow + "tasks:\n  - id: a\n    secrets:\n      - name: db\n        sorce: env:DB\n", false},
 		{orkflow + "tasks:\n  - &k id: a\n  - *k : b\n    timeout_seconds: abc\n", false},
+		{orkflow + "tasks:\n  - id: a\n    with: {command: &k bogus}\n  - *k : b\n", false},
 		{orkflow + "tasks:\n  - id: a\n    with: &w {id: b, bogus: 1}\n  - <<: *w\n", false},
 		{orkflow + "pins:\n  p: &p {timeout_seconds: 1}\n  q:\n    <<: *p\n    x: 1\n", false},
 		{orkflow + "tasks:\n  - ? [a]\n    : b\n", false},
@@ -239,7 +244,12 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 	} {
 		f.Add([]byte(seed.source), seed.iface)
 	}
-	declared := regexp.MustCompile(`^line (\d+): field (.*) not found in type \S+$`)
+	// The key may hold a line break, so the pattern is (?s).
+	declared := regexp.MustCompile(`(?s)^line (\d+): field (.*) not found in type \S+$`)
+	type refused struct {
+		line int
+		key  string
+	}
 	f.Fuzz(func(t *testing.T, source []byte, isInterface bool) {
 		typ, kind := reflect.TypeOf(document{}), KindOrkflow
 		if isInterface {
@@ -252,52 +262,85 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 			return
 		}
 		refusal := strictDecodeError(source, typ, kind, err)
-		var validation *ValidationError
-		if !errors.As(refusal, &validation) {
+		var keys []refused
+		var typeErr *yaml.TypeError
+		if errors.As(err, &typeErr) {
+			seen := map[refused]bool{}
+			for _, entry := range typeErr.Errors {
+				m := declared.FindStringSubmatch(entry)
+				if m == nil {
+					continue
+				}
+				line, convErr := strconv.Atoi(m[1])
+				if convErr != nil {
+					t.Fatalf("the decoder's line %q is not a number", m[1])
+				}
+				if k := (refused{line, m[2]}); !seen[k] {
+					seen[k] = true
+					keys = append(keys, k)
+				}
+			}
+			sort.SliceStable(keys, func(i, j int) bool { return keys[i].line < keys[j].line })
+		}
+		if len(keys) == 0 {
 			if refusal.Error() != "parse yaml: "+err.Error() {
-				t.Fatalf("refusal %q is neither a named key nor the decoder's %q", refusal, err)
+				t.Fatalf("refusal %q is not the decoder's %q, which refused no key", refusal, err)
 			}
 			return
 		}
-		var typeErr *yaml.TypeError
-		if !errors.As(err, &typeErr) {
-			t.Fatalf("a key was named for a refusal that is not the decoder's type error: %v", err)
+		var validation *ValidationError
+		if !errors.As(refusal, &validation) {
+			t.Fatalf("refusal %q of the refused keys %v is not a ValidationError", refusal, keys)
 		}
 		message := validation.Error()
-		var rest string
-		for _, entry := range typeErr.Errors {
-			m := declared.FindStringSubmatch(entry)
-			if m == nil {
-				continue
+		first, rest := keys[0], keys[1:]
+		more := ""
+		if len(rest) > 0 {
+			names := make([]string, len(rest))
+			for i, k := range rest {
+				names[i] = fmt.Sprintf("%q at line %d", k.key, k.line)
 			}
-			key := m[2]
-			parent, ok := "", validation.Field == key
-			if !ok {
-				parent, ok = strings.CutSuffix(validation.Field, "."+key)
+			noun := "key"
+			if len(rest) > 1 {
+				noun = "keys"
 			}
-			if !ok {
-				continue
-			}
-			where := "at the top level"
-			if parent != "" {
-				where = "in " + parent
-			}
-			prefix := fmt.Sprintf("line %s: unknown key %q %s of the %s; allowed: ", m[1], key, where, kind)
-			if after, found := strings.CutPrefix(message, prefix); found {
-				rest = after
-				break
-			}
+			more = fmt.Sprintf(" (and %d more unknown %s: %s)", len(rest), noun, strings.Join(names, ", "))
 		}
-		if rest == "" {
-			t.Fatalf("%q at field %q names no key the decoder refused (%q)", message, validation.Field, typeErr.Errors)
+		// By its line alone, with no field; an empty key at the top level
+		// also has the empty path, so the sentence decides, not the field.
+		if message == fmt.Sprintf("line %d: unknown key %q in the %s%s", first.line, first.key, kind, more) {
+			if validation.Field != "" {
+				t.Fatalf("refusal %q, by its line alone, is placed at %q", message, validation.Field)
+			}
+			return
 		}
-		allowed := strings.Split(rest, ", ")
+		parent, ok := "", validation.Field == first.key
+		if !ok {
+			parent, ok = strings.CutSuffix(validation.Field, "."+first.key)
+		}
+		if !ok {
+			t.Fatalf("%q is placed at %q, not at the path of %q, the first key the decoder refused (%q)",
+				message, validation.Field, first.key, typeErr.Errors)
+		}
+		where := "at the top level"
+		if parent != "" {
+			where = "in " + parent
+		}
+		prefix := fmt.Sprintf("line %d: unknown key %q %s of the %s%s; allowed: ", first.line, first.key, where, kind, more)
+		after, found := strings.CutPrefix(message, prefix)
+		if !found {
+			t.Fatalf("refusal %q does not begin %q (the decoder refused %q)", message, prefix, typeErr.Errors)
+		}
+		allowed := strings.Split(after, ", ")
 		if !sort.StringsAreSorted(allowed) {
 			t.Fatalf("the allowed keys %q are not sorted", allowed)
 		}
-		for i := 1; i < len(allowed); i++ {
-			if allowed[i] == allowed[i-1] || allowed[i] == "" {
+		for i, key := range allowed {
+			if key == "" || (i > 0 && key == allowed[i-1]) {
 				t.Fatalf("the allowed keys %q repeat or hold an empty key", allowed)
+			}
+			if key == first.key {
+				t.Fatalf("the allowed keys %q offer %q, the key refused as unknown", allowed, first.key)
 			}
 		}
 	})

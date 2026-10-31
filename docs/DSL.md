@@ -1779,7 +1779,11 @@ ignored, so a misspelled or unsupported key cannot surface later as a run that
 behaves differently from its document. The refusal names the key, where it
 stands and the keys that position takes, at the key's field path
 (`tasks[1].need`) and its line: `line 10: unknown key "need" in tasks[1] of
-the Orkflow; allowed: await, cache, …`.
+the Orkflow; allowed: await, cache, …`. Every other unknown key in the
+document is named after the first, with its line (`(and 1 more unknown key:
+"sorce" at line 14)`), and a key a merge (`<<:`) delivered, which no path of
+the document holds, is named by its line alone (`line 7: unknown key "bogus"
+in the Orkflow`).
 
 A slug is at most **200 bytes**, in every position above. The bound is half the
 rule and not a detail of it: a namespace, an orkflow name and a version are

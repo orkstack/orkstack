@@ -16,8 +16,9 @@ word for word.
 - An unknown key in an Orkflow or an activity interface is refused in the
   document's own words: the key, where it stands, the document's kind and the
   keys that position takes, at the key's field path
-  (`line 10: unknown key "need" in tasks[1] of the Orkflow; allowed: …`).
-  It used to repeat the YAML decoder's sentence, which named an internal type.
+  (`line 10: unknown key "need" in tasks[1] of the Orkflow; allowed: …`),
+  followed by every other unknown key and its line. It used to repeat the
+  YAML decoder's sentence, which named an internal type and only one key.
 - `orkctl activity test` reports the `with:` interface the image declares in
   its `org.orkstack.activity.interface` label (declared, none or malformed),
   in its table and as `interface` in `--json`. The label is reported, never

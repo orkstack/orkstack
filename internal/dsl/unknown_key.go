@@ -4,51 +4,113 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
 
+// unknownFieldRefusal is yaml.v3's sentence for a key a struct does not
+// declare. The key may hold any character, a line break or " not found in
+// type " included, so it is everything between "field " and the last word,
+// which is the Go type.
+var unknownFieldRefusal = regexp.MustCompile(`(?s)^line (\d+): field (.*) not found in type \S+$`)
+
 // strictDecodeError words a strict decode's refusal for the author. yaml.v3
 // refuses a key the schema does not define as "field X not found in type
 // dsl.taskDocument", naming the Go type the key would have decoded into
-// (AGENTS.md §7: nothing internal on a user surface). So the source is read
-// again, walked against the same struct, and the first key the decoder
-// refused is refused in the author's words — the key, the path it stands at
-// and the document's kind — at the key's field path. Only a key the decoder
-// itself refused, at the same line, is named, so the walk can never report a
-// key yaml.v3 accepted or hide its real refusal; any other refusal is
-// returned as the decoder worded it.
+// (AGENTS.md §7: nothing internal on a user surface). Every key it refused
+// that way is reworded from the decoder's own line and key. The first, in
+// line order, has the sentence: at the path it stands at, with the keys that
+// path takes, when the source walked against the same struct finds the key
+// there at that line, and by its line alone when the walk does not (a key a
+// merge delivered). The rest are named after it, so one answer lists every
+// unknown key. When no key was refused, the decoder's refusal is returned as
+// it worded it; a refusal of another kind beside refused keys (a value of
+// the wrong type) is the next decode's answer, once the keys are fixed.
 //
 // doc is the struct the strict decode decoded into; kind names the document
 // in the sentence ("Orkflow", "activity interface").
 func strictDecodeError(source []byte, doc reflect.Type, kind string, err error) error {
 	var typeErr *yaml.TypeError
-	if errors.As(err, &typeErr) {
-		var root yaml.Node
-		refused := func(key string, line int) bool {
-			want := fmt.Sprintf("line %d: field %s not found in type ", line, key)
-			for _, message := range typeErr.Errors {
-				if strings.HasPrefix(message, want) {
-					return true
-				}
+	if !errors.As(err, &typeErr) {
+		return fmt.Errorf("parse yaml: %w", err)
+	}
+	refusals := refusedKeys(typeErr)
+	if len(refusals) == 0 {
+		return fmt.Errorf("parse yaml: %w", err)
+	}
+	refused := make(map[refusedKey]bool, len(refusals))
+	for _, r := range refusals {
+		refused[r] = true
+	}
+	located := map[refusedKey]unknownKey{}
+	var root yaml.Node
+	if yaml.Unmarshal(source, &root) == nil {
+		walkUnknownKeys(&root, doc, "", func(found unknownKey) {
+			at := refusedKey{line: found.line, key: found.key}
+			if _, seen := located[at]; refused[at] && !seen {
+				located[at] = found
 			}
-			return false
+		})
+	}
+	more := ""
+	if rest := refusals[1:]; len(rest) > 0 {
+		names := make([]string, len(rest))
+		for i, r := range rest {
+			names[i] = fmt.Sprintf("%q at line %d", r.key, r.line)
 		}
-		if yaml.Unmarshal(source, &root) == nil {
-			if found := firstUnknownKey(&root, doc, "", refused); found != nil {
-				where := "at the top level"
-				if found.parent != "" {
-					where = "in " + found.parent
-				}
-				return validationError(joinPath(found.parent, found.key),
-					fmt.Errorf("line %d: unknown key %q %s of the %s; allowed: %s",
-						found.line, found.key, where, kind, strings.Join(found.allowed, ", ")))
-			}
+		noun := "key"
+		if len(rest) > 1 {
+			noun = "keys"
+		}
+		more = fmt.Sprintf(" (and %d more unknown %s: %s)", len(rest), noun, strings.Join(names, ", "))
+	}
+	first := refusals[0]
+	found, ok := located[first]
+	if !ok {
+		return validationError("", fmt.Errorf("line %d: unknown key %q in the %s%s", first.line, first.key, kind, more))
+	}
+	where := "at the top level"
+	if found.parent != "" {
+		where = "in " + found.parent
+	}
+	return validationError(joinPath(found.parent, found.key),
+		fmt.Errorf("line %d: unknown key %q %s of the %s%s; allowed: %s",
+			found.line, found.key, where, kind, more, strings.Join(found.allowed, ", ")))
+}
+
+// refusedKey is one key the decoder refused as undeclared, at its line.
+type refusedKey struct {
+	line int
+	key  string
+}
+
+// refusedKeys reads the keys the decoder refused as undeclared out of its
+// refusal, in line order and each once: a key under an anchor is refused
+// again at every alias that repeats it.
+func refusedKeys(typeErr *yaml.TypeError) []refusedKey {
+	var out []refusedKey
+	seen := map[refusedKey]bool{}
+	for _, message := range typeErr.Errors {
+		m := unknownFieldRefusal.FindStringSubmatch(message)
+		if m == nil {
+			continue
+		}
+		line, err := strconv.Atoi(m[1])
+		if err != nil {
+			continue
+		}
+		r := refusedKey{line: line, key: m[2]}
+		if !seen[r] {
+			seen[r] = true
+			out = append(out, r)
 		}
 	}
-	return fmt.Errorf("parse yaml: %w", err)
+	sort.SliceStable(out, func(i, j int) bool { return out[i].line < out[j].line })
+	return out
 }
 
 // unknownKey is one key a document struct does not declare: the key, the
@@ -61,25 +123,24 @@ type unknownKey struct {
 	allowed []string
 }
 
-// firstUnknownKey walks node against t in document order and returns the
-// first mapping key t's yaml tags do not declare and refused confirms the
-// decoder refused at its line, or nil. A data position (a yaml.Node field) is
-// authored data, judged by the strict mapping instead; a node of the wrong
-// shape, a merge key and a key that is not a plain scalar are left to the
-// decoder's own refusal.
-func firstUnknownKey(node *yaml.Node, t reflect.Type, path string, refused func(key string, line int) bool) *unknownKey {
+// walkUnknownKeys walks node against t in document order and hands report
+// every mapping key t's yaml tags do not declare. A data position (a
+// yaml.Node field) is authored data, judged by the strict mapping instead; a
+// node of the wrong shape, a merge key and a key that is not a plain scalar
+// are left to the decoder's own refusal.
+func walkUnknownKeys(node *yaml.Node, t reflect.Type, path string, report func(unknownKey)) {
 	for node != nil && (node.Kind == yaml.DocumentNode || node.Kind == yaml.AliasNode) {
 		if node.Kind == yaml.AliasNode {
 			node = node.Alias
 			continue
 		}
 		if len(node.Content) == 0 {
-			return nil
+			return
 		}
 		node = node.Content[0]
 	}
 	if node == nil || t == yamlNodeType {
-		return nil
+		return
 	}
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
@@ -87,7 +148,7 @@ func firstUnknownKey(node *yaml.Node, t reflect.Type, path string, refused func(
 	switch t.Kind() {
 	case reflect.Struct:
 		if node.Kind != yaml.MappingNode {
-			return nil
+			return
 		}
 		fields := yamlFields(t)
 		for i := 0; i+1 < len(node.Content); i += 2 {
@@ -97,44 +158,35 @@ func firstUnknownKey(node *yaml.Node, t reflect.Type, path string, refused func(
 			}
 			field, declared := fields[key]
 			if !declared {
-				if !refused(key, node.Content[i].Line) {
-					continue
-				}
 				allowed := make([]string, 0, len(fields))
 				for name := range fields {
 					allowed = append(allowed, name)
 				}
 				sort.Strings(allowed)
-				return &unknownKey{key: key, parent: path, line: node.Content[i].Line, allowed: allowed}
+				report(unknownKey{key: key, parent: path, line: node.Content[i].Line, allowed: allowed})
+				continue
 			}
-			if found := firstUnknownKey(node.Content[i+1], field, joinPath(path, key), refused); found != nil {
-				return found
-			}
+			walkUnknownKeys(node.Content[i+1], field, joinPath(path, key), report)
 		}
 	case reflect.Map:
 		if node.Kind != yaml.MappingNode {
-			return nil
+			return
 		}
 		for i := 0; i+1 < len(node.Content); i += 2 {
 			key, ok := plainKey(node.Content[i])
 			if !ok {
 				continue
 			}
-			if found := firstUnknownKey(node.Content[i+1], t.Elem(), joinPath(path, key), refused); found != nil {
-				return found
-			}
+			walkUnknownKeys(node.Content[i+1], t.Elem(), joinPath(path, key), report)
 		}
 	case reflect.Slice:
 		if node.Kind != yaml.SequenceNode {
-			return nil
+			return
 		}
 		for i, item := range node.Content {
-			if found := firstUnknownKey(item, t.Elem(), fmt.Sprintf("%s[%d]", path, i), refused); found != nil {
-				return found
-			}
+			walkUnknownKeys(item, t.Elem(), fmt.Sprintf("%s[%d]", path, i), report)
 		}
 	}
-	return nil
 }
 
 // plainKey is a mapping key as yaml.v3 reads it — an alias resolved to the
