@@ -14,8 +14,9 @@ word for word.
 ### Changed
 
 - A task's `retry:` that sets no `maximum_interval_seconds` now waits at most
-  60 seconds between attempts, the contract's suggested maximum, instead of
-  100. The number is decided when a run is submitted and kept for the whole
+  60 seconds between attempts, instead of 100: the maximum interval
+  OrkStack's engineering contract suggests (`maxInterval: 1m`, AGENTS.md
+  §4). The number is decided when a run is submitted and kept for the whole
   run, so runs submitted before the upgrade keep 100 seconds. Set
   `maximum_interval_seconds: 100` to keep the old spacing.
 - Fair dispatch across namespaces now also keys each pin's request for a pin
@@ -32,7 +33,9 @@ word for word.
   stuck: Temporal refused the retry policy and retried the refusal forever.
   An unset maximum interval is now never below the initial interval, in every
   run this release's engine executes, a run submitted before the upgrade
-  included.
+  included. On a deployment with versioning, a run v0.1.0 already left stuck
+  stays on v0.1.0 and never gets the fix: cancel it (UPGRADING.md,
+  "Upgrading Orkflows with the release").
 - **BREAKING**: An Orkflow whose `retry:` sets a negative
   `initial_interval_seconds` or `maximum_interval_seconds`, a
   `maximum_interval_seconds` below its `initial_interval_seconds`, or a
