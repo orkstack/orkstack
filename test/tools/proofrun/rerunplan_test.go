@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -550,7 +551,8 @@ func TestGhArgs_HoldsTheArgumentListOfEachRead(t *testing.T) {
 
 // ghExec reads a job's log through a gh that behaves as 2.103 does: a raw body
 // with an escape sequence is refused unless the flag allows it. The log the
-// planner gets is the body, escape sequences included; it never prints it.
+// planner gets is the body bounded as the job records keep it (boundJobLog):
+// a line it reads nothing from loses its escapes. It never prints it.
 func TestGhExec_ReadsAJobLogThatCarriesEscapeSequences(t *testing.T) {
 	dir := t.TempDir()
 	fake := `#!/bin/sh
@@ -570,7 +572,70 @@ printf '2026-10-30T15:33:40Z \033[31mrunner-health: verdict below-floor\033[0m\n
 	if err != nil {
 		t.Fatalf("the log read failed: %v", err)
 	}
-	if want := "2026-10-30T15:33:40Z \x1b[31mrunner-health: verdict below-floor\x1b[0m\n"; string(got) != want {
+	if want := "2026-10-30T15:33:40Z runner-health: verdict below-floor\n"; string(got) != want {
 		t.Errorf("log = %q, want %q", got, want)
+	}
+}
+
+// fakeGH puts a gh on PATH that runs body, a shell script, for every call.
+func fakeGH(t *testing.T, body string) {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte("#!/bin/sh\n"+body+"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// ghExec held a job's whole log in memory, and a job's log runs to
+// megabytes. It reads it through boundJobLog, as the job records keep it, so
+// the planner reads from it what it reads from the whole; a JSON body is read
+// as it is.
+func TestGhExec_KeepsAJobLogBounded(t *testing.T) {
+	fakeGH(t, `yes 'ordinary output of a test, which the planner reads nothing from' | head -n 50000
+echo 'proofrun: start example.com/m TestA'
+echo 'proofrun: outcome fail example.com/m TestA 3.00'
+yes 'more ordinary output' | head -n 50000
+echo 'proofrun: start example.com/m TestB'`)
+	got, err := ghExec("repos/o/r/actions/jobs/1/logs", false)
+	if err != nil {
+		t.Fatalf("the log read failed: %v", err)
+	}
+	if len(got) > 256<<10 {
+		t.Errorf("ghExec kept %d bytes of a log of about 4 MB", len(got))
+	}
+	failed, unfinished := logProgress(string(got))
+	if !slices.Equal(failed, []string{"example.com/m.TestA"}) || !slices.Equal(unfinished, []string{"example.com/m.TestB"}) {
+		t.Errorf("the planner reads failed %q unfinished %q from the kept log, want TestA failed and TestB unfinished:\n%s", failed, unfinished, got)
+	}
+
+	fakeGH(t, `echo '{"jobs":[]}'`)
+	if got, err := ghExec("repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100", true); err != nil || string(got) != "{\"jobs\":[]}\n" {
+		t.Errorf("a job listing reads %q, %v", got, err)
+	}
+}
+
+// A log whose proofrun lines or one line pass boundJobLog's bound, and a JSON
+// body longer than ghBodyMaxBytes, are failed reads, never cut: a cut could
+// hide a failing test. None reads as GitHub keeping no log, so the job fails
+// closed.
+func TestGhExec_RefusesABodyPastItsBound(t *testing.T) {
+	for _, c := range []struct {
+		name, body, path string
+		paginate         bool
+	}{
+		{"a log's proofrun lines", `yes 'proofrun: start example.com/m TestA' | head -n 40000`, "repos/o/r/actions/jobs/1/logs", false},
+		{"a log's one line", `head -c 2000000 /dev/zero | tr '\0' x`, "repos/o/r/actions/jobs/1/logs", false},
+		{"a job listing", `exec head -c 34000000 /dev/zero`, "repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100", true},
+	} {
+		fakeGH(t, c.body)
+		got, err := ghExec(c.path, c.paginate)
+		if err == nil {
+			t.Errorf("%s: ghExec read %d bytes, want a failed read", c.name, len(got))
+			continue
+		}
+		if noLogKept(err) {
+			t.Errorf("%s: the refusal %q reads as GitHub keeping no log", c.name, err)
+		}
 	}
 }

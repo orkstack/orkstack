@@ -67,22 +67,66 @@ func ghArgs(path string, paginate bool) []string {
 	return append(args, path)
 }
 
+// ghBodyMaxBytes bounds a JSON body the planner reads, all of its pages
+// together: a run attempt's job listing or a check run's annotations, each far
+// below it.
+const ghBodyMaxBytes = 32 << 20
+
 // ghExec reads one resource with the gh CLI, which takes its token from
-// GH_TOKEN. Each call is bounded.
+// GH_TOKEN. Each call is bounded in time and in memory. A job's log is read
+// through boundJobLog, as the proof job's job records keep it: every line the
+// planner reads from a log, byte for byte, and the log's last lines. A log
+// boundJobLog refuses, or another body longer than ghBodyMaxBytes, is a failed
+// read, never cut, so the job it belongs to fails closed.
 func ghExec(path string, paginate bool) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "gh", ghArgs(path, paginate)...)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(errb.String())
+	cmd.WaitDelay = 10 * time.Second
+	errb := &tailBuffer{max: 4 << 10}
+	cmd.Stderr = errb
+	stdout, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
+		return nil, fmt.Errorf("gh api %s: %w", path, err)
+	}
+	var out bytes.Buffer
+	var readErr error
+	if strings.HasSuffix(path, "/logs") {
+		readErr = boundJobLog(stdout, &out)
+	} else {
+		readErr = readAtMost(stdout, &out, ghBodyMaxBytes)
+	}
+	if readErr != nil {
+		// gh may be blocked writing what is no longer read.
+		cancel()
+	}
+	err = cmd.Wait()
+	if readErr != nil {
+		return nil, fmt.Errorf("gh api %s: its body was not read: %v", path, readErr)
+	}
+	if err != nil {
+		msg := strings.TrimSpace(string(errb.tail()))
 		if len(msg) > 300 {
 			msg = msg[:300]
 		}
 		return nil, fmt.Errorf("gh api %s: %v: %s", path, err, msg)
 	}
 	return out.Bytes(), nil
+}
+
+// readAtMost copies r to w, and fails once r holds more than max bytes.
+func readAtMost(r io.Reader, w io.Writer, max int64) error {
+	n, err := io.Copy(w, io.LimitReader(r, max+1))
+	if err != nil {
+		return err
+	}
+	if n > max {
+		return fmt.Errorf("it holds more than %d bytes", max)
+	}
+	return nil
 }
 
 // The reasons of a decision, a closed vocabulary.
