@@ -154,6 +154,17 @@ the fixed version: bump the module to exactly that version, then run
 `make check`. A vulnerability the code cannot reach is shown only with
 `go tool govulncheck -show verbose ./...`.
 
+`make vuln-js` and `make vuln-images` are the scan's other two lanes, and need
+the network too, so the nightly workflow runs them and no proof does.
+`make vuln-js` runs `bun audit` over `ui/` and `site/`, development
+dependencies included, and fails on a high or critical advisory;
+`bun audit fix --dry-run` names the fixed versions. `make vuln-images` builds
+the images a release publishes, for linux/amd64, and scans each with the
+pinned Grype (`deploy/grype-image.txt`, policy `deploy/grype.yaml`): a fixed
+vulnerability of high or critical severity in an OS package or a bundled
+third-party binary fails it. OrkStack's own Go code is `make vuln`'s. Grype's
+database takes about 3 GB under `.data/vuln-images`.
+
 When a test is listed in `scripts/proof-quarantine.txt`, its failure is that
 known flake: tell its owner if it is new to you. Never re-run a failing test until it
 passes; a second run is the flip the list exists to count, not a remedy.
@@ -233,8 +244,9 @@ run, with its own `ork` and `orker`, and stops them when it ends.
 - **`check`** — `make check`, on every push and every pull request, with
   `DOCKER_HOST` pointing at nothing to prove the fast path needs no Docker.
 - **`vuln`** — `make vuln`, on every push and every pull request. It needs the
-  network and is in no proof; the nightly workflow runs it too, and a
-  vulnerability it reports makes that night's run red.
+  network and is in no proof; the nightly workflow runs it too, with
+  `make vuln-js` and `make vuln-images`, and a vulnerability any of them
+  reports makes that night's run red.
 - **`feature`** — optional: the feature tier, run only with the `ci:feature`
   label, on a push to `validate/feature/**`, or by dispatch. It runs the fast
   gates, the tests and specs that prove your change, and its regression set,

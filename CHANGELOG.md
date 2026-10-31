@@ -11,6 +11,13 @@ word for word.
 
 ## [Unreleased]
 
+### Added
+
+- The nightly workflow also audits the UI's and the site's JavaScript
+  dependencies (`make vuln-js`, `bun audit`) and scans the images a release
+  publishes (`make vuln-images`, a pinned Grype) for known vulnerabilities; a
+  release is not tagged while either is red.
+
 ### Security
 
 - Release workflows pin every action by commit SHA.
