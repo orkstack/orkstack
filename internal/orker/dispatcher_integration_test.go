@@ -370,11 +370,13 @@ func TestIntegration_BurstOutputBeforeExitIsNotTruncated(t *testing.T) {
 }
 
 // TestIntegration_AdoptsAnExistingCommitWithoutRunningTheContainer is the
-// §5.4 step-0 guarantee, and the one that makes "Orker died after commit.json,
-// before Temporal completion" a container that ran ONCE.
+// guarantee of §5.4's retry-start check (step 0 there; STEP 3 of the
+// dispatcher's Execute, phase commit-check), and the one that makes "Orker
+// died after commit.json, before Temporal completion" a container that ran
+// ONCE.
 //
 // The CommitAdopted flag alone cannot say the container did not run: a retry
-// that skipped the step-0 check would run the container, lose the commit's
+// that skipped the retry-start check would run the container, lose the commit's
 // create-if-absent, and adopt the winner at the conflict branch — flagged
 // adopted, with the committed values. So the runtime is the witness: it is
 // asked for exactly one container across both attempts. And the workload
