@@ -1,8 +1,8 @@
 # OrkStack — developer entrypoints. Single Go module; UI is a Bun project.
 SHELL := /bin/bash
-# Where `make tools` installs the codegen binaries, and therefore what
-# `make proto` and `make tsgen` have to find on PATH. `go install` writes to
-# GOBIN when it is set and to GOPATH/bin otherwise — and those are different
+# Where `make tools` installs buf, and therefore where `make proto` has to
+# find it on PATH. `go install` writes to GOBIN when it is set and to
+# GOPATH/bin otherwise — and those are different
 # directories the moment a toolchain manager is involved, because mise and
 # friends export GOBIN to a version-specific path while GOPATH still points at
 # $HOME/go. Assuming GOPATH/bin put the tools on PATH only by accident: it held
@@ -40,10 +40,16 @@ tsgen: ## Install UI codegen deps and regenerate Go+TS clients from proto
 	go run ./internal/apidocs/cmd/genapidocs
 
 .PHONY: tools
-tools: ## Install codegen + lint tooling
-	go install github.com/bufbuild/buf/cmd/buf@latest
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install connectrpc.com/connect/cmd/protoc-gen-connect-go@latest
+# buf is installed at the exact version ui/package.json pins for
+# @bufbuild/buf, the buf `make tsgen` runs, so the one pin moves both; it is
+# not a go.mod tool directive because its module graph would join this
+# module's. The Go protoc plugins and the linters are tool directives and need
+# no install.
+tools: ## Install buf, the codegen driver `make proto` runs
+	@v="$$(sed -n 's/^[[:space:]]*"@bufbuild\/buf": "\([0-9][0-9.]*\)",*$$/\1/p' ui/package.json)"; \
+	test -n "$$v" || { echo "make tools: ui/package.json pins no exact @bufbuild/buf version" >&2; exit 1; }; \
+	echo "go install github.com/bufbuild/buf/cmd/buf@v$$v"; \
+	go install "github.com/bufbuild/buf/cmd/buf@v$$v"
 
 ## ---- build ----
 #

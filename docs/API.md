@@ -2755,7 +2755,7 @@ that wants to change one thing reads the schedule and sends the rest back,
 which is what `orkctl schedule update` does.
 
 There is deliberately no etag. The Go SDK issues a schedule update without
-a conflict token (v1.47.0, internal/internal_schedule_client.go:303), so a
+a conflict token (v1.50.0, internal/internal_schedule_client.go:303), so a
 compare-and-swap here would be a promise the mechanism underneath cannot
 keep. Last writer wins, and this comment says so rather than a field
 implying otherwise.
@@ -3143,7 +3143,7 @@ termination bypasses workflow code, and a terminated fire would leave its
 run executing while claiming otherwise.
 
 Every declared number equals the number of the same-named Temporal value
-(go.temporal.io/api/enums/v1 ScheduleOverlapPolicy, v1.63.4), and 5 —
+(go.temporal.io/api/enums/v1 ScheduleOverlapPolicy, v1.64.0), and 5 —
 Temporal's TERMINATE_OTHER — is RESERVED, so ALLOW_ALL is 6 here as it is
 there. The alignment is for readability only. The engine converts through
 an explicit switch that never casts (specOverlapToTemporal /

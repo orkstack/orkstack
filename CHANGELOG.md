@@ -22,6 +22,11 @@ word for word.
   `failure_reason` attribute, one series per reason, and
   `temporal_sticky_cache_total_forced_eviction` no longer counts a worker's
   shutdown, so a dashboard built on them may need adjusting.
+- Code generation is pinned exactly: buf 1.75.0, protobuf-es and
+  protoc-gen-es 2.16.0, and connect-es 2.3.0 in `ui/package.json`. The Go
+  protoc plugins are `go.mod` tool directives, so each generates with the
+  version of the runtime it links against, and `make tools` installs only buf,
+  at the exact version `ui/package.json` pins.
 
 ## [0.1.0] - 2026-10-30
 
