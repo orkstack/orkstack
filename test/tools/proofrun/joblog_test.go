@@ -318,8 +318,10 @@ func TestMerge_AFailingTestFarFromTheEndOfABoundedLogIsStillAResult(t *testing.T
 // does: --jq through jq; a log only with --allow-escape-sequences when it
 // carries one; a check run or a log the recording lacks as gh's HTTP 404; and
 // the log of the job FAKE_GH_LOG_ERROR names (<id>:<message>) as a failed read.
+// With TOKEN_LOG set, it appends "gh token" to it when GH_TOKEN reached it.
 const fakeGHScript = `#!/usr/bin/env bash
 set -u
+[ -z "${TOKEN_LOG:-}" ] || echo "gh ${GH_TOKEN:+token}" >>"$TOKEN_LOG"
 [ "$1" = api ] || { echo "fake gh: only api" >&2; exit 2; }
 shift
 jqexpr="" allow=no path=""
@@ -354,8 +356,9 @@ cat "$file"
 // runJobRecords runs the proof job's "job records" step itself over the
 // recorded run in fixture, with a gh that behaves as the runner's (fakeGHScript,
 // told by env which log reads fail) and, when builds, this test binary
-// standing in for proofrun; otherwise `go build` fails. It returns the records
-// of attempt 1 by job name.
+// standing in for proofrun; otherwise `go build` fails. With TOKEN_LOG in env,
+// gh, go and the stand-in each append to it a line saying whether GH_TOKEN
+// reached them. It returns the records of attempt 1 by job name.
 func runJobRecords(t *testing.T, fixture string, builds bool, env ...string) map[string]githubJob {
 	t.Helper()
 	for _, tool := range []string{"bash", "jq"} {
@@ -385,12 +388,14 @@ func runJobRecords(t *testing.T, fixture string, builds bool, env ...string) map
 	write("gh", fakeGHScript)
 	// `go build -o OUT ./test/tools/proofrun` makes OUT this test binary,
 	// which runs the subcommand it is given (TestMain).
+	const tokenSeen = `[ -z "${TOKEN_LOG:-}" ] || echo "%s ${GH_TOKEN:+token}" >>"$TOKEN_LOG"`
 	goScript := fmt.Sprintf(`#!/usr/bin/env bash
+`+fmt.Sprintf(tokenSeen, "go")+`
 [ "$1" = build ] && [ "$2" = -o ] && [ "$4" = ./test/tools/proofrun ] || { echo "fake go: $*" >&2; exit 2; }
-printf '#!/bin/sh\nPROOFRUN_AS_COMMAND=1 exec %%s "$@"\n' %q >"$3" && chmod +x "$3"
-`, self)
+printf '#!/bin/sh\n%%s\nPROOFRUN_AS_COMMAND=1 exec %%s "$@"\n' %q %q >"$3" && chmod +x "$3"
+`, fmt.Sprintf(tokenSeen, "proofrun"), self)
 	if !builds {
-		goScript = "#!/bin/sh\necho 'fake go: build failed' >&2\nexit 1\n"
+		goScript = "#!/bin/sh\n" + fmt.Sprintf(tokenSeen, "go") + "\necho 'fake go: build failed' >&2\nexit 1\n"
 	}
 	write("go", goScript)
 	cmd := exec.Command("bash", "-c", script)
@@ -454,6 +459,29 @@ func TestWorkflows_TheJobRecordsKeepABoundedLogOfEachFailedJob(t *testing.T) {
 				t.Errorf("%s (%s) kept a log; only a failed job's is read", j.Name, j.Conclusion)
 			}
 		}
+	}
+}
+
+// The job records step builds proofrun from the candidate's tree and runs it
+// on every failed job's log. Neither the build nor proofrun is given the job's
+// token, which only gh's reads take.
+func TestWorkflows_TheJobRecordsGiveTheTokenOnlyToGh(t *testing.T) {
+	seen := filepath.Join(t.TempDir(), "token-seen")
+	runJobRecords(t, recordedNightlyDir(t), true, "TOKEN_LOG="+seen)
+	b, err := os.ReadFile(seen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ran := map[string]int{}
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		tool, token, _ := strings.Cut(line, " ")
+		ran[tool]++
+		if got, want := token == "token", tool == "gh"; got != want {
+			t.Errorf("%s ran with the token: %v, want %v", tool, got, want)
+		}
+	}
+	if ran["gh"] == 0 || ran["go"] != 1 || ran["proofrun"] == 0 {
+		t.Errorf("gh, go and proofrun ran %v times; the step reads with gh, builds once and bounds each failed job's log", ran)
 	}
 }
 

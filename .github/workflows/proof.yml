@@ -891,13 +891,15 @@ jobs:
           # log. GitHub's 404 or 410 for a log is no log (a lost runner keeps
           # none). Any other failed read, a log job-log refuses (its proofrun
           # lines, or one line, pass the bound) and a proofrun that did not
-          # build set read_error: each fails closed.
+          # build set read_error: each fails closed. proofrun is built from
+          # the candidate's tree, so neither its build nor it is given the
+          # token, which only gh's reads take.
           set -uo pipefail
           dir="$RUNNER_TEMP/ci/jobs"
           work="$RUNNER_TEMP/ci/jobs-work"
           mkdir -p "$dir" "$work"
           repo="repos/$GITHUB_REPOSITORY"
-          go build -o "$work/proofrun" ./test/tools/proofrun || echo "proofrun did not build: every log it read fails its job's record closed" >&2
+          env -u GH_TOKEN go build -o "$work/proofrun" ./test/tools/proofrun || echo "proofrun did not build: every log it read fails its job's record closed" >&2
           for n in $(seq 1 "$GITHUB_RUN_ATTEMPT"); do
             if ! gh api --paginate "$repo/actions/runs/$GITHUB_RUN_ID/attempts/$n/jobs?per_page=100" --jq '.jobs[] | tojson' >"$work/raw-$n"; then
               # Not JSON on purpose: the merger lists it as unreadable.
@@ -930,7 +932,7 @@ jobs:
                   if gh api --allow-escape-sequences "$repo/actions/jobs/$id/logs" >"$work/rawlog" 2>"$work/logerr"; then
                     if [ ! -x "$work/proofrun" ]; then
                       [ -n "$err" ] || err="log: proofrun did not build, so the log could not be kept"
-                    elif ! "$work/proofrun" job-log <"$work/rawlog" >"$work/log"; then
+                    elif ! env -u GH_TOKEN "$work/proofrun" job-log <"$work/rawlog" >"$work/log"; then
                       : >"$work/log"
                       [ -n "$err" ] || err="log: proofrun job-log refused it (its proofrun lines, or one line, pass the bound)"
                     fi

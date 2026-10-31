@@ -1092,7 +1092,9 @@ and `fuzz-tests.json` of a nightly one, both plans, every part's records under `
 setup log and gate logs — and GitHub's record of every attempt's jobs under
 `jobs/` (`attempt-N.json`), with a bounded log of each job that did not
 succeed. The proof job's "job records" step reads that log with
-`--allow-escape-sequences` and keeps, through `proofrun job-log`, every line
+`--allow-escape-sequences` and keeps, through `proofrun job-log` (built from
+the candidate's tree, so neither it nor its build is given the step's token,
+which only `gh`'s reads take), every line
 the merger and the rerun planner read anything from (a `proofrun: start` or
 `proofrun: outcome` line, or a test event in JSON, §7.1) wherever it is, byte
 for byte, and the log's last 200 lines, each cut at 400 bytes, terminal escapes
