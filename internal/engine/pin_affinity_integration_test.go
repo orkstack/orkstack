@@ -42,7 +42,9 @@ import (
 //     every task of a pin lands on exactly ONE of them — never split across
 //     two — and the shared directory really is one filesystem, proved by a
 //     random token written by the first container and read back by the second.
-//     Checked run by run, over pinAffinityRuns consecutive runs.
+//     Checked run by run, over pinAffinityRuns consecutive runs, and again
+//     with pinAffinityOpenPins pins held open at once, which the per-host pin
+//     limit forces onto at least two hosts.
 //  2. NO FAILOVER. When that one host dies mid-pin, the pin dies with it:
 //     the run reaches FAILED with PIN_HOST_LOST, and the two survivors are
 //     never handed any task of that run — the pin is not silently re-opened
@@ -74,6 +76,14 @@ import (
 // second task. Twenty consecutive runs, each independently asserted, is the
 // difference between "it happened" and "it holds".
 const pinAffinityRuns = 20
+
+// pinAffinityMaxPins is each Orker's pin limit (ORK_ORKER_MAX_PINS) here,
+// and pinAffinityOpenPins how many pins Proof 1b holds open at once: one
+// more than a host may hold, so they cannot all open on one host.
+const (
+	pinAffinityMaxPins  = 2
+	pinAffinityOpenPins = pinAffinityMaxPins + 1
+)
 
 // pinAffinityHoldSeconds is how long Proof 2's first pinned container stays
 // alive after announcing itself.
@@ -410,6 +420,7 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 			logs:              logStore,
 			refs:              refs,
 			temporalNamespace: temporalNamespace,
+			maxPins:           pinAffinityMaxPins,
 		})
 		dep.orkers = append(dep.orkers, o)
 		dep.byID[o.id] = o
@@ -543,6 +554,81 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 			"pool channel and the session-creation channel before the first submit "+
 			"(asserted above), so this is Temporal's own dispatch behaviour on a short "+
 			"sequential run, not a harness bias.", pinAffinityRuns)
+	}
+
+	// ═══ PROOF 1b: affinity with pins open on several hosts at once ═══════
+	//
+	// Proof 1 may see every pin on one host, and then "each pin stayed on its
+	// own host" was asked of one host only. Here the spread is forced rather
+	// than hoped for: each pin's reader waits on an await the test resolves
+	// only after every writer has been handed to a host, so
+	// pinAffinityOpenPins pins are open at once, and no host may hold more
+	// than pinAffinityMaxPins. At least two hosts holding pins is the positive
+	// control, asserted; then each pin is checked to have kept its members on
+	// its own host.
+	transcript.section(fmt.Sprintf("1b. %d pins open at once, at most %d per host",
+		pinAffinityOpenPins, pinAffinityMaxPins))
+	gatedName := "pin-gated-" + token
+	if err := dep.storeOrkflow(ctx, gatedName, pinGatedRoundTripYAML); err != nil {
+		t.Fatalf("store the gated round-trip orkflow: %v", err)
+	}
+	gated := make([]string, 0, pinAffinityOpenPins)
+	for range pinAffinityOpenPins {
+		submitted, err := dep.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
+			OrkflowName: gatedName, Namespace: nsName,
+		}))
+		if err != nil {
+			t.Fatalf("SubmitRun(%s): %v", gatedName, err)
+		}
+		gated = append(gated, submitted.Msg.GetRun().GetId())
+	}
+	// A pin is open from the moment its first member is handed to its host
+	// until its last member ends, and no reader can start before its await
+	// is resolved: once every writer has been handed out, every pin is open.
+	pinHost := map[string]*pinOrker{}
+	hosting := map[string]int{}
+	for _, runID := range gated {
+		host := dep.awaitPinDispatch(t, ctx, runID, "writer")
+		pinHost[runID] = host
+		hosting[host.id]++
+		transcript.line("pin of %s  open on  %s", runID, host.id)
+	}
+	if len(hosting) < 2 {
+		t.Fatalf("%d pins were open at once on one host (%v), which hosts at most %d: the pin "+
+			"limit was not honoured, and the pins were never spread for affinity to be asked of",
+			pinAffinityOpenPins, hosting, pinAffinityMaxPins)
+	}
+	for id, n := range hosting {
+		if n > pinAffinityMaxPins {
+			t.Fatalf("%s held %d pins at once, over its limit of %d (%v)", id, n, pinAffinityMaxPins, hosting)
+		}
+	}
+	// While they are all open, each pin's /orkstack/shared is on its own
+	// host's disk and on no other's.
+	for _, runID := range gated {
+		for _, o := range dep.orkers {
+			want := 0
+			if o == pinHost[runID] {
+				want = 1
+			}
+			if dirs := pinDirsFor(t, o.workRoot, runID); len(dirs) != want {
+				t.Errorf("%s has %d shared directories for the pin of %s (%v), want %d: the pin is on %s",
+					o.id, len(dirs), runID, dirs, want, pinHost[runID].id)
+			}
+		}
+	}
+	t.Logf("EVIDENCE %d pins open at once on %d hosts: %v", pinAffinityOpenPins, len(hosting), hosting)
+	for _, runID := range gated {
+		dep.resolveGate(t, ctx, runID)
+	}
+	for i, runID := range gated {
+		winner := dep.checkPinnedRoundTrip(t, ctx, runID,
+			fmt.Sprintf("open pin %d/%d", i+1, pinAffinityOpenPins))
+		if winner != pinHost[runID].id {
+			t.Errorf("run %s reports its pin on %s, but its writer was handed to %s",
+				runID, winner, pinHost[runID].id)
+		}
+		transcript.line("run %s  ->  %s", runID, winner)
 	}
 
 	// ═══ PROOF 2: no failover when the pin host dies mid-pin ══════════════
@@ -801,6 +887,60 @@ tasks:
         printf '{"seen":"%s"}' "$SEEN" > /orkstack/output/values.json
 `
 
+// pinGatedRoundTripYAML is Proof 1b's orkflow: Proof 1's round trip, with
+// the reader also needing `gate`, an await the test resolves. The pin stays
+// open, holding its host's pin slot, from the writer's dispatch until the
+// gate is resolved and the reader has read the token.
+const pinGatedRoundTripYAML = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: __NAME__
+version: 0.1.0
+pins:
+  share:
+    timeout_seconds: __PIN_TIMEOUT__
+tasks:
+  - id: writer
+    uses: __IMAGE__
+    pool: __POOL__
+    pin: share
+    run_as_orker_user: true
+    network: none
+    timeout_seconds: 120
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mkdir -p /orkstack/shared/src
+        TOKEN=$(head -c 8 /dev/urandom | od -An -tx1 | tr -dc 'a-f0-9')
+        test -n "$TOKEN"
+        printf '%s' "$TOKEN" > /orkstack/shared/src/token.txt
+        printf '{"token":"%s","host":"%s"}' "$TOKEN" "$(hostname)" > /orkstack/output/values.json
+  - id: gate
+    await:
+      timeout_seconds: __PIN_TIMEOUT__
+  - id: reader
+    uses: __IMAGE__
+    pool: __POOL__
+    pin: share
+    needs: [writer, gate]
+    run_as_orker_user: true
+    network: none
+    timeout_seconds: 120
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        test -f /orkstack/shared/src/token.txt
+        SEEN=$(cat /orkstack/shared/src/token.txt)
+        test -n "$SEEN"
+        mkdir -p /orkstack/output/artifacts
+        printf '%s' "$SEEN" > /orkstack/output/artifacts/token.txt
+        printf '{"seen":"%s"}' "$SEEN" > /orkstack/output/values.json
+`
+
 // pinHoldYAML is Proof 2's orkflow: the first member announces itself, writes
 // its token, and then stays alive long enough for the test to kill its host
 // while it is genuinely mid-pin.
@@ -913,6 +1053,19 @@ func (d *pinDeployment) runPinnedRoundTrip(
 		t.Fatalf("%s: SubmitRun(%s): %v", label, orkflowName, err)
 	}
 	runID := submitted.Msg.GetRun().GetId()
+	return runID, d.checkPinnedRoundTrip(t, ctx, runID, label)
+}
+
+// checkPinnedRoundTrip waits for one submitted round-trip run to end and
+// asserts runPinnedRoundTrip's four promises of it, returning the winning
+// Orker's id.
+func (d *pinDeployment) checkPinnedRoundTrip(
+	t *testing.T,
+	ctx context.Context,
+	runID string,
+	label string,
+) string {
+	t.Helper()
 
 	run := d.awaitTerminalRun(t, ctx, runID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
@@ -993,7 +1146,39 @@ func (d *pinDeployment) runPinnedRoundTrip(
 			"filesystem, so the affinity is nominal only",
 			label, runID, seen, token)
 	}
-	return runID, winner
+	return winner
+}
+
+// resolveGate resolves run runID's await `gate` with {} once the run reports
+// it AWAITING. Polling the run with a deadline, never a sleep.
+func (d *pinDeployment) resolveGate(t *testing.T, ctx context.Context, runID string) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		got, err := d.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
+			RunId: runID, Namespace: d.namespace,
+		}))
+		if err != nil {
+			t.Fatalf("GetRun(%s): %v", runID, err)
+		}
+		gate := pinTaskRun(t, got.Msg.GetRun(), "gate")
+		if gate.GetStatus() == orkstackv1.Status_STATUS_AWAITING {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("run %s's gate is %v, never AWAITING within the deadline", runID, gate.GetStatus())
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context ended while waiting for run %s's gate: %v", runID, ctx.Err())
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	if _, err := d.runs.ResolveAwait(ctx, connect.NewRequest(&orkstackv1.ResolveAwaitRequest{
+		RunId: runID, Namespace: d.namespace, TaskId: "gate",
+	})); err != nil {
+		t.Fatalf("resolve run %s's gate: %v", runID, err)
+	}
 }
 
 // awaitTerminalRun drains the run's event stream — which closes when the run
