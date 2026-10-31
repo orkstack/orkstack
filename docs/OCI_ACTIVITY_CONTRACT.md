@@ -1243,8 +1243,11 @@ Orker-side behaviour and changes nothing a container sees: no file,
    error is `COMMIT_WRITE_FAILED`, the only way the memo step can fail an
    attempt. A memo that points at a HIT commit is followed once, so
    `cache.source` always names the run whose container produced the bytes.
-5. **A miss or a bypass** completes staging (phase `stage-artifacts`), runs
-   the container as always, and records the decision on the commit it writes.
+5. **A miss or a bypass** is first held to this Orker's own policy (§7.1,
+   step 5b′), which refuses it, before any secret or artifact is fetched,
+   where this Orker would not run it. Otherwise it completes staging (phase
+   `stage-artifacts`), runs the container as always, and records the decision
+   on the commit it writes.
    After that commit is **created** — never after a conflict's adoption — it
    writes the memo, a plain put that replaces whatever was at the key,
    best-effort on a detached 10 s context: a failure is logged and reported
@@ -1533,10 +1536,16 @@ heard of.
 
 **This Orker's own policy comes after the commit check and the memo step.**
 Two Orkers of one pool may hold different caps, secret schemes, floors or
-runtimes. A result another Orker committed (step 3), or a memo that hits (step
-5b), starts no container here, so it is handed back whatever this Orker would
-have refused; holding it to this Orker's settings would turn a durably
-committed result into a run failure. A task with neither is still refused at
+runtimes. A result another Orker committed (step 3) starts no container here,
+so it is handed back whatever this Orker's settings are: nothing that reads
+them comes before step 3. A memo that hits (step 5b) is handed back whatever
+this Orker's caps, secret schemes, floor or runtime; holding either to them
+would turn a reusable result into a run failure. A memo hit is not spared what
+comes before the lookup: a cached task's image policy (step 3b, a signature
+read with this Orker's registry credentials) and its render (step 5b, an
+`env` name held to this Orker's allow-list) run first, because the key hashes
+the rendered `config.json`, so those refuse it here even where the memo would
+hit. A task with neither is still refused at
 step 3a or 5b′, with its own reason (`RESOURCE_REQUEST_REFUSED`,
 `SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `RUN_AS_ORKER_UNAVAILABLE`),
 before any secret is resolved, any image pulled or any `config.json` written.

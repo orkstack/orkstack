@@ -468,7 +468,7 @@ then the variable it becomes.
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 195 seconds for removing what it gave up on and for that cancellation (17 minutes 15 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
-| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, as before. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
+| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
@@ -690,6 +690,8 @@ the pool offers. Give each Orker of a pool the same:
   `ORK_ORKER_SECRET_ALLOW`;
 - `env` allow-list, `orker.env_allowlist`, and the values of the variables it
   names;
+- registry credentials, `orker.registry_auth_file`, with which an Orker reads
+  a signature when a namespace requires one (`require_signed_by`);
 - runtime: `orker.resources.force_user`, and whether a task can run as the
   Orker's own user. Run a pool on runtimes where it can, or on runtimes where
   it cannot, not both (a rootless or user-namespaced daemon cannot;
@@ -701,17 +703,28 @@ Network modes need no setting: every Orker offers `default` and `none`.
 
 While the settings match, a run never fails because of which Orker took a
 task. When they differ, a task that lands on an Orker that will not run it
-fails there, explicitly and without a retry, with its own reason:
-`RESOURCE_REQUEST_REFUSED`, `SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`,
-`RUN_AS_ORKER_UNAVAILABLE`, or `RENDER_FAILED` for an `env` name outside the
-Orker's allow-list. A differing default
-request gives a task that declares none different limits on different Orkers,
-and a differing capacity or `max_concurrent` fails nothing, only spreads the
-work unevenly. A task whose result is already committed, or whose memo hits,
-is never refused this way: an Orker holds a task to its own settings only
-after the commit check and the memo step, because it then starts no container
-([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#71-the-sequence),
-"§7.1").
+fails there, explicitly, with its own reason: `RESOURCE_REQUEST_REFUSED`,
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED` or
+`RUN_AS_ORKER_UNAVAILABLE`, none of them retried; `RENDER_FAILED`, not
+retried, for an `env` name outside the Orker's allow-list; or
+`IMAGE_SIGNATURE_UNAVAILABLE`, retried under the task's policy, for a
+signature its registry credentials cannot read. A differing default request
+gives a task that declares none different limits on different Orkers, and a
+differing capacity or `max_concurrent` fails nothing, only spreads the work
+unevenly.
+
+What a task that runs no container here is spared depends on why it runs
+none ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#71-the-sequence),
+"§7.1"):
+
+- **A result already committed** is never refused for any of these settings:
+  the commit check comes before everything that reads them.
+- **A memo hit** is never refused for the caps, the secret schemes and floor,
+  or the runtime: those are checked only after the memo step misses. But a
+  cached task's image policy is checked before its memo lookup, and its
+  `with:` is rendered before it too, because the memo key hashes the rendered
+  `config.json`. A differing `env` allow-list, or differing registry
+  credentials, therefore refuse it even where another Orker's memo would hit.
 
 #### Changing a setting with runs in flight
 

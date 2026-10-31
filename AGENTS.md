@@ -290,6 +290,7 @@ check the completion commit
 check the run's image policy
 check a cached task's memo
 check the task against this Orker's own policy, once no commit or memo answers it
+  (the exact order, cached and not: docs/OCI_ACTIVITY_CONTRACT.md §7.1)
 resolve the OCI image and digest
 create an isolated workspace
 materialize input artifacts
@@ -319,10 +320,13 @@ polling Orker receives a task, and OrkStack never chooses a host.
 
 Every Orker of a pool has the same settings — caps, default request,
 capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
-runtime, pin hosting — so a run never fails because of which Orker took a
-task; where they differ, a task with no committed result and no memo hit
-fails explicitly with its own reason, and a committed result or a hit is
-never refused for one (`docs/DEPLOY.md`, "Every Orker of a pool has the same
+registry credentials, runtime, pin hosting — so a run never fails because of
+which Orker took a task. Where they differ, a task fails explicitly with its
+own reason. A committed result is never refused for any of them. A memo hit
+is never refused for the caps, secret schemes, floor or runtime, but a cached
+task is rendered and its image policy checked before its memo lookup, so a
+differing `env` allow-list or registry credentials can refuse it even where a
+memo would hit (`docs/DEPLOY.md`, "Every Orker of a pool has the same
 settings").
 
 Docker- and Podman-specific details live in the runtime files

@@ -107,7 +107,7 @@ Never give an Orker pod the node's container runtime or its Docker socket. [Run 
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | empty | both. Empty opens no listener |
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | ork. Off keeps every run; on retires runs by their namespace's retention |
 
-Give every Orker of a pool the same `max_concurrent`, caps and capacity, and the same default request, secret and `env` settings and runtime. A task that lands on an Orker that will not run it fails its run. To change a value with runs in flight, follow [DEPLOY.md, "Every Orker of a pool has the same settings"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings).
+Give every Orker of a pool the same `max_concurrent`, caps and capacity, and the same default request, secret and `env` settings, registry credentials and runtime. A task that lands on an Orker that will not run it fails its run. To change a value with runs in flight, follow [DEPLOY.md, "Every Orker of a pool has the same settings"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings).
 
 On a host, an Orker with no `ORK_ORKER_ID` derives a unique id from its host and work directory. In a container, set it explicitly, one distinct id per Orker.
 
