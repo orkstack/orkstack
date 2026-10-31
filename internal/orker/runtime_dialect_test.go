@@ -308,7 +308,7 @@ func TestDockerRuntime_TheProbeSpeaksTheEnginesSeccomp(t *testing.T) {
 		if podman {
 			fake.set("podmanengine", "")
 		}
-		if _, err := (&DockerRuntime{Bin: fake.bin}).RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir())); err != nil {
+		if _, _, err := (&DockerRuntime{Bin: fake.bin}).RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir())); err != nil {
 			t.Fatalf("RunBootProbe (podman engine %t) = %v", podman, err)
 		}
 		var run string
@@ -326,7 +326,7 @@ func TestDockerRuntime_TheProbeSpeaksTheEnginesSeccomp(t *testing.T) {
 	// a docker query, is told to set the CLI.
 	fake := newCountingDocker(t)
 	fake.set("versionfail", "")
-	_, err := (&DockerRuntime{Bin: fake.bin}).RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, _, err := (&DockerRuntime{Bin: fake.bin}).RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 	if !errors.Is(err, ErrPostureRefused) || !strings.Contains(err.Error(), "Cannot connect") || strings.Contains(err.Error(), CLIVar) {
 		t.Errorf("RunBootProbe with an unreachable daemon = %v; want ErrPostureRefused quoting the daemon and no CLI hint", err)
 	}
@@ -335,7 +335,7 @@ func TestDockerRuntime_TheProbeSpeaksTheEnginesSeccomp(t *testing.T) {
 	if err := os.WriteFile(shim, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, err = (&DockerRuntime{Bin: shim}).RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, _, err = (&DockerRuntime{Bin: shim}).RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 	if !errors.Is(err, ErrPostureRefused) || !strings.Contains(err.Error(), CLIVar+"="+CLIPodman) {
 		t.Errorf("RunBootProbe behind the podman-docker shim = %v; want ErrPostureRefused telling to set %s", err, CLIVar)
 	}

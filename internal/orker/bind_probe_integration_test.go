@@ -231,16 +231,17 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 		// that a busy daemon answers late would fail it for the wrong reason.
 		realBind bool
 		// wantRemoved is how many probe containers Boot force-removed: one
-		// per attempt that overran its budget.
+		// per attempt, whether it overran its budget, was refused or ran to
+		// its end (the Orker removes the container it was handed, too).
 		wantRemoved int
 	}{
 		{
 			name:  "a start slower than usual but inside its budget boots without a retry",
-			flags: map[string]string{"delay": "2"}, budget: 90 * time.Second, wantRuns: 1, realBind: true,
+			flags: map[string]string{"delay": "2"}, budget: 90 * time.Second, wantRuns: 1, realBind: true, wantRemoved: 1,
 		},
 		{
 			name:  "a start that overruns once boots on the retry",
-			flags: map[string]string{"hang": "1", "answer": ""}, budget: 5 * time.Second, wantRuns: 2, wantRemoved: 1,
+			flags: map[string]string{"hang": "1", "answer": ""}, budget: 5 * time.Second, wantRuns: 2, wantRemoved: 2,
 		},
 		{
 			name:  "a daemon whose own deadline error repeats refuses boot as slow, not as unbindable",
@@ -260,7 +261,7 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 		{
 			name:  "a container the daemon refused is the work root's fault and is not retried",
 			flags: map[string]string{"fail": ""}, budget: time.Minute,
-			wantRuns: 1, wantReason: orker.ReasonWorkdirNotBindable,
+			wantRuns: 1, wantReason: orker.ReasonWorkdirNotBindable, wantRemoved: 1,
 		},
 	}
 	for i, tt := range cases {
@@ -344,7 +345,7 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 			}
 			for j, name := range removed {
 				if name != ran[j] {
-					t.Errorf("removal #%d was of %q; want the overrun attempt's container %q", j, name, ran[j])
+					t.Errorf("removal #%d was of %q; want that attempt's container %q", j, name, ran[j])
 				}
 			}
 		})

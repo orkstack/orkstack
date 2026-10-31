@@ -112,28 +112,31 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 		rootName string // the work root's directory name; "" is a plain temporary one
 		wantErr  error  // nil: the probe passes
 		wantRuns int
-		// wantRemoved is how many probe containers were force-removed: one
-		// per attempt that overran, so an attempt the daemon is still
-		// starting cannot run beside the retry.
+		// wantRemoved is how many probe containers the runtime
+		// force-removed: one per attempt that did not hand its container
+		// over, so an attempt the daemon is still starting cannot run
+		// beside the retry, and one the daemon refused or cut off is not
+		// left created and never started. A container that ran to its end
+		// is handed to the caller, who removes it.
 		wantRemoved int
 	}{
 		{name: "the container starts and exits zero", budget: time.Minute, wantRuns: 1},
 		{
 			name: "the container ran and exited non-zero", flags: map[string]string{"runexit": ""},
-			budget: time.Minute, wantErr: ErrPostureRefused, wantRuns: 1,
+			budget: time.Minute, wantErr: ErrPostureRefused, wantRuns: 1, wantRemoved: 1,
 		},
 		{
 			name: "the daemon refuses the bind in its own words", flags: map[string]string{"runfail": ""},
-			budget: time.Minute, wantErr: ErrNotBindable, wantRuns: 1,
+			budget: time.Minute, wantErr: ErrNotBindable, wantRuns: 1, wantRemoved: 1,
 		},
 		{
 			name: "the daemon refuses the run for another reason", flags: map[string]string{"runother": ""},
-			budget: time.Minute, wantErr: ErrPostureRefused, wantRuns: 1,
+			budget: time.Minute, wantErr: ErrPostureRefused, wantRuns: 1, wantRemoved: 1,
 		},
 		{
 			name:  "a refusal that quotes a path with timeout in its name is still the work root's",
 			flags: map[string]string{"runfailsrc": ""}, budget: time.Minute, rootName: "timeout-work-root",
-			wantErr: ErrNotBindable, wantRuns: 1,
+			wantErr: ErrNotBindable, wantRuns: 1, wantRemoved: 1,
 		},
 		{
 			name:  "the daemon answers with its own deadline error once and the retry passes",
@@ -176,7 +179,7 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 				}
 			}
 
-			_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
+			_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
 
 			if tt.wantErr == nil && err != nil {
 				t.Fatalf("RunBootProbe = %v; want nil", err)
@@ -198,7 +201,7 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 			}
 			for i, name := range removed {
 				if name != ran[i] {
-					t.Errorf("removal #%d was of %q; want the container the overrun attempt named, %q", i, name, ran[i])
+					t.Errorf("removal #%d was of %q; want the container that attempt named, %q", i, name, ran[i])
 				}
 			}
 			if len(ran) == 2 && ran[0] == ran[1] {
@@ -219,7 +222,7 @@ func TestDockerRuntime_RunBootProbeTimeoutNamesTheDaemonAndTheSetting(t *testing
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
 	root := t.TempDir()
 
-	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
+	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
 	if !errors.Is(err, ErrProbeTimedOut) {
 		t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
 	}
@@ -245,7 +248,7 @@ func TestDockerRuntime_RunBootProbeReportsAContainerItCouldNotRemove(t *testing.
 	fake.set("rmfailall", "")
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
 
-	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 	if !errors.Is(err, ErrProbeTimedOut) {
 		t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
@@ -270,7 +273,7 @@ func TestDockerRuntime_RunBootProbeTimeoutQuotesTheDaemonsDeadlineError(t *testi
 	fake.set("timeoutruns", "9")
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
 
-	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 	if !errors.Is(err, ErrProbeTimedOut) {
 		t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
@@ -293,7 +296,7 @@ func TestDockerRuntime_RunBootProbeSlowImageInspectIsTheDaemonsNotTheImages(t *t
 	fake.set("inspecthang", "")
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
 
-	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 	if !errors.Is(err, ErrProbeTimedOut) {
 		t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
@@ -331,7 +334,7 @@ func TestDockerRuntime_RunBootProbeSlowEngineIsTheDaemonsNotThePostures(t *testi
 			fake.set(tt.flag, "")
 			runtime := &DockerRuntime{Bin: fake.bin, CLI: tt.cli, BindProbeTimeout: probeBudget}
 
-			_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+			_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 			if !errors.Is(err, ErrProbeTimedOut) {
 				t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
@@ -367,7 +370,7 @@ func TestDockerRuntime_RunBootProbeStopsWhenTheContextEndsDuringTheInspect(t *te
 	defer cancel()
 	done := make(chan error, 1)
 	spec := probeSpecUnder(t, t.TempDir())
-	go func() { _, err := runtime.RunBootProbe(ctx, spec); done <- err }()
+	go func() { _, _, err := runtime.RunBootProbe(ctx, spec); done <- err }()
 	waitForFile(t, filepath.Join(fake.dir, "calls"))
 	cancel()
 
@@ -403,7 +406,7 @@ func TestDockerRuntime_RunBootProbeStopsWhenTheContextEnds(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	spec := probeSpecUnder(t, t.TempDir())
-	go func() { _, err := runtime.RunBootProbe(ctx, spec); done <- err }()
+	go func() { _, _, err := runtime.RunBootProbe(ctx, spec); done <- err }()
 	waitForFile(t, filepath.Join(fake.dir, "runstarted"))
 	cancel()
 

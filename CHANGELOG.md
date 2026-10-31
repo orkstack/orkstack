@@ -16,6 +16,12 @@ word for word.
 - `make reset` no longer fails on a workspace an Orker left read-only under
   `.data/work`, and takes the observability profile's containers and volumes
   down with the rest instead of reporting them as survivors.
+- The Orker's boot probe no longer leaves `ork-bindprobe-*` or
+  `ork-sigprobe-*` containers behind when its boot is stopped or refused
+  between a container's create and its start. Both probe containers carry
+  the Orker's `ork.orker` label, the Orker removes each itself however the
+  probe ends, and one it could not remove (it was killed first) is reaped by
+  the next boot under the same identity, or listed by that label.
 
 ### Security
 
