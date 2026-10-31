@@ -119,6 +119,10 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 		// left created and never started. A container that ran to its end
 		// is handed to the caller, who removes it.
 		wantRemoved int
+		// wantLeftovers is how many of those removals the daemon refused on
+		// a run that still passed: each is handed back with the run, naming
+		// the attempt's container, for the caller to report.
+		wantLeftovers int
 	}{
 		{name: "the container starts and exits zero", budget: time.Minute, wantRuns: 1},
 		{
@@ -152,6 +156,11 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 			budget: probeBudget, wantRuns: 2, wantRemoved: 1,
 		},
 		{
+			name:  "one overrun whose container the daemon will not remove, and the retry passes",
+			flags: map[string]string{"slowruns": "1", "rmfailall": ""}, budget: probeBudget,
+			wantRuns: 2, wantRemoved: 1, wantLeftovers: 1,
+		},
+		{
 			name: "two overruns and never a third attempt", flags: map[string]string{"slowruns": "9"},
 			budget: probeBudget, wantErr: ErrProbeTimedOut, wantRuns: 2, wantRemoved: 2,
 		},
@@ -179,7 +188,7 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 				}
 			}
 
-			_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
+			run, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
 
 			if tt.wantErr == nil && err != nil {
 				t.Fatalf("RunBootProbe = %v; want nil", err)
@@ -204,6 +213,17 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 					t.Errorf("removal #%d was of %q; want the container that attempt named, %q", i, name, ran[i])
 				}
 			}
+			if len(run.Leftovers) != tt.wantLeftovers {
+				t.Errorf("the run handed back leftovers %+v; want %d", run.Leftovers, tt.wantLeftovers)
+			}
+			for i, left := range run.Leftovers {
+				if left.Container != ContainerID(ran[i]) || left.Err == nil {
+					t.Errorf("leftover #%d is %+v; want attempt %d's container %q with the daemon's refusal", i, left, i+1, ran[i])
+				}
+			}
+			if tt.wantErr == nil && (len(ran) == 0 || run.Container != ContainerID(ran[len(ran)-1])) {
+				t.Errorf("the run handed back %q; want the passing attempt's container, the last of %q", run.Container, ran)
+			}
 			if len(ran) == 2 && ran[0] == ran[1] {
 				t.Errorf("both attempts named their container %q; a retry beside a still-starting first attempt would collide", ran[0])
 			}
@@ -222,7 +242,7 @@ func TestDockerRuntime_RunBootProbeTimeoutNamesTheDaemonAndTheSetting(t *testing
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
 	root := t.TempDir()
 
-	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
+	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
 	if !errors.Is(err, ErrProbeTimedOut) {
 		t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
 	}
@@ -248,7 +268,7 @@ func TestDockerRuntime_RunBootProbeReportsAContainerItCouldNotRemove(t *testing.
 	fake.set("rmfailall", "")
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
 
-	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 	if !errors.Is(err, ErrProbeTimedOut) {
 		t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
@@ -273,7 +293,7 @@ func TestDockerRuntime_RunBootProbeTimeoutQuotesTheDaemonsDeadlineError(t *testi
 	fake.set("timeoutruns", "9")
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
 
-	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 	if !errors.Is(err, ErrProbeTimedOut) {
 		t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
@@ -296,7 +316,7 @@ func TestDockerRuntime_RunBootProbeSlowImageInspectIsTheDaemonsNotTheImages(t *t
 	fake.set("inspecthang", "")
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget}
 
-	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 	if !errors.Is(err, ErrProbeTimedOut) {
 		t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
@@ -334,7 +354,7 @@ func TestDockerRuntime_RunBootProbeSlowEngineIsTheDaemonsNotThePostures(t *testi
 			fake.set(tt.flag, "")
 			runtime := &DockerRuntime{Bin: fake.bin, CLI: tt.cli, BindProbeTimeout: probeBudget}
 
-			_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+			_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 			if !errors.Is(err, ErrProbeTimedOut) {
 				t.Fatalf("RunBootProbe = %v; want ErrProbeTimedOut", err)
@@ -370,7 +390,7 @@ func TestDockerRuntime_RunBootProbeStopsWhenTheContextEndsDuringTheInspect(t *te
 	defer cancel()
 	done := make(chan error, 1)
 	spec := probeSpecUnder(t, t.TempDir())
-	go func() { _, _, err := runtime.RunBootProbe(ctx, spec); done <- err }()
+	go func() { _, err := runtime.RunBootProbe(ctx, spec); done <- err }()
 	waitForFile(t, filepath.Join(fake.dir, "calls"))
 	cancel()
 
@@ -406,7 +426,7 @@ func TestDockerRuntime_RunBootProbeStopsWhenTheContextEnds(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	spec := probeSpecUnder(t, t.TempDir())
-	go func() { _, _, err := runtime.RunBootProbe(ctx, spec); done <- err }()
+	go func() { _, err := runtime.RunBootProbe(ctx, spec); done <- err }()
 	waitForFile(t, filepath.Join(fake.dir, "runstarted"))
 	cancel()
 

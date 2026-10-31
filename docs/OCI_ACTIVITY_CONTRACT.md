@@ -388,7 +388,7 @@ removal that fails is named in the refusal or logged. One the Orker could not
 remove, because it was killed first or the daemon finished a create the CLI
 had given up on, is reaped by that label at the next boot under the same
 `ORK_ORKER_ID` (or the same work root, for the default identity); until then
-`ps --filter label=ork.orker=<id>` lists it, and a test's is listed by
+`ps --all --filter label=ork.orker=<id>` lists it, and a test's is listed by
 `proofrun clean` by the work root its mounts lie in.
 
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt

@@ -1,9 +1,11 @@
 package orker
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -186,7 +188,7 @@ func TestDockerRuntime_ARefusalNamesTheProbeContainerItCouldNotRemove(t *testing
 	fake.set("rmfailall", "")
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
 
-	_, _, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
+	_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 
 	if !errors.Is(err, ErrPostureRefused) {
 		t.Fatalf("RunBootProbe = %v; want ErrPostureRefused", err)
@@ -200,4 +202,41 @@ func TestDockerRuntime_ARefusalNamesTheProbeContainerItCouldNotRemove(t *testing
 			t.Errorf("the refusal %q does not contain %q", err, want)
 		}
 	}
+}
+
+// TestBoot_ARetryThatPassesLogsTheContainerItCouldNotRemove: an attempt that
+// overran, and whose container the daemon then would not remove, is not
+// forgotten because the retry passed. Boot logs it by name, as it logs a
+// container of a probe that ended any other way, so an operator knows what
+// may remain until the next boot under this identity reaps it.
+func TestBoot_ARetryThatPassesLogsTheContainerItCouldNotRemove(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("slowruns", "1")
+	fake.set("rmfailall", "")
+	var logs bytes.Buffer
+	activities := NewActivitiesWithOptions(nil, Options{
+		OrkerID:  fmt.Sprintf("orker-probe-leftover-%d", os.Getpid()),
+		WorkRoot: t.TempDir(),
+		Runtime:  &DockerRuntime{Bin: fake.bin, BindProbeTimeout: probeBudget},
+		Logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+	})
+	t.Cleanup(activities.Close)
+	activities.dispatcher.signalProbeGrace = 300 * time.Millisecond
+
+	if err := activities.Boot(context.Background()); err != nil {
+		t.Fatalf("Boot = %v; want it to boot on the retry", err)
+	}
+
+	ran, _ := probeContainerNames(t, fake.calls())
+	if len(ran) < 2 || !strings.HasPrefix(ran[0], "ork-"+bootProbeTaskID+"-") {
+		t.Fatalf("probe containers run %q; want the first container's overrun attempt first", ran)
+	}
+	for _, line := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(line, "level=WARN") && strings.Contains(line, "could not be removed") &&
+			strings.Contains(line, "container="+ran[0]) && strings.Contains(line, "already in progress") {
+			return
+		}
+	}
+	t.Errorf("Boot did not warn, by name, of the overrun attempt's container %s it could not remove:\n%s", ran[0], logs.String())
 }

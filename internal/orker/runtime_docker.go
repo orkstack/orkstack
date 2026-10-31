@@ -1133,9 +1133,9 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 	return info, nil
 }
 
-// RunBootProbe runs the boot probe's container once, to its end, and returns
-// what it wrote on stdout and the container's name; the exited container is
-// the caller's to remove. The spec is built by the dispatcher exactly as a
+// RunBootProbe runs the boot probe's container once, to its end, and hands
+// back what it wrote on stdout and the container's name; the exited container
+// is the caller's to remove. The spec is built by the dispatcher exactly as a
 // task's is (bootProbeSpec), and its flags are rendered by the same function
 // a task's `create` is, so what the daemon refuses or weakens here it would
 // refuse or weaken for every task. What the output says is judged by the
@@ -1150,7 +1150,7 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 // refused the container for any other reason within the budget, or the
 // container exited non-zero (ErrPostureRefused). An Orker that is stopped
 // meanwhile gets the context's own error.
-func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (string, ContainerID, error) {
+func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (BootProbeRun, error) {
 	// Every step of the probe that waits on the daemon is bounded by the
 	// probe's budget and not by controlTimeout, which is meant for
 	// bookkeeping: under load a daemon has needed more than 30 s to answer
@@ -1165,16 +1165,16 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 	spoken, overran, err := d.dialectWithin(ctx, budget)
 	switch {
 	case ctx.Err() != nil:
-		return "", "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+		return BootProbeRun{}, fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	case overran:
-		return "", "", probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
+		return BootProbeRun{}, probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
 	case err != nil:
-		return "", "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
 	// A spec this CLI cannot render is refused before anything waits on the
 	// daemon: no retry changes it.
 	if _, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]), spoken); err != nil {
-		return "", "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
 
 	// The probe image is fetched first, under the PULL timeout rather than the
@@ -1185,56 +1185,54 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 	present, overran, err := d.imagePresent(ctx, budget, image)
 	switch {
 	case ctx.Err() != nil:
-		return "", "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+		return BootProbeRun{}, fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	case overran:
-		return "", "", probeTimedOut(fmt.Sprintf("answer `docker image inspect %s` within %s", image, budget), nil, nil)
+		return BootProbeRun{}, probeTimedOut(fmt.Sprintf("answer `docker image inspect %s` within %s", image, budget), nil, nil)
 	case err != nil:
-		return "", "", fmt.Errorf("%w: the bind probe image %s: %w", ErrProbeImageUnavailable, image, err)
+		return BootProbeRun{}, fmt.Errorf("%w: the bind probe image %s: %w", ErrProbeImageUnavailable, image, err)
 	}
 	if !present {
 		answer, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", image)
 		if err != nil {
-			return "", "", fmt.Errorf("%w: the bind probe image %s could not be pulled: %w",
+			return BootProbeRun{}, fmt.Errorf("%w: the bind probe image %s could not be pulled: %w",
 				ErrProbeImageUnavailable, image, err)
 		}
 		if answer.code != 0 {
-			return "", "", fmt.Errorf("%w: the bind probe image %s could not be pulled: docker exited %d: %s",
+			return BootProbeRun{}, fmt.Errorf("%w: the bind probe image %s could not be pulled: docker exited %d: %s",
 				ErrProbeImageUnavailable, image, answer.code, answer.said())
 		}
 	}
 
-	stdout, name, err := d.runProbeContainer(ctx, spec, spoken, budget, false)
-	return stdout, ContainerID(name), err
+	return d.runProbeContainer(ctx, spec, spoken, budget, false)
 }
 
 // StartBootProbe starts spec's container detached (`run --detach`) and
-// returns its name: the boot probe's SIGTERM container, which the dispatcher
+// hands back its name: the boot probe's SIGTERM container, which the dispatcher
 // then cancels as a task's container is cancelled and removes. It runs after
 // RunBootProbe has passed, so the engine is known and the image is local, and
 // its run has RunBootProbe's budget, retry and classification, and its errors
 // are RunBootProbe's. The flags are a task's, rendered by the same function
 // `create` uses.
-func (d *DockerRuntime) StartBootProbe(ctx context.Context, spec ContainerSpec) (ContainerID, error) {
+func (d *DockerRuntime) StartBootProbe(ctx context.Context, spec ContainerSpec) (BootProbeRun, error) {
 	budget := d.bindProbeTimeout()
 	spoken, overran, err := d.dialectWithin(ctx, budget)
 	switch {
 	case ctx.Err() != nil:
-		return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+		return BootProbeRun{}, fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	case overran:
-		return "", probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
+		return BootProbeRun{}, probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
 	case err != nil:
-		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
 	if _, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]), spoken); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
-	_, name, err := d.runProbeContainer(ctx, spec, spoken, budget, true)
-	return ContainerID(name), err
+	return d.runProbeContainer(ctx, spec, spoken, budget, true)
 }
 
 // runProbeContainer runs a boot probe's container, attached to its end or
-// detached once it has started, and returns its stdout (detached, the ID the
-// CLI printed) and its name.
+// detached once it has started, and hands back its name and its stdout
+// (empty for one started detached).
 //
 // The container is never left to the daemon's --rm. A successful run hands it
 // to the caller, who removes it. Every other ending removes the attempt's
@@ -1242,13 +1240,14 @@ func (d *DockerRuntime) StartBootProbe(ctx context.Context, spec ContainerSpec) 
 // daemon's create and its start leaves a container that was created and never
 // started, which --rm would never remove because it fires only when a
 // container exits. Each removal is best effort, on a context of its own, and
-// one the daemon refuses is named in the error: that container is what an
-// operator looks for. A daemon still finishing a create the CLI gave up on
+// one the daemon refuses is named in the error, or, when a later attempt
+// succeeds, handed back with the run: that container is what an operator
+// looks for. A daemon still finishing a create the CLI gave up on
 // can make one after the removal; it carries the Orker's identity
 // (probeContainerSpec), which the next boot under that identity reaps.
 func (d *DockerRuntime) runProbeContainer(
 	ctx context.Context, spec ContainerSpec, spoken dialect, budget time.Duration, detached bool,
-) (string, string, error) {
+) (BootProbeRun, error) {
 	verb := []string{"run"}
 	if detached {
 		verb = []string{"run", "--detach"}
@@ -1267,19 +1266,24 @@ func (d *DockerRuntime) runProbeContainer(
 	// whether the daemon is slow is a fact about the moment, and whether the
 	// root binds is not. Any other failure within the budget is the daemon's
 	// answer, and it is final.
-	var attempts, leftovers []string
+	var attempts []string
+	var leftovers []ProbeLeftover
 	for attempt := 1; attempt <= bindProbeAttempts; attempt++ {
 		name := containerName(spec.Labels["ork.task"])
 		flags, _ := dockerContainerFlags(spec, name, spoken)
 		answer, overran, runErr := d.runWithin(ctx, budget, append(verb, flags...)...)
 		if runErr == nil && answer.code == 0 {
-			return answer.stdout, name, nil
+			run := BootProbeRun{Container: ContainerID(name), Leftovers: leftovers}
+			if !detached {
+				run.Stdout = answer.stdout
+			}
+			return run, nil
 		}
 		// Read before the removal, which takes time of its own: a stop that
 		// lands during it does not turn the daemon's answer into one.
 		stopped := ctx.Err()
 		if err := d.Remove(context.WithoutCancel(ctx), ContainerID(name)); err != nil {
-			leftovers = append(leftovers, err.Error())
+			leftovers = append(leftovers, ProbeLeftover{Container: ContainerID(name), Err: err})
 		}
 		said := truncateString(answer.said(), 2000)
 		var final error
@@ -1301,20 +1305,34 @@ func (d *DockerRuntime) runProbeContainer(
 				"docker exited %d: %s", ErrPostureRefused, answer.code, said)
 		}
 		if final != nil {
-			return "", "", probeLeftovers(final, leftovers)
+			return BootProbeRun{}, probeLeftovers(final, leftovers)
 		}
 	}
-	return "", "", probeTimedOut(fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, bindProbeAttempts),
-		attempts, leftovers)
+	return BootProbeRun{}, probeTimedOut(fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, bindProbeAttempts),
+		attempts, leftoverTexts(leftovers))
 }
 
 // probeLeftovers adds to a refusal of the probe the containers it could not
 // remove.
-func probeLeftovers(err error, leftovers []string) error {
+func probeLeftovers(err error, leftovers []ProbeLeftover) error {
 	if len(leftovers) == 0 {
 		return err
 	}
-	return fmt.Errorf("%w. A probe container could not be removed and may remain: %s", err, strings.Join(leftovers, "; "))
+	return fmt.Errorf("%w. A probe container could not be removed and may remain: %s", err,
+		strings.Join(leftoverTexts(leftovers), "; "))
+}
+
+// leftoverTexts is each leftover's removal error, naming its container.
+func leftoverTexts(leftovers []ProbeLeftover) []string {
+	texts := make([]string, 0, len(leftovers))
+	for _, left := range leftovers {
+		text := left.Err.Error()
+		if !strings.Contains(text, string(left.Container)) {
+			text = fmt.Sprintf("%s: %s", left.Container, text)
+		}
+		texts = append(texts, text)
+	}
+	return texts
 }
 
 // probeTimedOut is the refusal of a daemon that was too slow: what it did not

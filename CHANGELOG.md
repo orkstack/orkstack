@@ -21,7 +21,8 @@ word for word.
   between a container's create and its start. Both probe containers carry
   the Orker's `ork.orker` label, the Orker removes each itself however the
   probe ends, and one it could not remove (it was killed first) is reaped by
-  the next boot under the same identity, or listed by that label.
+  the next boot under the same identity; until then
+  `docker ps --all --filter label=ork.orker=<id>` lists it.
 
 ### Security
 

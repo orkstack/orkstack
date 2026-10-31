@@ -386,7 +386,7 @@ func TestDockerRuntime_RunBootProbeSeparatesTheImageFromTheBind(t *testing.T) {
 	spec := probeSpecUnder(t, t.TempDir())
 
 	fake.set("pullfail", "")
-	_, _, err := runtime.RunBootProbe(context.Background(), spec)
+	_, err := runtime.RunBootProbe(context.Background(), spec)
 	if !errors.Is(err, ErrProbeImageUnavailable) || errors.Is(err, ErrNotBindable) {
 		t.Fatalf("pull failure = %v; want ErrProbeImageUnavailable and not ErrNotBindable", err)
 	}
@@ -396,7 +396,7 @@ func TestDockerRuntime_RunBootProbeSeparatesTheImageFromTheBind(t *testing.T) {
 
 	fake.clear("pullfail")
 	fake.calls()
-	if _, _, err := runtime.RunBootProbe(context.Background(), spec); err != nil {
+	if _, err := runtime.RunBootProbe(context.Background(), spec); err != nil {
 		t.Fatalf("probe after a successful pull: %v", err)
 	}
 	calls := fake.calls()
@@ -405,7 +405,7 @@ func TestDockerRuntime_RunBootProbeSeparatesTheImageFromTheBind(t *testing.T) {
 	}
 
 	fake.set("runfail", "")
-	_, _, err = runtime.RunBootProbe(context.Background(), spec)
+	_, err = runtime.RunBootProbe(context.Background(), spec)
 	if !errors.Is(err, ErrNotBindable) || errors.Is(err, ErrProbeImageUnavailable) {
 		t.Fatalf("bind failure = %v; want ErrNotBindable", err)
 	}
