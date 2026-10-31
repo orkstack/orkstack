@@ -34,8 +34,8 @@ word for word.
   An unset maximum interval is now never below the initial interval, in every
   run this release's engine executes, a run submitted before the upgrade
   included. On a deployment with versioning, a run v0.1.0 already left stuck
-  stays on v0.1.0 and never gets the fix: cancel it (UPGRADING.md,
-  "Upgrading Orkflows with the release").
+  stays on v0.1.0 and never gets the fix: cancel it, and terminate it if it
+  stays running (UPGRADING.md, "Upgrading Orkflows with the release").
 - **BREAKING**: An Orkflow whose `retry:` sets a negative
   `initial_interval_seconds` or `maximum_interval_seconds`, a
   `maximum_interval_seconds` below its `initial_interval_seconds`, or a

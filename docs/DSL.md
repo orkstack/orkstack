@@ -1786,8 +1786,8 @@ How each node reads:
     that is set is at least `initial_interval_seconds`, and a
     `backoff_coefficient` that is set is a finite number of at least 1 (field
     `tasks[i].retry.backoff_coefficient`); `0` and absent are one value, the
-    default. An interval is a whole number of seconds, so a non-finite one
-    does not decode at all. The refusal names the field and its value. It
+    default. An interval is an integer field, so a non-finite one does not
+    decode at all. The refusal names the field and its value. It
     holds whatever `maximum_attempts` says, so raising the attempts later can
     never surface a latent error. The cluster refuses a maximum below the
     initial interval, and a coefficient between 0 and 1, each time the task is

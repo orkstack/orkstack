@@ -29,7 +29,8 @@ import (
 // namespaces"), measured as the study measured it: one namespace queues a
 // backlog of 200 tasks, a second then queues 20, and only then does one Orker
 // with one slot start taking them, so the order it takes them in is the order
-// the cluster dispatched them in. On a cluster with fairness enabled the late
+// the cluster dispatched them in. The same experiment runs on fan-out items
+// and on pin requests (fairShape). On a cluster with fairness enabled the late
 // namespace is interleaved into the backlog; on a stock cluster it waits
 // behind it. Both clusters are private dev servers of the image the dev stack
 // pins, so the control runs exactly the same code with only the setting off,
