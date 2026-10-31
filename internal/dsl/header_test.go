@@ -102,7 +102,7 @@ func TestCompile_RefusesAnotherKind(t *testing.T) {
 }
 
 // TestCompile_ChecksTheHeaderBeforeTheBody: an automation document is named
-// for what it is, not refused key by key ("field settings not found").
+// for what it is, not refused key by key (unknown key "settings").
 func TestCompile_ChecksTheHeaderBeforeTheBody(t *testing.T) {
 	raw, err := os.ReadFile("../../examples/automation/examples.ork.yaml")
 	if err != nil {

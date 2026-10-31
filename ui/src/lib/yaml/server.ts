@@ -21,9 +21,10 @@ export interface EngineIssue {
 }
 
 // "line N:" where a message states its line: at its start (the strict
-// mapping, `line 9: yes is…`), or after a colon or a line break, as yaml.v3
-// words a decode error (`parse yaml: yaml: unmarshal errors:\n  line 7: field
-// need not found…`). Not "first at line 3)", which points elsewhere.
+// mapping, `line 9: yes is…`, and an unknown key, `line 7: unknown key
+// "need" in tasks[1]…`), or after a colon or a line break, as yaml.v3 words a
+// decode error (`parse yaml: yaml: unmarshal errors:\n  line 7: cannot
+// unmarshal…`). Not "first at line 3)", which points elsewhere.
 const LINE = /(?:^|\n|: )\s*line (\d+): /;
 const LEADING_LINE = /^line \d+: /;
 

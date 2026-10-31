@@ -298,7 +298,7 @@ tasks:
     plugin: shell
     with: {command: "echo 1"}
 `,
-			wantMessage: "field plugin not found",
+			wantMessage: `unknown key "plugin" in tasks[0] of the Orkflow`,
 		},
 		{
 			name: "unknown top-level key is refused",
@@ -311,7 +311,7 @@ tasks:
   - id: a
     uses: shell
 `,
-			wantMessage: "field queue not found",
+			wantMessage: `unknown key "queue" at the top level of the Orkflow`,
 		},
 		{
 			// There is no `container` activity: every task already is a
@@ -577,7 +577,7 @@ tasks:
     pin: build
     with: {op: exec, command: "echo 1"}
 `,
-			wantMessage: "field timeout_second not found",
+			wantMessage: `unknown key "timeout_second" in pins.build of the Orkflow`,
 		},
 	}
 

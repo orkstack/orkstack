@@ -806,7 +806,7 @@ is alive by answering DescribeOrker (§6.5).
 | `orker_id` | `string` |  |
 | `build_id` | `string` |  |
 | `pool` | `string` |  |
-| `runtime_name` | `string` | "docker" |
+| `runtime_name` | `string` | the engine the Orker drives: "docker" or "podman" |
 | `runtime_version` | `string` |  |
 | `security_profile` | `string` | the profile id the Orker enforces (§9.2) |
 | `max_concurrent` | `int32` | max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs at once, the size of its task worker's activity slots. |

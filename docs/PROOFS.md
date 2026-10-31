@@ -2181,34 +2181,36 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   rather than the gate's colour (2026-10-28), so a red gate cancels nothing,
   and a nightly is read by its `proof.json` (§10). Excusing the miss in the shard, as the UI ledger does,
   would make the colours agree; it is not done.
-- **The observability gate has not run on GitHub.** The first release run,
-  which always runs it, is its calibration.
-- **`release.yml` has not passed on GitHub yet.**
-  `nightly.yml` has four jobs, `nightly`, `vuln`, `quickstart` and `flakes`;
-  `nightly` and `flakes` have run, and so has `proof.yml` as a reusable
-  workflow through them (`workflow_call`; the flakes job passed in run
-  40555387388). `quickstart` has not run on GitHub yet, and neither has the
-  same smoke in `release.yml`: the first scheduled or dispatched nightly after
-  it lands is the smoke's first run on a hosted runner, and its time there,
-  for which the job allows 40 minutes, is not measured (5 minutes cold on the
-  16-CPU reference host). Its first
-  dispatch (run 40979860354, a dry run on `main` under the old `tag` input)
-  failed in `artifacts`, at the release smoke: the script handed docker the
-  relative `dist/layouts`, which docker reads as a volume name; the script now
-  resolves it (`TestReleaseSmoke_MountsTheLayoutsByAnAbsolutePath`). The
-  one-approval job graph, `artifacts`' cancel step, the `nightly` job and its
-  wait, and the tag made through the API have not run on GitHub; `actionlint` 1.7.7 reports
-  only the `A && B || fail` idiom (SC2015) the workflow uses throughout, the
-  workflow rules in `test/tools/proofrun` hold their shape, and `make
-  release-smoke` and `make quickstart-smoke` run their build and both smokes
-  on a developer's host. The next dispatch is their first run there. Its
-  `gate` excuses a runner-size miss as the merge gate does (§10, "Run the
-  release gate"), so the hosted runners' size alone no longer fails it.
-- **The proof's `race` part has not run on GitHub.** The `race` part of the
-  full and release tiers is on the same footing as the observability gate:
-  it is proven on a developer's host and by the workflow rules in
-  `test/tools/proofrun`, not on a hosted runner, so the first CI full proof
-  that carries it is its calibration. The other lanes have run there: the
+- **The observability gate first ran on GitHub in a release dispatch.**
+  The release gate always runs it; its first run on a hosted runner was the
+  dry run 40979860354 on 2026-10-30, and it passed there and in every release
+  run since, v0.1.0's included.
+- **`release.yml` passed on GitHub for v0.1.0, on its third attempt.**
+  Release run 41080710050 (2026-10-30) published v0.1.0: its first attempt
+  stopped in the `nightly` job, whose bounded wait for the nightly it checks
+  ran out; its second failed in `publish`, after the tag had been made through
+  the API, when the registry refused (`permission_denied: write_package`) the
+  first push to an image package that did not exist yet; the third,
+  re-running the failed jobs, kept that tag and published everything. The
+  one-approval job graph, `artifacts` and its release smoke, the `nightly`
+  job and its wait, and the tag made through the API have therefore all run
+  there. `nightly.yml` has four jobs, `nightly`, `vuln`, `quickstart` and
+  `flakes`, and all four have run, as has `proof.yml` as a reusable workflow
+  through them (`workflow_call`; the flakes job passed in run 40555387388);
+  `quickstart` passed in nightly 41080705584 in 2 min 11 s, under the 40
+  minutes its job allows (5 minutes cold on the 16-CPU reference host). The
+  first release dispatch (run 40979860354, a dry run on `main` under the old
+  `tag` input) failed in `artifacts`, at the release smoke: the script handed
+  docker the relative `dist/layouts`, which docker reads as a volume name; the
+  script now resolves it (`TestReleaseSmoke_MountsTheLayoutsByAnAbsolutePath`).
+  The release `gate` excuses a runner-size miss as the merge gate does (§10,
+  "Run the release gate"), so the hosted runners' size alone does not fail
+  it.
+- **The proof's `race` part has run on GitHub.** The `race` part of the
+  full and release tiers passed on hosted runners in the release dry run
+  40979860354 on 2026-10-30, in the CI full proof 41001701958 of
+  `validate/full/v0.1.0-4`, and in every attempt of release run 41080710050,
+  v0.1.0's. The other lanes have run there too: the
   `vuln` jobs of `ci.yml` (run 40706033375) and `nightly.yml`, and the
   nightly's `race-repeat` part, passed in their first runs on 2026-10-28, and
   its `fuzz` part ran its whole 105-minute budget in nightly 40706217000 and

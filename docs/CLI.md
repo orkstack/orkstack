@@ -155,6 +155,10 @@ accept that config. An image with its own config contract (activity-http,
 activity-file) is refused before any assertion, as "cannot be driven"; test
 it with a fixture that speaks its config (test/fixtures/).
 
+The report also shows the with: interface the image declares in its
+org.orkstack.activity.interface label, read as apply reads it: declared,
+none, or malformed. The label is optional, so it is reported, never asserted.
+
 Requires a working container runtime. Exits non-zero if any assertion fails.
 
 Flags:

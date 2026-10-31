@@ -108,7 +108,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Wait for the old release to drain with `orkctl release wait`, and stop it only after the wait exits 0 ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
 - [ ] Know the rollback path before you need it. `orkctl release rollback` returns new runs to the release that was current before, and runs pinned to the release you left keep finishing there, so its workers must keep running until they drain ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 - [ ] Keep the last replica of a release up until that release reports drained ([DEPLOY.md](./DEPLOY.md), "5. Ops notes").
-- [ ] Before a rollback below a release, check the floors in [UPGRADING.md](./UPGRADING.md), "Rolling back". Never roll back below the first release that reads runs carried into a fresh history.
+- [ ] Before a rollback below a release, check the floors in [UPGRADING.md](./UPGRADING.md), "Rolling back". Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it.
 
 ## Draining and removing Orkers
 

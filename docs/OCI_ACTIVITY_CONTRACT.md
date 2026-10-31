@@ -98,7 +98,7 @@ request, runs `buf breaking` against the first release, v0.1.0, under
 that job red. It is not part of the merge gate (`proof`).
 
 **Additive contexts are set only when used.** Every optional context added to
-`ExecuteTaskInput` after the first release — `telemetry = 23`, `pin = 24`,
+`ExecuteTaskInput` after field 22 — `telemetry = 23`, `pin = 24`,
 `image_policy = 25`, `each = 26`, `cache = 27`, `join = 28` — is set ONLY for
 a task that uses the feature, so every other payload stays byte-identical and
 old histories replay unchanged. Submit asks the task's pool what it can run
@@ -891,7 +891,7 @@ labels, inputs and tasks; on `Task` everything that decides what runs (`uses`,
 the seven resolved fields — are emitted whether or not they are zero. Never
 `source_yaml`, never `created_at`, never the per-execution `ImageRef` fields.
 
-**Every field added after the first release is emitted only when set**:
+**Every field added after the base fields is emitted only when set**:
 `pins` and `outputs` on the Orkflow; `pin`, `join` (when not the default),
 `await`, `orkflow`, `each` and `cache` on a task. Each changes what runs, so
 each is in the digest — but emitting an empty one unconditionally would move
@@ -2158,6 +2158,12 @@ assertions, each because a real defect would have passed without it:
    specially, and 0 succeeds (§14.13).
 6. **SIGTERM reaches the workload within the grace period, and the workload
    observes it** — both halves, because they fail independently (§14.14).
+
+The report also shows the `with:` interface the image declares in its
+`org.orkstack.activity.interface` label, read by the resolver apply uses
+(declared, none or malformed; `docs/ACTIVITY_IMAGES.md`, "Declaring the
+interface"). It is reported, never asserted: the label is optional, and a label
+apply cannot read is a warning there, not a contract violation.
 
 Fixtures in Bash, Go and Python under `test/fixtures/` run any image against
 the ABI with only docker, `cat`, `jq` and a redirect;

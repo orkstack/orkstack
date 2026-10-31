@@ -28,6 +28,8 @@ The test needs a pushed image, because it runs the digest the registry returns. 
 
 A `SKIP` is not a pass. The `--json` output lists each check with its status.
 
+The report also shows the `with:` interface the image declares in its `org.orkstack.activity.interface` label: declared, none, or malformed. The label is optional, so the test shows it and never fails over it. [Declare the interface](/docs/how-to/build-an-activity-image/#declare-the-interface) explains how.
+
 <!-- site-media: cli-activity-test -->
 
 ## Run one task locally

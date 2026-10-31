@@ -1287,8 +1287,9 @@ a **Current Version**, the task queue's current version is nil, and
 > — `api@v1.63.4/workflowservice/v1/request_response.pb.go`,
 > `SetWorkerDeploymentCurrentVersionRequest.BuildId`
 
-which a versioned release does not have. So the first release that sets
-`ORK_BUILD_ID` boots two healthy, polling workers that receive **nothing**:
+which a versioned release does not have. So a deployment's first versioned
+release, the first to set `ORK_BUILD_ID`, boots two healthy, polling workers
+that receive **nothing**:
 submitted runs sit at `HistoryLength 2` (`WorkflowExecutionStarted`,
 `WorkflowTaskScheduled`), no pending activities, indefinitely. Nothing in the
 logs says why, because nothing is wrong with the workers.
@@ -1313,8 +1314,9 @@ or **runs started before versioning still executing** (§3.5) — the refusal
 names each and what to start or wait for. The raw cluster
 command it makes underneath is listed in §4, "Underneath: the cluster commands".
 
-Backlogged runs start within seconds of it. §3 step 0 is the full first-release
-procedure; every release after that inherits a Current Version from its
+Backlogged runs start within seconds of it. §3 step 0, "First versioned
+release only", is the full procedure; every release after that inherits a
+Current Version from its
 predecessor, and takes over with the same call at §3 step 4
 (`TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent`).
 
@@ -1519,7 +1521,7 @@ Steps 1–6 are every release that has a predecessor. **The very first versioned
 release of a deployment has none, so start at step 0** — skip it and the
 release runs nothing at all (§1).
 
-0. **First release only: make it current before you rely on it.**
+0. **First versioned release only: make it current before you rely on it.**
 
    ```bash
    FIRST=2026.08.02-0a1b2c3
@@ -1808,9 +1810,10 @@ refuses a saved-state format it does not know. Turn
 `engine.continuation.enabled` off first and let runs that carry on finish
 (the check below lists them).
 
-**Never roll back below the first release that reads runs carried on into a
-fresh history.** That release (the read side of continue-as-new) must ship
-before any release that lets a run carry on, and stays the floor:
+**Never roll back below the build that introduced the read side of
+continue-as-new**, which reads runs carried on into a fresh history. That
+build shipped before any build that lets a run carry on, and it stays the
+floor; every release from 0.1.0 contains it:
 
 - a release older than it that picks up a run's later generation ends that
   generation before any side effect — the run fails, and every reader of this
@@ -1826,7 +1829,7 @@ before any release that lets a run carry on, and stays the floor:
 Check before rolling back:
 `temporal workflow list --query 'WorkflowType="RunWorkflow" AND ExecutionStatus="ContinuedAsNew"'`
 lists the closed generations of runs carrying on; while it returns any, do
-not go below that release.
+not go below that build.
 
 **Before rolling back below the release that raised the fan-out maximum to
 10,000 items**, lower `engine.each_max_items` to at most 1,000, then wait

@@ -126,6 +126,39 @@ func pinnedInput(runID, taskID, pinName, instanceID string) *orkstackv1.ExecuteT
 	return in
 }
 
+// pinDirAtPhase is a PhaseObserver that looks, when an attempt enters one
+// phase, for the shared directories of one run's pins under the work root.
+type pinDirAtPhase struct {
+	workRoot, runID, phase string
+
+	mu      sync.Mutex
+	entered bool
+	shared  []string
+}
+
+func (p *pinDirAtPhase) Begin(
+	ctx context.Context, _ *orkstackv1.ExecuteTaskInput, _ int32,
+) (context.Context, AttemptObserver) {
+	return ctx, p
+}
+
+func (p *pinDirAtPhase) Phase(name string) {
+	if name != p.phase {
+		return
+	}
+	roots, _ := filepath.Glob(filepath.Join(p.workRoot, pinDirPrefix+p.runID+"-*"))
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.entered = true
+	for _, root := range roots {
+		if info, err := os.Stat(filepath.Join(root, pinSharedDirName)); err == nil && info.IsDir() {
+			p.shared = append(p.shared, root)
+		}
+	}
+}
+
+func (p *pinDirAtPhase) End(AttemptOutcome) {}
+
 // mountFor finds one destination in a rendered mount set.
 func mountFor(mounts []Mount, destination string) (Mount, bool) {
 	for _, m := range mounts {
@@ -274,6 +307,33 @@ func TestExecute_TwoPinnedAttemptsShareOneSharedDirectory(t *testing.T) {
 		if paths["shared"] != ContainerShared {
 			t.Errorf("attempt %d paths.shared = %v, want %q", i, paths["shared"], ContainerShared)
 		}
+	}
+}
+
+// TestExecute_APinnedAttemptHoldsItsSharedDirectoryByStageInputs: a pinned
+// attempt's shared directory exists by the time it enters "stage-inputs".
+// The engine's pin affinity proof waits each writer into that phase and then
+// counts the pin's directories on every host
+// (internal/engine/pin_affinity_integration_test.go), so this order is what
+// makes that count exact rather than a race with the acquisition.
+func TestExecute_APinnedAttemptHoldsItsSharedDirectoryByStageInputs(t *testing.T) {
+	workRoot := t.TempDir()
+	dispatcher := newPinDispatcher(t, &pinSpecRuntime{}, workRoot)
+	obs := &pinDirAtPhase{workRoot: workRoot, runID: "ork-pin-phase", phase: "stage-inputs"}
+	dispatcher.Phases = obs
+
+	if _, err := dispatcher.Execute(
+		context.Background(), pinnedInput("ork-pin-phase", "writer", "share", testInstanceID)); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	obs.mu.Lock()
+	defer obs.mu.Unlock()
+	if !obs.entered {
+		t.Fatal("the pinned attempt never entered stage-inputs")
+	}
+	if len(obs.shared) != 1 {
+		t.Fatalf("at stage-inputs the pin had %d shared directories (%v), want 1: "+
+			"the phase is entered before the pin's directory is acquired", len(obs.shared), obs.shared)
 	}
 }
 

@@ -1790,7 +1790,14 @@ How each node reads:
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
-behaves differently from its document.
+behaves differently from its document. The refusal names the key, where it
+stands and the keys that position takes, at the key's field path
+(`tasks[1].need`) and its line: `line 10: unknown key "need" in tasks[1] of
+the Orkflow; allowed: await, cache, …`. The other unknown keys in the
+document are counted after the first, and the first ten of them named with
+their lines (`(and 1 more unknown key: "sorce" at line 14)`); a key a merge
+(`<<:`) delivered, which no path of the document holds, is named by its line
+alone (`line 7: unknown key "bogus" in the Orkflow`).
 
 A slug is at most **200 bytes**, in every position above. The bound is half the
 rule and not a detail of it: a namespace, an orkflow name and a version are
