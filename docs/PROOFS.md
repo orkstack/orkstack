@@ -2186,17 +2186,18 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   its own `if:`), that "Re-run failed jobs" after a `fast` setup failure runs
   the skipped shards again with it, and what the wait costs a green run's
   wall clock (§11.5).
-- **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
-  `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
-  planner is proven against fakes of `gh api` and against GitHub's recorded
-  answers for nightly 41080705584 (whose `integration (2)` measured an fsync
-  p95 of 99.43 ms against its 30 ms floor), and its workflow shape by the
-  rules in `test/tools/proofrun`. Until 2026-10-30 its log read could not
-  work at all: gh 2.103 refuses to print a job log that carries terminal
-  escapes unless it is given `--allow-escape-sequences`, so the planner read
-  no log and answered `not-eligible` for a degraded part (candidate proof
-  41001701958), and the proof job's job records kept every log empty. Three
-  things only a run can show: that the `proof` and `nightly` workflows'
+- **`proof-rerun.yml` has not rerun anything on GitHub yet.** The
+  `PROOF_AUTO_RERUN` variable has been `true` since 2026-10-30, and the
+  workflow has planned twice (runs 41000144125 and 41003620185, about a
+  minute each) and rerun nothing: its log read could not work, because gh
+  2.103 refuses to print a job log that carries terminal escapes unless it is
+  given `--allow-escape-sequences`, so the planner read no log and answered
+  `not-eligible` for a degraded part (candidate proof 41001701958), and the
+  proof job's job records kept every log empty. Its planner is now proven
+  against fakes of `gh api` and against GitHub's recorded answers for nightly
+  41080705584 (whose `integration (2)` measured an fsync p95 of 99.43 ms
+  against its 30 ms floor), and its workflow shape by the rules in
+  `test/tools/proofrun`. Three things only a run can show: that the `proof` and `nightly` workflows'
   completions fire `workflow_run` for an attempt that this workflow's own
   `GITHUB_TOKEN` asked for (if they do not, one automatic rerun follows a
   run, and a person's rerun arms the next), that a scheduled nightly's

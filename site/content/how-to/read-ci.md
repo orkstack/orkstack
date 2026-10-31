@@ -7,8 +7,9 @@ answer is a fix or a job run again.
 
 Only the `proof` job of the `proof` workflow gates a merge. `check` runs
 `make check` in a few minutes and is the first to report a lint, vet or unit
-failure. The nightly, release, Podman, Kubernetes and site workflows report on
-`main` and on releases. Each one, and what its red means, is a row of
+failure. None of the others gates a merge: the nightly and the release run on
+`main`, and the Podman, Kubernetes and site workflows on the changes that
+touch their paths. Each one, and what its red means, is a row of
 [docs/CI.md](https://github.com/orkstack/orkstack/blob/main/docs/CI.md#ci).
 
 ## Read the proof's verdict
@@ -25,6 +26,10 @@ jq '{result, merge_eligible, ineligible_reasons}' proof/ci-<run>/proof.json
 
 ## Fix it, or run one job again
 
+- **"update this branch":** your branch does not contain `main`'s tip, and
+  the proof proves only the tree that lands. Merge `main` into it and push.
+- **A draft:** the `proof` job fails until the pull request is marked ready
+  for review.
 - **A failing test, lint, build or vet:** fix it and push. When `fast` fails,
   the integration, UI and activity-fixture shards never start, on purpose: the
   proof could not pass anyway.
