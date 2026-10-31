@@ -2151,6 +2151,218 @@ func TestIntegration_ContinuationChaosC18_ForgedCarriesEndExplicitly(t *testing.
 	t.Log("C18: a forged unknown carry ends RUN_STATE_UNSUPPORTED and a carry without a budget RUN_STATE_CORRUPT, each published and archived")
 }
 
+// TestIntegration_ContinuationChaosC18_MalformedSavedStateEndsExplicitly: a
+// carry whose fields contradict each other, and a checkpoint whose bytes
+// verify but whose rows the run cannot adopt, each end the run
+// RUN_STATE_CORRUPT on a real cluster — Temporal Failed with that type and no
+// workflow task failed, a published RUN_FAILED as the archive's last event,
+// and an archive body naming what failed. Every object is written by the
+// engine's own writers, so each case is refused for its one malformed field
+// or row and for nothing else. A carry that fails
+// verification names earlier events no reader can trust, so its archive
+// records them as an explicit gap with that reason; a carry that verifies
+// keeps them, and its terminal rows are the switch snapshot's, with the
+// unfinished ones CANCELED.
+func TestIntegration_ContinuationChaosC18_MalformedSavedStateEndsExplicitly(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	s := newChaosStack(t, ctx, "C18/malformed")
+	s.startReplica("replica-a", replicaOptions{})
+	s.startProjection(nil)
+	s.startOrker("orker-1", instant)
+	plan, budget := s.tcPlan()
+	writers := engine.NewSnapshotActivities(s.store)
+	obs := engine.ContinuationObservationInput{Namespace: "default"}
+	ids := []string{"c00", "c01", "c02"}
+	rows := func(statuses ...orkstackv1.Status) []*orkstackv1.TaskRun {
+		out := make([]*orkstackv1.TaskRun, len(ids))
+		for i, id := range ids {
+			out[i] = &orkstackv1.TaskRun{TaskId: id, Status: statuses[i]}
+		}
+		return out
+	}
+	// The state at the switch: c00 done, the rest not started — what a real
+	// generation 0 hands on after its first task.
+	atSwitch := []orkstackv1.Status{orkstackv1.Status_STATUS_SUCCEEDED,
+		orkstackv1.Status_STATUS_PENDING, orkstackv1.Status_STATUS_PENDING}
+
+	// carryFor writes runID's earlier events, switch snapshot and a
+	// checkpoint holding checkpointRows, and returns the carry naming them.
+	carryFor := func(runID string, checkpointRows []*orkstackv1.TaskRun) (*orkstackv1.RunContinuation, *orkstackv1.Run) {
+		t.Helper()
+		created := timestamppb.New(time.Now().Add(-time.Minute))
+		events := []*orkstackv1.Event{
+			{RunId: runID, Sequence: 1, Type: orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
+				Status: orkstackv1.Status_STATUS_PENDING, Message: "run created", Timestamp: created},
+			{RunId: runID, Sequence: 2, Type: orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
+				Status: orkstackv1.Status_STATUS_RUNNING, Message: "run started", Timestamp: created},
+		}
+		segment, err := writers.WriteEventSegment(ctx, &orkstackv1.RunEventSegment{
+			RunId: runID, Generation: 0, FirstSequence: 1, LastSequence: 2, Events: events}, "default", obs)
+		if err != nil {
+			t.Fatalf("write the earlier events: %v", err)
+		}
+		state := func(r []*orkstackv1.TaskRun) *orkstackv1.Run {
+			return &orkstackv1.Run{Id: runID, Namespace: "default", OrkflowName: "c18-malformed", OrkflowVersion: "1.0.0",
+				Status: orkstackv1.Status_STATUS_RUNNING, CreatedAt: created, StartedAt: created, TaskRuns: r}
+		}
+		switched := state(rows(atSwitch...))
+		snapshot, err := writers.WriteSwitchSnapshot(ctx, switched, "default", 0, obs)
+		if err != nil {
+			t.Fatalf("write the switch snapshot: %v", err)
+		}
+		checkpoint, err := writers.WriteCheckpoint(ctx, state(checkpointRows), 0, budget.CheckpointMaxBytes, obs)
+		if err != nil || checkpoint.GetUri() == "" {
+			t.Fatalf("write the checkpoint: %v (%v)", err, checkpoint)
+		}
+		return &orkstackv1.RunContinuation{
+			Version:       engine.ContinuationCarryVersion,
+			Generation:    1,
+			EventSequence: 2,
+			CreatedAt:     created,
+			StartedAt:     created,
+			Checkpoint:    checkpoint,
+			Segments: []*orkstackv1.EventSegmentRef{{Generation: 0, FirstSequence: 1, LastSequence: 2,
+				EventCount: 2, Object: segment}},
+			Snapshot: snapshot,
+		}, switched
+	}
+
+	for _, tc := range []struct {
+		name string
+		// forge returns the carry to start with and, for a carry the run
+		// can verify, the switch snapshot its terminal rows must keep.
+		forge func(runID string) (*orkstackv1.RunContinuation, *orkstackv1.Run)
+		want  string // in the archived error's message
+	}{
+		{
+			name: "a carry whose earlier events do not start at 1",
+			forge: func(runID string) (*orkstackv1.RunContinuation, *orkstackv1.Run) {
+				carry, _ := carryFor(runID, rows(atSwitch...))
+				carry.Segments[0].FirstSequence = 2
+				return carry, nil
+			},
+			want: "earlier events 2–2 start at sequence 2, want 1",
+		},
+		{
+			name: "a carry naming another run's saved state",
+			forge: func(runID string) (*orkstackv1.RunContinuation, *orkstackv1.Run) {
+				carry, _ := carryFor(runID, rows(atSwitch...))
+				other, _ := carryFor(runID+"-other", rows(atSwitch...))
+				carry.Checkpoint = other.GetCheckpoint()
+				return carry, nil
+			},
+			want: "the saved state is not this run's own object",
+		},
+		{
+			name: "a checkpoint with a row left RUNNING",
+			forge: func(runID string) (*orkstackv1.RunContinuation, *orkstackv1.Run) {
+				return carryFor(runID, rows(orkstackv1.Status_STATUS_SUCCEEDED,
+					orkstackv1.Status_STATUS_RUNNING, orkstackv1.Status_STATUS_PENDING))
+			},
+			want: `task "c01" is RUNNING`,
+		},
+		{
+			name: "a checkpoint whose rows are another definition's",
+			forge: func(runID string) (*orkstackv1.RunContinuation, *orkstackv1.Run) {
+				swapped := rows(atSwitch...)
+				swapped[0], swapped[1] = swapped[1], swapped[0]
+				return carryFor(runID, swapped)
+			},
+			want: `its task 0 is "c01", the run declares "c00"`,
+		},
+	} {
+		runID := s.newRunID()
+		s.transcript.run(runID)
+		carry, switched := tc.forge(runID)
+		wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c18-malformed\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", len(ids), ""))
+		wf.Namespace = "default"
+		if _, err := s.control.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: runID, TaskQueue: s.runQueue},
+			engine.RunWorkflowType, "", wf, (*orkstackv1.Payload)(nil), plan, carry); err != nil {
+			t.Fatalf("%s: start: %v", tc.name, err)
+		}
+		status, _ := s.wait(runID, 2*time.Minute)
+		if status != enums.WORKFLOW_EXECUTION_STATUS_FAILED {
+			t.Fatalf("%s: closed %v, want Failed", tc.name, status)
+		}
+		h := s.history(runID, "")
+		if got := failureType(t, h); got != engine.RunStateCorruptCode {
+			t.Fatalf("%s: failed with type %q, want %s", tc.name, got, engine.RunStateCorruptCode)
+		}
+		if failures := factsOf(t, h).taskFailures; len(failures) != 0 {
+			t.Fatalf("%s: %d workflow tasks failed: a malformed saved state must end the run, never fail a task",
+				tc.name, len(failures))
+		}
+		events, lost := awaitArchivedEventsOrGap(t, ctx, s.archive, runID)
+		if len(events) == 0 || events[len(events)-1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED ||
+			events[len(events)-1].GetRunId() != runID {
+			t.Fatalf("%s: archived events %v, want the published RUN_FAILED under the run id", tc.name, eventKeys(events))
+		}
+		switch {
+		case switched == nil && (lost == nil || len(lost.Gaps) != 1 || lost.Gaps[0].First != 1 || lost.Gaps[0].Last != 2 ||
+			!strings.Contains(lost.Gaps[0].Reason, tc.want)):
+			t.Fatalf("%s: the archive's gaps are %v, want earlier events 1–2 recorded lost because %q", tc.name, lost, tc.want)
+		case switched != nil && lost != nil:
+			t.Fatalf("%s: the archive lost events of a carry that verifies: %v", tc.name, lost)
+		case switched != nil && len(events) != 3:
+			t.Fatalf("%s: archived events %v, want the two earlier events and the RUN_FAILED", tc.name, eventKeys(events))
+		}
+		run, err := s.archive.LoadRun(ctx, runID)
+		if err != nil || run.GetStatus() != orkstackv1.Status_STATUS_FAILED ||
+			run.GetError().GetCode() != engine.RunStateCorruptCode || !strings.Contains(run.GetError().GetMessage(), tc.want) {
+			t.Fatalf("%s: the archived run = %v %v %v, want FAILED %s naming %q",
+				tc.name, run.GetStatus(), run.GetError(), err, engine.RunStateCorruptCode, tc.want)
+		}
+		if switched != nil {
+			// The terminal rows are the switch snapshot's: c00 as it was,
+			// the unfinished rows CANCELED — never the checkpoint's.
+			if len(run.GetTaskRuns()) != len(switched.GetTaskRuns()) {
+				t.Fatalf("%s: the archived run has %d rows, the switch snapshot %d",
+					tc.name, len(run.GetTaskRuns()), len(switched.GetTaskRuns()))
+			}
+			for i, before := range switched.GetTaskRuns() {
+				after := run.GetTaskRuns()[i]
+				want := orkstackv1.Status_STATUS_CANCELED
+				if before.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED {
+					want = orkstackv1.Status_STATUS_SUCCEEDED
+				}
+				if after.GetTaskId() != before.GetTaskId() || after.GetStatus() != want {
+					t.Fatalf("%s: archived row %d is %s %v, want %s %v",
+						tc.name, i, after.GetTaskId(), after.GetStatus(), before.GetTaskId(), want)
+				}
+			}
+		}
+		s.transcript.step("%s: %s, published and archived (%s)", tc.name, engine.RunStateCorruptCode, run.GetError().GetMessage())
+	}
+	t.Log("C18: malformed carry fields and unadoptable rows each end RUN_STATE_CORRUPT, published and archived")
+}
+
+// awaitArchivedEventsOrGap waits for the run's archive body and returns its
+// events and, when the body records lost ranges, the explicit gap error.
+func awaitArchivedEventsOrGap(t *testing.T, ctx context.Context, archive *engine.RunArchiver,
+	runID string,
+) ([]*orkstackv1.Event, *engine.ArchivedEventsLostError) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		events, err := archive.LoadRunEvents(ctx, runID)
+		var lost *engine.ArchivedEventsLostError
+		switch {
+		case err == nil:
+			return events, nil
+		case errors.As(err, &lost):
+			return events, lost
+		case time.Now().After(deadline):
+			t.Fatalf("the run was never archived: %v", err)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context ended while waiting for run %s's archive: %v", runID, ctx.Err())
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+}
+
 // TestIntegration_ContinuationChaosC19_CancelWhileReadsBackOff: an
 // operator's cancel while the next generation's reads fail and Temporal backs
 // off between them ends the run RUN_CANCELED within 30 s, never RUN_STATE_*.
