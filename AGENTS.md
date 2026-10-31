@@ -378,9 +378,15 @@ no `env:` value grants a credential, privilege or host access. Which
 secret sources a task may name is bounded by its namespace's
 `allowed_secrets` (checked at apply and again at submit) intersected with each
 Orker's `ORK_ORKER_SECRET_ALLOW` floor (checked at dispatch); both bound names
-and never store or compare a value. A bearer credential OrkStack mints for a
-caller (a trigger token, an await callback token) is disclosed once and stored
-only as a salted hash.
+and never store or compare a value. No floor admits the Orker's own sources —
+its `ORK_*` and `OTEL_*` settings, its process and devices, its work root, its
+configuration and the credentials it and its container CLI use, under their
+own names or through a link that leads to or through one of them — and a
+`file:` source is a plain absolute path of at most 4096 bytes: the Orker
+refuses any other at dispatch, empty floor or not, and an operator gives a task
+such a value only under a source of the task's own. A bearer credential
+OrkStack mints for a caller (a trigger token, an await callback token) is
+disclosed once and stored only as a salted hash.
 
 ## 7. Orkflow execution model
 
@@ -720,8 +726,10 @@ history replays unchanged without a version marker — or by a plan field the
 submitting engine sets together with a `workflow.GetVersion` gate asked lazily
 where the path first diverges (`lean-event-path`, `run-history-guard`,
 `continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
-`snapshot-overlay`, `fairness-keys`), so a history recorded before the gate
-replays its `DefaultVersion` branch; each new command path gets its own
+`snapshot-overlay`, `fairness-keys`, `pin-creation-timeout`,
+`fairness-pin-creation`, `retry-max-interval`), so a history recorded
+before the gate replays its `DefaultVersion` branch; each new command path
+gets its own
 recorded history fixture. Every tunable number that decides whether, which,
 how many or where workflow code issues a command — a history ceiling or
 reserve, a continuation budget, a hold line, a chunk or batch size, an
