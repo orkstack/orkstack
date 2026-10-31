@@ -480,9 +480,10 @@ func rpcError(operation string, err error) error {
 // resumes: an UNAVAILABLE answer, or a CANCELED that ctx, the watch's own
 // context, did not cause. From connect-go v1.21.1 a connection the engine
 // reset reaches a client as CANCELED (error.go, wrapIfContextError's
-// isClientDisconnected), where before it was UNAVAILABLE, or INVALID_ARGUMENT
-// when it cut a stream mid-message. A Ctrl-C ends ctx, so it still ends the
-// watch.
+// isClientDisconnected), where before it was UNAVAILABLE before any
+// response, INVALID_ARGUMENT when it cut a stream between messages and UNKNOWN
+// when it cut one inside a message. A Ctrl-C ends ctx, so it still ends the
+// watch, and so does a stream that ends cleanly inside a message (INTERNAL).
 func engineInterrupted(ctx context.Context, err error) bool {
 	switch connect.CodeOf(err) {
 	case connect.CodeUnavailable:

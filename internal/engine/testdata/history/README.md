@@ -510,3 +510,28 @@ the recorded marker.
   are committed, so the replay tests above fail, never skip, when one is
   missing; only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes
   them).
+
+### `run-ordered-cancel-v1.json` — one cancel reaching two open awaits
+
+`prepare`, then two awaits that need it (`approve`, `sign-off`), then
+`release`, which needs both (`orderedCancelDocument`). The operator cancels
+the run once `prepare` has succeeded and both awaits are open, with nothing
+else in flight. The one cancel reaches `runCtx`, whose children are the two
+awaits' deadline contexts (`openAwait`, `await.go`), so the Temporal Go SDK
+1.50 records its flag 9 (`SDKFlagOrderedChildCancel`) in that workflow task's
+completion and cancels the two timers in the order they were created. It pins
+the flag, the two `TimerCanceled` events in the order their timers started,
+and the canceled ending: `release` never started and `RUN_CANCELED`. An
+engine on an SDK that does not know the flag fails every workflow task of
+such a history (`unknown SDK flag: 9`; `docs/DEPLOY.md` §4, "Rolling back"),
+and one that cancels a context's children in another order fails its replay.
+
+- command: `TestRunWorkflow_ReplaysCommittedOrderedCancelHistory`, which first
+  checks that the history records the flag at the cancel, and that the
+  cancel's commands end both timers in the order they started
+- negative: `TestOrderedCancelHistory_CatchesTheCancelsReordered` (a copy with
+  the two timer cancels swapped is refused by the replayer, `TMPRL1100`)
+- recorder: `TestIntegration_RecordOrderedCancelHistory`
+  (`ordered_cancel_integration_test.go`). It never skips. The fixture is
+  committed, so the replay tests above fail, never skip, when it is missing;
+  only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes it).

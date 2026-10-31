@@ -39,25 +39,30 @@ word for word.
   before; with versioning off, roll back below this release only when no run
   is open, and replace every engine replica together when rolling forward
   (`docs/DEPLOY.md` §4, `docs/UPGRADING.md`).
-- Connect 1.21 codes three failures differently. A connection the engine
-  resets under a call reaches a Go client as `canceled` (it was
-  `unavailable`, or `invalid_argument` when it cut a stream mid-message); a
-  stream that ends partway through a message is `internal` (it was
-  `invalid_argument`); and an engine's write to a client that has gone away
+- Connect 1.21 codes three failures differently. A connection reset under a
+  call reaches a Go client as `canceled`; before, it was `unavailable` when
+  the reset came before any response, `invalid_argument` when it cut a stream
+  between messages, and `unknown` when it cut one inside a message. A stream
+  that ends cleanly partway through a message is `internal` (it was
+  `invalid_argument`). And an engine's write to a client that has gone away
   is `canceled` (it was `unknown`). `orkctl run watch` and
-  `orkctl run inspect --watch` resume on such a reset as on `unavailable`,
-  so a watch whose stream is reset mid-message now resumes where it used to
-  stop, and a Ctrl-C still ends them; other `orkctl` commands print
+  `orkctl run inspect --watch` resume on such a reset as on `unavailable`, so
+  a watch whose stream is reset partway through now resumes where it used to
+  stop. A Ctrl-C still ends them, and so does a stream that ends cleanly
+  partway through a message, now as `internal`. Other `orkctl` commands print
   `canceled:` for a reset connection, with the same exit status. None of the
   three reaches an audit record, which is written after a request is read
   and before its response is; no OrkStack metric carries a Connect code; and
   the Temporal SDK's `failure_reason` attribute names only its own failure
   kinds, so none of them changes.
-- `ork` and `orker` turn off the Temporal SDK's worker environment report.
-  From SDK 1.49 every worker's heartbeat would otherwise send the Temporal
-  server the Go version, the hosting environment the SDK detects (a
-  container, Kubernetes, a cloud platform) and the OS platform; OrkStack
-  sends nothing it was not configured to send.
+- `ork` and `orker` turn off the environment report in the Temporal SDK's
+  worker heartbeats. From SDK 1.49 a worker's first heartbeat would otherwise
+  also send the Temporal server the Go version, the hosting environment the
+  SDK detects (a container, Kubernetes, a cloud platform) and the OS
+  platform, which nothing in OrkStack asks for. The heartbeats are otherwise
+  unchanged: they still carry what the SDK sends for its own worker
+  accounting, among it the host name, the process id, the host's CPU and
+  memory use, the SDK version, the task queue and the deployment version.
 
 ## [0.1.0] - 2026-10-30
 

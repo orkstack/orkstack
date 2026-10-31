@@ -333,7 +333,7 @@ func TestRunWatch_OtherStreamErrorsAreNotResumed(t *testing.T) {
 				t.Fatalf("stderr = %q, want %q", outcome.stderr, want)
 			}
 			if got := handler.calls(); len(got) != 1 {
-				t.Fatalf("streams opened = %d, want 1: only unavailable is resumed", len(got))
+				t.Fatalf("streams opened = %d, want 1: only an interrupted engine (engineInterrupted) is resumed", len(got))
 			}
 			if lines := resumeLines(outcome.stderr); len(lines) != 0 {
 				t.Fatalf("resume lines = %v, want none", lines)

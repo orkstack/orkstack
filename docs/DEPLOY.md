@@ -1564,10 +1564,19 @@ on the older release can record the marker too. So:
 - with versioning on, roll back as above: a run stays on the build that
   started it, so 0.1.1's runs finish on 0.1.1, whose processes keep running
   until `orkctl release wait` reports it drained;
-- with versioning off, roll back below 0.1.1 only when no run is open: hold
-  each namespace that takes runs
-  (`orkctl namespace update NS --hold "rolling back"`), let the running runs
-  finish, then replace the engines;
+- with versioning off, roll back below 0.1.1 only when no run is open. Any
+  run that was open while a 0.1.1 engine ran may carry the marker, whenever
+  it was created, so the check counts every open run, not only those created
+  since 0.1.1. For each namespace that takes runs:
+  1. hold it: `orkctl namespace update NS --hold "rolling back"`;
+  2. wait until
+     `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run.
+     A run waiting on an await stays open until the await is resolved or its
+     deadline passes, which may be hours: resolve it
+     (`orkctl run resolve`) or cancel it (`orkctl run cancel`) rather than
+     wait;
+  3. once every namespace is empty, replace the engines, then release each
+     hold: `orkctl namespace update NS --release-hold`;
 - an unversioned fleet that mixes older and 0.1.1 engines meets the same
   failure whenever an older engine picks up such a run, so replace every
   engine replica together when rolling forward to 0.1.1.
