@@ -1266,7 +1266,7 @@ Steps 1–6 are every release that has a predecessor. **The very first versioned
 release of a deployment has none, so start at step 0** — skip it and the
 release runs nothing at all (§1).
 
-0. **First release only: make it current before you rely on it.**
+0. **First versioned release only: make it current before you rely on it.**
 
    ```bash
    FIRST=2026.08.02-0a1b2c3
@@ -1555,9 +1555,10 @@ refuses a saved-state format it does not know. Turn
 `engine.continuation.enabled` off first and let runs that carry on finish
 (the check below lists them).
 
-**Never roll back below the first release that reads runs carried on into a
-fresh history.** That release (the read side of continue-as-new) must ship
-before any release that lets a run carry on, and stays the floor:
+**Never roll back below the build that introduced the read side of
+continue-as-new**, which reads runs carried on into a fresh history. That
+build shipped before any build that lets a run carry on, and it stays the
+floor; every release from 0.1.0 contains it:
 
 - a release older than it that picks up a run's later generation ends that
   generation before any side effect — the run fails, and every reader of this
@@ -1573,7 +1574,7 @@ before any release that lets a run carry on, and stays the floor:
 Check before rolling back:
 `temporal workflow list --query 'WorkflowType="RunWorkflow" AND ExecutionStatus="ContinuedAsNew"'`
 lists the closed generations of runs carrying on; while it returns any, do
-not go below that release.
+not go below that build.
 
 **Before rolling back below the release that raised the fan-out maximum to
 10,000 items**, lower `engine.each_max_items` to at most 1,000, then wait

@@ -99,7 +99,7 @@ orkctl release status                              # current, ramping and candid
 
 Steps 0, 2, 3, 4 and 5 are `orkctl release` commands, and any `ork` replica answers them. Steps 1 and 6 start and stop processes. The cluster's routing is the only record of which release takes new runs, so nothing needs to be stored between steps ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
 
-0. **First versioned release only.** Until a release is current, it runs nothing. Make the first release current before you rely on it:
+0. **First versioned release only.** Until a release is current, it runs nothing. Make the first versioned release current before you rely on it:
 
    ```bash
    orkctl release promote "$FIRST"
@@ -183,17 +183,17 @@ Rolling back past a release that added Orkflow constructs needs the preparation 
 | Definitions passed by reference | Set `engine.definition_by_reference` to `false` on every replica, then wait until every run started with its definition by reference has finished. An older release cannot read such a run's definition ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Snapshot overlays | Set `engine.snapshot_overlays` to `false` on every replica, then wait until every run started while it was on has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 
-Two floors do not move. Never roll back below the first release that reads runs carried into a fresh history. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a lost range of its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
+Two floors do not move. Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a lost range of its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
 ### Turning versioning on for a running system
 
-A run that started before versioning has nothing pinning it. When the first release becomes current, such a run upgrades onto that release at its next workflow task. A partial history therefore meets a different build, and pinning cannot protect it ([DEPLOY.md](./DEPLOY.md), "3.5 Turning versioning on for a system that is already running").
+A run that started before versioning has nothing pinning it. When the first versioned release becomes current, such a run upgrades onto that release at its next workflow task. A partial history therefore meets a different build, and pinning cannot protect it ([DEPLOY.md](./DEPLOY.md), "3.5 Turning versioning on for a system that is already running").
 
 The safe path is to drain first:
 
 1. Hold each namespace that takes runs: `orkctl namespace update NS --hold "versioning rollout"`.
 2. Let the running runs finish.
-3. Make the first release current, as in step 0 above.
+3. Make the first versioned release current, as in step 0 above.
 
 `orkctl release promote` refuses while a run started before any release was current is still executing. The live switch, without draining, is a raw cluster procedure. It is safe only when the versioned release is the same binary as the unversioned one already serving, and OrkStack cannot verify that for you ([DEPLOY.md](./DEPLOY.md), "3.5 Turning versioning on for a system that is already running").
 
@@ -203,7 +203,7 @@ A run keeps the build that started it, so a pinned run finishes on old code. The
 
 ### Defaults that moved
 
-Some defaults changed after their first release. Read the setting in the generated [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) on the release you run, and set the key yourself if you need the older behaviour.
+Some defaults changed after the setting was introduced. Read the setting in the generated [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) on the release you run, and set the key yourself if you need the older behaviour.
 
 | Setting | What changed | What to do |
 |---|---|---|

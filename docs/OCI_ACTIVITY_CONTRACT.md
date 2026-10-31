@@ -95,7 +95,7 @@ not define is refused. `make proto` runs `buf lint` and `buf generate`, not
 `buf breaking`.
 
 **Additive contexts are set only when used.** Every optional context added to
-`ExecuteTaskInput` after the first release — `telemetry = 23`, `pin = 24`,
+`ExecuteTaskInput` after field 22 — `telemetry = 23`, `pin = 24`,
 `image_policy = 25`, `each = 26`, `cache = 27`, `join = 28` — is set ONLY for
 a task that uses the feature, so every other payload stays byte-identical and
 old histories replay unchanged. Submit asks the task's pool what it can run
@@ -874,7 +874,7 @@ labels, inputs and tasks; on `Task` everything that decides what runs (`uses`,
 the seven resolved fields — are emitted whether or not they are zero. Never
 `source_yaml`, never `created_at`, never the per-execution `ImageRef` fields.
 
-**Every field added after the first release is emitted only when set**:
+**Every field added after the base fields is emitted only when set**:
 `pins` and `outputs` on the Orkflow; `pin`, `join` (when not the default),
 `await`, `orkflow`, `each` and `cache` on a task. Each changes what runs, so
 each is in the digest — but emitting an empty one unconditionally would move
