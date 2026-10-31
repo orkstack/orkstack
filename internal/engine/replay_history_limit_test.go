@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -229,8 +230,13 @@ func TestHistoryLimitHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 
 // TestCommittedFixtures_DeclareNoNewPlanFields: no committed fixture before
 // the guard carries a plan field a later path reads — history, continuation,
-// in_flight, definition or snapshot_overlay — in its start or in any child
-// start it recorded, so none of them can enter a new path.
+// in_flight, definition, snapshot_overlay, pin_creation_timeout_seconds,
+// fairness or retry_max_interval_seconds — in its start or in any child start
+// it recorded, so none of them can enter a new path. And no committed fixture
+// at all carries a field the fairness-pin-creation or retry-max-interval path
+// reads — fairness.pin_requests, retry_max_interval_seconds — but the ones
+// recorded for that path, which do, so a post-guard fixture recorded before
+// those gates cannot enter them either.
 func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 	fixtures := []string{
 		"testdata/history/run-succeeded-v1.json",
@@ -244,7 +250,8 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		"testdata/history/run-cached-v1.json",
 		"testdata/history/run-join-v1.json",
 	}
-	newFields := []string{"history", "continuation", "in_flight", "definition", "snapshot_overlay", "pin_creation_timeout_seconds"}
+	newFields := []string{"history", "continuation", "in_flight", "definition", "snapshot_overlay", "pin_creation_timeout_seconds",
+		"fairness", "retry_max_interval_seconds"}
 	for _, path := range fixtures {
 		recorded := loadHistoryFile(t, path)
 		checked := 0
@@ -269,6 +276,48 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		}
 		if checked == 0 {
 			t.Fatalf("%s: no plan found to check", path)
+		}
+	}
+
+	recordedFor := map[string][]string{
+		"fairness.pin_requests": {"run-fairness-pin-creation-v1.json", "run-fairness-pin-creation-legacy-v1.json"},
+		"retry_max_interval_seconds": {"run-retry-max-interval-v1.json", "run-retry-max-interval-legacy-v1.json",
+			"run-retry-long-initial-v1.json", "run-retry-long-initial-legacy-v1.json"},
+	}
+	paths, err := filepath.Glob("testdata/history/*.json")
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("committed fixtures = %v, %v", paths, err)
+	}
+	for _, path := range paths {
+		carried := map[string]bool{}
+		for _, event := range loadHistoryFile(t, path).GetEvents() {
+			var payloads = event.GetWorkflowExecutionStartedEventAttributes().GetInput()
+			if attrs := event.GetStartChildWorkflowExecutionInitiatedEventAttributes(); attrs != nil {
+				payloads = attrs.GetInput()
+			}
+			if len(payloads.GetPayloads()) < 4 {
+				continue
+			}
+			var plan struct {
+				Fairness *struct {
+					PinRequests *bool `json:"pin_requests"`
+				} `json:"fairness"`
+				RetryMaxIntervalSeconds *int32 `json:"retry_max_interval_seconds"`
+			}
+			if err := json.Unmarshal(payloads.GetPayloads()[3].GetData(), &plan); err != nil {
+				t.Fatalf("%s: decode a recorded plan: %v", path, err)
+			}
+			if plan.Fairness != nil && plan.Fairness.PinRequests != nil {
+				carried["fairness.pin_requests"] = true
+			}
+			if plan.RetryMaxIntervalSeconds != nil {
+				carried["retry_max_interval_seconds"] = true
+			}
+		}
+		for field, fixtures := range recordedFor {
+			if want := slices.Contains(fixtures, filepath.Base(path)); carried[field] != want {
+				t.Errorf("%s: a recorded plan carries %s = %v, want %v", path, field, carried[field], want)
+			}
 		}
 	}
 }

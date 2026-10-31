@@ -1802,7 +1802,7 @@ pinned when it started. Two ways to handle it:
 Either way, keep the old workers up until their runs are done. That rule is
 not about versioning: an Orker killed mid-task loses that attempt until its
 `timeout_seconds` expires, and the default retry policy is a single attempt
-(`internal/engine/workflow.go`, `retryPolicyFor`), so the task fails.
+(`internal/engine/retry_spacing.go`, `retryPolicyFor`), so the task fails.
 
 ---
 
@@ -2898,6 +2898,15 @@ submit and pinned in the run, so a changed weight moves only the runs
 submitted after it. A namespace name longer than 64 bytes is keyed by a
 readable prefix and a SHA-256 suffix.
 
+The key reaches everything a run hands an Orker: each task, each item of a
+fan-out, each member of a pin, and each pin's request for a pin host, which
+waits for a free pin slot beside other namespaces' requests. A run that
+carries on into a new history keeps its key and weight, and a composed
+task's child run takes its parent's. A pin's request carries the key only
+through the engine's own run worker (`ork` builds it so), and only in a run
+submitted from v0.1.1 on: the submit marks it in the run, and a run submitted
+before opens every pin unkeyed to its end, whatever release carries it on.
+
 It is Temporal's own task-queue fairness, never an OrkStack queue, and it takes
 effect only where the operator enables it on the Temporal cluster:
 `matching.enableFairness=true` in the server's dynamic configuration, for the
@@ -2910,6 +2919,9 @@ What fairness does and does not do:
 - it orders the tasks waiting on one pool's channel, per partition of that
   channel, so the effect is real but moderate, and it never moves a task to
   another pool;
+- a pin's members wait on their pin host's own channel, so their keys order
+  them only among that host's work; across namespaces it is the pin requests
+  that compete for the pool's pin hosts;
 - a weight pinned at submit never reorders a backlog already queued;
 - during a release rollout it holds among the tasks queued for one worker
   version;
@@ -3793,6 +3805,59 @@ version it was answered with the recorded marker. The fixtures
 `run-pin-creation-timeout-v1.json` and `run-pin-creation-timeout-legacy-v1.json`
 (the same plan, recorded with the gate on and off) guard it with command and
 negative tests.
+
+**A pin's fairness key is a versioned change.** A run whose plan's fairness
+selection says `pin_requests` (set at submit since v0.1.1) asks the
+`fairness-pin-creation` version once, where its first pin opens, and every pin
+request it then makes carries the plan's key and weight; a run that opens no
+pin, or whose plan carries no such selection — every run submitted before —
+records no marker, and a generation that continues a run answers from what the
+run already decided. A history recorded before the gate replays its
+`DefaultVersion` branch, which keys no pin request. The SDK builds a pin
+request's options itself, so the key reaches it through an interceptor of the
+engine's run worker (`engine.RunWorkerInterceptors`, set by `cmd/ork`); a run
+worker without it opens pins unkeyed and changes nothing else. The fixtures
+`run-fairness-pin-creation-v1.json` and
+`run-fairness-pin-creation-legacy-v1.json` guard it with command and negative
+tests, one of which replays the gated fixture without the interceptor and must
+see the key missing.
+
+**A retry's default maximum interval is a versioned change.** A run's plan
+carries the maximum wait between two attempts of a task whose `retry:` sets no
+`maximum_interval_seconds` (60 seconds, `engine.DefaultRetryMaxInterval`),
+pinned at submit and copied into each child run's start. The run asks the
+`retry-max-interval` version once, where it first schedules such a task. A
+history recorded before the gate replays its `DefaultVersion` branch, the
+100 seconds every earlier build used, whatever its plan says; so does a run
+whose plan carries no number. Either way the maximum is never below the task's
+own initial interval: the cluster refuses that policy by failing the workflow
+task over and over, so no recorded history holds one, and every earlier build
+left such a run stuck. The same holds for an explicit maximum below the
+initial interval and a backoff coefficient between 0 and 1, which a version
+applied before DSL rule 47 may carry: the task is scheduled with the maximum
+raised to the initial interval and the coefficient raised to 1, with no gate,
+because no recorded history holds the refused command
+(`TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled`). A stored
+coefficient that is not a number is different: the cluster accepts it (the
+same test sends one), so a run may already have scheduled it. It reads as the
+default 2.0 only on the gate's new path, in a run whose plan carries the
+number, and the run asks the gate where it first schedules such a task if it
+has not already; a run submitted before v0.1.1, and a history recorded before
+the gate, keep sending the NaN as every earlier build did, so its spacing never
+changes partway through a run. A build that
+predates the field ignores the plan's
+number, so a rollback to one waits 100 seconds again. The fixtures
+`run-retry-max-interval-v1.json` and `run-retry-max-interval-legacy-v1.json`
+guard it with command and negative tests, and
+`run-retry-long-initial-v1.json` and `run-retry-long-initial-legacy-v1.json`
+record the raise to the initial interval on both branches.
+
+The replayer compares neither a priority nor a retry policy: it matches a
+scheduled activity by its id and type alone
+(`TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy`). So a key or a
+spacing added to a recorded command never breaks a replay; a version gate is
+what keeps a recorded run on the values it was recorded with, and these tests
+compare those values themselves.
 
 If any of them fails, current code no longer produces what the recorded build
 did. Either restore it (`workflow.GetVersion` for a deliberate command-stream

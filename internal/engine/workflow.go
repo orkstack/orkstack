@@ -755,6 +755,10 @@ type pinState struct {
 	// here so the value the session was created with and the value
 	// PIN_UNAVAILABLE reports are one number computed once.
 	creationTimeout time.Duration
+	// creationPriority is the fairness key and weight the pin's creation
+	// request carries (pinCreationPriorityFor), decided once where the pin
+	// opens; zero for none.
+	creationPriority temporal.Priority
 
 	// ready settles when the session is open or its creation failed. The main
 	// loop registers it in its Selector; the coroutine settles it.
@@ -1156,6 +1160,7 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 	p.openedAt = workflow.Now(runCtx)
 	p.timeout = s.pinLifetime(p)
 	p.creationTimeout = s.pinCreationTimeoutFor(runCtx)
+	p.creationPriority = s.pinCreationPriorityFor(runCtx)
 	p.ready, p.readySettable = workflow.NewFuture(runCtx)
 	p.closed, p.closedSettable = workflow.NewFuture(runCtx)
 	p.done = workflow.NewBufferedChannel(runCtx, 1)
@@ -1182,6 +1187,10 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 // channel back to the loop is the two futures and the one signal.
 func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 	base := workflow.WithActivityOptions(gctx, workflow.ActivityOptions{TaskQueue: queue})
+	// The run's fairness for the creation request, which the SDK schedules
+	// with options of its own; the run worker's interceptor sets it
+	// (RunWorkerInterceptors).
+	base = withPinCreationPriority(base, p.creationPriority)
 	if limit := s.historyLimit(); limit != nil {
 		s.noteCommand(gctx, 1, limit.Reserve.SessionBytes)
 	}
@@ -1924,7 +1933,7 @@ func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstac
 		// Without this the workflow may mark the task terminal before the
 		// Orker has finished killing the container and cleaning up.
 		WaitForCancellation: true,
-		RetryPolicy:         retryPolicyFor(t),
+		RetryPolicy:         s.retryPolicyFor(activityBase, t),
 		// The run's namespace as a fairness key (fairness.go): the cluster
 		// orders this channel's waiting tasks by it where fairness is on.
 		Priority: s.priorityFor(activityBase),
@@ -2940,31 +2949,4 @@ func timeoutSecondsFor(t *orkstackv1.Task) int {
 		return int(t.GetTimeoutSeconds())
 	}
 	return 300
-}
-
-// retryPolicyFor converts the DSL retry policy to Temporal's. A missing policy
-// means a single attempt: leaving it nil would inherit Temporal's default of
-// unlimited retries, which contradicts the proto contract ("0 or 1 = no
-// retries").
-func retryPolicyFor(t *orkstackv1.Task) *temporal.RetryPolicy {
-	retry := t.GetRetry()
-	if retry == nil || retry.GetMaximumAttempts() <= 1 {
-		return &temporal.RetryPolicy{MaximumAttempts: 1}
-	}
-	policy := &temporal.RetryPolicy{
-		MaximumAttempts:    retry.GetMaximumAttempts(),
-		InitialInterval:    time.Duration(retry.GetInitialIntervalSeconds()) * time.Second,
-		BackoffCoefficient: retry.GetBackoffCoefficient(),
-		MaximumInterval:    time.Duration(retry.GetMaximumIntervalSeconds()) * time.Second,
-	}
-	if policy.InitialInterval <= 0 {
-		policy.InitialInterval = time.Second
-	}
-	if policy.BackoffCoefficient <= 0 {
-		policy.BackoffCoefficient = 2.0
-	}
-	if policy.MaximumInterval <= 0 {
-		policy.MaximumInterval = 100 * time.Second
-	}
-	return policy
 }

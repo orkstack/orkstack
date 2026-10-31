@@ -51,7 +51,7 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 | Limit | Value | Setting |
 |---|---|---|
 | Attempts | 1, unless the task sets `retry:` | `retry:` on the task |
-| Retry interval, when `retry:` sets none | 1 second first, doubling, at most 100 seconds | `retry:` on the task |
+| Retry interval, when `retry:` sets none | 1 second first, doubling, at most 60 seconds | `retry:` on the task |
 | Container timeout | 300 seconds | `timeout_seconds` on the task |
 | Cancellation grace period | 30 seconds | `cancellation_grace_period_seconds` on the task |
 | Heartbeat interval | 5 seconds. Allowed range 1 to 10 seconds | `ORK_ORKER_HEARTBEAT_INTERVAL` |

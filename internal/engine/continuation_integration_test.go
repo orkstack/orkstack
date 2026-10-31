@@ -98,6 +98,7 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 	runWorker := worker.New(c, s.runQueue, options(worker.Options{
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
+		Interceptors:                engine.RunWorkerInterceptors(),
 	}))
 	engine.RegisterWorkflows(runWorker)
 	registerRunActivities(runWorker, engine.NewSnapshotActivities(snapshots), s.values)

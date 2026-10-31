@@ -3,6 +3,7 @@ package dsl_test
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -343,7 +344,10 @@ func halfOfAPair(valid []byte) string {
 // FuzzCompile_Orkflow reads arbitrary documents with the examples as seeds.
 // A document compiles or is refused with a reason, never panics, and one that
 // compiles has a definition digest in its one shape that depends only on the
-// message: compiling again, and a trip through the wire format, keep it.
+// message: compiling again, and a trip through the wire format, keep it. Every
+// retry: of a document that compiles is one rule 47 admits: no negative
+// interval, no maximum below the initial one, and a coefficient that is 0 (the
+// default) or a finite number of at least 1.
 func FuzzCompile_Orkflow(f *testing.F) {
 	examples, err := filepath.Glob("../../examples/*.ork.yaml")
 	if err != nil || len(examples) == 0 {
@@ -358,6 +362,18 @@ func FuzzCompile_Orkflow(f *testing.F) {
 	}
 	f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks: []\n"))
 	f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    with: {op: exec, command: [echo, \"{{ sh .inputs.x }}\"]}\n"))
+	for _, retry := range []string{
+		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: 10}",
+		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: 30}",
+		"{maximum_attempts: 3, backoff_coefficient: 0.5}",
+		"{maximum_attempts: 3, backoff_coefficient: 1}",
+		"{maximum_attempts: 3, initial_interval_seconds: -5}",
+		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: -60}",
+		"{maximum_attempts: 3, backoff_coefficient: 0.999}",
+		"{maximum_attempts: 3, backoff_coefficient: .inf}",
+	} {
+		f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    retry: " + retry + "\n"))
+	}
 	digestShape := regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	f.Fuzz(func(t *testing.T, source []byte) {
 		wf, err := dsl.Compile(source)
@@ -366,6 +382,17 @@ func FuzzCompile_Orkflow(f *testing.F) {
 				t.Fatalf("Compile refused %q without a reason", source)
 			}
 			return
+		}
+		for _, task := range wf.GetTasks() {
+			retry := task.GetRetry()
+			initial, maximum := retry.GetInitialIntervalSeconds(), retry.GetMaximumIntervalSeconds()
+			if initial < 0 || maximum < 0 || (maximum != 0 && maximum < initial) {
+				t.Fatalf("Compile accepted %q, whose task %q waits at most %ds after a first wait of %ds",
+					source, task.GetId(), maximum, initial)
+			}
+			if coefficient := retry.GetBackoffCoefficient(); coefficient != 0 && !(coefficient >= 1 && coefficient <= math.MaxFloat64) {
+				t.Fatalf("Compile accepted %q, whose task %q backs off by %g", source, task.GetId(), coefficient)
+			}
 		}
 		digest, err := dsl.DefinitionDigest(wf)
 		if err != nil || !digestShape.MatchString(digest) {

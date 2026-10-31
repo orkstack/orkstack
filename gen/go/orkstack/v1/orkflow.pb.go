@@ -29,7 +29,7 @@ type RetryPolicy struct {
 	MaximumAttempts        int32                  `protobuf:"varint,1,opt,name=maximum_attempts,json=maximumAttempts,proto3" json:"maximum_attempts,omitempty"`                        // 0 or 1 = no retries
 	InitialIntervalSeconds int32                  `protobuf:"varint,2,opt,name=initial_interval_seconds,json=initialIntervalSeconds,proto3" json:"initial_interval_seconds,omitempty"` // default 1
 	BackoffCoefficient     float64                `protobuf:"fixed64,3,opt,name=backoff_coefficient,json=backoffCoefficient,proto3" json:"backoff_coefficient,omitempty"`              // default 2.0
-	MaximumIntervalSeconds int32                  `protobuf:"varint,4,opt,name=maximum_interval_seconds,json=maximumIntervalSeconds,proto3" json:"maximum_interval_seconds,omitempty"` // default 100
+	MaximumIntervalSeconds int32                  `protobuf:"varint,4,opt,name=maximum_interval_seconds,json=maximumIntervalSeconds,proto3" json:"maximum_interval_seconds,omitempty"` // default 60, or initial_interval_seconds when longer
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }

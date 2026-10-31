@@ -418,7 +418,7 @@ tasks:
       maximum_attempts: 3
       initial_interval_seconds: 1
       backoff_coefficient: 2.0
-      maximum_interval_seconds: 100
+      maximum_interval_seconds: 60
     pool: ""              # optional Orker pool; absent means the default pool
     pin: ""               # optional declared pin; absent means unpinned
     command:              # optional image ENTRYPOINT/CMD override; argv
@@ -451,7 +451,13 @@ B's `needs:`.
 
 `retry:` absent (or `maximum_attempts` of 0 or 1) means one attempt — never
 Temporal's unbounded default. Within `retry:`, an unset interval is 1 s, an
-unset coefficient 2.0 and an unset maximum interval 100 s.
+unset coefficient 2.0 and an unset maximum interval 60 s, or the initial
+interval when that is longer (Temporal refuses a maximum below the initial).
+A negative interval, a `maximum_interval_seconds` set below
+`initial_interval_seconds`, and a `backoff_coefficient` below 1 or not finite,
+are refused (rule 47).
+The 60 s is decided when the run is submitted and kept for the whole run: a
+run submitted by a release before v0.1.1 keeps the 100 s it started with.
 
 `uses:` is the only image selector. A catalog name is resolved at apply time;
 a registry tag or digest may be written directly. In every case the applied
@@ -1787,6 +1793,29 @@ How each node reads:
     cannot hold exactly, a null or ambiguous key, a key written twice, and
     any tag, anchor, alias or merge key are refused, at the field path of the
     value (`tasks[1].with.flags.verbose`) and its line.
+47. Within a task's `retry:`, `initial_interval_seconds` and
+    `maximum_interval_seconds` are never negative (fields
+    `tasks[i].retry.initial_interval_seconds` and
+    `tasks[i].retry.maximum_interval_seconds`), a `maximum_interval_seconds`
+    that is set is at least `initial_interval_seconds`, and a
+    `backoff_coefficient` that is set is a finite number of at least 1 (field
+    `tasks[i].retry.backoff_coefficient`); `0` and absent are one value, the
+    default. An interval is an integer field, so a non-finite one does not
+    decode at all. The refusal names the field and its value. It
+    holds whatever `maximum_attempts` says, so raising the attempts later can
+    never surface a latent error. The cluster refuses a maximum below the
+    initial interval, and a coefficient between 0 and 1, each time the task is
+    scheduled, so a run that retried the task would be stuck; a negative
+    interval and a coefficient that is negative or not finite have no meaning
+    as a wait. Checked wherever a document is compiled — validate reports it
+    as an error at the field, apply and `orkctl run plan --file` refuse it as
+    an invalid argument — and on a hand-built request. A version applied
+    before this rule keeps starting: its task is scheduled with the nearest
+    policy the cluster accepts, the maximum raised to the initial interval and
+    a coefficient between 0 and 1 raised to 1, and, in a run submitted from
+    v0.1.1 on, a coefficient that is not a number read as the default 2.0 (a
+    negative coefficient reads as the default too, a negative initial interval as 1 s and a negative maximum as
+    unset, as they always have).
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

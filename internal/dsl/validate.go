@@ -2,6 +2,7 @@ package dsl
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strings"
@@ -213,6 +214,12 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 							"\"512Mi\" or \"4Gi\" (Gi, not GB)", task.GetId(), memory, err))
 				}
 			}
+		}
+		// Rule 47: a retry: the cluster would refuse is refused here. The
+		// cluster fails the workflow task that schedules such an attempt and
+		// retries it forever, so a run that reached the task would be stuck.
+		if err := validateRetry(taskIndex, task); err != nil {
+			return err
 		}
 		// Rule 7: an explicit pool is a slug. The compiler checks the shape
 		// only; whether this namespace may dispatch onto that pool is the
@@ -503,3 +510,55 @@ func validSecretName(name string) bool {
 
 // secretNamePattern is rule 6c's grammar; "." and ".." are refused besides.
 var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// validateRetry is rule 47, on the compiled message so a hand-built request
+// meets it too. 0 is how an absent field arrives, and it means the default,
+// so only a value that is set is compared. An interval, an integer field, is
+// never negative, a set maximum is never below the initial
+// interval, and a set coefficient is a finite number of at least 1: the
+// cluster refuses a maximum below the initial interval and a coefficient
+// between 0 and 1, and the rest have no meaning as a wait (the engine has
+// always read a negative one as the default). They hold whatever
+// maximum_attempts says, as rules 34 and 35 hold whatever cache.enabled says,
+// so raising the attempts later can never surface a latent error.
+func validateRetry(taskIndex int, task *orkstackv1.Task) error {
+	retry := task.GetRetry()
+	if retry == nil {
+		return nil
+	}
+	at := func(field string) string { return fmt.Sprintf("tasks[%d].retry.%s", taskIndex, field) }
+	initial, maximum := retry.GetInitialIntervalSeconds(), retry.GetMaximumIntervalSeconds()
+	if initial < 0 {
+		return validationError(at("initial_interval_seconds"), fmt.Errorf(
+			"task %q: retry.initial_interval_seconds %d is negative — it is the wait before the second attempt, "+
+				"in seconds; omit it for the default of 1",
+			task.GetId(), initial))
+	}
+	if maximum < 0 {
+		return validationError(at("maximum_interval_seconds"), fmt.Errorf(
+			"task %q: retry.maximum_interval_seconds %d is negative — it is the longest wait between attempts, "+
+				"in seconds; omit it for the default, which is never shorter than the first",
+			task.GetId(), maximum))
+	}
+	if maximum > 0 && maximum < initial {
+		return validationError(at("maximum_interval_seconds"), fmt.Errorf(
+			"task %q: retry.maximum_interval_seconds %d is below retry.initial_interval_seconds %d — "+
+				"the longest wait between attempts cannot be shorter than the first; set it to at least %d, "+
+				"or omit it for the default, which is never shorter than the first",
+			task.GetId(), maximum, initial, initial))
+	}
+	coefficient := retry.GetBackoffCoefficient()
+	if math.IsNaN(coefficient) || math.IsInf(coefficient, 0) {
+		return validationError(at("backoff_coefficient"), fmt.Errorf(
+			"task %q: retry.backoff_coefficient %g is not a finite number — it multiplies each wait to give the next, "+
+				"so it must be a number of at least 1; write 1 for a constant wait, or omit it (2: each wait doubles)",
+			task.GetId(), coefficient))
+	}
+	if coefficient != 0 && coefficient < 1 {
+		return validationError(at("backoff_coefficient"), fmt.Errorf(
+			"task %q: retry.backoff_coefficient %g is below 1 — it multiplies each wait to give the next, "+
+				"so it must be at least 1; write 1 for a constant wait, or omit it (2: each wait doubles)",
+			task.GetId(), coefficient))
+	}
+	return nil
+}

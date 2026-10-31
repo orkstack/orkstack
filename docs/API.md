@@ -2324,7 +2324,7 @@ RetryPolicy mirrors Temporal retry semantics for a task.
 | `maximum_attempts` | `int32` | 0 or 1 = no retries |
 | `initial_interval_seconds` | `int32` | default 1 |
 | `backoff_coefficient` | `double` | default 2.0 |
-| `maximum_interval_seconds` | `int32` | default 100 |
+| `maximum_interval_seconds` | `int32` | default 60, or initial_interval_seconds when longer |
 
 ### Run
 

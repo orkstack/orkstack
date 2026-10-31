@@ -1748,6 +1748,7 @@ func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
 	limit := engine.DefaultInFlightLimit(s.runMaxInFlight)
 	plan.InFlight = &limit
 	plan.PinCreationTimeoutSeconds = s.pinCreationSeconds
+	plan.RetryMaxIntervalSeconds = int32(engine.DefaultRetryMaxInterval / time.Second)
 }
 
 // pinCreationTimeoutSecondsOf is the pin creation timeout a plan carries, in
