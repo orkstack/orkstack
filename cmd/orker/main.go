@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -274,10 +275,11 @@ func envBool(key string, fallback bool) (bool, error) {
 	return parsed, nil
 }
 
-// applyConfigFile is main()'s entire configuration-file mechanism
-// (docs/DEPLOY.md §1); see cmd/ork's function of the same name for the full
-// rationale (shared design, one package each side of it can Setenv/LookupEnv
-// through fakes in a test rather than the real process environment).
+// applyConfigFile is main()'s entire configuration-file mechanism, which
+// configure runs (docs/DEPLOY.md §1); see cmd/ork's function of the same
+// name for the full rationale (shared design, one package each side of it
+// can Setenv/LookupEnv through fakes in a test rather than the real process
+// environment).
 func applyConfigFile(
 	args []string, binary cfgfile.Binary,
 	lookup func(string) (string, bool), setenv func(string, string) error,
@@ -309,44 +311,10 @@ func applyConfigFile(
 }
 
 func main() {
-	// --defaults needs no config file, no environment, and nothing else
-	// this func does below: print config.RenderDefaults() and stop — see
-	// cmd/ork's main for the full rationale (shared design).
-	requested, argsErr := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv)
-	if argsErr == nil && requested.Defaults {
-		fmt.Print(cfgfile.RenderDefaults())
-		os.Exit(0)
+	cfg, cfgPath, cfgSet, exit, stop := configure(os.Args[1:], os.LookupEnv, os.Setenv, os.Stdout, os.Stderr)
+	if stop {
+		os.Exit(exit)
 	}
-
-	// The configuration file, if any, is resolved before loadConfig reads a
-	// single environment variable — see applyConfigFile — so every existing
-	// *FromEnv reader below (loadConfig included) works unchanged whether its
-	// value came from a file or, as always, straight from the environment.
-	cfgDoc, cfgPath, cfgCheck, cfgSet, err := applyConfigFile(
-		os.Args[1:], cfgfile.BinaryOrker, os.LookupEnv, os.Setenv)
-	if err != nil {
-		if cfgDoc == nil && cfgPath == "" {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
-		}
-		fmt.Fprintf(os.Stderr, "orker: %v\n", err)
-		os.Exit(1)
-	}
-	if cfgCheck {
-		fmt.Print(cfgDoc.Effective(cfgfile.BinaryOrker, os.LookupEnv))
-		os.Exit(0)
-	}
-
-	// --healthcheck asks this process's own running copy, over the admin
-	// listener, whether it is ready (docs/DEPLOY.md, "Health checks"). It comes
-	// after the configuration file is applied, because ORK_ADMIN_ADDR may have
-	// come from the file, and before loadConfig or any boot step: it starts
-	// nothing, and the exit status is the answer.
-	if argsErr == nil && requested.Healthcheck {
-		os.Exit(healthcheck.Run(context.Background(), "orker", os.Getenv, os.Stdout, os.Stderr))
-	}
-
-	cfg := configFrom(cfgDoc)
 	// Telemetry configuration is resolved before the process logger exists,
 	// for the same reason as cmd/ork: the logger's own encoding is itself a
 	// telemetry setting, so building it first would mean rebuilding it the
@@ -743,6 +711,57 @@ func awaitStoppedTasks(logger *slog.Logger, activities *orker.Activities) {
 	started := time.Now()
 	_ = activities.WaitForTasks(context.Background())
 	logger.Info("cancelled tasks stopped", "took", time.Since(started).Round(time.Millisecond))
+}
+
+// configure is main's start, everything it decides before telemetry boots:
+// the arguments and the environment made into the configuration this
+// process runs with, the file it came from and the keys that file set — or,
+// with stop set, the status the process exits with, having said why on
+// stdout or stderr. It is main's own path, a seam only so that a test given
+// main's arguments boots the configuration main boots.
+func configure(
+	args []string, lookup func(string) (string, bool), setenv func(string, string) error, stdout, stderr io.Writer,
+) (cfg config, path string, set []string, exit int, stop bool) {
+	// --defaults needs no config file, no environment, and nothing else
+	// this func does below: print config.RenderDefaults() and stop — see
+	// cmd/ork's main for the full rationale (shared design).
+	requested, argsErr := cfgfile.ParseArgs(args, lookup)
+	if argsErr == nil && requested.Defaults {
+		fmt.Fprint(stdout, cfgfile.RenderDefaults())
+		return config{}, "", nil, 0, true
+	}
+
+	// The configuration file, if any, is resolved before loadConfig reads a
+	// single environment variable — see applyConfigFile — so every existing
+	// *FromEnv reader below (loadConfig included) works unchanged whether its
+	// value came from a file or, as always, straight from the environment.
+	doc, path, check, set, err := applyConfigFile(args, cfgfile.BinaryOrker, lookup, setenv)
+	if err != nil {
+		if doc == nil && path == "" {
+			fmt.Fprintln(stderr, err)
+			return config{}, "", nil, 2, true
+		}
+		fmt.Fprintf(stderr, "orker: %v\n", err)
+		return config{}, "", nil, 1, true
+	}
+	if check {
+		fmt.Fprint(stdout, doc.Effective(cfgfile.BinaryOrker, lookup))
+		return config{}, "", nil, 0, true
+	}
+
+	// --healthcheck asks this process's own running copy, over the admin
+	// listener, whether it is ready (docs/DEPLOY.md, "Health checks"). It comes
+	// after the configuration file is applied, because ORK_ADMIN_ADDR may have
+	// come from the file, and before loadConfig or any boot step: it starts
+	// nothing, and the exit status is the answer.
+	if argsErr == nil && requested.Healthcheck {
+		getenv := func(key string) string {
+			value, _ := lookup(key)
+			return value
+		}
+		return config{}, "", nil, healthcheck.Run(context.Background(), "orker", getenv, stdout, stderr), true
+	}
+	return configFrom(doc), path, set, 0, false
 }
 
 // configFrom is loadConfig, with the files the configuration document doc

@@ -730,3 +730,54 @@ func TestLoad_FilesNamesTheDocumentAndEveryFileItRead(t *testing.T) {
 		t.Fatalf("Files() of an empty document = %q, want the document alone", got)
 	}
 }
+
+// TestLoad_FilesAreTheFilesItOpened: Files names each file as Load opened it,
+// made absolute but never cleaned. Through a link, ".." is the link target's
+// parent to the kernel, not the link's, so the cleaned name of
+// dir/link/../cfg.yaml is dir/cfg.yaml, another file than the one read.
+func TestLoad_FilesAreTheFilesItOpened(t *testing.T) {
+	dir := t.TempDir()
+	deep := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(deep, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	read := filepath.Join(dir, "a", "cfg.yaml")
+	secret := filepath.Join(dir, "a", "secret")
+	body := "storage:\n  s3:\n    secret_key: {file: " + filepath.Join(dir, "link") + "/../secret}\n"
+	for path, content := range map[string]string{
+		read: body, secret: "x\n",
+		// What the cleaned names name: other files.
+		filepath.Join(dir, "cfg.yaml"): "# another file\n", filepath.Join(dir, "secret"): "y\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(dir)
+	for _, path := range []string{filepath.Join(dir, "link") + "/../cfg.yaml", "link/../cfg.yaml"} {
+		doc, err := Load(path, BinaryOrker)
+		if err != nil {
+			t.Fatalf("Load(%q): %v", path, err)
+		}
+		got := doc.Files()
+		if len(got) != 2 {
+			t.Fatalf("Load(%q).Files() = %q, want the document and its secret", path, got)
+		}
+		for i, want := range []string{read, secret} {
+			named, err := os.Stat(got[i])
+			if err != nil {
+				t.Fatalf("Load(%q).Files()[%d] = %q: %v", path, i, got[i], err)
+			}
+			opened, err := os.Stat(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !filepath.IsAbs(got[i]) || !os.SameFile(named, opened) {
+				t.Errorf("Load(%q).Files()[%d] = %q, want an absolute name of %s, the file Load read", path, i, got[i], want)
+			}
+		}
+	}
+}

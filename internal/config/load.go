@@ -102,9 +102,10 @@ type Document struct {
 }
 
 // Files is the file this document was loaded from and every {file: PATH}
-// it read, in that order, each absolute: the files a binary configured from
-// it holds as its own. An Orker's secret floor admits none of them as a
-// task's source (docs/SECURITY_MODEL.md, "The Orker's own sources").
+// it read, in that order, each named as it was opened and made absolute
+// (absolute): the files a binary configured from it holds as its own. An
+// Orker's secret floor admits none of them as a task's source
+// (docs/SECURITY_MODEL.md, "The Orker's own sources").
 func (d *Document) Files() []string {
 	return append([]string{absolute(d.path)}, d.files...)
 }
@@ -116,13 +117,20 @@ type loadContext struct {
 	files []string
 }
 
-// absolute is path made absolute against this process's working directory,
-// as the file was opened, or path itself when that cannot be known.
+// absolute is path as the file was opened, made absolute against this
+// process's working directory and never cleaned, or path itself when the
+// working directory cannot be read. Through a link, ".." is the link
+// target's parent to the kernel, not the link's, so a cleaned name
+// (filepath.Abs cleans) could name another file than the one read.
 func absolute(path string) string {
-	if abs, err := filepath.Abs(path); err == nil {
-		return abs
+	if filepath.IsAbs(path) {
+		return path
 	}
-	return path
+	wd, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+	return wd + string(filepath.Separator) + path
 }
 
 // Load reads path and strictly validates it for binary: an unknown key is

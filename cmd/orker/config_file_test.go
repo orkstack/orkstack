@@ -172,7 +172,9 @@ func TestApplyConfigFile_NoConfigIsTheZeroConfigPath(t *testing.T) {
 // was configured from, every {file:} that file read, and every telemetry
 // sink header's file and variable are the Orker's own, so its secret floor
 // admits none of them as a task's source, whatever ORK_ORKER_SECRET_ALLOW
-// says.
+// says. The configuration comes from configure, main's own start, given the
+// arguments main is given, so the files are the Orker's own on the path a
+// real boot takes.
 func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
 	clearTelemetryEnv(t)
 	unsetenvT(t, "ORK_S3_SECRET_KEY")
@@ -186,9 +188,10 @@ func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
 		}
 	}
 	path := writeTempConfig(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: {file: "+secret+"}\n")
-	doc, _, _, _, err := applyConfigFile([]string{"--config", path}, cfgfile.BinaryOrker, os.LookupEnv, setenvT(t))
-	if err != nil {
-		t.Fatalf("applyConfigFile: %v", err)
+	var stderr strings.Builder
+	cfg, _, _, exit, stop := configure([]string{"--config", path}, os.LookupEnv, setenvT(t), io.Discard, &stderr)
+	if stop {
+		t.Fatalf("configure stopped with %d: %s", exit, stderr.String())
 	}
 	t.Setenv(telemetry.SinksVar, "sinks:\n  vendor:\n    endpoint: http://127.0.0.1:1\n    headers:\n"+
 		"      X-Key: { source: \"file:"+sinkKey+"\" }\n"+
@@ -198,7 +201,6 @@ func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("telemetry.Boot: %v", err)
 	}
-	cfg := configFrom(doc)
 	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if opts.Policy == nil {
