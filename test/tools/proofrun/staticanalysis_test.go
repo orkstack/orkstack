@@ -87,12 +87,20 @@ func lintProblems(mk string) []string {
 		p = append(p, "make vuln-images does not scan every image and fail on any one")
 	case !strings.Contains(images, "$(MAKE) release-images VERSION=v0.0.0"):
 		p = append(p, "make vuln-images does not build the images a release publishes")
-	case !strings.Contains(images, `[ -n '$(strip $(VULN_IMAGES))' ] || {`):
-		p = append(p, "make vuln-images passes when it has no image to scan")
+	case !strings.Contains(images, `[ -n '$(strip $(VULN_ACTIVITIES))' ] || {`):
+		p = append(p, "make vuln-images passes when it has no activity to scan")
 	case !strings.Contains(images, "docker run --rm --user \"$$(id -u):$$(id -g)\" --cap-drop=ALL --security-opt no-new-privileges --read-only "):
 		p = append(p, "make vuln-images runs the scanner with a capability, a new privilege or a writable root")
 	case !scanFails.MatchString(images):
 		p = append(p, "make vuln-images does not exit 1 when a scan failed")
+	case !strings.Contains(images, "-e GRYPE_DB_CACHE_DIR=/db -e TMPDIR=/scratch") ||
+		!strings.Contains(images, "-v '$(VULN_IMAGES_DIR)/db:/db' -v '$(VULN_IMAGES_DIR)/tmp:/scratch'"):
+		p = append(p, "make vuln-images keeps Grype's database or scratch outside VULN_IMAGES_DIR")
+	}
+	// Grype's database is about 3 GB unpacked: it is kept in the checkout, on
+	// disk, never under a /tmp that may be a small tmpfs.
+	if dir := regexp.MustCompile(`(?m)^VULN_IMAGES_DIR \?= (.+)$`).FindStringSubmatch(mk); dir == nil || !strings.HasPrefix(dir[1], "$(CURDIR)/") {
+		p = append(p, "make vuln-images keeps Grype's database outside the checkout (VULN_IMAGES_DIR is not under $(CURDIR))")
 	}
 	// Nothing a proof or the fast path runs may reach the network database.
 	for _, target := range []string{"lint", "check", "merge-check", "test", "build"} {
@@ -140,7 +148,11 @@ func TestMakefile_LintRunsStaticcheckAndNothingOnTheNetwork(t *testing.T) {
 		{"layouts that are not the release's", "$(MAKE) release-images VERSION=v0.0.0", "$(MAKE) -C images oci VERSION=v0.0.0"},
 		{"the audit exiting 0", `names the fixed versions)" >&2; exit 1; fi`, `names the fixed versions)" >&2; exit 0; fi`},
 		{"the image scan exiting 0", `a scan that could not run, in:$$failed" >&2; exit 1; fi`, `a scan that could not run, in:$$failed" >&2; fi`},
-		{"an empty image list passing", `[ -n '$(strip $(VULN_IMAGES))' ] || {`, `true || {`},
+		{"an empty activity list passing", `[ -n '$(strip $(VULN_ACTIVITIES))' ] || {`, `true || {`},
+		{"the database under /tmp", "VULN_IMAGES_DIR ?= $(CURDIR)/.data/vuln-images", "VULN_IMAGES_DIR ?= /tmp/vuln-images"},
+		{"the database dropped from the checkout", "VULN_IMAGES_DIR ?= $(CURDIR)/.data/vuln-images", "VULN_IMAGES_DIR ?= $(TMPDIR)/vuln-images"},
+		{"the scanner's scratch under /tmp", "-v '$(VULN_IMAGES_DIR)/tmp:/scratch'", "-v /tmp:/scratch"},
+		{"the scanner's database under /tmp", "-v '$(VULN_IMAGES_DIR)/db:/db'", "-v /tmp/grype-db:/db"},
 		{"a scanner with its capabilities", "--cap-drop=ALL --security-opt no-new-privileges --read-only ", ""},
 	} {
 		if !strings.Contains(mk, c.from) {
@@ -275,14 +287,26 @@ func TestWorkflows_TheNightlyScansJavaScriptAndImages(t *testing.T) {
 }
 
 // TestVulnImages_ScansEveryImageAReleasePublishes: make vuln-images scans the
-// release images and every activity image images/Makefile builds, so renaming
-// an activity's directory can never narrow the scan in silence.
+// release images and every activity images/Makefile builds, read from its
+// print-activities with none of the caller's make flags (a `make -n` would
+// otherwise print the recipe instead of the list), and images/Makefile builds
+// every activity directory, so neither a new activity nor a renamed one can
+// narrow the scan in silence.
 func TestVulnImages_ScansEveryImageAReleasePublishes(t *testing.T) {
 	mk := readRepoFile(t, "Makefile")
-	if !strings.Contains(mk, "\nVULN_IMAGES = $(RELEASE_IMAGES) $(patsubst images/%/Dockerfile,%,$(wildcard images/activity-*/Dockerfile))\n") {
-		t.Fatal("the Makefile's VULN_IMAGES is not the release images and every images/activity-*/Dockerfile")
+	for _, line := range []string{
+		"\nVULN_ACTIVITIES = $(shell MAKEFLAGS= $(MAKE) -s --no-print-directory -C images print-activities)\n",
+		"\nVULN_IMAGES = $(RELEASE_IMAGES) $(addprefix activity-,$(VULN_ACTIVITIES))\n",
+	} {
+		if !strings.Contains(mk, line) {
+			t.Fatalf("the Makefile's image list is not the release images and images/Makefile's activities: it has no line %q", strings.TrimSpace(line))
+		}
 	}
-	line := regexp.MustCompile(`(?m)^ACTIVITIES := (.+)$`).FindStringSubmatch(readRepoFile(t, "images/Makefile"))
+	images := readRepoFile(t, "images/Makefile")
+	if print, ok := makeRecipe(images, "print-activities"); !ok || !strings.HasSuffix(print, "\n\t@echo $(ACTIVITIES)\n") {
+		t.Fatalf("images/Makefile's print-activities does not print exactly its ACTIVITIES:\n%s", print)
+	}
+	line := regexp.MustCompile(`(?m)^ACTIVITIES := (.+)$`).FindStringSubmatch(images)
 	if line == nil {
 		t.Fatal("images/Makefile has no ACTIVITIES line")
 	}
@@ -294,14 +318,14 @@ func TestVulnImages_ScansEveryImageAReleasePublishes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var scanned []string
+	var dirs []string
 	for _, d := range dockerfiles {
-		scanned = append(scanned, filepath.Base(filepath.Dir(d)))
+		dirs = append(dirs, filepath.Base(filepath.Dir(d)))
 	}
 	sort.Strings(built)
-	sort.Strings(scanned)
-	if len(built) == 0 || strings.Join(built, " ") != strings.Join(scanned, " ") {
-		t.Errorf("make vuln-images scans %q, and images/Makefile builds %q", scanned, built)
+	sort.Strings(dirs)
+	if len(built) == 0 || strings.Join(built, " ") != strings.Join(dirs, " ") {
+		t.Errorf("images/ holds the activities %q, and images/Makefile builds, and make vuln-images scans, %q", dirs, built)
 	}
 }
 

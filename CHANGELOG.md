@@ -20,7 +20,8 @@ word for word.
 
 ### Security
 
-- Release workflows pin every action by commit SHA.
+- Every workflow and composite action pins every action by commit SHA, and
+  Dependabot now also bumps the composite actions.
 
 ## [0.1.0] - 2026-10-30
 

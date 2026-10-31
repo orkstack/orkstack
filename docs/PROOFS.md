@@ -801,9 +801,10 @@ completes. It downloads the completed run's newest unexpired
 -nightly DIR -nightly-jobs FILE`: the rule `make merge-check NIGHTLY=`
 applies (a passing nightly proof, eligible but for its tier, clean, of this
 commit's tree), plus the conclusions of the run's `vuln`, `vuln-js`,
-`vuln-images` and `quickstart` jobs, which the proof does not hold. No nightly run of the commit, or one that
-kept no proof, is a refusal that says to dispatch one; re-running the job
-after that nightly passes finishes the release.
+`vuln-images` and `quickstart` jobs, which the proof does not hold. No
+nightly run of the commit, or one that kept no proof, is a refusal that says
+to dispatch one; re-running the job after that nightly passes finishes the
+release.
 `release.yml` › `publish` runs only on `main`, after `verify` and `nightly`, in the
 `release` environment, whose required reviewers approve it once: one job, so
 one approval, and a dispatch off `main` never asks. Before anything leaves it,
@@ -857,9 +858,10 @@ code, and a step that runs a moved action in `release.yml` › `publish` could
 read the signing key. One action is one commit and one release in every file
 (`TestWorkflows_ActionsAndToolchainsArePinnedExactly`). Go, Bun, Node and
 cosign are pinned to exact versions. Dependabot moves them, the SHA and its
-comment together, one pull request and one proof at a time; its github-actions
-entry reads `.github/workflows` and both composite actions
-(`.github/actions/proof-host/action.yml`, `.github/actions/proof-fetch/action.yml`;
+comment together, one pull request and one proof at a time; its
+github-actions entry reads `.github/workflows` and both composite actions
+(`.github/actions/proof-host/action.yml`,
+`.github/actions/proof-fetch/action.yml`;
 `TestDependabot_ReadsEveryActionPin`).
 
 The composite action `.github/actions/proof-host` installs the host setup a
@@ -1569,10 +1571,11 @@ git rev-parse main
   vulnerability the code cannot reach is not reported and fails nothing.
 - Only `nightly.yml` › `vuln-js` failed: a high or critical advisory against a
   package in `ui/bun.lock` or `site/bun.lock`, or an audit that could not run
-  (the registry unreachable), which is a regression on `main` too. The job's log lists every advisory and the package path that pulls the
-  vulnerable one in; `bun audit fix --dry-run` in that directory names the
-  versions that fix it. Move them, run `make check`, and merge that change on
-  its own proof. `make vuln-js` reproduces it.
+  (the registry unreachable), which is a regression on `main` too. The job's
+  log lists every advisory and the package path that pulls the vulnerable one
+  in; `bun audit fix --dry-run` in that directory names the versions that fix
+  it. Move them, run `make check`, and merge that change on its own proof.
+  `make vuln-js` reproduces it.
 - Only `nightly.yml` › `vuln-images` failed: a fixed high or critical
   vulnerability in an image a release would publish, or a scan that could not
   run, which is a regression on `main` too. The job's log has one Grype table
@@ -2118,8 +2121,8 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
 - **`release.yml` has not passed on GitHub yet.**
   `nightly.yml` has six jobs, `nightly`, `vuln`, `vuln-js`, `vuln-images`,
   `quickstart` and `flakes`; `vuln-js` and `vuln-images` have not run on
-  GitHub yet; `nightly` and `flakes` have run, and so has `proof.yml` as a reusable
-  workflow through them (`workflow_call`; the flakes job passed in run
+  GitHub yet; `nightly` and `flakes` have run, and so has `proof.yml` as a
+  reusable workflow through them (`workflow_call`; the flakes job passed in run
   40555387388). `quickstart` has not run on GitHub yet, and neither has the
   same smoke in `release.yml`: the first scheduled or dispatched nightly after
   it lands is the smoke's first run on a hosted runner, and its time there,

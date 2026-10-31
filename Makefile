@@ -220,14 +220,16 @@ vuln-js: ## Audit the UI's and the site's JavaScript dependencies with bun audit
 	if [ -n "$$failed" ]; then echo "make vuln-js: a high or critical advisory, or an audit that could not run, in:$$failed (bun audit fix --dry-run names the fixed versions)" >&2; exit 1; fi
 
 # vuln-images builds what a release of this commit publishes (VULN_IMAGES: the
-# release images and every activity image) for linux/amd64 as OCI layouts, as
-# release.yml builds them, and scans each with the Grype image
+# release images and every activity images/Makefile builds, as its
+# print-activities names them) for linux/amd64 as OCI layouts, as release.yml
+# builds them, and scans each with the Grype image
 # deploy/grype-image.txt pins, by the policy deploy/grype.yaml states, with no
 # capability, no new privilege and a read-only root.
 # LAYOUTS=<dir> scans the layouts already built there instead. Grype's
 # database, about 3 GB unpacked, is downloaded into VULN_IMAGES_DIR (on disk,
 # never a tmpfs /tmp) and kept for the next scan.
-VULN_IMAGES = $(RELEASE_IMAGES) $(patsubst images/%/Dockerfile,%,$(wildcard images/activity-*/Dockerfile))
+VULN_ACTIVITIES = $(shell MAKEFLAGS= $(MAKE) -s --no-print-directory -C images print-activities)
+VULN_IMAGES = $(RELEASE_IMAGES) $(addprefix activity-,$(VULN_ACTIVITIES))
 VULN_IMAGES_DIR ?= $(CURDIR)/.data/vuln-images
 .PHONY: vuln-images
 vuln-images: ## Build the release images for linux/amd64 (or take LAYOUTS=<dir>) and scan each with the pinned Grype, failing on a fixed high or critical vulnerability (needs the network; in no lint or proof gate)
@@ -238,7 +240,7 @@ vuln-images: ## Build the release images for linux/amd64 (or take LAYOUTS=<dir>)
 	fi; \
 	grype="$$(grep -v '^#' deploy/grype-image.txt | head -1)"; \
 	mkdir -p '$(VULN_IMAGES_DIR)/db' '$(VULN_IMAGES_DIR)/tmp'; failed=; \
-	[ -n '$(strip $(VULN_IMAGES))' ] || { echo "make vuln-images: no image to scan" >&2; exit 1; }; \
+	[ -n '$(strip $(VULN_ACTIVITIES))' ] || { echo "make vuln-images: images/Makefile names no activity to scan" >&2; exit 1; }; \
 	for t in $(VULN_IMAGES); do \
 	  echo "grype: $$t"; \
 	  docker run --rm --user "$$(id -u):$$(id -g)" --cap-drop=ALL --security-opt no-new-privileges --read-only \

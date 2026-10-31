@@ -1057,7 +1057,9 @@ Every code change follows this order:
 3. Dependencies are pinned: an exact module version, or an image digest,
    never a floating tag at runtime; a toolchain version is an exact line in
    `go.mod` or the workflow; a tool the build runs (staticcheck,
-   govulncheck) is a `tool` directive there, pinned like a module. Update by
+   govulncheck) is a `tool` directive there, pinned like a module; a
+   third-party action is pinned by its full commit SHA, with its release as a
+   comment on the same line (`@<sha> # vX.Y.Z`). Update by
    pull request that proves the change —
    `.github/dependabot.yml` opens them, and an update never merges on a green
    unit run alone. A new dependency follows the same rule as any other change.

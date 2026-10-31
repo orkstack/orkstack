@@ -2308,9 +2308,11 @@ func allUses(file, src string) ([]actionUse, error) {
 // actionPinProblems holds every use of an action outside this repository to
 // the pin rule: the full 40-hex commit SHA its release tag points at, with
 // that release (`# vMAJOR.MINOR.PATCH`) as the comment on the same line, and
-// one action at one commit and one release in every file. A tag is a moving
-// name: whoever can move it runs code in the job, and release.yml's publish
-// job holds the signing key.
+// one repository at one commit and one release in every file. A tag is a
+// moving name: whoever can move it runs code in the job, and release.yml's
+// publish job holds the signing key. The repository is the owner/repo part,
+// lower-cased as GitHub resolves it, so an action in a subdirectory
+// (actions/cache/restore) or a spelling in another case is the same pin.
 func actionPinProblems(uses []actionUse) []string {
 	var p []string
 	first := map[string]actionUse{}
@@ -2324,17 +2326,25 @@ func actionPinProblems(uses []actionUse) []string {
 			p = append(p, fmt.Sprintf("%s pins %s with the comment %q, not the release it is (# vMAJOR.MINOR.PATCH)", u.where, u.ref, u.comment))
 			continue
 		}
-		f, ok := first[m[1]]
+		parts := strings.SplitN(m[1], "/", 3)
+		repo := strings.ToLower(parts[0] + "/" + parts[1])
+		f, ok := first[repo]
 		if !ok {
-			first[m[1]] = u
+			first[repo] = u
 			continue
 		}
-		if f.ref != u.ref || f.comment != u.comment {
+		if commitOf(f.ref) != commitOf(u.ref) || f.comment != u.comment {
 			p = append(p, fmt.Sprintf("%s pins %s %s, and %s pins %s %s: one action is one release everywhere",
 				u.where, u.ref, u.comment, f.where, f.ref, f.comment))
 		}
 	}
 	return p
+}
+
+// commitOf is the commit a pinned `uses:` names.
+func commitOf(ref string) string {
+	_, sha, _ := strings.Cut(ref, "@")
+	return sha
 }
 
 // pinFiles are the files whose `uses:` the action pin rule reads, by their
@@ -2506,13 +2516,13 @@ func TestDependabot_ReadsEveryActionPin(t *testing.T) {
 // moving ref fails the rule, on the last actions/download-artifact of
 // release.yml (the publish job's, which runs beside the signing key) and on
 // site.yml's checkout, and so does one use of an action moved apart from its
-// others.
+// others, under its own path, a subdirectory of it or another case. The same
+// commit and release under a subdirectory or another case is the same pin.
 func TestWorkflows_TheActionPinRuleRefusesEachWeakening(t *testing.T) {
 	type textMutation struct {
 		name string
 		edit func(ref, comment string) string // the new `<ref> <comment>`
 	}
-	sha := func(ref string) string { _, s, _ := strings.Cut(ref, "@"); return s }
 	action := func(ref string) string { a, _, _ := strings.Cut(ref, "@"); return a }
 	release := func(comment string) string { return strings.TrimSpace(strings.TrimPrefix(comment, "#")) }
 	cases := []textMutation{
@@ -2521,7 +2531,7 @@ func TestWorkflows_TheActionPinRuleRefusesEachWeakening(t *testing.T) {
 		{"a major tag", func(ref, c string) string { return action(ref) + "@" + strings.Split(release(c), ".")[0] + " " + c }},
 		{"a branch", func(ref, c string) string { return action(ref) + "@main " + c }},
 		{"a short SHA", func(ref, c string) string { return ref[:len(ref)-28] + " " + c }},
-		{"an upper-case SHA", func(ref, c string) string { return action(ref) + "@" + strings.ToUpper(sha(ref)) + " " + c }},
+		{"an upper-case SHA", func(ref, c string) string { return action(ref) + "@" + strings.ToUpper(commitOf(ref)) + " " + c }},
 		{"no comment", func(ref, c string) string { return ref }},
 		{"a comment that is a major", func(ref, c string) string { return ref + " # " + strings.Split(release(c), ".")[0] }},
 		{"a comment that is not a release", func(ref, c string) string { return ref + " # latest" }},
@@ -2529,6 +2539,16 @@ func TestWorkflows_TheActionPinRuleRefusesEachWeakening(t *testing.T) {
 			return action(ref) + "@" + strings.Repeat("0", 40) + " " + c
 		}},
 		{"the same commit under another release", func(ref, c string) string { return ref + " # v0.0.1" }},
+		{"a subdirectory of the action at another commit", func(ref, c string) string {
+			return action(ref) + "/sub@" + strings.Repeat("0", 40) + " " + c
+		}},
+		{"the action in another case at another commit", func(ref, c string) string {
+			return strings.ToUpper(action(ref)) + "@" + strings.Repeat("0", 40) + " " + c
+		}},
+	}
+	samePin := []textMutation{
+		{"a subdirectory of the action", func(ref, c string) string { return action(ref) + "/sub@" + commitOf(ref) + " " + c }},
+		{"the action in another case", func(ref, c string) string { return strings.ToUpper(action(ref)) + "@" + commitOf(ref) + " " + c }},
 	}
 	for _, target := range []struct{ file, action string }{
 		{"release.yml", "actions/download-artifact"},
@@ -2580,6 +2600,11 @@ func TestWorkflows_TheActionPinRuleRefusesEachWeakening(t *testing.T) {
 			}
 			if p := rule(mutated); len(p) == 0 {
 				t.Errorf("%s: the rule accepts the weakening %q", target.file, c.name)
+			}
+		}
+		for _, c := range samePin {
+			if p := rule(src[:at] + c.edit(pin.ref, pin.comment) + src[at+len(old):]); len(p) > 0 {
+				t.Errorf("%s: the rule refuses %s at the same commit and release:\n  %s", target.file, c.name, strings.Join(p, "\n  "))
 			}
 		}
 	}
