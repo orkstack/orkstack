@@ -671,6 +671,16 @@ func (a *Activities) Boot(ctx context.Context) error {
 		a.dispatcher.logger().Info("capacity declared",
 			"capacity", limit.String(), "per_task_cap", a.capacity.ceiling.String(),
 			"reserved_by_orphans", reserved.String(), "orphans_pending_removal", a.capacity.pendingRemovals())
+	} else {
+		// Said out loud rather than left to be inferred from an absent line:
+		// max_concurrent counts tasks, not their size, so nothing holds the
+		// requests of the tasks this Orker runs at once to what its host has
+		// (docs/DEPLOY.md, "Declaring an Orker's capacity").
+		// The policy's own Validate, above, parsed these caps, so this
+		// cannot fail.
+		ceiling, _ := a.dispatcher.Policy.ceiling()
+		a.dispatcher.logger().Info("capacity not declared: admission is best effort, bounded only by max_concurrent",
+			"max_concurrent", a.maxConc, "per_task_cap", ceiling.String())
 	}
 	// And its own previous life's pin directories, beside the containers, for
 	// the same reason and with a stronger guarantee: a pin cannot outlive the

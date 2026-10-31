@@ -11,6 +11,12 @@ word for word.
 
 ## [Unreleased]
 
+### Added
+
+- An Orker that declares no capacity says at boot that its admission is best
+  effort, bounded only by `max_concurrent`
+  (`capacity not declared: admission is best effort, bounded only by max_concurrent`).
+
 ## [0.1.0] - 2026-10-30
 
 First release.

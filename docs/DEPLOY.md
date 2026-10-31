@@ -606,9 +606,19 @@ polled first.
 
 `orker.capacity.cpu` and `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`,
 `ORK_ORKER_CAPACITY_MEMORY`) declare what one Orker admits tasks within, in the
-Kubernetes spelling: `"16"` and `"64Gi"`. Unset, the default, the Orker admits
-by `max_concurrent` alone, exactly as before. Either may be set alone; the
-other dimension is then not bounded.
+Kubernetes spelling: `"16"` and `"64Gi"`. Either may be set alone; the other
+dimension is then not bounded.
+
+**Unset, the default, admission is best effort.** The Orker admits by
+`max_concurrent` alone, a count of tasks: nothing holds the sum of their
+requests to what the host has, and the Orker never measures the host to find
+out, because it cannot know what else shares it. A host that runs out of
+memory may kill a container, or the runtime or the Orker itself; a task whose
+container is killed fails as any killed workload does, retried under its own
+policy. Size `max_concurrent` by the caps (above), or
+declare a capacity. Such an Orker says so at boot:
+`capacity not declared: admission is best effort, bounded only by max_concurrent`,
+with its `max_concurrent` and per-task cap.
 
 An Orker that declares a capacity admits no task that would take its
 reservations above it. A Temporal worker reserves a slot before it polls and

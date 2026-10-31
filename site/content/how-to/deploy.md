@@ -101,7 +101,7 @@ Never give an Orker pod the node's container runtime or its Docker socket. [Run 
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | the temp directory | orker. Must be a path the Docker daemon can bind-mount, with no comma or control character in it |
 | `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | orker. Tasks at once on one Orker; size it to the host. To rule out over-commit, keep it at or below the host's cpus ÷ `max_cpu` and its memory ÷ `max_memory` |
 | `orker.resources.max_cpu`, `max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | orker. A task that asks for more is refused |
-| `orker.capacity.cpu`, `memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | empty | orker. What the Orker admits tasks within; each poll then waits for a per-task cap's worth to be free. Empty admits by `max_concurrent` alone |
+| `orker.capacity.cpu`, `memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | empty | orker. What the Orker admits tasks within; each poll then waits for a per-task cap's worth to be free. Empty admits by `max_concurrent` alone, best effort, and the Orker says so at boot |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | orker. Above zero makes the Orker a pin host |
 | `deployment.build_id` | `ORK_BUILD_ID` | empty | both. Empty means versioning is off |
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | empty | both. Empty opens no listener |
