@@ -51,7 +51,7 @@ func TestMerge_ATimedOutAttemptIsAResult(t *testing.T) {
 	}
 }
 
-func TestMerge_ACancelledAttemptBeforeAnyTestStartedIsNotRerunEligible(t *testing.T) {
+func TestMerge_ACancelledAttemptWhoseLogNamesNoRunningTestIsNotRerunEligible(t *testing.T) {
 	r, code, _ := rerunShard2(t, &githubJob{Conclusion: "cancelled", Log: "2026-10-21T10:00:00Z Pulling images\n"})
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)

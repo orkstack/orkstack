@@ -652,7 +652,8 @@ prerequisite absent), says no gate failed and cancels nothing: that one job
 may run again (§7.1), and its shards keep their results. The `proof` job
 still runs, on `always()`, and fails on the failing gate; each shard the
 cancel stopped is a part with no result that no rule lets run again (cancelled
-before any test, or a test running when it stopped), never a lost or a
+with no running test named in its job log, or a test running when it
+stopped), never a lost or a
 degraded runner, and the run concludes `cancelled`, which `proof-rerun.yml`
 does not answer. Both callers grant `actions: write`, because a called
 workflow's job never gets more than its caller grants; the nightly tier has
