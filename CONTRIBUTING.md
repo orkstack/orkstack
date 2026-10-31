@@ -52,6 +52,16 @@ and a live-event socket opened through it. When it prints "OrkStack is up":
 | Temporal UI | http://localhost:8233 |
 | SeaweedFS filer | http://localhost:8888 (S3 API on http://localhost:9000) |
 
+Every port the infrastructure publishes (`deploy/docker-compose.yml`, the
+observability profile's included) is bound to `127.0.0.1`: Temporal's
+frontend, the object store with its development key, the unauthenticated
+registry and Grafana's anonymous admin are reachable from this machine and
+from no other. Nothing in the stack, the suites or the proofs needs more: an
+activity container reaches only a test's own server on the host, by
+`host.docker.internal` ("Linux hosts" below), and the observability
+profile's services reach each other on the compose network.
+`TestDevCompose_PublishesOnlyOnLoopback` holds the rule.
+
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl apply examples/each-fan-out.ork.yaml` and the
 rest of [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) work as written,

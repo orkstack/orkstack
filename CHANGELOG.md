@@ -11,6 +11,18 @@ word for word.
 
 ## [Unreleased]
 
+### Security
+
+- The development stack (`deploy/docker-compose.yml`, `make infra-up`)
+  publishes every port on `127.0.0.1` only. Temporal's frontend, the object
+  store with its development key, the unauthenticated registry and, in the
+  observability profile, Grafana with anonymous admin were reachable from
+  any host that could reach the contributor's machine. Reach it from another
+  machine through an SSH tunnel. The next `make infra-up` on a running stack
+  recreates its containers to apply this: the object store and the registry
+  keep their volumes, and Temporal's development server, which keeps its
+  history in memory, starts empty.
+
 ## [0.1.0] - 2026-10-30
 
 First release.

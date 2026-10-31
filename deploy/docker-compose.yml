@@ -57,8 +57,8 @@ services:
       - --dynamic-config-value
       - 'matching.wv.VersionDrainageStatusRefreshInterval="3s"'
     ports:
-      - "7233:7233"   # gRPC frontend
-      - "8233:8233"   # Temporal Web UI
+      - "127.0.0.1:7233:7233"   # gRPC frontend
+      - "127.0.0.1:8233:8233"   # Temporal Web UI
     healthcheck:
       test: ["CMD", "temporal", "operator", "cluster", "health", "--address", "127.0.0.1:7233"]
       interval: 5s
@@ -78,9 +78,9 @@ services:
     image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
     command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts"]
     ports:
-      - "9000:8333"   # S3 API, on the documented port
-      - "9333:9333"   # master
-      - "8888:8888"   # filer
+      - "127.0.0.1:9000:8333"   # S3 API, on the documented port
+      - "127.0.0.1:9333:9333"   # master
+      - "127.0.0.1:8888:8888"   # filer
     volumes:
       - seaweedfs-data:/data
     healthcheck:
@@ -108,7 +108,7 @@ services:
   registry:
     image: registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
     ports:
-      - "5001:5000"
+      - "127.0.0.1:5001:5000"
     volumes:
       - registry-data:/var/lib/registry
     healthcheck:
@@ -133,7 +133,7 @@ services:
     volumes:
       - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
     ports:
-      - "4318:4318"   # OTLP/http — point OTEL_EXPORTER_OTLP_ENDPOINT here
+      - "127.0.0.1:4318:4318"   # OTLP/http — point OTEL_EXPORTER_OTLP_ENDPOINT here
     depends_on:
       - loki
       - tempo
@@ -147,7 +147,7 @@ services:
       - ./observability/loki.yaml:/etc/loki/loki.yaml:ro
       - loki-data:/loki
     ports:
-      - "3100:3100"   # native OTLP too: http://localhost:3100/otlp
+      - "127.0.0.1:3100:3100"   # native OTLP too: http://localhost:3100/otlp
 
   tempo:
     image: grafana/tempo:3.0.3
@@ -157,8 +157,8 @@ services:
       - ./observability/tempo.yaml:/etc/tempo.yaml:ro
       - tempo-data:/var/tempo
     ports:
-      - "3200:3200"   # Tempo API (Grafana reads this)
-      - "4317:4317"   # OTLP/gRPC, direct or via the collector
+      - "127.0.0.1:3200:3200"   # Tempo API (Grafana reads this)
+      - "127.0.0.1:4317:4317"   # OTLP/gRPC, direct or via the collector
 
   prometheus:
     image: prom/prometheus:v3.14.0
@@ -170,7 +170,7 @@ services:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     extra_hosts:
       # so the container can reach ork's and orker's ORK_ADMIN_ADDR on the
       # host; docker-desktop resolves this on macOS/Windows without the entry,
@@ -189,7 +189,7 @@ services:
       - ./observability/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
       - grafana-data:/var/lib/grafana
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - loki
       - tempo
