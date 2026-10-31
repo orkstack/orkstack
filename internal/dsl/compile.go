@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"regexp"
 	"sort"
 	"strings"
@@ -314,7 +315,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	decoder := yaml.NewDecoder(bytes.NewReader(source))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
-		return nil, fmt.Errorf("parse yaml: %w", err)
+		return nil, strictDecodeError(source, reflect.TypeOf(doc), KindOrkflow, err)
 	}
 
 	wf := &orkstackv1.Orkflow{

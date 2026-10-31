@@ -1,11 +1,19 @@
 package dsl
 
 import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"gopkg.in/yaml.v3"
 )
 
 // FuzzCheckSecretSource: the hand-written matcher behind a namespace's
@@ -198,6 +206,98 @@ func FuzzParseCatalog(f *testing.F) {
 			}
 			if got, err := catalog.ResolveUses("t", name); err != nil || got != reference {
 				t.Fatalf("a catalog name %q resolves to %q, %v; the table says %q", name, got, err, reference)
+			}
+		}
+	})
+}
+
+// FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused: for any document
+// the strict decode refuses, strictDecodeError never panics, and either
+// returns the decoder's own refusal unchanged or names, in its one sentence,
+// a key the decoder refused at the same line, at that key's field path, with
+// the keys its position takes, sorted and distinct.
+func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
+	const orkflow = "apiVersion: orkstack/v1\nkind: Orkflow\nname: typo\n"
+	const iface = "apiVersion: orkstack/v1\nkind: ActivityInterface\n"
+	for _, seed := range []struct {
+		source string
+		iface  bool
+	}{
+		{orkflow + "tasks:\n  - id: a\n    uses: shell\n    need: [a]\n", false},
+		{orkflow + "tsks:\n  - id: a\n", false},
+		{orkflow + "pins:\n  build:\n    timeout_second: 60\n", false},
+		{orkflow + "tasks:\n  - id: a\n    retry:\n      max_attempts: 3\n", false},
+		{orkflow + "tasks:\n  - id: a\n    secrets:\n      - name: db\n        sorce: env:DB\n", false},
+		{orkflow + "tasks:\n  - &k id: a\n  - *k : b\n    timeout_seconds: abc\n", false},
+		{orkflow + "tasks:\n  - id: a\n    with: &w {id: b, bogus: 1}\n  - <<: *w\n", false},
+		{orkflow + "pins:\n  p: &p {timeout_seconds: 1}\n  q:\n    <<: *p\n    x: 1\n", false},
+		{orkflow + "tasks:\n  - ? [a]\n    : b\n", false},
+		{orkflow + "tasks:\n  - id: a\n    ~: x\n    timeout_seconds: abc\n", false},
+		{iface + "field:\n  a:\n    type: string\n", true},
+		{iface + "fields:\n  a:\n    type: string\n    pattern: x\n", true},
+		{iface + "ops:\n  get:\n    feilds:\n      a:\n        type: string\n", true},
+	} {
+		f.Add([]byte(seed.source), seed.iface)
+	}
+	declared := regexp.MustCompile(`^line (\d+): field (.*) not found in type \S+$`)
+	f.Fuzz(func(t *testing.T, source []byte, isInterface bool) {
+		typ, kind := reflect.TypeOf(document{}), KindOrkflow
+		if isInterface {
+			typ, kind = reflect.TypeOf(interfaceDocument{}), "activity interface"
+		}
+		decoder := yaml.NewDecoder(bytes.NewReader(source))
+		decoder.KnownFields(true)
+		err := decoder.Decode(reflect.New(typ).Interface())
+		if err == nil || errors.Is(err, io.EOF) {
+			return
+		}
+		refusal := strictDecodeError(source, typ, kind, err)
+		var validation *ValidationError
+		if !errors.As(refusal, &validation) {
+			if refusal.Error() != "parse yaml: "+err.Error() {
+				t.Fatalf("refusal %q is neither a named key nor the decoder's %q", refusal, err)
+			}
+			return
+		}
+		var typeErr *yaml.TypeError
+		if !errors.As(err, &typeErr) {
+			t.Fatalf("a key was named for a refusal that is not the decoder's type error: %v", err)
+		}
+		message := validation.Error()
+		var rest string
+		for _, entry := range typeErr.Errors {
+			m := declared.FindStringSubmatch(entry)
+			if m == nil {
+				continue
+			}
+			key := m[2]
+			parent, ok := "", validation.Field == key
+			if !ok {
+				parent, ok = strings.CutSuffix(validation.Field, "."+key)
+			}
+			if !ok {
+				continue
+			}
+			where := "at the top level"
+			if parent != "" {
+				where = "in " + parent
+			}
+			prefix := fmt.Sprintf("line %s: unknown key %q %s of the %s; allowed: ", m[1], key, where, kind)
+			if after, found := strings.CutPrefix(message, prefix); found {
+				rest = after
+				break
+			}
+		}
+		if rest == "" {
+			t.Fatalf("%q at field %q names no key the decoder refused (%q)", message, validation.Field, typeErr.Errors)
+		}
+		allowed := strings.Split(rest, ", ")
+		if !sort.StringsAreSorted(allowed) {
+			t.Fatalf("the allowed keys %q are not sorted", allowed)
+		}
+		for i := 1; i < len(allowed); i++ {
+			if allowed[i] == allowed[i-1] || allowed[i] == "" {
+				t.Fatalf("the allowed keys %q repeat or hold an empty key", allowed)
 			}
 		}
 	})

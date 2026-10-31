@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 
 	"google.golang.org/protobuf/encoding/protojson"
@@ -117,7 +118,7 @@ func ParseInterfaceDocument(source []byte) (*orkstackv1.ActivityInterface, error
 	strict := yaml.NewDecoder(bytes.NewReader(source))
 	strict.KnownFields(true)
 	if err := strict.Decode(&doc); err != nil {
-		return nil, fmt.Errorf("parse yaml: %w", err)
+		return nil, strictDecodeError(source, reflect.TypeOf(doc), "activity interface", err)
 	}
 
 	iface := &orkstackv1.ActivityInterface{DefaultOp: doc.DefaultOp}

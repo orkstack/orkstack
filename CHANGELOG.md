@@ -11,6 +11,14 @@ word for word.
 
 ## [Unreleased]
 
+### Changed
+
+- An unknown key in an Orkflow or an activity interface is refused in the
+  document's own words: the key, where it stands, the document's kind and the
+  keys that position takes, at the key's field path
+  (`line 10: unknown key "need" in tasks[1] of the Orkflow; allowed: …`).
+  It used to repeat the YAML decoder's sentence, which named an internal type.
+
 ## [0.1.0] - 2026-10-30
 
 First release.
