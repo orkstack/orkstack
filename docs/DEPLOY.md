@@ -3471,10 +3471,13 @@ applied before DSL rule 47 may carry: the task is scheduled with the maximum
 raised to the initial interval and the coefficient raised to 1, with no gate,
 because no recorded history holds the refused command
 (`TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled`). A stored
-coefficient that is not a number reads as the default 2.0, as zero and a
-negative one always have; it is not gated either,
-because the replayer compares no retry policy (below), so it changes only the
-spacing of a task scheduled after the upgrade, never a recorded command. A build that
+coefficient that is not a number is different: the cluster accepts it (the
+same test sends one), so a run may already have scheduled it. It reads as the
+default 2.0 only on the gate's new path, in a run whose plan carries the
+number, and the run asks the gate where it first schedules such a task if it
+has not already; a run submitted before v0.1.1, and a history recorded before
+the gate, keep sending the NaN as every earlier build did, so its spacing never
+changes partway through a run. A build that
 predates the field ignores the plan's
 number, so a rollback to one waits 100 seconds again. The fixtures
 `run-retry-max-interval-v1.json` and `run-retry-max-interval-legacy-v1.json`

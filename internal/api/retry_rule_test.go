@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"strings"
 	"testing"
 
@@ -32,6 +33,12 @@ var refusedRetries = []struct {
 	{"a negative maximum", "{maximum_attempts: 3, maximum_interval_seconds: -1}",
 		"tasks[0].retry.maximum_interval_seconds", "maximum_interval_seconds -1 is negative",
 		&orkstackv1.RetryPolicy{MaximumAttempts: 3, MaximumIntervalSeconds: -1}},
+	{"a negative initial interval", "{maximum_attempts: 3, initial_interval_seconds: -5}",
+		"tasks[0].retry.initial_interval_seconds", "initial_interval_seconds -5 is negative",
+		&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: -5}},
+	{"a coefficient that is not a number", "{maximum_attempts: 3, backoff_coefficient: .nan}",
+		"tasks[0].retry.backoff_coefficient", "backoff_coefficient NaN is not a finite number",
+		&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN()}},
 }
 
 func retriedDoc(retry string) string {

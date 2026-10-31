@@ -513,8 +513,8 @@ var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
 // validateRetry is rule 47, on the compiled message so a hand-built request
 // meets it too. 0 is how an absent field arrives, and it means the default,
-// so only a value that is set is compared. An interval is a whole number of
-// seconds and never negative, a set maximum is never below the initial
+// so only a value that is set is compared. An interval, an integer field, is
+// never negative, a set maximum is never below the initial
 // interval, and a set coefficient is a finite number of at least 1: the
 // cluster refuses a maximum below the initial interval and a coefficient
 // between 0 and 1, and the rest have no meaning as a wait (the engine has
@@ -531,13 +531,13 @@ func validateRetry(taskIndex int, task *orkstackv1.Task) error {
 	if initial < 0 {
 		return validationError(at("initial_interval_seconds"), fmt.Errorf(
 			"task %q: retry.initial_interval_seconds %d is negative — it is the wait before the second attempt, "+
-				"in whole seconds; omit it for the default of 1",
+				"in seconds; omit it for the default of 1",
 			task.GetId(), initial))
 	}
 	if maximum < 0 {
 		return validationError(at("maximum_interval_seconds"), fmt.Errorf(
 			"task %q: retry.maximum_interval_seconds %d is negative — it is the longest wait between attempts, "+
-				"in whole seconds; omit it for the default, which is never shorter than the first",
+				"in seconds; omit it for the default, which is never shorter than the first",
 			task.GetId(), maximum))
 	}
 	if maximum > 0 && maximum < initial {

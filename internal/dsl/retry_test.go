@@ -35,9 +35,9 @@ func TestCompile_RetryRules(t *testing.T) {
 		`each wait to give the next, so it must be a number of at least 1; write 1 for a constant wait, or omit it ` +
 		`(2: each wait doubles)`
 	const initialNegative = `task "fetch": retry.initial_interval_seconds %d is negative — it is the wait before ` +
-		`the second attempt, in whole seconds; omit it for the default of 1`
+		`the second attempt, in seconds; omit it for the default of 1`
 	const maxNegative = `task "fetch": retry.maximum_interval_seconds %d is negative — it is the longest wait ` +
-		`between attempts, in whole seconds; omit it for the default, which is never shorter than the first`
+		`between attempts, in seconds; omit it for the default, which is never shorter than the first`
 	for _, tc := range []struct {
 		name, retry, field, message string
 	}{
@@ -109,15 +109,15 @@ func TestCompile_RetryRules(t *testing.T) {
 			}
 		})
 	}
-	// An interval is a whole number of seconds, so a non-finite one never
-	// reaches the rule: the document does not decode.
+	// An interval is an integer field, so a non-finite one never reaches the
+	// rule: the document does not decode.
 	for _, notFinite := range []string{
 		"{maximum_attempts: 3, initial_interval_seconds: .inf}",
 		"{maximum_attempts: 3, maximum_interval_seconds: -.inf}",
 		"{maximum_attempts: 3, maximum_interval_seconds: .nan}",
 	} {
 		if _, err := dsl.Compile(retryDoc(notFinite)); err == nil || !strings.Contains(err.Error(), "into int32") {
-			t.Errorf("Compile(retry: %s) = %v, want the document refused as not a whole number", notFinite, err)
+			t.Errorf("Compile(retry: %s) = %v, want the document refused as not an integer", notFinite, err)
 		}
 	}
 	for _, ok := range []string{

@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"math"
 	"sync/atomic"
 	"time"
 
@@ -20,10 +21,11 @@ import (
 
 // RetryMaxIntervalChange is the workflow.GetVersion change id of the maximum
 // retry interval a run's plan carries. Asked lazily, where the run first
-// schedules a task whose retry: sets no maximum interval (retryPolicyFor),
-// and only by a run whose plan carries a number: a history recorded before
-// the gate, or by a build that ignored the plan field, replays its
-// DefaultVersion branch, which waits legacyRetryMaxInterval.
+// schedules a task whose retry: sets no maximum interval or whose backoff
+// coefficient is a NaN (retryPolicyFor), and only by a run whose plan carries
+// a number: a history recorded before the gate, or by a build that ignored
+// the plan field, replays its DefaultVersion branch, which waits
+// legacyRetryMaxInterval and schedules a NaN coefficient as it is.
 const RetryMaxIntervalChange = "retry-max-interval"
 
 // legacyRetryMaxInterval is what every build before the gate hardcoded, and
@@ -57,13 +59,15 @@ func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task) *tem
 	if policy.InitialInterval <= 0 {
 		policy.InitialInterval = time.Second
 	}
+	if policy.BackoffCoefficient <= 0 {
+		policy.BackoffCoefficient = 2.0
+	}
 	// A NaN, which a version applied before docs/DSL.md rule 47 may carry,
-	// reads as the default with zero and a negative coefficient: no
-	// comparison with 1 below could raise it, and a NaN multiplies no wait
-	// into another. The replayer compares no retry policy
-	// (TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy), so this
-	// changes no command a recorded history replays.
-	if !(policy.BackoffCoefficient > 0) {
+	// multiplies no wait into another, and no comparison with 1 below could
+	// raise it. The cluster accepts it, so a run may already have scheduled
+	// it: it reads as the default only where the run decided the
+	// retry-max-interval path, never partway through a run that did not.
+	if math.IsNaN(policy.BackoffCoefficient) && s.retryMaxIntervalPath(ctx) {
 		policy.BackoffCoefficient = 2.0
 	}
 	// Such a version may also carry a coefficient below 1 or a maximum below
@@ -81,6 +85,17 @@ func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task) *tem
 	return policy
 }
 
+// retryMaxIntervalPath says whether the run takes the retry-max-interval
+// path: its plan carries a number (every plan submitted from v0.1.1 on) and
+// the gate says so. A plan without the number asks nothing, so a run
+// submitted before the field never meets the gate, whatever release carries
+// it on; a history recorded before the gate, or by a build that ignored the
+// field, replays its DefaultVersion branch.
+func (s *runState) retryMaxIntervalPath(ctx workflow.Context) bool {
+	return s.plan.RetryMaxIntervalSeconds > 0 && !retryMaxIntervalGateDisabledForTest.Load() &&
+		s.version(ctx, RetryMaxIntervalChange, 1) >= 1
+}
+
 // unsetRetryMaxInterval is the maximum interval of a retry: that sets none:
 // the plan's number once the gate says so, and the legacy 100 seconds for a
 // run whose plan carries no number or whose history predates the gate —
@@ -91,10 +106,8 @@ func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task) *tem
 // initial interval in the DefaultVersion branch too changes no command a
 // history recorded: it only schedules what every earlier build left stuck.
 func (s *runState) unsetRetryMaxInterval(ctx workflow.Context, initial time.Duration) time.Duration {
-	seconds := s.plan.RetryMaxIntervalSeconds
-	if seconds <= 0 || retryMaxIntervalGateDisabledForTest.Load() ||
-		s.version(ctx, RetryMaxIntervalChange, 1) < 1 {
+	if !s.retryMaxIntervalPath(ctx) {
 		return max(legacyRetryMaxInterval, initial)
 	}
-	return max(time.Duration(seconds)*time.Second, initial)
+	return max(time.Duration(s.plan.RetryMaxIntervalSeconds)*time.Second, initial)
 }

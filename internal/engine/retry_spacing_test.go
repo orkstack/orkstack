@@ -3,12 +3,14 @@ package engine_test
 import (
 	"fmt"
 	"math"
+	"slices"
 	"testing"
 	"time"
 
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -221,39 +223,59 @@ func storedBeforeRule47(t *testing.T, retry *orkstackv1.RetryPolicy) *orkstackv1
 // and the cluster refuses it by failing the workflow task forever. Such a
 // task is scheduled with the nearest policy the cluster accepts: the maximum
 // raised to the initial interval, the coefficient raised to 1. No gate is
-// asked: no recorded history can hold the refused command.
+// asked for either: no recorded history can hold the refused command. A NaN
+// coefficient, which the cluster accepts, reads as the default only on the
+// retry-max-interval gate's new path, in a run whose plan carries the number:
+// a run submitted without it, and a history recorded with the gate off, keep
+// scheduling the NaN as every earlier build did.
 func TestRunWorkflow_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		retry       *orkstackv1.RetryPolicy
+		planned     int32
+		gateOff     bool
 		maximum     time.Duration
 		coefficient float64
+		asked       []workflow.Version
 	}{
 		{"a maximum below the initial interval",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 30 * time.Second, 2.0},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 60, false, 30 * time.Second, 2.0, nil},
 		{"a coefficient below 1",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5, MaximumIntervalSeconds: 20}, 20 * time.Second, 1},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5, MaximumIntervalSeconds: 20}, 60, false, 20 * time.Second, 1, nil},
 		{"a coefficient that is not a number",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 20 * time.Second, 2},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 60, false, 20 * time.Second, 2,
+			[]workflow.Version{1}},
+		{"a coefficient that is not a number, in a plan without the number",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 0, false, 20 * time.Second, math.NaN(), nil},
+		{"a coefficient that is not a number, with the gate off",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 60, true, 20 * time.Second, math.NaN(), nil},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.gateOff {
+				defer engine.DisableRetryMaxIntervalGateForTest()()
+			}
 			capture := &dispatchCapture{}
 			h := newHarnessCtx(t, &testsuite.WorkflowTestSuite{}, itemBehavior)
 			h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "run-stored-before-rule-47",
-				storedBeforeRule47(t, tc.retry), spreadInput(t, 2), retryPlan(60), (*orkstackv1.RunContinuation)(nil))
+				storedBeforeRule47(t, tc.retry), spreadInput(t, 2), retryPlan(tc.planned), (*orkstackv1.RunContinuation)(nil))
 			if err := h.env.GetWorkflowError(); err != nil {
 				t.Fatalf("workflow error: %v", err)
 			}
 			requireIntervals(t, maximumIntervals(capture), 3, tc.maximum)
 			for _, options := range capture.of(task.ActivityExecuteTask) {
-				if policy := options.RetryPolicy; policy.MaximumAttempts > 1 && policy.BackoffCoefficient != tc.coefficient {
+				if policy := options.RetryPolicy; policy.MaximumAttempts > 1 && !sameCoefficient(policy.BackoffCoefficient, tc.coefficient) {
 					t.Fatalf("scheduled with backoff coefficient %g, want %g", policy.BackoffCoefficient, tc.coefficient)
 				}
 			}
-			if asked := capture.versionsAsked(engine.RetryMaxIntervalChange); len(asked) != 0 {
-				t.Fatalf("an explicit maximum asked %s %v", engine.RetryMaxIntervalChange, asked)
+			if asked := capture.versionsAsked(engine.RetryMaxIntervalChange); !slices.Equal(asked, tc.asked) {
+				t.Fatalf("%s asked %v, want %v", engine.RetryMaxIntervalChange, asked, tc.asked)
 			}
 		})
 	}
+}
+
+// sameCoefficient is == with a NaN equal to a NaN.
+func sameCoefficient(a, b float64) bool {
+	return a == b || (math.IsNaN(a) && math.IsNaN(b))
 }

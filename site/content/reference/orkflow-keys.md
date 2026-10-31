@@ -77,7 +77,7 @@ Read an input as `{{ .inputs.<name> }}`.
 | Key | Default | Meaning |
 |---|---|---|
 | `maximum_attempts` | `1` | Attempts in total. |
-| `initial_interval_seconds` | `1` | Wait before the first retry, in whole seconds; not negative. |
+| `initial_interval_seconds` | `1` | Wait before the first retry, in seconds; not negative. |
 | `backoff_coefficient` | `2.0` | Each wait is this many times the last; a finite number, at least 1. |
 | `maximum_interval_seconds` | `60` | The longest wait; not negative, never below the first. Left unset, it rises to meet it. |
 

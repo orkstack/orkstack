@@ -554,7 +554,7 @@ creation request, whatever the plan says. It must keep replaying through the
 carries `retry_max_interval_seconds: 60`. The gated fixture is recorded by
 today's code: it carries the lazy `retry-max-interval` marker once
 (`retryPolicyFor`, `retry_spacing.go`, asked where the first task whose
-`retry:` sets no maximum is scheduled), and `fetch` was scheduled with a
+`retry:` sets no maximum, or whose coefficient is a NaN, is scheduled), and `fetch` was scheduled with a
 60 second maximum interval, the plan's number. The `legacy` fixture is
 recorded from the same plan with the gate switched off
 (`DisableRetryMaxIntervalGateForTest`), which is the command sequence of every

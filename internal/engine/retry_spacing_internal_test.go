@@ -156,10 +156,11 @@ func TestChildStartPlan_CarriesEveryRunTreeValue(t *testing.T) {
 // before docs/DSL.md rule 47, the coefficient is raised to 1 only where the
 // cluster refuses it (between 0 and 1) and an explicit maximum only where it
 // is below the initial interval. Zero and a negative coefficient read as the
-// default 2.0, as they always have, and so does a NaN, which no comparison
-// with 1 could raise. A negative initial interval reads as 1 s and a negative
-// maximum as unset, as they always have, and +Inf, which the cluster accepts,
-// is scheduled as it is.
+// default 2.0, as they always have, and so does a NaN on the new path, which
+// no comparison with 1 could raise (TestRetryPolicyFor_ANaNCoefficient...).
+// A negative initial interval reads as 1 s and a negative maximum as unset,
+// as they always have, and +Inf, which the cluster accepts, is scheduled as
+// it is.
 func TestRetryPolicyFor_RaisesOnlyWhatTheClusterRefuses(t *testing.T) {
 	s := &runState{plan: RunPlan{RetryMaxIntervalSeconds: 60}, versions: map[string]workflow.Version{RetryMaxIntervalChange: 1}}
 	for _, tc := range []struct {
@@ -183,6 +184,35 @@ func TestRetryPolicyFor_RaisesOnlyWhatTheClusterRefuses(t *testing.T) {
 			if got.BackoffCoefficient != tc.coefficient || got.InitialInterval != tc.initial || got.MaximumInterval != tc.maximum {
 				t.Errorf("coefficient %g, initial %s and maximum %s, want %g, %s and %s",
 					got.BackoffCoefficient, got.InitialInterval, got.MaximumInterval, tc.coefficient, tc.initial, tc.maximum)
+			}
+		})
+	}
+}
+
+// TestRetryPolicyFor_ANaNCoefficientReadsAsTheDefaultOnlyOnTheNewPath: the
+// cluster accepts a NaN coefficient and v0.1.0 compiled one, so a run may
+// have scheduled it. It reads as the default 2.0 only in a run whose plan
+// carries the maximum retry interval and whose retry-max-interval decision is
+// the new path; a run submitted without the number, and a history recorded
+// before the gate, keep scheduling it as every earlier build did, whatever
+// release takes the run over. A plan without the number asks nothing: the
+// nil context would panic if it did.
+func TestRetryPolicyFor_ANaNCoefficientReadsAsTheDefaultOnlyOnTheNewPath(t *testing.T) {
+	nan := &orkstackv1.Task{Retry: &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}}
+	for _, tc := range []struct {
+		name  string
+		state *runState
+		isNaN bool
+	}{
+		{"the new path", &runState{plan: RunPlan{RetryMaxIntervalSeconds: 60}, versions: map[string]workflow.Version{RetryMaxIntervalChange: 1}}, false},
+		{"a plan without the number", &runState{}, true},
+		{"a history recorded before the gate", &runState{plan: RunPlan{RetryMaxIntervalSeconds: 60},
+			versions: map[string]workflow.Version{RetryMaxIntervalChange: workflow.DefaultVersion}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.state.retryPolicyFor(nil, nan).BackoffCoefficient
+			if math.IsNaN(got) != tc.isNaN || (!tc.isNaN && got != 2) {
+				t.Errorf("a NaN coefficient was scheduled as %g, want NaN=%v (else 2)", got, tc.isNaN)
 			}
 		})
 	}

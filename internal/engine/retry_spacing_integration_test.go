@@ -71,7 +71,9 @@ func TestIntegration_ARetryWithALongInitialIntervalIsScheduled(t *testing.T) {
 // nearest policy the cluster accepts, and the run completes with no failed
 // workflow task. So does a stored value rule 47 refuses that the cluster
 // would not: a negative interval, a coefficient that is not a number, and
-// +Inf, which is scheduled as it is.
+// +Inf, which is scheduled as it is. A NaN reads as the default only in a run
+// whose plan carries the maximum retry interval; in a run submitted without
+// it the cluster is sent the NaN, and accepts it.
 func TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -81,27 +83,32 @@ func TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
 		retry       *orkstackv1.RetryPolicy
 		maximum     time.Duration
 		coefficient float64
+		unplanned   bool
 	}{
 		{"a maximum below the initial interval",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 30 * time.Second, 2},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 30 * time.Second, 2, false},
 		{"a coefficient below 1",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5, MaximumIntervalSeconds: 20}, 20 * time.Second, 1},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5, MaximumIntervalSeconds: 20}, 20 * time.Second, 1, false},
 		{"a coefficient that is not a number",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 20 * time.Second, 2},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 20 * time.Second, 2, false},
+		{"a coefficient that is not a number, in a run submitted without the number",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 20 * time.Second, math.NaN(), true},
 		{"an infinite coefficient",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.Inf(1), MaximumIntervalSeconds: 20}, 20 * time.Second, math.Inf(1)},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.Inf(1), MaximumIntervalSeconds: 20}, 20 * time.Second, math.Inf(1), false},
 		{"a negative initial interval",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: -5, MaximumIntervalSeconds: 20}, 20 * time.Second, 2},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: -5, MaximumIntervalSeconds: 20}, 20 * time.Second, 2, false},
 		{"a negative maximum",
-			&orkstackv1.RetryPolicy{MaximumAttempts: 3, MaximumIntervalSeconds: -1}, time.Minute, 2},
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, MaximumIntervalSeconds: -1}, time.Minute, 2, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wf := compile(t, slowRetryDocument)
 			wf.GetTasks()[0].Retry = tc.retry
 			plan := s.plan(1000, nil)
-			plan.RetryMaxIntervalSeconds = 60
+			if !tc.unplanned {
+				plan.RetryMaxIntervalSeconds = 60
+			}
 			_, policy := runRetryToCompletion(t, ctx, s, wf, plan)
-			if policy.GetMaximumInterval().AsDuration() != tc.maximum || policy.GetBackoffCoefficient() != tc.coefficient {
+			if policy.GetMaximumInterval().AsDuration() != tc.maximum || !sameCoefficient(policy.GetBackoffCoefficient(), tc.coefficient) {
 				t.Fatalf("the task was scheduled with maximum %s and coefficient %g, want %s and %g",
 					policy.GetMaximumInterval().AsDuration(), policy.GetBackoffCoefficient(), tc.maximum, tc.coefficient)
 			}

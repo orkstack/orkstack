@@ -1798,9 +1798,9 @@ How each node reads:
     an invalid argument — and on a hand-built request. A version applied
     before this rule keeps starting: its task is scheduled with the nearest
     policy the cluster accepts, the maximum raised to the initial interval and
-    a coefficient between 0 and 1 raised to 1, and a coefficient that is not
-    a number read as the default 2.0 (a negative coefficient reads as the
-    default too, a negative initial interval as 1 s and a negative maximum as
+    a coefficient between 0 and 1 raised to 1, and, in a run submitted from
+    v0.1.1 on, a coefficient that is not a number read as the default 2.0 (a
+    negative coefficient reads as the default too, a negative initial interval as 1 s and a negative maximum as
     unset, as they always have).
 
 Decoding is strict: a key the schema above does not define is refused, never
