@@ -355,9 +355,9 @@ func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 	}{
 		{"as GitHub recorded it", nil, []string{
 			"gate unit failed",
-			"part integration:1 left no result (attempt 1, it was cancelled before any test started); it is not rerun-eligible (only a lost, degraded or setup-failed attempt is): start a new run",
-			"part integration:2 left no result (attempt 1, it was cancelled before any test started)",
-			"part ui-e2e:1 left no result (attempt 1, it was cancelled before any test started)",
+			"part integration:1 left no result (attempt 1, it was cancelled, and its job log names no test that was running); it is not rerun-eligible (only a lost, degraded or setup-failed attempt is): start a new run",
+			"part integration:2 left no result (attempt 1, it was cancelled, and its job log names no test that was running)",
+			"part ui-e2e:1 left no result (attempt 1, it was cancelled, and its job log names no test that was running)",
 		}},
 		// What today's integration gate also prints to the job's log
 		// (proof-part.sh, PART_STREAM): the test that was running.
@@ -380,7 +380,7 @@ func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 					jobs[i].Annotations = []string{"The run was canceled by @github-actions[bot].", "The operation was canceled."}
 				}
 			}
-		}, []string{"gate unit failed", "part integration:1 left no result (attempt 1, it was cancelled before any test started)"}},
+		}, []string{"gate unit failed", "part integration:1 left no result (attempt 1, it was cancelled, and its job log names no test that was running)"}},
 		// A cancel that comes before a shard has started (its plan or
 		// build still running) leaves it no record and no artifact.
 		{"a shard the cancel stopped before it started", func(jobs []githubJob) {
