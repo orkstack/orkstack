@@ -84,6 +84,8 @@ A namespace requires one key. To mix your own images with the first-party ones, 
 cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
 ```
 
+Each release's page lists every image's digest and this command for each of them, and the command that checks `SHA256SUMS` against its signature.
+
 On a host, the `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it. On Kubernetes, each Orker pod has an engine of its own instead.
 
 ## On Kubernetes

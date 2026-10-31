@@ -91,8 +91,11 @@ Three rules follow and are enforced everywhere below:
 `TaskRun`), and `namespace.proto` reserves `Pool.plugins` the same way, so a
 stale stored document can never be re-read as a pool selection or an image.
 The DSL compiler decodes strictly: a document carrying any key the schema does
-not define is refused. `make proto` runs `buf lint` and `buf generate`, not
-`buf breaking`.
+not define is refused. `make proto` runs `buf lint` and `buf generate`;
+`make proto-breaking`, which `ci.yml` › `proto` runs on every push and pull
+request, runs `buf breaking` against the first release, v0.1.0, under
+`buf.yaml`'s `FILE` rules, so a renumbered, retyped or removed field turns
+that job red. It is not part of the merge gate (`proof`).
 
 **Additive contexts are set only when used.** Every optional context added to
 `ExecuteTaskInput` after the first release — `telemetry = 23`, `pin = 24`,
@@ -1000,11 +1003,15 @@ supply-chain policy". This is the Orker's half.
 - **What it checks:** the pure rule (`internal/task/image_policy.go`, the one
   place it is stated) against `ImageRef`, then — when a signer is named — the
   signature, verified by the Orker itself with its own registry client and the
-  key the selection carries. The verifier accepts cosign's key-based layout
-  (an OCI manifest at tag `sha256-<hex>.sig` in the same repository) when at
-  least one signature layer verifies over this exact index digest with that
-  key; it checks the digest claim, not the payload's docker-reference, as
-  cosign's own key-based verify does.
+  key the selection carries. The verifier accepts either of cosign's
+  key-based layouts when at least one signature in them verifies over this
+  exact index digest with that key: the legacy one (an OCI manifest at tag
+  `sha256-<hex>.sig` in the same repository, one simple-signing layer per
+  signature), and cosign 3's bundle (an OCI referrer of the image, found
+  through the referrers API or the `sha256-<hex>` referrers tag, whose DSSE
+  envelope signs an in-toto statement naming the digest). It checks the
+  digest claim, not the payload's docker-reference or the referrer's
+  subject, as cosign's own key-based verify does.
 - **Outcomes:** `IMAGE_NOT_PERMITTED` (a tag under `require_digest`, a
   registry outside the list), `IMAGE_NOT_SIGNED` (no signature object),
   `IMAGE_SIGNATURE_INVALID` (signatures exist, none verifies) — all
@@ -1014,7 +1021,11 @@ supply-chain policy". This is the Orker's half.
   is not a verdict, is never a pass and never "unsigned".
 - **Rolling upgrade:** a run submitted through an engine replica of a release
   without the policy carries no selection, and its tasks are not checked by
-  the Orker. The window is the rollout.
+  the Orker. The window is the rollout. An Orker of v0.1.0 reads only the
+  legacy layout: a run whose selection requires a signer, submitted through
+  a later engine, has each bundle-signed image refused by such an Orker
+  still polling, `IMAGE_NOT_SIGNED`, a `ContractViolation` that is never
+  retried ([UPGRADING.md](./UPGRADING.md), "Release artifacts").
 
 ---
 

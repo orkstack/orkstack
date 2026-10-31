@@ -15,7 +15,8 @@ package main
 // run sees what the first one did. cosign makes a stub pair that binds the
 // private key to a hash of COSIGN_PASSWORD, so a signature made with the wrong
 // password, or verified with another pair's public key, fails as the real one
-// would.
+// would; its bundle is JSON, with the tlogEntries FAKE_TLOG_ENTRIES names, or
+// FAKE_BUNDLE word for word.
 
 import (
 	"bytes"
@@ -105,14 +106,19 @@ generate-key-pair)
 	printf -- '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----\n' "$id" >"$p.pub"
 	;;
 sign-blob)
-	key="$(arg --key "$@")" out="$(arg --output-signature "$@")" file="${@: -1}"
+	key="$(arg --key "$@")" out="$(arg --bundle "$@")" file="${@: -1}"
 	read -r id pw <<<"$(sed -n 2p "$key")"
 	[ "$(hash "${COSIGN_PASSWORD:-}")" = "$pw" ] || { echo "cosign stub: decrypt: wrong password" >&2; exit 1; }
-	printf 'sig %s %s\n' "$id" "$(sha256sum <"$file" | cut -d' ' -f1)" >"$out"
+	if [ -n "${FAKE_BUNDLE:-}" ]; then
+		printf '%s\n' "$FAKE_BUNDLE" >"$out"
+		exit 0
+	fi
+	printf '{"mediaType":"application/vnd.dev.sigstore.bundle.v0.3+json","verificationMaterial":{"publicKey":{"hint":"stub"}%s},"messageSignature":{"signature":"sig %s %s"}}\n' \
+		"${FAKE_TLOG_ENTRIES:+,\"tlogEntries\":$FAKE_TLOG_ENTRIES}" "$id" "$(sha256sum <"$file" | cut -d' ' -f1)" >"$out"
 	;;
 verify-blob)
-	key="$(arg --key "$@")" sig="$(arg --signature "$@")" file="${@: -1}"
-	[ "$(cat "$sig")" = "sig $(sed -n 2p "$key") $(sha256sum <"$file" | cut -d' ' -f1)" ] || { echo "cosign stub: invalid signature" >&2; exit 1; }
+	key="$(arg --key "$@")" bundle="$(arg --bundle "$@")" file="${@: -1}"
+	[ "$(jq -r .messageSignature.signature "$bundle")" = "sig $(sed -n 2p "$key") $(sha256sum <"$file" | cut -d' ' -f1)" ] || { echo "cosign stub: invalid signature" >&2; exit 1; }
 	;;
 *) echo "cosign stub: unexpected: $*" >&2; exit 1 ;;
 esac
@@ -136,7 +142,7 @@ type signingSandbox struct {
 
 func newSigningSandbox(t *testing.T) *signingSandbox {
 	t.Helper()
-	for _, tool := range []string{"git", "sha256sum", "od"} {
+	for _, tool := range []string{"git", "sha256sum", "od", "jq"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Fatalf("%s is not installed; the script and its stubs need it", tool)
 		}
@@ -290,8 +296,9 @@ func TestReleaseSigningSetup_SetsUpTheKeyTheEnvironmentAndTheSecretsInOrder(t *t
 		"gh api user --jq",
 		"gh api repos/o/r/environments/release --jq",
 		"cosign generate-key-pair --output-key-prefix " + filepath.Join(s.keys, "cosign"),
-		"cosign sign-blob --key " + filepath.Join(s.keys, "cosign.key") + " --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes --output-signature",
-		"cosign verify-blob --key " + filepath.Join(s.keys, "cosign.pub") + " --insecure-ignore-tlog=true --signature",
+		"cosign sign-blob --key " + filepath.Join(s.keys, "cosign.key") + " --signing-config " +
+			filepath.Join(s.checkout, "deploy", "cosign-signing-config.json") + " --yes --bundle",
+		"cosign verify-blob --key " + filepath.Join(s.keys, "cosign.pub") + " --insecure-ignore-tlog=true --bundle",
 		"gh api -X PUT repos/o/r/environments/release --input -",
 		"gh api -X POST repos/o/r/environments/release/deployment-branch-policies -f name=main -f type=branch",
 		"gh secret set COSIGN_PRIVATE_KEY --env release --repo o/r",
@@ -538,5 +545,41 @@ func TestReleaseSigningSetup_RefusesAnInvalidInvocation(t *testing.T) {
 	}
 	if calls := s.calls(); len(calls) > 0 {
 		t.Errorf("an invalid invocation ran:\n  %s", strings.Join(calls, "\n  "))
+	}
+}
+
+// The pair is proved under release.yml's signing config, and its bundle is
+// held to the check release.yml and the smoke make: refused when it records a
+// transparency-log entry, or is not JSON, before anything reaches GitHub; an
+// absent or empty tlogEntries is no entry.
+func TestReleaseSigningSetup_RefusesOnlyABundleThatRecordsATransparencyLogEntry(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		env     map[string]string
+		refused string
+	}{
+		{"no tlogEntries", nil, ""},
+		{"an empty tlogEntries", map[string]string{"FAKE_TLOG_ENTRIES": "[]"}, ""},
+		{"an entry", map[string]string{"FAKE_TLOG_ENTRIES": `[{"logIndex":"7"}]`}, "recorded the proof in a transparency log"},
+		{"not JSON", map[string]string{"FAKE_BUNDLE": "sig a b"}, "is no bundle jq can read"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newSigningSandbox(t)
+			out, code := s.run(c.env, typed)
+			if c.refused == "" {
+				if code != 0 {
+					t.Fatalf("exit %d:\n%s", code, out)
+				}
+				return
+			}
+			if code != 1 || !strings.Contains(out, c.refused) {
+				t.Fatalf("exit %d, want 1 and %q:\n%s", code, c.refused, out)
+			}
+			for _, w := range signingWrites(s.calls()) {
+				if !strings.HasPrefix(w, "cosign generate-key-pair") {
+					t.Errorf("refused, but it wrote %q", w)
+				}
+			}
+		})
 	}
 }

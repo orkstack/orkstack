@@ -1,13 +1,17 @@
 package dsl
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -103,11 +107,270 @@ func TestSignatureVerifier_AcceptsWhenAnyLayerVerifies(t *testing.T) {
 func TestSignatureVerifier_MissingTagIsNotSigned(t *testing.T) {
 	f := newSigFixture(t)
 	sig := requireSignatureCode(t, f.verify(), task.ReasonImageNotSigned)
-	want := fmt.Sprintf("image %s carries no cosign signature (%s/%s:%s is not in the registry)",
-		f.image.GetPinned(), f.double.Host, sigRepo, cosigntest.SignatureTag(f.image.GetIndexDigest()))
+	want := fmt.Sprintf("image %s carries no cosign signature (%s/%s:%s is not in the registry, and no cosign bundle refers to %s)",
+		f.image.GetPinned(), f.double.Host, sigRepo, cosigntest.SignatureTag(f.image.GetIndexDigest()), f.image.GetIndexDigest())
 	if sig.Error() != want {
 		t.Fatalf("sentence =\n%s\nwant\n%s", sig.Error(), want)
 	}
+}
+
+// ---- cosign 3's bundle layout --------------------------------------------------
+
+func (f *sigFixture) bundle(t *testing.T, key *cosigntest.Key, digest string) []byte {
+	t.Helper()
+	b, err := key.Bundle(digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// TestSignatureVerifier_AcceptsABundle: what `cosign sign --key` writes by
+// default since cosign 3, on a registry without the referrers API (the index
+// under the referrers tag) and on one with it.
+func TestSignatureVerifier_AcceptsABundle(t *testing.T) {
+	t.Run("referrers tag", func(t *testing.T) {
+		f := newSigFixture(t)
+		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), f.bundle(t, f.key, f.image.GetIndexDigest()))
+		if err := f.verify(); err != nil {
+			t.Fatalf("Verify = %v, want nil", err)
+		}
+	})
+	t.Run("referrers API", func(t *testing.T) {
+		f := newSigFixture(t)
+		f.double.ServeReferrersAPI()
+		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), f.bundle(t, f.key, f.image.GetIndexDigest()))
+		if err := f.verify(); err != nil {
+			t.Fatalf("Verify = %v, want nil", err)
+		}
+		if n := f.double.CountSuffix("/manifests/" + cosigntest.ReferrersTag(f.image.GetIndexDigest())); n != 0 {
+			t.Fatalf("a registry with the referrers API was asked for the referrers tag %d time(s)", n)
+		}
+	})
+	t.Run("the legacy layout is read first and still verifies", func(t *testing.T) {
+		f := newSigFixture(t)
+		other, _ := cosigntest.GenerateKey()
+		f.double.Sign(sigRepo, f.image.GetIndexDigest(), f.layer(t, f.key, f.image.GetIndexDigest()))
+		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), f.bundle(t, other, f.image.GetIndexDigest()))
+		if err := f.verify(); err != nil {
+			t.Fatalf("Verify = %v, want nil", err)
+		}
+		if n := f.double.CountSuffix("/manifests/" + cosigntest.ReferrersTag(f.image.GetIndexDigest())); n != 0 {
+			t.Fatalf("a verified legacy signature still asked for bundles (%d GETs)", n)
+		}
+	})
+	t.Run("a bundle by the key beside a legacy signature by another", func(t *testing.T) {
+		f := newSigFixture(t)
+		other, _ := cosigntest.GenerateKey()
+		f.double.Sign(sigRepo, f.image.GetIndexDigest(), f.layer(t, other, f.image.GetIndexDigest()))
+		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(),
+			f.bundle(t, other, f.image.GetIndexDigest()), f.bundle(t, f.key, f.image.GetIndexDigest()))
+		if err := f.verify(); err != nil {
+			t.Fatalf("Verify = %v, want nil", err)
+		}
+	})
+}
+
+// TestSignatureVerifier_RefusesABundleThatDoesNotVerify: every bundle below is
+// stored where cosign stores it, and none is a signature by this key over
+// this digest.
+func TestSignatureVerifier_RefusesABundleThatDoesNotVerify(t *testing.T) {
+	other, _ := cosigntest.GenerateKey()
+	tests := []struct {
+		name   string
+		bundle func(t *testing.T, f *sigFixture) []byte
+	}{
+		{"by another key", func(t *testing.T, f *sigFixture) []byte {
+			return f.bundle(t, other, f.image.GetIndexDigest())
+		}},
+		{"over another digest", func(t *testing.T, f *sigFixture) []byte {
+			return f.bundle(t, f.key, cosigntest.Digest([]byte("a different image")))
+		}},
+		{"an attestation, not a signature", func(t *testing.T, f *sigFixture) []byte {
+			b, err := f.key.BundleOver(cosigntest.InTotoPayloadType,
+				cosigntest.StatementWith(f.image.GetIndexDigest(), "https://slsa.dev/provenance/v1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}},
+		{"another payload type", func(t *testing.T, f *sigFixture) []byte {
+			b, err := f.key.BundleOver("application/json", cosigntest.Statement(f.image.GetIndexDigest()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}},
+		{"another statement type", func(t *testing.T, f *sigFixture) []byte {
+			statement := strings.Replace(string(cosigntest.Statement(f.image.GetIndexDigest())),
+				cosigntest.StatementType, "https://in-toto.io/Statement/v0.1", 1)
+			b, err := f.key.BundleOver(cosigntest.InTotoPayloadType, []byte(statement))
+			if err != nil {
+				t.Fatal(err)
+			}
+			return b
+		}},
+		{"the payload changed under the signature", func(t *testing.T, f *sigFixture) []byte {
+			// The key's own signature, over the statement for another
+			// digest, carried with a payload that names this one.
+			var signed struct {
+				DSSEEnvelope struct {
+					Signatures []struct {
+						Sig string `json:"sig"`
+					} `json:"signatures"`
+				} `json:"dsseEnvelope"`
+			}
+			if err := json.Unmarshal(f.bundle(t, f.key, cosigntest.Digest([]byte("a different image"))), &signed); err != nil {
+				t.Fatal(err)
+			}
+			return cosigntest.EnvelopeBundle(f.key.Hint(), cosigntest.InTotoPayloadType,
+				cosigntest.Statement(f.image.GetIndexDigest()), signed.DSSEEnvelope.Signatures[0].Sig)
+		}},
+		{"no signature", func(t *testing.T, f *sigFixture) []byte {
+			return cosigntest.EnvelopeBundle(f.key.Hint(), cosigntest.InTotoPayloadType,
+				cosigntest.Statement(f.image.GetIndexDigest()))
+		}},
+		{"another bundle version", func(t *testing.T, f *sigFixture) []byte {
+			return []byte(strings.Replace(string(f.bundle(t, f.key, f.image.GetIndexDigest())),
+				cosigntest.BundleType, "application/vnd.dev.sigstore.bundle.v0.2+json", 1))
+		}},
+		{"not JSON", func(*testing.T, *sigFixture) []byte { return []byte("not a bundle") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSigFixture(t)
+			f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), tt.bundle(t, f))
+			sig := requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+			want := fmt.Sprintf("image %s has 1 cosign signature(s) and none verifies with key \"release\" (%s) over this digest",
+				f.image.GetPinned(), task.SigningKeyPEMFingerprint(f.key.PublicPEM))
+			if sig.Error() != want {
+				t.Fatalf("sentence =\n%s\nwant\n%s", sig.Error(), want)
+			}
+		})
+	}
+}
+
+// TestSignatureVerifier_RefusesATamperedBundleBlob: the registry serves other
+// bytes than the referrer manifest's layer names.
+func TestSignatureVerifier_RefusesATamperedBundleBlob(t *testing.T) {
+	f := newSigFixture(t)
+	good := f.bundle(t, f.key, f.image.GetIndexDigest())
+	f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), good)
+	tampered := append([]byte(nil), good...)
+	tampered[len(tampered)-3] ^= 0x01
+	f.double.PutBlobAt(sigRepo, cosigntest.Digest(good), tampered)
+	requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+}
+
+// TestSignatureVerifier_CountsBothLayouts: the refusal counts every signature
+// it read, legacy and bundle alike.
+func TestSignatureVerifier_CountsBothLayouts(t *testing.T) {
+	f := newSigFixture(t)
+	other, _ := cosigntest.GenerateKey()
+	f.double.Sign(sigRepo, f.image.GetIndexDigest(), f.layer(t, other, f.image.GetIndexDigest()))
+	f.double.SignBundle(sigRepo, f.image.GetIndexDigest(),
+		f.bundle(t, other, f.image.GetIndexDigest()), f.bundle(t, other, f.image.GetIndexDigest()))
+	sig := requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+	if !strings.Contains(sig.Detail, "has 3 cosign signature(s)") {
+		t.Fatalf("detail = %s", sig.Detail)
+	}
+}
+
+// TestSignatureVerifier_AnAttestationAloneIsNotASignature: a referrer whose
+// descriptor names another predicate, or another artifact type, is not a
+// signature; it is never fetched and never counted.
+func TestSignatureVerifier_AnAttestationAloneIsNotASignature(t *testing.T) {
+	f := newSigFixture(t)
+	b, err := f.key.BundleOver(cosigntest.InTotoPayloadType,
+		cosigntest.StatementWith(f.image.GetIndexDigest(), "https://slsa.dev/provenance/v1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := cosigntest.BundleManifest(b, f.image.GetIndexDigest(), 1024)
+	sbom := []byte(`{"an":"sbom"}`)
+	f.double.PutBlob(sigRepo, b)
+	f.double.PutManifest(sigRepo, cosigntest.Digest(manifest), cosigntest.OCIManifestType, manifest)
+	f.double.PutReferrers(sigRepo, f.image.GetIndexDigest(), cosigntest.ReferrersIndex(cosigntest.Referrer{
+		Manifest: manifest, ArtifactType: cosigntest.BundleType, PredicateType: "https://slsa.dev/provenance/v1",
+	}, cosigntest.Referrer{Manifest: sbom, ArtifactType: "application/spdx+json"}))
+	requireSignatureCode(t, f.verify(), task.ReasonImageNotSigned)
+	for _, m := range [][]byte{manifest, sbom} {
+		if n := f.double.CountSuffix("/manifests/" + cosigntest.Digest(m)); n != 0 {
+			t.Fatalf("a referrer that is not a signature was fetched %d time(s)", n)
+		}
+	}
+}
+
+// TestSignatureVerifier_BundleRegistryFailuresAreUnavailable: any GET the
+// bundle path makes that the registry cannot answer is never a verdict.
+func TestSignatureVerifier_BundleRegistryFailuresAreUnavailable(t *testing.T) {
+	for _, tt := range []struct {
+		name, fragment string
+		api, exact     bool
+	}{
+		{"the referrers API", "/referrers/", true, false},
+		// Exactly the tag's path: the legacy .sig path starts with it too.
+		{"the referrers tag", "", false, true},
+		{"the referrer manifest", "/manifests/sha256:", false, false},
+		{"the bundle blob", "/blobs/", false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSigFixture(t)
+			if tt.api {
+				f.double.ServeReferrersAPI()
+			}
+			f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), f.bundle(t, f.key, f.image.GetIndexDigest()))
+			if tt.exact {
+				f.double.SetStatusAt("/v2/"+sigRepo+"/manifests/"+cosigntest.ReferrersTag(f.image.GetIndexDigest()), http.StatusBadGateway)
+			} else {
+				f.double.SetStatus(tt.fragment, http.StatusBadGateway)
+			}
+			sig := requireSignatureCode(t, f.verify(), task.ReasonImageSignatureUnavailable)
+			if !strings.Contains(sig.Error(), "this is a registry problem, not a verdict") {
+				t.Fatalf("sentence = %s", sig.Error())
+			}
+		})
+	}
+	t.Run("unauthorized names the auth file", func(t *testing.T) {
+		f := newSigFixture(t)
+		f.double.ServeReferrersAPI()
+		f.double.SetStatus("/referrers/", http.StatusUnauthorized)
+		f.v.AuthFileVar = "ORK_ORKER_REGISTRY_AUTH_FILE"
+		sig := requireSignatureCode(t, f.verify(), task.ReasonImageSignatureUnavailable)
+		if !strings.Contains(sig.Error(), "ORK_ORKER_REGISTRY_AUTH_FILE") {
+			t.Fatalf("sentence %q does not name the auth file variable", sig.Error())
+		}
+	})
+}
+
+// TestSignatureVerifier_BoundsBundles: at most maxSignatureLayers bundles are
+// read, and a bundle blob over the payload bound is refused unread.
+func TestSignatureVerifier_BoundsBundles(t *testing.T) {
+	t.Run("17 bundles", func(t *testing.T) {
+		f := newSigFixture(t)
+		other, _ := cosigntest.GenerateKey()
+		bundles := make([][]byte, 0, 17)
+		for i := 0; i < 16; i++ {
+			bundles = append(bundles, f.bundle(t, other, f.image.GetIndexDigest()))
+		}
+		last := f.bundle(t, f.key, f.image.GetIndexDigest())
+		bundles = append(bundles, last)
+		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), bundles...)
+		sig := requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+		if !strings.Contains(sig.Detail, "17 cosign signature(s)") {
+			t.Fatalf("detail = %s", sig.Detail)
+		}
+		if n := f.double.CountSuffix("/blobs/" + cosigntest.Digest(last)); n != 0 {
+			t.Fatalf("the 17th bundle was fetched %d time(s)", n)
+		}
+	})
+	t.Run("2 MiB bundle", func(t *testing.T) {
+		f := newSigFixture(t)
+		good := f.bundle(t, f.key, f.image.GetIndexDigest())
+		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), good)
+		f.double.PutBlobAt(sigRepo, cosigntest.Digest(good), make([]byte, 2<<20))
+		requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+	})
 }
 
 func TestSignatureVerifier_WrongKeyIsInvalid(t *testing.T) {
@@ -255,7 +518,7 @@ func TestGetSignatureBlob_FollowsOneRedirectAndBoundsTheBody(t *testing.T) {
 	ref := Reference{Registry: strings.TrimPrefix(registry.URL, "http://"), Repository: sigRepo}
 	r := NewResolver("")
 
-	body, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload))
+	body, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload), new(string))
 	if err != nil || string(body) != string(payload) {
 		t.Fatalf("one redirect: %q, %v", body, err)
 	}
@@ -265,12 +528,212 @@ func TestGetSignatureBlob_FollowsOneRedirectAndBoundsTheBody(t *testing.T) {
 		}
 	}
 	target = "/big"
-	if _, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload)); !errors.Is(err, errBlobTooLarge) {
+	if _, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload), new(string)); !errors.Is(err, errBlobTooLarge) {
 		t.Fatalf("oversized body: %v, want errBlobTooLarge", err)
 	}
 	target = "/again"
-	if _, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload)); err == nil ||
+	if _, err := r.getSignatureBlob(context.Background(), ref, cosigntest.Digest(payload), new(string)); err == nil ||
 		!strings.Contains(err.Error(), "more than once") {
 		t.Fatalf("two redirects: %v, want a refusal", err)
+	}
+}
+
+// TestSignatureVerifier_ReusesTheTokenItEarned: on a registry that answers
+// every read with a bearer challenge, one Verify asks the token endpoint
+// once, whatever it reads after: manifests, referrers and blobs alike.
+func TestSignatureVerifier_ReusesTheTokenItEarned(t *testing.T) {
+	f := newSigFixture(t)
+	other, _ := cosigntest.GenerateKey()
+	f.double.Sign(sigRepo, f.image.GetIndexDigest(), f.layer(t, other, f.image.GetIndexDigest()))
+	f.double.SignBundle(sigRepo, f.image.GetIndexDigest(),
+		f.bundle(t, other, f.image.GetIndexDigest()), f.bundle(t, f.key, f.image.GetIndexDigest()))
+	var mu sync.Mutex
+	tokens := 0
+	var proxy *httptest.Server
+	proxy = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			mu.Lock()
+			tokens++
+			mu.Unlock()
+			_, _ = w.Write([]byte(`{"token":"t"}`))
+			return
+		}
+		if r.Header.Get("Authorization") != "Bearer t" {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="`+proxy.URL+`/token",service="stub"`)
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, f.double.Server.URL+r.URL.RequestURI(), nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		req.Header = r.Header.Clone()
+		resp, err := http.DefaultTransport.RoundTrip(req)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer resp.Body.Close()
+		for k, v := range resp.Header {
+			w.Header()[k] = v
+		}
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, resp.Body)
+	}))
+	t.Cleanup(proxy.Close)
+	host := strings.TrimPrefix(proxy.URL, "http://")
+	f.image.Registry = host
+	f.image.Pinned = host + "/" + sigRepo + "@" + f.image.GetIndexDigest()
+	if err := f.verify(); err != nil {
+		t.Fatalf("Verify = %v, want nil", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if tokens != 1 {
+		t.Fatalf("one Verify asked the token endpoint %d times, want once", tokens)
+	}
+}
+
+// TestSignatureVerifier_AReferrersIndexItCannotReadIsAVerdict: a referrers
+// index that is not one, or is over the manifest bound, is refused as
+// IMAGE_SIGNATURE_INVALID naming it, never read as "no signature".
+func TestSignatureVerifier_AReferrersIndexItCannotReadIsAVerdict(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		api  bool
+		body []byte
+	}{
+		{"the referrers API answers an index that is not JSON", true, []byte("not an index")},
+		{"the referrers API answers an index over the bound", true,
+			append([]byte(`{"manifests":[],"x":"`), bytes.Repeat([]byte("a"), 5<<20)...)},
+		{"the referrers tag holds an image manifest", false, cosigntest.Manifest(nil)},
+		{"the referrers tag holds an index that is not JSON", false, []byte("not an index")},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newSigFixture(t)
+			if tt.api {
+				f.double.ServeReferrersAPI()
+				f.double.PutReferrers(sigRepo, f.image.GetIndexDigest(), tt.body)
+			} else {
+				f.double.PutManifest(sigRepo, cosigntest.ReferrersTag(f.image.GetIndexDigest()), cosigntest.OCIIndexType, tt.body)
+			}
+			sig := requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+			if !strings.Contains(sig.Detail, "referrers") || !strings.Contains(sig.Detail, "not an image index") {
+				t.Fatalf("detail = %s", sig.Detail)
+			}
+		})
+	}
+}
+
+// TestSignatureVerifier_AnotherBundleVersionIsASignatureItCannotRead: a
+// referrer in a Sigstore bundle version this verifier does not read is
+// counted, and the image is IMAGE_SIGNATURE_INVALID, never "not signed".
+func TestSignatureVerifier_AnotherBundleVersionIsASignatureItCannotRead(t *testing.T) {
+	f := newSigFixture(t)
+	manifest := []byte(`{"schemaVersion":2,"mediaType":"application/vnd.oci.image.manifest.v1+json"}`)
+	f.double.PutManifest(sigRepo, cosigntest.Digest(manifest), cosigntest.OCIManifestType, manifest)
+	f.double.PutReferrers(sigRepo, f.image.GetIndexDigest(), cosigntest.ReferrersIndex(cosigntest.Referrer{
+		Manifest: manifest, ArtifactType: "application/vnd.dev.sigstore.bundle.v0.4+json", PredicateType: cosigntest.SignPredicateType,
+	}))
+	sig := requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+	if !strings.Contains(sig.Detail, "has 1 cosign signature(s)") {
+		t.Fatalf("detail = %s", sig.Detail)
+	}
+	if n := f.double.CountSuffix("/manifests/" + cosigntest.Digest(manifest)); n != 0 {
+		t.Fatalf("a bundle of a version it cannot read was fetched %d time(s)", n)
+	}
+}
+
+// TestSignatureVerifier_ReadsOnlyWhatItsDigestNames: a referrer manifest, or a
+// bundle blob, served under another object's digest is skipped, even when the
+// object served is itself a valid signature by the key over this digest.
+func TestSignatureVerifier_ReadsOnlyWhatItsDigestNames(t *testing.T) {
+	t.Run("a referrer manifest under another's digest", func(t *testing.T) {
+		f := newSigFixture(t)
+		listed := f.bundle(t, other(t), f.image.GetIndexDigest())
+		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), listed)
+		valid := f.bundle(t, f.key, f.image.GetIndexDigest())
+		f.double.PutBlob(sigRepo, valid)
+		served := cosigntest.BundleManifest(valid, f.image.GetIndexDigest(), 1024)
+		f.double.PutManifest(sigRepo, cosigntest.Digest(cosigntest.BundleManifest(listed, f.image.GetIndexDigest(), 1024)),
+			cosigntest.OCIManifestType, served)
+		requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+	})
+	t.Run("a bundle blob under another's digest", func(t *testing.T) {
+		f := newSigFixture(t)
+		listed := f.bundle(t, other(t), f.image.GetIndexDigest())
+		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), listed)
+		f.double.PutBlobAt(sigRepo, cosigntest.Digest(listed), f.bundle(t, f.key, f.image.GetIndexDigest()))
+		requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+	})
+}
+
+func other(t *testing.T) *cosigntest.Key {
+	t.Helper()
+	k, err := cosigntest.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return k
+}
+
+// TestSignatureVerifier_TriesAtMostSixteenEnvelopeSignatures: one envelope's
+// signatures are bounded like a manifest's layers; a valid seventeenth is
+// never tried.
+func TestSignatureVerifier_TriesAtMostSixteenEnvelopeSignatures(t *testing.T) {
+	f := newSigFixture(t)
+	statement := cosigntest.Statement(f.image.GetIndexDigest())
+	junk := sigOfFor(t, other(t), f.image.GetIndexDigest())
+	sigs := make([]string, 0, 17)
+	for i := 0; i < 16; i++ {
+		sigs = append(sigs, junk)
+	}
+	f.double.SignBundle(sigRepo, f.image.GetIndexDigest(),
+		cosigntest.EnvelopeBundle(f.key.Hint(), cosigntest.InTotoPayloadType, statement, append(sigs, sigOfFor(t, f.key, f.image.GetIndexDigest()))...))
+	requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
+	// The same key's signature sixteenth verifies: the bound, not the key.
+	g := newSigFixture(t)
+	g.key = f.key
+	g.double.SignBundle(sigRepo, g.image.GetIndexDigest(), cosigntest.EnvelopeBundle(f.key.Hint(), cosigntest.InTotoPayloadType,
+		cosigntest.Statement(g.image.GetIndexDigest()), append(sigs[:15], sigOfFor(t, f.key, g.image.GetIndexDigest()))...))
+	if err := g.verify(); err != nil {
+		t.Fatalf("a valid sixteenth signature: Verify = %v, want nil", err)
+	}
+}
+
+// sigOfFor is the envelope signature k makes over the statement for digest.
+func sigOfFor(t *testing.T, k *cosigntest.Key, digest string) string {
+	t.Helper()
+	var b struct {
+		DSSEEnvelope struct {
+			Signatures []struct {
+				Sig string `json:"sig"`
+			} `json:"signatures"`
+		} `json:"dsseEnvelope"`
+	}
+	signed, err := k.Bundle(digest)
+	if err != nil || json.Unmarshal(signed, &b) != nil {
+		t.Fatal(err)
+	}
+	return b.DSSEEnvelope.Signatures[0].Sig
+}
+
+// TestSignatureVerifier_FallsBackToTheReferrersTag: a referrers endpoint that
+// answers 400, or 200 with something other than an image index, means the
+// registry has no referrers API, and the referrers tag is read instead.
+func TestSignatureVerifier_FallsBackToTheReferrersTag(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusOK} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			f := newSigFixture(t)
+			f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), f.bundle(t, f.key, f.image.GetIndexDigest()))
+			f.double.SetStatus("/referrers/", status)
+			if err := f.verify(); err != nil {
+				t.Fatalf("Verify = %v, want nil", err)
+			}
+			if n := f.double.CountSuffix("/manifests/" + cosigntest.ReferrersTag(f.image.GetIndexDigest())); n != 1 {
+				t.Fatalf("the referrers tag was read %d times, want once", n)
+			}
+		})
 	}
 }

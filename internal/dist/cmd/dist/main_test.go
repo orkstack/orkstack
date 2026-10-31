@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -177,13 +178,53 @@ func TestRun_Check(t *testing.T) {
 }
 
 // TestRun_Notes: notes prints any version's section, so an entry merged under
-// [Unreleased] since does not change it; check is what refuses that release.
+// [Unreleased] since does not change it (check is what refuses that release),
+// and then the images footer: with placeholders of a digest's length before
+// the images exist, with their digests from -images once they do. A page over
+// GitHub's limit is refused, footer included.
 func TestRun_Notes(t *testing.T) {
 	t.Parallel()
 	root := repoWith(t, withUnreleased(changelogFor("1.2.3")))
 	got := invoke(t, nil, nil, "notes", "-version", "v1.2.3", "-root", root)
-	if got.code != 0 || got.stdout != "- What this release did.\n" {
-		t.Fatalf("exit %d, stdout %q (stderr %q), want the section", got.code, got.stdout, got.stderr)
+	placeholder := "sha256:" + strings.Repeat("0", 64)
+	if got.code != 0 || !strings.HasPrefix(got.stdout, "- What this release did.\n\n---\n") ||
+		!strings.Contains(got.stdout, "ghcr.io/orkstack/ork@"+placeholder) {
+		t.Fatalf("exit %d, stdout %q (stderr %q), want the section and the footer with placeholders", got.code, got.stdout, got.stderr)
+	}
+	var images []dist.Image
+	for i, name := range dist.Images() {
+		images = append(images, dist.Image{Name: name, Digest: fmt.Sprintf("sha256:%064x", i+1)})
+	}
+	list := filepath.Join(t.TempDir(), "images.tsv")
+	if err := os.WriteFile(list, []byte(dist.FormatImages(images)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	built := invoke(t, nil, nil, "notes", "-version", "v1.2.3", "-root", root, "-images", list)
+	if built.code != 0 || strings.Contains(built.stdout, placeholder) || len(built.stdout) != len(got.stdout) ||
+		!strings.Contains(built.stdout, "ghcr.io/orkstack/ork@"+images[slices.IndexFunc(images, func(i dist.Image) bool { return i.Name == "ork" })].Digest) {
+		t.Fatalf("with -images: exit %d, stdout %q (stderr %q), want the digests in place of the placeholders",
+			built.code, built.stdout, built.stderr)
+	}
+	// A list named but empty is a caller's mistake, never the placeholders a
+	// page without -images carries.
+	for _, empty := range []string{"", " "} {
+		if bad := invoke(t, nil, nil, "notes", "-version", "v1.2.3", "-root", root, "-images", empty); bad.code != 2 || bad.stdout != "" ||
+			!strings.Contains(bad.stderr, "-images names no file") {
+			t.Fatalf("-images %q: exit %d, stdout %q, stderr %q; want 2 naming the flag", empty, bad.code, bad.stdout, bad.stderr)
+		}
+	}
+	short := filepath.Join(t.TempDir(), "images.tsv")
+	if err := os.WriteFile(short, []byte(dist.FormatImages(images[1:])), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if bad := invoke(t, nil, nil, "notes", "-version", "v1.2.3", "-root", root, "-images", short); bad.code != 1 || bad.stdout != "" ||
+		!strings.Contains(bad.stderr, images[0].Name) {
+		t.Fatalf("an image list missing %s: exit %d, stdout %q, stderr %q; want 1 naming it", images[0].Name, bad.code, bad.stdout, bad.stderr)
+	}
+	long := repoWith(t, "# Changelog\n\n## [1.2.3] - 2026-10-30\n\n"+strings.Repeat("- a very long entry.\n", 7000))
+	if over := invoke(t, nil, nil, "notes", "-version", "v1.2.3", "-root", long); over.code != 1 || over.stdout != "" ||
+		!strings.Contains(over.stderr, "characters, over GitHub's limit of 125000") {
+		t.Fatalf("a page over the limit: exit %d, stdout %d bytes, stderr %q; want 1 naming the limit", over.code, len(over.stdout), over.stderr)
 	}
 	missing := invoke(t, nil, nil, "notes", "-version", "v1.2.4", "-root", root)
 	if missing.code != 1 || missing.stdout != "" || !strings.Contains(missing.stderr, "[1.2.4]") {

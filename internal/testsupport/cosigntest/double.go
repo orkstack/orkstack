@@ -21,9 +21,14 @@ type Double struct {
 	mu        sync.Mutex
 	manifests map[string]manifestEntry // "<repo>/manifests/<ref>"
 	blobs     map[string][]byte        // "<repo>/blobs/<digest>"
+	referrers map[string][]byte        // "<repo>/referrers/<digest>"
+	// referrersAPI is ServeReferrersAPI: answer the referrers endpoint.
+	referrersAPI bool
 	// Status, when set for a path suffix ("manifests/" or "blobs/"), answers
-	// that status instead of the content.
-	status map[string]int
+	// that status instead of the content; statusAt does the same for one
+	// exact path.
+	status   map[string]int
+	statusAt map[string]int
 	// Block, when non-nil, is waited on before answering a request whose path
 	// contains BlockPath (the test closes it, or cancels the caller).
 	Block     chan struct{}
@@ -45,7 +50,9 @@ func NewDouble(t testing.TB) *Double {
 	d := &Double{
 		manifests: map[string]manifestEntry{},
 		blobs:     map[string][]byte{},
+		referrers: map[string][]byte{},
 		status:    map[string]int{},
+		statusAt:  map[string]int{},
 	}
 	d.Server = httptest.NewServer(http.HandlerFunc(d.serve))
 	t.Cleanup(d.Server.Close)
@@ -84,6 +91,46 @@ func (d *Double) Sign(repo, digest string, layers ...Layer) {
 	d.PutManifest(repo, SignatureTag(digest), OCIManifestType, Manifest(layers))
 }
 
+// SignBundle serves bundles as cosign 3 stores them for repo@digest: each
+// bundle's blob and referrer manifest, listed in the referrers index that
+// the referrers API answers (ServeReferrersAPI) or, by default, the
+// referrers tag holds.
+func (d *Double) SignBundle(repo, digest string, bundles ...[]byte) {
+	referrers := make([]Referrer, 0, len(bundles))
+	for _, b := range bundles {
+		manifest := BundleManifest(b, digest, 1024)
+		d.PutBlob(repo, b)
+		d.PutBlob(repo, emptyConfig)
+		d.PutManifest(repo, Digest(manifest), OCIManifestType, manifest)
+		referrers = append(referrers, BundleReferrer(manifest))
+	}
+	d.PutReferrers(repo, digest, ReferrersIndex(referrers...))
+}
+
+// PutReferrers serves index as repo@digest's referrers: from the referrers
+// API when ServeReferrersAPI is set, under the referrers tag otherwise.
+func (d *Double) PutReferrers(repo, digest string, index []byte) {
+	d.mu.Lock()
+	api := d.referrersAPI
+	if api {
+		d.referrers[repo+"/referrers/"+digest] = index
+	}
+	d.mu.Unlock()
+	if !api {
+		d.PutManifest(repo, ReferrersTag(digest), OCIIndexType, index)
+	}
+}
+
+// ServeReferrersAPI makes the double a registry with the OCI referrers API:
+// GET <repo>/referrers/<digest> answers an image index, empty when nothing
+// refers to the digest. Without it that path answers 404, as a registry
+// without the API does. Call it before PutReferrers or SignBundle.
+func (d *Double) ServeReferrersAPI() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.referrersAPI = true
+}
+
 // SetStatus makes every request whose path contains fragment answer status.
 // A zero status removes the override.
 func (d *Double) SetStatus(fragment string, status int) {
@@ -94,6 +141,18 @@ func (d *Double) SetStatus(fragment string, status int) {
 		return
 	}
 	d.status[fragment] = status
+}
+
+// SetStatusAt makes the request for exactly path ("/v2/<repo>/manifests/<ref>")
+// answer status. A zero status removes the override.
+func (d *Double) SetStatusAt(path string, status int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if status == 0 {
+		delete(d.statusAt, path)
+		return
+	}
+	d.statusAt[path] = status
 }
 
 // Requests returns every "GET <path>" served so far.
@@ -126,6 +185,9 @@ func (d *Double) serve(w http.ResponseWriter, r *http.Request) {
 			status = s
 		}
 	}
+	if s, ok := d.statusAt[r.URL.Path]; ok {
+		status = s
+	}
 	d.mu.Unlock()
 	if hook != nil {
 		hook(event)
@@ -146,8 +208,16 @@ func (d *Double) serve(w http.ResponseWriter, r *http.Request) {
 	d.mu.Lock()
 	manifest, isManifest := d.manifests[key]
 	blob, isBlob := d.blobs[key]
+	referrers, isReferrers := d.referrers[key]
+	api := d.referrersAPI
 	d.mu.Unlock()
 	switch {
+	case strings.Contains(key, "/referrers/") && api:
+		if !isReferrers {
+			referrers = ReferrersIndex()
+		}
+		w.Header().Set("Content-Type", OCIIndexType)
+		_, _ = w.Write(referrers)
 	case strings.Contains(key, "/manifests/") && isManifest:
 		w.Header().Set("Content-Type", manifest.mediaType)
 		w.Header().Set("Docker-Content-Digest", Digest(manifest.body))

@@ -348,6 +348,30 @@ func proofHostProblems(steps []wfStep) []string {
 		}
 	}
 
+	// The cosign image the release signs with: listed when the daemon lacks
+	// it, and only then pulled, through proof-fetch, only when cosign is
+	// asked for.
+	list, pull := namedStepAt(steps, "cosign image"), namedStepAt(steps, "fetch cosign image")
+	switch {
+	case list < 0 || pull < 0 || list >= pull:
+		p = append(p, "the action has no `cosign image` step followed by a `fetch cosign image` step")
+	default:
+		l, f := steps[list], steps[pull]
+		if l.ID != "cosign-image" || !strings.Contains(l.Run, "grep -v '^#' deploy/cosign-image.txt") ||
+			!strings.Contains(l.Run, `docker image inspect "$image"`) || !strings.Contains(l.Run, `>>"$GITHUB_OUTPUT"`) {
+			p = append(p, "`cosign image` does not list deploy/cosign-image.txt's pin when the daemon lacks it")
+		}
+		if normalizeIf(l.If) != "inputs.cosign == 'true'" {
+			p = append(p, fmt.Sprintf("`cosign image` runs under %q, want only when cosign is asked for", l.If))
+		}
+		if f.Uses != proofFetchAction || withString(f, "image") != "${{ steps.cosign-image.outputs.image }}" {
+			p = append(p, "`fetch cosign image` is not a proof-fetch of the listed image")
+		}
+		if normalizeIf(f.If) != "inputs.cosign == 'true' && steps.cosign-image.outputs.image != ''" {
+			p = append(p, fmt.Sprintf("`fetch cosign image` runs under %q, want only when cosign is asked for and the image is missing", f.If))
+		}
+	}
+
 	// The stack images: the ones the cache did not load are pulled through
 	// proof-fetch, before the stack starts, and saved without a pull.
 	names := []string{"Load the stack images", "Missing stack images", "fetch stack images", "SeaweedFS and registry", "Save the stack images"}
@@ -423,6 +447,20 @@ func TestProofHost_NothingLeavesTheRunnerExceptThroughProofFetch(t *testing.T) {
 		"cosign downloaded with curl": func(s []wfStep) {
 			f := by(s, "fetch cosign")
 			f.Uses, f.With, f.Run = "", nil, "curl -fsSL "+cosignURL+" -o /usr/local/bin/cosign"
+		},
+		"the cosign image pulled by docker": func(s []wfStep) {
+			f := by(s, "fetch cosign image")
+			f.Uses, f.With, f.Run = "", nil, `docker pull "$image"`
+		},
+		"the cosign image fetched whatever the input says": func(s []wfStep) {
+			by(s, "fetch cosign image").If = "steps.cosign-image.outputs.image != ''"
+		},
+		"the cosign image fetched of another list": func(s []wfStep) {
+			by(s, "fetch cosign image").With["image"] = "ghcr.io/sigstore/cosign/cosign:latest"
+		},
+		"the cosign image listed from elsewhere": func(s []wfStep) {
+			c := by(s, "cosign image")
+			c.Run = strings.Replace(c.Run, "deploy/cosign-image.txt", "/tmp/image.txt", 1)
 		},
 		"the stack images pulled in the save step": func(s []wfStep) {
 			by(s, "Save the stack images").Run += "\ndocker pull --quiet \"$image\""

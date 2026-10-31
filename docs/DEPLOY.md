@@ -3243,31 +3243,44 @@ was submitted under: tightening the floor, moving a namespace's signer or
 rotating a key never reaches a run already accepted; stop one with `orkctl
 run cancel`. A committed attempt is adopted without being judged again.
 
-Verification is one fixed scheme — key-based cosign signatures over the
-simple-signing payload; no keyless signing, transparency log, attestation or
-policy language. The Orker verifies the signature itself, never taking a
-caller's word that it was checked, with its own registry client:
-`orker.registry_auth_file` / `ORK_ORKER_REGISTRY_AUTH_FILE` is a docker
-`config.json` used only for the signature manifest and blob GETs (empty is
-anonymous, which public registries allow); the engine uses
-`ORK_REGISTRY_AUTH_FILE` for the same GETs at apply. A registry that cannot
+Verification is one fixed scheme — key-based cosign signatures, ECDSA P-256,
+over the image's digest; no keyless signing, transparency log, attestation or
+policy language. It reads both layouts cosign stores a key-based signature
+in: the legacy one, a manifest tagged `sha256-<hex>.sig` whose layers are
+simple-signing payloads (cosign 2's default, and how OrkStack v0.1.0's images
+are signed), and cosign 3's default, a Sigstore bundle stored as an OCI
+referrer of the image, whose DSSE envelope signs an in-toto statement naming
+the digest. A referrer is found through the registry's referrers API, or,
+on a registry without it (ghcr.io, `registry:3`), under the referrers tag
+`sha256-<hex>`, as cosign looks. A bundle's transparency-log entries, if it
+has any, are not read: the key is the trust root. The Orker verifies the
+signature itself, never taking a caller's word that it was checked, with its
+own registry client: `orker.registry_auth_file` /
+`ORK_ORKER_REGISTRY_AUTH_FILE` is a docker `config.json` used only for the
+signature's manifest, referrers and blob GETs (empty is anonymous, which
+public registries allow); the engine uses `ORK_REGISTRY_AUTH_FILE` for the
+same GETs at apply. A registry that cannot
 be asked is never a pass: `unavailable` at apply and submit, and a retried
 `IMAGE_SIGNATURE_UNAVAILABLE` at the Orker. A missing signature is
 `IMAGE_NOT_SIGNED`, a signature by another key or over another digest
 `IMAGE_SIGNATURE_INVALID`, an image outside the floor `IMAGE_NOT_PERMITTED`
 — all three `ContractViolation`, never retried.
 
-Signing an image with the `cosign` CLI. cosign 2 writes the layout OrkStack
-reads by default. cosign 3 writes a newer bundle format unless told not to,
-and OrkStack would find no signature (`IMAGE_NOT_SIGNED`), so pass it the
-flags below, as OrkStack's own release does; cosign 3.1 warns that they are
-deprecated. `--tlog-upload=false` keeps the signature out of the public
-transparency log, which OrkStack never reads; leave it out to record one.
+Signing an image with the `cosign` CLI. Any cosign signs in a layout OrkStack
+reads: cosign 2 in the legacy one, cosign 3 in the bundle. Both also record
+the signature in Sigstore's public transparency log by default, which
+OrkStack never reads. cosign 3 keeps it out under a signing config that
+names no service, which is how OrkStack's own release signs
+([`deploy/cosign-signing-config.json`](../deploy/cosign-signing-config.json),
+what `cosign signing-config create` writes with no flags); cosign 2 keeps it
+out with `--tlog-upload=false`. Leave either out to record the signature in
+the log. An engine or Orker of OrkStack v0.1.0 reads only the legacy layout
+and finds no signature in a bundle (`IMAGE_NOT_SIGNED`).
 
 ```bash
 cosign generate-key-pair                                  # cosign.key, cosign.pub
-cosign sign --key cosign.key --new-bundle-format=false --use-signing-config=false \
-  --tlog-upload=false ghcr.io/acme/migrate@sha256:<digest>
+cosign signing-config create --out signing-config.json    # names no service
+cosign sign --key cosign.key --signing-config signing-config.json ghcr.io/acme/migrate@sha256:<digest>
 orkctl admin image-policy set --signing-key release=cosign.pub
 orkctl namespace update prod-payments --require-signed-by cosign:release
 ```
@@ -3292,14 +3305,19 @@ or the binaries by hand:
 
 ```bash
 cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
-cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true --signature SHA256SUMS.sig SHA256SUMS
+cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true --bundle SHA256SUMS.sigstore.json SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 ```
 
-The release records nothing in a public transparency log: the key is the
-trust root, and `--insecure-ignore-tlog=true` tells cosign so (it prints a
-warning). Without cosign, `openssl dgst -sha256 -verify cosign.pub -signature
-<(base64 -d SHA256SUMS.sig) SHA256SUMS` checks the same signature.
+Each release's page ends with these commands for each of its images, by
+digest. The release records nothing in a public transparency log: the key is
+the trust root, and `--insecure-ignore-tlog=true` tells cosign so (it prints a
+warning). `SHA256SUMS.sigstore.json` is cosign's bundle of the checksum
+signature; `SHA256SUMS.sig`, beside it, is the same signature alone, so
+without cosign `openssl dgst -sha256 -verify cosign.pub -signature <(base64 -d
+SHA256SUMS.sig) SHA256SUMS` checks it. v0.1.0 attaches only `SHA256SUMS.sig`:
+verify its checksums with `--signature SHA256SUMS.sig` in place of `--bundle`
+(cosign 3.1 warns that the flag is deprecated) or with openssl.
 
 To rotate a key without a gap, add the new key under a new name, re-sign,
 move each namespace's `--require-signed-by`, then `--remove-signing-key` the

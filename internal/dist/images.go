@@ -148,3 +148,43 @@ func FormatImages(images []Image) string {
 	}
 	return out.String()
 }
+
+// ParseImages reads the list FormatImages writes back: one
+// "<name><TAB><digest>" line per image, in any order, each digest
+// well-formed. It refuses a list that is not exactly the images a release
+// publishes, each once, naming the line or the image at fault.
+func ParseImages(list []byte) ([]Image, error) {
+	text := strings.TrimSuffix(strings.ReplaceAll(string(list), "\r\n", "\n"), "\n")
+	if text == "" {
+		return nil, fmt.Errorf("the image list names no image; a release publishes %s", strings.Join(Images(), ", "))
+	}
+	var images []Image
+	seen := map[string]bool{}
+	for i, line := range strings.Split(text, "\n") {
+		name, digest, ok := strings.Cut(line, "\t")
+		switch {
+		case !ok || strings.Contains(digest, "\t"):
+			return nil, fmt.Errorf("image list line %d is %q, not <image><TAB><digest>", i+1, line)
+		case !slices.Contains(Images(), name):
+			return nil, fmt.Errorf("image list line %d names %q, which a release does not publish; it publishes %s",
+				i+1, name, strings.Join(Images(), ", "))
+		case seen[name]:
+			return nil, fmt.Errorf("image list line %d names %s a second time", i+1, name)
+		case !dsl.ValidDigest(digest):
+			return nil, fmt.Errorf("image list line %d gives %s the digest %q, which is not sha256:<64 lowercase hex>", i+1, name, digest)
+		}
+		seen[name] = true
+		images = append(images, Image{Name: name, Digest: digest})
+	}
+	var missing []string
+	for _, name := range Images() {
+		if !seen[name] {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("the image list names no digest for %s; a release publishes %s",
+			strings.Join(missing, ", "), strings.Join(Images(), ", "))
+	}
+	return images, nil
+}

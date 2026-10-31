@@ -2,7 +2,7 @@
 # scripts/release-signing-setup.sh: set up the key release.yml signs with, once,
 # on a maintainer's own machine (docs/PROOFS.md §10, "Set up release signing").
 #
-#   1. checks that cosign, gh and git are on PATH, that gh is signed in and may
+#   1. checks that cosign, gh, git and jq are on PATH, that gh is signed in and may
 #      administer the repository, and that --dir lies outside every git work
 #      tree, so the private key can never be committed; then, before it writes
 #      anything, refuses a key file it would overwrite, an environment that
@@ -11,7 +11,9 @@
 #   2. asks for the key's password, silently and twice, and generates the pair
 #      in --dir with cosign generate-key-pair;
 #   3. proves the pair: signs a file with the private key and verifies it with
-#      the public one, with the flags release.yml signs and verifies with;
+#      the public one, under the signing config release.yml signs with
+#      (deploy/cosign-signing-config.json, which names no service), and
+#      refuses a bundle that records a transparency-log entry;
 #   4. creates or updates the environment: deployments from main only, and the
 #      caller a required reviewer unless --no-reviewer;
 #   5. sets the environment's COSIGN_PRIVATE_KEY (the key file) and
@@ -84,7 +86,7 @@ step() {
 
 ROTATION="a new key replaces the release key: commit the new deploy/cosign.pub in the same pull request, and every deployment that trusts OrkStack's releases adds it to its image policy (orkctl admin image-policy set --signing-key NAME=cosign.pub) and moves each namespace's --require-signed-by to it before it runs a release signed with it; releases already published stay signed by the old key"
 
-for tool in cosign gh git; do
+for tool in cosign gh git jq; do
 	command -v "$tool" >/dev/null || need "$tool is not on PATH"
 done
 [ -d "$ROOT/deploy" ] || need "$ROOT/deploy does not exist: run the script from an OrkStack checkout"
@@ -172,12 +174,16 @@ if step "generate the key pair in $DIR (cosign generate-key-pair)"; then
 	[ -s "$KEY" ] && [ -s "$PUB" ] || refuse "cosign generate-key-pair wrote no $KEY and $PUB"
 fi
 
-if step "prove the pair: sign a file with $KEY and verify it with $PUB, with release.yml's flags"; then
+if step "prove the pair: sign a file with $KEY and verify it with $PUB, under release.yml's signing config"; then
 	printf 'release signing setup for %s\n' "$REPO" >"$work/proof"
-	COSIGN_PASSWORD="$password" cosign sign-blob --key "$KEY" --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes \
-		--output-signature "$work/proof.sig" "$work/proof" >"$work/cosign.log" 2>&1 ||
+	COSIGN_PASSWORD="$password" cosign sign-blob --key "$KEY" --signing-config "$ROOT/deploy/cosign-signing-config.json" --yes \
+		--bundle "$work/proof.sigstore.json" "$work/proof" >"$work/cosign.log" 2>&1 ||
 		{ cat "$work/cosign.log" >&2; refuse "cosign sign-blob could not sign with the new key (cosign 2.6 or later is needed)"; }
-	cosign verify-blob --key "$PUB" --insecure-ignore-tlog=true --signature "$work/proof.sig" "$work/proof" >"$work/cosign.log" 2>&1 ||
+	jq -e . "$work/proof.sigstore.json" >/dev/null 2>&1 ||
+		refuse "cosign wrote $work/proof.sigstore.json, which is no bundle jq can read"
+	jq -e '(.verificationMaterial.tlogEntries // []) | length == 0' "$work/proof.sigstore.json" >/dev/null ||
+		refuse "cosign recorded the proof in a transparency log; it ignored deploy/cosign-signing-config.json (cosign 2.6 or later reads it)"
+	cosign verify-blob --key "$PUB" --insecure-ignore-tlog=true --bundle "$work/proof.sigstore.json" "$work/proof" >"$work/cosign.log" 2>&1 ||
 		{ cat "$work/cosign.log" >&2; refuse "cosign verify-blob does not accept the new pair's signature"; }
 fi
 

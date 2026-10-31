@@ -66,6 +66,59 @@ func RegistryImage() (string, error) {
 	return registryImageFrom(data)
 }
 
+// cosignImageFile pins the cosign image the release signs with, and
+// signingConfigFile is the signing config it signs under: one naming no
+// service, so nothing is written to a transparency log.
+const (
+	cosignImageFile   = "deploy/cosign-image.txt"
+	signingConfigFile = "deploy/cosign-signing-config.json"
+)
+
+// cosignPinned is the only shape deploy/cosign-image.txt may name.
+var cosignPinned = regexp.MustCompile(`^ghcr\.io/sigstore/cosign/cosign:v[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$`)
+
+// CosignImage is the cosign image deploy/cosign-image.txt pins, the one the
+// release and its smoke sign with: its first line that is neither blank nor
+// a comment.
+func CosignImage() (string, error) {
+	path, err := moduleFile(cosignImageFile)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("cosigntest: read %s: %w", cosignImageFile, err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if line = strings.TrimSpace(line); line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !cosignPinned.MatchString(line) {
+			return "", fmt.Errorf("cosigntest: %s names %q, not ghcr.io/sigstore/cosign/cosign:vX.Y.Z@sha256:<64 hex>", cosignImageFile, line)
+		}
+		return line, nil
+	}
+	return "", fmt.Errorf("cosigntest: %s names no image", cosignImageFile)
+}
+
+// SigningConfig is the absolute path of deploy/cosign-signing-config.json.
+func SigningConfig() (string, error) { return moduleFile(signingConfigFile) }
+
+// moduleFile is rel under the root of the module that holds the working
+// directory.
+func moduleFile(rel string) (string, error) {
+	wd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("cosigntest: working directory: %w", err)
+	}
+	compose, err := composePath(wd)
+	if err != nil {
+		return "", err
+	}
+	root := filepath.Dir(filepath.Dir(compose))
+	return filepath.Join(root, filepath.FromSlash(rel)), nil
+}
+
 // composePath is the compose file of the module that holds start.
 func composePath(start string) (string, error) {
 	abs, err := filepath.Abs(start)
