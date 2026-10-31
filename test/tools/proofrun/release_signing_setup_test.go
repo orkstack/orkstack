@@ -105,13 +105,13 @@ generate-key-pair)
 	printf -- '-----BEGIN PUBLIC KEY-----\n%s\n-----END PUBLIC KEY-----\n' "$id" >"$p.pub"
 	;;
 sign-blob)
-	key="$(arg --key "$@")" out="$(arg --output-signature "$@")" file="${@: -1}"
+	key="$(arg --key "$@")" out="$(arg --bundle "$@")" file="${@: -1}"
 	read -r id pw <<<"$(sed -n 2p "$key")"
 	[ "$(hash "${COSIGN_PASSWORD:-}")" = "$pw" ] || { echo "cosign stub: decrypt: wrong password" >&2; exit 1; }
 	printf 'sig %s %s\n' "$id" "$(sha256sum <"$file" | cut -d' ' -f1)" >"$out"
 	;;
 verify-blob)
-	key="$(arg --key "$@")" sig="$(arg --signature "$@")" file="${@: -1}"
+	key="$(arg --key "$@")" sig="$(arg --bundle "$@")" file="${@: -1}"
 	[ "$(cat "$sig")" = "sig $(sed -n 2p "$key") $(sha256sum <"$file" | cut -d' ' -f1)" ] || { echo "cosign stub: invalid signature" >&2; exit 1; }
 	;;
 *) echo "cosign stub: unexpected: $*" >&2; exit 1 ;;
@@ -290,8 +290,9 @@ func TestReleaseSigningSetup_SetsUpTheKeyTheEnvironmentAndTheSecretsInOrder(t *t
 		"gh api user --jq",
 		"gh api repos/o/r/environments/release --jq",
 		"cosign generate-key-pair --output-key-prefix " + filepath.Join(s.keys, "cosign"),
-		"cosign sign-blob --key " + filepath.Join(s.keys, "cosign.key") + " --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes --output-signature",
-		"cosign verify-blob --key " + filepath.Join(s.keys, "cosign.pub") + " --insecure-ignore-tlog=true --signature",
+		"cosign sign-blob --key " + filepath.Join(s.keys, "cosign.key") + " --signing-config " +
+			filepath.Join(s.checkout, "deploy", "cosign-signing-config.json") + " --yes --bundle",
+		"cosign verify-blob --key " + filepath.Join(s.keys, "cosign.pub") + " --insecure-ignore-tlog=true --bundle",
 		"gh api -X PUT repos/o/r/environments/release --input -",
 		"gh api -X POST repos/o/r/environments/release/deployment-branch-policies -f name=main -f type=branch",
 		"gh secret set COSIGN_PRIVATE_KEY --env release --repo o/r",

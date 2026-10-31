@@ -122,9 +122,9 @@ runs:
     # proof-fetch (two bounded attempts, in the setup log) and kept only if it
     # hashes to the SHA-256 the release's cosign_checksums.txt lists for it.
     # The installer action had no way to retry without continue-on-error, which
-    # no workflow here allows, and v4 of it defaults to cosign v3, whose new
-    # bundle format is not the signature layout OrkStack verifies; moving to it
-    # is its own change with its own proof. To move cosign, take the new line
+    # no workflow here allows. This binary proves the legacy `.sig` layout
+    # cosign 2 writes; cosign 3's bundle is proven by the image the release
+    # signs with (`cosign image`, below). To move cosign, take the new line
     # from the release's checksums and change the pair here and in
     # test/tools/proofrun/proofhost_test.go.
     - name: fetch cosign
@@ -141,6 +141,23 @@ runs:
         set -euo pipefail
         sudo install -m 0755 "$RUNNER_TEMP/cosign/cosign" /usr/local/bin/cosign
         cosign version
+    # The cosign image the release signs with (deploy/cosign-image.txt): the
+    # bundle interop test (internal/dsl) runs it with --pull never, so it is
+    # pulled here, through proof-fetch, when the daemon lacks it.
+    - name: cosign image
+      id: cosign-image
+      if: inputs.cosign == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        image="$(grep -v '^#' deploy/cosign-image.txt | head -1)"
+        [ -n "$image" ] || { echo "deploy/cosign-image.txt names no image" >&2; exit 1; }
+        docker image inspect "$image" >/dev/null 2>&1 || echo "image=$image" >>"$GITHUB_OUTPUT"
+    - name: fetch cosign image
+      if: inputs.cosign == 'true' && steps.cosign-image.outputs.image != ''
+      uses: ./.github/actions/proof-fetch
+      with:
+        image: ${{ steps.cosign-image.outputs.image }}
 
     - name: temporal CLI
       if: inputs.temporal-cli == 'true'

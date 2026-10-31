@@ -34,8 +34,9 @@ const (
 	// require_digest, or the resolved registry/repository is outside
 	// allowed_registries, or the selection names a signer with no usable key.
 	ReasonImageNotPermitted = "IMAGE_NOT_PERMITTED"
-	// ReasonImageNotSigned: the registry has no cosign signature object for
-	// the digest (the .sig tag is 404).
+	// ReasonImageNotSigned: the registry has no cosign signature for the
+	// digest in either layout (the .sig tag is 404 and no bundle refers to
+	// the digest).
 	ReasonImageNotSigned = "IMAGE_NOT_SIGNED"
 	// ReasonImageSignatureInvalid: signatures exist and none verifies with
 	// the named key over this digest.

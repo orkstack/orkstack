@@ -28,6 +28,26 @@ proto: ## Regenerate Go/TS and docs/API.md from proto
 	buf generate
 	go run ./internal/apidocs/cmd/genapidocs
 
+# PROTO_BASE is the release the proto contract is checked against: the first,
+# so no change breaks a client of any release since. buf runs from the image
+# deploy/buf-image.txt pins, with no network, against the tag's own tree,
+# which git exports; buf.yaml's breaking rules decide.
+PROTO_BASE ?= v0.1.0
+# A literal #, which a recipe-free line would otherwise read as a comment.
+HASH := \#
+BUF_IMAGE = $(shell grep -v -e '^$(HASH)' -e '^$$' deploy/buf-image.txt | head -1)
+
+.PHONY: proto-breaking
+proto-breaking: ## Refuse a proto change that breaks the release PROTO_BASE's contract (default v0.1.0), with the pinned buf
+	@test -n "$(BUF_IMAGE)" || { echo "proto-breaking: deploy/buf-image.txt names no image" >&2; exit 2; }
+	@git rev-parse -q --verify "refs/tags/$(PROTO_BASE)^{commit}" >/dev/null || \
+		{ echo "proto-breaking: no tag $(PROTO_BASE) in this clone; fetch it: git fetch origin tag $(PROTO_BASE)" >&2; exit 2; }
+	@set -euo pipefail; base="$$(mktemp -d)"; trap 'rm -rf "$$base"' EXIT; \
+	git archive "refs/tags/$(PROTO_BASE)" buf.yaml proto | tar -x -C "$$base"; \
+	docker run --rm --network none --user "$$(id -u):$$(id -g)" -e HOME=/tmp \
+		-v "$(CURDIR):/work:ro" -v "$$base:/base:ro" -w /work "$(BUF_IMAGE)" breaking --against /base; \
+	echo "proto-breaking: the proto contract keeps $(PROTO_BASE)'s"
+
 .PHONY: config-defaults
 config-defaults: ## Regenerate deploy/orkstack.defaults.yaml from the code's defaults
 	go run ./internal/config/cmd/gendefaults > deploy/orkstack.defaults.yaml

@@ -59,8 +59,13 @@ commands:
                                   and the linux binaries into DIR/bin/linux-<arch>/; refuse
                                   a tree without the web UI build ork embeds (make ui)
   sums DIR                        write DIR/SHA256SUMS for the files in DIR
-  notes -version vX.Y.Z           print the "## [X.Y.Z]" section of CHANGELOG.md, without its
-                                  heading: the GitHub release's notes, word for word
+  notes -version vX.Y.Z [-images FILE]
+                                  print the GitHub release's page: the "## [X.Y.Z]" section of
+                                  CHANGELOG.md, without its heading, word for word, then each
+                                  image's digest from FILE (what digests printed) and the
+                                  commands that verify them; without -images each digest is a
+                                  placeholder of a digest's length. Refuse a page over GitHub's
+                                  limit of 125000 characters
   digests -layouts DIR            print "<image><TAB><digest>" for each of the nine OCI image layouts
                                   in DIR, sorted: the digest skopeo pushes each under
 
@@ -229,6 +234,7 @@ func (e runEnv) order(args []string) int {
 func (e runEnv) notes(args []string) int {
 	set := e.flags("notes")
 	raw, root := versionFlags(set)
+	list := set.String("images", "", "the image list dist digests printed; without it each digest is a placeholder")
 	if code, done := e.parse(set, args, 0); done {
 		return code
 	}
@@ -244,7 +250,21 @@ func (e runEnv) notes(args []string) int {
 	if err != nil {
 		return e.failure(err)
 	}
-	fmt.Fprint(e.stdout, notes)
+	var images []dist.Image
+	if *list != "" {
+		data, err := os.ReadFile(*list)
+		if err != nil {
+			return e.failure(fmt.Errorf("read the image list: %w", err))
+		}
+		if images, err = dist.ParseImages(data); err != nil {
+			return e.failure(fmt.Errorf("%s: %w", *list, err))
+		}
+	}
+	page, err := dist.ReleasePage(notes, version, images)
+	if err != nil {
+		return e.failure(err)
+	}
+	fmt.Fprint(e.stdout, page)
 	return 0
 }
 

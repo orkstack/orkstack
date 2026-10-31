@@ -270,7 +270,9 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 ## The loop
 
 1. Cross-process type change? Edit `proto/`, run `make proto`, commit generated
-   code in the same change.
+   code in the same change. `make proto-breaking` (Docker, and the `v0.1.0`
+   tag in your clone) checks the change keeps the first release's contract,
+   as CI's `proto` job does.
 2. New configuration setting? Add it to `internal/config`'s `Schema`, to
    `docs/DEPLOY.md`'s configuration table, and run `make config-defaults`
    (AGENTS.md §11.1). Changed a DSL or automation key, or a first-party
@@ -312,9 +314,11 @@ its kind (`### Added`, `### Changed`, `### Deprecated`, `### Removed`,
 (AGENTS.md §11.1, step 7). Write it for the people who read the release: at a
 release the `[Unreleased]` section becomes the version's own,
 `## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
-section's text is the GitHub release's notes, word for word. Link to a
-document by its absolute URL: a relative link does not resolve on the release
-page. `make check` refuses a heading or a subsection of any other shape
+section's text is the GitHub release's notes, word for word, above a footer
+the release adds with each image's digest. Link to a document by its absolute
+URL: a relative link does not resolve on the release page. The page, footer
+included, must stay within GitHub's 125,000 characters, or the release is
+refused before anything is built. `make check` refuses a heading or a subsection of any other shape
 (`internal/docscheck`), and `release.yml` refuses a release while entries are
 still under `[Unreleased]`; docs/PROOFS.md §10, "Write the release notes", is
 the release's side of it. 0.1.0, the first release, says only "First

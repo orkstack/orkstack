@@ -651,6 +651,7 @@ skipped required job reports success, which is why
 |---|---|
 | `ci.yml` › `check` | `make check` on every push and every pull request: no Docker, no Temporal |
 | `ci.yml` › `vuln` | `make vuln` (the pinned `govulncheck`) on every push and every pull request. It reads the vulnerability database over the network, so it is a job of its own and in no proof gate: a network failure cannot fail a proof |
+| `ci.yml` › `proto` | `make proto-breaking` on every push and every pull request: `buf breaking` of the proto contract against the first release, v0.1.0, under `buf.yaml`'s rules, by the buf `deploy/buf-image.txt` pins. It checks out every tag, and is in no proof gate |
 | `ci.yml` › `feature` | the optional feature tier: on a pull request only with the `ci:feature` label, on a push to `validate/feature/**`, and by dispatch; it gates nothing |
 
 `site.yml` is not part of the proof and holds no required check; it builds and
@@ -780,28 +781,35 @@ it checks that the gate's proof is a passing release proof of this commit,
 that the assets are exactly what the artifact's `SHA256SUMS` sums and match
 it, that the image list names each of the nine images once, that each layout's
 index names that digest, and that its bytes hash to it and list linux/amd64
-and linux/arm64; it signs `SHA256SUMS` with the release key and verifies that
-signature with the committed `deploy/cosign.pub`, so a missing key, a wrong
-password or a key that is not that file's pair stops it before the tag or any
-image is out. It then creates the annotated tag through the API (`gh api`, the
+and linux/arm64, that the release page names each image by that digest, and
+that the signing config is `deploy/cosign-signing-config.json`'s, which names
+no service; it signs `SHA256SUMS` with the release key, with no network, into
+cosign's bundle `SHA256SUMS.sigstore.json`, verifies that bundle with the
+committed `deploy/cosign.pub`, and writes its signature alone to
+`SHA256SUMS.sig`, which openssl verifies, so a missing key, a wrong password or
+a key that is not that file's pair stops it before the tag or any image is
+out. It then creates the annotated tag through the API (`gh api`, the
 ref created, never moved: a tag this run made on this commit is kept on a
 re-run, and any other is refused), pushes each layout to
 `ghcr.io/orkstack/<image>` byte for byte
 (`skopeo copy --all --preserve-digests`, from the image
-`deploy/skopeo-image.txt` pins) under `X.Y.Z` and `X.Y`, checks each digest
-after the push, refuses to move an `X.Y.Z` that holds another digest, signs
-each image by its digest (cosign, from the image `deploy/cosign-image.txt`
-pins, with `--new-bundle-format=false --use-signing-config=false
---tlog-upload=false`, so it writes the `sha256-<hex>.sig` layout OrkStack's
-verifier reads and nothing in a public transparency log), verifies each
-signature by digest with `deploy/cosign.pub` and reads the `.sig` manifest
-back, and only then creates the GitHub release (`gh release create
---verify-tag`, marked the latest when `validate` said so, never a draft or a
-pre-release, so `releases/latest/download/` names the newest release), with
-`SHA256SUMS.sig` and `cosign.pub` beside the archives. `validate` refuses a
-dispatch whose `deploy/cosign.pub` is not committed, and the `--release`
-smoke signs every image with a throwaway key by the same image and flags and
-runs an Orkflow in a namespace that requires that key. `verify` and `publish`
+`deploy/skopeo-image.txt` pins) under `X.Y.Z`, checks each digest after the
+push, refuses to move an `X.Y.Z` that holds another digest, signs each image
+by its digest (cosign, from the image `deploy/cosign-image.txt` pins, under
+that signing config and with no deprecated flag, so it writes cosign 3's
+bundle, which OrkStack's verifier reads, and nothing in a public
+transparency log), verifies each signature by digest with
+`deploy/cosign.pub`, moves `X.Y` to each image only once every one is signed
+and verified (so a deployment that follows `X.Y`, as the built-in catalog
+does, never meets this release's images unsigned), and only then creates the
+GitHub release (`gh release
+create --verify-tag`, marked the latest when `validate` said so, never a draft
+or a pre-release, so `releases/latest/download/` names the newest release),
+with `SHA256SUMS.sig`, `SHA256SUMS.sigstore.json` and `cosign.pub` beside the
+archives. `validate` refuses a dispatch whose `deploy/cosign.pub` is not
+committed, and the `--release` smoke signs every image with a throwaway key by
+the same image, command and signing config and runs an Orkflow in a namespace
+that requires that key. `verify` and `publish`
 download what `gate` and `artifacts` uploaded by the names those jobs output,
 so a re-run of either finds the first attempt's artifact; `artifacts` keeps
 its upload 7 days, so the approval must come within them.
@@ -809,7 +817,7 @@ its upload 7 days, so the approval must come within them.
 `packages: write` and the only `contents: write`, and its environment alone
 holds the signing key. `verify`'s checkout keeps no credential, and no step
 that runs repository code holds a token; in `publish` only the steps that
-tag, push, sign images and release are given the token, and only the two
+tag, push, sign images, move `X.Y` and release are given the token, and only the two
 signing steps the key, which cosign reads from the environment
 (`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a concurrency group named
 from the validated version, so two dispatches of one version run one after the
@@ -830,7 +838,9 @@ stack images the cache did not load are pulled through it (the compose file
 pins each by digest, and the stack then starts with `--pull never`, so a
 missing image is an explicit failure and never a stall), cosign v2.6.5 is
 downloaded through it as the release's linux/amd64 binary and kept only if it
-hashes to the SHA-256 the release's `cosign_checksums.txt` lists, and the one
+hashes to the SHA-256 the release's `cosign_checksums.txt` lists, the cosign
+image `deploy/cosign-image.txt` pins (which the bundle interop test runs with
+`--pull never`) is pulled through it when the daemon lacks it, and the one
 container the action runs from Docker Hub by tag is bounded with `timeout`.
 Its fetches run inside the caller's `proof host` step, which has a limit of
 10 minutes of its own.
@@ -1559,17 +1569,29 @@ edits the entries into what the release page should say, under Keep a
 Changelog's `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
 `### Fixed` and `### Security`, each breaking change marked **BREAKING**.
 Nothing writes the date at tag time: the tag names a commit a proof passed
-on, so the heading is already in that commit. `dist notes -version vX.Y.Z`
-prints exactly what the page will show: the section without its heading,
-because the release has its own title, `OrkStack vX.Y.Z`. `release.yml` ›
-`artifacts` writes that to `meta/notes.md`, and `release.yml` › `publish`
-hands it, and nothing else, to `gh release create --notes-file`; the
-checksums, `SHA256SUMS.sig` and `cosign.pub` are the release's assets, and
-[UPGRADING.md](./UPGRADING.md), "Release artifacts", says how to verify
-them. `release.yml` › `validate` refuses a version with no section or an
-empty one, and one whose `## [Unreleased]` still holds entries, because they
-would ship in the release without being in its notes: an entry merged after
-the cut moves into the section before the dispatch. The first release, 0.1.0,
+on, so the heading is already in that commit. `dist notes -version vX.Y.Z
+-images FILE` prints exactly what the page will show: the section without its
+heading, because the release has its own title, `OrkStack vX.Y.Z`, and then a
+footer that names each image by the digest the image list FILE gives
+(`dist digests`), the tags and key it is published and signed with, and the
+`cosign verify` and `sha256sum` commands that check each image and the
+checksums. `release.yml` › `artifacts` writes that to `meta/notes.md`, and
+`release.yml` › `publish` refuses a page that does not name each image it
+pushes by its digest and hands it, and nothing else, to `gh release create
+--notes-file`; the checksums, `SHA256SUMS.sig`, `SHA256SUMS.sigstore.json` and
+`cosign.pub` are the release's assets, and [UPGRADING.md](./UPGRADING.md),
+"Release artifacts", says how to verify them. `release.yml` › `validate`
+refuses a version with no section or an empty one, and one whose
+`## [Unreleased]` still holds entries, because they would ship in the release
+without being in its notes: an entry merged after the cut moves into the
+section before the dispatch. It also refuses a page over GitHub's limit for a
+release body, 125,000 characters (counted as UTF-16 code units, never fewer
+than code points), footer included:
+`dist notes` without `-images` writes each digest as a placeholder of a
+digest's length, so the page it measures is exactly as long as the page
+`publish` creates, and a section too long for it fails the dispatch before
+anything is built or tagged, naming the page's size, rather than at `gh
+release create`, the last step, once the tag and the images are out. The first release, 0.1.0,
 says only "First release.": everything built before it is that release.
 
 **Run the release gate.** Dispatch `release.yml` with `version` set from
@@ -1752,6 +1774,7 @@ listing with no bucket at all.
 |---|---|
 | `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept, except for `GIT_STATE_PACKAGES` (the packages whose unit tests run git, whose reads the cache cannot see), run with `-count=1`; no Docker |
 | `make vuln` | `go tool govulncheck ./...`: the known vulnerabilities whose vulnerable code the module reaches. It needs the network, so it is in no proof gate; `ci.yml` and `nightly.yml` run it (§5) |
+| `make proto-breaking` | `buf breaking` of `proto/` against the tree of the tag `PROTO_BASE` (default `v0.1.0`, which the clone must hold), under `buf.yaml`'s rules, by the buf image `deploy/buf-image.txt` pins, run with no network; `ci.yml` › `proto` runs it (§5) |
 | `make proof` | the full proof, the merge gate |
 | `make proof-ui` | the same; the full proof already runs the UI suites |
 | `make test-race` | the race gate's `go test`, without its ledger: `-race -short` over `RACE_PACKAGES` (default `./...`), `RACE_COUNT` times (default 1) |

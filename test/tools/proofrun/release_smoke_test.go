@@ -60,7 +60,8 @@ func newSmokeSandbox(t *testing.T) *smokeSandbox {
 	}
 	root := t.TempDir()
 	s := &smokeSandbox{t: t, root: root, repo: filepath.Join(root, "repo"), bin: filepath.Join(root, "bin"), log: filepath.Join(root, "calls.log")}
-	for _, f := range []string{"scripts/quickstart-smoke.sh", "deploy/skopeo-image.txt", "deploy/cosign-image.txt", "compose.yaml"} {
+	for _, f := range []string{"scripts/quickstart-smoke.sh", "deploy/skopeo-image.txt", "deploy/cosign-image.txt",
+		"deploy/cosign-signing-config.json", "compose.yaml"} {
 		b, err := os.ReadFile(gateRepoPath(t, f))
 		if err != nil {
 			t.Fatal(err)

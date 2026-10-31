@@ -29,9 +29,11 @@ written on a clone of its commit, and a maintainer approved the publication
     `orker-linux-amd64.tar.gz`, `orker-linux-arm64.tar.gz`;
   - `SHA256SUMS`, over every file above: `sha256sum --ignore-missing -c
     SHA256SUMS` checks the ones you downloaded;
-  - `SHA256SUMS.sig`, the release key's cosign signature over `SHA256SUMS`,
-    and `cosign.pub`, that key's public half: the same file as
-    `deploy/cosign.pub` at the release's tag.
+  - `SHA256SUMS.sigstore.json`, the release key's cosign signature over
+    `SHA256SUMS` as cosign's bundle, `SHA256SUMS.sig`, the same signature
+    alone (for openssl; v0.1.0 attaches only this one), and `cosign.pub`,
+    that key's public half: the same file as `deploy/cosign.pub` at the
+    release's tag.
 - **On `ghcr.io/orkstack`**, for linux/amd64 and linux/arm64: `ork`, `orker`,
   `orkctl`, and the six first-party activity images `activity-shell`,
   `activity-http`, `activity-file`, `activity-json`, `activity-git` and
@@ -39,18 +41,27 @@ written on a clone of its commit, and a maintainer approved the publication
   tagged `X.Y.Z`, which never moves, and `X.Y`, which moves to each patch
   release of that line. Deploy by digest, or by `X.Y.Z`.
 
-Each image is signed by its digest with the release key, in the layout
+Each image is signed by its digest with the release key, in a layout
 OrkStack's image policy verifies, so a namespace can require that key
-(`--require-signed-by`). [DEPLOY.md](./DEPLOY.md), "Image supply-chain
-policy", says how to trust it, and how to verify an image or `SHA256SUMS` by
-hand.
+(`--require-signed-by`). v0.1.0's images are signed in cosign's legacy
+`.sig` layout; later releases sign in cosign 3's bundle, which an engine or
+Orker of v0.1.0 does not read: it refuses such an image `IMAGE_NOT_SIGNED`.
+v0.1.0's built-in catalog names the activity images by their `0.1` tag, which
+moves to each patch release's images when it is published, so a v0.1.0
+deployment whose namespace requires `cosign:orkstack` refuses `uses: shell`
+and the other first-party activities at its next apply or submit once a
+later 0.1 release is out. Upgrade every engine and Orker to that release, or
+until then name the v0.1.0 images by digest in `ORK_ACTIVITY_CATALOG`.
+[DEPLOY.md](./DEPLOY.md), "Image supply-chain policy", says how to trust the
+key, and how to verify an image or `SHA256SUMS` by hand.
 
 The built-in activity catalog names the activity images by their `X.Y` tag,
 so a release's `ork` resolves `uses: shell` to that release line's image at
 apply time and pins its digest; `release.yml` refuses a version whose `X.Y`
 the catalog does not name. The notes on the GitHub release page are the
 version's `## [X.Y.Z]` section of [CHANGELOG.md](../CHANGELOG.md), word for
-word, without its heading.
+word, without its heading, followed by each image's digest and the commands
+that verify it.
 
 Running the published images is set out in [DEPLOY.md](./DEPLOY.md),
 "Running the published images". A deployment that turns versioning on sets

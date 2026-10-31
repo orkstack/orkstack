@@ -457,8 +457,8 @@ func TestApplyOrkflow_RefusesAnUnsignedImageOnItsFieldPath(t *testing.T) {
 	f.signerNamespace(t, "prod", "release")
 	err := f.apply(signedDocument(f.double.Host), "prod")
 	image := f.imageOf(t)
-	want := fmt.Sprintf(`task "migrate": image %s carries no cosign signature (%s/acme/migrate:%s is not in the registry); namespace "prod" requires cosign:release`,
-		image.GetPinned(), f.double.Host, cosigntest.SignatureTag(image.GetIndexDigest()))
+	want := fmt.Sprintf(`task "migrate": image %s carries no cosign signature (%s/acme/migrate:%s is not in the registry, and no cosign bundle refers to %s); namespace "prod" requires cosign:release`,
+		image.GetPinned(), f.double.Host, cosigntest.SignatureTag(image.GetIndexDigest()), image.GetIndexDigest())
 	requirePolicyCode(t, err, connect.CodeInvalidArgument, want)
 	resp := f.validate(t, signedDocument(f.double.Host), "prod")
 	if len(resp.GetIssues()) != 1 || resp.GetIssues()[0].GetField() != "tasks[0].uses" || resp.GetIssues()[0].GetMessage() != want {

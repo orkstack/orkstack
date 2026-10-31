@@ -22,10 +22,11 @@
 #   2. the stack's own registry takes every image, copied byte for byte from
 #      its layout by the pinned skopeo image, and each pushed digest is
 #      checked against the layout's; each is then signed by digest with a
-#      throwaway key, by the pinned cosign image and the command and flags
+#      throwaway key, by the pinned cosign image and the command and signing
+#      config (deploy/cosign-signing-config.json, which names no service)
 #      release.yml's publish signs with, and verified with `cosign verify`,
-#      and a file is signed as publish signs SHA256SUMS and verified with
-#      `cosign verify-blob` and with openssl;
+#      and a file is signed as publish signs SHA256SUMS, with no network, and
+#      verified with `cosign verify-blob` and with openssl;
 #   3. compose.yaml, with deploy/release-smoke.yaml naming those images by tag
 #      and digest instead of building any, starts with `up -d --wait`;
 #      orkctl's image reports VERSION and applies each-fan-out, and the
@@ -92,7 +93,9 @@ if [ -n "$VERSION" ]; then
 	[ -n "$SKOPEO" ] || need "deploy/skopeo-image.txt names no image"
 	COSIGN="$(grep -v '^#' "$REPO/deploy/cosign-image.txt" | head -1)"
 	[ -n "$COSIGN" ] || need "deploy/cosign-image.txt names no image"
+	[ -s "$REPO/deploy/cosign-signing-config.json" ] || need "deploy/cosign-signing-config.json is missing"
 	command -v openssl >/dev/null || need "openssl is not installed (it checks the checksum signature as the docs do)"
+	command -v jq >/dev/null || need "jq is not installed (it reads the checksum signature out of its bundle, as publish does)"
 	# deploy/release-smoke.yaml forwards the registry into the Orker's network
 	# namespace with compose.yaml's own pinned forwarder.
 	export SMOKE_FORWARD_IMAGE
@@ -230,11 +233,12 @@ else
 	done <"$WORK/images.tsv"
 
 	say "== sign: each image by digest, with a throwaway key, as publish signs"
-	# publish's command and flags (.github/workflows/release.yml); only the key,
-	# the registry, and --allow-insecure-registry for its plain HTTP differ.
-	# `other` signs nothing: the namespace that requires it is the refusal.
+	# publish's command and signing config (.github/workflows/release.yml),
+	# mounted where publish mounts it; only the key, the registry, and
+	# --allow-insecure-registry for its plain HTTP differ. `other` signs
+	# nothing: the namespace that requires it is the refusal.
 	export COSIGN_PASSWORD="$TOKEN"
-	cos() { docker run --rm --network host --user "$(id -u):$(id -g)" -e HOME=/tmp -e COSIGN_PRIVATE_KEY -e COSIGN_PASSWORD -v "$WORK/keys:/keys" "$COSIGN" "$@"; }
+	cos() { docker run --rm --network "${COS_NETWORK:-host}" --user "$(id -u):$(id -g)" -e HOME=/tmp -e COSIGN_PRIVATE_KEY -e COSIGN_PASSWORD -v "$WORK/keys:/keys" -v "$REPO/deploy/cosign-signing-config.json:/signing-config.json:ro" "$COSIGN" "$@"; }
 	for key in release other; do
 		mkdir -p "$WORK/keys/$key"
 		cos generate-key-pair --output-key-prefix "/keys/$key/cosign" >"$WORK/keys.log" 2>&1 || { cat "$WORK/keys.log" >&2; fail "cosign generate-key-pair"; }
@@ -243,18 +247,23 @@ else
 	COSIGN_PRIVATE_KEY="$(cat "$WORK/keys/release/cosign.key")"
 	while IFS=$'\t' read -r name digest; do
 		ref="$REGISTRY/orkstack/$name@$digest"
-		cos sign --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false --use-signing-config=false --tlog-upload=false --allow-insecure-registry --yes "$ref" >"$WORK/sign.log" 2>&1 ||
+		cos sign --key env://COSIGN_PRIVATE_KEY --signing-config /signing-config.json --allow-insecure-registry --yes "$ref" >"$WORK/sign.log" 2>&1 ||
 			{ cat "$WORK/sign.log" >&2; fail "cosign sign $ref"; }
 		cos verify --key /keys/release/cosign.pub --insecure-ignore-tlog=true --allow-insecure-registry "$ref" >"$WORK/sign.log" 2>&1 ||
 			{ cat "$WORK/sign.log" >&2; fail "cosign verify $ref"; }
 		say "  $name signed, and cosign verify accepts it"
 	done <"$WORK/images.tsv"
-	# SHA256SUMS's signing, on a file of the smoke's own: the docs' two checks.
+	# SHA256SUMS's signing, on a file of the smoke's own, with no network as
+	# publish signs it: the docs' two checks, on the bundle and on the
+	# signature publish extracts from it.
 	cp "$WORK/images.tsv" "$WORK/keys/SUMS"
-	cos sign-blob --key env://COSIGN_PRIVATE_KEY --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes --output-signature /keys/SUMS.sig /keys/SUMS >"$WORK/sign.log" 2>&1 ||
+	COS_NETWORK=none cos sign-blob --key env://COSIGN_PRIVATE_KEY --signing-config /signing-config.json --yes --bundle /keys/SUMS.sigstore.json /keys/SUMS >"$WORK/sign.log" 2>&1 ||
 		{ cat "$WORK/sign.log" >&2; fail "cosign sign-blob"; }
-	cos verify-blob --key /keys/release/cosign.pub --insecure-ignore-tlog=true --signature /keys/SUMS.sig /keys/SUMS >"$WORK/sign.log" 2>&1 ||
+	COS_NETWORK=none cos verify-blob --key /keys/release/cosign.pub --insecure-ignore-tlog=true --bundle /keys/SUMS.sigstore.json /keys/SUMS >"$WORK/sign.log" 2>&1 ||
 		{ cat "$WORK/sign.log" >&2; fail "cosign verify-blob"; }
+	jq -e '(.verificationMaterial.tlogEntries // []) | length == 0' "$WORK/keys/SUMS.sigstore.json" >/dev/null ||
+		fail "the checksum bundle carries a transparency-log entry"
+	jq -er .messageSignature.signature "$WORK/keys/SUMS.sigstore.json" >"$WORK/keys/SUMS.sig" || fail "the bundle carries no message signature"
 	openssl dgst -sha256 -verify "$WORK/keys/release/cosign.pub" -signature <(base64 -d "$WORK/keys/SUMS.sig") "$WORK/keys/SUMS" >/dev/null ||
 		fail "openssl does not verify the blob signature"
 	unset COSIGN_PRIVATE_KEY

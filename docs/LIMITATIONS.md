@@ -136,7 +136,7 @@ The contract names these as non-goals, and says not to build them ([AGENTS.md](.
 - An OrkStack-owned execution database, scheduler, event bus or state machine. Temporal owns execution, and object storage holds data ([AGENTS.md](../AGENTS.md) §2).
 - A required durable system beyond Temporal and S3-compatible object storage ([AGENTS.md](../AGENTS.md) §2.2).
 - A workload SDK, a sidecar, a message queue, a custom RPC framework or an application worker daemon. A workload is an OCI image that reads and writes files ([AGENTS.md](../AGENTS.md) §1).
-- Keyless image signing, transparency logs, attestations and a policy language. Image signatures are key-based cosign signatures over the simple-signing payload ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy").
+- Keyless image signing, transparency logs, attestations and a policy language. Image signatures are key-based cosign signatures over the image's digest, in cosign's legacy `.sig` layout or its bundle ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy").
 
 ## Not built yet
 
@@ -146,5 +146,4 @@ These are deferred. Nothing on this list is promised by a date.
 - Named, Orker-defined network profiles. Only `default` and `none` exist ([AGENTS.md](../AGENTS.md) §6).
 - Container runtimes other than Docker and Podman, such as containerd, Kubernetes Jobs, ECS Tasks or Nomad ([AGENTS.md](../AGENTS.md) §5; [ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)"). An Orker does run on Kubernetes, as a pod with a Docker engine of its own that runs its tasks' containers ([DEPLOY.md](./DEPLOY.md), "Orkers on Kubernetes").
 - A structured progress channel from a container. Plain stdout and stderr are the required interface, and the container implements no heartbeat ([AGENTS.md](../AGENTS.md) §3.3).
-- Reading cosign's newer signature bundle format. OrkStack reads the key-based `sha256-<hex>.sig` layout only. cosign 3 writes the bundle by default, and cosign 3.1 marks the flags that still write the `.sig` layout (and that the release signs with) deprecated ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy").
 - Automatic reclamation of workload artifact bytes by the cleanup worker. It would mean a scan of the whole reference index, so the cleanup worker does not do it, and a bucket lifecycle rule is the current answer ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").

@@ -69,7 +69,8 @@ func (s *Service) imagePolicySelection(ctx context.Context, ns *orkstackv1.Names
 // by the raw `uses:` string (resolved[uses]): a catalog name and the
 // registry reference it maps to are two resolutions there and one
 // verification here, and one digest in two repositories is two
-// verifications here, because cosign stores the .sig per repository. Tasks
+// verifications here, because cosign stores a signature per repository (the
+// .sig tag, or a bundle referring to the digest). Tasks
 // are walked in document order and the map is filled as they go, so the
 // field an image's failure anchors to is its first task's. A nil selection
 // returns nil without looking at a task. Errors:

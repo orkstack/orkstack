@@ -11,7 +11,9 @@
 #   2. asks for the key's password, silently and twice, and generates the pair
 #      in --dir with cosign generate-key-pair;
 #   3. proves the pair: signs a file with the private key and verifies it with
-#      the public one, with the flags release.yml signs and verifies with;
+#      the public one, under the signing config release.yml signs with
+#      (deploy/cosign-signing-config.json, which names no service), and
+#      refuses a bundle that records a transparency-log entry;
 #   4. creates or updates the environment: deployments from main only, and the
 #      caller a required reviewer unless --no-reviewer;
 #   5. sets the environment's COSIGN_PRIVATE_KEY (the key file) and
@@ -172,12 +174,14 @@ if step "generate the key pair in $DIR (cosign generate-key-pair)"; then
 	[ -s "$KEY" ] && [ -s "$PUB" ] || refuse "cosign generate-key-pair wrote no $KEY and $PUB"
 fi
 
-if step "prove the pair: sign a file with $KEY and verify it with $PUB, with release.yml's flags"; then
+if step "prove the pair: sign a file with $KEY and verify it with $PUB, under release.yml's signing config"; then
 	printf 'release signing setup for %s\n' "$REPO" >"$work/proof"
-	COSIGN_PASSWORD="$password" cosign sign-blob --key "$KEY" --new-bundle-format=false --use-signing-config=false --tlog-upload=false --yes \
-		--output-signature "$work/proof.sig" "$work/proof" >"$work/cosign.log" 2>&1 ||
+	COSIGN_PASSWORD="$password" cosign sign-blob --key "$KEY" --signing-config "$ROOT/deploy/cosign-signing-config.json" --yes \
+		--bundle "$work/proof.sigstore.json" "$work/proof" >"$work/cosign.log" 2>&1 ||
 		{ cat "$work/cosign.log" >&2; refuse "cosign sign-blob could not sign with the new key (cosign 2.6 or later is needed)"; }
-	cosign verify-blob --key "$PUB" --insecure-ignore-tlog=true --signature "$work/proof.sig" "$work/proof" >"$work/cosign.log" 2>&1 ||
+	! grep -q '"tlogEntries"' "$work/proof.sigstore.json" ||
+		refuse "cosign recorded the proof in a transparency log; it ignored deploy/cosign-signing-config.json (cosign 2.6 or later reads it)"
+	cosign verify-blob --key "$PUB" --insecure-ignore-tlog=true --bundle "$work/proof.sigstore.json" "$work/proof" >"$work/cosign.log" 2>&1 ||
 		{ cat "$work/cosign.log" >&2; refuse "cosign verify-blob does not accept the new pair's signature"; }
 fi
 

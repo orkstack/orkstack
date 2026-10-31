@@ -9,6 +9,9 @@ name: ci
 #            and about twice that is estimated at two (docs/PROOFS.md §11.5).
 #   vuln     govulncheck over the module: the one job that needs the network
 #            (vuln.go.dev), so it is a job of its own and in no proof.
+#   proto    buf breaking: the proto contract against the first release,
+#            v0.1.0 (make proto-breaking), with the buf deploy/buf-image.txt
+#            pins.
 #   feature  the feature proof of this change, which is optional: only with
 #            the ci:feature label, on a validate/feature/** push, or by
 #            dispatch. The full proof is the gate (AGENTS.md §11.1).
@@ -69,6 +72,23 @@ jobs:
       - name: vuln
         timeout-minutes: 10
         run: make vuln
+
+  proto:
+    # Every tag is fetched, so the tree of the release compared with is
+    # there; buf itself runs with no network.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7.0.1
+        timeout-minutes: 3
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: proto-breaking
+        timeout-minutes: 10
+        run: make proto-breaking
 
   feature:
     needs: check

@@ -1,0 +1,6 @@
+# The buf image `make proto-breaking` runs (ci.yml's proto job): buf breaking
+# compares the proto contract with the tree of a release tag (PROTO_BASE,
+# v0.1.0) under buf.yaml's breaking rules. Pinned by its multi-arch index
+# digest, and run with no network. A bump is a pull request that proves it
+# with `make proto-breaking`.
+bufbuild/buf:1.75.0@sha256:adf82c7170be6629ec81dc907921ac1699407cd11c4f7fd7521b13c74152f849
