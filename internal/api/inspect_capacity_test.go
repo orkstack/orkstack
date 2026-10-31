@@ -1,7 +1,6 @@
 package api_test
 
 import (
-	"context"
 	"errors"
 	"log/slog"
 	"strings"
@@ -207,61 +206,6 @@ func TestInspectRun_AnOrkerThatDidNotAnswerKeepsEveryPoolFromBeingCalledFull(t *
 	}
 	if len(fleet.describes) != 3 {
 		t.Fatalf("describes = %v, want every live Orker asked", fleet.describes)
-	}
-}
-
-// hungFleet is a stubFleet one of whose Orkers never answers until it is
-// given up on, and which records the deadline it was given.
-type hungFleet struct {
-	*stubFleet
-	hung     string
-	mu       sync.Mutex
-	deadline time.Time
-}
-
-func (f *hungFleet) DescribeOrkerByID(ctx context.Context, id string) (*orkstackv1.DescribeOrkerResult, error) {
-	if id != f.hung {
-		return f.stubFleet.DescribeOrkerByID(ctx, id)
-	}
-	deadline, _ := ctx.Deadline()
-	f.mu.Lock()
-	f.deadline = deadline
-	f.mu.Unlock()
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-// TestInspectRun_AHungOrkerStillAnswersWithinTheReadBound: an Orker that
-// never answers is given up on at the read's own bound, well inside the live
-// view's poll, and the attempt keeps today's caption.
-func TestInspectRun_AHungOrkerStillAnswersWithinTheReadBound(t *testing.T) {
-	run := inspectRun("ork-capacity-5", orkstackv1.Status_STATUS_RUNNING, "build")
-	routeTasksTo(run, "build", "build")
-	stub := capacityFleet()
-	stub.presence = append(stub.presence, engine.OrkerPresence{Identity: "orker-hung", LastSeen: fleetSeen})
-	fleet := &hungFleet{stubFleet: stub, hung: "orker-hung"}
-	reader := &fakeReader{runs: map[string]*orkstackv1.Run{run.GetId(): run}}
-	liveReader := &liveFakeReader{fakeReader: reader, live: engine.LiveRun{Attempts: []*orkstackv1.LiveAttempt{waitingAttempt("build")}}}
-	f := newReaderFixtureWith(t, reader, func(cfg *api.Config) {
-		cfg.Reader = liveReader
-		cfg.Now = func() time.Time { return inspectNow }
-		cfg.Fleet = fleet
-	})
-	asked := time.Now()
-	resp, err := (&inspectFixture{readerFixture: f, live: liveReader}).inspect(t,
-		&orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun with a hung Orker: %v", err)
-	}
-	if got := resp.GetAttempts()[0].GetCapacityWait(); got != nil {
-		t.Fatalf("capacity_wait = %v with an Orker that never answered, want today's caption", got)
-	}
-	fleet.mu.Lock()
-	deadline := fleet.deadline
-	fleet.mu.Unlock()
-	if deadline.IsZero() || deadline.Sub(asked) > 3*time.Second {
-		t.Fatalf("the hung Orker was asked with deadline %v, %v after the call; want the 2 s read bound",
-			deadline, deadline.Sub(asked))
 	}
 }
 

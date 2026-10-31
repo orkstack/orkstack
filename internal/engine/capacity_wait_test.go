@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -23,6 +22,17 @@ func sizedOrker(id, pool string, capCPU float64, capMem int64, resCPU float64, r
 	o.Reserved = &orkstackv1.ResourceQuantity{Cpu: resCPU, MemoryBytes: resMem}
 	o.MaxRequest = &orkstackv1.ResourceQuantity{Cpu: 2, MemoryBytes: 4 * capacityGiB}
 	return o
+}
+
+// capacityWaitsOf reads fleet's inventory once and applies the rule to it,
+// as InspectRun does.
+func capacityWaitsOf(t *testing.T, fleet engine.FleetReader, pools ...string) (map[string]*orkstackv1.CapacityWait, int) {
+	t.Helper()
+	orkers, err := engine.ReadFleet(context.Background(), fleet)
+	if err != nil {
+		t.Fatalf("ReadFleet: %v", err)
+	}
+	return engine.CapacityWaitsOf(orkers, pools)
 }
 
 func editedOrker(o *orkstackv1.DescribeOrkerResult, edit func(*orkstackv1.DescribeOrkerResult)) *orkstackv1.DescribeOrkerResult {
@@ -136,10 +146,7 @@ func TestCapacityWaits_EveryCountedOrkerMustBeFull(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			waits, unanswered, err := engine.CapacityWaits(context.Background(), tc.fleet, []string{"build"})
-			if err != nil {
-				t.Fatalf("CapacityWaits: %v", err)
-			}
+			waits, unanswered := capacityWaitsOf(t, tc.fleet, "build")
 			if got := waits["build"]; !proto.Equal(got, tc.want) {
 				t.Fatalf("capacity wait = %v, want %v", got, tc.want)
 			}
@@ -150,39 +157,18 @@ func TestCapacityWaits_EveryCountedOrkerMustBeFull(t *testing.T) {
 	}
 }
 
-// TestCapacityWaits_ReadsTheInventoryOnceForEveryPool bounds the cost: one
-// presence read and one describe per live Orker, however many pools ask.
-func TestCapacityWaits_ReadsTheInventoryOnceForEveryPool(t *testing.T) {
+// TestCapacityWaits_OneReadingAnswersEveryPool: the rule asks nothing of
+// its own, so each pool is answered from the one reading.
+func TestCapacityWaits_OneReadingAnswersEveryPool(t *testing.T) {
 	fleet := fleetOf(
 		sizedOrker("b-1", "build", 4, 0, 4, 0),
 		sizedOrker("g-1", "gpu", 4, 0, 4, 0),
 		sizedOrker("g-2", "gpu", 4, 0, 1, 0))
-	waits, _, err := engine.CapacityWaits(context.Background(), fleet, []string{"build", "gpu", "io"})
-	if err != nil {
-		t.Fatalf("CapacityWaits: %v", err)
-	}
+	waits, _ := capacityWaitsOf(t, fleet, "build", "gpu", "io")
 	if fleet.reads != 1 || len(fleet.asked) != 3 {
-		t.Fatalf("presence reads = %d and describes = %v, want 1 read and one describe per Orker", fleet.reads, fleet.asked)
+		t.Fatalf("presence reads = %d and describes = %v, want the one reading", fleet.reads, fleet.asked)
 	}
 	if waits["build"] == nil || waits["gpu"] != nil || waits["io"] != nil {
 		t.Fatalf("waits = %v, want only build waiting for capacity", waits)
-	}
-}
-
-// TestCapacityWaits_NoPoolsReadsNothing: nothing waits, nothing is asked.
-func TestCapacityWaits_NoPoolsReadsNothing(t *testing.T) {
-	waits, _, err := engine.CapacityWaits(context.Background(), refusingFleet{t}, nil)
-	if err != nil || len(waits) != 0 {
-		t.Fatalf("CapacityWaits(no pools) = %v, %v; want nothing and no read", waits, err)
-	}
-}
-
-// TestCapacityWaits_AFailedPresenceReadIsAnError: nothing was measured, so
-// the caller is told rather than handed "no pool is full".
-func TestCapacityWaits_AFailedPresenceReadIsAnError(t *testing.T) {
-	_, _, err := engine.CapacityWaits(context.Background(),
-		&fakeFleet{observeErr: errors.New("frontend unavailable")}, []string{"build"})
-	if err == nil {
-		t.Fatal("CapacityWaits over an unreadable inventory = nil error, want the read's error")
 	}
 }

@@ -680,18 +680,22 @@ It is derived on read, never stored as state: `InspectRun` sets
 `capacity_wait` on a waiting attempt from the Orker inventory, the rows
 `orkctl orker list` shows. The inventory is read only when an attempt has
 waited for an Orker for two seconds — one presence read and one describe per
-live Orker, the cost of one `orkctl orker list`, bounded at two seconds — and
-each engine replica shares one reading among every caller: a read in flight is
-joined by every answer that asks meanwhile, and a successful reading answers
-for five seconds, the run page's and `orkctl run inspect --watch`'s own poll
-period. However many pages and watches are open, while its reads succeed a
-replica asks the Orkers at most once every five seconds for them, and nothing
-once no task waits; a caption is never older than one poll. While any live
-Orker does not answer within the bound, no pool is called full, because the one that did
+live Orker, the cost of one `orkctl orker list` — and each engine replica
+shares one reading among every caller: a read in flight is joined by every
+answer that asks meanwhile, and a whole reading, one every live Orker
+answered, answers for five seconds from when its read began, the run page's
+and `orkctl run inspect --watch`'s own poll period. A read ends at two
+seconds whether or not the Orkers have answered, so no answer waits longer.
+However many pages and watches are open, while its reads are whole a replica
+asks the Orkers at most once every five seconds for them, and nothing once no
+task waits; a caption is never older than one poll. While any live Orker does
+not answer within the bound, no pool is called full, because the one that did
 not answer could serve it with room: for the 90 seconds a stopped Orker stays
 listed, every waiting task reads `Waiting for an orker`, as it does when the
-inventory cannot be read at all. A failed read is never kept, and the engine
-warns of one at most once a minute.
+inventory cannot be read at all, and the replica reads again for each answer,
+still one read at a time. A failed read, or one some live Orker did not
+answer, is never kept, and the engine warns of a failed one at most once a
+minute.
 
 **Capacity metrics.** With metrics on (`OTEL_METRICS_EXPORTER`, "Metrics"
 below), an Orker that declares a capacity exports, on the default sink:

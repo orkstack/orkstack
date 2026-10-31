@@ -146,8 +146,8 @@ const capacityWaitAfter = 2 * time.Second
 // Orker (waitingByPool), and then the answer reads the replica's shared
 // inventory (sharedInventory): one presence read and one describe per live
 // Orker — the cost of one ListOrkers — at most once per capacityInventoryTTL
-// for every page and watch on this replica, each read bounded by
-// capacityReadTimeout.
+// for every page and watch on this replica while its readings are whole, and
+// one read at a time while they are not, each ending at capacityReadTimeout.
 //
 // "Waiting for an Orker" stays true whatever the inventory says, so a read
 // that fails, or one in which a live Orker did not answer, leaves the attempts

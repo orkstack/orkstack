@@ -7,25 +7,12 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// CapacityWaits answers, for each pool named, whether a task that no Orker of
-// the pool has started is waiting for capacity rather than for an Orker
-// (orkstackv1.CapacityWait, InspectRun's live view). It reads the Orker
-// inventory once (ReadFleet) and applies CapacityWaitsOf to it. Only a failed
-// presence read is an error; no pools reads nothing.
-func CapacityWaits(ctx context.Context, fleet FleetReader, pools []string) (waits map[string]*orkstackv1.CapacityWait, unanswered int, err error) {
-	if len(pools) == 0 || fleet == nil {
-		return map[string]*orkstackv1.CapacityWait{}, 0, nil
-	}
-	orkers, err := ReadFleet(ctx, fleet)
-	if err != nil {
-		return nil, 0, err
-	}
-	waits, unanswered = CapacityWaitsOf(orkers, pools)
-	return waits, unanswered, nil
-}
-
-// CapacityWaitsOf is the rule over an inventory already read: a pool is in
-// the map only when its waiting task is waiting for capacity.
+// CapacityWaitsOf answers, for each pool named, whether a task that no Orker
+// of the pool has started is waiting for capacity rather than for an Orker
+// (orkstackv1.CapacityWait, InspectRun's live view), over an inventory
+// already read (ReadFleet): a pool is in the map only when its waiting task
+// is waiting for capacity. It asks nothing, so one reading answers every
+// pool.
 //
 // It is derived on read and held nowhere (AGENTS.md §7), over the Orkers that
 // answered on their own channel and are not cordoned — the Orkers submit
