@@ -205,6 +205,14 @@ func TestRun_Notes(t *testing.T) {
 		t.Fatalf("with -images: exit %d, stdout %q (stderr %q), want the digests in place of the placeholders",
 			built.code, built.stdout, built.stderr)
 	}
+	// A list named but empty is a caller's mistake, never the placeholders a
+	// page without -images carries.
+	for _, empty := range []string{"", " "} {
+		if bad := invoke(t, nil, nil, "notes", "-version", "v1.2.3", "-root", root, "-images", empty); bad.code != 2 || bad.stdout != "" ||
+			!strings.Contains(bad.stderr, "-images names no file") {
+			t.Fatalf("-images %q: exit %d, stdout %q, stderr %q; want 2 naming the flag", empty, bad.code, bad.stdout, bad.stderr)
+		}
+	}
 	short := filepath.Join(t.TempDir(), "images.tsv")
 	if err := os.WriteFile(short, []byte(dist.FormatImages(images[1:])), 0o644); err != nil {
 		t.Fatal(err)

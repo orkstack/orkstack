@@ -238,6 +238,13 @@ func (e runEnv) notes(args []string) int {
 	if code, done := e.parse(set, args, 0); done {
 		return code
 	}
+	// Placeholders are for a page measured before anything is built; a list
+	// named but empty is a caller's mistake, never that.
+	named := false
+	set.Visit(func(f *flag.Flag) { named = named || f.Name == "images" })
+	if named && strings.TrimSpace(*list) == "" {
+		return e.usageError("-images names no file: leave the flag out for placeholders, or name the list dist digests printed")
+	}
 	version, code := e.parseVersion(*raw)
 	if code != 0 {
 		return code
