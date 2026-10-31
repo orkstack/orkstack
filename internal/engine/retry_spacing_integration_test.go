@@ -5,6 +5,7 @@ package engine_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -68,7 +69,9 @@ func TestIntegration_ARetryWithALongInitialIntervalIsScheduled(t *testing.T) {
 // coefficient below 1 — and the cluster refuses it by failing the workflow
 // task, which it then retries forever. Such a task is scheduled with the
 // nearest policy the cluster accepts, and the run completes with no failed
-// workflow task.
+// workflow task. So does a stored value rule 47 refuses that the cluster
+// would not: a negative interval, a coefficient that is not a number, and
+// +Inf, which is scheduled as it is.
 func TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -83,11 +86,21 @@ func TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
 			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 30 * time.Second, 2},
 		{"a coefficient below 1",
 			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5, MaximumIntervalSeconds: 20}, 20 * time.Second, 1},
+		{"a coefficient that is not a number",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 20 * time.Second, 2},
+		{"an infinite coefficient",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.Inf(1), MaximumIntervalSeconds: 20}, 20 * time.Second, math.Inf(1)},
+		{"a negative initial interval",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: -5, MaximumIntervalSeconds: 20}, 20 * time.Second, 2},
+		{"a negative maximum",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, MaximumIntervalSeconds: -1}, time.Minute, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			wf := compile(t, slowRetryDocument)
 			wf.GetTasks()[0].Retry = tc.retry
-			_, policy := runRetryToCompletion(t, ctx, s, wf, s.plan(1000, nil))
+			plan := s.plan(1000, nil)
+			plan.RetryMaxIntervalSeconds = 60
+			_, policy := runRetryToCompletion(t, ctx, s, wf, plan)
 			if policy.GetMaximumInterval().AsDuration() != tc.maximum || policy.GetBackoffCoefficient() != tc.coefficient {
 				t.Fatalf("the task was scheduled with maximum %s and coefficient %g, want %s and %g",
 					policy.GetMaximumInterval().AsDuration(), policy.GetBackoffCoefficient(), tc.maximum, tc.coefficient)

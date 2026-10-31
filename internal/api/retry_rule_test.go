@@ -63,7 +63,11 @@ func TestRetryRule_RefusedAtValidateApplyAndInlinePlan(t *testing.T) {
 			if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), tc.phrase) {
 				t.Fatalf("apply = %v, want invalid_argument saying %q", err, tc.phrase)
 			}
-			if listed, _ := orkflows.List(context.Background(), "default"); len(listed) != 0 {
+			listed, err := orkflows.List(context.Background(), "default")
+			if err != nil {
+				t.Fatalf("list the store after a refused apply: %v", err)
+			}
+			if len(listed) != 0 {
 				t.Fatalf("a refused apply stored %d orkflows", len(listed))
 			}
 			_, err = svc.PlanRun(context.Background(), connect.NewRequest(&orkstackv1.PlanRunRequest{Yaml: doc}))

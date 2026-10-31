@@ -157,26 +157,32 @@ func TestChildStartPlan_CarriesEveryRunTreeValue(t *testing.T) {
 // cluster refuses it (between 0 and 1) and an explicit maximum only where it
 // is below the initial interval. Zero and a negative coefficient read as the
 // default 2.0, as they always have, and so does a NaN, which no comparison
-// with 1 could raise.
+// with 1 could raise. A negative initial interval reads as 1 s and a negative
+// maximum as unset, as they always have, and +Inf, which the cluster accepts,
+// is scheduled as it is.
 func TestRetryPolicyFor_RaisesOnlyWhatTheClusterRefuses(t *testing.T) {
 	s := &runState{plan: RunPlan{RetryMaxIntervalSeconds: 60}, versions: map[string]workflow.Version{RetryMaxIntervalChange: 1}}
 	for _, tc := range []struct {
-		name        string
-		retry       *orkstackv1.RetryPolicy
-		coefficient float64
-		maximum     time.Duration
+		name             string
+		retry            *orkstackv1.RetryPolicy
+		coefficient      float64
+		initial, maximum time.Duration
 	}{
-		{"a coefficient between 0 and 1", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5}, 1, time.Minute},
-		{"a negative coefficient", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: -1}, 2, time.Minute},
-		{"a coefficient of 1", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 1}, 1, time.Minute},
-		{"a coefficient that is not a number", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN()}, 2, time.Minute},
-		{"a maximum below the initial", &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 2, 30 * time.Second},
-		{"a maximum above the initial", &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 10, MaximumIntervalSeconds: 30}, 2, 30 * time.Second},
+		{"a coefficient between 0 and 1", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5}, 1, time.Second, time.Minute},
+		{"a negative coefficient", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: -1}, 2, time.Second, time.Minute},
+		{"a coefficient of 1", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 1}, 1, time.Second, time.Minute},
+		{"a coefficient that is not a number", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN()}, 2, time.Second, time.Minute},
+		{"an infinite coefficient", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.Inf(1), MaximumIntervalSeconds: 20}, math.Inf(1), time.Second, 20 * time.Second},
+		{"a maximum below the initial", &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 2, 30 * time.Second, 30 * time.Second},
+		{"a maximum above the initial", &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 10, MaximumIntervalSeconds: 30}, 2, 10 * time.Second, 30 * time.Second},
+		{"a negative initial interval", &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: -5, MaximumIntervalSeconds: 20}, 2, time.Second, 20 * time.Second},
+		{"a negative maximum", &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 5, MaximumIntervalSeconds: -1}, 2, 5 * time.Second, time.Minute},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := s.retryPolicyFor(nil, &orkstackv1.Task{Retry: tc.retry})
-			if got.BackoffCoefficient != tc.coefficient || got.MaximumInterval != tc.maximum {
-				t.Errorf("coefficient %g and maximum %s, want %g and %s", got.BackoffCoefficient, got.MaximumInterval, tc.coefficient, tc.maximum)
+			if got.BackoffCoefficient != tc.coefficient || got.InitialInterval != tc.initial || got.MaximumInterval != tc.maximum {
+				t.Errorf("coefficient %g, initial %s and maximum %s, want %g, %s and %s",
+					got.BackoffCoefficient, got.InitialInterval, got.MaximumInterval, tc.coefficient, tc.initial, tc.maximum)
 			}
 		})
 	}

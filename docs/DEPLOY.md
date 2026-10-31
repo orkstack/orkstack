@@ -3471,8 +3471,8 @@ applied before DSL rule 47 may carry: the task is scheduled with the maximum
 raised to the initial interval and the coefficient raised to 1, with no gate,
 because no recorded history holds the refused command
 (`TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled`). A stored
-coefficient that is not a number, which the cluster accepts, reads as the
-default 2.0, as zero and a negative one always have; it is not gated either,
+coefficient that is not a number reads as the default 2.0, as zero and a
+negative one always have; it is not gated either,
 because the replayer compares no retry policy (below), so it changes only the
 spacing of a task scheduled after the upgrade, never a recorded command. A build that
 predates the field ignores the plan's
