@@ -287,6 +287,51 @@ func TestDispatcher_ASecretRefusalSaysWhichRuleRefusedIt(t *testing.T) {
 	}
 }
 
+// TestDispatcher_ASecretRefusalQuotesALongValueByItsHead: a secret's name, its
+// scheme and the variable it names are what a task wrote, and none has a bound
+// the dispatcher can rely on, so every refusal that names one quotes it by its
+// head and its length rather than in full.
+func TestDispatcher_ASecretRefusalQuotesALongValueByItsHead(t *testing.T) {
+	long := strings.Repeat("A", 200<<10)
+	length := fmt.Sprintf("(%d bytes)", len(long))
+	d := newAttemptDispatcher(t, &capturingRuntime{}, artifacts.NewMemoryAttemptStore())
+	for _, tc := range []struct {
+		what   string
+		secret *orkstackv1.SecretRef
+		reason string
+		// read is whether the read beside the value is asked too, and admit
+		// whether Validate lets the secret through to it.
+		read, admit bool
+	}{
+		{"a name", &orkstackv1.SecretRef{Name: long, Source: "env:SANDBOX_TOKEN"}, ReasonSecretSchemeForbid, false, false},
+		{"a scheme", &orkstackv1.SecretRef{Name: "s", Source: long + ":x"}, ReasonSecretSchemeForbid, true, false},
+		{"a variable", &orkstackv1.SecretRef{Name: "s", Source: "env:" + long}, ReasonSecretUnresolved, true, true},
+	} {
+		in := baseExportInput("grab")
+		in.Secrets = []*orkstackv1.SecretRef{tc.secret}
+		failures := map[string]*Failure{}
+		if failure := d.Validate(in); tc.admit {
+			if failure != nil {
+				t.Fatalf("%s: Validate = %v, want it admitted", tc.what, failure)
+			}
+		} else {
+			failures["Validate"] = failure
+		}
+		if tc.read {
+			_, failures["resolveSecret"] = d.resolveSecret(tc.secret)
+		}
+		for step, failure := range failures {
+			if failure == nil || failure.Reason != tc.reason {
+				t.Fatalf("%s: %s = %v, want %s", tc.what, step, failure, tc.reason)
+			}
+			if len(failure.Message) > 512 || !strings.Contains(failure.Message, length) {
+				t.Errorf("%s: %s's message is %d bytes, want at most 512 that end the value with %s:\n%.300s",
+					tc.what, step, len(failure.Message), length, failure.Message)
+			}
+		}
+	}
+}
+
 // TestDispatcher_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAnythingRuns:
 // with no floor set, a task that names the Orker's own environment or process
 // files is refused SECRET_NOT_PERMITTED exactly as a source outside a floor

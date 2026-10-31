@@ -48,8 +48,9 @@ word for word.
   that the source is one of the Orker's variables or one of its files, never
   which ([SECURITY_MODEL.md](docs/SECURITY_MODEL.md), "The Orker's own
   sources").
-- A secret refusal, the namespace's and the Orker's alike, quotes a source
-  longer than 4101 bytes by its first 64 bytes and its length.
+- A secret refusal, the namespace's, the Orker's and `orkctl task run`'s
+  alike, quotes a source, a scheme, a variable or a secret name longer than
+  4101 bytes by its first 64 bytes and its length.
 - **BREAKING:** A `file:` secret source must be a plain absolute path, with
   no `..`, `.` or empty segment, of at most 4096 bytes, under every secret
   floor, the empty one included. Any other name fails `SECRET_NOT_PERMITTED`,

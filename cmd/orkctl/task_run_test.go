@@ -504,6 +504,21 @@ func TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed(t *testing.T) {
 	}
 }
 
+// TestParseTaskSecretFlag_QuotesALongSourceByItsHead: a scheme or a variable
+// of any length is refused with its head and its length, as an Orker refuses
+// it, never in full.
+func TestParseTaskSecretFlag_QuotesALongSourceByItsHead(t *testing.T) {
+	long := strings.Repeat("A", 200<<10)
+	length := fmt.Sprintf("(%d bytes)", len(long))
+	for _, value := range []string{"tok=env:" + long, "tok=" + long + ":x"} {
+		_, _, err := parseTaskSecretFlag(value, orker.DefaultSecurityPolicy())
+		if err == nil || len(err.Error()) > 512 || !strings.Contains(err.Error(), length) {
+			t.Errorf("parseTaskSecretFlag(%.20q…) = %.300v, want a refusal of at most 512 bytes that ends the value with %s",
+				value, err, length)
+		}
+	}
+}
+
 func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	dir := t.TempDir()
@@ -548,7 +563,7 @@ func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 		{"missing secret file", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=file:/nonexistent/tok"}, nil,
 			"--secret tok: /nonexistent/tok: no such file"},
 		{"unset secret variable", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=env:TEST_TASK_RUN_UNSET_VARIABLE"}, nil,
-			"--secret tok: environment variable TEST_TASK_RUN_UNSET_VARIABLE is not set"},
+			`--secret tok: environment variable "TEST_TASK_RUN_UNSET_VARIABLE" is not set`},
 		{"the machine's own variable", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=env:ORK_TEST_TASK_RUN_OWN_VARIABLE"}, nil,
 			`--secret tok: "env:ORK_TEST_TASK_RUN_OWN_VARIABLE" is this orker's own (one of its variables), which no secret floor admits; a local run refuses it as an Orker does`},
 		{"the machine's own file", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=file:/proc/self/environ"}, nil,

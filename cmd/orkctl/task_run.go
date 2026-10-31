@@ -303,8 +303,8 @@ func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, str
 		return "", "", malformed
 	}
 	if !policy.AllowsSecretScheme(scheme) {
-		return "", "", fmt.Errorf("--secret %s: scheme %q is not one this machine resolves (allowed: %s)",
-			name, scheme, strings.Join(policy.SecretSchemes, ", "))
+		return "", "", fmt.Errorf("--secret %s: scheme %s is not one this machine resolves (allowed: %s)",
+			name, dsl.QuoteSecretSource(scheme), strings.Join(policy.SecretSchemes, ", "))
 	}
 	switch scheme {
 	case "file":
@@ -333,7 +333,7 @@ func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, str
 			return "", "", err
 		}
 		if _, ok := os.LookupEnv(locator); !ok {
-			return "", "", fmt.Errorf("--secret %s: environment variable %s is not set", name, locator)
+			return "", "", fmt.Errorf("--secret %s: environment variable %s is not set", name, dsl.QuoteSecretSource(locator))
 		}
 		return name, source, nil
 	default:

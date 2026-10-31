@@ -512,7 +512,7 @@ func (d *OCIDispatcher) validateTask(in *orkstackv1.ExecuteTaskInput) *Failure {
 	for _, secret := range in.GetSecrets() {
 		if !ValidSecretName(secret.GetName()) {
 			return Fail(ReasonSecretSchemeForbid,
-				"secret name %q must match ^[A-Za-z0-9._-]{1,128}$", secret.GetName())
+				"secret name %s must match ^[A-Za-z0-9._-]{1,128}$", dsl.QuoteSecretSource(secret.GetName()))
 		}
 	}
 	return nil
@@ -536,9 +536,9 @@ func (d *OCIDispatcher) checkOrkerPolicy(in *orkstackv1.ExecuteTaskInput) *Failu
 		scheme, _ := SplitSecretSource(secret.GetSource())
 		if !d.Policy.AllowsSecretScheme(scheme) {
 			return Fail(ReasonSecretSchemeForbid,
-				"secret %q uses source scheme %q, which this orker does not resolve (allowed: %s); "+
+				"secret %q uses source scheme %s, which this orker does not resolve (allowed: %s); "+
 					"an unknown scheme is refused rather than ignored",
-				secret.GetName(), scheme, strings.Join(d.Policy.SecretSchemes, ", "))
+				secret.GetName(), dsl.QuoteSecretSource(scheme), strings.Join(d.Policy.SecretSchemes, ", "))
 		}
 		if failure := d.secretFloorFailure(secret); failure != nil {
 			return failure
@@ -1498,8 +1498,8 @@ func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failu
 	scheme, locator := SplitSecretSource(ref.GetSource())
 	if !d.Policy.AllowsSecretScheme(scheme) {
 		return nil, Fail(ReasonSecretSchemeForbid,
-			"secret %q uses source scheme %q, which this orker does not resolve (allowed: %s)",
-			ref.GetName(), scheme, strings.Join(d.Policy.SecretSchemes, ", "))
+			"secret %q uses source scheme %s, which this orker does not resolve (allowed: %s)",
+			ref.GetName(), dsl.QuoteSecretSource(scheme), strings.Join(d.Policy.SecretSchemes, ", "))
 	}
 	// The floor again, beside the read: this is the function that reads the
 	// value, and the check that protects the value lives here whatever a
@@ -1512,7 +1512,7 @@ func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failu
 		value, ok := os.LookupEnv(locator)
 		if !ok {
 			return nil, Fail(ReasonSecretUnresolved,
-				"secret %q: environment variable %q is not set on this orker", ref.GetName(), locator)
+				"secret %q: environment variable %s is not set on this orker", ref.GetName(), dsl.QuoteSecretSource(locator))
 		}
 		return []byte(value), nil
 	case "file":
@@ -1524,7 +1524,7 @@ func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failu
 		return value, nil
 	default:
 		return nil, Fail(ReasonSecretSchemeForbid,
-			"secret %q: source scheme %q is unknown", ref.GetName(), scheme)
+			"secret %q: source scheme %s is unknown", ref.GetName(), dsl.QuoteSecretSource(scheme))
 	}
 }
 

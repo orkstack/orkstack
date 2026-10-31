@@ -282,9 +282,10 @@ pattern, and `*` is the only wildcard. It does not cross `/`.
   pool").
 - A refusal names the source string and what refused it: the floor's entries,
   the path rule, or that the source is one of the Orker's own, in the same
-  words for every variable and for every file, never which one. A source
-  longer than the longest `file:` source (4101 bytes) is quoted by its first
-  64 bytes and its length. Nothing stores, logs or compares a value.
+  words for every variable and for every file, never which one. A source, a
+  scheme, a variable or a secret name longer than the longest `file:` source
+  (4101 bytes) is quoted by its first 64 bytes and its length, in every
+  refusal that names one. Nothing stores, logs or compares a value.
 
 ### The Orker's own sources
 
