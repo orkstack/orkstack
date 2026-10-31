@@ -14,6 +14,7 @@
 //	proofrun merge        merge a proof's parts into one proof.json
 //	proofrun verify       refuse a merge or tag whose proof does not cover it
 //	proofrun temporal-args  the temporal service's image and arguments
+//	proofrun temporal-log   keep a proof's own Temporal server's log, bounded and compressed
 //	proofrun costs        regenerate the cost ledgers and the slow list
 //	proofrun overhead     where an existing proof's wall-clock went
 //	proofrun push-layout  push OCI layouts byte for byte and check the digests
@@ -25,6 +26,7 @@
 //	proofrun clean        list, or remove, what test processes that are gone left
 //	proofrun runner-health  measure this runner against the floors and write runner-health.json
 //	proofrun rerun-plan   decide whether a completed proof run's failed jobs are worth a rerun
+//	proofrun job-log      bound a GitHub job log to what the merger and the rerun planner read
 //
 // Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation.
 package main
@@ -56,6 +58,7 @@ var subcommands = []subcommand{
 	{"flakes", "derive per-test flake rates from proof ledgers", cmdFlakes},
 	{"verify", "refuse a merge or a tag whose proof does not cover it", cmdVerify},
 	{"temporal-args", "the temporal service's image and arguments", cmdTemporalArgs},
+	{"temporal-log", "keep a proof's own Temporal server's log, its end bounded and compressed", cmdTemporalLog},
 	{"costs", "regenerate the cost ledgers and the slow list", cmdCosts},
 	{"overhead", "where an existing proof's wall-clock went, and its per-process overhead", cmdOverhead},
 	{"push-layout", "push OCI layouts byte for byte and check their digests", cmdPushLayout},
@@ -67,20 +70,27 @@ var subcommands = []subcommand{
 	{"clean", "list, or remove, what test processes that are gone left behind", cmdClean},
 	{"runner-health", "measure this runner against the floors and write runner-health.json", cmdRunnerHealth},
 	{"rerun-plan", "decide whether the failed jobs of a completed proof run are worth an automatic rerun", cmdRerunPlan},
+	{"job-log", "bound a GitHub job log to what the merger and the rerun planner read from it", cmdJobLog},
 }
 
 func main() {
-	if len(os.Args) < 2 {
+	os.Exit(runCommand(os.Args[1:]))
+}
+
+// runCommand runs the subcommand args name, with its flags, and returns its
+// exit status.
+func runCommand(args []string) int {
+	if len(args) < 1 {
 		usage()
-		os.Exit(2)
+		return 2
 	}
 	for _, c := range subcommands {
-		if c.name == os.Args[1] {
-			os.Exit(c.run(os.Args[2:]))
+		if c.name == args[0] {
+			return c.run(args[1:])
 		}
 	}
 	usage()
-	os.Exit(2)
+	return 2
 }
 
 func usage() {

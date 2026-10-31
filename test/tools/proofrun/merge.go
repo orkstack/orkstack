@@ -812,8 +812,8 @@ const (
 	attemptSetupFailed
 	// attemptNotEligible: no result, and not one of the above (a setup failure
 	// in a step that is not a fetch or an install, one in the plan or the
-	// build, a cancel before any test started): a later attempt makes the
-	// proof ineligible, and the remedy is a new run.
+	// build, a cancel whose job log names no running test): a later attempt
+	// makes the proof ineligible, and the remedy is a new run.
 	attemptNotEligible
 )
 
@@ -875,8 +875,10 @@ func classify(j *githubJob, reading partReading) (attemptClass, string) {
 	if reading.Unfinished {
 		return attemptResult, "its events show a test that started and never finished"
 	}
+	// Only an integration shard prints its tests to the job's log, so for
+	// any other part this says nothing of whether a test was running.
 	if j.Conclusion == "cancelled" {
-		return attemptNotEligible, "it was cancelled before any test started"
+		return attemptNotEligible, "it was cancelled, and its job log names no test that was running"
 	}
 	switch proofStepState(j) {
 	case "started":

@@ -789,14 +789,15 @@ func TestWorkflows_JobRecordsCarryWhatTheMergerClassifies(t *testing.T) {
 		t.Errorf("a lost runner's record is classified %v (%s), want lost", class, why)
 	}
 
-	// The log is best effort: GitHub keeps none for a job whose runner it lost,
-	// so a missing one must not read as an unreadable record.
+	// GitHub keeps no log for a job whose runner it lost, so its 404 or 410
+	// must not read as an unreadable record; any other failed log read does
+	// (TestWorkflows_TheJobRecordsFailClosedWhenALogCannotBeKept runs both).
 	for _, s := range loadWorkflow(t, "proof.yml").Jobs["proof"].Steps {
 		if s.Name != "job records" {
 			continue
 		}
-		if strings.Contains(s.Run, "log: the API call failed") {
-			t.Error("a failed log fetch sets read_error; a runner-lost job has no log")
+		if !strings.Contains(s.Run, `HTTP 4(04|10)`) || !strings.Contains(s.Run, "log: the API call failed") {
+			t.Error("the job records step does not tell GitHub's missing log (404, 410) from a log read that failed")
 		}
 		if !strings.Contains(s.Run, `annotations: the API call failed`) || !strings.Contains(s.Run, `unreadable: listing attempt`) {
 			t.Error("the job listing or the annotations fetch no longer sets read_error")

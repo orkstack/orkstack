@@ -45,7 +45,7 @@ func (f *fakeCleanStore) Remove(_ context.Context, bucket string) error {
 // them, unless treeErr says the container failed).
 type fakeCleanDocker struct {
 	containers []cleanContainer
-	temporals  [][2]string
+	temporals  []proofContainer
 	removed    []string
 	stopped    []string
 	trees      []string
@@ -67,7 +67,7 @@ func (f *fakeCleanDocker) RemoveTree(_ context.Context, root string) error {
 func (f *fakeCleanDocker) Containers(context.Context) ([]cleanContainer, error) {
 	return f.containers, nil
 }
-func (f *fakeCleanDocker) ProofTemporals(context.Context) ([][2]string, error) {
+func (f *fakeCleanDocker) ProofContainers(context.Context) ([]proofContainer, error) {
 	return f.temporals, nil
 }
 func (f *fakeCleanDocker) Remove(_ context.Context, id string) error {
@@ -172,10 +172,10 @@ func TestClean_RemovesOnlyWhatDeadProcessesLeft(t *testing.T) {
 			{id: "c-dev", orker: "builder-9c8d7e6f", mounts: workspace(filepath.Join(wt, ".data", "work"))},
 			{id: "c-fixed-root", orker: "builder-1a2b3c4d", mounts: workspace(filepath.Join(wt, ".data", "work", "e2e", "run-page"))},
 		},
-		temporals: [][2]string{
-			{"orkstack-proof-pr-gone-temporal", host + ":18:500"},
-			{"orkstack-proof-pr-ddd-temporal", host + ":40:900"},
-			{"orkstack-proof-pr-elsewhere-temporal", "other-host:18:500"},
+		temporals: []proofContainer{
+			{"orkstack-proof-pr-gone-temporal", "pr-gone", host + ":18:500"},
+			{"orkstack-proof-pr-ddd-temporal", "pr-ddd", host + ":40:900"},
+			{"orkstack-proof-pr-elsewhere-temporal", "pr-elsewhere", "other-host:18:500"},
 		},
 	}
 	live := map[int]bool{40: true, 41: true, 50: true}

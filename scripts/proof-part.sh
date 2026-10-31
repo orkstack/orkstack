@@ -214,12 +214,35 @@ part_is_clean() { [ -z "$(git status --porcelain --untracked-files=all)" ]; }
 
 part_proc_start() { sed -E 's/^.*\) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'; }
 
+# part_run runs one gate into its log file. With PART_STREAM set to an
+# extended regular expression, the lines of its output that match are also
+# printed as they happen: the job's own log is what GitHub keeps when the
+# runner is lost or the run is cancelled before the part's artifact is
+# uploaded, and the integration gate's `proofrun: start` and `proofrun:
+# outcome` lines are what the merger and the rerun planner read such a part
+# from (test/tools/proofrun, classify).
 part_run() { # <gate> <log> <command...>
 	local gate="$1" logname="$2" logfile="$DIR/$2"
 	shift 2
 	part_say "== $gate: $*"
 	local started=$SECONDS result=pass code=0
-	"$@" >"$logfile" 2>&1 || code=$?
+	if [ -n "${PART_STREAM:-}" ]; then
+		# The filters ignore the signals the part forwards to its process
+		# group, so a gate that shuts down on one (proofrun integration
+		# finishes its jobs and writes its events and ledger) keeps its log
+		# and its pipe until it exits; grep reads every byte as text (-a) and
+		# prints each matching line as it comes. The gate's result is its
+		# command's exit status, as with the redirect, whatever the shell's
+		# pipefail; a passing gate fails when its log tee could not write or
+		# its filter could not run (grep's exit 1 is only "no line matched").
+		"$@" 2>&1 | (trap '' TERM INT HUP && exec tee "$logfile") |
+			(trap '' TERM INT HUP && exec grep -a --line-buffered -E "$PART_STREAM")
+		local status=("${PIPESTATUS[@]}")
+		code=${status[0]}
+		[ "$code" -ne 0 ] || { [ "${status[1]}" -eq 0 ] && [ "${status[2]}" -le 1 ]; } || code=1
+	else
+		"$@" >"$logfile" 2>&1 || code=$?
+	fi
 	[ "$code" -eq 0 ] || result=fail
 	printf '%s\t%s\t%s\t%s\t%s\n' "$gate" "$result" "$((SECONDS - started))" "$logname" "$*" >>"$DIR/gates.tsv"
 	if [ "$result" = pass ]; then
@@ -299,10 +322,22 @@ part_push_images() {
 	done <"$DIR/images.tsv"
 }
 
+# part_save_temporal_log keeps the part's own Temporal server's log, its end
+# bounded and gzip-compressed, as temporal-server.log.gz beside the part's
+# records: the container was started with --rm, so stopping it removes its
+# log, and a history-read error in a test is traced in the server's log.
+part_save_temporal_log() {
+	"$PR" temporal-log -container "$TEMPORAL_NAME" -out "$DIR/temporal-server.log.gz" ||
+		part_say "proof: the Temporal server's log could not be kept"
+}
+
 part_cleanup() {
 	local code=$?
 	trap '' TERM INT HUP
-	if [ -n "$PART_TEMPORAL_RAN" ]; then docker stop "$TEMPORAL_NAME" >/dev/null 2>&1; fi
+	if [ -n "$PART_TEMPORAL_RAN" ]; then
+		part_save_temporal_log
+		docker stop "$TEMPORAL_NAME" >/dev/null 2>&1
+	fi
 	if [ -n "$PART_IMAGES" ]; then
 		local a
 		for a in $(make -s -C "$REPO/images" print-activities 2>/dev/null); do
@@ -478,7 +513,7 @@ part_main() { # <part>
 		part_run images images.log part_push_images || true
 		PART_IMAGES=1
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
-		part_run integration integration.log env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 \
+		PART_STREAM='^proofrun: (start|outcome) ' part_run integration integration.log env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 \
 			"$PR" integration -plan "$PLAN" -shard "$k" -out "$DIR" -jobs "$PROOF_JOBS" \
 			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" \
 			-namespace-prefix "$PROOF_ID-s$k" -print-progress || true

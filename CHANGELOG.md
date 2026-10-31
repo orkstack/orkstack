@@ -47,6 +47,12 @@ word for word.
 - Each release's page ends with every image's digest and the `cosign verify` and `sha256sum` commands that check the images and the checksums.
 - Each release attaches `SHA256SUMS.sigstore.json`, cosign's bundle of the checksum signature, beside `SHA256SUMS.sig`, which openssl still checks ([UPGRADING.md, "Release artifacts"](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts)).
 - `make proto-breaking`, run by CI on every push and pull request, checks the proto contract against v0.1.0 with `buf breaking`.
+- Each proof part that starts its own Temporal, and a local `make proof`,
+  keeps that Temporal server's log as `temporal-server.log.gz` (its last
+  16 MiB, compressed), so an error a test read from Temporal can be traced.
+- `docs/CI.md`: every CI workflow, its trigger, whether a merge waits for
+  it, how long it takes and what to do when it is red, with the site page
+  "Read a red CI run".
 
 ### Changed
 
@@ -118,6 +124,13 @@ word for word.
   forbids everything.
 - **BREAKING** The release signs its images and `SHA256SUMS` in cosign 3's bundle format, with none of the flags cosign 3.1 deprecates, and still records nothing in a transparency log. An engine or Orker of v0.1.0 reads only the legacy layout, and v0.1.0's catalog follows the `0.1` tag to this release's activity images, so a v0.1.0 deployment whose namespace requires `cosign:orkstack` refuses them with `IMAGE_NOT_SIGNED`. Upgrade every engine and Orker, or until then name v0.1.0's activity images by digest in `ORK_ACTIVITY_CATALOG`. During the upgrade, a v0.1.0 Orker still polling refuses the bundle-signed images of a run whose namespace requires a signer too, as a contract violation that is never retried ([UPGRADING.md, "Release artifacts"](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#release-artifacts)).
 - A release is refused before anything is built when its page, footer included, is over GitHub's limit of 125,000 characters for a release body, instead of failing at its last step after the tag and the images are out.
+- The full proof cancels its run when a gate of its `fast` part fails, so a
+  lint, build or unit failure no longer leaves the shards running for a
+  proof that cannot pass. A setup failure, or a quarantined failure, cancels
+  nothing, and a green run takes no longer.
+- `proof-rerun.yml` also runs a failed nightly of `main` again when its only
+  failures are parts whose runner was lost or measured below the floor, or
+  that failed in a setup step.
 
 ### Fixed
 
@@ -143,6 +156,20 @@ word for word.
   probe ends, and one it could not remove (it was killed first) is reaped by
   the next boot under the same identity; until then
   `docker ps --all --filter label=ork.orker=<id>` lists it.
+- The proof's automatic rerun and its job records read GitHub's job logs
+  again: gh 2.103 refuses to print a log that carries terminal escape
+  sequences unless it is given `--allow-escape-sequences`, so every log read
+  came back empty. The job records now keep a bounded log of each failed job:
+  every line the merger reads and its last 200 lines. A log that cannot be
+  read or kept, other than one GitHub does not have, fails its job closed.
+- A local proof's Playwright browser server is no longer stopped by another
+  proof's start while its gate runs: it is labelled with the proof itself as
+  its owner, not with the short-lived process that starts it, and no sweep
+  stops a container whose proof's record says it still runs.
+- A proof shard cancelled, or whose runner was lost, before its artifact was
+  uploaded is read by the test it was running: the integration gate now also
+  prints its `proofrun` progress lines to the job's log, where none reached
+  before.
 
 ### Security
 

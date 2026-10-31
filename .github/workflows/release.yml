@@ -124,9 +124,12 @@ jobs:
     concurrency:
       group: release-gate-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
+    # actions: write because proof.yml's cancel job cancels the run when a
+    # gate of its fast part fails, which no release proof excuses; a called
+    # workflow's job never gets more than its caller grants.
     permissions:
       contents: read
-      actions: read
+      actions: write
       checks: read
     uses: ./.github/workflows/proof.yml
     with:
@@ -247,8 +250,10 @@ jobs:
       # checkout, a toolchain or QEMU/buildx setup, or the upload, which a
       # lost or flaky runner explains, cancels nothing: "Re-run failed jobs",
       # once the run completes, re-runs this job and what needs it, and the
-      # gate is never run again for it. The gate itself cancels nothing: an
-      # excused runner-size miss leaves it red while its proof passes.
+      # gate is never run again for it. The gate cancels only from its cancel
+      # job, on a failing gate of its fast part, which no proof excuses
+      # (proof.yml): an excused runner-size miss leaves a shard red while its
+      # proof passes.
       - name: cancel the run, which cannot be released
         if: ${{ failure() && (steps.dist.outcome == 'failure' || steps.images.outcome == 'failure' || steps.smoke.outcome == 'failure' || steps.quickstart.outcome == 'failure' || steps.meta.outcome == 'failure') }}
         timeout-minutes: 3

@@ -268,7 +268,9 @@ run, with its own `ork` and `orker`, and stops them when it ends.
   check. Read the result from the `proof-<run>-a<attempt>` artifact's
   `proof.json` (`result`, `merge_eligible`, `ineligible_reasons`); the job
   summary is written from it. It proves exactly the tree that lands, so a
-  branch that does not contain `main`'s tip is asked to update.
+  branch that does not contain `main`'s tip is asked to update. When a gate
+  of its `fast` part fails, the run is cancelled, so a lint, build or unit
+  failure ends it early.
 
 Once the gate is enforced, a change to the gate's own files (the lists under
 `scripts/proof-*`, `.github/`, `test/tools/proofrun/`, …) needs the

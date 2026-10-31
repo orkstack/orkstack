@@ -1,9 +1,10 @@
 name: proof-rerun
 
-# Runs a failed proof of a candidate again, automatically, when nothing in it
-# recorded a result: every job that failed is the `proof` aggregator, or a part
-# whose runner GitHub lost, whose runner measured below the floor, or whose job
-# failed in a fetch or install step before its proof step started. Those are
+# Runs a failed proof of a candidate, or a failed nightly of the default
+# branch, again, automatically, when nothing in it recorded a result: every
+# job that failed is the `proof` aggregator, or a part whose runner GitHub
+# lost, whose runner measured below the floor, or whose job failed in a fetch
+# or install step before its proof step started. Those are
 # the only attempts AGENTS.md §11.2 lets run again, and `proofrun rerun-plan`
 # decides it with the merger's own classification (test/tools/proofrun,
 # docs/PROOFS.md §10), not shell. A part that recorded a result is never
@@ -15,12 +16,14 @@ name: proof-rerun
 # never pass one.
 #
 # Off unless the repository variable PROOF_AUTO_RERUN is 'true'. It acts only
-# on a push to validate/full/** of this repository (a candidate), and only
-# while the run attempt is below 3, so at most two automatic reruns follow
-# the first attempt. It runs from the default branch (a workflow_run workflow
-# always does) and checks the default branch out; nothing of the candidate's
-# code runs here, and the planner reads GitHub's record of the run through the
-# API alone.
+# on a proof.yml run of a push to validate/full/** of this repository (a
+# candidate), or a nightly.yml run, scheduled or dispatched, on the default
+# branch (main's nightly, which calls proof.yml as a reusable workflow and so
+# raises no `proof` completion of its own), and only while the run attempt is
+# below 3, so at most two automatic reruns follow the first attempt. It runs
+# from the default branch (a workflow_run workflow always does) and checks the
+# default branch out; nothing of the candidate's code runs here, and the
+# planner reads GitHub's record of the run through the API alone.
 #
 # Permissions: the two a rerun needs, `actions: write` and `contents: read`,
 # and `checks: read`, which the `proof` job of proof.yml takes for the same
@@ -29,7 +32,7 @@ name: proof-rerun
 
 on:
   workflow_run:
-    workflows: [proof]
+    workflows: [proof, nightly]
     types: [completed]
 
 concurrency:
@@ -45,10 +48,14 @@ jobs:
     if: >-
       vars.PROOF_AUTO_RERUN == 'true'
       && github.event.workflow_run.conclusion == 'failure'
-      && github.event.workflow_run.event == 'push'
-      && startsWith(github.event.workflow_run.head_branch, 'validate/full/')
       && github.event.workflow_run.head_repository.full_name == github.repository
       && github.event.workflow_run.run_attempt < 3
+      && ((github.event.workflow_run.path == '.github/workflows/proof.yml'
+           && github.event.workflow_run.event == 'push'
+           && startsWith(github.event.workflow_run.head_branch, 'validate/full/'))
+          || (github.event.workflow_run.path == '.github/workflows/nightly.yml'
+              && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')
+              && github.event.workflow_run.head_branch == github.event.repository.default_branch))
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     permissions:

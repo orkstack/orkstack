@@ -244,6 +244,9 @@ jobs:
     timeout-minutes: 65
     permissions:
       contents: read
+    outputs:
+      # Whether one of the part's own gates failed: the cancel job's cue.
+      failed_gate: ${{ steps.gates.outputs.failed }}
     steps:
       - uses: actions/checkout@v7.0.1
         timeout-minutes: 3
@@ -271,6 +274,7 @@ jobs:
         working-directory: site
         run: bun install --frozen-lockfile
       - name: fast
+        id: fast
         # 30: the unit gate alone took 689 s on a slower 4-vCPU runner (CI
         # run 40749987883), and lint about four minutes on two vCPUs
         # (docs/PROOFS.md §11.5); the unit gate's own 15-minute hang guard
@@ -292,6 +296,53 @@ jobs:
             proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/
             !proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
+      # Whether a gate of the part failed, for the cancel job, read from the
+      # part's own gates.tsv after the upload. A setup step's failure skips
+      # the part step, so this step, and a part that stopped before any gate
+      # (a prerequisite absent) recorded none: neither says a gate failed.
+      - name: failing gate
+        id: gates
+        if: ${{ failure() && steps.fast.outcome == 'failure' }}
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          gates="proof/$PROOF_NAME-part-fast-a$GITHUB_RUN_ATTEMPT/gates.tsv"
+          if [ -f "$gates" ] && grep -q $'^[^\t]*\tfail\t' "$gates"; then
+            echo "a fast gate failed: $(grep $'^[^\t]*\tfail\t' "$gates" | cut -f1 | paste -sd, -)"
+            echo "failed=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "the fast part failed before any gate recorded a failure"
+          fi
+
+  cancel:
+    # GitHub cancels no sibling job, so a proof whose fast part recorded a
+    # failing gate, which no merge excuses (the unit gate exits 0 when every
+    # failure is a quarantined one), would keep its shards running for a
+    # verdict already decided: this job cancels the run then, as
+    # release.yml › artifacts does on a failure a rerun would repeat. It is a
+    # job of its own because fast runs the candidate's code, which could
+    # change what a later step of fast runs: this one checks out nothing,
+    # runs nothing of the repository, and alone holds actions: write. The
+    # proof job still runs, on always(), and fails (docs/PROOFS.md §5).
+    needs: fast
+    if: ${{ !cancelled() && needs.fast.result == 'failure' && needs.fast.outputs.failed_gate == 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    permissions:
+      actions: write
+    steps:
+      - name: cancel the run, which cannot pass
+        timeout-minutes: 1
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          echo "a gate of the fast part failed: cancelling the run, which cannot pass"
+          gh run cancel "$RUN_ID" --repo "$REPO"
 
   race:
     # The unit suites under the race detector (-short), on a runner of their
@@ -766,7 +817,7 @@ jobs:
   proof:
     # A skipped required job reports success: `always()` and nothing else.
     if: always()
-    needs: [base, plan, build, fast, race, race-repeat, fuzz, integration, ui-e2e, activity-fixture, observability]
+    needs: [base, plan, build, fast, cancel, race, race-repeat, fuzz, integration, ui-e2e, activity-fixture, observability]
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     permissions:
@@ -831,11 +882,24 @@ jobs:
           # its runner are how the merger tells a job "Re-run failed jobs"
           # carried forward from the attempt before, which GitHub lists again
           # under a new id without running it (merge.go, carriedForward).
+          #
+          # A log is kept bounded (`proofrun job-log`, joblog.go): every line
+          # the merger reads (proofrun start and outcome lines), byte for
+          # byte, and its last lines, without terminal escapes. gh refuses to
+          # print a log that carries escape sequences unless it is given
+          # --allow-escape-sequences; without it, every record kept an empty
+          # log. GitHub's 404 or 410 for a log is no log (a lost runner keeps
+          # none). Any other failed read, a log job-log refuses (its proofrun
+          # lines, or one line, pass the bound) and a proofrun that did not
+          # build set read_error: each fails closed. proofrun is built from
+          # the candidate's tree, so neither its build nor it is given the
+          # token, which only gh's reads take.
           set -uo pipefail
           dir="$RUNNER_TEMP/ci/jobs"
           work="$RUNNER_TEMP/ci/jobs-work"
           mkdir -p "$dir" "$work"
           repo="repos/$GITHUB_REPOSITORY"
+          env -u GH_TOKEN go build -o "$work/proofrun" ./test/tools/proofrun || echo "proofrun did not build: every log it read fails its job's record closed" >&2
           for n in $(seq 1 "$GITHUB_RUN_ATTEMPT"); do
             if ! gh api --paginate "$repo/actions/runs/$GITHUB_RUN_ID/attempts/$n/jobs?per_page=100" --jq '.jobs[] | tojson' >"$work/raw-$n"; then
               # Not JSON on purpose: the merger lists it as unreadable.
@@ -864,7 +928,18 @@ jobs:
                 # and that job is classified from its annotations, not its log.
                 case "$conclusion" in
                 success | skipped) ;;
-                *) gh api "$repo/actions/jobs/$id/logs" >"$work/log" 2>/dev/null || : >"$work/log" ;;
+                *)
+                  if gh api --allow-escape-sequences "$repo/actions/jobs/$id/logs" >"$work/rawlog" 2>"$work/logerr"; then
+                    if [ ! -x "$work/proofrun" ]; then
+                      [ -n "$err" ] || err="log: proofrun did not build, so the log could not be kept"
+                    elif ! env -u GH_TOKEN "$work/proofrun" job-log <"$work/rawlog" >"$work/log"; then
+                      : >"$work/log"
+                      [ -n "$err" ] || err="log: proofrun job-log refused it (its proofrun lines, or one line, pass the bound)"
+                    fi
+                  elif ! grep -qE 'HTTP 4(04|10)([^0-9]|$)' "$work/logerr"; then
+                    [ -n "$err" ] || err="log: the API call failed"
+                  fi
+                  ;;
                 esac
               fi
               jq -c --rawfile log "$work/log" --slurpfile ann "$work/ann" --arg err "$err" '

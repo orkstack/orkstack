@@ -3,6 +3,7 @@ import { readFileSync, realpathSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOwner } from './proof-owner';
 
 // The browser the specs drive runs in a container of its own, and therefore in
 // a NETWORK NAMESPACE of its own.
@@ -28,10 +29,10 @@ import { fileURLToPath } from 'node:url';
 // `connectOptions.exposeNetwork: '<loopback>'`, so a spec's
 // `http://127.0.0.1:<port>` reaches the engine (which serves the UI) that spec
 // started on the host, through the connection, with nothing in the spec changed. The
-// container is this run's own — labelled with the proof id and the runner's
-// pid and start time, the same labels scripts/proof.sh gives a proof's Temporal
-// — stopped by e2e/global-teardown.ts by its recorded id, and reaped by the
-// next proof's sweep if this runner was killed outright. ORK_E2E_BROWSER=host
+// container is this run's own — labelled with the proof id and its owner, the
+// same labels scripts/proof.sh gives a proof's Temporal (browserServerOwner) —
+// stopped by e2e/global-teardown.ts by its recorded id, and reaped by a later
+// proof's sweep once its owner is gone, never while its proof runs. ORK_E2E_BROWSER=host
 // drives the host's own Chromium instead, for a developer without the image;
 // a proof never sets it.
 
@@ -64,6 +65,11 @@ function procStart(): string {
 	}
 }
 
+/** browserServerOwner is the owner the container is labelled with (proofOwner): the proof's when it names one, otherwise this process. */
+export function browserServerOwner(): string {
+	return proofOwner(process.env, os.hostname(), process.pid, procStart());
+}
+
 export interface BrowserServer {
 	/** The WebSocket endpoint a client connects to, on the host's loopback. */
 	wsEndpoint: string;
@@ -79,7 +85,7 @@ export interface BrowserServer {
  * `docker pull` it first (a proof's images step does), because an unpinned
  * fetch at run time is what the pinned reference exists to prevent.
  */
-export function startBrowserServer(proofId: string): BrowserServer {
+export function startBrowserServer(proofId: string, owner: string = browserServerOwner()): BrowserServer {
 	const image = browserImage();
 	try {
 		execFileSync('docker', ['image', 'inspect', image], { stdio: 'ignore' });
@@ -89,7 +95,6 @@ export function startBrowserServer(proofId: string): BrowserServer {
 	// Bun's linker may place the package behind a link; the daemon mounts a
 	// real path.
 	const core = realpathSync(path.join(uiDir, 'node_modules', 'playwright-core'));
-	const owner = `${os.hostname()}:${process.pid}:${procStart()}`;
 	const container = execFileSync(
 		'docker',
 		[
@@ -157,12 +162,20 @@ export function stopBrowserServer(container: string): void {
 	}
 }
 
-// `bun e2e/browser-server.ts start <proof id>` starts a server and prints
-// `{"wsEndpoint":…,"container":…,"image":…}`; scripts/proof.sh runs it once
-// and hands the endpoint to both of a proof's invocations, stopping the
-// container itself when the gate ends. Under Playwright this module is only
-// imported, and import.meta.main is not set.
+// `ORK_PROOF_OWNER=host:pid:start bun e2e/browser-server.ts start <proof id>`
+// starts a server and prints `{"wsEndpoint":…,"container":…,"image":…}`;
+// scripts/proof.sh runs it once and hands the endpoint to both of a proof's
+// invocations, stopping the container itself when the gate ends. This process
+// exits as soon as the server listens, so it is never the owner: the command
+// refuses to start one without ORK_PROOF_OWNER. Under Playwright this module
+// is only imported, and import.meta.main is not set.
 if ((import.meta as { main?: boolean }).main && process.argv[2] === 'start') {
+	if (!process.env.ORK_PROOF_OWNER) {
+		console.error(
+			'browser-server start: ORK_PROOF_OWNER must name the process the server lives for (host:pid:start): this one exits at once, and a sweep would read the server as abandoned'
+		);
+		process.exit(2);
+	}
 	const server = startBrowserServer(process.argv[3] ?? `e2e-${process.pid}`);
 	console.log(JSON.stringify(server));
 }
