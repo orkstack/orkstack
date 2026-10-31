@@ -1007,7 +1007,11 @@ supply-chain policy". This is the Orker's half.
   is not a verdict, is never a pass and never "unsigned".
 - **Rolling upgrade:** a run submitted through an engine replica of a release
   without the policy carries no selection, and its tasks are not checked by
-  the Orker. The window is the rollout.
+  the Orker. The window is the rollout. An Orker of v0.1.0 reads only the
+  legacy layout: a run whose selection requires a signer, submitted through
+  a later engine, has each bundle-signed image refused by such an Orker
+  still polling, `IMAGE_NOT_SIGNED`, a `ContractViolation` that is never
+  retried ([UPGRADING.md](./UPGRADING.md), "Release artifacts").
 
 ---
 
