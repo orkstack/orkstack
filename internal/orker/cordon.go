@@ -351,9 +351,11 @@ func (a *Activities) admit(queue string, request amount) (*Admission, error) {
 }
 
 // executeTaskRequest is what an ExecuteTask attempt reserves: its resolved
-// request, or nothing for a request the policy refuses, because the attempt
-// fails RESOURCE_REQUEST_REFUSED before any container exists. An input this
-// cannot read keeps the whole per-task cap: unknown is never nothing.
+// request, or nothing for a request the policy refuses, because such an
+// attempt starts no container here: it adopts a committed result, reuses a
+// memo hit, or fails RESOURCE_REQUEST_REFUSED before any container exists.
+// An input this cannot read keeps the whole per-task cap: unknown is never
+// nothing.
 func executeTaskRequest(policy SecurityPolicy, in *interceptor.ExecuteActivityInput) amount {
 	var input *orkstackv1.ExecuteTaskInput
 	if len(in.Args) > 0 {
