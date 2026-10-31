@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/hostpolicy"
 )
 
 // maxRequestMaxBytes is the largest ORK_REQUEST_MAX_BYTES the engine
@@ -24,7 +25,7 @@ type listenerConfig struct {
 	idleTimeout     time.Duration
 	requestMaxBytes int64
 	allowedHosts    []string
-	hosts           api.HostPolicy
+	hosts           hostpolicy.Policy
 	// warnings are logged at boot, Warn, one line each.
 	warnings []string
 }

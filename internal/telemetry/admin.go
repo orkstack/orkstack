@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	"github.com/orkstack/orkstack/internal/hostpolicy"
 )
 
 // Paths on the admin listener.
@@ -34,6 +36,17 @@ const (
 	// listener; one over it is 431.
 	adminMaxHeaderBytes = 64 << 10
 )
+
+// AdminListener names the admin listener's settings for its Host policy
+// (internal/hostpolicy): ORK_ADMIN_ADDR, and ORK_ADMIN_ALLOWED_HOSTS
+// (telemetry.admin_allowed_hosts). It answers the names every OrkStack
+// listener answers, its own address's host and the names that setting
+// lists, so a page that rebinds a public name to it cannot read /metrics or
+// a profile.
+var AdminListener = hostpolicy.Listener{
+	Name: "admin listener", AddrVar: AdminAddrVar, AllowedVar: AdminAllowedHostsVar,
+	AllowedKey: "telemetry.admin_allowed_hosts",
+}
 
 // newAdminServer serves handler within the admin listener's bounds. Like
 // the API listener it sets no ReadTimeout and no WriteTimeout: a CPU profile
@@ -108,11 +121,15 @@ func StartAdmin(cfg Config, providers *Providers, logger *slog.Logger) (addr str
 	if cfg.AdminAddr == "" {
 		return "", func(context.Context) error { return nil }, nil
 	}
+	hosts, err := hostpolicy.New(AdminListener, cfg.AdminAddr, cfg.AdminAllowedHosts)
+	if err != nil {
+		return "", nil, err
+	}
 	listener, err := net.Listen("tcp", cfg.AdminAddr)
 	if err != nil {
 		return "", nil, fmt.Errorf("%s=%q: %w", AdminAddrVar, cfg.AdminAddr, err)
 	}
-	server := newAdminServer(NewAdminMux(providers, cfg))
+	server := newAdminServer(hosts.Guard(NewAdminMux(providers, cfg), logger))
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("admin listener stopped", "addr", cfg.AdminAddr, "error", err)

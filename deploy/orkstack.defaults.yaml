@@ -128,6 +128,7 @@ telemetry:
   log_format: text
   log_level: info
   admin_addr: ""  # no listener when unset
+  admin_allowed_hosts: []  # an IP address, localhost and *.localhost, a name without a dot, and the host ORK_ADMIN_ADDR names are always admitted
   pprof_enabled: false
   high_cardinality: false
   service_name:

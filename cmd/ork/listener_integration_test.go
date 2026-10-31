@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -59,9 +60,9 @@ func statusUnder(t *testing.T, address, host, path string) int {
 // over the cap is refused resource_exhausted naming it, and the next request
 // on the same client is served; a keep-alive connection is closed once idle
 // for the timeout; a Host that is neither one the engine always admits nor
-// listed is refused 403 on every route; and a cap under what the task
-// ceiling needs, or an allowed host that is not a name, stops the boot
-// naming the settings.
+// listed is refused 403 on every route, and on the admin listener under
+// ORK_ADMIN_ALLOWED_HOSTS; and a cap under what the task ceiling needs, or an
+// allowed host that is not a name, stops the boot naming the settings.
 func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 	temporal := requireTemporal(t)
 	_ = requireObjectStore(t)
@@ -73,7 +74,8 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 	address, orkflows, log := bootEngine(ctx, t, binary, temporal, "engine-listener",
 		"ORK_TEMPORAL_NAMESPACE="+listenerNamespace("listener"),
 		"ORK_ORKFLOW_MAX_TASKS=1", "ORK_HTTP_IDLE_TIMEOUT="+idle.String(),
-		"ORK_ALLOWED_HOSTS=orkstack.example.com, *.corp.example")
+		"ORK_ALLOWED_HOSTS=orkstack.example.com, *.corp.example",
+		"ORK_ADMIN_ADDR=127.0.0.1:0", "ORK_ADMIN_ALLOWED_HOSTS=host.docker.internal")
 	if !strings.Contains(log.String(), "request_max_bytes=1052672") || !strings.Contains(log.String(), "allowed_hosts") {
 		t.Fatalf("the boot log does not state the listener's settings:\n%s", log.String())
 	}
@@ -81,6 +83,18 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 	_, port, err := net.SplitHostPort(address)
 	if err != nil {
 		t.Fatal(err)
+	}
+	admin := regexp.MustCompile(`msg="admin listener ready" addr=(\S+)`).FindStringSubmatch(log.String())
+	if admin == nil {
+		t.Fatalf("the boot log names no admin listener:\n%s", log.String())
+	}
+	for host, want := range map[string]int{
+		admin[1]: http.StatusOK, "localhost:9464": http.StatusOK, "host.docker.internal:9464": http.StatusOK,
+		"evil.example": http.StatusForbidden, "orkstack.example.com": http.StatusForbidden,
+	} {
+		if got := statusUnder(t, admin[1], host, "/healthz"); got != want {
+			t.Errorf("the admin listener's /healthz with Host %q: %d, want %d", host, got, want)
+		}
 	}
 	for _, tc := range []struct {
 		host string

@@ -30,6 +30,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/orkstack/orkstack/internal/hostpolicy"
 )
 
 // Service names. They are the default service.name of each binary and the
@@ -51,6 +53,9 @@ const (
 	// AdminAddrVar is the listener for /healthz, /readyz, /metrics and
 	// /debug/pprof. Empty, the default, opens nothing.
 	AdminAddrVar = "ORK_ADMIN_ADDR"
+	// AdminAllowedHostsVar adds names the admin listener answers to in a
+	// request's Host header (internal/hostpolicy).
+	AdminAllowedHostsVar = "ORK_ADMIN_ALLOWED_HOSTS"
 	// PprofEnabledVar mounts net/http/pprof on the admin listener. Off by
 	// default: an Orker's heap holds resolved secret bytes.
 	PprofEnabledVar = "ORK_PPROF_ENABLED"
@@ -111,6 +116,8 @@ type Config struct {
 	LogsExporter string
 	// AdminAddr is the admin listener, or empty for none.
 	AdminAddr string
+	// AdminAllowedHosts are the further names the admin listener answers to.
+	AdminAllowedHosts []string
 	// PprofEnabled mounts pprof on the admin listener.
 	PprofEnabled bool
 	// HighCardinality adds per-run and per-task labels to metrics.
@@ -225,6 +232,14 @@ func configFrom(service string, lookup func(string) (string, bool)) (Config, err
 		} else {
 			cfg.MetricsExporters = names
 		}
+	}
+	for entry := range strings.SplitSeq(get(AdminAllowedHostsVar), ",") {
+		if entry = strings.TrimSpace(entry); entry != "" {
+			cfg.AdminAllowedHosts = append(cfg.AdminAllowedHosts, entry)
+		}
+	}
+	if _, err := hostpolicy.New(AdminListener, cfg.AdminAddr, cfg.AdminAllowedHosts); err != nil {
+		errs = append(errs, err)
 	}
 	if cfg.hasMetricsExporter(ExporterPrometheus) && cfg.AdminAddr == "" {
 		errs = append(errs, fmt.Errorf("%s includes %q, which is served on the admin listener: set %s",

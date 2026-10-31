@@ -259,6 +259,8 @@ var Schema = []Var{
 	{Path: "telemetry.log_format", Env: "ORK_LOG_FORMAT", Binaries: usesBoth, Kind: KindString, Default: telemetry.LogFormatText},
 	{Path: "telemetry.log_level", Env: "ORK_LOG_LEVEL", Binaries: usesBoth, Kind: KindString, Default: telemetry.DefaultLogLevel},
 	{Path: "telemetry.admin_addr", Env: "ORK_ADMIN_ADDR", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "no listener when unset"},
+	{Path: "telemetry.admin_allowed_hosts", Env: "ORK_ADMIN_ALLOWED_HOSTS", Binaries: usesBoth, Kind: KindList, Default: EmptyDefault,
+		DerivedNote: "an IP address, localhost and *.localhost, a name without a dot, and the host ORK_ADMIN_ADDR names are always admitted"},
 	{Path: "telemetry.pprof_enabled", Env: "ORK_PPROF_ENABLED", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 	{Path: "telemetry.high_cardinality", Env: "ORK_TELEMETRY_HIGH_CARDINALITY", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 

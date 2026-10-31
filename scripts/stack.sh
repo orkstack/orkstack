@@ -239,7 +239,7 @@ wants_admin_addr() {
 # .run/orkstack.yaml from exactly the five values `up` computes (backend,
 # workdir, http_addr, ws_allowed_origins — empty unless exported, which is the
 # engine's same-origin default — and the local activity catalog), plus
-# telemetry.admin_addr when wants_admin_addr says so.
+# telemetry.admin_addr and admin_allowed_hosts when wants_admin_addr says so.
 # Both binaries are started against this one file with --config; the
 # ambient environment still wins over anything it sets
 # (config.Document.Apply's precedence — docs/DEPLOY.md §1), so a variable
@@ -270,8 +270,14 @@ write_run_config() {
 			printf '%s\n' "$catalog"
 		fi
 		if wants_admin_addr; then
+			# The observability profile's Prometheus scrapes these listeners
+			# as host.docker.internal, a name with a dot, which an admin
+			# listener answers only when it is listed (docs/DEPLOY.md, "The
+			# API listener's bounds").
 			echo "telemetry:"
 			echo "  admin_addr: {ork: \"127.0.0.1:9464\", orker: \"127.0.0.1:9465\"}"
+			echo "  admin_allowed_hosts:"
+			echo "    - host.docker.internal"
 		fi
 	} >"$RUN_DIR/orkstack.yaml"
 }

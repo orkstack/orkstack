@@ -24,6 +24,8 @@
 #
 # Prometheus runs in a container on the compose network and scrapes
 # host.docker.internal, which compose maps to Docker's default-bridge gateway.
+# That name has a dot, so the config file lists it in admin_allowed_hosts:
+# the admin listeners refuse any other Host with one (docs/DEPLOY.md §1).
 # On Linux a host listener on 127.0.0.1 cannot be reached from a container,
 # and a host firewall commonly admits container traffic only from the default
 # bridge (README, "Linux hosts"). So, for this gate only, the admin listeners
@@ -190,6 +192,8 @@ cat >"$CONFIG_FILE" <<EOF
 telemetry:
   log_format: json
   admin_addr: {ork: "$ADMIN_HOST:9464", orker: "$ADMIN_HOST:9465"}
+  admin_allowed_hosts:
+    - host.docker.internal
   exporters:
     logs: otlp
     metrics: [prometheus, otlp]
