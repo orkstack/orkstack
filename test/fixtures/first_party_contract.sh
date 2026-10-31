@@ -126,7 +126,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 ||
 bindable() {   # bindable <dir> — can the daemon actually bind-mount this?
     docker run --rm \
         --mount "type=bind,source=$1,destination=/probe,readonly" \
-        docker.io/library/alpine:3.20 true >/dev/null 2>&1
+        docker.io/library/alpine:3.24 true >/dev/null 2>&1
 }
 
 ROOT=
@@ -163,7 +163,7 @@ cleanup() {
     # (a git repository in tmp/, a checkout in shared/); a root container
     # opens them up so the host user can remove the whole root.
     docker run --rm --mount "type=bind,source=$ROOT,destination=/w" \
-        docker.io/library/alpine:3.20 chmod -R a+rwX /w >/dev/null 2>&1
+        docker.io/library/alpine:3.24 chmod -R a+rwX /w >/dev/null 2>&1
     chmod -R u+rwX "$ROOT" 2>/dev/null
     rm -rf "$ROOT"
 }
@@ -578,7 +578,7 @@ cases_json() {
     section "J15 the version line"
     w=$(mkws '{"op":"query","nullInput":true,"filter":"1"}')
     rc=$(drun "$w")
-    contains "J15 stdout's first line names jq 1.7" "activity-json: jq-1.7." "$(first_line "$w")"
+    contains "J15 stdout's first line names jq 1.8" "activity-json: jq-1.8." "$(first_line "$w")"
 
     section "J16 SIGTERM reaches jq"
     w=$(mkws '{"op":"query","nullInput":true,"filter":"last(range(1e12))"}')
@@ -993,7 +993,7 @@ cases_git() {
     section "G9 the version line"
     w=$(mkws "$(git_resolve_cfg https://h/r.git)")
     rc=$(drun "$w")
-    contains "G9 stdout's first line names git 2.45" "activity-git: git version 2.45." "$(first_line "$w")"
+    contains "G9 stdout's first line names git 2.54" "activity-git: git version 2.54." "$(first_line "$w")"
 
     section "G10 caFile"
     w=$(mkws "$(jq -cn --arg r "$GIT_ID" '{op: "resolve", url: "https://h/r.git", ref: $r, caFile: "missing.pem"}')")

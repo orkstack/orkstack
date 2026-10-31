@@ -152,7 +152,7 @@ report() {
         # path is then predictable (.tasks.<id>.output.result…) whatever the
         # filter returns, and an array there is exactly what each.over reads.
         # The output file is jq's operand, so a number passes through with its
-        # literal text intact (jq 1.7 preserves an unchanged number).
+        # literal text intact (jq 1.8 preserves an unchanged number).
         jq -c '{result: .}' "$TMP/out" > "$TMP/values.json" || fail "writing values.json failed"
         mv "$TMP/values.json" "$VALUES" || fail "writing values.json failed"
         _size=$(wc -c < "$VALUES" | tr -d ' ')

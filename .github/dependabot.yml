@@ -24,8 +24,19 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # The first-party activity images: each Dockerfile is in a directory of its
+  # own (images/activity-*/), which Dependabot reads only when named, so the
+  # entry names them by glob. Their alpine base is pinned again elsewhere,
+  # moved by hand in the same pull request, and tests hold every copy to these
+  # Dockerfiles: orker.BindProbeImage, the boot probe's image
+  # (internal/orker/runtime_docker.go), its PROBE_IMAGE copies in
+  # .github/workflows/podman.yml, scripts/k8s-orker-check.sh and
+  # scripts/kind-orker.sh, and examples/custom-image-shell's base
+  # (TestBindProbeImage_IsTheFirstPartyImagesBase); and the proof cleanup's
+  # firstPartyBase (test/tools/proofrun/clean.go,
+  # TestClean_RemoveTreeArgs_BaseIsTheFirstPartyImagesBase).
   - package-ecosystem: docker
-    directory: /images
+    directories: ["/images/*"]
     schedule:
       interval: weekly
     groups:

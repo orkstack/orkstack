@@ -536,9 +536,9 @@ func TestActivityTemplate_CachingInventoryNamesThePinnedVersion(t *testing.T) {
 
 func TestTransformImages_PinTheirToolVersions(t *testing.T) {
 	for image, constraints := range map[string][]string{
-		"activity-json":     {"'jq~1.7'"},
-		"activity-template": {"'jq~1.7'"},
-		"activity-git":      {"'git~2.45'", "'jq~1.7'"},
+		"activity-json":     {"'jq~1.8'"},
+		"activity-template": {"'jq~1.8'"},
+		"activity-git":      {"'git~2.54'", "'jq~1.8'"},
 	} {
 		dockerfile := readImageFile(t, image, "Dockerfile")
 		for _, c := range constraints {

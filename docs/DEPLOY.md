@@ -1974,7 +1974,7 @@ missing:
 - **A subordinate uid and gid range of at least 65536** for the Orker's user
   (`/etc/subuid`, `/etc/subgid`), for rootless Podman.
 - **Qualified image references.** Podman's enforcing short-name mode refuses
-  `alpine:3.20` where more than one search registry is configured; the boot
+  `alpine:3.24` where more than one search registry is configured; the boot
   probe's image is fully qualified and pinned, and an activity's reference
   is resolved before it reaches the runtime.
 - **`insecure = true` for a plain-HTTP registry** in `registries.conf`, the

@@ -38,7 +38,7 @@ WORK_DIR="${ORK_ORKER_WORKDIR:-$REPO/.data/work}"
 
 # The image the mount probe uses. A small image most machines already hold, so
 # the probe usually pulls nothing.
-PROBE_IMAGE="${ORK_PROBE_IMAGE:-alpine:3.20}"
+PROBE_IMAGE="${ORK_PROBE_IMAGE:-alpine:3.24}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf '%s\n' "$*" >&2; exit 1; }

@@ -7,15 +7,15 @@
 #
 # jq is the whole toolchain: this image does not install a JSON library, it
 # installs the JSON tool every first-party entry script already uses and lets
-# a document point it at a document. The `~1.7` constraint admits Alpine's
-# patch releases of jq 1.7 and refuses another minor version, so a rebuild
+# a document point it at a document. The `~1.8` constraint admits Alpine's
+# patch releases of jq 1.8 and refuses another minor version, so a rebuild
 # cannot silently change what a filter computes.
 #
 # tzdata is what makes a task's own TZ (say Europe/Berlin) mean that zone:
 # without zone data, musl reads every zone name as UTC, silently.
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
-RUN apk add --no-cache 'jq~1.7' tzdata
+RUN apk add --no-cache 'jq~1.8' tzdata
 
 COPY entry.sh /usr/local/bin/entry.sh
 RUN chmod 0555 /usr/local/bin/entry.sh

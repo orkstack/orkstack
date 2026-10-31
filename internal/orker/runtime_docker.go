@@ -1336,7 +1336,7 @@ func saysDeadline(answer string, paths ...string) bool {
 // when the daemon overruns the probe's budget: the first try and one retry.
 const bindProbeAttempts = 2
 
-// BindProbeImage is the image the boot probe runs: alpine 3.20, the base of
+// BindProbeImage is the image the boot probe runs: alpine 3.24, the base of
 // the first-party images, at the index digest they pin.
 //
 // It is qualified with its registry because a short name is resolved by the
@@ -1345,7 +1345,7 @@ const bindProbeAttempts = 2
 // digest because it is what the probe's checks were measured with: the probe
 // needs a POSIX shell, cat, sed and env, and a tag that moved could take any
 // of them away. It runs no workload code and produces no commit.
-const BindProbeImage = "docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc"
+const BindProbeImage = "docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a"
 
 func containerName(taskID string) string {
 	var suffix [4]byte

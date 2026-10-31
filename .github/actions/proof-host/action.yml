@@ -46,7 +46,7 @@ runs:
         sudo systemctl restart docker
         # The one container this action runs that is not the stack's: pulled
         # from Docker Hub by tag, so it is bounded like a fetch is.
-        timeout -k 10 360 docker run --rm alpine:3.20 getent hosts host.docker.internal
+        timeout -k 10 360 docker run --rm alpine:3.24 getent hosts host.docker.internal
 
     # About 20 jobs a run each need the stack's images; Docker Hub allows 100
     # anonymous pulls an hour per address. One job saves them, every job loads

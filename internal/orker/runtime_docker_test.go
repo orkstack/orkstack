@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -520,5 +521,56 @@ func TestBindProbeImage_IsQualifiedAndPinned(t *testing.T) {
 	}
 	if !strings.HasPrefix(name, "docker.io/library/") {
 		t.Fatalf("BindProbeImage = %q; want it qualified with its registry and repository", BindProbeImage)
+	}
+}
+
+// TestBindProbeImage_IsTheFirstPartyImagesBase: the boot probe runs the alpine
+// the first-party images build from, at the digest they pin, and the copies
+// of it outside the Orker move with it: the PROBE_IMAGE of the Podman
+// workflow, the Kubernetes check and the kind script, the shell example's
+// base, and the documents that quote the probe's image for an operator to
+// mirror or pull. Dependabot moves only the Dockerfiles
+// (.github/dependabot.yml), so a copy it left behind fails here.
+func TestBindProbeImage_IsTheFirstPartyImagesBase(t *testing.T) {
+	root := filepath.Join("..", "..")
+	base := strings.TrimPrefix(BindProbeImage, "docker.io/library/")
+	files, err := filepath.Glob(filepath.Join(root, "images", "*", "Dockerfile"))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no first-party Dockerfiles found: %v", err)
+	}
+	files = append(files, filepath.Join(root, "examples", "custom-image-shell", "Dockerfile"))
+	for _, doc := range []string{"OCI_ACTIVITY_CONTRACT.md", "REASONS.md", "TROUBLESHOOTING.md", "UPGRADING.md"} {
+		files = append(files, filepath.Join(root, "docs", doc))
+	}
+	pinned := regexp.MustCompile(`alpine:[0-9.]+@sha256:[0-9a-f]{64}`)
+	for _, file := range files {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		refs := pinned.FindAllString(string(b), -1)
+		if len(refs) == 0 {
+			t.Errorf("%s builds from no pinned alpine", file)
+		}
+		for _, ref := range refs {
+			if ref != base {
+				t.Errorf("%s builds from %s; the boot probe runs %s", file, ref, BindProbeImage)
+			}
+		}
+	}
+	probe := regexp.MustCompile(`(?m)^\s*PROBE_IMAGE(?::\s*|=)(\S+)\s*$`)
+	for _, rel := range []string{".github/workflows/podman.yml", "scripts/k8s-orker-check.sh", "scripts/kind-orker.sh"} {
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		sets := probe.FindAllSubmatch(b, -1)
+		if len(sets) != 1 {
+			t.Errorf("%s sets PROBE_IMAGE %d times, want once", rel, len(sets))
+			continue
+		}
+		if got := string(sets[0][1]); got != BindProbeImage {
+			t.Errorf("%s probes with %s; the boot probe runs %s", rel, got, BindProbeImage)
+		}
 	}
 }

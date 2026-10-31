@@ -122,7 +122,7 @@ docker image inspect "$IMAGE" >/dev/null 2>&1 ||
 bindable() {   # bindable <dir> — can the daemon actually bind-mount this?
     docker run --rm \
         --mount "type=bind,source=$1,destination=/probe,readonly" \
-        docker.io/library/alpine:3.20 true >/dev/null 2>&1
+        docker.io/library/alpine:3.24 true >/dev/null 2>&1
 }
 
 ROOT=
@@ -160,7 +160,7 @@ cleanup() {
     # uids) the files it wrote are not the host user's to remove; a root
     # container opens them up first, as first_party_contract.sh does.
     docker run --rm --mount "type=bind,source=$ROOT,destination=/w" \
-        docker.io/library/alpine:3.20 chmod -R a+rwX /w >/dev/null 2>&1
+        docker.io/library/alpine:3.24 chmod -R a+rwX /w >/dev/null 2>&1
     chmod -R u+rwX "$ROOT" 2>/dev/null
     rm -rf "$ROOT"
 }
@@ -568,12 +568,12 @@ contains "workload stdout reached the container log stream" "HELLO-ON-STDOUT" "$
 # silently accepted — otherwise every later assertion is vacuous. Run a bare
 # base image so this falsifies the CHECKER, not the image under test.
 w=$(mkws '{}' "novalues")
-rc=$(run_sync "$w" "docker.io/library/alpine:3.20")
+rc=$(run_sync "$w" "docker.io/library/alpine:3.24")
 check "exit 0 with no values.json is caught as VALUES_MISSING" \
     "VALUES_MISSING" "$(validate_values "$w")"
 
 w=$(mkws '{}' "badvalues")
-rc=$(run_sync "$w" "docker.io/library/alpine:3.20")
+rc=$(run_sync "$w" "docker.io/library/alpine:3.24")
 printf '[1,2,3]' > "$w/output/values.json"
 check "a top-level array is caught as VALUES_MALFORMED" \
     "VALUES_MALFORMED" "$(validate_values "$w")"

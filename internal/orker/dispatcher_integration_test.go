@@ -30,10 +30,10 @@ import (
 // It is pinned to a DIGEST because the dispatcher refuses a tag: a running
 // execution must never silently switch images because a tag moved
 // (AGENTS.md §5). The digest is resolved once, at the start of the run, from
-// whatever alpine:3.20 the host has — so the test pins what it actually ran
+// whatever alpine:3.24 the host has — so the test pins what it actually ran
 // rather than hardcoding a digest that will rot. It is qualified, because
 // Podman's enforcing short-name mode refuses a short name.
-const referenceTag = "docker.io/library/alpine:3.20"
+const referenceTag = "docker.io/library/alpine:3.24"
 
 // containerCLI is the container CLI these suites drive and inspect with: the
 // one the runtime under test is pointed at, ORK_DOCKER_BIN, then podman for
@@ -219,7 +219,7 @@ func baseInput(t *testing.T, taskID string, command ...string) *orkstackv1.Execu
 }
 
 // TestIntegration_DispatcherRunsAReferenceImageEndToEnd is acceptance
-// criterion 2: OCIDispatcher executes alpine:3.20 end to end.
+// criterion 2: OCIDispatcher executes alpine:3.24 end to end.
 //
 // It runs the whole §5.4 success path — validate, scan, hash, bound the
 // commit, upload artifacts, upload values.json, upload the streams, write the
