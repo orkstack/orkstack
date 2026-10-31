@@ -68,8 +68,8 @@ machine to a vanilla state: it deletes Temporal history, every object-store
 object (artifacts, archived runs, and the Orkflow catalogue), the local
 artifact store and all build output. The repository itself is untouched.
 
-The individual steps are there when you want them: `make tools`,
-`make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
+The individual steps are there when you want them: `make tools` (buf at
+the release `deploy/buf-image.txt` pins), `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
 `make infra-up-observability` adds a local Grafana stack
 ([deploy/observability](./deploy/observability/README.md)).
 To run the UI by hand, `cd ui && bun run dev`: Vite serves it with hot

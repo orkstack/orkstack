@@ -36,6 +36,9 @@ PROTO_BASE ?= v0.1.0
 # A literal #, which a recipe-free line would otherwise read as a comment.
 HASH := \#
 BUF_IMAGE = $(shell grep -v -e '^$(HASH)' -e '^$$' deploy/buf-image.txt | head -1)
+# BUF_VERSION is that image's release, which `make tools` installs too, so the
+# buf that lints and generates is the buf that checks.
+BUF_VERSION = $(patsubst bufbuild/buf:%,%,$(firstword $(subst @, ,$(BUF_IMAGE))))
 
 .PHONY: proto-breaking
 proto-breaking: ## Refuse a proto change that breaks the release PROTO_BASE's contract (default v0.1.0), with the pinned buf
@@ -61,7 +64,8 @@ tsgen: ## Install UI codegen deps and regenerate Go+TS clients from proto
 
 .PHONY: tools
 tools: ## Install codegen + lint tooling
-	go install github.com/bufbuild/buf/cmd/buf@latest
+	@test -n "$(BUF_VERSION)" || { echo "tools: deploy/buf-image.txt names no buf release" >&2; exit 2; }
+	go install github.com/bufbuild/buf/cmd/buf@v$(BUF_VERSION)
 	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	go install connectrpc.com/connect/cmd/protoc-gen-connect-go@latest
 

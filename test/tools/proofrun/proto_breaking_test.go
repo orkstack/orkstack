@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -72,19 +73,24 @@ func TestWorkflows_CIChecksTheProtoContractAgainstTheFirstRelease(t *testing.T) 
 
 // bufPinned is the only shape deploy/buf-image.txt may name: one exact buf
 // release, by its multi-platform index digest.
-var bufPinned = regexp.MustCompile(`^bufbuild/buf:[0-9]+\.[0-9]+\.[0-9]+@sha256:[0-9a-f]{64}$`)
+var bufPinned = regexp.MustCompile(`^bufbuild/buf:([0-9]+\.[0-9]+\.[0-9]+)@sha256:[0-9a-f]{64}$`)
+
+// bufPin is the image deploy/buf-image.txt names: its first line that is not
+// blank or a comment.
+func bufPin(t *testing.T) string {
+	t.Helper()
+	for _, line := range strings.Split(readRepoFileForPins(t, "deploy/buf-image.txt"), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			return line
+		}
+	}
+	return ""
+}
 
 // TestMakefile_ProtoBreakingRunsThePinnedBufAgainstTheFirstRelease: the target
 // CI runs compares with v0.1.0's own tree, through the pinned buf, offline.
 func TestMakefile_ProtoBreakingRunsThePinnedBufAgainstTheFirstRelease(t *testing.T) {
-	var pin string
-	for _, line := range strings.Split(readRepoFileForPins(t, "deploy/buf-image.txt"), "\n") {
-		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
-			pin = line
-			break
-		}
-	}
-	if !bufPinned.MatchString(pin) {
+	if pin := bufPin(t); !bufPinned.MatchString(pin) {
 		t.Errorf("deploy/buf-image.txt names %q, not bufbuild/buf:X.Y.Z@sha256:<64 hex>", pin)
 	}
 	makefile := readRepoFileForPins(t, "Makefile")
@@ -114,5 +120,30 @@ func TestMakefile_ProtoBreakingRunsThePinnedBufAgainstTheFirstRelease(t *testing
 	}
 	if !strings.Contains(readRepoFileForPins(t, "buf.yaml"), "breaking:") {
 		t.Error("buf.yaml names no breaking rules")
+	}
+}
+
+// bufInstall is the line of `make -n tools` that installs buf, and the version
+// it names.
+var bufInstall = regexp.MustCompile(`(?m)^go install github\.com/bufbuild/buf/cmd/buf@(\S*)$`)
+
+// TestMakefile_ToolsInstallsTheBufTheImagePins: the buf `make tools` puts on
+// PATH, which `make proto` lints and generates with, is the release
+// deploy/buf-image.txt pins for `make proto-breaking`, never @latest.
+func TestMakefile_ToolsInstallsTheBufTheImagePins(t *testing.T) {
+	m := bufPinned.FindStringSubmatch(bufPin(t))
+	if m == nil {
+		t.Fatalf("deploy/buf-image.txt names %q, not bufbuild/buf:X.Y.Z@sha256:<64 hex>", bufPin(t))
+	}
+	out, err := exec.Command("make", "-n", "-s", "-C", mustRepoRoot(), "tools").CombinedOutput()
+	if err != nil {
+		t.Fatalf("make -n tools: %v\n%s", err, out)
+	}
+	got := bufInstall.FindAllStringSubmatch(string(out), -1)
+	if len(got) != 1 {
+		t.Fatalf("make tools installs buf %d times, want once:\n%s", len(got), out)
+	}
+	if want := "v" + m[1]; got[0][1] != want {
+		t.Errorf("make tools installs buf@%s, and deploy/buf-image.txt pins buf %s:\n%s", got[0][1], want, out)
 	}
 }
