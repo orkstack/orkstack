@@ -3,6 +3,7 @@ package dsl_test
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -344,7 +345,9 @@ func halfOfAPair(valid []byte) string {
 // A document compiles or is refused with a reason, never panics, and one that
 // compiles has a definition digest in its one shape that depends only on the
 // message: compiling again, and a trip through the wire format, keep it. Every
-// retry: of a document that compiles is one the cluster accepts (rule 47).
+// retry: of a document that compiles is one rule 47 admits: no negative
+// interval, no maximum below the initial one, and a coefficient that is 0 (the
+// default) or a finite number of at least 1.
 func FuzzCompile_Orkflow(f *testing.F) {
 	examples, err := filepath.Glob("../../examples/*.ork.yaml")
 	if err != nil || len(examples) == 0 {
@@ -364,6 +367,10 @@ func FuzzCompile_Orkflow(f *testing.F) {
 		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: 30}",
 		"{maximum_attempts: 3, backoff_coefficient: 0.5}",
 		"{maximum_attempts: 3, backoff_coefficient: 1}",
+		"{maximum_attempts: 3, initial_interval_seconds: -5}",
+		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: -60}",
+		"{maximum_attempts: 3, backoff_coefficient: 0.999}",
+		"{maximum_attempts: 3, backoff_coefficient: .inf}",
 	} {
 		f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    retry: " + retry + "\n"))
 	}
@@ -378,11 +385,12 @@ func FuzzCompile_Orkflow(f *testing.F) {
 		}
 		for _, task := range wf.GetTasks() {
 			retry := task.GetRetry()
-			if maximum := retry.GetMaximumIntervalSeconds(); maximum > 0 && maximum < retry.GetInitialIntervalSeconds() {
+			initial, maximum := retry.GetInitialIntervalSeconds(), retry.GetMaximumIntervalSeconds()
+			if initial < 0 || maximum < 0 || (maximum != 0 && maximum < initial) {
 				t.Fatalf("Compile accepted %q, whose task %q waits at most %ds after a first wait of %ds",
-					source, task.GetId(), maximum, retry.GetInitialIntervalSeconds())
+					source, task.GetId(), maximum, initial)
 			}
-			if coefficient := retry.GetBackoffCoefficient(); coefficient != 0 && !(coefficient >= 1) {
+			if coefficient := retry.GetBackoffCoefficient(); coefficient != 0 && !(coefficient >= 1 && coefficient <= math.MaxFloat64) {
 				t.Fatalf("Compile accepted %q, whose task %q backs off by %g", source, task.GetId(), coefficient)
 			}
 		}

@@ -42,9 +42,9 @@ Leave `retry:` out, and the task makes one attempt.
 | Key | Default | Meaning |
 |---|---|---|
 | `maximum_attempts` | `1` | Attempts in all, the first one included. `0` and `1` mean one attempt. |
-| `initial_interval_seconds` | `1` | The wait before the first retry. |
-| `backoff_coefficient` | `2.0` | Each wait is this many times the one before. At least 1. |
-| `maximum_interval_seconds` | `60` | The longest wait. Set, it may not be shorter than `initial_interval_seconds`; left unset, it is never shorter. |
+| `initial_interval_seconds` | `1` | The wait before the first retry, in whole seconds. Not negative. |
+| `backoff_coefficient` | `2.0` | Each wait is this many times the one before. A finite number, at least 1. |
+| `maximum_interval_seconds` | `60` | The longest wait. Not negative. Set, it may not be shorter than `initial_interval_seconds`; left unset, it is never shorter. |
 
 Each attempt gets a fresh workspace. The idempotency key stays the same across attempts, so an outside system can match the retries to one activity.
 
