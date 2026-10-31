@@ -29,3 +29,21 @@ ignore:
   - package:
       type: go-module
       location: /usr/local/bin/orkctl
+
+  # Waivers: one fixed vulnerability set aside in one package of one binary,
+  # with the user's approval. Each names the vulnerability, the package's
+  # exact name, version, type and location, and a reason that opens with the
+  # date it is reviewed by, at most 30 days ahead; past that date the waiver
+  # fails TestVulnImages_EveryWaiverIsScopedReasonedAndDated, as a quarantine
+  # entry stops excusing (AGENTS.md §11.2). Remove a waiver once the fix ships.
+  - vulnerability: GHSA-mgcc-cww5-fp2q
+    reason: >-
+      review-by 2026-11-30: go-jose/v4 v4.1.4 is built into gomplate v5.3.1,
+      its latest release, and is fixed in v4.1.6, which gomplate's main
+      already requires; remove this waiver when gomplate releases with
+      go-jose v4.1.6 or later.
+    package:
+      name: github.com/go-jose/go-jose/v4
+      version: v4.1.4
+      type: go-module
+      location: /usr/local/bin/gomplate

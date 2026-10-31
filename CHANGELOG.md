@@ -22,6 +22,11 @@ word for word.
 
 - Every workflow and composite action pins every action by commit SHA, and
   Dependabot now also bumps the composite actions.
+- The nightly image scan waives GHSA-mgcc-cww5-fp2q (go-jose/v4 v4.1.4, high,
+  fixed in v4.1.6) in the template activity's gomplate alone: gomplate's
+  latest release, v5.3.1, still carries v4.1.4, and gomplate's `main` already
+  requires v4.1.6. The waiver is reviewed by 2026-11-30 and is removed when
+  gomplate releases with go-jose v4.1.6 or later.
 
 ## [0.1.0] - 2026-10-30
 

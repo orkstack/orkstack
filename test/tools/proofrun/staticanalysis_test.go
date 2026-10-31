@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -329,13 +330,55 @@ func TestVulnImages_ScansEveryImageAReleasePublishes(t *testing.T) {
 	}
 }
 
+// grypeConfig is deploy/grype.yaml as the policy tests read it, with no key
+// beyond these: Grype would ignore a misspelt one, and an ignore entry's
+// include-aliases, namespace, fix-state, match-type, VEX keys, or a package's
+// language or upstream-name would widen or bypass the entry.
+type grypeConfig struct {
+	OnlyFixed         bool   `yaml:"only-fixed"`
+	FailOn            string `yaml:"fail-on-severity"`
+	CheckForAppUpdate *bool  `yaml:"check-for-app-update"`
+	DB                struct {
+		RequireUpdateCheck bool `yaml:"require-update-check"`
+	} `yaml:"db"`
+	Ignore []grypeIgnore `yaml:"ignore"`
+}
+
+type grypeIgnore struct {
+	Vulnerability string             `yaml:"vulnerability"`
+	Reason        string             `yaml:"reason"`
+	Package       grypeIgnorePackage `yaml:"package"`
+}
+
+type grypeIgnorePackage struct {
+	Name     string `yaml:"name"`
+	Version  string `yaml:"version"`
+	Type     string `yaml:"type"`
+	Location string `yaml:"location"`
+}
+
+// setsAside reports whether the entry has a set-aside's shape: every Go module
+// of the binary at one location, and nothing else. Every other entry is a
+// waiver.
+func (ig grypeIgnore) setsAside() bool {
+	return ig == grypeIgnore{Package: grypeIgnorePackage{Type: "go-module", Location: ig.Package.Location}}
+}
+
+func decodeGrypeConfig(src string) (grypeConfig, error) {
+	var cfg grypeConfig
+	dec := yaml.NewDecoder(strings.NewReader(src))
+	dec.KnownFields(true)
+	err := dec.Decode(&cfg)
+	return cfg, err
+}
+
 // TestVulnImages_TheScannerAndItsPolicyArePinned: deploy/grype-image.txt names
 // one Grype release by its index digest, and deploy/grype.yaml, read with no
-// unknown key (a misspelt one Grype would ignore), fails on a fixed
-// vulnerability of high or critical severity and sets aside exactly the Go
-// modules of OrkStack's own binaries, at the paths deploy/Dockerfile copies
-// them to: govulncheck judges those, by reachability, and every other binary
-// an image carries is the scan's.
+// unknown key, fails on a fixed vulnerability of high or critical severity and
+// sets aside exactly the Go modules of OrkStack's own binaries, at the paths
+// deploy/Dockerfile copies them to: govulncheck judges those, by reachability,
+// and every other binary an image carries is the scan's. Its waivers are
+// TestVulnImages_EveryWaiverIsScopedReasonedAndDated's.
 func TestVulnImages_TheScannerAndItsPolicyArePinned(t *testing.T) {
 	var pin string
 	for _, line := range strings.Split(readRepoFile(t, "deploy/grype-image.txt"), "\n") {
@@ -355,27 +398,8 @@ func TestVulnImages_TheScannerAndItsPolicyArePinned(t *testing.T) {
 		t.Fatal("deploy/Dockerfile copies no OrkStack binary: the policy check is vacuous")
 	}
 	policy := func(src string) []string {
-		var cfg struct {
-			OnlyFixed         bool   `yaml:"only-fixed"`
-			FailOn            string `yaml:"fail-on-severity"`
-			CheckForAppUpdate *bool  `yaml:"check-for-app-update"`
-			DB                struct {
-				RequireUpdateCheck bool `yaml:"require-update-check"`
-			} `yaml:"db"`
-			Ignore []struct {
-				Vulnerability string `yaml:"vulnerability"`
-				FixState      string `yaml:"fix-state"`
-				Package       struct {
-					Name     string `yaml:"name"`
-					Version  string `yaml:"version"`
-					Type     string `yaml:"type"`
-					Location string `yaml:"location"`
-				} `yaml:"package"`
-			} `yaml:"ignore"`
-		}
-		dec := yaml.NewDecoder(strings.NewReader(src))
-		dec.KnownFields(true)
-		if err := dec.Decode(&cfg); err != nil {
+		cfg, err := decodeGrypeConfig(src)
+		if err != nil {
 			return []string{"deploy/grype.yaml: " + err.Error()}
 		}
 		var p []string
@@ -390,12 +414,9 @@ func TestVulnImages_TheScannerAndItsPolicyArePinned(t *testing.T) {
 		}
 		var ignored []string
 		for _, ig := range cfg.Ignore {
-			pk := ig.Package
-			if ig.Vulnerability != "" || ig.FixState != "" || pk.Name != "" || pk.Version != "" || pk.Type != "go-module" {
-				p = append(p, fmt.Sprintf("deploy/grype.yaml ignores %+v, which is not the Go modules of an OrkStack binary", ig))
-				continue
+			if ig.setsAside() {
+				ignored = append(ignored, ig.Package.Location)
 			}
-			ignored = append(ignored, pk.Location)
 		}
 		sort.Strings(ignored)
 		want := append([]string(nil), own...)
@@ -413,10 +434,10 @@ func TestVulnImages_TheScannerAndItsPolicyArePinned(t *testing.T) {
 		{"failing only on critical", "fail-on-severity: high", "fail-on-severity: critical"},
 		{"a misspelt key Grype would ignore", "fail-on-severity: high", "fail-on: high"},
 		{"no fail at all", "fail-on-severity: high\n", ""},
-		{"an ignored vulnerability", "ignore:\n", "ignore:\n  - vulnerability: CVE-2026-0001\n"},
 		{"the docker CLI set aside", "location: /usr/local/bin/orker\n", "location: /usr/local/bin/docker\n"},
 		{"every Go module set aside", "      location: /usr/local/bin/ork\n", ""},
 		{"an OS package set aside", "type: go-module\n      location: /usr/local/bin/orkctl", "type: apk\n      location: /usr/local/bin/orkctl"},
+		{"a set-aside narrowed to one module", "type: go-module\n      location: /usr/local/bin/orkctl", "name: golang.org/x/net\n      type: go-module\n      location: /usr/local/bin/orkctl"},
 		{"a self-update check", "check-for-app-update: false", "check-for-app-update: true"},
 		{"a database never checked", "require-update-check: true", "require-update-check: false"},
 	} {
@@ -424,6 +445,114 @@ func TestVulnImages_TheScannerAndItsPolicyArePinned(t *testing.T) {
 			t.Fatalf("the mutation %q finds nothing to change in deploy/grype.yaml", c.name)
 		}
 		if len(policy(strings.Replace(src, c.from, c.to, 1))) == 0 {
+			t.Errorf("the rule accepts the weakening %q", c.name)
+		}
+	}
+}
+
+// grypeWaiverProblems: every entry of deploy/grype.yaml's ignore list that is
+// not a set-aside is a waiver, approved by the user, and a waiver sets aside
+// one vulnerability in one package of one binary, for a stated reason, until a
+// stated date. It names the vulnerability by its GHSA or CVE id and the
+// package by its exact name, version, type and location: Grype reads a name
+// holding a regular-expression character as a pattern and a location as a
+// glob, either of which would widen it. Its reason opens "review-by
+// YYYY-MM-DD: " and says why; the date is at most 30 days after today, and
+// once it has passed the waiver is refused, as an expired quarantine entry
+// stops excusing.
+func grypeWaiverProblems(src string, today time.Time) []string {
+	cfg, err := decodeGrypeConfig(src)
+	if err != nil {
+		return []string{"deploy/grype.yaml: " + err.Error()}
+	}
+	advisory := regexp.MustCompile(`^(GHSA-[0-9a-z]{4}-[0-9a-z]{4}-[0-9a-z]{4}|CVE-[0-9]{4}-[0-9]{4,})$`)
+	review := regexp.MustCompile(`^review-by ([0-9]{4}-[0-9]{2}-[0-9]{2}): \S`)
+	var p []string
+	for _, ig := range cfg.Ignore {
+		if ig.setsAside() {
+			continue
+		}
+		pk := ig.Package
+		where := fmt.Sprintf("deploy/grype.yaml's waiver of %q in %q", ig.Vulnerability, pk.Name)
+		if !advisory.MatchString(ig.Vulnerability) {
+			p = append(p, where+" names no GHSA or CVE id")
+		}
+		if pk.Name == "" || pk.Version == "" || pk.Type == "" || pk.Location == "" {
+			p = append(p, fmt.Sprintf("%s does not name one package (name %q, version %q, type %q, location %q)", where, pk.Name, pk.Version, pk.Type, pk.Location))
+		}
+		if strings.ContainsAny(pk.Name, `^$*+?[](){}|\`) || strings.ContainsAny(pk.Location, `*?[]{}\`) {
+			p = append(p, fmt.Sprintf("%s names the package by a pattern (name %q, location %q), not exactly", where, pk.Name, pk.Location))
+		}
+		if pk.Location != "" && !strings.HasPrefix(pk.Location, "/") {
+			p = append(p, fmt.Sprintf("%s: location %q is not a path in the image", where, pk.Location))
+		}
+		m := review.FindStringSubmatch(ig.Reason)
+		if m == nil {
+			p = append(p, fmt.Sprintf("%s has the reason %q, which does not open \"review-by YYYY-MM-DD: \" and say why", where, ig.Reason))
+			continue
+		}
+		by, err := time.Parse(time.DateOnly, m[1])
+		switch {
+		case err != nil:
+			p = append(p, fmt.Sprintf("%s: review-by %q is not a date", where, m[1]))
+		case today.After(by):
+			p = append(p, fmt.Sprintf("%s was to be reviewed by %s, which has passed: remove it, or renew it with the user's approval", where, m[1]))
+		case by.Sub(today) > 30*24*time.Hour:
+			p = append(p, fmt.Sprintf("%s: review-by %s is more than 30 days after today", where, m[1]))
+		}
+	}
+	return p
+}
+
+func TestVulnImages_EveryWaiverIsScopedReasonedAndDated(t *testing.T) {
+	now := time.Now().UTC()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
+	if p := grypeWaiverProblems(readRepoFile(t, "deploy/grype.yaml"), today); len(p) > 0 {
+		t.Fatalf("\n  %s", strings.Join(p, "\n  "))
+	}
+	day := func(n int) string { return today.AddDate(0, 0, n).Format(time.DateOnly) }
+	waiver := "ignore:\n" +
+		"  - vulnerability: GHSA-abcd-efgh-ijkl\n" +
+		"    reason: \"review-by " + day(10) + ": the fix is not released yet\"\n" +
+		"    package:\n" +
+		"      name: example.com/mod/v2\n" +
+		"      version: v2.1.0\n" +
+		"      type: go-module\n" +
+		"      location: /usr/local/bin/tool\n"
+	for _, c := range []struct{ name, from, to string }{
+		{"the waiver as written", "", ""},
+		{"a review the day it is due", day(10), day(0)},
+		{"a review 30 days ahead", day(10), day(30)},
+		{"a CVE id", "GHSA-abcd-efgh-ijkl", "CVE-2026-12345"},
+	} {
+		if p := grypeWaiverProblems(strings.Replace(waiver, c.from, c.to, 1), today); len(p) > 0 {
+			t.Errorf("the rule refuses %s:\n  %s", c.name, strings.Join(p, "\n  "))
+		}
+	}
+	for _, c := range []struct{ name, from, to string }{
+		{"no reason", "    reason: \"review-by " + day(10) + ": the fix is not released yet\"\n", ""},
+		{"a reason with no review date", "review-by " + day(10) + ": ", ""},
+		{"a review date with no reason", ": the fix is not released yet", ":"},
+		{"a review date that is no date", "review-by " + day(10), "review-by 2026-02-30"},
+		{"a review date that has passed", day(10), day(-1)},
+		{"a review date more than 30 days ahead", day(10), day(31)},
+		{"no vulnerability", "  - vulnerability: GHSA-abcd-efgh-ijkl\n    reason", "  - reason"},
+		{"a vulnerability that is no advisory id", "GHSA-abcd-efgh-ijkl", "go-jose"},
+		{"no package", "    package:\n      name: example.com/mod/v2\n      version: v2.1.0\n      type: go-module\n      location: /usr/local/bin/tool\n", ""},
+		{"no package name", "      name: example.com/mod/v2\n", ""},
+		{"no package version", "      version: v2.1.0\n", ""},
+		{"no package type", "      type: go-module\n", ""},
+		{"no package location", "      location: /usr/local/bin/tool\n", ""},
+		{"a package name Grype reads as a pattern", "name: example.com/mod/v2", "name: example.com/.*"},
+		{"a location Grype reads as a glob", "location: /usr/local/bin/tool", "location: /usr/local/bin/*"},
+		{"a relative location", "location: /usr/local/bin/tool", "location: usr/local/bin/tool"},
+		{"the vulnerability's aliases too", "    package:\n", "    include-aliases: true\n    package:\n"},
+		{"a whole namespace", "    package:\n", "    namespace: github:language:go\n    package:\n"},
+	} {
+		if !strings.Contains(waiver, c.from) {
+			t.Fatalf("the mutation %q finds nothing to change in the waiver", c.name)
+		}
+		if len(grypeWaiverProblems(strings.Replace(waiver, c.from, c.to, 1), today)) == 0 {
 			t.Errorf("the rule accepts the weakening %q", c.name)
 		}
 	}

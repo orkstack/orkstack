@@ -733,7 +733,14 @@ fails the scan too. The Go modules of OrkStack's own binaries are
 binaries `deploy/Dockerfile` copies). linux/arm64 is not scanned: its images
 come from the same multi-arch base digests and package pins, and building them
 needs QEMU. The fix is to move the base image's digest, the package's pin or
-the bundled binary's version the report names. Dependabot does not read
+the bundled binary's version the report names. Where a bundled binary's latest
+release still carries the vulnerability, the user may approve a waiver in
+`deploy/grype.yaml`: one vulnerability, by its GHSA or CVE id, in one package
+named by its exact name, version, type and location, with a reason that opens
+with a review-by date at most 30 days ahead.
+`TestVulnImages_EveryWaiverIsScopedReasonedAndDated` refuses a waiver of any
+other shape and fails once its date has passed; the waiver is removed when the
+fix ships. Dependabot does not read
 `deploy/grype-image.txt`, so the scanner is bumped by hand. A red `vuln-js` or
 `vuln-images` is a regression on `main` like any red nightly (§6).
 `quickstart` is independent of the proof too: it runs the README's Quickstart
