@@ -119,7 +119,8 @@ out; at the `warn` level the compose file sets, a part's log is far below
 that. A history-read error a test saw (a stream ended on "branch tokens don't
 match", say) is traced there. Keeping it is best effort: a log docker cannot
 give within 20 s (`-timeout`) is reported and fails nothing, and the stop
-follows, so a cancel never waits on it longer.
+follows, so a cancel waits on it at most about 22 s (the timeout, and 2 s for
+a child of docker that still holds its pipes).
 
 The **site gate** runs `bun run check && bun run build` in `site/`, logged to
 `site.log`: the docs sync, the design-token drift check and `astro check`, then
@@ -1105,9 +1106,9 @@ that the merger reads the same from the bounded log as from the whole. The integ
 gate prints its `proofrun: start` and `proofrun: outcome` lines to the job's log
 as they happen as well as to `integration.log` (`PART_STREAM` in
 `scripts/proof-part.sh`): before, the job's log held none of them, so a shard
-GitHub cancelled or lost before its artifact was uploaded read as cancelled
-before any test started however long it had run (run 40965510239's
-`integration (1)`, twelve minutes into `TestIntegration_SoakTasks`). A log
+GitHub cancelled or lost before its artifact was uploaded read as if no test
+had started, however long it had run (run 40965510239's `integration (1)`,
+twelve minutes into `TestIntegration_SoakTasks`). A log
 GitHub answers 404 or 410 for (a lost runner keeps none) is left empty, as
 before. Every other way the step cannot keep a log fails that job's record
 closed, with a `read_error` naming why: a read that failed for another reason,

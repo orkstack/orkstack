@@ -388,11 +388,13 @@ func runJobRecords(t *testing.T, fixture string, builds bool, env ...string) map
 	write("gh", fakeGHScript)
 	// `go build -o OUT ./test/tools/proofrun` makes OUT this test binary,
 	// which runs the subcommand it is given (TestMain).
+	// The stand-in's line is single-quoted into it, so it reads GH_TOKEN when
+	// it runs, not when the fake go writes it.
 	const tokenSeen = `[ -z "${TOKEN_LOG:-}" ] || echo "%s ${GH_TOKEN:+token}" >>"$TOKEN_LOG"`
 	goScript := fmt.Sprintf(`#!/usr/bin/env bash
 `+fmt.Sprintf(tokenSeen, "go")+`
 [ "$1" = build ] && [ "$2" = -o ] && [ "$4" = ./test/tools/proofrun ] || { echo "fake go: $*" >&2; exit 2; }
-printf '#!/bin/sh\n%%s\nPROOFRUN_AS_COMMAND=1 exec %%s "$@"\n' %q %q >"$3" && chmod +x "$3"
+printf '#!/bin/sh\n%%s\nPROOFRUN_AS_COMMAND=1 exec %%s "$@"\n' '%s' %q >"$3" && chmod +x "$3"
 `, fmt.Sprintf(tokenSeen, "proofrun"), self)
 	if !builds {
 		goScript = "#!/bin/sh\n" + fmt.Sprintf(tokenSeen, "go") + "\necho 'fake go: build failed' >&2\nexit 1\n"

@@ -100,8 +100,11 @@ func ghExec(path string, paginate bool) ([]byte, error) {
 		readErr = readAtMost(stdout, &out, ghBodyMaxBytes)
 	}
 	if readErr != nil {
-		// gh may be blocked writing what is no longer read.
+		// gh, or a child of it, may be blocked writing what is no longer
+		// read: kill gh, and close the pipe so that a child takes its EPIPE
+		// now rather than holding Wait for its WaitDelay.
 		cancel()
+		stdout.Close()
 	}
 	err = cmd.Wait()
 	if readErr != nil {
