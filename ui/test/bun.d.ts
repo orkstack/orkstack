@@ -35,6 +35,8 @@ declare module 'bun:test' {
 		not: {
 			toBe(expected: T): void;
 			toContain(expected: unknown): void;
+			// csp.test.ts: a refusal the spec did not declare is an error.
+			toBeNull(): void;
 		};
 	};
 }
