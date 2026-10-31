@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 )
 
 // CLIVar names the environment variable that says which command-line grammar
@@ -202,16 +203,22 @@ func (x dialect) stateSettings() string {
 	return "the daemon's data-root"
 }
 
-// statePaths is each line of answer that is an absolute path. A field the
-// engine leaves unset answers nothing, or "<no value>", and names none.
-func statePaths(answer string) []string {
-	var dirs []string
+// statePaths reads stateQuery's answer, one directory a line. dirs are the
+// lines that name a directory the Orker can hold as its own; refused is every
+// other line that is not blank: a field the engine leaves unset
+// ("<no value>"), a relative path, one holding a control character, and the
+// root of the file system, which would make every file the Orker's own.
+func statePaths(answer string) (dirs, refused []string) {
 	for _, line := range strings.Split(answer, "\n") {
-		if line = strings.TrimSpace(line); filepath.IsAbs(line) {
+		switch line = strings.TrimSpace(line); {
+		case line == "":
+		case filepath.IsAbs(line) && filepath.Clean(line) != "/" && !strings.ContainsFunc(line, unicode.IsControl):
 			dirs = append(dirs, line)
+		default:
+			refused = append(refused, line)
 		}
 	}
-	return dirs
+	return dirs, refused
 }
 
 // The runtime's own words, matched case-insensitively: the CLIs and engines

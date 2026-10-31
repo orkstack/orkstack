@@ -564,42 +564,45 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 }
 
 // engineStater is the runtime capability Boot asks where the engine keeps
-// its state. A runtime without it keeps the default paths alone.
+// its state. A runtime without it keeps the default paths alone, and Boot
+// says so.
 type engineStater interface {
 	EngineState(ctx context.Context) ([]OwnPath, error)
 }
 
 // ownEngineState adds the directories the engine keeps its state in to the
-// Orker's own paths. An engine that cannot say leaves the default paths in
-// force and is no reason to refuse boot: it is said once, naming the floor
-// that bounds what a task may name meanwhile. A floor entry that admits only
-// those directories refuses boot, as one under the defaults does.
+// Orker's own paths. Whatever the engine could not say — nothing at all, or
+// something beside what it named — leaves the default paths in force and is
+// no reason to refuse boot: it is said once, with what to check and the
+// floor that bounds what a task may name meanwhile. A floor entry that admits
+// only such directories refuses boot, as one under the defaults does.
 func (a *Activities) ownEngineState(ctx context.Context) error {
-	stater, ok := a.dispatcher.Runtime.(engineStater)
-	if !ok {
-		return nil
+	var paths []OwnPath
+	err := errors.New("this runtime cannot say where its engine keeps its state")
+	if stater, ok := a.dispatcher.Runtime.(engineStater); ok {
+		paths, err = stater.EngineState(ctx)
 	}
-	paths, err := stater.EngineState(ctx)
-	if err != nil {
-		if ctx.Err() != nil {
-			return fmt.Errorf("boot interrupted while asking where the container engine keeps its state: %w (%v)",
-				ctx.Err(), err)
+	if err != nil && ctx.Err() != nil {
+		return fmt.Errorf("boot interrupted while asking where the container engine keeps its state: %w (%v)",
+			ctx.Err(), err)
+	}
+	if len(paths) > 0 {
+		policy := a.dispatcher.Policy.WithOwnPaths(paths...)
+		if err := policy.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
 		}
+		a.dispatcher.Policy = policy
+		dirs := make([]string, 0, len(paths))
+		for _, path := range paths {
+			dirs = append(dirs, path.Path)
+		}
+		a.dispatcher.logger().Info("container engine state is this orker's own", "dirs", dirs)
+	}
+	if err != nil {
 		a.dispatcher.logger().Warn("container engine did not say where it keeps its state: a state directory "+
-			"kept off the defaults is not among this orker's own; check the engine setting the error names, "+
-			"and set "+SecretAllowVar+" to directories of the tasks' own", "error", err, "setting", SecretAllowVar)
-		return nil
+			"kept off the defaults is not among this orker's own; check what the error names, and set "+
+			SecretAllowVar+" to directories of the tasks' own", "error", err, "setting", SecretAllowVar)
 	}
-	policy := a.dispatcher.Policy.WithOwnPaths(paths...)
-	if err := policy.Validate(); err != nil {
-		return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
-	}
-	a.dispatcher.Policy = policy
-	dirs := make([]string, 0, len(paths))
-	for _, path := range paths {
-		dirs = append(dirs, path.Path)
-	}
-	a.dispatcher.logger().Info("container engine state is this orker's own", "dirs", dirs)
 	return nil
 }
 

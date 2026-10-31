@@ -1104,31 +1104,59 @@ const engineStateWhy = "its container engine's state"
 // EngineState asks the engine where it keeps its state (stateQuery), wherever
 // its own settings put it, as paths of the Orker's own: a state directory
 // moved off the defaults runtimeOwnPaths lists still holds every container's
-// writable layer, which a task writes. An engine that cannot be asked, or
-// that names no directory, is an error that names the settings to check.
+// writable layer, which a task writes. The question is bounded by
+// controlTimeout. It returns every directory the engine named that the Orker
+// can hold, and beside them an error, naming the engine settings to check,
+// when the engine could not be asked, did not answer in time, or named
+// nothing the Orker can hold or something else too.
 func (d *DockerRuntime) EngineState(ctx context.Context) ([]OwnPath, error) {
-	spoken, err := d.dialect(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("ask where the container engine keeps its state: %w", err)
-	}
-	query := spoken.stateQuery()
-	answer, err := d.control(ctx, "info", "--format", query)
+	return d.engineStateWithin(ctx, controlTimeout)
+}
+
+// engineStateWithin is EngineState with the whole question — which engine it
+// is, and where it keeps its state — bounded by one within.
+func (d *DockerRuntime) engineStateWithin(ctx context.Context, within time.Duration) ([]OwnPath, error) {
+	check := d.grammar().stateSettings()
+	askCtx, cancel := context.WithTimeout(ctx, within)
+	defer cancel()
+	timedOut := func() bool { return askCtx.Err() != nil && ctx.Err() == nil }
+	spoken, overran, err := d.dialectWithin(askCtx, within)
 	switch {
+	case overran || timedOut():
+		return nil, fmt.Errorf("the container engine did not say which engine it is within %s, so where it keeps "+
+			"its state is not known (check %s)", within, check)
 	case err != nil:
-		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %w",
-			spoken.stateSettings(), err)
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %w", check, err)
+	}
+	check = spoken.stateSettings()
+	query := spoken.stateQuery()
+	answer, overran, err := d.runWithin(askCtx, within, "info", "--format", query)
+	switch {
+	case overran || timedOut():
+		return nil, fmt.Errorf("the container engine did not answer `%s info --format %q` within %s (check %s)",
+			spoken.cli, query, within, check)
+	case err != nil:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %w", check, err)
 	case answer.code != 0:
 		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %s info --format %q exited %d: %s",
-			spoken.stateSettings(), spoken.cli, query, answer.code, answer.said())
+			check, spoken.cli, query, answer.code, answer.said())
 	}
-	dirs := statePaths(answer.stdout)
+	dirs, refused := statePaths(answer.stdout)
 	if len(dirs) == 0 {
-		return nil, fmt.Errorf("the container engine named no directory for its state (check %s): %s info --format %q answered %q",
-			spoken.stateSettings(), spoken.cli, query, truncateString(strings.TrimSpace(answer.stdout), 200))
+		return nil, fmt.Errorf("the container engine named no directory the orker can hold as its state (check %s): "+
+			"%s info --format %q answered %q", check, spoken.cli, query, truncateString(strings.TrimSpace(answer.stdout), 200))
 	}
 	paths := make([]OwnPath, 0, len(dirs))
 	for _, dir := range dirs {
 		paths = append(paths, OwnPath{Path: dir, Why: engineStateWhy})
+	}
+	if len(refused) > 0 {
+		quoted := make([]string, 0, len(refused))
+		for _, line := range refused {
+			quoted = append(quoted, strconv.Quote(line))
+		}
+		return paths, fmt.Errorf("the container engine also named %s, which is no directory the orker can hold "+
+			"as its state (check %s)", truncateString(strings.Join(quoted, ", "), 200), check)
 	}
 	return paths, nil
 }

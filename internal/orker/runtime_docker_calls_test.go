@@ -119,6 +119,7 @@ case "$1" in
       *Host.Security.Rootless*) if [ -e "$S/rootless" ]; then cat "$S/rootless"; else echo false; fi ;;
       *DockerRootDir*|*Store.GraphRoot*)
         if [ -e "$S/enginerootfail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
+        if [ -e "$S/engineroothang" ]; then exec sleep 30; fi
         if [ -e "$S/engineroot" ]; then cat "$S/engineroot"; else echo /var/lib/docker; fi ;;
       *) echo "[name=seccomp,profile=builtin]" ;;
     esac ;;

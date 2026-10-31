@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -442,6 +443,48 @@ func FuzzIsRootless(f *testing.F) {
 		got, err = dockerDialect.isRootless(answer)
 		if err != nil || got != strings.Contains(answer, "name=rootless") {
 			t.Fatalf("docker isRootless(%q) = %t, %v", answer, got, err)
+		}
+	})
+}
+
+// FuzzStatePaths reads the engine's answer to where it keeps its state, which
+// the engine's settings decide. The claims: every directory kept is one of
+// the answer's lines, trimmed, absolute, on one line, free of control
+// characters and never the root of the file system, which would make every
+// file the Orker's own; every other line that is not blank is refused, never
+// dropped, so nothing relative survives unsaid; and no answer panics. The
+// seeds are TestDockerRuntime_AsksTheEngineWhereItKeepsItsState's answers
+// and the Boot test's.
+func FuzzStatePaths(f *testing.F) {
+	for _, seed := range []string{
+		"/srv/docker\n", "/srv/storage\n/run/storage\n", "<no value>\n", "", "\n\n", "srv/docker-data\n",
+		"/srv/docker-data\nrun/storage\n", "/\n", "//\n", "/.\n", "/..\n", " /srv/y \r\n", "/a\x00b\n", "/a\rb", "/a\u0085b\n",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, answer string) {
+		dirs, refused := statePaths(answer)
+		lines, nonBlank := map[string]bool{}, 0
+		for _, line := range strings.Split(answer, "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				lines[line] = true
+				nonBlank++
+			}
+		}
+		for _, dir := range dirs {
+			if !lines[dir] || !filepath.IsAbs(dir) || filepath.Clean(dir) == "/" ||
+				strings.ContainsFunc(dir, unicode.IsControl) {
+				t.Fatalf("statePaths(%q) kept %q", answer, dir)
+			}
+		}
+		for _, line := range refused {
+			if !lines[line] {
+				t.Fatalf("statePaths(%q) refused %q, which is no line of the answer", answer, line)
+			}
+		}
+		if len(dirs)+len(refused) != nonBlank {
+			t.Fatalf("statePaths(%q) kept %q and refused %q of %d lines that are not blank; want each one kept or refused",
+				answer, dirs, refused, nonBlank)
 		}
 	})
 }

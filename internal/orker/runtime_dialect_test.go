@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 var (
@@ -291,9 +292,12 @@ func TestDockerRuntime_AsksTheEngineWhereItKeepsItsState(t *testing.T) {
 		})
 	}
 	for name, tt := range map[string]struct{ cli, flag, answer, settings string }{
-		"docker: a failed question": {CLIDocker, "enginerootfail", "", "data-root"},
-		"docker: no directory":      {CLIDocker, "", "<no value>\n", "data-root"},
-		"podman: no directory":      {CLIPodman, "", "\n\n", "graphroot and runroot"},
+		"docker: a failed question":       {CLIDocker, "enginerootfail", "", "data-root"},
+		"docker: no directory":            {CLIDocker, "", "<no value>\n", "data-root"},
+		"docker: the root of the system":  {CLIDocker, "", "/\n", "data-root"},
+		"docker: an engine not known":     {CLIDocker, "versionfail", "", "data-root"},
+		"podman: no directory":            {CLIPodman, "", "\n\n", "graphroot and runroot"},
+		"podman: an engine that will not": {CLIPodman, "infofail", "", "graphroot and runroot"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			fake := newCountingDocker(t)
@@ -306,6 +310,29 @@ func TestDockerRuntime_AsksTheEngineWhereItKeepsItsState(t *testing.T) {
 				t.Errorf("EngineState = %q, %v; want an error naming %s", paths, err, tt.settings)
 			}
 		})
+	}
+}
+
+// TestDockerRuntime_AStateQueryThatHangsIsATimeout: the question is bounded,
+// 30 s at boot and a short bound here, and an engine that does not answer
+// within it is said to have not answered in time, naming what to check,
+// never as an exit status.
+func TestDockerRuntime_AStateQueryThatHangsIsATimeout(t *testing.T) {
+	fake := newCountingDocker(t)
+	runtime := &DockerRuntime{Bin: fake.bin}
+	if _, err := runtime.dialect(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fake.set("engineroothang", "")
+	const bound = 200 * time.Millisecond
+	started := time.Now()
+	paths, err := runtime.engineStateWithin(context.Background(), bound)
+	if took := time.Since(started); took > 20*time.Second {
+		t.Fatalf("engineStateWithin took %v, want it stopped at its bound of %v", took, bound)
+	}
+	if err == nil || !strings.Contains(err.Error(), "within "+bound.String()) || !strings.Contains(err.Error(), "data-root") ||
+		strings.Contains(err.Error(), "exited") {
+		t.Fatalf("engineStateWithin = %q, %v; want a timeout that says within %s and names the data-root", paths, err, bound)
 	}
 }
 

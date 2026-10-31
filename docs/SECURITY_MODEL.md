@@ -318,14 +318,22 @@ only the Orker's own sources stops the Orker at boot
 | the files and directories `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG`, `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`, `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, `AZURE_FEDERATED_TOKEN_FILE`, `AZURE_CONFIG_DIR` and `AZURE_CLIENT_CERTIFICATE_PATH` name, `~/.aws`, `~/.azure`, `~/.config/gcloud` | the credential helpers' cloud credentials |
 | `/var/lib/docker`, `/var/lib/containerd`, `/var/lib/containers`, `/run/docker`, `/run/containerd`, `~/.local/share/docker`, `~/.local/share/containers` (or under `$XDG_DATA_HOME`), and each directory the engine reports at boot: the docker CLI's `DockerRootDir` (dockerd's `data-root`), the podman CLI's `GraphRoot` and `RunRoot` (`graphroot` and `runroot` in `storage.conf`) | the container engine's state: images, layers, every container's writable layer and its log, other tasks' among them |
 
-The engine's state is asked at boot because its settings can move it off
-those defaults, and a container's writable layer, which its task writes,
-moves with it. An engine that cannot be asked, or that names no directory,
-leaves the defaults in force: the Orker boots and logs a warning that names
-the engine setting to check and `ORK_ORKER_SECRET_ALLOW`. Neither CLI reports
-containerd's own root, so a containerd root moved off `/var/lib/containerd`
-is not on the list; an Orker on such a host sets a floor
-(`internal/orker/runtime_docker.go`, `EngineState`).
+The engine's state is asked at boot, within 30 seconds, because its settings
+can move it off those defaults, and a container's writable layer, which its
+task writes, moves with it. Each directory the engine names is the Orker's
+own from then on, so a floor entry that admits only what lies under a moved
+data root stops the Orker at boot, as one under `/var/lib/docker` does. An
+answer the Orker cannot hold is refused line by line: a field the engine
+leaves unset, a relative path, a path holding a control character, and `/`,
+which would make every file the Orker's own and every `file:` floor entry
+refused. Whatever the engine could not say — it did not answer, did not
+answer in time, named nothing the Orker can hold, or named something else
+beside what it held — leaves the defaults in force: the Orker boots and logs
+a warning that names the engine setting to check and `ORK_ORKER_SECRET_ALLOW`.
+A runtime that cannot be asked at all logs the same warning. Neither CLI
+reports containerd's own root, so a containerd root moved off
+`/var/lib/containerd` is not on the list; an Orker on such a host sets a
+floor (`internal/orker/runtime_docker.go`, `EngineState`).
 
 A file is named by the path itself and everything beneath it. A `file:` source
 must be a plain absolute path, with no `..`, `.` or empty segment, of at most
