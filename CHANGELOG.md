@@ -19,7 +19,8 @@ word for word.
   v2 1.47.5 (S3 1.114.6) and the Prometheus client 1.25.0. The Temporal SDK's
   `temporal_activity_execution_failed` and
   `temporal_local_activity_execution_failed` metrics now carry a
-  `failure_reason` attribute, one series per reason, and
+  `failure_reason` attribute, `ActivityError`, or `PayloadsTooLarge` for an
+  activity whose result was over the payload limit, and
   `temporal_sticky_cache_total_forced_eviction` no longer counts a worker's
   shutdown, so a dashboard built on them may need adjusting.
 - Code generation is pinned exactly: buf 1.75.0, protobuf-es and
@@ -38,6 +39,20 @@ word for word.
   before; with versioning off, roll back below this release only when no run
   is open, and replace every engine replica together when rolling forward
   (`docs/DEPLOY.md` §4, `docs/UPGRADING.md`).
+- Connect 1.21 codes three failures differently. A connection the engine
+  resets under a call reaches a Go client as `canceled` (it was
+  `unavailable`, or `invalid_argument` when it cut a stream mid-message); a
+  stream that ends partway through a message is `internal` (it was
+  `invalid_argument`); and an engine's write to a client that has gone away
+  is `canceled` (it was `unknown`). `orkctl run watch` and
+  `orkctl run inspect --watch` resume on such a reset as on `unavailable`,
+  so a watch whose stream is reset mid-message now resumes where it used to
+  stop, and a Ctrl-C still ends them; other `orkctl` commands print
+  `canceled:` for a reset connection, with the same exit status. None of the
+  three reaches an audit record, which is written after a request is read
+  and before its response is; no OrkStack metric carries a Connect code; and
+  the Temporal SDK's `failure_reason` attribute names only its own failure
+  kinds, so none of them changes.
 - `ork` and `orker` turn off the Temporal SDK's worker environment report.
   From SDK 1.49 every worker's heartbeat would otherwise send the Temporal
   server the Go version, the hosting environment the SDK detects (a

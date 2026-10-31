@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -45,10 +46,14 @@ func resumeEvent(seq int64) *orkstackv1.Event {
 }
 
 // scriptedStream is one StreamEvents answer: the sequences it sends, then
-// the error it ends with (nil for a clean end).
+// the error it ends with (nil for a clean end). A stream that stalls holds
+// the call open after sending until the client goes away; one that resets
+// resets the connection under the call first.
 type scriptedStream struct {
-	send []int64
-	end  error
+	send  []int64
+	end   error
+	stall bool
+	reset bool
 }
 
 // resumingRuns answers StreamEvents from a script, one entry per call (the
@@ -57,13 +62,15 @@ type scriptedStream struct {
 type resumingRuns struct {
 	orkstackv1connect.UnimplementedRunServiceHandler
 	script []scriptedStream
+	// reset resets every connection the server holds; watchAgainst sets it.
+	reset func()
 
 	mu    sync.Mutex
 	froms []int64
 }
 
 func (s *resumingRuns) StreamEvents(
-	_ context.Context,
+	ctx context.Context,
 	req *connect.Request[orkstackv1.StreamEventsRequest],
 	stream *connect.ServerStream[orkstackv1.Event],
 ) error {
@@ -76,6 +83,13 @@ func (s *resumingRuns) StreamEvents(
 		if err := stream.Send(resumeEvent(seq)); err != nil {
 			return err
 		}
+	}
+	if answer.reset {
+		s.reset()
+	}
+	if answer.reset || answer.stall {
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	return answer.end
 }
@@ -99,6 +113,18 @@ func (s *resumingRuns) calls() []int64 {
 // waits on a clock and still sees the doubling and its cap.
 func watchAgainst(t *testing.T, handler *resumingRuns, args ...string) result {
 	t.Helper()
+	var stdout bytes.Buffer
+	outcome := watchAgainstTo(t, handler, &stdout, args...)
+	outcome.stdout = stdout.String()
+	return outcome
+}
+
+// watchAgainstTo is watchAgainst writing stdout into out, so a test can act
+// on a line while the watch still runs. The server listens on a
+// resetListener, which handler.reset resets, and a watch that has not ended
+// within 30 s fails the test.
+func watchAgainstTo(t *testing.T, handler *resumingRuns, out io.Writer, args ...string) result {
+	t.Helper()
 	t.Setenv(serverEnvVar, "")
 	t.Setenv(namespaceEnvVar, "")
 	t.Setenv(configEnvVar, filepath.Join(t.TempDir(), "config.json"))
@@ -113,13 +139,26 @@ func watchAgainst(t *testing.T, handler *resumingRuns, args ...string) result {
 	server.Config.Protocols = new(http.Protocols)
 	server.Config.Protocols.SetHTTP1(true)
 	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	listener := &resetListener{Listener: server.Listener}
+	server.Listener = listener
+	handler.reset = listener.reset
 	server.Start()
 	t.Cleanup(server.Close)
 
-	var stdout, stderr bytes.Buffer
 	full := append(append([]string{"run", "watch", resumeRunID}, args...), "--server", server.URL)
-	code := Execute(full, &stdout, &stderr)
-	return result{stdout: stdout.String(), stderr: stderr.String(), code: code}
+	done := make(chan result, 1)
+	go func() {
+		var stderr bytes.Buffer
+		code := Execute(full, out, &stderr)
+		done <- result{stderr: stderr.String(), code: code}
+	}()
+	select {
+	case outcome := <-done:
+		return outcome
+	case <-time.After(30 * time.Second):
+		t.Fatalf("run watch did not end within 30 s")
+		return result{}
+	}
 }
 
 // printedSequences reads the sequences of a human watch's event lines.

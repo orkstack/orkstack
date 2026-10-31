@@ -189,7 +189,7 @@ func (i *runInspector) watch(interval time.Duration) error {
 			if !errors.As(err, &failed) {
 				return err
 			}
-			if connect.CodeOf(failed.err) != connect.CodeUnavailable {
+			if !engineInterrupted(ctx, failed.err) {
 				return failed.rendered()
 			}
 			var connectErr *connect.Error

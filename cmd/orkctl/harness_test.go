@@ -255,7 +255,25 @@ type fixture struct {
 	// body (nil for every other request), in the same order, so a test can decode exactly what
 	// the CLI put on the wire.
 	bodyLog [][]byte
+	// intercept, when set (interceptWith), sees every request first and
+	// answers it instead of the server when it returns true. Guarded by
+	// requestsMu.
+	intercept func(w http.ResponseWriter, r *http.Request) bool
+	// listener accepted every connection the server holds, so a test can
+	// reset them (resetConnections).
+	listener *resetListener
 }
+
+// interceptWith sets the fixture's request hook (see fixture.intercept).
+func (f *fixture) interceptWith(fn func(w http.ResponseWriter, r *http.Request) bool) {
+	f.requestsMu.Lock()
+	defer f.requestsMu.Unlock()
+	f.intercept = fn
+}
+
+// resetConnections resets every connection the server holds, as an engine
+// replica that dies under a call does.
+func (f *fixture) resetConnections() { f.listener.reset() }
 
 // lastRequest decodes the body of the newest request sent to path into msg,
 // and reports whether one was sent. The CLI's Connect clients send unary
@@ -364,15 +382,21 @@ func newFixtureWith(
 			r.Body = io.NopCloser(bytes.NewReader(body))
 		}
 		f.bodyLog = append(f.bodyLog, body)
+		intercept := f.intercept
 		f.requestsMu.Unlock()
+		if intercept != nil && intercept(w, r) {
+			return
+		}
 		mux.ServeHTTP(w, r)
 	})
 
 	server := api.NewServer("127.0.0.1:0", recording)
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	plain, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
+	listener := &resetListener{Listener: plain}
+	f.listener = listener
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -98,7 +98,8 @@ needs `ORK_S3_*` either way.
   workflow assigns it — so resuming against a *different* replica yields the
   same stream with nothing repeated and nothing skipped. A stream that ends
   `unavailable` is resumed that way by `orkctl run watch` and the UI's run
-  page, each up to six times in a row without an event. The engine itself
+  page, each up to six times in a row without an event; `orkctl run watch`
+  resumes too when its connection to the engine is reset. The engine itself
   restarts a history read the cluster says changed under it
   (`CurrentBranchChanged`, which can answer a long poll of a run that has
   just completed), up to three times in a row without a new event, so that

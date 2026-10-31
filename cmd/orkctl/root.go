@@ -474,3 +474,22 @@ func rpcError(operation string, err error) error {
 	}
 	return fmt.Errorf("%s: %w", operation, err)
 }
+
+// engineInterrupted reports whether err ended a call because the engine, or
+// the connection to it, went away under it — what a watch rides out and
+// resumes: an UNAVAILABLE answer, or a CANCELED that ctx, the watch's own
+// context, did not cause. From connect-go v1.21.1 a connection the engine
+// reset reaches a client as CANCELED (error.go, wrapIfContextError's
+// isClientDisconnected), where before it was UNAVAILABLE, or INVALID_ARGUMENT
+// when it cut a stream mid-message. A Ctrl-C ends ctx, so it still ends the
+// watch.
+func engineInterrupted(ctx context.Context, err error) bool {
+	switch connect.CodeOf(err) {
+	case connect.CodeUnavailable:
+		return true
+	case connect.CodeCanceled:
+		return ctx.Err() == nil
+	default:
+		return false
+	}
+}
