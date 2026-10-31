@@ -286,6 +286,81 @@ func TestBoot_RunAsOrkerThatDoesNotLandAsTheOrker(t *testing.T) {
 	}
 }
 
+// TestBoot_TheEnginesStateIsTheOrkersOwnWhereverItKeepsIt: an engine whose
+// settings move its state off the defaults keeps every container's writable
+// layer, which a task writes, under that directory, so the Orker asks the
+// engine at boot and holds the answer as its own. A floor entry that admits
+// only that directory refuses boot, as one under the defaults does. An
+// engine that does not answer, or names no directory, leaves the defaults in
+// force, and the Orker boots and says so, naming the settings to check.
+func TestBoot_TheEnginesStateIsTheOrkersOwnWhereverItKeepsIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "srv", "docker-data")
+	under := "file:" + filepath.Join(root, "overlay2", "abc", "diff", "secret")
+	boot := func(t *testing.T, fake *countingDocker, floor []string) (*Activities, string, error) {
+		policy := SecurityPolicyFromEnv()
+		policy.SecretAllow = floor
+		var logs bytes.Buffer
+		activities := NewActivitiesWithOptions(nil, Options{
+			OrkerID:  fmt.Sprintf("orker-state-%d-%s", os.Getpid(), strings.ReplaceAll(t.Name(), "/", "-")),
+			WorkRoot: t.TempDir(),
+			Runtime:  &DockerRuntime{Bin: fake.bin},
+			Policy:   &policy,
+			Logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+		})
+		t.Cleanup(activities.Close)
+		err := activities.Boot(context.Background())
+		return activities, logs.String(), err
+	}
+
+	t.Run("a root the engine names", func(t *testing.T) {
+		fake := newCountingDocker(t)
+		fake.set("present", "")
+		fake.set("engineroot", root+"\n")
+		activities, logs, err := boot(t, fake, nil)
+		if err != nil {
+			t.Fatalf("Boot = %v", err)
+		}
+		var refusal *OwnSourceRefusal
+		if err := activities.dispatcher.Policy.AllowsSecretSource(under); !errors.As(err, &refusal) {
+			t.Errorf("AllowsSecretSource(%s) = %v, want it refused as the Orker's own", under, err)
+		}
+		assertOwn(t, activities.dispatcher.Policy, "file:/var/lib/docker/overlay2/abc/diff/secret")
+		if !strings.Contains(logs, root) {
+			t.Errorf("the boot log does not name the engine's state directory %s:\n%s", root, logs)
+		}
+	})
+
+	t.Run("a floor entry that admits only it", func(t *testing.T) {
+		fake := newCountingDocker(t)
+		fake.set("present", "")
+		fake.set("engineroot", root+"\n")
+		if _, _, err := boot(t, fake, []string{"file:" + root + "/*"}); err == nil ||
+			!strings.Contains(err.Error(), "admits only this orker's own sources") {
+			t.Fatalf("Boot with a floor of %s/* = %v, want it refused as admitting only the Orker's own", root, err)
+		}
+	})
+
+	for name, setup := range map[string]func(*countingDocker){
+		"an engine that does not answer":    func(f *countingDocker) { f.set("enginerootfail", "") },
+		"an engine that names no directory": func(f *countingDocker) { f.set("engineroot", "<no value>\n") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newCountingDocker(t)
+			fake.set("present", "")
+			setup(fake)
+			activities, logs, err := boot(t, fake, nil)
+			if err != nil {
+				t.Fatalf("Boot = %v; an engine that does not say where it keeps its state is no reason to refuse", err)
+			}
+			assertOwn(t, activities.dispatcher.Policy, "file:/var/lib/docker/overlay2/abc/diff/secret")
+			if !strings.Contains(logs, "level=WARN") || !strings.Contains(logs, SecretAllowVar) ||
+				!strings.Contains(logs, "data-root") {
+				t.Errorf("the boot log does not warn naming %s and the engine's data-root:\n%s", SecretAllowVar, logs)
+			}
+		})
+	}
+}
+
 // specRecordingRuntime is a phaseCapturingRuntime that keeps every spec it
 // was asked to create, and can make the work root unwritable while the
 // container runs, so the attempt's own directory cannot be removed after it.

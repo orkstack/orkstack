@@ -563,6 +563,46 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 	}
 }
 
+// engineStater is the runtime capability Boot asks where the engine keeps
+// its state. A runtime without it keeps the default paths alone.
+type engineStater interface {
+	EngineState(ctx context.Context) ([]OwnPath, error)
+}
+
+// ownEngineState adds the directories the engine keeps its state in to the
+// Orker's own paths. An engine that cannot say leaves the default paths in
+// force and is no reason to refuse boot: it is said once, naming the floor
+// that bounds what a task may name meanwhile. A floor entry that admits only
+// those directories refuses boot, as one under the defaults does.
+func (a *Activities) ownEngineState(ctx context.Context) error {
+	stater, ok := a.dispatcher.Runtime.(engineStater)
+	if !ok {
+		return nil
+	}
+	paths, err := stater.EngineState(ctx)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("boot interrupted while asking where the container engine keeps its state: %w (%v)",
+				ctx.Err(), err)
+		}
+		a.dispatcher.logger().Warn("container engine did not say where it keeps its state: a state directory "+
+			"kept off the defaults is not among this orker's own; check the engine setting the error names, "+
+			"and set "+SecretAllowVar+" to directories of the tasks' own", "error", err, "setting", SecretAllowVar)
+		return nil
+	}
+	policy := a.dispatcher.Policy.WithOwnPaths(paths...)
+	if err := policy.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
+	}
+	a.dispatcher.Policy = policy
+	dirs := make([]string, 0, len(paths))
+	for _, path := range paths {
+		dirs = append(dirs, path.Path)
+	}
+	a.dispatcher.logger().Info("container engine state is this orker's own", "dirs", dirs)
+	return nil
+}
+
 // Boot performs the checks an Orker must pass before it accepts work.
 //
 // Refusing to start is the only honest response to any of these failures. An
@@ -638,6 +678,12 @@ func (a *Activities) Boot(ctx context.Context) error {
 	} else {
 		a.dispatcher.logger().Info("container runtime", "engine", info.Name, "cli", info.CLI,
 			"version", info.Version, "rootless", info.Rootless, "seccomp", info.Seccomp)
+	}
+	// The engine's state, where the engine's own settings put it: one kept
+	// off the defaults still holds every container's writable layer, which a
+	// task writes, so it is this Orker's own as the defaults are.
+	if err := a.ownEngineState(ctx); err != nil {
+		return err
 	}
 	// An escape hatch that does not land as the Orker is a boot refusal only
 	// where every task would use it; elsewhere it fails only the tasks that

@@ -249,6 +249,66 @@ func TestDockerRuntime_ReadsRootlessFromTheCLIsOwnField(t *testing.T) {
 	}
 }
 
+// TestDockerRuntime_AsksTheEngineWhereItKeepsItsState: each CLI is asked its
+// own field — the docker CLI DockerRootDir, the podman CLI its graphroot and
+// its runroot — and every directory named is the engine's state. An engine
+// that fails the question, or names no directory, is an error that names the
+// engine's own settings.
+func TestDockerRuntime_AsksTheEngineWhereItKeepsItsState(t *testing.T) {
+	for _, tt := range []struct {
+		name, cli, flag, answer, asked string
+		want                           []string
+	}{
+		{"docker CLI on Docker", CLIDocker, "", "/srv/docker\n", "info --format {{.DockerRootDir}}", []string{"/srv/docker"}},
+		{"docker CLI on the Podman socket", CLIDocker, "podmanengine", "/srv/storage\n", "info --format {{.DockerRootDir}}",
+			[]string{"/srv/storage"}},
+		{"podman CLI", CLIPodman, "", "/srv/storage\n/run/storage\n", "info --format {{.Store.GraphRoot}}",
+			[]string{"/srv/storage", "/run/storage"}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := newCountingDocker(t)
+			if tt.flag != "" {
+				fake.set(tt.flag, "")
+			}
+			fake.set("engineroot", tt.answer)
+			paths, err := (&DockerRuntime{Bin: fake.bin, CLI: tt.cli}).EngineState(context.Background())
+			if err != nil {
+				t.Fatalf("EngineState = %v", err)
+			}
+			var got []string
+			for _, path := range paths {
+				if path.Why != engineStateWhy {
+					t.Errorf("%s is the Orker's own for %q, want %q", path.Path, path.Why, engineStateWhy)
+				}
+				got = append(got, path.Path)
+			}
+			if strings.Join(got, ",") != strings.Join(tt.want, ",") {
+				t.Errorf("EngineState = %q, want %q", got, tt.want)
+			}
+			if calls := fake.calls(); countPrefix(calls, tt.asked) != 1 {
+				t.Errorf("calls = %q; want the CLI asked %q once", calls, tt.asked)
+			}
+		})
+	}
+	for name, tt := range map[string]struct{ cli, flag, answer, settings string }{
+		"docker: a failed question": {CLIDocker, "enginerootfail", "", "data-root"},
+		"docker: no directory":      {CLIDocker, "", "<no value>\n", "data-root"},
+		"podman: no directory":      {CLIPodman, "", "\n\n", "graphroot and runroot"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fake := newCountingDocker(t)
+			if tt.flag != "" {
+				fake.set(tt.flag, "")
+			}
+			fake.set("engineroot", tt.answer)
+			if paths, err := (&DockerRuntime{Bin: fake.bin, CLI: tt.cli}).EngineState(context.Background()); err == nil ||
+				!strings.Contains(err.Error(), tt.settings) {
+				t.Errorf("EngineState = %q, %v; want an error naming %s", paths, err, tt.settings)
+			}
+		})
+	}
+}
+
 // TestDockerRuntime_TheCLISettingDecidesTheGrammarAndTheDefaultBinary: the
 // field over ORK_DOCKER_CLI over the default, the podman CLI's binary is
 // `podman` on PATH unless ORK_DOCKER_BIN says otherwise, and a value that

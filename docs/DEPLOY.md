@@ -3042,8 +3042,8 @@ or `env:*`, an Orker refuses as a task's source what belongs to it: its
 `GOOGLE_APPLICATION_CREDENTIALS` among them), `/proc`, `/dev`, its container's
 credentials under `/run/secrets` and `/var/run/secrets`, its work root, its
 configuration file and each file that reads, its telemetry sinks' header
-sources, the container engine's state, and the credential files its settings
-name. The work root is the temp directory when `orker.workdir` is unset, so
+sources, the container engine's state (wherever the engine reports keeping
+it at boot), and the credential files its settings name. The work root is the temp directory when `orker.workdir` is unset, so
 there a `file:/tmp/…` source is refused and a floor entry under `/tmp` stops
 the Orker at boot. A `file:` source must also be a plain absolute path, with
 no `..`, `.` or empty segment, of at most 4096 bytes, under any floor. A task

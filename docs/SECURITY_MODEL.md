@@ -316,7 +316,16 @@ only the Orker's own sources stops the Orker at boot
 | `ORK_ARTIFACT_DIR`, when the artifact backend is `local` | every run's artifacts, commits and logs, of every namespace |
 | `DOCKER_CONFIG`, `DOCKER_CERT_PATH`, `REGISTRY_AUTH_FILE`, `CONTAINER_SSHKEY`, `~/.docker`, `~/.dockercfg`, `~/.ssh`, `~/.config/containers` (or `$XDG_CONFIG_HOME/containers`), `$XDG_RUNTIME_DIR/containers`, `/run/containers` | the container CLI's registry credentials, TLS key and SSH identity |
 | the files and directories `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG`, `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`, `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, `AZURE_FEDERATED_TOKEN_FILE`, `AZURE_CONFIG_DIR` and `AZURE_CLIENT_CERTIFICATE_PATH` name, `~/.aws`, `~/.azure`, `~/.config/gcloud` | the credential helpers' cloud credentials |
-| `/var/lib/docker`, `/var/lib/containerd`, `/var/lib/containers`, `/run/docker`, `/run/containerd`, `~/.local/share/docker`, `~/.local/share/containers` (or under `$XDG_DATA_HOME`) | the container engine's state: images, layers and every container's log, other tasks' among them |
+| `/var/lib/docker`, `/var/lib/containerd`, `/var/lib/containers`, `/run/docker`, `/run/containerd`, `~/.local/share/docker`, `~/.local/share/containers` (or under `$XDG_DATA_HOME`), and each directory the engine reports at boot: the docker CLI's `DockerRootDir` (dockerd's `data-root`), the podman CLI's `GraphRoot` and `RunRoot` (`graphroot` and `runroot` in `storage.conf`) | the container engine's state: images, layers, every container's writable layer and its log, other tasks' among them |
+
+The engine's state is asked at boot because its settings can move it off
+those defaults, and a container's writable layer, which its task writes,
+moves with it. An engine that cannot be asked, or that names no directory,
+leaves the defaults in force: the Orker boots and logs a warning that names
+the engine setting to check and `ORK_ORKER_SECRET_ALLOW`. Neither CLI reports
+containerd's own root, so a containerd root moved off `/var/lib/containerd`
+is not on the list; an Orker on such a host sets a floor
+(`internal/orker/runtime_docker.go`, `EngineState`).
 
 A file is named by the path itself and everything beneath it. A `file:` source
 must be a plain absolute path, with no `..`, `.` or empty segment, of at most
@@ -356,8 +365,9 @@ Some ways of reaching a file are out of the check's reach, by design: a file
 beneath one of the Orker's directories that a bind mount or a hard link shows
 under another name, another mount of the process or device file system than
 `/proc` and `/dev`, and a symbolic link swapped between the check and the
-read. Each needs write access outside the task's workspace, where no task
-writes — the workspace lies under the work root, which is the Orker's own —
+read. Each needs write access outside the task's workspace and its
+container's writable layer, where no task writes — the workspace lies under
+the work root and the layer under the engine's state, both the Orker's own —
 and [AGENTS.md](../AGENTS.md) §6 forbids host mounts. A Kubernetes update
 swaps a mount's links while the Orker runs, so a name such as
 `..data/orker.yaml` names the Orker's file before the update and after it.

@@ -1098,6 +1098,41 @@ var runtimeOwnEnv = []ownName{
 	{"CLOUDSDK_*", "its registry credential helpers' settings, CLOUDSDK_*"},
 }
 
+// engineStateWhy is why the engine's state directories are the Orker's own.
+const engineStateWhy = "its container engine's state"
+
+// EngineState asks the engine where it keeps its state (stateQuery), wherever
+// its own settings put it, as paths of the Orker's own: a state directory
+// moved off the defaults runtimeOwnPaths lists still holds every container's
+// writable layer, which a task writes. An engine that cannot be asked, or
+// that names no directory, is an error that names the settings to check.
+func (d *DockerRuntime) EngineState(ctx context.Context) ([]OwnPath, error) {
+	spoken, err := d.dialect(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ask where the container engine keeps its state: %w", err)
+	}
+	query := spoken.stateQuery()
+	answer, err := d.control(ctx, "info", "--format", query)
+	switch {
+	case err != nil:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %w",
+			spoken.stateSettings(), err)
+	case answer.code != 0:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %s info --format %q exited %d: %s",
+			spoken.stateSettings(), spoken.cli, query, answer.code, answer.said())
+	}
+	dirs := statePaths(answer.stdout)
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("the container engine named no directory for its state (check %s): %s info --format %q answered %q",
+			spoken.stateSettings(), spoken.cli, query, truncateString(strings.TrimSpace(answer.stdout), 200))
+	}
+	paths := make([]OwnPath, 0, len(dirs))
+	for _, dir := range dirs {
+		paths = append(paths, OwnPath{Path: dir, Why: engineStateWhy})
+	}
+	return paths, nil
+}
+
 // runtimeOwnPaths are the files the CLI and the engine behind it hold as
 // their own, where getenv places them: the CLI's registry credentials (the
 // docker CLI's config.json and its older ~/.dockercfg, the podman CLI's
@@ -1119,7 +1154,7 @@ func runtimeOwnPaths(getenv func(string) string) []OwnPath {
 			paths = append(paths, OwnPath{Path: path, Why: why})
 		}
 	}
-	const creds, state = "its container CLI's credentials", "its container engine's state"
+	const creds, state = "its container CLI's credentials", engineStateWhy
 	for _, name := range []string{"DOCKER_CONFIG", "DOCKER_CERT_PATH", "REGISTRY_AUTH_FILE", "CONTAINER_SSHKEY",
 		"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
 		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG",

@@ -117,6 +117,9 @@ case "$1" in
     if [ -e "$S/infofail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
     case "$3" in
       *Host.Security.Rootless*) if [ -e "$S/rootless" ]; then cat "$S/rootless"; else echo false; fi ;;
+      *DockerRootDir*|*Store.GraphRoot*)
+        if [ -e "$S/enginerootfail" ]; then echo "Error: cannot read host info" >&2; exit 125; fi
+        if [ -e "$S/engineroot" ]; then cat "$S/engineroot"; else echo /var/lib/docker; fi ;;
       *) echo "[name=seccomp,profile=builtin]" ;;
     esac ;;
   run)

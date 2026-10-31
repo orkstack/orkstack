@@ -31,8 +31,10 @@ word for word.
   `env:CLOUDSDK_*`, `env:GOOGLE_APPLICATION_CREDENTIALS`), `/proc`, `/dev`,
   its container's credentials under `/run/secrets` and `/var/run/secrets`, its
   work root, its configuration file and each file that reads, its telemetry
-  sinks' header sources, the container engine's state, and the credential
-  files its settings name. A `file:` source is the Orker's own when the way
+  sinks' header sources, the container engine's state (the defaults, and
+  wherever the engine reports keeping it at boot; an engine that cannot say
+  leaves the defaults and logs a warning), and the credential files its
+  settings name. A `file:` source is the Orker's own when the way
   the kernel takes to open it passes through or ends at one of these, by name
   or as the file is when the source is judged, so a link, a hard link to an
   own file and a Kubernetes mount updated after boot reach none of them. The

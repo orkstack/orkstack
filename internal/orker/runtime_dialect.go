@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -176,6 +177,41 @@ func (x dialect) isRootless(answer string) (bool, error) {
 	default:
 		return false, fmt.Errorf("the podman CLI answered %q to %s, not true or false", truncateString(answer, 200), x.rootlessQuery())
 	}
+}
+
+// stateQuery is the `info` template that names the directories the engine
+// keeps its state in — images, layers, every container's writable layer and
+// its log — wherever the engine's own settings put them, and statePaths
+// reads its answer. The docker CLI reports DockerRootDir: dockerd's
+// data-root, and Podman's graphroot behind its Docker-compatible socket. The
+// podman CLI reports its graphroot and its runroot, one a line. Neither
+// reports containerd's own root.
+func (x dialect) stateQuery() string {
+	if x.cli == CLIPodman {
+		return "{{.Store.GraphRoot}}\n{{.Store.RunRoot}}"
+	}
+	return "{{.DockerRootDir}}"
+}
+
+// stateSettings names the engine settings that move what stateQuery
+// reports, for an operator told to check them.
+func (x dialect) stateSettings() string {
+	if x.engine == CLIPodman {
+		return "graphroot and runroot in the engine's storage.conf"
+	}
+	return "the daemon's data-root"
+}
+
+// statePaths is each line of answer that is an absolute path. A field the
+// engine leaves unset answers nothing, or "<no value>", and names none.
+func statePaths(answer string) []string {
+	var dirs []string
+	for _, line := range strings.Split(answer, "\n") {
+		if line = strings.TrimSpace(line); filepath.IsAbs(line) {
+			dirs = append(dirs, line)
+		}
+	}
+	return dirs
 }
 
 // The runtime's own words, matched case-insensitively: the CLIs and engines
