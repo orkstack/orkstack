@@ -124,14 +124,14 @@ const MaxConcurrentVar = "ORK_ORKER_MAX_CONCURRENT"
 // pool's channel: the SDK's own default, set explicitly because a count left
 // at the default is the SDK's signal to auto-enrol the worker in poller
 // autoscaling when the Temporal namespace advertises it (go.temporal.io/sdk
-// internal_worker.go, v1.47.0). An autoscaled worker decides for itself how
+// internal_worker.go, v1.50.0). An autoscaled worker decides for itself how
 // many polls to hold, and every poll reserves a slot before it is sent, so an
 // Orker's reservations would follow a server setting nobody chose for them. A
 // pin host's session activity worker takes the same poller behaviour.
 const TaskPollers = 2
 
 // sdkDefaultSlots is the SDK's own default for every other supplier the tuner
-// must name (go.temporal.io/sdk/internal/internal_worker.go, v1.47.0).
+// must name (go.temporal.io/sdk/internal/internal_worker.go, v1.50.0).
 const sdkDefaultSlots = 1000
 
 // cordonSlotSupplier wraps the ordinary fixed-size supplier and refuses to
@@ -210,7 +210,7 @@ func (a *Activities) WorkerTuner() (worker.WorkerTuner, error) {
 // ---------------------------------------------------------------- interceptor
 
 // sessionCreationActivityName is the SDK's internal name for the activity that
-// opens a session (go.temporal.io/sdk/internal/session.go:113, v1.47.0). It is
+// opens a session (go.temporal.io/sdk/internal/session.go:113, v1.50.0). It is
 // unexported there, so it is spelled here and pinned by
 // TestIntegration_ACordonedPinHostOpensNoNewPinAndKeepsItsOpenOne, which fails
 // the day the SDK renames it — the same footing docs/DEPLOY.md gives the

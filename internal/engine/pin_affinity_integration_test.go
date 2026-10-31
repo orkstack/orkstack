@@ -239,7 +239,7 @@ func (o *pinOrker) sawPhase(runID, taskID, phase string) bool {
 //
 //   - worker.Stop() is a GRACEFUL DRAIN. The SDK cancels its activity contexts
 //     with ErrWorkerShutdown and the in-flight activity then REPORTS its own
-//     failure to the server (go.temporal.io/sdk@v1.47.0,
+//     failure to the server (go.temporal.io/sdk@v1.50.0,
 //     internal_worker_base.go baseWorker.Stop -> backgroundContextCancel). The
 //     member's own error therefore reaches the workflow FIRST and the task is
 //     recorded as an ordinary TASK_FAILED — measured: the run failed 53 ms

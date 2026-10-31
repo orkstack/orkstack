@@ -32,7 +32,7 @@ const idleWindow = 15 * time.Second
 // deployment's Current Version, the task queue's current version is nil, and
 //
 //	"A nil Current Version represents all the unversioned workers"
-//	(api@v1.63.5/workflowservice/v1/request_response.pb.go,
+//	(api@v1.64.0/workflowservice/v1/request_response.pb.go,
 //	 SetWorkerDeploymentCurrentVersionRequest.BuildId)
 //
 // so every workflow task waits for an unversioned poller that a versioned

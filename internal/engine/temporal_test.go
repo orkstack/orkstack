@@ -238,8 +238,8 @@ func TestStartRun_StartsTheWorkflowOnTheEnginesOwnQueue(t *testing.T) {
 //
 // Without these three options a colliding id is silent: ExecuteWorkflow
 // returns a handle to whatever execution already holds the id and the caller
-// believes its own run started (SDK v1.47.0
-// internal/internal_workflow_client.go:2201 swallows the already-started error
+// believes its own run started (SDK v1.50.0
+// internal/internal_workflow_client.go:2238 swallows the already-started error
 // when WorkflowExecutionErrorWhenAlreadyStarted is false). Uniqueness is then
 // only as good as the entropy in the id; with them it is decided by the
 // server.

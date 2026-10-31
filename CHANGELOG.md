@@ -11,6 +11,18 @@ word for word.
 
 ## [Unreleased]
 
+### Changed
+
+- Every Go dependency is on its latest release: the Temporal Go SDK 1.50.0
+  (API 1.64.0), Connect 1.21.1, gRPC 1.85.0, OpenTelemetry Go 1.47.0 (its logs
+  API and SDK are now stable, 1.47.0) with otelhttp 0.72.0, the AWS SDK for Go
+  v2 1.47.5 (S3 1.114.6) and the Prometheus client 1.25.0. The Temporal SDK's
+  `temporal_activity_execution_failed` and
+  `temporal_local_activity_execution_failed` metrics now carry a
+  `failure_reason` attribute, one series per reason, and
+  `temporal_sticky_cache_total_forced_eviction` no longer counts a worker's
+  shutdown, so a dashboard built on them may need adjusting.
+
 ## [0.1.0] - 2026-10-30
 
 First release.

@@ -377,7 +377,7 @@ func TestRegisterWorkflows_ScheduleFireIsPinned(t *testing.T) {
 // TestRegisterEngineWorkflows_SurvivesAVersionedWorker is the same acceptance
 // checked against the SDK rather than against this test's own expectations: a
 // versioned worker with no DefaultVersioningBehavior PANICS on a workflow type
-// registered without one (sdk@v1.47.0/internal/internal_worker.go:1317-1322).
+// registered without one (sdk@v1.50.0/internal/internal_worker.go:1389-1394).
 // Registering the shipped list on a real (undialled) worker built from this
 // binary's own options is therefore a live check that both types declare one.
 func TestRegisterEngineWorkflows_SurvivesAVersionedWorker(t *testing.T) {

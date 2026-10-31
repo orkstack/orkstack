@@ -40,10 +40,10 @@ type claimClient interface {
 //
 //   - WORKFLOW_ID_CONFLICT_POLICY_USE_EXISTING joins the execution that already
 //     holds the key instead of starting a second one, and is required by
-//     UpdateWithStartWorkflow (v1.47.0 client/client.go:1580-1591);
+//     UpdateWithStartWorkflow (v1.50.0 client/client.go:1601-1612);
 //   - the update in the same request reads back the winner.
 //
-// It is the only GA call in SDK v1.47 that both creates-or-joins an execution
+// It is the only GA call in SDK v1.50 that both creates-or-joins an execution
 // and returns application state in one round trip, so the decision of who wins
 // is taken once, by the server, and never by a replica. The documented
 // fallback — start with USE_EXISTING, then QueryWorkflow for the winner — needs

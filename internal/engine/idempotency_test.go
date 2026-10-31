@@ -101,7 +101,7 @@ func claimOf(runID string) engine.Claim {
 }
 
 // TestTemporalIdempotency_JoinsTheKeysClaimInOneRoundTrip pins the claim
-// round trip: the dedupe decision is taken by the server, in one call, using GA v1.47
+// round trip: the dedupe decision is taken by the server, in one call, using GA v1.50
 // APIs. USE_EXISTING is what makes a second replica join the claim already
 // holding the key instead of starting a rival, and it is required by
 // UpdateWithStartWorkflow; waiting for Completed is what makes that same call
