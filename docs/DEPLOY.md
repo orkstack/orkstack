@@ -2274,7 +2274,8 @@ precedence over its `envFrom`. The floor names the `file` scheme, so
 `ORK_ORKER_SECRET_SCHEMES`, if you set it, must keep `file`, or the Orker
 refuses to boot. A test holds both bases to this floor and checks that it
 admits none of the Orker's own credentials
-(`internal/dist/kubernetes_test.go`).
+(`internal/dist/kubernetes_test.go`), and the cluster check below runs a task
+through it on a live cluster.
 
 **The work root is one path in both containers.** The engine bind-mounts each
 task's workspace from the path the Orker gives it, so the `work` volume must be
@@ -2415,15 +2416,21 @@ checks:
 - that the engine's root is a user-namespace range, or the node's root for
   the fallback;
 - that the Orker reports the capacity its pod declares;
+- that a task reads a key of `orkstack-task-secrets`, which the bases' floor
+  lists, and that the floor refuses what it does not list: the Orker's own
+  `ORK_S3_SECRET_KEY`, and `POD_NAME`, a variable of the Orker's
+  environment. The key's value is the check's own, random, and appears in no
+  log or record;
 - a cancel; a task above the per-task cap, refused at submit by the cap the
   Orker reported, with no run left behind; a task at the cap, with the cap as
   its limit; an out-of-memory task; and a pod deletion.
 
 Then it checks that the Orker refuses a mismatched work root, and that the
 user-namespaced engine does not start without its RuntimeClass. It deletes its
-namespace at the end (`KEEP=1` leaves it) and creates nothing cluster-wide:
-the RuntimeClass must exist already. In OrkStack it leaves four Orkflows
-(`k8s-orker-proof`, `k8s-orker-cancel`, `k8s-orker-limits`,
+namespace at the end (`KEEP=1` leaves it), the `orkstack-task-secrets` Secret
+it makes there with it, and creates nothing cluster-wide: the RuntimeClass
+must exist already. In OrkStack it leaves five Orkflows (`k8s-orker-proof`,
+`k8s-orker-secrets`, `k8s-orker-cancel`, `k8s-orker-limits`,
 `k8s-orker-too-big`) in
 `--ork-namespace` (`default` unless named) and their runs, kept by that
 namespace's retention. Its Orkers serve only the pool `k8s-check`, which that

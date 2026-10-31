@@ -42,6 +42,11 @@ word for word.
   no `..`, `.` or empty segment, under every secret floor, the empty one
   included. Any other name fails `SECRET_NOT_PERMITTED`, as a non-empty floor
   already refused it.
+- `scripts/k8s-orker-check.sh` runs a task's secrets through the Kubernetes
+  bases' floor on a live cluster: a key of `orkstack-task-secrets` is read, and
+  `ORK_S3_SECRET_KEY` and a variable the floor does not list are refused. It
+  makes the `orkstack-task-secrets` Secret in its own namespace, and leaves a
+  fifth Orkflow, `k8s-orker-secrets`.
 
 ### Fixed
 

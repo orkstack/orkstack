@@ -34,7 +34,10 @@
 #
 # For each shape it then checks that a run passes artifacts between tasks,
 # runs tasks with no network and one on the default network, and gives each
-# task its own limits and the Orker's security profile; that each task's
+# task its own limits and the Orker's security profile; that a task reads a
+# key of the orkstack-task-secrets Secret, which the bases' secret floor
+# lists, and that the floor refuses what it does not list: the Orker's own
+# ORK_S3_SECRET_KEY, and a variable of its environment; that each task's
 # cgroup is inside the engine container's; that a cancel reaches each task's
 # container as SIGTERM, then SIGKILL after that task's own grace; that the
 # Orker declares the capacity its pod gives it; that a task may ask for up to
@@ -46,8 +49,9 @@
 # that the user-namespaced engine does not start without its RuntimeClass.
 #
 # What it creates, and what it leaves: in the cluster, the namespace and
-# everything in it, deleted at the end (KEEP=1 leaves it); nothing
-# cluster-wide. In OrkStack: the four check Orkflows in --ork-namespace,
+# everything in it, the orkstack-task-secrets Secret with its one key among
+# it, deleted at the end (KEEP=1 leaves it); nothing cluster-wide. In
+# OrkStack: the five check Orkflows in --ork-namespace,
 # applied once and left (an identical apply changes nothing), their runs,
 # kept as that namespace's retention says, and Orkers of the pool k8s-check
 # while the check runs, which that namespace must allow. Exit 0: every check
@@ -221,6 +225,16 @@ for object in configmap/orkstack secret/orkstack-s3; do
 		k apply -f - >/dev/null
 done
 [ -z "$registry_ca" ] || k -n "$ns" create configmap registry-ca --from-file=ca.crt="$registry_ca" >/dev/null
+# The task secret the bases' floor lists: one key of orkstack-task-secrets,
+# which every Orker of the check mounts, made here so its pods start with it.
+# The check prints its hash, never its value.
+od -An -N32 -tx1 /dev/urandom | tr -d ' \n' >"$work/k8s-check-value"
+k -n "$ns" create secret generic orkstack-task-secrets --from-file=k8s-check-value="$work/k8s-check-value" >/dev/null
+if command -v sha256sum >/dev/null; then
+	secret_sha=$(sha256sum "$work/k8s-check-value" | cut -d ' ' -f 1)
+else
+	secret_sha=$(shasum -a 256 "$work/k8s-check-value" | cut -d ' ' -f 1)
+fi
 
 # Run a probe pod to its end; say what it printed, or why it never ran.
 probe() { # probe NAME WHAT, the pod's manifest on stdin
@@ -463,6 +477,24 @@ check_shape() { # check_shape SHAPE
 	expect "$dir/proof-logs.txt" "^\\[verify\\] $sha " "$shape: verify read produce's artifact intact"
 	expect "$dir/proof-logs.txt" '^\[verify\] memory.max: 134217728$' "$shape: verify read compress's artifact back"
 	expect "$dir/proof-artifacts.txt" '^compress +1 +OUTPUT +report.txt.gz ' "$shape: compress's artifact was committed"
+
+	log "$shape: a task's secrets: the floor admits what it lists and refuses what it does not"
+	run=$(orkctl run submit k8s-orker-secrets --json | jq -r .run.id)
+	wait_terminal "$run"
+	orkctl run get "$run" --json >"$dir/secrets-run.json"
+	orkctl run logs "$run" >"$dir/secrets-logs.txt"
+	jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-") \(.error.message // "-")"' "$dir/secrets-run.json" | tee "$dir/secrets-tasks.txt"
+	expect "$dir/secrets-tasks.txt" '^listed SUCCEEDED ' "$shape: a task reads a key of orkstack-task-secrets, which the floor lists"
+	expect "$dir/secrets-logs.txt" "^\\[listed\\] secret sha256: $secret_sha\$" "$shape: and is given the value the check put there"
+	expect "$dir/secrets-tasks.txt" '^own FAILED SECRET_NOT_PERMITTED .*"env:ORK_S3_SECRET_KEY" is this orker.s own' \
+		"$shape: the floor refuses what it does not list: the Orker's own ORK_S3_SECRET_KEY"
+	expect "$dir/secrets-tasks.txt" '^unlisted FAILED SECRET_NOT_PERMITTED .*"env:POD_NAME" matches none of file:/etc/orkstack/task-secrets/\*' \
+		"$shape: the floor refuses what it does not list: POD_NAME, a variable of the Orker's environment"
+	! grep -q 'staged a secret the floor does not list' "$dir/secrets-logs.txt" ||
+		fail "$shape: a task whose secret the floor does not list ran"
+	! grep -qF -f "$work/k8s-check-value" "$dir/secrets-logs.txt" "$dir/secrets-run.json" ||
+		fail "$shape: the secret's value appears in the run's logs or its record"
+	log "ok: $shape: the secret's value appears nowhere in the run's logs or its record"
 
 	log "$shape: a cancel, and where each task's cgroup is"
 	since=$(k -n "$ns" exec "$pod" -c engine -- date +%s)
