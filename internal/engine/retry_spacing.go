@@ -60,8 +60,17 @@ func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task) *tem
 	if policy.BackoffCoefficient <= 0 {
 		policy.BackoffCoefficient = 2.0
 	}
+	// A version applied before docs/DSL.md rule 47 may still carry a
+	// coefficient below 1 or a maximum below the initial interval. The
+	// cluster refuses either by failing the workflow task, which it then
+	// retries forever (TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled),
+	// so no recorded history holds such a command and raising each to the
+	// nearest value the cluster accepts needs no gate.
+	policy.BackoffCoefficient = max(policy.BackoffCoefficient, 1)
 	if policy.MaximumInterval <= 0 {
 		policy.MaximumInterval = s.unsetRetryMaxInterval(ctx, policy.InitialInterval)
+	} else {
+		policy.MaximumInterval = max(policy.MaximumInterval, policy.InitialInterval)
 	}
 	return policy
 }

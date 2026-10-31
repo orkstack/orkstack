@@ -3465,7 +3465,13 @@ history recorded before the gate replays its `DefaultVersion` branch, the
 whose plan carries no number. Either way the maximum is never below the task's
 own initial interval: the cluster refuses that policy by failing the workflow
 task over and over, so no recorded history holds one, and every earlier build
-left such a run stuck. A build that predates the field ignores the plan's
+left such a run stuck. The same holds for an explicit maximum below the
+initial interval and a backoff coefficient between 0 and 1, which a version
+applied before DSL rule 47 may carry: the task is scheduled with the maximum
+raised to the initial interval and the coefficient raised to 1, with no gate,
+because no recorded history holds the refused command
+(`TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled`). A build that
+predates the field ignores the plan's
 number, so a rollback to one waits 100 seconds again. The fixtures
 `run-retry-max-interval-v1.json` and `run-retry-max-interval-legacy-v1.json`
 guard it with command and negative tests.

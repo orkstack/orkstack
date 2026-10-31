@@ -453,6 +453,8 @@ B's `needs:`.
 Temporal's unbounded default. Within `retry:`, an unset interval is 1 s, an
 unset coefficient 2.0 and an unset maximum interval 60 s, or the initial
 interval when that is longer (Temporal refuses a maximum below the initial).
+A `maximum_interval_seconds` set below `initial_interval_seconds`, and a
+`backoff_coefficient` below 1, are refused (rule 47).
 The 60 s is decided when the run is submitted and kept for the whole run: a
 run submitted by a release before v0.1.1 keeps the 100 s it started with.
 
@@ -1776,6 +1778,21 @@ How each node reads:
     cannot hold exactly, a null or ambiguous key, a key written twice, and
     any tag, anchor, alias or merge key are refused, at the field path of the
     value (`tasks[1].with.flags.verbose`) and its line.
+47. Within a task's `retry:`, a `maximum_interval_seconds` that is set is at
+    least `initial_interval_seconds` (field
+    `tasks[i].retry.maximum_interval_seconds`), and a `backoff_coefficient`
+    that is set is at least 1 (field `tasks[i].retry.backoff_coefficient`);
+    `0` and absent are one value, the default. The refusal names the values.
+    It holds whatever `maximum_attempts` says, so raising the attempts later
+    can never surface a latent error. The cluster refuses a maximum below the
+    initial interval, and a coefficient between 0 and 1, each time the task
+    is scheduled, so a run that retried the task would be stuck. Checked
+    wherever a document is compiled — validate, apply and
+    `orkctl run plan --file` — and on a hand-built request. A version applied
+    before this rule keeps starting: its task is scheduled with the nearest
+    policy the cluster accepts, the maximum raised to the initial interval and
+    a coefficient between 0 and 1 raised to 1 (a negative coefficient reads as
+    the default 2.0, as it always has).
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

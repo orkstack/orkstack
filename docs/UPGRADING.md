@@ -163,6 +163,8 @@ What an older release does with each construct, from the same reference:
 | `cache:` | Runs every task uncached. Memos left behind are inert |
 | schedules | Cannot fire. Pause or delete every schedule first with `orkctl schedule pause` or `orkctl schedule delete` |
 
+From v0.1.1, validate, apply and plan refuse a `retry:` whose `maximum_interval_seconds` is below its `initial_interval_seconds`, or whose `backoff_coefficient` is below 1 ([DSL.md](./DSL.md), rule 47), whatever its `maximum_attempts`. A version stored before keeps starting, its retry raised to the nearest policy the cluster accepts, so fix the document before you next apply it.
+
 Some runs need a newer engine than the one that could otherwise decide them. A submit that needs such a run is refused while an older `ork` process is polling, and the refusal names the count of processes. A fan-out above 1,000 items, and a definition passed by reference, are the two refusals of this kind. A snapshot overlay is never refused: a run whose engines cannot all be sure of overlays writes full snapshots instead ([DEPLOY.md](./DEPLOY.md), "Engine capabilities and the fleet check"). Submit refuses a run whose fan-out, cached task or failure handler would reach a pool whose Orkers predate that feature, so run every Orker of one pool on one release ([DEPLOY.md](./DEPLOY.md), "Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them").
 
 ### Rolling back

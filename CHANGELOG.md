@@ -33,6 +33,16 @@ word for word.
   An unset maximum interval is now never below the initial interval, in every
   run this release's engine executes, a run submitted before the upgrade
   included.
+- An Orkflow whose `retry:` sets a `maximum_interval_seconds` below its
+  `initial_interval_seconds`, or a `backoff_coefficient` below 1, is now
+  refused at validate, apply and plan, naming the field and its values,
+  instead of being accepted and leaving every run that retried the task
+  stuck: Temporal refused the retry policy and retried the refusal forever.
+  The refusal holds whatever `maximum_attempts` says, so a document that
+  pairs such a policy with one attempt, and ran, is refused too. A version
+  applied before this release keeps starting, and such a task is scheduled
+  with the nearest policy Temporal accepts: the maximum raised to the
+  initial interval, a coefficient between 0 and 1 raised to 1.
 
 ## [0.1.0] - 2026-10-30
 

@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/api/enums/v1"
+	historypb "go.temporal.io/api/history/v1"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 )
@@ -47,32 +50,7 @@ func TestIntegration_ARetryWithALongInitialIntervalIsScheduled(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			plan := s.plan(1000, nil)
 			plan.RetryMaxIntervalSeconds = tc.seconds
-			runID := fmt.Sprintf("ork-slow-retry-%d", time.Now().UnixNano())
-			if err := s.starter.StartRun(ctx, runID, compile(t, slowRetryDocument), nil, plan); err != nil {
-				t.Fatalf("StartRun: %v", err)
-			}
-			waitCtx, stop := context.WithTimeout(ctx, 60*time.Second)
-			defer stop()
-			runErr := s.client.GetWorkflow(waitCtx, runID, "").Get(waitCtx, nil)
-			recorded := s.history(runID, "")
-			for _, event := range recorded.GetEvents() {
-				if attrs := event.GetWorkflowTaskFailedEventAttributes(); attrs != nil {
-					_ = s.client.TerminateWorkflow(ctx, runID, "", "the test saw its workflow task fail")
-					t.Fatalf("the run's workflow task failed (%v): %s", attrs.GetCause(), attrs.GetFailure().GetMessage())
-				}
-			}
-			if runErr != nil {
-				_ = s.client.TerminateWorkflow(ctx, runID, "", "the test gave up on it")
-				t.Fatalf("the run did not complete: %v", runErr)
-			}
-			if last := recorded.GetEvents()[len(recorded.GetEvents())-1]; last.GetEventType() != enums.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED {
-				t.Fatalf("the run closed with %v, want completed", last.GetEventType())
-			}
-			scheduled := recordedScheduled(recorded, task.ActivityExecuteTask)
-			if len(scheduled) != 1 {
-				t.Fatalf("%d task activities scheduled, want 1", len(scheduled))
-			}
-			policy := scheduled[0].GetRetryPolicy()
+			recorded, policy := runRetryToCompletion(t, ctx, s, compile(t, slowRetryDocument), plan)
 			if policy.GetInitialInterval().AsDuration() != 2*time.Minute || policy.GetMaximumInterval().AsDuration() != 2*time.Minute {
 				t.Fatalf("the task was scheduled with initial %s and maximum %s, want both 2m0s",
 					policy.GetInitialInterval().AsDuration(), policy.GetMaximumInterval().AsDuration())
@@ -82,4 +60,73 @@ func TestIntegration_ARetryWithALongInitialIntervalIsScheduled(t *testing.T) {
 				versionMarkers(t, recorded)[engine.RetryMaxIntervalChange])
 		})
 	}
+}
+
+// TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled: a version
+// applied before docs/DSL.md rule 47 may carry a retry: the cluster refuses —
+// an explicit maximum interval below the initial one, or a backoff
+// coefficient below 1 — and the cluster refuses it by failing the workflow
+// task, which it then retries forever. Such a task is scheduled with the
+// nearest policy the cluster accepts, and the run completes with no failed
+// workflow task.
+func TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	s := startCANStack(t, ctx, "stored-retry", false, canFixtureBehavior)
+	for _, tc := range []struct {
+		name        string
+		retry       *orkstackv1.RetryPolicy
+		maximum     time.Duration
+		coefficient float64
+	}{
+		{"a maximum below the initial interval",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 30 * time.Second, 2},
+		{"a coefficient below 1",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5, MaximumIntervalSeconds: 20}, 20 * time.Second, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wf := compile(t, slowRetryDocument)
+			wf.GetTasks()[0].Retry = tc.retry
+			_, policy := runRetryToCompletion(t, ctx, s, wf, s.plan(1000, nil))
+			if policy.GetMaximumInterval().AsDuration() != tc.maximum || policy.GetBackoffCoefficient() != tc.coefficient {
+				t.Fatalf("the task was scheduled with maximum %s and coefficient %g, want %s and %g",
+					policy.GetMaximumInterval().AsDuration(), policy.GetBackoffCoefficient(), tc.maximum, tc.coefficient)
+			}
+			t.Logf("EVIDENCE %s: retry policy initial %s, coefficient %g, maximum %s; run completed with no failed workflow task",
+				tc.name, policy.GetInitialInterval().AsDuration(), policy.GetBackoffCoefficient(), policy.GetMaximumInterval().AsDuration())
+		})
+	}
+}
+
+// runRetryToCompletion starts one run of wf, fails the test on any failed
+// workflow task or a run that does not complete, and returns its history and
+// the retry policy its one task activity was scheduled with.
+func runRetryToCompletion(t *testing.T, ctx context.Context, s *canStack, wf *orkstackv1.Orkflow, plan engine.RunPlan) (*historypb.History, *commonpb.RetryPolicy) {
+	t.Helper()
+	runID := fmt.Sprintf("ork-retry-%d", time.Now().UnixNano())
+	if err := s.starter.StartRun(ctx, runID, wf, nil, plan); err != nil {
+		t.Fatalf("StartRun: %v", err)
+	}
+	waitCtx, stop := context.WithTimeout(ctx, 60*time.Second)
+	defer stop()
+	runErr := s.client.GetWorkflow(waitCtx, runID, "").Get(waitCtx, nil)
+	recorded := s.history(runID, "")
+	for _, event := range recorded.GetEvents() {
+		if attrs := event.GetWorkflowTaskFailedEventAttributes(); attrs != nil {
+			_ = s.client.TerminateWorkflow(ctx, runID, "", "the test saw its workflow task fail")
+			t.Fatalf("the run's workflow task failed (%v): %s", attrs.GetCause(), attrs.GetFailure().GetMessage())
+		}
+	}
+	if runErr != nil {
+		_ = s.client.TerminateWorkflow(ctx, runID, "", "the test gave up on it")
+		t.Fatalf("the run did not complete: %v", runErr)
+	}
+	if last := recorded.GetEvents()[len(recorded.GetEvents())-1]; last.GetEventType() != enums.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED {
+		t.Fatalf("the run closed with %v, want completed", last.GetEventType())
+	}
+	scheduled := recordedScheduled(recorded, task.ActivityExecuteTask)
+	if len(scheduled) != 1 {
+		t.Fatalf("%d task activities scheduled, want 1", len(scheduled))
+	}
+	return recorded, scheduled[0].GetRetryPolicy()
 }

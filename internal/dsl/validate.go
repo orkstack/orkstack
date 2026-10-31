@@ -214,6 +214,12 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 				}
 			}
 		}
+		// Rule 47: a retry: the cluster would refuse is refused here. The
+		// cluster fails the workflow task that schedules such an attempt and
+		// retries it forever, so a run that reached the task would be stuck.
+		if err := validateRetry(taskIndex, task); err != nil {
+			return err
+		}
 		// Rule 7: an explicit pool is a slug. The compiler checks the shape
 		// only; whether this namespace may dispatch onto that pool is the
 		// server's call, on a path a hand-written request cannot skip.
@@ -503,3 +509,34 @@ func validSecretName(name string) bool {
 
 // secretNamePattern is rule 6c's grammar; "." and ".." are refused besides.
 var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
+
+// validateRetry is rule 47, on the compiled message so a hand-built request
+// meets it too. 0 is how an absent field arrives, and it means the default,
+// so only a value that is set is compared. The cluster refuses a maximum
+// interval below the initial one and a backoff coefficient between 0 and 1;
+// a negative coefficient (which the engine has always read as the default)
+// and a NaN are refused with them, because a coefficient is at least 1. They
+// hold whatever maximum_attempts says, as rules 34 and 35 hold whatever
+// cache.enabled says, so raising the attempts later can never surface a
+// latent error.
+func validateRetry(taskIndex int, task *orkstackv1.Task) error {
+	retry := task.GetRetry()
+	if retry == nil {
+		return nil
+	}
+	at := func(field string) string { return fmt.Sprintf("tasks[%d].retry.%s", taskIndex, field) }
+	if maximum, initial := retry.GetMaximumIntervalSeconds(), retry.GetInitialIntervalSeconds(); maximum > 0 && maximum < initial {
+		return validationError(at("maximum_interval_seconds"), fmt.Errorf(
+			"task %q: retry.maximum_interval_seconds %d is below retry.initial_interval_seconds %d — "+
+				"the longest wait between attempts cannot be shorter than the first; set it to at least %d, "+
+				"or omit it for the default, which is never shorter than the first",
+			task.GetId(), maximum, initial, initial))
+	}
+	if coefficient := retry.GetBackoffCoefficient(); coefficient != 0 && !(coefficient >= 1) {
+		return validationError(at("backoff_coefficient"), fmt.Errorf(
+			"task %q: retry.backoff_coefficient %g is below 1 — it multiplies each wait to give the next, "+
+				"so it must be at least 1; write 1 for a constant wait, or omit it (2: each wait doubles)",
+			task.GetId(), coefficient))
+	}
+	return nil
+}

@@ -8,6 +8,7 @@ import (
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -196,5 +197,60 @@ func TestRunWorkflow_AnInitialIntervalAboveTheLegacyMaximumIsScheduled(t *testin
 	requireIntervals(t, maximumIntervals(capture), 3, 120*time.Second)
 	if asked := capture.versionsAsked(engine.RetryMaxIntervalChange); len(asked) != 0 {
 		t.Fatalf("a plan without the number asked %s %v", engine.RetryMaxIntervalChange, asked)
+	}
+}
+
+// storedBeforeRule47 is retrySpacingDocument with every retry: replaced by
+// one the DSL now refuses (docs/DSL.md rule 47), as a version applied before
+// the rule is stored.
+func storedBeforeRule47(t *testing.T, retry *orkstackv1.RetryPolicy) *orkstackv1.Orkflow {
+	t.Helper()
+	wf := compile(t, retrySpacingDocument("{maximum_attempts: 3}"))
+	for _, spec := range wf.GetTasks() {
+		if spec.GetRetry() != nil {
+			spec.Retry = proto.Clone(retry).(*orkstackv1.RetryPolicy)
+		}
+	}
+	return wf
+}
+
+// TestRunWorkflow_AVersionStoredBeforeTheRetryRuleIsScheduled: a version
+// applied before rule 47 may carry a retry: the cluster refuses — an explicit
+// maximum interval below the initial one, or a backoff coefficient below 1 —
+// and the cluster refuses it by failing the workflow task forever. Such a
+// task is scheduled with the nearest policy the cluster accepts: the maximum
+// raised to the initial interval, the coefficient raised to 1. No gate is
+// asked: no recorded history can hold the refused command.
+func TestRunWorkflow_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		retry       *orkstackv1.RetryPolicy
+		maximum     time.Duration
+		coefficient float64
+	}{
+		{"a maximum below the initial interval",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 30 * time.Second, 2.0},
+		{"a coefficient below 1",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5, MaximumIntervalSeconds: 20}, 20 * time.Second, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			capture := &dispatchCapture{}
+			h := newHarnessCtx(t, &testsuite.WorkflowTestSuite{}, itemBehavior)
+			h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
+			h.env.ExecuteWorkflow(engine.RunWorkflow, "run-stored-before-rule-47",
+				storedBeforeRule47(t, tc.retry), spreadInput(t, 2), retryPlan(60), (*orkstackv1.RunContinuation)(nil))
+			if err := h.env.GetWorkflowError(); err != nil {
+				t.Fatalf("workflow error: %v", err)
+			}
+			requireIntervals(t, maximumIntervals(capture), 3, tc.maximum)
+			for _, options := range capture.of(task.ActivityExecuteTask) {
+				if policy := options.RetryPolicy; policy.MaximumAttempts > 1 && policy.BackoffCoefficient != tc.coefficient {
+					t.Fatalf("scheduled with backoff coefficient %g, want %g", policy.BackoffCoefficient, tc.coefficient)
+				}
+			}
+			if asked := capture.versionsAsked(engine.RetryMaxIntervalChange); len(asked) != 0 {
+				t.Fatalf("an explicit maximum asked %s %v", engine.RetryMaxIntervalChange, asked)
+			}
+		})
 	}
 }

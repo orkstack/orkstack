@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -148,5 +149,37 @@ func TestChildStartPlan_CarriesEveryRunTreeValue(t *testing.T) {
 	old := (&runState{runID: "ork-old"}).childStartPlan(planned)
 	if old.RetryMaxIntervalSeconds != 0 || old.Fairness != nil {
 		t.Errorf("a child of a plan without the fields starts with %+v", old)
+	}
+}
+
+// TestRetryPolicyFor_RaisesOnlyWhatTheClusterRefuses: for a version stored
+// before docs/DSL.md rule 47, the coefficient is raised to 1 only where the
+// cluster refuses it (between 0 and 1) and an explicit maximum only where it
+// is below the initial interval. A value the cluster accepts — and so a
+// recorded run may have used — is scheduled as it always was: zero and a
+// negative coefficient read as the default 2.0, and a NaN passes through.
+func TestRetryPolicyFor_RaisesOnlyWhatTheClusterRefuses(t *testing.T) {
+	s := &runState{plan: RunPlan{RetryMaxIntervalSeconds: 60}, versions: map[string]workflow.Version{RetryMaxIntervalChange: 1}}
+	for _, tc := range []struct {
+		name        string
+		retry       *orkstackv1.RetryPolicy
+		coefficient float64
+		maximum     time.Duration
+	}{
+		{"a coefficient between 0 and 1", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5}, 1, time.Minute},
+		{"a negative coefficient", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: -1}, 2, time.Minute},
+		{"a coefficient of 1", &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 1}, 1, time.Minute},
+		{"a maximum below the initial", &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 2, 30 * time.Second},
+		{"a maximum above the initial", &orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 10, MaximumIntervalSeconds: 30}, 2, 30 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := s.retryPolicyFor(nil, &orkstackv1.Task{Retry: tc.retry})
+			if got.BackoffCoefficient != tc.coefficient || got.MaximumInterval != tc.maximum {
+				t.Errorf("coefficient %g and maximum %s, want %g and %s", got.BackoffCoefficient, got.MaximumInterval, tc.coefficient, tc.maximum)
+			}
+		})
+	}
+	if got := s.retryPolicyFor(nil, &orkstackv1.Task{Retry: &orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN()}}); !math.IsNaN(got.BackoffCoefficient) {
+		t.Errorf("a NaN coefficient became %g, want it scheduled as it always was", got.BackoffCoefficient)
 	}
 }
