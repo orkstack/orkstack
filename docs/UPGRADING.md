@@ -53,9 +53,11 @@ and the other first-party activities at its next apply or submit once a
 later 0.1 release is out. Upgrade every engine and Orker to that release, or
 until then name the v0.1.0 images by digest in `ORK_ACTIVITY_CATALOG`.
 Upgrade the Orkers with the engines: once an engine is upgraded it accepts a
-bundle-signed image at apply and submit, and a v0.1.0 Orker still polling
-refuses that run's task at dispatch with `IMAGE_NOT_SIGNED`, a contract
-violation, which is never retried, so the run fails.
+bundle-signed image at apply and submit, and where the run's namespace
+requires a signer, a v0.1.0 Orker still polling refuses that run's task at
+dispatch with `IMAGE_NOT_SIGNED`, a contract violation, which is never
+retried, so the run fails. A namespace that requires no signer is not
+affected.
 [DEPLOY.md](./DEPLOY.md), "Image supply-chain policy", says how to trust the
 key, and how to verify an image or `SHA256SUMS` by hand.
 

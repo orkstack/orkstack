@@ -801,10 +801,10 @@ bundle, which OrkStack's verifier reads, and nothing in a public
 transparency log), verifies each signature by digest with
 `deploy/cosign.pub`, reads back every signature the registry holds for each
 digest (`cosign download signature`) and refuses one that is not a bundle or
-that records a transparency-log entry, moves `X.Y` to each image only once every one is signed
-and verified (so a deployment that follows `X.Y`, as the built-in catalog
-does, never meets this release's images unsigned), and only then creates the
-GitHub release (`gh release
+that records a transparency-log entry, moves `X.Y` to each image only once
+every one is signed and verified (so a deployment that follows `X.Y`, as the
+built-in catalog does, never meets this release's images unsigned), and only
+then creates the GitHub release (`gh release
 create --verify-tag`, marked the latest when `validate` said so, never a draft
 or a pre-release, so `releases/latest/download/` names the newest release),
 with `SHA256SUMS.sig`, `SHA256SUMS.sigstore.json` and `cosign.pub` beside the
@@ -820,13 +820,13 @@ its upload 7 days, so the approval must come within them.
 `packages: write` and the only `contents: write`, and its environment alone
 holds the signing key. `verify`'s checkout keeps no credential, and no step
 that runs repository code holds a token; in `publish` only the steps that
-tag, push, sign images, move `X.Y` and release are given the token, and only the two
-signing steps the key, which cosign reads from the environment
-(`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a concurrency group named
-from the validated version, so two dispatches of one version run one after the
-other. A dispatch off `main` builds, smokes, proves and verifies, and
-publishes nothing; one on `main` whose approval is rejected publishes nothing
-either.
+tag, push, sign images, move `X.Y` and release are given the token, and only
+the two signing steps the key, which cosign reads from the environment
+(`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a
+concurrency group named from the validated version, so two dispatches of one
+version run one after the other. A dispatch off `main` builds, smokes, proves
+and verifies, and publishes nothing; one on `main` whose approval is rejected
+publishes nothing either.
 
 No `run:` step splices a workflow input or an event field into its shell; each
 reaches the step through `env:`. Every action is pinned to an exact release of
@@ -1594,8 +1594,10 @@ than code points), footer included:
 digest's length, so the page it measures is exactly as long as the page
 `publish` creates, and a section too long for it fails the dispatch before
 anything is built or tagged, naming the page's size, rather than at `gh
-release create`, the last step, once the tag and the images are out. The first release, 0.1.0,
-says only "First release.": everything built before it is that release.
+release create`, the last step, once the tag and the images are out. An
+`-images` given but empty is refused, never read as placeholders: only
+leaving the flag out asks for them. The first release, 0.1.0, says only
+"First release.": everything built before it is that release.
 
 **Run the release gate.** Dispatch `release.yml` with `version` set from
 any branch but `main` for a dry run: `validate`, `gate`, `artifacts` and
@@ -1664,9 +1666,9 @@ any git work tree, an existing key file, and an environment that already holds
 before it writes anything. It then generates the pair with `cosign
 generate-key-pair`, proves it by signing and verifying a file under
 `release.yml`'s signing config (refusing a bundle that records a
-transparency-log entry, as `release.yml` does), creates or updates the `release` environment
-(deployments from `main` only, the caller a required reviewer unless
-`--no-reviewer`, so `publish` waits for an approval), sets
+transparency-log entry, as `release.yml` does), creates or updates the
+`release` environment (deployments from `main` only, the caller a required
+reviewer unless `--no-reviewer`, so `publish` waits for an approval), sets
 `COSIGN_PRIVATE_KEY` (the whole `.key` file) and `COSIGN_PASSWORD`, and
 copies the public key to `deploy/cosign.pub`. The password reaches cosign
 through its environment and `gh` on stdin, never an argument or a file.

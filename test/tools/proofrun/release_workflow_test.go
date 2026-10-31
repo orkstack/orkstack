@@ -521,6 +521,15 @@ const (
 	bundlesReadBack = `cos download signature "$ref" | ` + bundlesCheck + ` >/dev/null`
 )
 
+// bundlesRefused is publish's read-back with its refusal, and
+// smokeBundlesRefused the smoke's: a read the check refuses fails the step,
+// or the smoke, there and then.
+var (
+	bundlesRefused      = regexp.MustCompile(regexp.QuoteMeta(bundlesReadBack) + `\s*\|\|\s*\{ echo "\$ref: [^"\n]*" >&2; exit 1; \}`)
+	smokeBundlesRefused = regexp.MustCompile(regexp.QuoteMeta(`cos download signature --allow-insecure-registry "$ref" 2>"$WORK/sign.log" | `+bundlesCheck) +
+		` >/dev/null \|\|\s*\{ cat "\$WORK/sign\.log" >&2; fail "[^"\n]*"; \}`)
+)
+
 func releaseSigningProblems(w *wfFile) []string {
 	var p []string
 	if job, ok := w.Jobs["validate"]; !ok || stepIndex(job.Steps, func(s wfStep) bool {
@@ -621,8 +630,8 @@ func releaseSigningProblems(w *wfFile) []string {
 		if !strings.Contains(r[after:], signedAfter) {
 			p = append(p, "the image signing never verifies each signature by digest with the committed key after signing")
 		}
-		if !strings.Contains(r[after:], bundlesReadBack) {
-			p = append(p, "the image signing never reads back the bundles the registry holds and refuses one that records a transparency-log entry ("+bundlesReadBack+")")
+		if !bundlesRefused.MatchString(r[after:]) {
+			p = append(p, "the image signing never reads back the bundles the registry holds and fails on one that records a transparency-log entry ("+bundlesReadBack+` || { echo "$ref: …" >&2; exit 1; })`)
 		}
 		for _, want := range []struct{ text, says string }{
 			{`ref="ghcr.io/orkstack/$name@$digest"`, "names each image by its digest"},
@@ -701,6 +710,14 @@ func TestWorkflows_ReleaseSignsWhatItPublishes(t *testing.T) {
 			edit(w, "jq -e '(.verificationMaterial.tlogEntries // []) | length == 0' SHA256SUMS.sigstore.json", "true")
 		}},
 		{"the pushed bundles not read back", func(w *wfFile) { edit(w, bundlesReadBack, "true") }},
+		{"a refused read-back ignored", func(w *wfFile) {
+			s := &steps(w)[at(w, imageSignCommand)]
+			s.Run = regexp.MustCompile(regexp.QuoteMeta(bundlesReadBack)+`\s*\|\|\s*\{[^}]*\}`).ReplaceAllLiteralString(s.Run, bundlesReadBack+" || true")
+		}},
+		{"a refused read-back only logged", func(w *wfFile) {
+			s := &steps(w)[at(w, imageSignCommand)]
+			s.Run = strings.Replace(s.Run, `transparency-log entry" >&2; exit 1; }`, `transparency-log entry" >&2; }`, 1)
+		}},
 		{"a transparency-log entry in a pushed bundle not refused", func(w *wfFile) {
 			s := &steps(w)[at(w, imageSignCommand)]
 			s.Run = strings.Replace(s.Run, " and ("+noTlogEntry+")", "", 1)
@@ -795,6 +812,18 @@ func TestWorkflows_TheCosignPinIsTheRepositorysPin(t *testing.T) {
 		"cos download signature", bundlesCheck, "--require-signed-by cosign:"} {
 		if !strings.Contains(string(smoke), want) {
 			t.Errorf("scripts/quickstart-smoke.sh never says %q: the smoke would not prove what publish signs", want)
+		}
+	}
+	if !smokeBundlesRefused.MatchString(string(smoke)) {
+		t.Errorf(`scripts/quickstart-smoke.sh never fails on a read-back its check refuses (%s >/dev/null || { cat "$WORK/sign.log" >&2; fail "…"; })`, bundlesCheck)
+	}
+	refusal := regexp.MustCompile(`(` + regexp.QuoteMeta(bundlesCheck) + ` >/dev/null \|\|)\s*\{[^}]*\}`)
+	for name, weakened := range map[string]string{
+		"ignored":     refusal.ReplaceAllString(string(smoke), "${1} true"),
+		"only logged": refusal.ReplaceAllString(string(smoke), `${1} { cat "$$WORK/sign.log" >&2; }`),
+	} {
+		if weakened == string(smoke) || smokeBundlesRefused.MatchString(weakened) {
+			t.Errorf("the smoke's read-back check accepts a refusal %s", name)
 		}
 	}
 	setup, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "release-signing-setup.sh"))
