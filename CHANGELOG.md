@@ -39,6 +39,10 @@ word for word.
   came back empty. The job records now keep a bounded log of each failed job:
   every line the merger reads and its last 200 lines. A log that cannot be
   read or kept, other than one GitHub does not have, fails its job closed.
+- A proof shard cancelled, or whose runner was lost, before its artifact was
+  uploaded is read by the test it was running: the integration gate now also
+  prints its `proofrun` progress lines to the job's log, where none reached
+  before.
 
 ## [0.1.0] - 2026-10-30
 

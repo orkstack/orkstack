@@ -214,12 +214,24 @@ part_is_clean() { [ -z "$(git status --porcelain --untracked-files=all)" ]; }
 
 part_proc_start() { sed -E 's/^.*\) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'; }
 
+# part_run runs one gate into its log file. With PART_STREAM set to an
+# extended regular expression, the lines of its output that match are also
+# printed as they happen: the job's own log is what GitHub keeps when the
+# runner is lost or the run is cancelled before the part's artifact is
+# uploaded, and the integration gate's `proofrun: start` and `proofrun:
+# outcome` lines are what the merger and the rerun planner read such a part
+# from (test/tools/proofrun, classify).
 part_run() { # <gate> <log> <command...>
 	local gate="$1" logname="$2" logfile="$DIR/$2"
 	shift 2
 	part_say "== $gate: $*"
 	local started=$SECONDS result=pass code=0
-	"$@" >"$logfile" 2>&1 || code=$?
+	if [ -n "${PART_STREAM:-}" ]; then
+		"$@" 2>&1 | tee "$logfile" | grep --line-buffered -E "$PART_STREAM"
+		code=${PIPESTATUS[0]}
+	else
+		"$@" >"$logfile" 2>&1 || code=$?
+	fi
 	[ "$code" -eq 0 ] || result=fail
 	printf '%s\t%s\t%s\t%s\t%s\n' "$gate" "$result" "$((SECONDS - started))" "$logname" "$*" >>"$DIR/gates.tsv"
 	if [ "$result" = pass ]; then
@@ -490,7 +502,7 @@ part_main() { # <part>
 		part_run images images.log part_push_images || true
 		PART_IMAGES=1
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
-		part_run integration integration.log env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 \
+		PART_STREAM='^proofrun: (start|outcome) ' part_run integration integration.log env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 \
 			"$PR" integration -plan "$PLAN" -shard "$k" -out "$DIR" -jobs "$PROOF_JOBS" \
 			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" \
 			-namespace-prefix "$PROOF_ID-s$k" -print-progress || true

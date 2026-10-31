@@ -1086,7 +1086,13 @@ the merger and the rerun planner read anything from (a `proofrun: start` or
 for byte, and the log's last 200 lines, each cut at 400 bytes, terminal escapes
 removed, a run of lines left out marked with how many; a line its cleanup
 would turn into one the merger reads is left out too. `FuzzBoundJobLog` holds
-that the merger reads the same from the bounded log as from the whole. A log
+that the merger reads the same from the bounded log as from the whole. The integration
+gate prints its `proofrun: start` and `proofrun: outcome` lines to the job's log
+as they happen as well as to `integration.log` (`PART_STREAM` in
+`scripts/proof-part.sh`): before, the job's log held none of them, so a shard
+GitHub cancelled or lost before its artifact was uploaded read as cancelled
+before any test started however long it had run (run 40965510239's
+`integration (1)`, twelve minutes into `TestIntegration_SoakTasks`). A log
 GitHub answers 404 or 410 for (a lost runner keeps none) is left empty, as
 before. Every other way the step cannot keep a log fails that job's record
 closed, with a `read_error` naming why: a read that failed for another reason,
