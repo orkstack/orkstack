@@ -189,7 +189,10 @@ What a document is told:
   released together.
 
 `orkctl activity inspect <name-or-reference>` and Admin → Activities show what
-an image declares. Every first-party image carries the label, and so does each
+an image declares, and `orkctl activity test <image>` reports it beside the
+contract's assertions (declared, none or malformed), read as apply reads it;
+the label is optional, so the test never fails over it. Every first-party
+image carries the label, and so does each
 example image: each one's `interface.ork.yaml`, beside its Dockerfile, is the
 source, and `go run ./internal/schemas/cmd/genschemas` writes the Dockerfile's
 one interface `LABEL` line from it, so a plain `docker build` of the directory

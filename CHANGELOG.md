@@ -18,6 +18,10 @@ word for word.
   keys that position takes, at the key's field path
   (`line 10: unknown key "need" in tasks[1] of the Orkflow; allowed: …`).
   It used to repeat the YAML decoder's sentence, which named an internal type.
+- `orkctl activity test` reports the `with:` interface the image declares in
+  its `org.orkstack.activity.interface` label (declared, none or malformed),
+  in its table and as `interface` in `--json`. The label is reported, never
+  asserted, so it never changes the verdict.
 
 ## [0.1.0] - 2026-10-30
 

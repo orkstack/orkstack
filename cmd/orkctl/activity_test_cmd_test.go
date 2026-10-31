@@ -2,12 +2,15 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/orker"
 )
 
@@ -354,5 +357,129 @@ func TestPreflightIsContractViolation(t *testing.T) {
 				t.Errorf("preflightIsContractViolation() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+// TestActivityInterfaceReport_SaysWhatTheLabelDeclares: the suite reports the
+// image's org.orkstack.activity.interface label — what apply checks a task's
+// with: against — in the words `activity inspect` uses. The label is never a
+// contract assertion: it is optional, and a malformed one is a warning at
+// apply, so it is reported beside the six and decides nothing.
+func TestActivityInterfaceReport_SaysWhatTheLabelDeclares(t *testing.T) {
+	t.Parallel()
+	iface := &orkstackv1.ActivityInterface{
+		SchemaVersion: 1,
+		Fields: map[string]*orkstackv1.FieldSchema{
+			"command": {Type: "array", Required: true},
+			"op":      {Type: "string"},
+		},
+	}
+	packed, err := dsl.PackInterfaceLabel(iface)
+	if err != nil {
+		t.Fatalf("pack the label: %v", err)
+	}
+	image := &orkstackv1.ImageRef{IndexDigest: "sha256:" + strings.Repeat("a", 64)}
+	tests := []struct {
+		name        string
+		resolution  *dsl.Resolution
+		wantStatus  string
+		wantSummary string
+		wantError   string
+		wantLabel   string
+	}{
+		{
+			name:        "a declared interface",
+			resolution:  &dsl.Resolution{Image: image, Interface: iface},
+			wantStatus:  "declared",
+			wantSummary: "schema 1 · 2 keys",
+			wantLabel:   packed,
+		},
+		{
+			name:        "no label",
+			resolution:  &dsl.Resolution{Image: image},
+			wantStatus:  "none",
+			wantSummary: "none — the image declares no org.orkstack.activity.interface label; with: is checked by the image at run time",
+		},
+		{
+			name: "a declaration that cannot be packed",
+			resolution: &dsl.Resolution{Image: image, Interface: &orkstackv1.ActivityInterface{
+				Fields: map[string]*orkstackv1.FieldSchema{"a": {Type: "nonsense"}},
+			}},
+			wantStatus:  "declared",
+			wantSummary: "schema 0 · 1 key",
+			wantError:   "the declaration could not be packed: ",
+		},
+		{
+			name:        "a label that cannot be read",
+			resolution:  &dsl.Resolution{Image: image, InterfaceError: "the label is not JSON"},
+			wantStatus:  "malformed",
+			wantSummary: "malformed — the label is not JSON",
+			wantError:   "the label is not JSON",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := activityInterfaceReport(tc.resolution)
+			if got.Status != tc.wantStatus || got.Summary != tc.wantSummary || !strings.HasPrefix(got.Error, tc.wantError) ||
+				(tc.wantError == "") != (got.Error == "") {
+				t.Errorf("report = {status %q, summary %q, error %q}, want {%q, %q, %q}",
+					got.Status, got.Summary, got.Error, tc.wantStatus, tc.wantSummary, tc.wantError)
+			}
+			if tc.wantLabel == "" {
+				if len(got.Label) != 0 {
+					t.Errorf("label = %s, want none", got.Label)
+				}
+				return
+			}
+			var gotLabel, wantLabel any
+			if err := json.Unmarshal(got.Label, &gotLabel); err != nil {
+				t.Fatalf("the reported label is not JSON: %v (%s)", err, got.Label)
+			}
+			if err := json.Unmarshal([]byte(tc.wantLabel), &wantLabel); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(gotLabel, wantLabel) {
+				t.Errorf("label = %s, want the packed label %s", got.Label, tc.wantLabel)
+			}
+		})
+	}
+}
+
+// TestActivityTestReport_ShowsTheInterface: both surfaces carry the label's
+// report, and a label never changes the verdict.
+func TestActivityTestReport_ShowsTheInterface(t *testing.T) {
+	t.Parallel()
+	report := buildActivityTestReport("good:dev", sixAssertions())
+	report.Interface = activityInterfaceReport(&dsl.Resolution{
+		Image:          &orkstackv1.ImageRef{IndexDigest: "sha256:" + strings.Repeat("b", 64)},
+		InterfaceError: "the label is not JSON",
+	})
+
+	var out bytes.Buffer
+	renderActivityTestReport(&out, report)
+	if want := "Interface:         malformed — the label is not JSON\n"; !strings.Contains(out.String(), want) {
+		t.Errorf("the rendered report has no %q line:\n%s", want, out.String())
+	}
+	if !strings.Contains(out.String(), "good:dev satisfies the OCI Activity Contract.") {
+		t.Errorf("a malformed label changed the verdict:\n%s", out.String())
+	}
+
+	var encoded bytes.Buffer
+	if err := writeGoJSON(&encoded, report); err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		OK        bool `json:"ok"`
+		Interface struct {
+			Status string `json:"status"`
+			Error  string `json:"error"`
+		} `json:"interface"`
+	}
+	if err := json.Unmarshal(encoded.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode --json output: %v\n%s", err, encoded.String())
+	}
+	if decoded.Interface.Status != "malformed" || decoded.Interface.Error != "the label is not JSON" || !decoded.OK {
+		t.Errorf("--json interface = %+v ok=%t, want malformed with its error and ok", decoded.Interface, decoded.OK)
 	}
 }

@@ -2102,6 +2102,12 @@ assertions, each because a real defect would have passed without it:
 6. **SIGTERM reaches the workload within the grace period, and the workload
    observes it** — both halves, because they fail independently (§14.14).
 
+The report also shows the `with:` interface the image declares in its
+`org.orkstack.activity.interface` label, read by the resolver apply uses
+(declared, none or malformed; `docs/ACTIVITY_IMAGES.md`, "Declaring the
+interface"). It is reported, never asserted: the label is optional, and a label
+apply cannot read is a warning there, not a contract violation.
+
 Fixtures in Bash, Go and Python under `test/fixtures/` run any image against
 the ABI with only docker, `cat`, `jq` and a redirect;
 `test/fixtures/first_party_contract.sh` covers `json`, `git` and `template`.

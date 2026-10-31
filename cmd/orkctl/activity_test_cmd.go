@@ -58,12 +58,28 @@ func (a assertion) status() string {
 
 // activityTestReport is the machine-readable form behind --json.
 type activityTestReport struct {
-	Image      string                `json:"image"`
+	Image string `json:"image"`
+	// Interface is the image's activity interface label, reported beside
+	// the six assertions and never one of them (activityInterfaceReport).
+	Interface  activityTestInterface `json:"interface"`
 	Passed     int                   `json:"passed"`
 	Failed     int                   `json:"failed"`
 	Skipped    int                   `json:"skipped"`
 	OK         bool                  `json:"ok"`
 	Assertions []activityTestOutcome `json:"assertions"`
+}
+
+// activityTestInterface is what the image's org.orkstack.activity.interface
+// label declares, as apply reads it (docs/ACTIVITY_IMAGES.md, "Declaring the
+// interface"): Status is "declared", "none" or "malformed"; Summary is the
+// Interface line of `activity inspect`; Label is the declaration apply read,
+// packed as a label value; Error is why the label could not be read, or the
+// declaration could not be packed.
+type activityTestInterface struct {
+	Status  string          `json:"status"`
+	Summary string          `json:"summary"`
+	Label   json.RawMessage `json:"label,omitempty"`
+	Error   string          `json:"error,omitempty"`
 }
 
 type activityTestOutcome struct {
@@ -94,6 +110,9 @@ func newActivityTestCommand(g *globalFlags) *cobra.Command {
 			"accept that config. An image with its own config contract (activity-http,\n" +
 			"activity-file) is refused before any assertion, as \"cannot be driven\"; test\n" +
 			"it with a fixture that speaks its config (test/fixtures/).\n\n" +
+			"The report also shows the with: interface the image declares in its\n" +
+			"org.orkstack.activity.interface label, read as apply reads it: declared,\n" +
+			"none, or malformed. The label is optional, so it is reported, never asserted.\n\n" +
 			"Requires a working container runtime. Exits non-zero if any assertion fails.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -138,7 +157,8 @@ func newActivityTestCommand(g *globalFlags) *cobra.Command {
 }
 
 func renderActivityTestReport(out io.Writer, report *activityTestReport) {
-	fmt.Fprintf(out, "Activity contract: %s\n\n", report.Image)
+	fmt.Fprintf(out, "Activity contract: %s\n", report.Image)
+	fmt.Fprintf(out, "Interface:         %s\n\n", report.Interface.Summary)
 	table := newTable(out)
 	fmt.Fprintln(table, "RESULT\tASSERTION\tDETAIL")
 	for _, a := range report.Assertions {
@@ -167,6 +187,9 @@ type activitySuite struct {
 	root       string
 	dispatcher *orker.OCIDispatcher
 	pinned     *orkstackv1.ImageRef
+	// resolution is the pin's resolution, which carries the image's
+	// interface label as apply would read it.
+	resolution *dsl.Resolution
 }
 
 func (s *activitySuite) run(ctx context.Context) (*activityTestReport, error) {
@@ -206,7 +229,38 @@ func (s *activitySuite) run(ctx context.Context) (*activityTestReport, error) {
 		s.assertExitCodesAreNotInterpreted(ctx),
 		s.assertCancellationIsHonoured(ctx),
 	}
-	return buildActivityTestReport(s.image, assertions), nil
+	report := buildActivityTestReport(s.image, assertions)
+	report.Interface = activityInterfaceReport(s.resolution)
+	return report, nil
+}
+
+// activityInterfaceReport says what the image's interface label declares,
+// read by the same resolver apply uses, in the words `activity inspect`
+// uses. It is reported, never asserted: the label is optional, and a label
+// that cannot be read is a warning at apply, not a contract violation. Pure.
+func activityInterfaceReport(res *dsl.Resolution) activityTestInterface {
+	info := &orkstackv1.ActivityInfo{
+		IndexDigest:    res.Image.GetIndexDigest(),
+		Interface:      res.Interface,
+		InterfaceError: res.InterfaceError,
+	}
+	report := activityTestInterface{Summary: interfaceHeadline(info)}
+	switch {
+	case res.InterfaceError != "":
+		report.Status = "malformed"
+		report.Error = res.InterfaceError
+	case res.Interface == nil:
+		report.Status = "none"
+	default:
+		report.Status = "declared"
+		label, err := dsl.PackInterfaceLabel(res.Interface)
+		if err != nil {
+			report.Error = "the declaration could not be packed: " + err.Error()
+			break
+		}
+		report.Label = json.RawMessage(label)
+	}
+	return report
 }
 
 // buildActivityTestReport folds the six outcomes into the reported form.
@@ -260,11 +314,12 @@ func (s *activitySuite) build(ctx context.Context) error {
 	// Resolved ONCE, for the same reason the Orker pins: a tag that moved
 	// between two assertions would make the suite report on two different
 	// images and call it one.
-	pinned, err := s.resolve(ctx)
+	resolution, err := s.resolve(ctx)
 	if err != nil {
 		return err
 	}
-	s.pinned = pinned
+	s.resolution = resolution
+	s.pinned = resolution.Image
 
 	policy := orker.SecurityPolicyFromEnv()
 	s.dispatcher = &orker.OCIDispatcher{
@@ -279,7 +334,8 @@ func (s *activitySuite) build(ctx context.Context) error {
 	return nil
 }
 
-// resolve pins the image through §4.3's resolver — the SAME one apply uses.
+// resolve pins the image through §4.3's resolver — the SAME one apply uses —
+// and reads its interface label as apply does (step 7).
 //
 // The suite cannot skip this and hand the dispatcher a tag: the dispatcher
 // refuses an unpinned reference outright, because a running execution must
@@ -291,11 +347,11 @@ func (s *activitySuite) build(ctx context.Context) error {
 // local image ID is not a manifest digest — so it genuinely cannot be pinned,
 // and the error says so rather than inventing a local-only pin that would not
 // transfer to a second Orker (§4.6).
-func (s *activitySuite) resolve(ctx context.Context) (*orkstackv1.ImageRef, error) {
-	image, err := dsl.NewResolver(os.Getenv("ORK_REGISTRY_AUTH_FILE")).
-		Resolve(ctx, s.image, s.image)
+func (s *activitySuite) resolve(ctx context.Context) (*dsl.Resolution, error) {
+	resolution, err := dsl.NewResolver(os.Getenv("ORK_REGISTRY_AUTH_FILE")).
+		Inspect(ctx, s.image, s.image)
 	if err == nil {
-		return image, nil
+		return resolution, nil
 	}
 	return nil, fmt.Errorf("%w\n\n"+
 		"`activity test` runs the image the way an Orker will, and an Orker only ever\n"+
