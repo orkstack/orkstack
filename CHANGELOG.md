@@ -47,7 +47,8 @@ word for word.
   too: fix the document before you next apply it. A version applied before
   this release keeps starting, and such a task is scheduled with the nearest
   policy Temporal accepts: the maximum raised to the initial interval, a
-  coefficient between 0 and 1 raised to 1.
+  coefficient between 0 and 1 raised to 1, and a coefficient that is not a
+  number read as the default 2.
 
 ## [0.1.0] - 2026-10-30
 

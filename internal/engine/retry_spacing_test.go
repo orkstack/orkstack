@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"fmt"
+	"math"
 	"testing"
 	"time"
 
@@ -232,6 +233,8 @@ func TestRunWorkflow_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
 			&orkstackv1.RetryPolicy{MaximumAttempts: 3, InitialIntervalSeconds: 30, MaximumIntervalSeconds: 10}, 30 * time.Second, 2.0},
 		{"a coefficient below 1",
 			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: 0.5, MaximumIntervalSeconds: 20}, 20 * time.Second, 1},
+		{"a coefficient that is not a number",
+			&orkstackv1.RetryPolicy{MaximumAttempts: 3, BackoffCoefficient: math.NaN(), MaximumIntervalSeconds: 20}, 20 * time.Second, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			capture := &dispatchCapture{}

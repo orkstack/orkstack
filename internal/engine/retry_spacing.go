@@ -57,15 +57,21 @@ func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task) *tem
 	if policy.InitialInterval <= 0 {
 		policy.InitialInterval = time.Second
 	}
-	if policy.BackoffCoefficient <= 0 {
+	// A NaN, which a version applied before docs/DSL.md rule 47 may carry,
+	// reads as the default with zero and a negative coefficient: no
+	// comparison with 1 below could raise it, and a NaN multiplies no wait
+	// into another. The replayer compares no retry policy
+	// (TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy), so this
+	// changes no command a recorded history replays.
+	if !(policy.BackoffCoefficient > 0) {
 		policy.BackoffCoefficient = 2.0
 	}
-	// A version applied before docs/DSL.md rule 47 may still carry a
-	// coefficient below 1 or a maximum below the initial interval. The
-	// cluster refuses either by failing the workflow task, which it then
-	// retries forever (TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled),
-	// so no recorded history holds such a command and raising each to the
-	// nearest value the cluster accepts needs no gate.
+	// Such a version may also carry a coefficient below 1 or a maximum below
+	// the initial interval. The cluster refuses either by failing the
+	// workflow task, which it then retries forever
+	// (TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled), so no
+	// recorded history holds such a command and raising each to the nearest
+	// value the cluster accepts needs no gate.
 	policy.BackoffCoefficient = max(policy.BackoffCoefficient, 1)
 	if policy.MaximumInterval <= 0 {
 		policy.MaximumInterval = s.unsetRetryMaxInterval(ctx, policy.InitialInterval)

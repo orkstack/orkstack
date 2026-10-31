@@ -3470,7 +3470,11 @@ initial interval and a backoff coefficient between 0 and 1, which a version
 applied before DSL rule 47 may carry: the task is scheduled with the maximum
 raised to the initial interval and the coefficient raised to 1, with no gate,
 because no recorded history holds the refused command
-(`TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled`). A build that
+(`TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled`). A stored
+coefficient that is not a number, which the cluster accepts, reads as the
+default 2.0, as zero and a negative one always have; it is not gated either,
+because the replayer compares no retry policy (below), so it changes only the
+spacing of a task scheduled after the upgrade, never a recorded command. A build that
 predates the field ignores the plan's
 number, so a rollback to one waits 100 seconds again. The fixtures
 `run-retry-max-interval-v1.json` and `run-retry-max-interval-legacy-v1.json`
