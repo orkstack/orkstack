@@ -3609,6 +3609,19 @@ that an Orker's heap holds resolved secret bytes. Suggested addresses for a
 single-host deployment: `:9464` for `ork`, `:9465` for `orker`, so one host can
 run both without a collision.
 
+**The admin listener answers only names it knows.** It applies the API
+listener's `Host` rule (§ "The API listener's bounds") under its own setting:
+with nothing set it admits an IP address, `localhost` and every name under
+it, a name without a dot, and the host `ORK_ADMIN_ADDR` names, and refuses
+any other `Host` with `403`, logging `request refused: Host not allowed` with
+`listener="admin listener"`. A scraper that dials a name with a dot — a
+Prometheus static target such as `host.docker.internal`, a Kubernetes Service
+FQDN such as `ork-admin.orkstack.svc.cluster.local` — is refused until that
+name is listed in `ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`)
+on the binary it scrapes. A deployment upgrading from 0.1.0 that scrapes by
+such a name sets it before the upgrade. A scraper that dials an IP address,
+such as Kubernetes pod discovery, needs nothing.
+
 ### Recipes
 
 Point `OTEL_EXPORTER_OTLP_ENDPOINT` (and, where noted, the per-signal
@@ -3657,6 +3670,8 @@ telemetry:
   admin_addr:
     ork: ":9464"
     orker: ":9465"
+  admin_allowed_hosts:
+    - host.docker.internal   # the name the profile's Prometheus scrapes by
   exporters:
     logs: otlp
     metrics:

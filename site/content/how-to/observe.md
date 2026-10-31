@@ -32,6 +32,8 @@ With `OTEL_METRICS_EXPORTER=prometheus`, set `ORK_ADMIN_ADDR` and let Prometheus
 
 `ORK_ADMIN_ADDR` opens a listener for `/healthz`, `/readyz`, `/metrics` and, when `ORK_PPROF_ENABLED=true`, `/debug/pprof/`. It is never the API port. Bind it to a private address. Leave `ORK_PPROF_ENABLED` off unless you are profiling. An Orker's memory holds resolved secret values.
 
+The listener answers only names it knows in a request's `Host`: an IP address, `localhost`, a name without a dot, and the host `ORK_ADMIN_ADDR` names. It refuses any other name with `403`. If Prometheus scrapes by a name with a dot, such as `host.docker.internal` or a Service's full name, list that name in `ORK_ADMIN_ALLOWED_HOSTS` on the binary it scrapes. 0.1.0 had no such check, so set it before you upgrade from it.
+
 ## Metrics to alert on
 
 | Metric | Labels | Counts |

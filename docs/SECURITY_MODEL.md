@@ -427,10 +427,10 @@ its own writes (`internal/api/audit.go`). A record is written once to
   `ui/src/lib/yaml/lint.ts`), from the generated schemas the build carries
   and nothing a caller sends. Styles allow `'unsafe-inline'`, because the
   page cannot run without inline styles: app.html wraps the app in a styled
-  element, Svelte renders style attributes from its templates and adds a
-  `<style>` element for each transition, and the YAML editor styles itself
-  at run time. Images allow `data:`, which the editor draws its markers
-  with. Neither runs a script.
+  element, Svelte renders style attributes from its templates, and the YAML
+  editor (CodeMirror) inserts its own `<style>` element at run time. Images
+  allow `data:`, which the editor draws its markers with. Neither runs a
+  script.
   The page refuses to be framed (`frame-ancestors 'none'`, which opens the
   policy, and `X-Frame-Options: DENY`), because it carries the operator's
   destructive controls. A page that names no policy, such as the placeholder,

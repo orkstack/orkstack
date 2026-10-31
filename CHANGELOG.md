@@ -50,10 +50,15 @@ word for word.
   - the browser's name, behind a proxy that keeps the browser's `Host`;
   - the name `orkctl`, `curl` or a trigger caller dials.
 
-  The admin listener (`ORK_ADMIN_ADDR`) applies the same rule: set
-  `ORK_ADMIN_ALLOWED_HOSTS` to a name with a dot a scraper dials, such as a
-  Prometheus static target (`host.docker.internal`). See DEPLOY.md, "The web
-  UI" and "The API listener's bounds".
+  See DEPLOY.md, "The web UI" and "The API listener's bounds".
+- **BREAKING**: the admin listener (`ORK_ADMIN_ADDR`, on `ork` and `orker`)
+  applies the same rule, so a scraper that reads `/metrics` or a profile by a
+  name with a dot is refused `403` until that name is listed in
+  `ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`): a Prometheus
+  static target such as `host.docker.internal` (the observability profile's,
+  which `make up` and `deploy/orkstack.example.yaml` now list), or a
+  Kubernetes Service FQDN. A scraper that dials an IP address needs nothing.
+  See DEPLOY.md, "Telemetry".
 - The web UI's page is sent under a strict content security policy. The UI's
   build writes it, and the engine sends it as a header. Scripts run only
   from the page's own origin, and inline ones only when the policy names

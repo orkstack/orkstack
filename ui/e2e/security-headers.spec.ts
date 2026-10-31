@@ -123,10 +123,10 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	expect(directive(policy, 'base-uri')).toEqual(["'none'"]);
 	expect(directive(policy, 'connect-src')).toEqual(["'self'"]);
 	// Styles may be inline: app.html wraps the app in a styled element, Svelte
-	// renders style attributes from its templates and adds a <style> element
-	// for a transition, and the YAML editor styles itself at run time. Images
-	// may be data: URLs, which the editor draws its markers with. Neither can
-	// run a script.
+	// renders style attributes from its templates, and the YAML editor
+	// (CodeMirror) inserts its own <style> element at run time. Images may be
+	// data: URLs, which the editor draws its markers with. Neither can run a
+	// script.
 	expect(directive(policy, 'style-src')).toEqual(["'self'", "'unsafe-inline'"]);
 	expect(directive(policy, 'img-src')).toEqual(["'self'", 'data:']);
 	expect(directive(policy, 'font-src')).toEqual(["'self'"]);

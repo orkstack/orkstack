@@ -126,45 +126,76 @@ func openSlowHeader(t *testing.T, addr string) (net.Conn, time.Time) {
 	return conn, start
 }
 
-// openSlowH2Header opens an h2c connection with prior knowledge, settles
-// its settings as a client does, and starts its first request with a header
-// block that never ends: a HEADERS frame without END_HEADERS, and no
-// CONTINUATION after it. It returns a time no later than when the server
-// began counting the connection idle: before the dial.
-func openSlowH2Header(t *testing.T, addr string) (net.Conn, time.Time) {
-	t.Helper()
-	const (
-		frameHeaders  = 0x1
-		frameSettings = 0x4
-		flagAck       = 0x1
-	)
-	frame := func(kind, flags byte, stream uint32, payload []byte) []byte {
-		header := []byte{byte(len(payload) >> 16), byte(len(payload) >> 8), byte(len(payload)), kind, flags,
-			byte(stream>>24) & 0x7f, byte(stream >> 16), byte(stream >> 8), byte(stream)}
-		return append(header, payload...)
+// HTTP/2 frame types and flags the h2c probes below write and read.
+const (
+	h2FrameData     = 0x0
+	h2FrameHeaders  = 0x1
+	h2FrameSettings = 0x4
+	h2FrameGoAway   = 0x7
+	h2FlagAck       = 0x1
+	h2FlagEndStream = 0x1
+	h2FlagEndHeader = 0x4
+)
+
+// h2Request is a request's header block: :method GET, :scheme http, :path /
+// (HPACK static table 2, 6, 4), and :authority localhost as a literal that
+// is never indexed, so every request can reuse it.
+var h2Request = []byte{0x82, 0x86, 0x84, 0x01, 0x09, 'l', 'o', 'c', 'a', 'l', 'h', 'o', 's', 't'}
+
+// h2Frame encodes one HTTP/2 frame.
+func h2Frame(kind, flags byte, stream uint32, payload []byte) []byte {
+	header := []byte{byte(len(payload) >> 16), byte(len(payload) >> 8), byte(len(payload)), kind, flags,
+		byte(stream>>24) & 0x7f, byte(stream >> 16), byte(stream >> 8), byte(stream)}
+	return append(header, payload...)
+}
+
+// readH2Frame reads one HTTP/2 frame's header and discards its payload.
+func readH2Frame(r io.Reader) (kind, flags byte, stream uint32, err error) {
+	header := make([]byte, 9)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return 0, 0, 0, err
 	}
+	size := int64(header[0])<<16 | int64(header[1])<<8 | int64(header[2])
+	if _, err := io.CopyN(io.Discard, r, size); err != nil {
+		return 0, 0, 0, err
+	}
+	stream = uint32(header[5]&0x7f)<<24 | uint32(header[6])<<16 | uint32(header[7])<<8 | uint32(header[8])
+	return header[3], header[4], stream, nil
+}
+
+// openH2c opens an h2c connection with prior knowledge and reads the
+// server's SETTINGS, which a client acknowledges before it sends anything
+// else; the caller writes that acknowledgement with its first frames. It
+// returns a time no later than when the server began counting the
+// connection idle: before the dial.
+func openH2c(t *testing.T, addr string) (net.Conn, time.Time) {
+	t.Helper()
 	start := time.Now()
 	conn := dialRaw(t, addr)
-	if _, err := conn.Write(append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), frame(frameSettings, 0, 0, nil)...)); err != nil {
+	if _, err := conn.Write(append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), h2Frame(h2FrameSettings, 0, 0, nil)...)); err != nil {
 		t.Fatal(err)
 	}
-	// The server's SETTINGS comes first; a client acknowledges it before
-	// it sends anything else.
 	if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
 		t.Fatal(err)
 	}
-	header := make([]byte, 9)
-	if _, err := io.ReadFull(conn, header); err != nil {
+	kind, flags, _, err := readH2Frame(conn)
+	if err != nil {
 		t.Fatalf("read the server's first frame: %v", err)
 	}
-	if header[3] != frameSettings || header[4]&flagAck != 0 {
-		t.Fatalf("the server's first frame is type %d flags %d, want SETTINGS", header[3], header[4])
+	if kind != h2FrameSettings || flags&h2FlagAck != 0 {
+		t.Fatalf("the server's first frame is type %d flags %d, want SETTINGS", kind, flags)
 	}
-	if _, err := io.CopyN(io.Discard, conn, int64(header[0])<<16|int64(header[1])<<8|int64(header[2])); err != nil {
-		t.Fatal(err)
-	}
-	// :method GET, :scheme http, :path / (HPACK static table 2, 6, 4).
-	stalled := append(frame(frameSettings, flagAck, 0, nil), frame(frameHeaders, 0, 1, []byte{0x82, 0x86, 0x84})...)
+	return conn, start
+}
+
+// openSlowH2Header opens an h2c connection and starts its first request
+// with a header block that never ends: a HEADERS frame without
+// END_HEADERS, and no CONTINUATION after it. It returns a time no later
+// than when the server began counting the connection idle: before the dial.
+func openSlowH2Header(t *testing.T, addr string) (net.Conn, time.Time) {
+	t.Helper()
+	conn, start := openH2c(t, addr)
+	stalled := append(h2Frame(h2FrameSettings, h2FlagAck, 0, nil), h2Frame(h2FrameHeaders, 0, 1, h2Request)...)
 	if _, err := conn.Write(stalled); err != nil {
 		t.Fatal(err)
 	}
@@ -280,6 +311,68 @@ type longStream struct {
 // what happens next on the connection it opened. In the same silence, a
 // keep-alive connection and a request whose headers never end are closed on
 // each server, so the bounds were in force while the streams survived them.
+// Go's HTTP/2 server bounds an h2c connection by the idle bound alone, which
+// counts only while it carries no stream: a header block left unfinished
+// beside an open stream is bounded by nothing until that stream ends
+// (docs/DEPLOY.md, "The API listener's bounds"). Over the window the idle
+// bound and its grace would have closed the connection in, the open stream
+// keeps answering, so the connection was live and the server was serving;
+// once the stream ends, the idle bound closes the connection.
+func TestAPIListener_AnH2cHeaderBlockBesideAnOpenStreamWaitsForThatStream(t *testing.T) {
+	release := make(chan struct{})
+	addr := serveBounded(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ticker := time.NewTicker(testIdleTimeout / 5)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-release:
+				return
+			case <-r.Context().Done():
+				return
+			case <-ticker.C:
+				_, _ = w.Write([]byte("tick"))
+				w.(http.Flusher).Flush()
+			}
+		}
+	}))
+	conn, _ := openH2c(t, addr)
+	frames := append(h2Frame(h2FrameSettings, h2FlagAck, 0, nil),
+		h2Frame(h2FrameHeaders, h2FlagEndHeader|h2FlagEndStream, 1, h2Request)...)
+	frames = append(frames, h2Frame(h2FrameHeaders, 0, 3, h2Request)...)
+	opened := time.Now()
+	if _, err := conn.Write(frames); err != nil {
+		t.Fatal(err)
+	}
+
+	// The idle bound sends GOAWAY at testIdleTimeout and closes the
+	// connection a second later; the window outlasts both.
+	window := opened.Add(testIdleTimeout + time.Second + outlast)
+	if err := conn.SetReadDeadline(window.Add(closeDeadline)); err != nil {
+		t.Fatal(err)
+	}
+	reader := bufio.NewReader(conn)
+	late := 0
+	for time.Now().Before(window) {
+		kind, _, stream, err := readH2Frame(reader)
+		if err != nil {
+			t.Fatalf("the connection ended %s after the stalled header block: %v", time.Since(opened), err)
+		}
+		if kind == h2FrameGoAway {
+			t.Fatalf("GOAWAY %s after the stalled header block, while a stream was open", time.Since(opened))
+		}
+		if kind == h2FrameData && stream == 1 && time.Since(opened) > testIdleTimeout+time.Second {
+			late++
+		}
+	}
+	if late == 0 {
+		t.Fatal("the open stream sent nothing after the idle bound's grace: the window proves nothing")
+	}
+
+	released := time.Now()
+	close(release)
+	requireClosedByBound(t, conn, reader, released, testIdleTimeout)
+}
+
 func TestAPIListener_LongLivedStreamsOutliveItsBounds(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()

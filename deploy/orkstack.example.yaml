@@ -123,6 +123,8 @@ telemetry:
   admin_addr:                       # default: "" (no listener); per-binary since the ports must differ
     ork: ":9464"
     orker: ":9465"
+  admin_allowed_hosts:              # default: none; a Host with a dot a scraper dials, else it is refused 403
+    - host.docker.internal          # the observability profile's Prometheus scrapes by this name
   # pprof_enabled: false            # mounts net/http/pprof on the admin listener
   # high_cardinality: false         # adds run_id/task_id/orkflow labels to ork_* metrics — see docs/DEPLOY.md §7
   # service_name: ""                # default: ork / orker per binary — the local profile wants exactly that
