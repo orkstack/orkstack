@@ -11,6 +11,11 @@ word for word.
 
 ## [Unreleased]
 
+### Added
+
+- `SECURITY.md`: report a vulnerability privately through the repository's
+  "Report a vulnerability" form, never in a public issue.
+
 ## [0.1.0] - 2026-10-30
 
 First release.
