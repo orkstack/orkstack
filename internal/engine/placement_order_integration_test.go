@@ -152,7 +152,8 @@ func requireNoContainerPhase(t *testing.T, record *orkstackv1.TaskAttempt) {
 	}
 }
 
-// TestIntegration_ACommittedRetryIsAdoptedOnASmallerOrker: review test 5.
+// TestIntegration_ACommittedRetryIsAdoptedOnASmallerOrker: a committed retry
+// lands on an Orker whose cap is smaller than the task's request.
 // Orker A (cpu cap 2) runs the 2-cpu task, writes its commit.json and is
 // killed before it reports completion. The retry lands on Orker B (cpu cap
 // 1), which adopts the commit: the run succeeds, the record says
@@ -267,7 +268,7 @@ func TestIntegration_ACommittedRetryIsAdoptedOnASmallerOrker(t *testing.T) {
 	if n := missStarts.by(idB); n != 0 {
 		t.Fatalf("Orker B started %d containers for the refused task, want 0", n)
 	}
-	t.Logf("review test 5: attempt 2 on %s (cpu cap 1) adopted the commit %s (cpu cap 2) wrote, with no container; "+
+	t.Logf("committed retry on a smaller Orker: attempt 2 on %s (cpu cap 1) adopted the commit %s (cpu cap 2) wrote, with no container; "+
 		"a fresh 2-cpu task on %s failed %s with no container", idB, idA, idB, orker.ReasonResourceRefused)
 }
 
@@ -281,10 +282,10 @@ type placementVariant struct {
 	secrets     []*orkstackv1.SecretRef
 }
 
-// TestIntegration_AMemoHitIsReusedOnASmallerOrker: review test 6, and the
-// stricter-policy variant. Run 1 seeds the memo of the cached 2-cpu task
-// "work" on a seed Orker; a narrower Orker then takes the seed's place on
-// that pool. In run 2, "work" hits on the narrower Orker and starts no
+// TestIntegration_AMemoHitIsReusedOnASmallerOrker: a memo hit lands on an
+// Orker with a smaller cap, or with a stricter secret floor. Run 1 seeds the
+// memo of the cached 2-cpu task "work" on a seed Orker; a narrower Orker then
+// takes the seed's place on that pool. In run 2, "work" hits on the narrower Orker and starts no
 // container, while the uncached task "other" of the same run runs its
 // container on the cap-2 Orker of the "big" pool. Run 3 changes the input, so
 // "work" misses: the narrower Orker refuses it with the setting's own reason
@@ -385,7 +386,7 @@ func TestIntegration_AMemoHitIsReusedOnASmallerOrker(t *testing.T) {
 			if small := starts3.by(idSmall); small != 0 {
 				t.Fatalf("the narrower Orker started %d containers in run 3, want 0", small)
 			}
-			t.Logf("review test 6 (%s): run 2's work hit on %s with no container while other ran on %s; "+
+			t.Logf("memo hit on a narrower Orker (%s): run 2's work hit on %s with no container while other ran on %s; "+
 				"run 3's miss was refused %s on %s with no container", v.name, idSmall, idBig, v.reason, idSmall)
 		})
 	}

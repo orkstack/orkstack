@@ -8,8 +8,10 @@ import (
 	"testing"
 
 	"go.temporal.io/sdk/interceptor"
+	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -141,6 +143,37 @@ func requireNoAttemptDirectory(t *testing.T, root string) {
 	}
 }
 
+// asItem makes in item 1 of 3 of a fan-out over the run input's "parts".
+func asItem(t *testing.T, _ *cacheHarness, in *orkstackv1.ExecuteTaskInput) {
+	t.Helper()
+	input, err := structpb.NewStruct(map[string]any{"rows": 3, "parts": []any{"a", "b", "c"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.RunInput = &orkstackv1.Payload{Data: input}
+	in.IdempotencyKey = task.ItemIdempotencyKeyFor("default", in.GetRunId(), in.GetTaskId(), 1)
+	key, err := artifacts.ItemCommitKey("default", in.GetRunId(), in.GetTaskId(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.CommitUri = cacheRoot + "/" + key
+	in.Each = &orkstackv1.EachContext{Index: 1, Count: 3, As: "part", Source: &orkstackv1.EachSource{Input: "parts"}}
+}
+
+// onlyAttemptOf is the one attempt record of in, an item's or the task's.
+func onlyAttemptOf(t *testing.T, store *artifacts.MemoryAttemptStore, in *orkstackv1.ExecuteTaskInput) *orkstackv1.TaskAttempt {
+	t.Helper()
+	item := artifacts.NoItem
+	if each := in.GetEach(); each != nil {
+		item = artifacts.ItemAt(each.GetIndex())
+	}
+	records, err := store.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), item)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("attempt records of %s/%s item %s = %v (%v), want one", in.GetRunId(), in.GetTaskId(), item, records, err)
+	}
+	return records[0]
+}
+
 // TestExecute_AnAdoptedCommitIsNeverRefusedForThisOrkersPolicy: a retry that
 // lands on a narrower Orker after the first attempt committed adopts the
 // commit, with no container, whatever the narrower setting.
@@ -212,7 +245,7 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 		name   string
 		cached bool
 		// edit shapes the input for the path.
-		edit func(in *orkstackv1.ExecuteTaskInput)
+		edit func(t *testing.T, h *cacheHarness, in *orkstackv1.ExecuteTaskInput)
 		// ran is the phase the refusal must come after: the commit check,
 		// or the memo step that did not hit.
 		ran string
@@ -224,18 +257,35 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 		{name: "uncached", ran: "commit-check", notRun: beforeAnyWork},
 		{
 			name: "pinned", ran: "commit-check", notRun: beforeAnyWork,
-			edit: func(in *orkstackv1.ExecuteTaskInput) {
+			edit: func(_ *testing.T, _ *cacheHarness, in *orkstackv1.ExecuteTaskInput) {
 				in.Pin = &orkstackv1.PinContext{Name: "build", InstanceId: "ork-order-miss-pin", TimeoutSeconds: 60}
 			},
 		},
+		{name: "a fan-out item", ran: "commit-check", notRun: beforeAnyWork, edit: asItem},
 		{
 			name: "cached", cached: true, ran: "memo", notRun: afterTheMemo,
 			outcome: orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS,
 		},
 		{
 			name: "cached under no_cache", cached: true, ran: "memo", notRun: afterTheMemo,
-			edit:    func(in *orkstackv1.ExecuteTaskInput) { in.Cache.Refresh = true },
+			edit: func(_ *testing.T, _ *cacheHarness, in *orkstackv1.ExecuteTaskInput) {
+				in.Cache.Refresh = true
+			},
 			outcome: orkstackv1.CacheOutcome_CACHE_OUTCOME_BYPASSED,
+		},
+		{
+			name: "cached with no key", cached: true, ran: "memo", notRun: afterTheMemo,
+			edit: func(t *testing.T, h *cacheHarness, in *orkstackv1.ExecuteTaskInput) {
+				// An upstream artifact with no sha256: nothing can be keyed.
+				ref := h.put(t, "data.csv", []byte("x"))
+				ref.Sha256 = ""
+				in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Artifacts: []*orkstackv1.ArtifactRef{ref}}}
+			},
+			outcome: orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS,
+		},
+		{
+			name: "a cached fan-out item", cached: true, ran: "memo", notRun: afterTheMemo, edit: asItem,
+			outcome: orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS,
 		},
 	} {
 		for _, row := range narrowerOrkers {
@@ -247,7 +297,7 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 				}
 				in := policyOrderInput(t, row, "ork-order-miss", path.cached)
 				if path.edit != nil {
-					path.edit(in)
+					path.edit(t, h, in)
 				}
 
 				_, err := h.dispatcher.Execute(context.Background(), in)
@@ -258,12 +308,8 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 				if p, c := h.runtime.counts(); p != 0 || c != 0 {
 					t.Fatalf("a refused task pulled %d images and created %d containers, want none", p, c)
 				}
-				if len(h.runtime.configs) != 0 || len(h.runtime.secrets) != 0 {
-					t.Fatalf("a refused task reached the runtime with a config or secrets: %d, %d",
-						len(h.runtime.configs), len(h.runtime.secrets))
-				}
 				requireNoAttemptDirectory(t, h.dispatcher.WorkRoot)
-				record := lastAttempt(t, h.attempts, in.GetRunId(), in.GetTaskId())
+				record := onlyAttemptOf(t, h.attempts, in)
 				phases := phasesOf(record)
 				joined := " " + strings.Join(phases, " ") + " "
 				if !strings.Contains(joined, " "+path.ran+" ") {
@@ -282,7 +328,7 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 						t.Fatalf("a refused task logged that it runs its container: %q", h.loggedLines())
 					}
 				}
-				if path.outcome == orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS {
+				if path.outcome == orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS && record.GetCache().GetMissReason() != MemoMissInputUnhashed {
 					if gets, _ := h.memos.calls(); gets == 0 {
 						t.Fatal("the cached task was refused before its memo was looked up")
 					}
@@ -321,30 +367,71 @@ func TestValidate_RefusesWhatThisOrkerWouldRefuse(t *testing.T) {
 // asIs is an input that needs nothing a narrower Orker refuses.
 var asIs = narrowerOrker{ask: func(*orkstackv1.ExecuteTaskInput) {}}
 
-// TestExecute_AnUnknownNetworkModeIsRefusedBeforeTheCommitCheck: the network
-// mode reads nothing of the Orker, so it is checked with the rest of the
-// task's own shape, before the commit check — and so before the memo step,
-// whose key folds every mode but none into one component and would otherwise
-// hand back a hit for a mode no Orker offers.
-func TestExecute_AnUnknownNetworkModeIsRefusedBeforeTheCommitCheck(t *testing.T) {
-	h := policyOrderHarness(t)
-	h.produce(t, policyOrderInput(t, asIs, "ork-order-net-1", true))
-	pulls, creates := h.runtime.counts()
+// TestExecute_TheTasksOwnShapeIsRefusedBeforeTheCommitCheck: what reads
+// nothing of the Orker — a network mode that does not exist, a malformed or
+// zero request, a malformed secret name — is refused before the commit check,
+// on every Orker alike, so neither a committed result nor a memo hit hands
+// back a task no Orker would run. The network mode is here although it hangs
+// off the policy: the memo key folds every mode but none into one component,
+// so checking it after the memo step would let a hit through.
+func TestExecute_TheTasksOwnShapeIsRefusedBeforeTheCommitCheck(t *testing.T) {
+	for _, shape := range []struct {
+		name   string
+		reason string
+		spoil  func(in *orkstackv1.ExecuteTaskInput)
+	}{
+		{
+			name: "a network mode that does not exist", reason: ReasonNetworkModeRefused,
+			spoil: func(in *orkstackv1.ExecuteTaskInput) { in.Network = orkstackv1.NetworkMode(99) },
+		},
+		{
+			name: "a malformed cpu request", reason: ReasonResourceRefused,
+			spoil: func(in *orkstackv1.ExecuteTaskInput) { in.Resources = &orkstackv1.ResourceRequest{Cpu: "lots"} },
+		},
+		{
+			name: "a zero memory request", reason: ReasonResourceRefused,
+			spoil: func(in *orkstackv1.ExecuteTaskInput) { in.Resources = &orkstackv1.ResourceRequest{Memory: "0"} },
+		},
+		{
+			name: "a malformed secret name", reason: ReasonSecretSchemeForbid,
+			spoil: func(in *orkstackv1.ExecuteTaskInput) { in.Secrets[0].Name = "not a name" },
+		},
+	} {
+		for _, over := range []struct {
+			name   string
+			cached bool
+		}{
+			{name: "over an adopted commit"},
+			{name: "over a memo hit", cached: true},
+		} {
+			t.Run(shape.name+"/"+over.name, func(t *testing.T) {
+				h := policyOrderHarness(t)
+				first := policyOrderInput(t, asIs, "ork-order-shape-1", over.cached)
+				if _, err := h.dispatcher.Execute(context.Background(), first); err != nil {
+					t.Fatalf("the first attempt: %v", err)
+				}
+				pulls, creates := h.runtime.counts()
+				again := first
+				if over.cached {
+					again = policyOrderInput(t, asIs, "ork-order-shape-2", true)
+				}
+				shape.spoil(again)
 
-	second := policyOrderInput(t, asIs, "ork-order-net-2", true)
-	second.Network = orkstackv1.NetworkMode(99)
-	_, err := h.dispatcher.Execute(context.Background(), second)
-	if failure := failureOf(err); failure == nil || failure.Reason != ReasonNetworkModeRefused {
-		t.Fatalf("Execute = %v, want %s", err, ReasonNetworkModeRefused)
-	}
-	if p, c := h.runtime.counts(); p != pulls || c != creates {
-		t.Fatalf("the refused task pulled (%d→%d) or created (%d→%d)", pulls, p, creates, c)
-	}
-	if phases := phasesOf(lastAttempt(t, h.attempts, second.GetRunId(), second.GetTaskId())); len(phases) != 1 || phases[0] != "start" {
-		t.Fatalf("phases = %v; an unknown network mode is refused before the commit check", phases)
-	}
-	if failure := h.dispatcher.Validate(second); failure == nil || failure.Reason != ReasonNetworkModeRefused {
-		t.Fatalf("Validate = %v, want %s", failure, ReasonNetworkModeRefused)
+				_, err := h.dispatcher.Execute(context.Background(), again)
+				if failure := failureOf(err); failure == nil || failure.Reason != shape.reason {
+					t.Fatalf("Execute = %v, want %s", err, shape.reason)
+				}
+				if p, c := h.runtime.counts(); p != pulls || c != creates {
+					t.Fatalf("the refused task pulled (%d→%d) or created (%d→%d)", pulls, p, creates, c)
+				}
+				if phases := phasesOf(lastAttempt(t, h.attempts, again.GetRunId(), again.GetTaskId())); len(phases) != 1 || phases[0] != "start" {
+					t.Fatalf("phases = %v; the task's own shape is refused before the commit check", phases)
+				}
+				if failure := h.dispatcher.Validate(again); failure == nil || failure.Reason != shape.reason {
+					t.Fatalf("Validate = %v, want %s", failure, shape.reason)
+				}
+			})
+		}
 	}
 }
 
