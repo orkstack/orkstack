@@ -35,16 +35,24 @@ func Boot(service string, attrs ...attribute.KeyValue) (Config, *Sinks, error) {
 // With telemetry off, p is the zero-config Providers SetupSinks (via Boot)
 // returns for it, TemporalMetricsHandler and TemporalInterceptors both answer
 // nil, and the returned options are byte-identical to
-// client.Options{HostPort: hostPort, Namespace: namespace, Logger: logger} —
-// exactly what both binaries dialed with before either had a MetricsHandler
-// or an Interceptors slice to set (TestClientOptionsZeroConfigIsByteIdentical
-// holds this).
+// client.Options{HostPort: hostPort, Namespace: namespace, Logger: logger,
+// DisableWorkerEnvironmentInfo: true}
+// (TestClientOptionsZeroConfigIsByteIdentical holds this).
+//
+// DisableWorkerEnvironmentInfo is set whatever telemetry says. From SDK 1.49
+// a worker's heartbeats otherwise report the Go version, the hosting
+// environment the SDK detects (a container, Kubernetes, a cloud platform) and
+// the OS platform to the Temporal server. OrkStack sends nothing it was not
+// configured to send (AGENTS.md §11: off by default), and no setting asks for
+// this. cmd/ork and cmd/orker dial only with these options
+// (TestClientOptions_IsHowOrkAndOrkerDialTemporal holds that).
 func ClientOptions(hostPort, namespace string, p *Providers, logger *slog.Logger) (client.Options, error) {
 	opts := client.Options{
-		HostPort:       hostPort,
-		Namespace:      namespace,
-		Logger:         logger,
-		MetricsHandler: TemporalMetricsHandler(p, logger),
+		HostPort:                     hostPort,
+		Namespace:                    namespace,
+		Logger:                       logger,
+		MetricsHandler:               TemporalMetricsHandler(p, logger),
+		DisableWorkerEnvironmentInfo: true,
 	}
 	interceptors, err := TemporalInterceptors(p)
 	if err != nil {

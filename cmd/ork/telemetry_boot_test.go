@@ -47,7 +47,8 @@ func clearTelemetryEnv(t *testing.T) {
 // TestBootTelemetryZeroConfig holds the non-negotiable invariant: with no
 // telemetry env set, this binary's sinks, its Temporal metrics handler, and
 // the client options it dials with are exactly what it had before
-// internal/telemetry existed.
+// internal/telemetry existed, and those options never report the worker's
+// environment to Temporal.
 func TestBootTelemetryZeroConfig(t *testing.T) {
 	clearTelemetryEnv(t)
 
@@ -89,6 +90,9 @@ func TestBootTelemetryZeroConfig(t *testing.T) {
 	}
 	if len(got.Interceptors) != 0 {
 		t.Fatalf("client.Options.Interceptors = %v, want none", got.Interceptors)
+	}
+	if !got.DisableWorkerEnvironmentInfo {
+		t.Fatalf("client.Options.DisableWorkerEnvironmentInfo = false, want true: the worker's environment is never reported")
 	}
 
 	// The API handler is the zero-config invariant's other half: with

@@ -27,6 +27,11 @@ word for word.
   protoc plugins are `go.mod` tool directives, so each generates with the
   version of the runtime it links against, and `make tools` installs only buf,
   at the exact version `ui/package.json` pins.
+- `ork` and `orker` turn off the Temporal SDK's worker environment report.
+  From SDK 1.49 every worker's heartbeat would otherwise send the Temporal
+  server the Go version, the hosting environment the SDK detects (a
+  container, Kubernetes, a cloud platform) and the OS platform; OrkStack
+  sends nothing it was not configured to send.
 
 ## [0.1.0] - 2026-10-30
 
