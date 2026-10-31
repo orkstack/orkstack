@@ -266,7 +266,9 @@ func (s *activitySuite) build(ctx context.Context) error {
 	}
 	s.pinned = pinned
 
-	policy := orker.SecurityPolicyFromEnv()
+	// The work root is the dispatcher's own, as NewActivitiesWithOptions
+	// makes it an Orker's.
+	policy := orker.SecurityPolicyFromEnv().WithWorkRoot(work)
 	s.dispatcher = &orker.OCIDispatcher{
 		Runtime:  runtime,
 		Store:    store,

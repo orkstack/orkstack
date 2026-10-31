@@ -471,7 +471,9 @@ number that looks real:
 - `coverage_since` — the creation time of the oldest run in the window that
   still has a record: where reclamation has reached.
 - `attempts_without_resources` — recorded attempts with no reservation (written
-  by an Orker that predates reservations, or refused before one was resolved): their time is in
+  by an Orker that predates reservations, refused before one was resolved, or
+  an adopted commit or memo hit whose request is above the cap of the Orker
+  that handed it back): their time is in
   task-seconds, not in cpu- or GiB-seconds, which are then lower bounds.
 - `unreported_attempts` — attempts below a task's highest that left no record.
 - `attempts_unmeasured` — records with no usable interval; counted in nothing.

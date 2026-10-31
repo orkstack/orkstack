@@ -269,11 +269,11 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 ### A task failed with `SECRET_UNRESOLVED`, `SECRET_NOT_PERMITTED` or `SECRET_SCHEME_FORBIDDEN`
 
-**Cause.** `SECRET_UNRESOLVED`: the Orker could not read the source. For `env:NAME`, the variable is not set on that Orker. For `file:PATH`, the file cannot be read. It is an `InfrastructureError` and is retried under the task's policy. `SECRET_NOT_PERMITTED`: the source is outside the Orker's `ORK_ORKER_SECRET_ALLOW` floor. It is refused before the image is pulled and is never retried. `SECRET_SCHEME_FORBIDDEN`: the Orker does not resolve that scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed (`internal/orker/oci_dispatcher.go`; [DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
+**Cause.** `SECRET_UNRESOLVED`: the Orker could not read the source. For `env:NAME`, the variable is not set on that Orker. For `file:PATH`, the file cannot be read. It is an `InfrastructureError` and is retried under the task's policy. `SECRET_NOT_PERMITTED`: the source is outside the Orker's `ORK_ORKER_SECRET_ALLOW` floor, or is one of the Orker's own sources, such as an `ORK_*` or `OTEL_*` setting, a file under `/proc` or `/run/secrets`, or its configuration file, which no floor admits ([SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources"). It is refused before the image is pulled and is never retried. `SECRET_SCHEME_FORBIDDEN`: the Orker does not resolve that scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed (`internal/orker/oci_dispatcher.go`; [DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
 
 **Confirm.** The message names the secret and the variable or path. It never contains the value.
 
-**Fix.** For `SECRET_UNRESOLVED`, set the variable, or make the file readable, on the Orker host that ran the attempt. For `SECRET_NOT_PERMITTED`, ask the operator to add the source to `ORK_ORKER_SECRET_ALLOW`, or use an allowed source.
+**Fix.** For `SECRET_UNRESOLVED`, set the variable, or make the file readable, on the Orker host that ran the attempt. For `SECRET_NOT_PERMITTED`, ask the operator to add the source to `ORK_ORKER_SECRET_ALLOW`, or use an allowed source. A source of the Orker's own cannot be added: ask the operator to supply the value under a source of the task's own.
 
 ### A task failed with `INPUT_ARTIFACT_UNAVAILABLE` or `INPUT_ARTIFACT_CORRUPT`
 

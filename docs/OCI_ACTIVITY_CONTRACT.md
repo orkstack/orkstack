@@ -1243,8 +1243,11 @@ Orker-side behaviour and changes nothing a container sees: no file,
    error is `COMMIT_WRITE_FAILED`, the only way the memo step can fail an
    attempt. A memo that points at a HIT commit is followed once, so
    `cache.source` always names the run whose container produced the bytes.
-5. **A miss or a bypass** completes staging (phase `stage-artifacts`), runs
-   the container as always, and records the decision on the commit it writes.
+5. **A miss or a bypass** is first held to this Orker's own policy (§7.1,
+   step 5b′), which refuses it, before any secret or artifact is fetched,
+   where this Orker would not run it. Otherwise it completes staging (phase
+   `stage-artifacts`), runs the container as always, and records the decision
+   on the commit it writes.
    After that commit is **created** — never after a conflict's adoption — it
    writes the memo, a plain put that replaces whatever was at the key,
    best-effort on a detached 10 s context: a failure is logged and reported
@@ -1511,12 +1514,14 @@ heard of.
 | # | Phase | Step |
 |---|---|---|
 | 1 | — | **Open the log sink**, first, always; closed before return |
-| 2 | `start` | **Heartbeat loop start**, until step 15; input validated |
+| 2 | `start` | **Heartbeat loop start**, until step 15; the input checks that are the same on every Orker: a pinned image, a network mode that exists, a well-formed resource request, well-formed secret names |
 | 3 | `commit-check` | **Commit check**: GET `commit_uri` → adopt and jump to 15, or proceed (§5.4) |
+| 3a | — | **This Orker's policy**, a task with no memo step (uncached or pinned): the request against this Orker's caps, its secret schemes and `ORK_ORKER_SECRET_ALLOW` floor, and whether a task that runs as the Orker's user can (§3.1); a refusal ends the attempt here, recorded in phase `commit-check` |
 | 3b | `image-policy` | **Image policy**, only when the input carries one (§4.7) |
 | 4 | `workspace` | **Workspace**: per-attempt dir `0700`; `input/` `0555`, `output/` `1777`, `tmp/` `1777`; a pinned task's shared directory |
 | 5 | `stage-inputs` | **Input stage**: upstream artifacts → `input/artifacts/`, upstream `values.json` → `input/upstream/`, secrets → `input/secrets/` (a cached task: `values.json` only) |
 | 5b | `memo` | **Memo**, a cached task only: render, key, lookup (§5.4.1); a HIT writes this run's commit and jumps to 15 |
+| 5b′ | — | **This Orker's policy**, a cached task after the memo step, unless it hit: step 3a's checks; a refusal ends the attempt here, recorded in phase `memo`, its workspace removed |
 | 5c | `stage-artifacts` | **Deferred staging**, a cached task only: the recorded downloads, then secrets |
 | 6 | `image` | **Image**: `Runtime.Pull(image.pinned)`, or the verified embedded layout (§4.6); record platform digest and delivery |
 | 7 | `render` | **Render**: resources and network resolved against policy; `with:` → `config.json`; `run.json`; `task.json`; input tree sealed |
@@ -1528,6 +1533,30 @@ heard of.
 | 14 | — | **Failure path**: scan `output/artifacts/` under the same §3.5 and readability rules; upload streams and the artifacts that passed; attach refs and any scan note to the error; write NO commit; return the workload's error |
 | 15 | — | **Cleanup**: remove the container (detached context), remove the workdir and secrets, stop the heartbeat, close the log sink |
 | 16 | — | **Attempt record**: one `TaskAttempt`, best-effort (below) |
+
+**This Orker's own policy comes after the commit check and the memo step.** Two
+Orkers of one pool may hold different caps, secret schemes, floors or runtimes.
+A result another Orker committed (step 3) starts no container here, so it is
+handed back whatever this Orker's settings are: nothing that refuses for them
+comes before step 3. A memo that hits (step 5b) is handed back whatever this
+Orker's caps, secret schemes, floor or runtime; holding either to them would
+turn a reusable result into a run failure. A memo hit is not spared what comes
+before the lookup: a cached task's image policy (step 3b, which reads a
+required signature with this Orker's registry credentials) and its render (step
+5b, which holds an `env` name to this Orker's allow-list) run first, because
+the key hashes the rendered `config.json`, so those refuse it here even where
+the memo would hit. A task with neither a commit nor a hit is still refused at
+step 3a or 5b′, with its own reason (`RESOURCE_REQUEST_REFUSED`,
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `RUN_AS_ORKER_UNAVAILABLE`),
+before any secret is resolved, any image pulled or any `config.json` written.
+The checks that read nothing of the Orker, the network mode among them, stay at
+step 2. For a cached task the image policy, the workspace, the upstream values
+the key needs, the render and the memo lookup come first, so a failure among
+them is reported ahead of this Orker's refusal; that is the price of never
+refusing a hit for this Orker's own policy. A request above this Orker's cap
+reserves nothing against a declared capacity, whether it is refused, adopted or
+a hit, and an attempt that starts no container frees its reservation when it
+ends (docs/DEPLOY.md, "Declaring an Orker's capacity").
 
 **IMAGE comes before RENDER, and the order is load-bearing.** `task.json`
 carries `image.platformDigest`, `image.platform` and `image.delivery`, which do
@@ -1677,7 +1706,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `RENDER_FAILED` | ContractViolation | no | template error, missing key, `<no value>`, or an `env` name not allowlisted |
 | `SECRET_UNRESOLVED` | InfrastructureError | yes | a `SecretRef.source` could not be resolved |
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | the Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed |
-| `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor (`docs/DEPLOY.md`, "Secrets on a shared pool") |
+| `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor, or is one of the Orker's own sources, which no floor admits (`docs/DEPLOY.md`, "Secrets on a shared pool"; `docs/SECURITY_MODEL.md`, "The Orker's own sources") |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | the request exceeds the Orker's cap, or is not a positive finite quantity |
 | `RESOURCE_ADMISSION_MISMATCH` | ContractViolation | no | on an Orker declaring a capacity, the resolved request is larger than the reservation it was polled under and free capacity cannot cover it; it cannot happen while every poll reserves the per-task cap |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | the requested mode is not `default` or `none` |
@@ -1872,7 +1901,9 @@ Orker's environment, `file:/path` from its filesystem;
 `ORK_ORKER_SECRET_SCHEMES`). An unknown scheme is refused rather than ignored,
 and a source outside the Orker's `ORK_ORKER_SECRET_ALLOW` floor or the
 namespace's allowed list is refused (`docs/DEPLOY.md`, "Secrets on a shared
-pool"). Secret bytes never appear in a proto message, Temporal history, the
+pool"), as is one of the Orker's own sources — its settings, its process
+files, its configuration and credential files — whatever the floor says
+(`docs/SECURITY_MODEL.md`, "The Orker's own sources"). Secret bytes never appear in a proto message, Temporal history, the
 run archive, a log chunk, or `task.json` — which carries names and paths only.
 The per-attempt secrets directory is removed on every exit path, including
 panic and cancellation. A cached task resolves no secret on a hit, which is why
@@ -2173,7 +2204,10 @@ before the container starts.
 **Secrets.** None is resolved implicitly. Every declared secret must be
 supplied (`--secret NAME=file:PATH` or `NAME=env:VAR`) or explicitly skipped
 (`--omit-secret NAME`); an unaccounted one refuses before any byte is fetched.
-No value is printed, reported, or kept with `--keep`.
+A supplied source is held to the Orker's secret floor, as on an Orker: one of
+this machine's own sources is refused at the flag (`docs/SECURITY_MODEL.md`,
+"The Orker's own sources"). No value is printed, reported, or kept with
+`--keep`.
 
 **What it never does.** It calls only the engine's read and validate RPCs and
 never dials Temporal or object storage. Its dispatcher has no commit, attempt,

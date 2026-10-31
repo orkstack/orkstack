@@ -237,7 +237,7 @@ func TestDispatcher_ValidateIsUnchangedByASelection(t *testing.T) {
 	in := h.input("validate", &orkstackv1.ImagePolicySelection{RequireDigest: true, AllowedRegistries: []string{"ghcr.io/acme/"}})
 	in.Image.Reference = "docker.io/library/alpine:3.20"
 	if failure := h.d.Validate(in); failure != nil {
-		t.Fatalf("Validate = %v; the image rule must not be in Validate, which precedes adoption", failure)
+		t.Fatalf("Validate = %v; the image rule must not be in Validate, whose task half precedes adoption", failure)
 	}
 }
 

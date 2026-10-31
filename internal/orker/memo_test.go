@@ -666,7 +666,7 @@ func TestMemoKey_InputWithoutDigestIsUnkeyable(t *testing.T) {
 
 func TestExecute_CacheHitReturnsTheSourceResultWithoutAContainer(t *testing.T) {
 	h := newCacheHarness(t)
-	envName := "ORK_TEST_CACHE_SECRET"
+	envName := "SANDBOX_CACHE_SECRET"
 	t.Setenv(envName, "s3cret")
 	first := cachedTaskInput(t, "ork-run-1")
 	first.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:" + envName}}
@@ -1345,8 +1345,8 @@ func TestStageInputs_DeferBytesFetchesValuesOnly(t *testing.T) {
 	data := h.put(t, "data.csv", []byte("a,b\n"))
 	in := cachedTaskInput(t, "ork-defer")
 	in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Values: values, Artifacts: []*orkstackv1.ArtifactRef{data}}}
-	t.Setenv("ORK_TEST_DEFER_SECRET", "v")
-	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:ORK_TEST_DEFER_SECRET"}}
+	t.Setenv("SANDBOX_DEFER_SECRET", "v")
+	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:SANDBOX_DEFER_SECRET"}}
 	root := t.TempDir()
 	ws, err := NewWorkspace(root)
 	if err != nil {
@@ -1378,8 +1378,8 @@ func TestCompleteStaging_FetchesDeferredArtifactsThenSecrets(t *testing.T) {
 	data := h.put(t, "data.csv", []byte("a,b\n"))
 	in := cachedTaskInput(t, "ork-defer")
 	in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Artifacts: []*orkstackv1.ArtifactRef{data}}}
-	t.Setenv("ORK_TEST_DEFER_SECRET", "v")
-	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:ORK_TEST_DEFER_SECRET"}}
+	t.Setenv("SANDBOX_DEFER_SECRET", "v")
+	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:SANDBOX_DEFER_SECRET"}}
 	ws, err := NewWorkspace(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

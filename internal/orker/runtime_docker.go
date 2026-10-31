@@ -1070,6 +1070,156 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 var endpointVars = []string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
 	"CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_STORAGE_CONF"}
 
+// runtimeOwnEnv is the environment the CLI this Orker drives reads as its
+// own. The CLI runs with the Orker's environment, so it is the Orker's own,
+// and the secret floor admits none of it (security_profile.go, "The Orker's
+// own sources"): the daemon it reaches, its registry credentials
+// (DOCKER_AUTH_CONFIG, REGISTRY_AUTH_FILE), its TLS client key
+// (DOCKER_CERT_PATH), a remote engine's SSH identity and passphrase
+// (CONTAINER_SSHKEY, CONTAINER_PASSPHRASE), and its configuration.
+// DOCKER_* and CONTAINERS_* are the two CLIs' own prefixes; CONTAINER_ is a
+// common word, so only the podman CLI's names in it are listed. A pull may
+// run a registry credential helper (ecr-login, gcr, acr), which reads the
+// cloud credentials of the environment it inherits — the Orker's — so
+// AWS_*, AZURE_*, GOOGLE_APPLICATION_CREDENTIALS and the gcloud SDK's
+// CLOUDSDK_* are the Orker's own too. The object store's client never uses
+// them: it signs with ORK_S3_*.
+var runtimeOwnEnv = []ownName{
+	{"DOCKER_*", "its container CLI's settings, DOCKER_*"},
+	{"CONTAINERS_*", "its container CLI's settings, CONTAINERS_*"},
+	{"CONTAINER_HOST", "its container CLI's settings"},
+	{"CONTAINER_CONNECTION", "its container CLI's settings"},
+	{"CONTAINER_SSHKEY", "its container CLI's settings"},
+	{"CONTAINER_PASSPHRASE", "its container CLI's settings"},
+	{"REGISTRY_AUTH_FILE", "its container CLI's settings"},
+	{"AWS_*", "its registry credential helpers' settings, AWS_*"},
+	{"AZURE_*", "its registry credential helpers' settings, AZURE_*"},
+	{"GOOGLE_APPLICATION_CREDENTIALS", "its registry credential helpers' settings"},
+	{"CLOUDSDK_*", "its registry credential helpers' settings, CLOUDSDK_*"},
+}
+
+// engineStateWhy is why the engine's state directories are the Orker's own.
+const engineStateWhy = "its container engine's state"
+
+// EngineState asks the engine where it keeps its state (stateQuery), wherever
+// its own settings put it, as paths of the Orker's own: a state directory
+// moved off the defaults runtimeOwnPaths lists still holds every container's
+// writable layer, which a task writes. The question is bounded by
+// controlTimeout. It returns every directory the engine named that the Orker
+// can hold, and beside them an error, naming the engine settings to check,
+// when the engine could not be asked, did not answer in time, or named
+// nothing the Orker can hold or something else too.
+func (d *DockerRuntime) EngineState(ctx context.Context) ([]OwnPath, error) {
+	return d.engineStateWithin(ctx, controlTimeout)
+}
+
+// engineStateWithin is EngineState with the whole question — which engine it
+// is, and where it keeps its state — bounded by one within.
+func (d *DockerRuntime) engineStateWithin(ctx context.Context, within time.Duration) ([]OwnPath, error) {
+	check := d.grammar().stateSettings()
+	askCtx, cancel := context.WithTimeout(ctx, within)
+	defer cancel()
+	timedOut := func() bool { return askCtx.Err() != nil && ctx.Err() == nil }
+	spoken, overran, err := d.dialectWithin(askCtx, within)
+	switch {
+	case overran || timedOut():
+		return nil, fmt.Errorf("the container engine did not say which engine it is within %s, so where it keeps "+
+			"its state is not known (check %s)", within, check)
+	case err != nil:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %w", check, err)
+	}
+	check = spoken.stateSettings()
+	query := spoken.stateQuery()
+	answer, overran, err := d.runWithin(askCtx, within, "info", "--format", query)
+	switch {
+	case overran || timedOut():
+		return nil, fmt.Errorf("the container engine did not answer `%s info --format %q` within %s (check %s)",
+			spoken.cli, query, within, check)
+	case err != nil:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %w", check, err)
+	case answer.code != 0:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %s info --format %q exited %d: %s",
+			check, spoken.cli, query, answer.code, answer.said())
+	}
+	dirs, refused := statePaths(answer.stdout)
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("the container engine named no directory the orker can hold as its state (check %s): "+
+			"%s info --format %q answered %q", check, spoken.cli, query, truncateString(strings.TrimSpace(answer.stdout), 200))
+	}
+	paths := make([]OwnPath, 0, len(dirs))
+	for _, dir := range dirs {
+		paths = append(paths, OwnPath{Path: dir, Why: engineStateWhy})
+	}
+	if len(refused) > 0 {
+		quoted := make([]string, 0, len(refused))
+		for _, line := range refused {
+			quoted = append(quoted, strconv.Quote(line))
+		}
+		return paths, fmt.Errorf("the container engine also named %s, which is no directory the orker can hold "+
+			"as its state (check %s)", truncateString(strings.Join(quoted, ", "), 200), check)
+	}
+	return paths, nil
+}
+
+// runtimeOwnPaths are the files the CLI and the engine behind it hold as
+// their own, where getenv places them: the CLI's registry credentials (the
+// docker CLI's config.json and its older ~/.dockercfg, the podman CLI's
+// auth.json, rootful podman's under /run/containers) and its credential
+// helpers' cloud credentials and tokens — the gcloud SDK's and the Azure
+// CLI's configuration directories wherever CLOUDSDK_CONFIG and
+// AZURE_CONFIG_DIR move them, the token and credential files the gcloud
+// SDK's CLOUDSDK_AUTH_* settings name, and an Azure client certificate — the
+// daemon's TLS client key, the SSH identity a remote engine
+// (DOCKER_HOST=ssh://…, a podman connection) authenticates with, and the
+// engine's own state — images, layers and every container's log, other
+// tasks' among them. The docker CLI's home directory is listed even when
+// DOCKER_CONFIG moves it, because the podman CLI falls back to it for
+// credentials.
+func runtimeOwnPaths(getenv func(string) string) []OwnPath {
+	var paths []OwnPath
+	add := func(path, why string) {
+		if path != "" {
+			paths = append(paths, OwnPath{Path: path, Why: why})
+		}
+	}
+	const creds, state = "its container CLI's credentials", engineStateWhy
+	for _, name := range []string{"DOCKER_CONFIG", "DOCKER_CERT_PATH", "REGISTRY_AUTH_FILE", "CONTAINER_SSHKEY",
+		"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG",
+		"CLOUDSDK_AUTH_ACCESS_TOKEN_FILE", "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+		"AZURE_FEDERATED_TOKEN_FILE", "AZURE_CONFIG_DIR", "AZURE_CLIENT_CERTIFICATE_PATH"} {
+		add(getenv(name), creds)
+	}
+	add("/run/containers", creds)
+	for _, dir := range []string{"/var/lib/docker", "/var/lib/containerd", "/var/lib/containers", "/run/docker", "/run/containerd"} {
+		add(dir, state)
+	}
+	if dir := getenv("XDG_RUNTIME_DIR"); dir != "" {
+		add(filepath.Join(dir, "containers"), creds)
+	}
+	config, data := getenv("XDG_CONFIG_HOME"), getenv("XDG_DATA_HOME")
+	if home := getenv("HOME"); home != "" {
+		for _, dir := range []string{".docker", ".dockercfg", ".ssh", ".aws", ".azure"} {
+			add(filepath.Join(home, dir), creds)
+		}
+		if config == "" {
+			config = filepath.Join(home, ".config")
+		}
+		if data == "" {
+			data = filepath.Join(home, ".local", "share")
+		}
+	}
+	if config != "" {
+		add(filepath.Join(config, "containers"), creds)
+		add(filepath.Join(config, "gcloud"), creds)
+	}
+	if data != "" {
+		add(filepath.Join(data, "docker"), state)
+		add(filepath.Join(data, "containers"), state)
+	}
+	return paths
+}
+
 // Endpoint names, without asking it, the daemon this runtime's commands
 // reach: the CLI's grammar and binary, and every variable that points either
 // CLI elsewhere. `orkctl task run` keys the containers of a run that is gone

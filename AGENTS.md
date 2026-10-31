@@ -289,6 +289,8 @@ resolve the activity specification
 check the completion commit
 check the run's image policy
 check a cached task's memo
+check the task against this Orker's own policy, once no commit or memo answers it
+  (the exact order, cached and not: docs/OCI_ACTIVITY_CONTRACT.md §7.1)
 resolve the OCI image and digest
 create an isolated workspace
 materialize input artifacts
@@ -315,6 +317,17 @@ or above capacity, the Orker polls for no new task. The ledger is
 process-local, exactly as a cordon is: never stored, never shared, gone
 with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task, and OrkStack never chooses a host.
+
+Every Orker of a pool has the same settings — caps, default request,
+capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
+registry credentials, runtime, pin hosting — so a run never fails because of
+which Orker took a task. Where they differ, a task fails explicitly with its
+own reason. A committed result is never refused for any of them. A memo hit
+is never refused for the caps, secret schemes, floor or runtime, but a cached
+task is rendered and its image policy checked before its memo lookup, so a
+differing `env` allow-list or registry credentials can refuse it even where the
+memo would hit (`docs/DEPLOY.md`, "Every Orker of a pool has the same
+settings").
 
 Docker- and Podman-specific details live in the runtime files
 (`internal/orker/runtime_docker.go` and `runtime_dialect.go`) and nowhere else:

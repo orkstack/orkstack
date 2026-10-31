@@ -693,3 +693,91 @@ func TestLoad_DuplicateKey_Refused(t *testing.T) {
 		})
 	}
 }
+
+// TestLoad_FilesNamesTheDocumentAndEveryFileItRead: Files is the file itself
+// and every {file:} it read, scalar or map entry, relative ones anchored as
+// Load anchored them — every one absolute, for the Orker to hold as its own
+// (docs/SECURITY_MODEL.md, "The Orker's own sources").
+func TestLoad_FilesNamesTheDocumentAndEveryFileItRead(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"s3-secret", "otlp-header"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	configPath := filepath.Join(dir, "orkstack.yaml")
+	body := "storage:\n  s3:\n    secret_key: {file: s3-secret}\n" +
+		"telemetry:\n  otlp:\n    headers:\n      x-api-key: {file: " + filepath.Join(dir, "otlp-header") + "}\n"
+	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Chdir(dir)
+
+	doc, err := Load("orkstack.yaml", BinaryOrker)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{configPath, filepath.Join(dir, "s3-secret"), filepath.Join(dir, "otlp-header")}
+	if got := doc.Files(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("Files() = %q, want %q", got, want)
+	}
+
+	empty, err := Load(writeTemp(t, "empty.yaml", "# nothing\n"), BinaryOrker)
+	if err != nil {
+		t.Fatalf("Load empty: %v", err)
+	}
+	if got := empty.Files(); len(got) != 1 || !filepath.IsAbs(got[0]) {
+		t.Fatalf("Files() of an empty document = %q, want the document alone", got)
+	}
+}
+
+// TestLoad_FilesAreTheFilesItOpened: Files names each file as Load opened it,
+// made absolute but never cleaned. Through a link, ".." is the link target's
+// parent to the kernel, not the link's, so the cleaned name of
+// dir/link/../cfg.yaml is dir/cfg.yaml, another file than the one read.
+func TestLoad_FilesAreTheFilesItOpened(t *testing.T) {
+	dir := t.TempDir()
+	deep := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(deep, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	read := filepath.Join(dir, "a", "cfg.yaml")
+	secret := filepath.Join(dir, "a", "secret")
+	body := "storage:\n  s3:\n    secret_key: {file: " + filepath.Join(dir, "link") + "/../secret}\n"
+	for path, content := range map[string]string{
+		read: body, secret: "x\n",
+		// What the cleaned names name: other files.
+		filepath.Join(dir, "cfg.yaml"): "# another file\n", filepath.Join(dir, "secret"): "y\n",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Chdir(dir)
+	for _, path := range []string{filepath.Join(dir, "link") + "/../cfg.yaml", "link/../cfg.yaml"} {
+		doc, err := Load(path, BinaryOrker)
+		if err != nil {
+			t.Fatalf("Load(%q): %v", path, err)
+		}
+		got := doc.Files()
+		if len(got) != 2 {
+			t.Fatalf("Load(%q).Files() = %q, want the document and its secret", path, got)
+		}
+		for i, want := range []string{read, secret} {
+			named, err := os.Stat(got[i])
+			if err != nil {
+				t.Fatalf("Load(%q).Files()[%d] = %q: %v", path, i, got[i], err)
+			}
+			opened, err := os.Stat(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !filepath.IsAbs(got[i]) || !os.SameFile(named, opened) {
+				t.Errorf("Load(%q).Files()[%d] = %q, want an absolute name of %s, the file Load read", path, i, got[i], want)
+			}
+		}
+	}
+}

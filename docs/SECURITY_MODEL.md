@@ -266,19 +266,144 @@ pattern, and `*` is the only wildcard. It does not cross `/`.
 | The Orker's floor | `ORK_ORKER_SECRET_ALLOW` (`orker.secret_allow`) | at dispatch, by the process that reads the value, before the image is pulled |
 | The namespace's allow-list | `orkctl namespace update NAME --allow-secret PATTERN`, cleared by `--clear-allowed-secrets` | at apply, at every submit, and never retroactively |
 
-- An empty floor resolves every source of an allowed scheme. The schemes an Orker
-  resolves are `env` and `file` by default (`ORK_ORKER_SECRET_SCHEMES`).
-- A source outside the floor fails the task as `SECRET_NOT_PERMITTED`, a
-  `ContractViolation`. An unknown scheme is `SECRET_SCHEME_FORBIDDEN`, and an
-  unset variable or an unreadable file is `SECRET_UNRESOLVED`, an
-  `InfrastructureError`.
+- An empty floor resolves every source of an allowed scheme except the Orker's
+  own (below), and the Orker logs a warning at boot that names
+  `ORK_ORKER_SECRET_ALLOW`. The schemes an Orker resolves are `env` and `file`
+  by default (`ORK_ORKER_SECRET_SCHEMES`).
+- A source outside the floor, or one of the Orker's own, fails the task as
+  `SECRET_NOT_PERMITTED`, a `ContractViolation`. An unknown scheme is
+  `SECRET_SCHEME_FORBIDDEN`, and an unset variable or an unreadable file is
+  `SECRET_UNRESOLVED`, an `InfrastructureError`.
 - A `file:` source with a `..`, `.` or empty segment is refused outright. It is
   never normalised, so `file:/etc/orkstack/secrets/sandbox/../payments/db` never
   matches `file:/etc/orkstack/secrets/sandbox/*`.
 - A namespace's list never travels to the Orker. The engine's submit gate is the
   one check no client can bypass ([DEPLOY.md](DEPLOY.md), "Secrets on a shared
   pool").
-- Refusals name the source string only. Nothing stores, logs or compares a value.
+- A refusal names the source string and what refused it: the floor's entries,
+  the path rule, or that the source is one of the Orker's own, in the same
+  words for every variable and for every file, never which one. A source, a
+  scheme, a variable or a secret name longer than the longest `file:` source
+  (4101 bytes) is quoted by its first 64 bytes and its length, in every
+  refusal that names one. Nothing stores, logs or compares a value.
+
+### The Orker's own sources
+
+A source is read from the Orker's own environment and file system, and part of
+what is there belongs to the Orker. No floor admits any of it, whether
+`ORK_ORKER_SECRET_ALLOW` is empty or not. No entry re-admits one: a broad entry
+such as `env:*` still does not reach them. To give a task one of these values,
+supply it under a source of the task's own, such as a file in a directory the
+floor names ([AGENTS.md](../AGENTS.md), §2.3). A floor entry that can match
+only the Orker's own sources stops the Orker at boot
+(`internal/orker/security_profile.go`, `internal/orker/runtime_docker.go`).
+
+| The Orker's own | Why it is the Orker's |
+| --- | --- |
+| `env:ORK_*` | every OrkStack setting, the object store's keys among them |
+| `env:OTEL_*` | the telemetry exporters' settings; their headers carry a collector's credentials |
+| `env:HTTP_PROXY`, `env:HTTPS_PROXY`, `env:ALL_PROXY`, `env:http_proxy`, `env:https_proxy`, `env:all_proxy` | the proxies the Orker's HTTP clients and its container CLI use; a proxy URL may carry a user and a password |
+| `env:DOCKER_*`, `env:CONTAINERS_*`, `env:CONTAINER_HOST`, `env:CONTAINER_CONNECTION`, `env:CONTAINER_SSHKEY`, `env:CONTAINER_PASSPHRASE`, `env:REGISTRY_AUTH_FILE` | the settings of the container CLI the Orker drives, which runs with the Orker's environment: the daemon it reaches, its registry credentials, its TLS key, a remote engine's SSH identity |
+| `env:AWS_*`, `env:AZURE_*`, `env:GOOGLE_APPLICATION_CREDENTIALS`, `env:CLOUDSDK_*` | the cloud credentials a registry credential helper (ecr-login, gcr, acr) reads when the CLI pulls an image, from the environment it inherits: the Orker's |
+| each telemetry sink header's `env:` source (`ORK_TELEMETRY_SINKS`) | a collector's credentials |
+| `file:/proc` | the Orker's process: its environment, memory and descriptors, and every other process it can see |
+| `file:/dev` | its devices, `/dev/fd` and `/dev/stdin` among them, which are its own descriptors |
+| `file:/run/secrets`, `file:/var/run/secrets` | the credentials of the Orker's own pod or container: a Kubernetes service-account or projected token, a Docker or Compose secret |
+| its work root (`ORK_ORKER_WORKDIR`; unset, the temp directory, `/tmp` on most Linux hosts) | every attempt's workspace: other tasks' secrets, inputs and outputs, and every pin's shared directory |
+| its configuration file (`--config`), and each `{file: PATH}` it reads | the Orker's settings and the values they name |
+| each telemetry sink's header file (`ORK_TELEMETRY_SINKS`) | a collector's credentials |
+| the files `ORK_ORKER_REGISTRY_AUTH_FILE`, `ORK_REGISTRY_AUTH_FILE` and `OTEL_EXPORTER_OTLP_*CERTIFICATE`, `*_CLIENT_KEY` name | registry credentials, and the exporters' TLS files |
+| `ORK_ARTIFACT_DIR`, when the artifact backend is `local` | every run's artifacts, commits and logs, of every namespace |
+| `DOCKER_CONFIG`, `DOCKER_CERT_PATH`, `REGISTRY_AUTH_FILE`, `CONTAINER_SSHKEY`, `~/.docker`, `~/.dockercfg`, `~/.ssh`, `~/.config/containers` (or `$XDG_CONFIG_HOME/containers`), `$XDG_RUNTIME_DIR/containers`, `/run/containers` | the container CLI's registry credentials, TLS key and SSH identity |
+| the files and directories `AWS_SHARED_CREDENTIALS_FILE`, `AWS_CONFIG_FILE`, `AWS_WEB_IDENTITY_TOKEN_FILE`, `AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE`, `GOOGLE_APPLICATION_CREDENTIALS`, `CLOUDSDK_CONFIG`, `CLOUDSDK_AUTH_ACCESS_TOKEN_FILE`, `CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE`, `AZURE_FEDERATED_TOKEN_FILE`, `AZURE_CONFIG_DIR` and `AZURE_CLIENT_CERTIFICATE_PATH` name, `~/.aws`, `~/.azure`, `~/.config/gcloud` | the credential helpers' cloud credentials |
+| `/var/lib/docker`, `/var/lib/containerd`, `/var/lib/containers`, `/run/docker`, `/run/containerd`, `~/.local/share/docker`, `~/.local/share/containers` (or under `$XDG_DATA_HOME`), and each directory the engine reports at boot: the docker CLI's `DockerRootDir` (dockerd's `data-root`), the podman CLI's `GraphRoot` and `RunRoot` (`graphroot` and `runroot` in `storage.conf`) | the container engine's state: images, layers, every container's writable layer and its log, other tasks' among them |
+
+The engine's state is asked at boot, within 30 seconds, because its settings
+can move it off those defaults, and a container's writable layer, which its
+task writes, moves with it. Each directory the engine names is the Orker's
+own from then on, so a floor entry that admits only what lies under a moved
+data root stops the Orker at boot, as one under `/var/lib/docker` does. An
+answer the Orker cannot hold is refused line by line: a field the engine
+leaves unset, a relative path, a path holding a control character, and `/`,
+which would make every file the Orker's own and every `file:` floor entry
+refused. Whatever the engine could not say — it did not answer, did not
+answer in time, named nothing the Orker can hold, or named something else
+beside what it held — leaves the defaults in force: the Orker boots and logs
+a warning that names the engine setting to check and `ORK_ORKER_SECRET_ALLOW`.
+A runtime that cannot be asked at all logs the same warning. Neither CLI
+reports containerd's own root, so a containerd root moved off
+`/var/lib/containerd` is not on the list; an Orker on such a host sets a
+floor (`internal/orker/runtime_docker.go`, `EngineState`).
+
+A file is named by the path itself and everything beneath it. A `file:` source
+must be a plain absolute path, with no `..`, `.` or empty segment, of at most
+4096 bytes, under any floor, empty included: the kernel applies `..` after it
+follows a link, so a name with one need not be the file read, and it is
+refused as a floor refuses it; a longer name is one the kernel never opens
+(`internal/dsl/secret_policy.go`, `CheckSecretPath`). A plain path is
+followed as the kernel follows it to open it, one name at a time, a link that
+leads nowhere yet included, and it is the Orker's own when its name, any
+directory its way looks a name up in, or the file it ends at is one of these:
+by name, or as the file system holds that path when the source is judged, the
+same file or directory under any name. So no symbolic link reaches one of them
+under another name; a link through `/proc`, such as one to a descriptor of the
+Orker's, is the Orker's own wherever its text points; a way that passes
+through one of the Orker's directories is refused even when a link's `..`
+leads out of it again; a Kubernetes ConfigMap or Secret mounted as links into
+a dated directory stays the Orker's own after an update swaps the links to a
+new directory; and a hard link to one of the Orker's own files is that file.
+Judging a name costs the Orker one look at each name its way passes through,
+whatever the task wrote — two when the way is cut short at a name that cannot
+be looked at, since it then follows the name once more — and up to three
+looks at each of its own paths. A refusal says only that the source is one of
+the Orker's files, or one of its variables, the same words for each, never
+which one, which setting named it or where a link led. A task that tries
+names can still tell which of them are the Orker's own, since those are
+refused; what it cannot learn from a refusal is which rule, setting or path
+made one so.
+
+Paths are compared byte for byte, as a case-sensitive file system names them.
+On a file system that folds case, `/PROC/self/environ` opens
+`/proc/self/environ`, and the comparison does not see it. Every Linux root
+file system is case-sensitive; an Orker whose work root or task-secret
+directories sit on one that is not (a macOS default volume, some mounted
+shares) should set a floor that lists only directories of the tasks' own.
+
+Some ways of reaching a file are out of the check's reach, by design: a file
+beneath one of the Orker's directories that a bind mount or a hard link shows
+under another name, another mount of the process or device file system than
+`/proc` and `/dev`, and a symbolic link swapped between the check and the
+read. Each needs write access outside the task's workspace and its
+container's writable layer, where no task writes — the workspace lies under
+the work root and the layer under the engine's state, both the Orker's own —
+and [AGENTS.md](../AGENTS.md) §6 forbids host mounts. A Kubernetes update
+swaps a mount's links while the Orker runs, so a name such as
+`..data/orker.yaml` names the Orker's file before the update and after it.
+The Orker looks at its own files before it follows a name and again after,
+compares every file and directory the way came to with both looks, and
+follows the name once more when its way was cut short at a name it could not
+look at, such as the directory an update is removing. So one update that
+lands while a name is judged is seen, whichever of its steps the way met.
+Two cases stay out of reach: two updates of one mount while one name is judged —
+the kubelet updates a mount on its periodic sync, once a minute by default —
+and, in the moment an update writes its new dated directory or removes the
+old one, a name of that directory itself, which the kubelet names with a
+random number no task can list.
+For the same reason the Orker checks a name and then reads it, rather than
+opening the file and judging the descriptor it holds: such a read would close
+a window no task can reach, at the cost of a second, platform-specific
+reading of every path, and it is not planned.
+
+An Orker's own object-store client signs only with `ORK_S3_ACCESS_KEY` and
+`ORK_S3_SECRET_KEY` (`pkg/artifacts/s3.go`). The cloud credentials above are
+on the list for the credential helpers, not for the object store. A task that
+needs a cloud credential is given it under a variable or file of its own.
+
+The list bounds what belongs to this Orker. Everything else on the host is
+reachable by name until the floor narrows it: another Orker's work root and
+configuration on the same host, and the host's other files. That is why every
+Orker of a shared pool, and every Orker that shares a host, should set a floor
+([DEPLOY.md](DEPLOY.md), "Secrets on a shared pool").
 
 ### Environment values are configuration
 

@@ -64,7 +64,8 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 
 ## Secrets
 
-- [ ] Set `ORK_ORKER_SECRET_ALLOW` on every Orker of a shared pool. It is the operator's floor, and it is checked by the Orker at dispatch ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
+- [ ] Set `ORK_ORKER_SECRET_ALLOW` on every Orker of a shared pool. It is the operator's floor, and it is checked by the Orker at dispatch. An Orker with no floor still refuses its own settings, process files and credential files, and logs a warning at boot ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool"; [SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources").
+- [ ] Put the values tasks read under sources of their own, such as a directory the floor names. No floor admits the Orker's own: its `ORK_*` and `OTEL_*` settings, `/proc`, `/run/secrets`, its work root, or its configuration and credential files ([SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources").
 - [ ] Set each namespace's `allowed_secrets` with `orkctl namespace update NAME --allow-secret 'env:SANDBOX_*'`. It is checked at apply and at every submit, and it can only narrow the floor ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
 - [ ] Keep secret values out of definitions. A secret reaches a task as a read-only file, and an `env:` value is stored in the definition, so it is configuration and never a secret ([DSL.md](./DSL.md), "Tasks"; [ORKFLOW_PATTERNS.md](./ORKFLOW_PATTERNS.md), "Environment variables are configuration").
 - [ ] Check `orker.secret_schemes` (default `env,file`) against the sources your tasks name ([DEPLOY.md](./DEPLOY.md), "1. Configuration").

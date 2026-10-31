@@ -1185,7 +1185,17 @@ func (s *chaosStack) startRealOrker(name, pool, queue string, stores *realOrkerS
 	wrap func(next orkerCall) orkerCall,
 ) (*chaosOrker, string) {
 	s.t.Helper()
-	call, orkerID := s.realOrkerCall(name, pool, stores, wrap)
+	return s.startRealOrkerWithPolicy(name, pool, queue, stores, c, nil, wrap)
+}
+
+// startRealOrkerWithPolicy is startRealOrker for an Orker whose security
+// policy — its caps, secret schemes and floor — is policy rather than the
+// default one.
+func (s *chaosStack) startRealOrkerWithPolicy(name, pool, queue string, stores *realOrkerStores, c client.Client,
+	policy *orker.SecurityPolicy, wrap func(next orkerCall) orkerCall,
+) (*chaosOrker, string) {
+	s.t.Helper()
+	call, orkerID := s.realOrkerCallWithPolicy(name, pool, stores, policy, wrap)
 	if c == nil {
 		c = s.control
 	}
@@ -1202,10 +1212,19 @@ func (s *chaosStack) startRealOrker(name, pool, queue string, stores *realOrkerS
 // ExecuteTask (behind wrap, when set) and its Orker id.
 func (s *chaosStack) realOrkerCall(name, pool string, stores *realOrkerStores, wrap func(next orkerCall) orkerCall) (orkerCall, string) {
 	s.t.Helper()
+	return s.realOrkerCallWithPolicy(name, pool, stores, nil, wrap)
+}
+
+// realOrkerCallWithPolicy is realOrkerCall under policy (the default policy
+// when nil).
+func (s *chaosStack) realOrkerCallWithPolicy(name, pool string, stores *realOrkerStores, policy *orker.SecurityPolicy,
+	wrap func(next orkerCall) orkerCall,
+) (orkerCall, string) {
+	s.t.Helper()
 	orkerID := proof.OrkerID("chaos-" + chaosLabel(s.scenario) + "-" + name)
 	activities := orker.NewActivitiesWithOptions(stores.store, orker.Options{
 		Logs: stores.logs, Commits: stores.commits, Attempts: stores.attempts, Refs: stores.refs,
-		Pool: pool, OrkerID: orkerID, WorkRoot: chaosWorkRoot(s.t, name),
+		Pool: pool, OrkerID: orkerID, WorkRoot: chaosWorkRoot(s.t, name), Policy: policy,
 	})
 	if err := activities.Boot(s.ctx); err != nil {
 		infraAbsent(s.t, "orker boot checks failed: %v", err)

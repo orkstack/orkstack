@@ -468,13 +468,13 @@ then the variable it becomes.
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 195 seconds for removing what it gave up on and for that cancellation (17 minutes 15 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
-| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, as before. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
+| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable. An Orker whose boot probe finds that user does not land as the Orker (a rootless or user-namespaced daemon) refuses to start with it set, as `RUN_AS_ORKER_UNAVAILABLE` |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
-| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme. A namespace's `allowed_secrets` can only narrow this, never widen it (§5, "Secrets on a shared pool"). Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
+| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme except the Orker's own, and logs a warning at boot. No entry admits the Orker's own sources: its `ORK_*` and `OTEL_*` settings, its process files, its work root, its configuration and credential files (§5, "Secrets on a shared pool"). With `orker.workdir` unset the work root is the temp directory, so a `file:/tmp/…` source is refused and an entry under `/tmp` stops the Orker at boot: give tasks' secret files a directory of their own. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed, names a scheme not in `orker.secret_schemes`, or can match only the Orker's own sources |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it, and its path must be a plain one: a mount is a comma-separated option list, so an Orker whose work root holds a comma or a control character refuses to start (`WORKDIR_NOT_BINDABLE`, naming `ORK_ORKER_WORKDIR`). The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
@@ -600,15 +600,25 @@ for, and give the rare large task a pool of its own whose Orkers set larger
 caps and a smaller ceiling. Set the same caps on every Orker of a pool: a task
 above the cap of the Orker that takes it fails `RESOURCE_REQUEST_REFUSED`, so a
 pool whose Orkers disagree runs a task or fails it depending on which one
-polled first.
+polled first ("Every Orker of a pool has the same settings", below).
 
 ### Declaring an Orker's capacity
 
 `orker.capacity.cpu` and `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`,
 `ORK_ORKER_CAPACITY_MEMORY`) declare what one Orker admits tasks within, in the
-Kubernetes spelling: `"16"` and `"64Gi"`. Unset, the default, the Orker admits
-by `max_concurrent` alone, exactly as before. Either may be set alone; the
-other dimension is then not bounded.
+Kubernetes spelling: `"16"` and `"64Gi"`. Either may be set alone; the other
+dimension is then not bounded.
+
+**Unset, the default, admission is best effort.** The Orker admits by
+`max_concurrent` alone, a count of tasks: nothing holds the sum of their
+requests to what the host has, and the Orker never measures the host to find
+out, because it cannot know what else shares it. A host that runs out of
+memory may kill a container, or the runtime or the Orker itself; a task whose
+container is killed fails as any killed workload does, retried under its own
+policy. Size `max_concurrent` by the caps (above), or
+declare a capacity. Such an Orker says so at boot:
+`capacity not declared: admission is best effort, bounded only by max_concurrent`,
+with its `max_concurrent` and per-task cap.
 
 An Orker that declares a capacity admits no task that would take its
 reservations above it. A Temporal worker reserves a slot before it polls and
@@ -619,7 +629,10 @@ one bound it knows in advance, the per-task cap (`orker.resources.max_cpu`,
 - every poll for a task reserves the cap, and is granted only while that fits
   beside everything already reserved;
 - once the task is in hand, its reservation is trimmed to the task's own
-  resolved request, and an activity that runs no container to nothing;
+  resolved request, and an activity that runs no container to nothing. A
+  request above this Orker's cap resolves to nothing, so it reserves nothing,
+  whether it is refused or, for a result already committed or a memo hit,
+  handed back without a container;
 - the reservation is freed when the attempt's container is **removed**. A
   container whose removal failed keeps its reservation, and the Orker tries to
   remove it again every 30 seconds.
@@ -653,8 +666,8 @@ a task that declares a request above every one of them
 (`RESOURCES_UNSATISFIABLE`), before a run id exists. That read costs a submit
 whose tasks declare `resources:` one describe per live Orker of the deployment,
 together, each bounded at five seconds; a submit that declares none pays
-nothing for it. Capacity may differ per Orker, but every Orker of a pool should
-set the same cap and default.
+nothing for it. Set the same capacity, cap and default on every Orker of a
+pool, with the rest of the settings the next section lists.
 
 **After a crash**, the Orker's restart reaps its previous life's containers.
 One it could not remove still holds its host, so a declared capacity starts
@@ -663,6 +676,113 @@ with that container's cap reserved, and frees it once a later reap removes it.
 The ledger is held in the process, as a cordon is: never stored, never shared,
 gone with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task.
+
+### Every Orker of a pool has the same settings
+
+Temporal hands a task to whichever Orker of its pool polls for it, and
+OrkStack never chooses a host, so a run can count only on what every Orker of
+the pool offers. Give each Orker of a pool the same:
+
+- per-task caps, `orker.resources.max_cpu` and `max_memory`;
+- default request, `orker.resources.default_cpu` and `default_memory`;
+- capacity, `orker.capacity.cpu` and `memory`, and `orker.max_concurrent`;
+- secret schemes and floor, `ORK_ORKER_SECRET_SCHEMES` and
+  `ORK_ORKER_SECRET_ALLOW`;
+- `env` allow-list, `orker.env_allowlist`, and the values of the variables it
+  names;
+- registry credentials, `orker.registry_auth_file`, with which an Orker reads
+  a signature when a namespace requires one (`require_signed_by`);
+- runtime: `orker.resources.force_user`, and whether a task can run as the
+  Orker's own user. Run a pool on runtimes where it can, or on runtimes where
+  it cannot, not both (a rootless or user-namespaced daemon cannot;
+  [REASONS.md](./REASONS.md), `RUN_AS_ORKER_UNAVAILABLE`);
+- pin hosting, `ORK_ORKER_MAX_PINS` ("Pin hosting is a pool-wide setting",
+  below).
+
+Network modes need no setting: every Orker offers `default` and `none`.
+
+While the settings match, a run never fails because of which Orker took a
+task. When they differ, a task that lands on an Orker that will not run it
+fails there, explicitly, with its own reason: `RESOURCE_REQUEST_REFUSED`,
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED` or
+`RUN_AS_ORKER_UNAVAILABLE`, none of them retried; `RENDER_FAILED`, not
+retried, for an `env` name outside the Orker's allow-list; or
+`IMAGE_SIGNATURE_UNAVAILABLE`, retried under the task's policy, for a
+signature its registry credentials cannot read. A differing default request
+gives a task that declares none different limits on different Orkers, and a
+differing capacity or `max_concurrent` fails nothing, only spreads the work
+unevenly.
+
+What a task that runs no container here is spared depends on why it runs
+none ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#71-the-sequence),
+"§7.1"):
+
+- **A result already committed** is never refused for any of these settings:
+  the commit check comes before everything that refuses for them.
+- **A memo hit** is never refused for the caps, the secret schemes and floor,
+  or the runtime: those are checked only after the memo step misses. But a
+  cached task's image policy is checked before its memo lookup, and its
+  `with:` is rendered before it too, because the memo key hashes the rendered
+  `config.json`. So a differing `env` allow-list refuses it when its `with:`
+  names an `env` variable, and differing registry credentials refuse it when
+  the run's image policy requires a signature, even where the memo would hit.
+
+#### Changing a setting with runs in flight
+
+Change a setting in the order a schema migration uses: widen every Orker
+before any task needs more, and stop needing it before you narrow them. It
+works with an ordinary rolling update, versioned or not.
+
+**To widen** (raise a cap, allow another scheme or source):
+
+1. Roll every Orker of the pool to the wider setting, and let the rollout
+   finish (`orkctl orker list --filter pool=<pool>` lists the pool's live
+   Orkers).
+2. Only then apply and promote the Orkflow version that needs it
+   (`orkctl apply`, `orkctl orkflow promote <name> <version>`).
+
+During the rollout no task asks for more than the old setting allows, so
+Orkers that still differ are harmless.
+
+**To narrow** (lower a cap, allow less):
+
+1. Promote the Orkflow versions that no longer need the wider setting.
+2. Repoint whatever pins an older version. `orkctl orkflow callers <name>
+   --all-versions` lists the schedules, triggers and composing tasks that pin
+   one. Move a schedule with `orkctl schedule update <name> --version <v>` (or
+   `--follow-current`), a trigger with `orkctl trigger update <id> --version
+   <v>` (or `--follow-current`), and a composing task by applying and promoting
+   a version of its Orkflow that names the new version. Do not use
+   `orkctl run again` on a run from before the promotion until the narrowing is
+   done: it resubmits that run's pinned version unless `--version` says
+   otherwise.
+3. Wait until the runs that may still need the wider setting have finished:
+   in every namespace whose runs use the pool,
+   `orkctl run list --filter 'status=PENDING,RUNNING' --filter 'created_at<T'`
+   lists none, with `T` the instant of the last repoint in step 2, an RFC 3339
+   instant with a zone such as `2026-10-30T12:00:00Z`. A schedule or trigger
+   still pinned to an older version can start a run until it is repointed,
+   and so can a submit that names that version with `--version`. A parent run
+   stays running while its child runs do, so this covers composed tasks too. A
+   task that has already committed is adopted, never run again, so only work
+   still to run matters.
+4. Roll the narrower setting out to every Orker of the pool.
+
+With versioning on, a release is already a generation of settings: change the
+setting in a new release and roll it forward ("3. Rolling a release forward",
+below): new runs go to the new release's Orkers, and a run already in flight
+keeps to its own release's Orkers while they drain.
+
+**What it does not cover:**
+
+- an Orker configured wrong by mistake;
+- an Orker that joins late with stale settings, such as one started from an
+  old template;
+- runs that stay open a long time, such as one waiting on an await: they only
+  make step 3 take longer.
+
+Either of the first two fails the run explicitly, with its own reason, as
+above.
 
 ### Pin hosting is a pool-wide setting
 
@@ -2154,7 +2274,8 @@ precedence over its `envFrom`. The floor names the `file` scheme, so
 `ORK_ORKER_SECRET_SCHEMES`, if you set it, must keep `file`, or the Orker
 refuses to boot. A test holds both bases to this floor and checks that it
 admits none of the Orker's own credentials
-(`internal/dist/kubernetes_test.go`).
+(`internal/dist/kubernetes_test.go`), and the cluster check below runs a task
+through it on a live cluster.
 
 **The work root is one path in both containers.** The engine bind-mounts each
 task's workspace from the path the Orker gives it, so the `work` volume must be
@@ -2295,15 +2416,21 @@ checks:
 - that the engine's root is a user-namespace range, or the node's root for
   the fallback;
 - that the Orker reports the capacity its pod declares;
+- that a task reads a key of `orkstack-task-secrets`, which the bases' floor
+  lists, and that the floor refuses what it does not list: the Orker's own
+  `ORK_S3_SECRET_KEY`, and `POD_NAME`, a variable of the Orker's
+  environment. The key's value is the check's own, random, and appears in no
+  log or record;
 - a cancel; a task above the per-task cap, refused at submit by the cap the
   Orker reported, with no run left behind; a task at the cap, with the cap as
   its limit; an out-of-memory task; and a pod deletion.
 
 Then it checks that the Orker refuses a mismatched work root, and that the
 user-namespaced engine does not start without its RuntimeClass. It deletes its
-namespace at the end (`KEEP=1` leaves it) and creates nothing cluster-wide:
-the RuntimeClass must exist already. In OrkStack it leaves four Orkflows
-(`k8s-orker-proof`, `k8s-orker-cancel`, `k8s-orker-limits`,
+namespace at the end (`KEEP=1` leaves it), the `orkstack-task-secrets` Secret
+it makes there with it, and creates nothing cluster-wide: the RuntimeClass
+must exist already. In OrkStack it leaves five Orkflows (`k8s-orker-proof`,
+`k8s-orker-secrets`, `k8s-orker-cancel`, `k8s-orker-limits`,
 `k8s-orker-too-big`) in
 `--ork-namespace` (`default` unless named) and their runs, kept by that
 namespace's retention. Its Orkers serve only the pool `k8s-check`, which that
@@ -2892,8 +3019,10 @@ places; a source must pass **both**:
   process that reads the value, at dispatch, before the image is pulled; a
   source outside it fails the task `SECRET_NOT_PERMITTED` (a
   `ContractViolation`, never retried). Empty resolves every source of an
-  allowed scheme. A malformed entry, or one
-  naming a scheme outside `orker.secret_schemes`, stops the Orker at boot.
+  allowed scheme except the Orker's own (below), and the Orker logs a warning
+  at boot that says so. A malformed entry, one naming a scheme outside
+  `orker.secret_schemes`, or one that can match only the Orker's own sources
+  stops the Orker at boot.
 - **The tenant's list, per namespace:** `orkctl namespace update NAME
   --allow-secret 'env:SANDBOX_*'` (or Admin → Namespaces). It is enforced by
   the engine at validate and apply, as an issue on
@@ -2906,16 +3035,40 @@ places; a source must pass **both**:
   the Orker: a list handed to the Orker by its caller would be no check on
   the caller, and the engine's submit gate is the one no client bypasses.
 
+**The Orker's own sources are never admitted.** Whatever the floor says, empty
+or `env:*`, an Orker refuses as a task's source what belongs to it: its
+`ORK_*` and `OTEL_*` settings, its proxy settings and the container CLI's
+(registry credential helpers' `AWS_*`, `AZURE_*`, `CLOUDSDK_*` and
+`GOOGLE_APPLICATION_CREDENTIALS` among them), `/proc`, `/dev`, its container's
+credentials under `/run/secrets` and `/var/run/secrets`, its work root, its
+configuration file and each file that reads, its telemetry sinks' header
+sources, the container engine's state (wherever the engine reports keeping it
+at boot), and the credential files its settings name. The work root is the
+temp directory when `orker.workdir` is unset, so there a `file:/tmp/…` source
+is refused and a floor entry under `/tmp` stops the Orker at boot, as one
+under a data root the engine reports does. A `file:` source must also be a
+plain absolute path, with no `..`, `.` or empty segment, of at most 4096
+bytes, under any floor. A task that names one fails `SECRET_NOT_PERMITTED`
+where the floor is checked: after the commit check and a cached task's memo
+step, so a result already committed or a memo hit is still reused, and before
+its image is pulled. A value a task needs goes under a source of the task's
+own, such as a file in a directory the floor names, or a variable the floor
+names. [SECURITY_MODEL.md](SECURITY_MODEL.md), "The Orker's own sources",
+lists each one and why.
+
 A namespace can therefore only ever narrow what its Orkers permit. The grammar
 is deliberately small: a literal scheme, and `*` as the one wildcard, which
 never crosses `/`; `?`, `[…]` and `\` are ordinary characters. A `file:`
 source with a `..`, `.` or empty segment is refused outright rather than
 normalized, so `file:/etc/orkstack/secrets/sandbox/../payments/db` never sits
 inside `file:/etc/orkstack/secrets/sandbox/*`. The policy bounds the NAME a
-tenant may write, not the filesystem behind it: a symlink placed under a
-tenant's directory is a grant the operator made, and the Orker reads the path
-as it always has. Nothing here stores, logs or compares a secret value;
-refusals carry the source string only.
+tenant may write. A symbolic link under a tenant's directory is a grant the
+operator made, and the Orker reads it where it leads, unless it leads to or
+through one of the Orker's own files or directories, which is refused as the
+Orker's own name is — judged against what those are when the task's secret is
+resolved, so a Kubernetes update of the Orker's own mounted configuration is
+seen at once. Nothing here stores, logs or compares a secret value; a refusal
+carries the source string and what refused it, never a value.
 
 During a rolling upgrade the namespace list is enforced only by engine
 replicas that know it; the Orker floor is unaffected by the rollout.

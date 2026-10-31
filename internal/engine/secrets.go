@@ -34,10 +34,11 @@ type SecretNotAllowedError struct {
 //	namespace "sandbox" may not resolve "env:PROD_DB_PASSWORD" (task "grab", secret "db"); allowed: env:SANDBOX_*, …
 //
 // and, when the dsl refused a file: source before matching, names that rule
-// between the coordinates and the list.
+// between the coordinates and the list. The source is quoted as every secret
+// refusal quotes it (dsl.QuoteSecretSource), a long one by its head.
 func (e *SecretNotAllowedError) Error() string {
-	head := fmt.Sprintf("namespace %q may not resolve %q (task %q, secret %q)",
-		e.Namespace, e.Source, e.Task, e.Secret)
+	head := fmt.Sprintf("namespace %q may not resolve %s (task %q, secret %q)",
+		e.Namespace, dsl.QuoteSecretSource(e.Source), e.Task, e.Secret)
 	if e.Refusal != nil && e.Refusal.Why != "" {
 		head += fmt.Sprintf(`: a "file:" locator with %s is refused, never normalized`,
 			dsl.SecretRefusalPhrase(e.Refusal.Why))

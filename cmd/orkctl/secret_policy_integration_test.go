@@ -565,6 +565,8 @@ func TestIntegration_AMalformedFloorStopsTheOrkerAtBoot(t *testing.T) {
 	}{
 		{"file:relative", []string{"ORK_ORKER_SECRET_ALLOW", "file:relative"}},
 		{"env:SANDBOX_*,vault:*", []string{"ORK_ORKER_SECRET_ALLOW", "vault:*", "ORK_ORKER_SECRET_SCHEMES"}},
+		// An entry that can match only the Orker's own sources admits nothing.
+		{"env:SANDBOX_*,env:ORK_S3_*", []string{"ORK_ORKER_SECRET_ALLOW", "env:ORK_S3_*", "this orker's own"}},
 	} {
 		bootCtx, bootCancel := context.WithTimeout(ctx, 90*time.Second)
 		cmd := exec.CommandContext(bootCtx, orkerPath)

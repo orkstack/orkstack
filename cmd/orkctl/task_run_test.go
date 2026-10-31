@@ -475,6 +475,50 @@ func countRequests(paths []string, method string) int {
 	return n
 }
 
+// TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed: a --secret file that
+// cannot be looked at is refused with the reason the file system gave, kept
+// as the error's cause, so a file the user may not read is not reported as
+// one that does not exist.
+func TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed(t *testing.T) {
+	_, _, err := parseTaskSecretFlag("tok=file:/nonexistent/tok", orker.DefaultSecurityPolicy())
+	if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "--secret tok: /nonexistent/tok: no such file") {
+		t.Errorf("parseTaskSecretFlag(a missing file) = %v, want it to say no such file, with fs.ErrNotExist its cause", err)
+	}
+	if os.Geteuid() == 0 {
+		return // root reads through any mode
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "tok"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	_, _, err = parseTaskSecretFlag("tok=file:"+filepath.Join(locked, "tok"), orker.DefaultSecurityPolicy())
+	if !errors.Is(err, fs.ErrPermission) || strings.Contains(err.Error(), "no such file") {
+		t.Errorf("parseTaskSecretFlag(a file it may not look at) = %v, want fs.ErrPermission its cause", err)
+	}
+}
+
+// TestParseTaskSecretFlag_QuotesALongSourceByItsHead: a scheme or a variable
+// of any length is refused with its head and its length, as an Orker refuses
+// it, never in full.
+func TestParseTaskSecretFlag_QuotesALongSourceByItsHead(t *testing.T) {
+	long := strings.Repeat("A", 200<<10)
+	length := fmt.Sprintf("(%d bytes)", len(long))
+	for _, value := range []string{"tok=env:" + long, "tok=" + long + ":x"} {
+		_, _, err := parseTaskSecretFlag(value, orker.DefaultSecurityPolicy())
+		if err == nil || len(err.Error()) > 512 || !strings.Contains(err.Error(), length) {
+			t.Errorf("parseTaskSecretFlag(%.20q…) = %.300v, want a refusal of at most 512 bytes that ends the value with %s",
+				value, err, length)
+		}
+	}
+}
+
 func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	dir := t.TempDir()
@@ -489,8 +533,9 @@ func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 	if err := os.Symlink(regular, filepath.Join(withLink, "link")); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("ORK_TEST_TASK_RUN_UNSET_VARIABLE", "")
-	_ = os.Unsetenv("ORK_TEST_TASK_RUN_UNSET_VARIABLE")
+	t.Setenv("TEST_TASK_RUN_UNSET_VARIABLE", "")
+	_ = os.Unsetenv("TEST_TASK_RUN_UNSET_VARIABLE")
+	t.Setenv("ORK_TEST_TASK_RUN_OWN_VARIABLE", "x")
 	cases := []struct {
 		name string
 		args []string
@@ -517,8 +562,12 @@ func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 			`invalid --secret "tok": want NAME=file:PATH or NAME=env:VAR`},
 		{"missing secret file", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=file:/nonexistent/tok"}, nil,
 			"--secret tok: /nonexistent/tok: no such file"},
-		{"unset secret variable", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=env:ORK_TEST_TASK_RUN_UNSET_VARIABLE"}, nil,
-			"--secret tok: environment variable ORK_TEST_TASK_RUN_UNSET_VARIABLE is not set"},
+		{"unset secret variable", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=env:TEST_TASK_RUN_UNSET_VARIABLE"}, nil,
+			`--secret tok: environment variable "TEST_TASK_RUN_UNSET_VARIABLE" is not set`},
+		{"the machine's own variable", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=env:ORK_TEST_TASK_RUN_OWN_VARIABLE"}, nil,
+			`--secret tok: "env:ORK_TEST_TASK_RUN_OWN_VARIABLE" is this orker's own (one of its variables), which no secret floor admits; a local run refuses it as an Orker does`},
+		{"the machine's own file", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=file:/proc/self/environ"}, nil,
+			`--secret tok: "file:/proc/self/environ" is this orker's own (one of its files), which no secret floor admits; a local run refuses it as an Orker does`},
 		{"secret scheme", []string{"--task", "consume", "--from-run", "r", "--secret", "tok=vault:x"}, nil,
 			`--secret tok: scheme "vault" is not one this machine resolves (allowed: env, file)`},
 		{"shared not a directory", []string{"--task", "consume", "--from-run", "r", "--shared", regular}, nil,

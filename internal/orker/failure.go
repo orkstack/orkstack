@@ -60,8 +60,10 @@ const (
 	ReasonSecretUnresolved     = "SECRET_UNRESOLVED"
 	ReasonSecretSchemeForbid   = "SECRET_SCHEME_FORBIDDEN"
 	// ReasonSecretNotPermitted is a source outside this Orker's
-	// ORK_ORKER_SECRET_ALLOW floor. A policy refusal refuses identically
-	// forever, so it is a ContractViolation and never retried.
+	// ORK_ORKER_SECRET_ALLOW floor, or one of the Orker's own sources, which
+	// no floor admits (SecurityPolicy.AllowsSecretSource). A policy refusal
+	// refuses identically forever, so it is a ContractViolation and never
+	// retried.
 	ReasonSecretNotPermitted   = "SECRET_NOT_PERMITTED"
 	ReasonCommitReadFailed     = "COMMIT_READ_FAILED"
 	ReasonCommitWriteFailed    = "COMMIT_WRITE_FAILED"

@@ -101,11 +101,13 @@ Never give an Orker pod the node's container runtime or its Docker socket. [Run 
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | the temp directory | orker. Must be a path the Docker daemon can bind-mount, with no comma or control character in it |
 | `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | orker. Tasks at once on one Orker; size it to the host. To rule out over-commit, keep it at or below the host's cpus ÷ `max_cpu` and its memory ÷ `max_memory` |
 | `orker.resources.max_cpu`, `max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | orker. A task that asks for more is refused |
-| `orker.capacity.cpu`, `memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | empty | orker. What the Orker admits tasks within; each poll then waits for a per-task cap's worth to be free. Empty admits by `max_concurrent` alone |
+| `orker.capacity.cpu`, `memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | empty | orker. What the Orker admits tasks within; each poll then waits for a per-task cap's worth to be free. Empty admits by `max_concurrent` alone, best effort, and the Orker says so at boot |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | orker. Above zero makes the Orker a pin host |
 | `deployment.build_id` | `ORK_BUILD_ID` | empty | both. Empty means versioning is off |
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | empty | both. Empty opens no listener |
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | ork. Off keeps every run; on retires runs by their namespace's retention |
+
+Give every Orker of a pool the same `max_concurrent`, caps and capacity, and the same default request, secret and `env` settings, registry credentials and runtime. A task that lands on an Orker that will not run it fails its run. To change a value with runs in flight, follow [DEPLOY.md, "Every Orker of a pool has the same settings"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings).
 
 On a host, an Orker with no `ORK_ORKER_ID` derives a unique id from its host and work directory. In a container, set it explicitly, one distinct id per Orker.
 
@@ -130,6 +132,7 @@ The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/P
 - [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#0-topology--what-you-run-and-where-state-lives): the topology, in full
 - [DEPLOY.md, “The web UI”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-web-ui): what the engine serves at `/`, caching, and running it behind a proxy
 - [DEPLOY.md, “1. Configuration”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration): every key and its variable
+- [DEPLOY.md, “Every Orker of a pool has the same settings”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings): the settings a pool's Orkers share, and how to change one with runs in flight
 - [DEPLOY.md, “Orkers on Kubernetes”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): both shapes, sizing, the RuntimeClass and the proof
 - [PRODUCTION_CHECKLIST.md](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md): the full list of care items
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack keeps in the bucket, and where

@@ -482,7 +482,21 @@ as files. Each `secrets` item names the file exposed under
 Secret values never enter this YAML or Temporal history. A namespace may bound
 which `source:` values its tasks may name (`allowed_secrets`, shown by
 `orkctl namespace get`), and a source outside that bound is refused at
-validate, apply and submit.
+validate, apply and submit. The Orker that runs the task refuses at dispatch,
+after the commit check and a cached task's memo step and before the image is
+pulled, with `SECRET_NOT_PERMITTED`:
+
+- a `file:` source that is not a plain absolute path — relative, with a `..`,
+  `.` or empty segment, or longer than 4096 bytes — whatever its floor says;
+- a source outside its own floor (`ORK_ORKER_SECRET_ALLOW`);
+- one of the Orker's own sources, under any floor: its settings
+  (`env:ORK_*`, `env:OTEL_*`), its process (`file:/proc`), its work root and
+  its credentials, by their own names or through a link that leads to or
+  through one of them ([SECURITY_MODEL.md](SECURITY_MODEL.md), "The Orker's
+  own sources").
+
+Name a source the operator set aside for tasks, such as a file under a
+directory the floor lists.
 
 `resources` uses `cpu` and `memory` request strings in the Kubernetes spelling
 (`"2"`, `"500m"`; `"512Mi"`, `"4Gi"`), refused at validate and apply when they do

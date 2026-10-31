@@ -1,6 +1,8 @@
 package dsl
 
 import (
+	"errors"
+	"path"
 	"regexp"
 	"strings"
 	"testing"
@@ -73,6 +75,40 @@ func FuzzCheckSecretSource(f *testing.F) {
 			if _, ok := err.(*SecretSourceRefusal); !ok || err.Error() == "" {
 				t.Fatalf("CheckSecretSource refused as %T %v, not as a SecretSourceRefusal", err, err)
 			}
+		}
+	})
+}
+
+// FuzzCheckSecretPath: a file source passes exactly when its locator is an
+// absolute path that cleaning leaves unchanged, is not "/" itself — a name
+// no reader has to normalize — and is no longer than MaxSecretPathBytes, and
+// a source of any other scheme always does.
+// A refusal is the *SecretSourceRefusal that names the source.
+func FuzzCheckSecretPath(f *testing.F) {
+	for _, seed := range []string{
+		"file:/etc/sec/a", "file:/var/run/../proc/self/environ", "file:/a/./b", "file:/a//b", "file:/a/b/",
+		"file:a/b", "file:", "file:/", "file:/...", "file:/a/..b", "env:../x", "nocolon", "file:/é/ü",
+		"file:/" + strings.Repeat("a/", 2047) + "b", "file:/" + strings.Repeat("a/", 2048) + "b",
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, source string) {
+		err := CheckSecretPath(source)
+		scheme, locator, found := strings.Cut(source, ":")
+		if !found || scheme != "file" {
+			if err != nil {
+				t.Fatalf("CheckSecretPath(%q) = %v, want nil for a source that is not a file", source, err)
+			}
+			return
+		}
+		plain := strings.HasPrefix(locator, "/") && path.Clean(locator) == locator && locator != "/" &&
+			len(locator) <= MaxSecretPathBytes
+		if plain != (err == nil) {
+			t.Fatalf("CheckSecretPath(%q) = %v, want refused=%v", source, err, !plain)
+		}
+		var refusal *SecretSourceRefusal
+		if err != nil && (!errors.As(err, &refusal) || refusal.Source != source || refusal.Why == "") {
+			t.Fatalf("CheckSecretPath(%q) = %#v, want a *SecretSourceRefusal naming the source and why", source, err)
 		}
 	})
 }
