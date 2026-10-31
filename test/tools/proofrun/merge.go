@@ -763,6 +763,11 @@ func readGithubAttempts(dir string) (map[string]map[int]githubJob, []string) {
 				part = partFromJobName(j.Name)
 			}
 			if part == "" {
+				// A matrix job GitHub skipped is listed once, without a
+				// shard: it is kept under its kind (mergePart, shardsSkipped).
+				part = unexpandedMatrixJob(j.Name)
+			}
+			if part == "" {
 				continue
 			}
 			if out[part] == nil {
@@ -779,6 +784,30 @@ var jobPartRE = regexp.MustCompile(`(?i)^(integration|ui-e2e|activity-fixture)\s
 // reusableWorkflowPrefix is what GitHub puts before a job of a reusable
 // workflow: "gate / integration (3)".
 var reusableWorkflowPrefix = regexp.MustCompile(`^.* / `)
+
+// unexpandedMatrixJob is the kind of a matrix job's name without its shard
+// ("integration", "ui-e2e", "activity-fixture"), the one record GitHub keeps
+// of a matrix it skipped, or "".
+func unexpandedMatrixJob(name string) string {
+	switch kind := strings.TrimSpace(reusableWorkflowPrefix.ReplaceAllString(strings.TrimSpace(name), "")); kind {
+	case "integration", "ui-e2e", "activity-fixture":
+		return kind
+	}
+	return ""
+}
+
+// shardsSkipped is the first attempt whose record says GitHub skipped every
+// job of the part's matrix, never starting one, because a job it needs did not
+// succeed (a red `fast`, plan or build): 0 when no record says so.
+func (m *merger) shardsSkipped(part string) int {
+	first := 0
+	for a, j := range m.attempts[partKind(part)] {
+		if j.Conclusion == "skipped" && len(j.Steps) == 0 && j.RunnerName == "" && (first == 0 || a < first) {
+			first = a
+		}
+	}
+	return first
+}
 
 func partFromJobName(name string) string {
 	name = reusableWorkflowPrefix.ReplaceAllString(strings.TrimSpace(name), "")
@@ -1301,6 +1330,10 @@ func (m *merger) mergePart(part string) {
 		all[a] = true
 	}
 	if len(all) == 0 {
+		if a := m.shardsSkipped(part); a > 0 {
+			m.problems = append(m.problems, fmt.Sprintf("part %s did not run: GitHub skipped its job at attempt %d because a job it needs did not succeed; it runs when that job runs again, or in a new run", part, a))
+			return
+		}
 		m.problems = append(m.problems, fmt.Sprintf("part %s left no result: it is not rerun-eligible (only a lost, degraded or setup-failed attempt is); this run cannot become merge-eligible: start a new run", part))
 		return
 	}

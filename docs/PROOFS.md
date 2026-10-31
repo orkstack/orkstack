@@ -269,8 +269,9 @@ writes the failing `proof.json` and README from the `local` part alone.
 `PROOF_FAIL_FAST=0` runs every gate to its end, in the same order. It changes
 no eligibility rule: a proof whose gates all pass is identical either way.
 Unit tests are not part of this: the unit suite runs to its end whatever fails
-in it. CI parts (`scripts/proof-part.sh`) are unchanged, each part being one
-job.
+in it. A CI part (`scripts/proof-part.sh`) is one job and runs its gates to
+their end; the CI graph fails fast between parts instead: the stack shards
+start only once the `fast` part has passed (§5).
 
 ### 2.3 The race gate and the nightly lanes
 
@@ -610,6 +611,7 @@ flowchart LR
   base --> plan & build & fast & race & race_repeat["race-repeat"] & fuzz
   plan --> integration & ui_e2e["ui-e2e"] & observability
   build --> integration & ui_e2e & activity_fixture["activity-fixture"] & observability
+  fast --> integration & ui_e2e & activity_fixture
   base & plan & build & fast & race & race_repeat & fuzz & integration & ui_e2e & activity_fixture & observability --> proof
   nightly["nightly.yml › nightly"] -. calls .-> callee["proof.yml"]
   gate["release.yml › gate"] -. calls .-> callee
@@ -626,18 +628,40 @@ checks the tree anyway. Every job but `proof` carries the same guard: on a
 pull request it runs only when the pull request is not a draft and, while the
 repository is private, carries the `ci:proof` label.
 
+**The shards wait for `fast`.** `integration`, `ui-e2e` and
+`activity-fixture` need `fast` as well as `plan` and `build`, and start only
+once it has passed (in the nightly tier, which has no `fast`, once it was
+skipped), under `!cancelled()` and each need's own `success`. A red `fast` is
+never a passing proof: its unit gate exits 0 when every failure is a
+quarantined one, and the merger fails the proof on any other red gate of it.
+So a deterministic lint, build, vet or unit failure stops the shards before
+they start, rather than spending about 150 runner-minutes on a proof that
+cannot pass (CI run 40965501357). It fails fast only where a rerun cannot
+help, because a rerun of `fast` takes the shards with it: a `fast` that failed
+in a setup step (§7.1) or whose runner GitHub lost left no result, its shards
+never started, and "Re-run failed jobs" runs `fast` again together with the
+jobs that need it. GitHub lists a matrix it skipped as one job without a
+shard, no steps and no runner, which names no part, so each shard's first
+attempt is the one that ran it and the proof can still be merge-eligible.
+Nothing is cancelled on a part's colour: `plan`, `build`, `race` and
+`observability` do not wait for `fast`, and the merged `proof.json` stays the
+verdict (an excused runner-size miss leaves its shard red while the proof
+passes, §12). The cost is on a green run's wall clock: the shards start when
+`fast` ends rather than when `build` does, about 8 to 11 minutes later
+(§11.5).
+
 | Job | Runs | Uploads |
 |---|---|---|
 | `proof.yml` › `base` | decides the base: a pull request's first parent, which must be an ancestor of its head ("update this branch") unless `MERGE_GATE_MODE` is `queue`; a merge group's base; a validate push's first parent; a dispatch's input | nothing; job outputs |
 | `proof.yml` › `plan` | compiles and lists the packages; writes both plans; decides observability | the plans, the listing, the base lists |
 | `proof.yml` › `build` | builds every activity image once as an OCI layout and records its digests | the layouts and `images.tsv` |
-| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build | one part |
+| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build; the stack shards wait for it to pass | one part |
 | `proof.yml` › `race` | the race gate (§2.3), on a runner of its own; the full and release tiers | one part |
 | `proof.yml` › `race-repeat` | the nightly race repeat (§2.3); the nightly tier alone | one part |
 | `proof.yml` › `fuzz` | the nightly fuzz lane (§2.3), `FUZZ_BUDGET` shared by its targets; the nightly tier alone | one part, with the crashers it found |
-| `proof.yml` › `integration` | one matrix entry per shard: its own Temporal, store, registry and images | one part per shard |
-| `proof.yml` › `ui-e2e` | one matrix entry per UI shard: its own stack and file list; the pinned browser image pulled, the host's Chromium installed only where the shard's files drive it (§2.1) | one part per shard |
-| `proof.yml` › `activity-fixture` | one matrix entry per activity: `make -C images contract` | one part per activity |
+| `proof.yml` › `integration` | once `plan`, `build` and `fast` have passed, one matrix entry per shard: its own Temporal, store, registry and images | one part per shard |
+| `proof.yml` › `ui-e2e` | once `plan`, `build` and `fast` have passed, one matrix entry per UI shard: its own stack and file list; the pinned browser image pulled, the host's Chromium installed only where the shard's files drive it (§2.1) | one part per shard |
+| `proof.yml` › `activity-fixture` | once `plan`, `build` and `fast` have passed, one matrix entry per activity: `make -C images contract` | one part per activity |
 | `proof.yml` › `observability` | when the plan says it is due, or always for release; its `observability stack` step starts the profile and waits up to 3 minutes until the Collector, Loki, Tempo and Prometheus answer ready, the readiness `proof.sh` requires | one part |
 | `proof.yml` › `proof` | `if: always()`; downloads every part and GitHub's job records; runs `proofrun merge`; writes the summary | the merged `proof.json` and ledgers |
 
@@ -1212,7 +1236,13 @@ log (`setup`: every fetch attempt made before it). It carries no verdict.
   step before the proof step (a checkout, a toolchain's setup) is not
   rerun-eligible. `proof.json` lists the attempt in `setup_failures` and the
   README under "Setup failures"; a part whose last attempt is setup-failed has
-  no result, and the proof fails naming it. Two tests pin the names to
+  no result, and the proof fails naming it. A `fast` that failed in a setup
+  step leaves the stack shards that wait for it skipped (§5): GitHub records
+  each skipped matrix once, without a shard, no steps and no runner, which
+  names no part, so the attempt that runs a shard is its first. A shard that
+  never ran in any attempt, where such a record says GitHub skipped its
+  matrix, is reported as not run because a job it needs did not succeed, not
+  as a part that left no result. Two tests pin the names to
   `proof.yml` in both directions, with rename mutations: the proof step names
   (`proofStepNames`) and the allowlist (`setupStepNames`).
 - **Carried-forward jobs.** "Re-run failed jobs" lists every job of the run
@@ -1453,7 +1483,9 @@ before its proof step started (§7.1) ran no test: `proof.json`'s
 `setup_failures` (and the step summary's "setup failure" line) names the part,
 the attempt and the step, and the job's log names every attempt of a fetch that
 gave up (§5). "Re-run job" on that job alone, while the plan and build
-artifacts exist; the merger records the rerun with reason `setup-failed`. A
+artifacts exist; the merger records the rerun with reason `setup-failed`. For
+`fast`, GitHub runs the stack shards that wait for it again with it (§5): they
+never ran, so they cost no eligibility. A
 failure in any other step before the proof step (a checkout, a toolchain's
 setup), and any failure of the plan or the build, is not rerun-eligible: start
 a new run, below.
@@ -1866,6 +1898,12 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   tier), and 78.0 minutes as one local part on the 16-core host (2026-10-28,
   race gate included). That gap is why a CI proof is the default merge path
   (§10).
+- The stack shards' wait for `fast` (§5), estimated from two runs before it:
+  `fast` ended 12.3 and 16.2 minutes after the run began (runs 40797687107
+  and 41001701958) and the shards began at 4.7 and 5.5, so a green run's wall
+  grows by about 8 to 11 minutes; a run with the wait has not measured it yet.
+  A run whose `fast` fails deterministically saves the shards' runner time,
+  about 150 runner-minutes (run 40965501357).
 - `make check` (lint, `go vet -tags=integration ./...`, `go test -short ./...`),
   measured 2026-10-21 on a quiet 16-core host: with a warm build and test
   cache, 11 s at 16 CPUs and 7 s at 2 CPUs (`taskset -c 0-1`), since unchanged
@@ -2138,6 +2176,16 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   rootless measurement, after lifting the runner's AppArmor restriction, have
   not run there. The check has run against kind clusters only; a cluster of
   another make is checked by its operator.
+- **The shards' wait for `fast` has not run on GitHub.** The job graph (§5)
+  is held by the workflow rules in `test/tools/proofrun`, and the merger and
+  the rerun planner are proven over a `fast` setup failure whose shards
+  GitHub skipped and a `fast` product failure. Only a run can show that
+  GitHub evaluates the shards' `!cancelled()` and each need's `result` as
+  read here, that it records a matrix skipped for a failed need once, without
+  a shard (as nightly 41080705584 recorded its `activity-fixture`, skipped by
+  its own `if:`), that "Re-run failed jobs" after a `fast` setup failure runs
+  the skipped shards again with it, and what the wait costs a green run's
+  wall clock (§11.5).
 - **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
   `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
   planner is proven against fakes of `gh api` and against GitHub's recorded

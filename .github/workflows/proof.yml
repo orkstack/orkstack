@@ -406,8 +406,13 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   integration:
-    needs: [base, plan, build]
-    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    # Waits for the fast part (docs/PROOFS.md §5): a red `fast` is never a
+    # passing proof, so a deterministic unit or lint failure stops the shards
+    # before they start. A `fast` that failed in a setup step or lost its
+    # runner left no result; "Re-run failed jobs" runs it again with the
+    # shards that need it, which never ran. The nightly tier has no `fast`.
+    needs: [base, plan, build, fast]
+    if: ${{ !cancelled() && needs.base.result == 'success' && needs.plan.result == 'success' && needs.build.result == 'success' && (needs.fast.result == 'success' || (inputs.tier == 'nightly' && needs.fast.result == 'skipped')) && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 155
     permissions:
@@ -473,11 +478,12 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   ui-e2e:
-    needs: [base, plan, build]
+    # Waits for the fast part, as integration does.
+    needs: [base, plan, build, fast]
     # Every tier's UI plan names its shards: the nightly tier's hold only the
     # spec files scripts/proof-nightly-specs.txt lists, and none when it lists
     # none.
-    if: ${{ needs.plan.outputs.ui_matrix != '[]' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ !cancelled() && needs.base.result == 'success' && needs.plan.result == 'success' && needs.build.result == 'success' && (needs.fast.result == 'success' || (inputs.tier == 'nightly' && needs.fast.result == 'skipped')) && needs.plan.outputs.ui_matrix != '[]' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     # Its steps' limits sum to 110 (the host Chromium's is 10): the job ends
     # them, never the other way round.
@@ -624,8 +630,9 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   activity-fixture:
-    needs: [base, plan, build]
-    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    # Waits for the fast part, as integration does.
+    needs: [base, plan, build, fast]
+    if: ${{ inputs.tier != 'nightly' && !cancelled() && needs.base.result == 'success' && needs.plan.result == 'success' && needs.build.result == 'success' && needs.fast.result == 'success' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
