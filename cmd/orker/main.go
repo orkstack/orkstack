@@ -311,9 +311,24 @@ func applyConfigFile(
 }
 
 func main() {
-	cfg, cfgPath, cfgSet, exit, stop := configure(os.Args[1:], os.LookupEnv, os.Setenv, os.Stdout, os.Stderr)
+	os.Exit(start(os.Args[1:], os.LookupEnv, os.Setenv, os.Stdout, os.Stderr, run))
+}
+
+// start is main's whole body, with what main hands it: the arguments made into
+// a configuration (configure), then telemetry and the process logger, then
+// serve — run, from main — given all three. It returns the status the process
+// exits with. A test hands it a serve of its own, so what it is served is what
+// a real boot of the same arguments serves.
+func start(
+	args []string,
+	lookup func(string) (string, bool),
+	setenv func(string, string) error,
+	stdout, stderr io.Writer,
+	serve func(*slog.Logger, telemetry.Config, *telemetry.Sinks, config) error,
+) int {
+	cfg, cfgPath, cfgSet, exit, stop := configure(args, lookup, setenv, stdout, stderr)
 	if stop {
-		os.Exit(exit)
+		return exit
 	}
 	// Telemetry configuration is resolved before the process logger exists,
 	// for the same reason as cmd/ork: the logger's own encoding is itself a
@@ -323,11 +338,11 @@ func main() {
 		telemetry.ResourceAttrs(version, cfg.deployment.Name, cfg.deployment.BuildID, cfg.temporalNamespace),
 		attribute.String(telemetry.AttrPool, cfg.pool))...)
 	if err != nil {
-		fallback := slog.New(slog.NewTextHandler(os.Stderr, nil))
+		fallback := slog.New(slog.NewTextHandler(stderr, nil))
 		fallback.Error("orker stopped", "error", err)
-		os.Exit(1)
+		return 1
 	}
-	logger := telemetry.NewLogger(tcfg, sinks.Default(), os.Stderr)
+	logger := telemetry.NewLogger(tcfg, sinks.Default(), stderr)
 	// Attached as soon as the logger exists, so a task naming a sink
 	// ORK_TELEMETRY_SINKS never declared logs a Warn from the very first
 	// call, rather than only from whichever caller happens to attach one.
@@ -337,10 +352,11 @@ func main() {
 	if cfgPath != "" {
 		logger.Info("configuration file applied", "path", cfgPath, "applied", len(cfgSet))
 	}
-	if err := run(logger, tcfg, sinks, cfg); err != nil {
+	if err := serve(logger, tcfg, sinks, cfg); err != nil {
 		logger.Error("orker stopped", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // workerOptions mirror the engine's expectation: an Orker is activity-only, so
@@ -713,12 +729,11 @@ func awaitStoppedTasks(logger *slog.Logger, activities *orker.Activities) {
 	logger.Info("cancelled tasks stopped", "took", time.Since(started).Round(time.Millisecond))
 }
 
-// configure is main's start, everything it decides before telemetry boots:
-// the arguments and the environment made into the configuration this
+// configure is start's first step, everything it decides before telemetry
+// boots: the arguments and the environment made into the configuration this
 // process runs with, the file it came from and the keys that file set — or,
 // with stop set, the status the process exits with, having said why on
-// stdout or stderr. It is main's own path, a seam only so that a test given
-// main's arguments boots the configuration main boots.
+// stdout or stderr.
 func configure(
 	args []string, lookup func(string) (string, bool), setenv func(string, string) error, stdout, stderr io.Writer,
 ) (cfg config, path string, set []string, exit int, stop bool) {

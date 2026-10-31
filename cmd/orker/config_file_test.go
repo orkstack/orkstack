@@ -172,9 +172,10 @@ func TestApplyConfigFile_NoConfigIsTheZeroConfigPath(t *testing.T) {
 // was configured from, every {file:} that file read, and every telemetry
 // sink header's file and variable are the Orker's own, so its secret floor
 // admits none of them as a task's source, whatever ORK_ORKER_SECRET_ALLOW
-// says. The configuration comes from configure, main's own start, given the
-// arguments main is given, so the files are the Orker's own on the path a
-// real boot takes.
+// says. The Orker is booted by start, main's whole body, given the arguments
+// main is given, and judged by the options built from what start serves, so
+// the files are the Orker's own on the path a real boot takes; --check stops
+// start before it serves anything.
 func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
 	clearTelemetryEnv(t)
 	unsetenvT(t, "ORK_S3_SECRET_KEY")
@@ -188,21 +189,24 @@ func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
 		}
 	}
 	path := writeTempConfig(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: {file: "+secret+"}\n")
-	var stderr strings.Builder
-	cfg, _, _, exit, stop := configure([]string{"--config", path}, os.LookupEnv, setenvT(t), io.Discard, &stderr)
-	if stop {
-		t.Fatalf("configure stopped with %d: %s", exit, stderr.String())
-	}
 	t.Setenv(telemetry.SinksVar, "sinks:\n  vendor:\n    endpoint: http://127.0.0.1:1\n    headers:\n"+
 		"      X-Key: { source: \"file:"+sinkKey+"\" }\n"+
 		"      X-Team: { source: \"env:VENDOR_TEAM_KEY\" }\n")
 	t.Setenv("VENDOR_TEAM_KEY", "x")
-	tcfg, sinks, err := telemetry.Boot(telemetry.ServiceOrker)
-	if err != nil {
-		t.Fatalf("telemetry.Boot: %v", err)
+	var opts orker.Options
+	served := 0
+	serve := func(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
+		served++
+		opts = orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
+		return nil
 	}
-	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil,
-		slog.New(slog.NewTextHandler(io.Discard, nil)))
+	var stderr strings.Builder
+	if exit := start([]string{"--config", path, "--check"}, os.LookupEnv, setenvT(t), io.Discard, &stderr, serve); exit != 0 || served != 0 {
+		t.Fatalf("start(--check) = %d having served %d times, want 0 and nothing served: %s", exit, served, stderr.String())
+	}
+	if exit := start([]string{"--config", path}, os.LookupEnv, setenvT(t), io.Discard, &stderr, serve); exit != 0 || served != 1 {
+		t.Fatalf("start = %d having served %d times, want 0 having served once: %s", exit, served, stderr.String())
+	}
 	if opts.Policy == nil {
 		t.Fatal("orkerOptions.Policy = nil, want the Orker's policy with its own files")
 	}
