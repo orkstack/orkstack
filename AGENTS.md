@@ -961,10 +961,14 @@ GitHub, was retired on 2026-10-27, once three consecutive nightlies of `main`
 had passed on it. A release tag has its own gate, the pre-release proof above.
 A merge is not held for a nightly of its own: a run speaks only for the commit
 it measured (its `headSha`), never for `main`'s tip, so the nightly of a later
-commit is a later run. The same workflow runs the vulnerability scan
-(`make vuln`) as a job of its own, because it needs the network and so is in
-no proof: a vulnerability whose vulnerable code the module reaches fails that
-run like any other nightly failure, and the fix is to bump the module to the
+commit is a later run. The same workflow runs the vulnerability scan as jobs
+of its own, because they need the network and so are in no proof: `make vuln`
+over the Go module, `make vuln-js` (`bun audit`) over the UI's and the site's
+JavaScript dependencies, and `make vuln-images` (a pinned Grype) over the
+images a release of the commit publishes. A vulnerability whose vulnerable
+code the module reaches, a high or critical JavaScript advisory, or a fixed
+high or critical vulnerability in an image fails that run like any other
+nightly failure; the fix is to bump the module, package or base image to the
 version the report names. It runs the README's Quickstart on a clone of the
 commit (`scripts/quickstart-smoke.sh`) as a job of its own too, because no
 proof runs the getting-started path: a stack that no longer builds or starts
@@ -982,10 +986,12 @@ of the fix or of a commit after it, passes. What it holds is the release: a
 release tag requires a passing pre-release proof, which runs every deferred
 test, so no tag is made while one fails, and a failing pre-release proof holds
 its release the same way. The pre-release proof runs neither the nightly's own
-lanes nor its vulnerability scan, so a release is not tagged while either is
-red, and `release.yml` checks it: before it asks for the approval, it refuses
-a commit whose latest completed nightly on `main` did not pass, or that no
-nightly measured, waiting a bounded time for one still running. (`make
+lanes nor its vulnerability scan (`vuln`, `vuln-js` and `vuln-images`), so a
+release is not tagged while either is red, and `release.yml` checks it: before
+it asks for the approval, it refuses a commit whose latest completed nightly on
+`main` did not pass (its proof, each of the scan's three jobs and
+`quickstart`), or that no nightly measured, waiting a bounded time for one
+still running. (`make
 release-tag`, which publishes nothing, leaves it a rule.) A nightly's verdict
 is its `proof.json`,
 not the run's colour (docs/PROOFS.md §10, §12). A nightly part whose runner measured below the
@@ -1034,7 +1040,9 @@ Every code change follows this order:
    and a false positive carries a line-level `//lint:ignore` that says why.
    `make vuln`, the pinned `govulncheck`, reads the vulnerability database
    over the network, so it is in no lint and no proof, where a network failure
-   must never fail one; `ci.yml` and `nightly.yml` run it.
+   must never fail one; `ci.yml` and `nightly.yml` run it. `make vuln-js` and
+   `make vuln-images`, the scan's other two lanes, need the network too;
+   `nightly.yml` alone runs them.
 1. For a process-boundary change, edit `proto/` first and run `make proto`.
 2. For a new configuration setting: add it to `internal/config`'s `Schema`
    (its default bound to the code constant, `internal/config/config.go`),
