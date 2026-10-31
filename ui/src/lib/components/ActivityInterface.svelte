@@ -8,8 +8,8 @@
 	// "none" and "malformed" are answers, not failures: an image without the
 	// label is an ordinary activity whose with: the image itself checks at run
 	// time, and a malformed label still pinned and still runs.
-	import type { ActivityInfo } from '$lib/gen/orkstack/v1/activity_service_pb';
-	import { interfaceHeadline, interfaceRows, valueRows } from '$lib/activity';
+	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
+	import { interfaceHeadline, interfaceRows, valueRows } from '#lib/activity.ts';
 
 	interface Props {
 		info: ActivityInfo;

@@ -9,14 +9,14 @@
 	// its runs are the page's failed runs, grouped.
 	//
 	// It renders exactly what `orkctl stats failures` renders from the same
-	// response (cmd/orkctl/stats_failures.go): the helpers in $lib/stats are
+	// response (cmd/orkctl/stats_failures.go): the helpers in #lib/stats.ts are
 	// shared spellings, not a second opinion.
 	import { durationFromMs, timestampFromDate, type Timestamp } from '@bufbuild/protobuf/wkt';
-	import { errorMessage } from '$lib/client';
-	import { statsClient } from '$lib/clients/stats';
-	import { listHref, runWindowFilters } from '$lib/browsing';
-	import { namespaceLabel } from '$lib/namespace';
-	import { shellQuote } from '$lib/runDetail';
+	import { errorMessage } from '#lib/client.ts';
+	import { statsClient } from '#lib/clients/stats.ts';
+	import { listHref, runWindowFilters } from '#lib/browsing.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
 	import {
 		DEFAULT_FINGERPRINT,
 		FINGERPRINT_DIMENSIONS,
@@ -25,8 +25,8 @@
 		fmtInstant,
 		groupBySpelling,
 		timestampMs
-	} from '$lib/stats';
-	import { FailureGroupBy, type GetFailureBreakdownResponse } from '$lib/gen/orkstack/v1/stats_pb';
+	} from '#lib/stats.ts';
+	import { FailureGroupBy, type GetFailureBreakdownResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 

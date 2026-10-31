@@ -10,18 +10,18 @@
 	import { invalidateAll } from '$app/navigation';
 	import { create } from '@bufbuild/protobuf';
 	import { timestampFromDate } from '@bufbuild/protobuf/wkt';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import Dialog from '$lib/components/Dialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import { parseInputObject } from '$lib/authoring';
-	import { errorMessage } from '$lib/client';
-	import { scheduleClient } from '$lib/clients/schedules';
-	import { PayloadSchema } from '$lib/gen/orkstack/v1/common_pb';
-	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-	import { ScheduleSpecSchema, type Schedule } from '$lib/gen/orkstack/v1/schedule_pb';
-	import { namespaceLabel, withNamespace } from '$lib/namespace';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import Dialog from '#lib/components/Dialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import { parseInputObject } from '#lib/authoring.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { scheduleClient } from '#lib/clients/schedules.ts';
+	import { PayloadSchema } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import type { OrkflowVersion } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+	import { ScheduleSpecSchema, type Schedule } from '#lib/gen/orkstack/v1/schedule_pb.ts';
+	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
 	import {
 		OVERLAP_POLICY_SLUGS,
 		fireOutcome,
@@ -38,7 +38,7 @@
 		scheduleResumeCli,
 		scheduleState,
 		whenLabel
-	} from '$lib/schedules';
+	} from '#lib/schedules.ts';
 
 	interface Props {
 		name: string;

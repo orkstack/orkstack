@@ -9,7 +9,7 @@
 // summary line — which orkflow, which child run — needs neither, so it is
 // there from the first paint.
 //
-// It also carries the event stream's terminal state ($lib/runEvents): a
+// It also carries the event stream's terminal state (#lib/runEvents.ts): a
 // child stream that stopped reconnecting reports 'failed' with its reason,
 // and retry() follows again.
 

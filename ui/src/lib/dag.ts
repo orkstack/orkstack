@@ -600,7 +600,7 @@ export function chooseDagDirection(tasks: Task[], frame: { width: number; height
  * frame it is drawn in) unless the address asks for one — `dag=lr` or
  * `dag=tb`, a reader's override that a shared link carries.
  */
-export function dagDirectionParam(url: URL): DagDirection | 'auto' {
+export function dagDirectionParam(url: { readonly searchParams: Pick<URLSearchParams, 'get'> }): DagDirection | 'auto' {
 	const asked = url.searchParams.get('dag');
 	return asked === 'lr' ? 'LR' : asked === 'tb' ? 'TB' : 'auto';
 }

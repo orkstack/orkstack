@@ -10,7 +10,7 @@
 	// same two halves each testid was already built from before this
 	// extraction, kept verbatim so nothing that reads them (Playwright specs,
 	// unit tests) has to change.
-	import type { TaskLogExport } from '$lib/gen/orkstack/v1/telemetry_pb';
+	import type { TaskLogExport } from '#lib/gen/orkstack/v1/telemetry_pb.ts';
 	import Select from './Select.svelte';
 
 	export type TaskLogsChoice = 'inherit' | 'enabled' | 'disabled';

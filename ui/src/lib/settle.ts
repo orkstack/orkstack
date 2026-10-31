@@ -1,15 +1,15 @@
 // A re-read the page starts on its own — a live event, a timer — must never
-// cost the reader a click.
+// cost the reader a click, and a click must not cost the page its re-read.
 //
-// SvelteKit hands the router to whichever began last: an invalidation started
-// while a navigation is still loading takes the navigation's token, and the
-// navigation's result is then discarded when it arrives (client.js
-// `_invalidate`: "the invalidation should take over and win"). So a run page
-// that re-read itself the moment its run finished swallowed a link clicked in
-// that same instant: the destination's data was fetched and thrown away, and
-// the reader was left on the run page with nothing to say why. Observed in
+// A navigation and an invalidation that overlap cannot both be applied.
+// SvelteKit 2 handed the router to whichever began last, so a run page that
+// re-read itself the moment its run finished swallowed a link clicked in that
+// same instant: the destination's data was fetched and thrown away, and the
+// reader was left on the run page with nothing to say why (observed in
 // e2e/run-origin.spec.ts — the trigger link, clicked as RUN_SUCCEEDED
-// arrived, never left /runs/<id>.
+// arrived, never left /runs/<id>). SvelteKit 3 lets the navigation win
+// instead (client.js `_invalidate` gives up when a navigation began or landed
+// while it loaded), so it is the re-read that is dropped.
 //
 // afterNavigation waits out every navigation in flight first, then re-reads
 // only if the page that asked is still mounted: a navigation that left it has

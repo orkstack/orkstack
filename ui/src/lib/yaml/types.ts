@@ -1,4 +1,4 @@
-// The YAML editor's vocabulary, shared by its pure modules (lint, server
+// The YAML editor's vocabulary, shared by its pure modules (lint, engine
 // findings, status, completion, highlighting) and the Svelte component that
 // draws them. Nothing here imports CodeMirror, so every rule is unit-tested
 // under bun without a DOM.

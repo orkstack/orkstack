@@ -1,6 +1,6 @@
 // The reader's appearance choice as shared state: the top bar's switch, the
 // menu drawer's copy of it and the command palette all read and change this
-// one value. The functions underneath are $lib/theme.ts's; this only holds
+// one value. The functions underneath are #lib/theme.ts's; this only holds
 // the choice so three controls cannot disagree about which is pressed.
 import { applyTheme, rememberTheme, rememberedTheme, type Theme } from './theme';
 

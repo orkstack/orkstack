@@ -1,8 +1,8 @@
-import { errorMessage } from '$lib/client';
-import { runClient } from '$lib/clients/runs';
-import { namespaceFrom } from '$lib/namespace';
-import { pageNumber, pageSize } from '$lib/browsing';
-import { filtersFromUrl } from '$lib/listFilter';
+import { errorMessage } from '#lib/client.ts';
+import { runClient } from '#lib/clients/runs.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
+import { pageNumber, pageSize } from '#lib/browsing.ts';
+import { filtersFromUrl } from '#lib/listFilter.ts';
 import type { PageLoad } from './$types';
 
 export const load: PageLoad = async ({ fetch, url }) => {

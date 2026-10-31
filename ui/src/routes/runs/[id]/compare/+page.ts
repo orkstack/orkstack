@@ -1,8 +1,8 @@
-import { errorMessage } from '$lib/client';
-import { runClient } from '$lib/clients/runs';
-import { namespaceFrom } from '$lib/namespace';
-import { parseOnly } from '$lib/runDiff';
-import type { DiffRunsResponse } from '$lib/gen/orkstack/v1/run_service_pb';
+import { errorMessage } from '#lib/client.ts';
+import { runClient } from '#lib/clients/runs.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
+import { parseOnly } from '#lib/runDiff.ts';
+import type { DiffRunsResponse } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 import type { PageLoad } from './$types';
 
 // The comparison is one read, computed by the engine on every call: the page

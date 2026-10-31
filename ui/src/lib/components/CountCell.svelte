@@ -8,9 +8,9 @@
 	// The one rule the band exists to keep: a number that could not be
 	// answered says so. When `value` is UNAVAILABLE the figure is set in the
 	// muted "no answer" face, never as a figure a reader would act on.
-	import type { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { UNAVAILABLE } from '$lib/stats';
-	import { statusMark } from '$lib/statusMarks';
+	import type { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { UNAVAILABLE } from '#lib/stats.ts';
+	import { statusMark } from '#lib/statusMarks.ts';
 
 	interface Props {
 		label: string;

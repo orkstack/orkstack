@@ -11,8 +11,8 @@
 	import CliEquivalent from './CliEquivalent.svelte';
 	import Dialog from './Dialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
-	import { errorMessage } from '$lib/client';
-	import { runClient } from '$lib/clients/runs';
+	import { errorMessage } from '#lib/client.ts';
+	import { runClient } from '#lib/clients/runs.ts';
 	import {
 		absentMembers,
 		collectEvidence,
@@ -24,7 +24,7 @@
 		evidenceTooLarge,
 		parseManifest,
 		type Manifest
-	} from '$lib/evidence';
+	} from '#lib/evidence.ts';
 
 	interface Props {
 		runId: string;
@@ -67,7 +67,7 @@
 		};
 	}
 
-	// Collects one stream; resolves only when `last` arrived ($lib/evidence).
+	// Collects one stream; resolves only when `last` arrived (#lib/evidence.ts).
 	function collect(manifestOnly: boolean, signal: AbortSignal): Promise<Uint8Array[]> {
 		return collectEvidence(runClient(fetch).exportRunEvidence(request(manifestOnly), { signal }), manifestOnly);
 	}

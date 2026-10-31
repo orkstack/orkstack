@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The task map: every task and every fan-out item of a run as one cell,
-	// drawn by status, on one <canvas>. See $lib/taskMap for the model, the
+	// drawn by status, on one <canvas>. See #lib/taskMap.ts for the model, the
 	// geometry and the keys; this component only wires them to the page.
 	//
 	// NOTHING here runs on the path that draws the run's header and cards. The
@@ -17,8 +17,8 @@
 	// has a full-size equivalent below the map (its task's card, its item's
 	// button), which is why cells may be smaller than 24 px (WCAG 2.5.8).
 	import { onDestroy, untrack } from 'svelte';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { layerOrder } from '$lib/dag';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { layerOrder } from '#lib/dag.ts';
 	import {
 		LABEL_H,
 		browserIdle,
@@ -39,7 +39,7 @@
 		type MapGeometry,
 		type MapModel,
 		type MapTask
-	} from '$lib/taskMap';
+	} from '#lib/taskMap.ts';
 
 	interface Props {
 		/** The run's tasks as the map reads them; called only in idle time and per revision. */

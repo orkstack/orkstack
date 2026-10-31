@@ -301,7 +301,7 @@ export function validateNamespaceForm(
 	}
 
 	// Blank means inherit — the same rule the deployment-maximum form
-	// ($lib/retentionForm.ts) uses, checked here only when the field carries
+	// (#lib/retentionForm.ts) uses, checked here only when the field carries
 	// something. This module is a prefilter, never a gate (see the file's
 	// own doc comment above): whether the value fits under the deployment
 	// maximum is the server's call (internal/api.validNamespaceRetention),

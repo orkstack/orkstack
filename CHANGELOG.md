@@ -11,6 +11,13 @@ word for word.
 
 ## [Unreleased]
 
+### Changed
+
+- The web UI is built with SvelteKit 3, Vite 8 and Svelte 5.57. An open UI
+  tab now also asks the engine for the UI's build version
+  (`/_app/version.json`) every hour and when the tab regains focus, as
+  SvelteKit 3 does by default.
+
 ## [0.1.0] - 2026-10-30
 
 First release.

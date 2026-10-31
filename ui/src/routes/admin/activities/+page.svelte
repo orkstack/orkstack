@@ -13,24 +13,24 @@
 	// sorts nothing. A client-side sort would silently take that guarantee
 	// over from the server, and the next reader would not know which of the
 	// two was in force.
-	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
+	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '#lib/clipboard.ts';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import { listHref } from '$lib/browsing';
-	import type { FieldFilter } from '$lib/listFilter';
-	import { namespaceLabel } from '$lib/namespace';
-	import { ListActivitiesRequestSchema } from '$lib/gen/orkstack/v1/activity_service_pb';
-	import ActivityInterface from '$lib/components/ActivityInterface.svelte';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import { inspectCommand, interfaceSummary, pinnedReference, shortDigest } from '$lib/activity';
-	import { errorMessage } from '$lib/client';
-	import { activityClient } from '$lib/clients/activities';
-	import type { ActivityInfo } from '$lib/gen/orkstack/v1/activity_service_pb';
-	import { fmtTimestamp } from '$lib/status';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import { listHref } from '#lib/browsing.ts';
+	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import { ListActivitiesRequestSchema } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
+	import ActivityInterface from '#lib/components/ActivityInterface.svelte';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import { inspectCommand, interfaceSummary, pinnedReference, shortDigest } from '#lib/activity.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { activityClient } from '#lib/clients/activities.ts';
+	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -39,7 +39,7 @@
 	// lists"). `ns` rides along for links out of this page; it does not scope
 	// the catalog.
 	function applyFilters(filters: FieldFilter[]) {
-		void goto(listHref('/admin/activities', { ns: namespaceLabel(data.namespace) }, { filter: filters }), { keepFocus: true, noScroll: true });
+		void goto(listHref('/admin/activities', { ns: namespaceLabel(data.namespace) }, { filter: filters }), { reset: false });
 	}
 	const clearHref = $derived(listHref('/admin/activities', { ns: namespaceLabel(data.namespace) }));
 

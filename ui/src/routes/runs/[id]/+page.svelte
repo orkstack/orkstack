@@ -1,23 +1,23 @@
 <script lang="ts">
-	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
-	import { pollWhileVisible } from '$lib/visibility';
-	import { rememberRecent } from '$lib/palette/recent';
+	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '#lib/clipboard.ts';
+	import { pollWhileVisible } from '#lib/visibility.ts';
+	import { rememberRecent } from '#lib/palette/recent.ts';
 	import { onDestroy, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import ArtifactProvenance from '$lib/components/ArtifactProvenance.svelte';
-	import AwaitPanel from '$lib/components/AwaitPanel.svelte';
-	import ChildRunPanel from '$lib/components/ChildRunPanel.svelte';
-	import { childLabel, childrenListHref } from '$lib/compose';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import Dialog from '$lib/components/Dialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import EventInspector from '$lib/components/EventInspector.svelte';
-	import RunEvidenceDialog from '$lib/components/RunEvidenceDialog.svelte';
-	import RunSubmitPanel from '$lib/components/RunSubmitPanel.svelte';
-	import StatusPill from '$lib/components/StatusPill.svelte';
-	import TaskLogPane from '$lib/components/TaskLogPane.svelte';
-	import EachItemGrid from '$lib/components/EachItemGrid.svelte';
+	import ArtifactProvenance from '#lib/components/ArtifactProvenance.svelte';
+	import AwaitPanel from '#lib/components/AwaitPanel.svelte';
+	import ChildRunPanel from '#lib/components/ChildRunPanel.svelte';
+	import { childLabel, childrenListHref } from '#lib/compose.ts';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import Dialog from '#lib/components/Dialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import EventInspector from '#lib/components/EventInspector.svelte';
+	import RunEvidenceDialog from '#lib/components/RunEvidenceDialog.svelte';
+	import RunSubmitPanel from '#lib/components/RunSubmitPanel.svelte';
+	import StatusPill from '#lib/components/StatusPill.svelte';
+	import TaskLogPane from '#lib/components/TaskLogPane.svelte';
+	import EachItemGrid from '#lib/components/EachItemGrid.svelte';
 	import {
 		applyItemEvents,
 		itemFromUrl,
@@ -25,14 +25,14 @@
 		mergeItems,
 		retriedItemsLabel,
 		type ItemView
-	} from '$lib/each';
-	import FailurePanel from '$lib/components/FailurePanel.svelte';
-	import { plainFailure } from '$lib/failureText';
-	import Icon from '$lib/components/Icon.svelte';
-	import RetryBadge from '$lib/components/RetryBadge.svelte';
-	import CacheBadge from '$lib/components/CacheBadge.svelte';
-	import type { CacheResult } from '$lib/gen/orkstack/v1/activity_pb';
-	import { CacheOutcome, JoinPolicy } from '$lib/gen/orkstack/v1/activity_pb';
+	} from '#lib/each.ts';
+	import FailurePanel from '#lib/components/FailurePanel.svelte';
+	import { plainFailure } from '#lib/failureText.ts';
+	import Icon from '#lib/components/Icon.svelte';
+	import RetryBadge from '#lib/components/RetryBadge.svelte';
+	import CacheBadge from '#lib/components/CacheBadge.svelte';
+	import type { CacheResult } from '#lib/gen/orkstack/v1/activity_pb.ts';
+	import { CacheOutcome, JoinPolicy } from '#lib/gen/orkstack/v1/activity_pb.ts';
 	import {
 		failingBannerText,
 		isFailingNote,
@@ -40,7 +40,7 @@
 		joinWord,
 		outstandingHandlers,
 		runFailing
-	} from '$lib/join';
+	} from '#lib/join.ts';
 	import {
 		cacheOutcomeLabel,
 		cacheSourceHref,
@@ -49,21 +49,21 @@
 		memoWriteSentence,
 		missReasonSentence,
 		sourceAttemptDuration
-	} from '$lib/cache';
-	import AttemptTimeline from '$lib/components/AttemptTimeline.svelte';
-	import TimingBar from '$lib/components/TimingBar.svelte';
-	import { formatQuantity, taskTiming, timelinePlacement } from '$lib/timing';
-	import { timestampMs } from '$lib/stats';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import { defaultCompareTarget } from '$lib/runDiff';
-	import { errorMessage } from '$lib/client';
-	import { runClient } from '$lib/clients/runs';
-	import { statsClient } from '$lib/clients/stats';
-	import { artifactMetadata, commandWords, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shortRunId, taskRunCommand, timestampJson } from '$lib/runDetail';
-	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '$lib/eventBuffer';
-	import { eventBatcher, slicedApply } from '$lib/eventBatch';
-	import { Status, type ArtifactRef, type Payload } from '$lib/gen/orkstack/v1/common_pb';
+	} from '#lib/cache.ts';
+	import AttemptTimeline from '#lib/components/AttemptTimeline.svelte';
+	import TimingBar from '#lib/components/TimingBar.svelte';
+	import { formatQuantity, taskTiming, timelinePlacement } from '#lib/timing.ts';
+	import { timestampMs } from '#lib/stats.ts';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import { defaultCompareTarget } from '#lib/runDiff.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { runClient } from '#lib/clients/runs.ts';
+	import { statsClient } from '#lib/clients/stats.ts';
+	import { artifactMetadata, commandWords, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shortRunId, taskRunCommand, timestampJson } from '#lib/runDetail.ts';
+	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '#lib/eventBuffer.ts';
+	import { eventBatcher, slicedApply } from '#lib/eventBatch.ts';
+	import { Status, type ArtifactRef, type Payload } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import {
 		EventType,
 		TaskAwaitSchema,
@@ -76,7 +76,7 @@
 		type TaskChild,
 		type TaskEach,
 		type TaskRun
-	} from '$lib/gen/orkstack/v1/run_pb';
+	} from '#lib/gen/orkstack/v1/run_pb.ts';
 	import { create } from '@bufbuild/protobuf';
 	import {
 		attemptsKey,
@@ -87,14 +87,14 @@
 		seedStillCurrent,
 		type FailureTries,
 		type SeedKey
-	} from '$lib/attempts';
+	} from '#lib/attempts.ts';
 	import { Code, ConnectError } from '@connectrpc/connect';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
-	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
-	import { flakesCli } from '$lib/flakes';
-	import { watchRunEvents, type RunSocketState } from '$lib/runEvents';
-	import { runWindowFilters } from '$lib/browsing';
-	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
+	import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
+	import { flakesCli } from '#lib/flakes.ts';
+	import { watchRunEvents, type RunSocketState } from '#lib/runEvents.ts';
+	import { runWindowFilters } from '#lib/browsing.ts';
+	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '#lib/namespace.ts';
 	import {
 		PRINCIPAL_CAPTION,
 		UNRECORDED,
@@ -102,30 +102,30 @@
 		originKindSlug,
 		originLinkPath,
 		originReferenceURL
-	} from '$lib/origin';
-	import { fmtTimestamp, isTerminal, isTerminalEventType, keepsEventMessage, statusLabel, taskDispatched } from '$lib/status';
-	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '$lib/activity';
-	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
-	import type { CommitRef } from '$lib/gen/orkstack/v1/activity_pb';
-	import { ArtifactKind, type LiveAttempt, type RunArtifact } from '$lib/gen/orkstack/v1/run_service_pb';
-	import { liveLine } from '$lib/live';
-	import { afterNavigation } from '$lib/settle';
-	import DrawingFrame, { type DrawingView } from '$lib/components/DrawingFrame.svelte';
-	import RevisionCloud from '$lib/components/RevisionCloud.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import MoreMenu from '$lib/components/MoreMenu.svelte';
-	import TaskMap from '$lib/components/TaskMap.svelte';
-	import TaskMapLegend from '$lib/components/TaskMapLegend.svelte';
-	import VersionTable from '$lib/components/VersionTable.svelte';
-	import { DAG_DRAW_LIMIT, dagDirectionParam, type NodeState } from '$lib/dag';
-	import { itemLabel } from '$lib/each';
-	import { isFailureHandler } from '$lib/join';
-	import { recordSeen } from '$lib/heldRuns';
-	import { registerProvider } from '$lib/palette/context';
-	import { commandId, type Command } from '$lib/palette/commands';
-	import { match } from '$lib/palette/rank';
-	import { setTitleBlock } from '$lib/sheet.svelte';
-	import { scrollToCard, twoFrames, type MapTask } from '$lib/taskMap';
+	} from '#lib/origin.ts';
+	import { fmtTimestamp, isTerminal, isTerminalEventType, keepsEventMessage, statusLabel, taskDispatched } from '#lib/status.ts';
+	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '#lib/activity.ts';
+	import type { Error as OrkError } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import type { CommitRef } from '#lib/gen/orkstack/v1/activity_pb.ts';
+	import { ArtifactKind, type LiveAttempt, type RunArtifact } from '#lib/gen/orkstack/v1/run_service_pb.ts';
+	import { liveLine } from '#lib/live.ts';
+	import { afterNavigation } from '#lib/settle.ts';
+	import DrawingFrame, { type DrawingView } from '#lib/components/DrawingFrame.svelte';
+	import RevisionCloud from '#lib/components/RevisionCloud.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import MoreMenu from '#lib/components/MoreMenu.svelte';
+	import TaskMap from '#lib/components/TaskMap.svelte';
+	import TaskMapLegend from '#lib/components/TaskMapLegend.svelte';
+	import VersionTable from '#lib/components/VersionTable.svelte';
+	import { DAG_DRAW_LIMIT, dagDirectionParam, type NodeState } from '#lib/dag.ts';
+	import { itemLabel } from '#lib/each.ts';
+	import { isFailureHandler } from '#lib/join.ts';
+	import { recordSeen } from '#lib/heldRuns.ts';
+	import { registerProvider } from '#lib/palette/context.ts';
+	import { commandId, type Command } from '#lib/palette/commands.ts';
+	import { match } from '#lib/palette/rank.ts';
+	import { setTitleBlock } from '#lib/sheet.svelte.ts';
+	import { scrollToCard, twoFrames, type MapTask } from '#lib/taskMap.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -775,7 +775,7 @@
 	// router from a navigation the reader already began — a link clicked in
 	// the instant the run finished used to be silently dropped — so each waits
 	// that navigation out, and is skipped when it left this page (see
-	// $lib/settle).
+	// #lib/settle.ts).
 	let mounted = true;
 	onDestroy(() => (mounted = false));
 	function rereadOnEvent(): Promise<boolean> {
@@ -855,7 +855,7 @@
 		})();
 	}
 
-	// applyEvents takes one frame's worth of socket events ($lib/eventBatch),
+	// applyEvents takes one frame's worth of socket events (#lib/eventBatch.ts),
 	// in delivery order: ONE buffer append for the batch, ONE item-array copy
 	// and write per fan-out it touches, and the reducer below for every other
 	// event.
@@ -1163,7 +1163,7 @@
 	const eventsOpen = $derived(page.url.searchParams.get('events') === '1');
 	function eventsHref(open: boolean): string {
 		void shallowTick;
-		const params = new URLSearchParams(typeof location === 'undefined' ? page.url.searchParams : location.search);
+		const params = new URLSearchParams(typeof location === 'undefined' ? page.url.search : location.search);
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
 		params.delete('events');
 		if (open) params.set('events', '1');
@@ -1241,7 +1241,7 @@
 	});
 
 	function taskHref(taskId: string, attempt = 0, item?: number): string {
-		const params = new URLSearchParams(page.url.searchParams);
+		const params = new URLSearchParams(page.url.search);
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
 		params.set('task', taskId);
 		if (attempt > 0) params.set('attempt', String(attempt));
@@ -1419,11 +1419,13 @@
 	// A shallow write moves the address bar and NOT page.url (that is what
 	// makes it shallow), so every write after the first builds on the address
 	// bar itself; `shallowTick` lets the one link built from it (Show events)
-	// follow.
+	// follow. replaceState lands its write asynchronously, so the tick moves
+	// once the address bar has.
 	let shallowTick = $state(0);
 	function shallow(href: string): void {
-		replaceState(href, page.state);
-		shallowTick++;
+		void replaceState(href, page.state).then(() => {
+			shallowTick++;
+		});
 	}
 	function writeHref(next: { task?: string; attempt?: number; item?: number; view?: DrawingView }): string {
 		const params = new URLSearchParams(location.search);
@@ -1537,7 +1539,7 @@
 		}));
 	}
 	// The map's sections as its frame is sized by: every task, then each
-	// fan-out's items (the same sections the map builds, $lib/taskMap).
+	// fan-out's items (the same sections the map builds, #lib/taskMap.ts).
 	const mapSections = $derived([
 		{ count: tasks.length, labelled: false },
 		...tasks.filter((t) => isFanOut(t.id) && t.items.length > 0).map((t) => ({ count: t.items.length, labelled: true }))
@@ -1616,7 +1618,7 @@
 	const againCommand = $derived(run ? runCommand(data.namespace, ['run', 'again', run.id]) : '');
 
 	// Watching a run is seeing it: the runs list stops holding its changed
-	// mark (this browser only, $lib/heldRuns), now and on every status change
+	// mark (this browser only, #lib/heldRuns.ts), now and on every status change
 	// while the page is visible. Off the path that draws the page.
 	$effect(() => {
 		const id = data.run?.id;
@@ -1881,7 +1883,7 @@
 			<a
 				href={eventsHref(!eventsOpen)}
 				data-testid="events-toggle"
-				data-sveltekit-noscroll
+				data-sveltekit-reset="false"
 				aria-expanded={eventsOpen}
 				aria-controls="run-events"
 				class="btn max-lg:hidden">{eventsOpen ? 'Hide events' : 'Show events'}</a
@@ -1896,7 +1898,7 @@
 					{/if}
 					<button type="button" data-testid="run-more-compare" onclick={() => { close(); void openCompare(); }}>Compare</button>
 					<button type="button" data-testid="run-more-export" onclick={() => { close(); downloadJson(`${run.id}.json`, runExport()); }}>Export JSON</button>
-					<a href={eventsHref(!eventsOpen)} data-testid="run-more-events" data-sveltekit-noscroll onclick={close}>{eventsOpen ? 'Hide events' : 'Show events'}</a>
+					<a href={eventsHref(!eventsOpen)} data-testid="run-more-events" data-sveltekit-reset="false" onclick={close}>{eventsOpen ? 'Hide events' : 'Show events'}</a>
 					<button type="button" data-testid="run-more-stability" aria-pressed={historyOpen} onclick={() => { close(); toggleHistory(); }}
 						>Retry history ({HISTORY_WINDOW})</button
 					>

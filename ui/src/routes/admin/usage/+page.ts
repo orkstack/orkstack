@@ -1,11 +1,11 @@
-import { errorMessage } from '$lib/client';
-import { namespaceClient } from '$lib/clients/namespaces';
-import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
-import { pageNumber } from '$lib/browsing';
-import { usagePageSize } from '$lib/adminUsage';
-import { filtersFromUrl } from '$lib/listFilter';
-import { namespaceFrom } from '$lib/namespace';
-import { USAGE_WINDOWS } from '$lib/usage';
+import { errorMessage } from '#lib/client.ts';
+import { namespaceClient } from '#lib/clients/namespaces.ts';
+import type { Namespace } from '#lib/gen/orkstack/v1/namespace_pb.ts';
+import { pageNumber } from '#lib/browsing.ts';
+import { usagePageSize } from '#lib/adminUsage.ts';
+import { filtersFromUrl } from '#lib/listFilter.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
+import { USAGE_WINDOWS } from '#lib/usage.ts';
 import type { PageLoad } from './$types';
 
 // Admin → Usage is `orkctl stats usage --group-by namespace` in a browser:
@@ -13,7 +13,7 @@ import type { PageLoad } from './$types';
 // switcher's namespace travels in the URL only so links out keep it. The
 // loader reads ONE PAGE of the namespace list, paged and filtered the way
 // Admin → Namespaces is (`size`, `cursor`, `page`, repeated `filter`); the
-// page asks the usage of those rows only ($lib/adminUsage), a few at a time,
+// page asks the usage of those rows only (#lib/adminUsage.ts), a few at a time,
 // so one slow or failing namespace never blanks the others.
 export const load: PageLoad = async ({ fetch, url }) => {
 	const namespace = namespaceFrom(url);

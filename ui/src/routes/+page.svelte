@@ -1,19 +1,19 @@
 <script lang="ts">
-	import { pollWhileVisible } from '$lib/visibility';
+	import { pollWhileVisible } from '#lib/visibility.ts';
 	import { goto, invalidate } from '$app/navigation';
 	import { navigating } from '$app/state';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import FailureFingerprints from '$lib/components/FailureFingerprints.svelte';
-	import FlakeIndex from '$lib/components/FlakeIndex.svelte';
-	import HoldBanner from '$lib/components/HoldBanner.svelte';
-	import Popover from '$lib/components/Popover.svelte';
-	import CountCell from '$lib/components/CountCell.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import StatusPill from '$lib/components/StatusPill.svelte';
-	import UsageCard from '$lib/components/UsageCard.svelte';
-	import { listHref, runWindowFilters, sinceInputValue } from '$lib/browsing';
-	import { namespaceLabel, withNamespace } from '$lib/namespace';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import FailureFingerprints from '#lib/components/FailureFingerprints.svelte';
+	import FlakeIndex from '#lib/components/FlakeIndex.svelte';
+	import HoldBanner from '#lib/components/HoldBanner.svelte';
+	import Popover from '#lib/components/Popover.svelte';
+	import CountCell from '#lib/components/CountCell.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import StatusPill from '#lib/components/StatusPill.svelte';
+	import UsageCard from '#lib/components/UsageCard.svelte';
+	import { listHref, runWindowFilters, sinceInputValue } from '#lib/browsing.ts';
+	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
 	import {
 		UNAVAILABLE,
 		finishedRuns,
@@ -24,14 +24,14 @@
 		fmtInstantMs,
 		fmtPercent,
 		timestampMs
-	} from '$lib/stats';
-	import { fmtTimestamp } from '$lib/status';
-	import { shellQuote } from '$lib/runDetail';
-	import { afterNavigation } from '$lib/settle';
-	import { setTitleBlock } from '$lib/sheet.svelte';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
+	} from '#lib/stats.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
+	import { afterNavigation } from '#lib/settle.ts';
+	import { setTitleBlock } from '#lib/sheet.svelte.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { PageProps } from './$types';
-	import { shortRunId } from '$lib/runDetail';
+	import { shortRunId } from '#lib/runDetail.ts';
 
 	let { data }: PageProps = $props();
 
@@ -98,11 +98,11 @@
 	// requests. It invalidates THIS loader, not every loader on the page, so a
 	// refresh does not also re-read the namespace list. A tick never takes the
 	// router from a navigation the reader began — it waits that navigation out
-	// and is dropped when it left this page ($lib/settle) — so a click on the
+	// and is dropped when it left this page (#lib/settle.ts) — so a click on the
 	// dashboard is never lost to the timer.
 	let now = $state(Date.now());
 	let refreshing = $state(false);
-	// Only while the tab is visible ($lib/visibility): a background dashboard
+	// Only while the tab is visible (#lib/visibility.ts): a background dashboard
 	// asks nothing, and coming back refreshes at once.
 	$effect(() => {
 		let mounted = true;

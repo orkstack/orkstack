@@ -14,8 +14,8 @@
 	import DeclaredInputs from './DeclaredInputs.svelte';
 	import Dialog from './Dialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
-	import { errorMessage } from '$lib/client';
-	import { runClient } from '$lib/clients/runs';
+	import { errorMessage } from '#lib/client.ts';
+	import { runClient } from '#lib/clients/runs.ts';
 	import {
 		awaitCallbackUrl,
 		awaitCurl,
@@ -24,10 +24,10 @@
 		awaitStateLabel,
 		resolveCli,
 		type Timestamp
-	} from '$lib/awaits';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import type { AwaitSpec } from '$lib/gen/orkstack/v1/orkflow_pb';
-	import type { TaskAwait } from '$lib/gen/orkstack/v1/run_pb';
+	} from '#lib/awaits.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import type { AwaitSpec } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
+	import type { TaskAwait } from '#lib/gen/orkstack/v1/run_pb.ts';
 
 	interface Props {
 		runId: string;

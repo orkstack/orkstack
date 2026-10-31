@@ -1,6 +1,5 @@
-import { json } from '@sveltejs/kit';
-import { gallery } from '$lib/examples';
-import { EXAMPLE_SOURCES } from '$lib/server/examples';
+import { gallery } from '#lib/examples.ts';
+import { EXAMPLE_SOURCES } from '#lib/server/examples.ts';
 import type { RequestHandler } from './$types';
 
 // The gallery's cards — names and descriptions only — written into the static
@@ -8,4 +7,4 @@ import type { RequestHandler } from './$types';
 // (./examples/[file]), fetched when it is chosen.
 export const prerender = true;
 
-export const GET: RequestHandler = () => json(gallery(EXAMPLE_SOURCES));
+export const GET: RequestHandler = () => Response.json(gallery(EXAMPLE_SOURCES));

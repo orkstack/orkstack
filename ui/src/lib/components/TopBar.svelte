@@ -8,7 +8,7 @@
 	// copy) this one is not rendered, and neither is the namespace picker.
 	import type { Snippet } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { BUILD_PAGES, modeOf, type Mode } from '$lib/navigation';
+	import { BUILD_PAGES, modeOf, type Mode } from '#lib/navigation.ts';
 
 	interface Props {
 		pathname: string;

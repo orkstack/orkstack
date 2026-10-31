@@ -8,11 +8,11 @@
 	// UNREACHABLE and none of its numbers are drawn: "not measured" rendered
 	// as "idle" would send an operator to stop a host that may be mid-task.
 	import { onMount } from 'svelte';
-	import { errorMessage } from '$lib/client';
-	import { activityClient } from '$lib/clients/activities';
-	import { FilterOperator, filterOf } from '$lib/listFilter';
-	import type { Orker } from '$lib/gen/orkstack/v1/activity_pb';
-	import { withNamespace } from '$lib/namespace';
+	import { errorMessage } from '#lib/client.ts';
+	import { activityClient } from '#lib/clients/activities.ts';
+	import { FilterOperator, filterOf } from '#lib/listFilter.ts';
+	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
+	import { withNamespace } from '#lib/namespace.ts';
 	import {
 		cordonCommand,
 		orkerCommand,
@@ -20,8 +20,8 @@
 		orkerPins,
 		orkerState,
 		orkerTasks
-	} from '$lib/orkers';
-	import { fmtTimestamp } from '$lib/status';
+	} from '#lib/orkers.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';

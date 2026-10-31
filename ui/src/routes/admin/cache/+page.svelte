@@ -5,14 +5,14 @@
 	// purging changes no result, only whether the next run of a cached task
 	// runs its container (docs/DSL.md "Caching").
 	import { goto, invalidateAll } from '$app/navigation';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import Dialog from '$lib/components/Dialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import { errorMessage } from '$lib/client';
-	import { cacheClient } from '$lib/clients/cache';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import Dialog from '#lib/components/Dialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import { errorMessage } from '#lib/client.ts';
+	import { cacheClient } from '#lib/clients/cache.ts';
 	import {
 		CACHE_WINDOWS,
 		cacheStatsCli,
@@ -24,9 +24,9 @@
 		reusedLabel,
 		scopeName,
 		type PurgeSelector
-	} from '$lib/cache';
-	import { namespaceLabel, withNamespace } from '$lib/namespace';
-	import { fmtInstant } from '$lib/stats';
+	} from '#lib/cache.ts';
+	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { fmtInstant } from '#lib/stats.ts';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
 

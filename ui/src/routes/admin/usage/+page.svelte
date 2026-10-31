@@ -6,24 +6,24 @@
 	// Namespaces, and one GetUsage per row ON THIS PAGE, four at a time, each
 	// row with its own loading and error state: a namespace the server cannot
 	// measure says so in its own row, in the server's words, and the others
-	// still render ($lib/adminUsage).
+	// still render (#lib/adminUsage.ts).
 	import { goto, invalidateAll } from '$app/navigation';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import Pagination from '$lib/components/Pagination.svelte';
-	import { errorMessage } from '$lib/client';
-	import { statsClient } from '$lib/clients/stats';
-	import { measureUsage, type UsageRow } from '$lib/adminUsage';
-	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
-	import { ListNamespacesRequestSchema } from '$lib/gen/orkstack/v1/namespace_service_pb';
-	import type { GetUsageResponse } from '$lib/gen/orkstack/v1/stats_pb';
-	import type { FieldFilter } from '$lib/listFilter';
-	import { namespaceLabel, withNamespace } from '$lib/namespace';
-	import { fmtInstant } from '$lib/stats';
-	import { USAGE_CAVEAT, USAGE_WINDOWS, adminUsageCli, budgetCellLabel, fmtUnitSeconds } from '$lib/usage';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import Pagination from '#lib/components/Pagination.svelte';
+	import { errorMessage } from '#lib/client.ts';
+	import { statsClient } from '#lib/clients/stats.ts';
+	import { measureUsage, type UsageRow } from '#lib/adminUsage.ts';
+	import { listHref, pageStackKey, readPageStack, writePageStack } from '#lib/browsing.ts';
+	import { ListNamespacesRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
+	import type { GetUsageResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
+	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { fmtInstant } from '#lib/stats.ts';
+	import { USAGE_CAVEAT, USAGE_WINDOWS, adminUsageCli, budgetCellLabel, fmtUnitSeconds } from '#lib/usage.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -92,7 +92,7 @@
 	const firstHref = $derived(href({ cursor: '', page: '' }));
 	function applyFilters(filters: FieldFilter[]) {
 		writePageStack(stackKey, []);
-		void goto(href({ cursor: '', page: '' }, { filter: filters }), { keepFocus: true, noScroll: true });
+		void goto(href({ cursor: '', page: '' }, { filter: filters }), { reset: false });
 	}
 	const clearHref = $derived(href({ cursor: '', page: '' }, {}));
 	const windowHref = (window: string) => href({ window, cursor: '', page: '' });

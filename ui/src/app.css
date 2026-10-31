@@ -387,7 +387,7 @@
 	/* The status stamp: a 1 px frame, tracked caps, and a drawn mark before
 	   the word. The mark is CSS only — no element — because a run page holds
 	   thousands of stamps. Statuses differ by mark shape, never by hue alone
-	   (WCAG 1.4.1); $lib/statusMarks.ts names the mark of each status. */
+	   (WCAG 1.4.1); #lib/statusMarks.ts names the mark of each status. */
 	.stamp {
 		display: inline-flex;
 		align-items: center;

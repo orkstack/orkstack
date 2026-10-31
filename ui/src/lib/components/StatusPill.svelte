@@ -1,13 +1,13 @@
 <script lang="ts">
 	// A status, stamped: a 1 px frame, tracked caps, and the status's drawn
-	// mark before its word ($lib/statusMarks.ts). The mark is CSS on the stamp
+	// mark before its word (#lib/statusMarks.ts). The mark is CSS on the stamp
 	// itself — RUNNING and AWAITING alone draw theirs as one inner span — so a
 	// run page of thousands of stamps adds no element per stamp, and no
 	// reactive node beyond its props. The text is exactly the status word and
 	// nothing else: lists read it as the cell's whole text.
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { statusLabel } from '$lib/status';
-	import { stampClass } from '$lib/statusMarks';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { statusLabel } from '#lib/status.ts';
+	import { stampClass } from '#lib/statusMarks.ts';
 
 	let { status, testid }: { status: Status | undefined; testid?: string } = $props();
 </script>

@@ -1,8 +1,7 @@
 // The authored documents' placeholders, and the one apiVersion they name.
 //
 // This module imports nothing, so a Bun unit test and a Playwright spec can
-// both import it by relative path ($lib resolves only inside the SvelteKit
-// build).
+// both import it by relative path.
 
 // The document format version every authored OrkStack document names (dsl.APIVersion).
 // ui/test/authoredSchemas.test.ts holds it to the generated schemas' const.

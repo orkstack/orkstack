@@ -1,6 +1,6 @@
 // The Admin retention forms' local validation, shared by the deployment
 // maximum (this page) and a namespace's own run retention
-// ($lib/namespaceRules.ts): an hours field must parse to a positive, finite
+// (#lib/namespaceRules.ts): an hours field must parse to a positive, finite
 // number before the browser ever asks UpdateRetentionPolicy or
 // CreateNamespace/UpdateNamespace for anything. This mirrors the engine's
 // own rule (internal/api/system.go: a non-positive duration is rejected

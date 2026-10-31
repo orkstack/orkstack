@@ -13,7 +13,7 @@
 	// in the document they belong to, a removed line left set back, and every
 	// line still its own bytes. Other diffs (a run's JSON input) stay as they are.
 	import { onMount } from 'svelte';
-	import type { DiffRow } from '$lib/yaml/highlight';
+	import type { DiffRow } from '#lib/yaml/highlight.ts';
 
 	interface Props {
 		diff: string;
@@ -29,7 +29,7 @@
 	onMount(() => {
 		if (lang !== 'yaml') return;
 		let gone = false;
-		import('$lib/yaml/highlight')
+		import('#lib/yaml/highlight.ts')
 			.then((m) => {
 				if (!gone) colour = m.diffSegments;
 			})

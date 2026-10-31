@@ -14,8 +14,8 @@
 	// platforms and not on others; here it never does. `onchange` fires on
 	// exactly two gestures — Enter/Space on a highlighted row, or a click on a
 	// row — and Escape is guaranteed to leave the value it found.
-	import { dismissOnOutsideOrEscape } from '$lib/dismiss';
-	import { selectAria } from '$lib/selectName';
+	import { dismissOnOutsideOrEscape } from '#lib/dismiss.ts';
+	import { selectAria } from '#lib/selectName.ts';
 
 	interface Option {
 		value: string;

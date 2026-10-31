@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { BUILD_PAGES, OPERATE_PAGES, buildPageOf, modeOf, operatePageOf, operateScope, pageOf } from '../src/lib/navigation';
 import { pageCommands } from '../src/lib/palette/commands';
 
-// The app's map ($lib/navigation.ts) is the one list the top bar, the Operate
+// The app's map (#lib/navigation.ts) is the one list the top bar, the Operate
 // strip, the drawer, the palette and the title block read. These hold it to
 // the routes that exist.
 const routes = `${import.meta.dir}/../src/routes`;
@@ -69,5 +69,5 @@ test('the root layout imports no run or Orkflow client statically (the palette l
 	for (const from of statics) {
 		expect(/clients\/(runs|orkflows)|palette\/(sources|CommandPalette)|CommandPalette/.test(from)).toBe(false);
 	}
-	expect(/import\(\s*['"]\$lib\/components\/CommandPalette\.svelte['"]\s*\)/.test(layout)).toBe(true);
+	expect(/import\(\s*['"]#lib\/components\/CommandPalette\.svelte['"]\s*\)/.test(layout)).toBe(true);
 });

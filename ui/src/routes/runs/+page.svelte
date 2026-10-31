@@ -1,31 +1,31 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import Pagination from '$lib/components/Pagination.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import StatusPill from '$lib/components/StatusPill.svelte';
-	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
-	import { fmtTimestamp } from '$lib/status';
-	import { UNRECORDED, UNRECORDED_CAPTION, originKindSlug } from '$lib/origin';
-	import { namespaceLabel, withNamespace } from '$lib/namespace';
-	import { shellQuote } from '$lib/runDetail';
-	import { equalityOf, type FieldFilter } from '$lib/listFilter';
-	import { ListRunsRequestSchema } from '$lib/gen/orkstack/v1/run_service_pb';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import Pagination from '#lib/components/Pagination.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import StatusPill from '#lib/components/StatusPill.svelte';
+	import { listHref, pageStackKey, readPageStack, writePageStack } from '#lib/browsing.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
+	import { UNRECORDED, UNRECORDED_CAPTION, originKindSlug } from '#lib/origin.ts';
+	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
+	import { equalityOf, type FieldFilter } from '#lib/listFilter.ts';
+	import { ListRunsRequestSchema } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	import type { PageProps } from './$types';
 	import { untrack } from 'svelte';
-	import Icon from '$lib/components/Icon.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import type { Run } from '$lib/gen/orkstack/v1/run_pb';
-	import { runClient } from '$lib/clients/runs';
-	import { heldLabel, loadHeld, markAllSeen, observeList, saveHeld, type ListedRun } from '$lib/heldRuns';
-	import { registerProvider } from '$lib/palette/context';
-	import { formatDuration } from '$lib/runDetail';
-	import { setTitleBlock } from '$lib/sheet.svelte';
-	import { statusLabel } from '$lib/status';
-	import { pollWhileVisible } from '$lib/visibility';
-	import { shortRunId } from '$lib/runDetail';
+	import Icon from '#lib/components/Icon.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import type { Run } from '#lib/gen/orkstack/v1/run_pb.ts';
+	import { runClient } from '#lib/clients/runs.ts';
+	import { heldLabel, loadHeld, markAllSeen, observeList, saveHeld, type ListedRun } from '#lib/heldRuns.ts';
+	import { registerProvider } from '#lib/palette/context.ts';
+	import { formatDuration } from '#lib/runDetail.ts';
+	import { setTitleBlock } from '#lib/sheet.svelte.ts';
+	import { statusLabel } from '#lib/status.ts';
+	import { pollWhileVisible } from '#lib/visibility.ts';
+	import { shortRunId } from '#lib/runDetail.ts';
 
 	let { data }: PageProps = $props();
 
@@ -104,7 +104,7 @@
 	});
 	function applyFilters(filters: FieldFilter[]) {
 		writePageStack(stackKey, []);
-		void goto(href({ size: sizeDraft || '25', cursor: '', page: '' }, { filter: filters }), { keepFocus: true, noScroll: true });
+		void goto(href({ size: sizeDraft || '25', cursor: '', page: '' }, { filter: filters }), { reset: false });
 	}
 	const clearHref = $derived(href({ cursor: '', page: '' }, {}));
 
@@ -121,7 +121,7 @@
 	const statusOf = (run: Run) => patched.get(run.id)?.status ?? run.status;
 	const finishedOf = (run: Run) => patched.get(run.id)?.finishedAt ?? run.finishedAt;
 
-	// ---- Changed-run marks (this browser only, $lib/heldRuns) ----
+	// ---- Changed-run marks (this browser only, #lib/heldRuns.ts) ----
 	let held = $state.raw(new Map<string, string>());
 	const ms = (t: Run['createdAt']) => (t ? Number(t.seconds) * 1000 + Math.floor(t.nanos / 1e6) : 0);
 	function listed(runs: Run[]): ListedRun[] {

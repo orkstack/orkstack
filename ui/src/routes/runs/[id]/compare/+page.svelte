@@ -7,21 +7,21 @@
 	// command that does. Nothing here is stored, and the URL carries two ids
 	// (and an optional field list) — never a run's input.
 	import { invalidateAll } from '$app/navigation';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import DiffView from '$lib/components/DiffView.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import RunDiffTable from '$lib/components/RunDiffTable.svelte';
-	import StatusPill from '$lib/components/StatusPill.svelte';
-	import Icon from '$lib/components/Icon.svelte';
-	import { withNamespace } from '$lib/namespace';
-	import { runCommand } from '$lib/runDetail';
-	import { diffSummary, isNarrowed, unavailableLines } from '$lib/runDiff';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import DiffView from '#lib/components/DiffView.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import RunDiffTable from '#lib/components/RunDiffTable.svelte';
+	import StatusPill from '#lib/components/StatusPill.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+	import { withNamespace } from '#lib/namespace.ts';
+	import { runCommand } from '#lib/runDetail.ts';
+	import { diffSummary, isNarrowed, unavailableLines } from '#lib/runDiff.ts';
 	import type { PageProps } from './$types';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { namespaceLabel } from '$lib/namespace';
-	import { setTitleBlock } from '$lib/sheet.svelte';
-	import { statusLabel } from '$lib/status';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import { setTitleBlock } from '#lib/sheet.svelte.ts';
+	import { statusLabel } from '#lib/status.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 
 	let { data }: PageProps = $props();
 

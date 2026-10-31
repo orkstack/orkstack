@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { engineFindings } from '../src/lib/yaml/server';
+import { engineFindings } from '../src/lib/yaml/engine';
 import { editorStatus, localFindings, type EngineState } from '../src/lib/yaml/status';
 import { lineCol } from '../src/lib/yaml/document';
 import { lintDocument } from '../src/lib/yaml/lint';

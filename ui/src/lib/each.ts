@@ -163,7 +163,7 @@ export function mergeItems(existing: ItemView[], snapshot: ItemView[]): ItemView
 }
 
 /** itemFromUrl reads ?item=N, or undefined when it is absent or malformed. */
-export function itemFromUrl(url: URL): number | undefined {
+export function itemFromUrl(url: { readonly searchParams: Pick<URLSearchParams, 'get'> }): number | undefined {
 	const raw = url.searchParams.get('item');
 	if (raw === null || !/^\d+$/.test(raw)) return undefined;
 	const n = Number(raw);

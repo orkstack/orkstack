@@ -8,8 +8,8 @@
 	// "Continue to the run" is the only way past this panel, so a submitter
 	// cannot lose the token by a navigation they did not choose.
 	import CliEquivalent from './CliEquivalent.svelte';
-	import { awaitCallbackUrl, awaitCurl } from '$lib/awaits';
-	import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
+	import { awaitCallbackUrl, awaitCurl } from '#lib/awaits.ts';
+	import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 
 	interface Props {
 		runId: string;

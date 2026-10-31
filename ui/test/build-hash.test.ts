@@ -32,7 +32,8 @@ test('the default inputs name the sources, assets, configs, the lockfile and the
 	expect(BUILD_INPUTS).toContain('src');
 	expect(BUILD_INPUTS).toContain('static');
 	expect(BUILD_INPUTS).toContain('bun.lock');
-	expect(BUILD_INPUTS).toContain('svelte.config.js');
+	// SvelteKit's own configuration is the sveltekit() plugin's, in vite.config.ts.
+	expect(BUILD_INPUTS).toContain('vite.config.ts');
 	// The build writes the example gallery from the repository's examples/.
 	expect(BUILD_INPUTS).toContain('../examples');
 });

@@ -170,7 +170,9 @@ CORS, and the bridge's same-origin default admits the UI with no
   else — `index.html`, `/_app/version.json`, the example gallery — is sent
   `Cache-Control: no-cache` with a strong `ETag`, so a browser revalidates it
   on every use (a `304` when it is unchanged) and picks up a new release at
-  its next page load. An error from the UI (a `404`, a `405`) is sent
+  its next page load. An open tab also reads `/_app/version.json` every hour
+  and whenever it regains focus; it reloads only as a rollout's failed
+  navigation does (below). An error from the UI (a `404`, a `405`) is sent
   `Cache-Control: no-store`, so no cache keeps the 404 of an asset asked for
   during a rollout. Content types come from a fixed table, never the host's
   MIME database.

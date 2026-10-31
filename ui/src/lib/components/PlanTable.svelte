@@ -3,11 +3,11 @@
 	// sentence, the FAILS sentence when the run would fail, a Wave · Task ·
 	// Outcome · Detail table in the CLI's row order, and the caveat lines.
 	//
-	// Every row order and sentence comes from $lib/plan, which mirrors
+	// Every row order and sentence comes from #lib/plan.ts, which mirrors
 	// cmd/orkctl/run_plan.go, so this component holds no logic of its own. A
 	// plan is not a run: the outcome badges are deliberately NOT the status
 	// palette's succeeded/failed, because nothing succeeded or failed.
-	import { PlanOutcome, type PlanRunResponse } from '$lib/gen/orkstack/v1/orkflow_service_pb';
+	import { PlanOutcome, type PlanRunResponse } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
 	import {
 		planCaveats,
 		planDetail,
@@ -16,7 +16,7 @@
 		planRows,
 		planSummary,
 		planWaveLabel
-	} from '$lib/plan';
+	} from '#lib/plan.ts';
 
 	interface Props {
 		plan: PlanRunResponse;

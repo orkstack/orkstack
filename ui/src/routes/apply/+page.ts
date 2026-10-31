@@ -1,6 +1,6 @@
-import { errorMessage } from '$lib/client';
-import { galleryHref, type OrkflowExample } from '$lib/examples';
-import { namespaceFrom } from '$lib/namespace';
+import { errorMessage } from '#lib/client.ts';
+import { galleryHref, type OrkflowExample } from '#lib/examples.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
 import type { PageLoad } from './$types';
 
 // Apply reads nothing from the engine; it needs the namespace only so the

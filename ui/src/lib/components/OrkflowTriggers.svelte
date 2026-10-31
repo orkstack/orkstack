@@ -15,20 +15,20 @@
 	// loader to read it again. Nothing here is optimistic — a row appears
 	// because the store answered with it, not because a create returned.
 	import { invalidateAll } from '$app/navigation';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import Dialog from '$lib/components/Dialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import { errorMessage } from '$lib/client';
-	import { triggerClient } from '$lib/clients/triggers';
-	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
-	import { namespaceLabel } from '$lib/namespace';
-	import { shellQuote } from '$lib/runDetail';
-	import { fmtTimestamp } from '$lib/status';
-	import { triggerUpdateCli } from '$lib/automation';
-	import { SCOPE_SLUG_PATTERN } from '$lib/webhooks';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import Dialog from '#lib/components/Dialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import { errorMessage } from '#lib/client.ts';
+	import { triggerClient } from '#lib/clients/triggers.ts';
+	import type { OrkflowVersion } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
+	import { triggerUpdateCli } from '#lib/automation.ts';
+	import { SCOPE_SLUG_PATTERN } from '#lib/webhooks.ts';
 
 	interface Props {
 		name: string;

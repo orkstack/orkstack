@@ -9,18 +9,18 @@
 	// pool is the count below.
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import { listHref } from '$lib/browsing';
-	import type { FieldFilter } from '$lib/listFilter';
-	import { shellQuote } from '$lib/runDetail';
-	import { ListPoolsRequestSchema } from '$lib/gen/orkstack/v1/namespace_service_pb';
-	import PoolOrkers from '$lib/components/PoolOrkers.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import type { Pool } from '$lib/gen/orkstack/v1/namespace_pb';
-	import { namespaceLabel } from '$lib/namespace';
-	import { fmtTimestamp } from '$lib/status';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import { listHref } from '#lib/browsing.ts';
+	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
+	import { ListPoolsRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
+	import PoolOrkers from '#lib/components/PoolOrkers.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import type { Pool } from '#lib/gen/orkstack/v1/namespace_pb.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -28,7 +28,7 @@
 	// The filters narrow the pool cards (ListFilter; docs/UI_CLI_PARITY.md
 	// "Filtering lists"); `ns` stays, because it scopes this view.
 	function applyFilters(filters: FieldFilter[]) {
-		void goto(listHref('/admin/pools', { ns: namespaceLabel(data.namespace) }, { filter: filters }), { keepFocus: true, noScroll: true });
+		void goto(listHref('/admin/pools', { ns: namespaceLabel(data.namespace) }, { filter: filters }), { reset: false });
 	}
 	const clearHref = $derived(listHref('/admin/pools', { ns: namespaceLabel(data.namespace) }));
 	const command = $derived(['orkctl', '-n', shellQuote(namespaceLabel(data.namespace)), 'pool', 'list']);

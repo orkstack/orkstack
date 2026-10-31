@@ -1,7 +1,7 @@
 // The Admin → Image policy form's local validation, and the key fingerprint
 // both clients print.
 //
-// This is a PREFILTER, never a gate, exactly as $lib/retentionForm.ts is: the
+// This is a PREFILTER, never a gate, exactly as #lib/retentionForm.ts is: the
 // engine (internal/task.ValidRegistryPrefix, ValidSigningKeys) is the
 // authority, re-validates every entry, and its refusal is shown verbatim. The
 // rules are restated here because there is nothing to import across the

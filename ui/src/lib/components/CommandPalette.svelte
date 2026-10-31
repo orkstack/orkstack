@@ -13,9 +13,9 @@
 	// a person asks.
 	import { goto } from '$app/navigation';
 	import Icon from './Icon.svelte';
-	import { appearance } from '$lib/theme.svelte';
-	import { copyText, MANUAL_COPY_MESSAGE } from '$lib/clipboard';
-	import { NEVER_SEEN, heldRuns, loadHeld } from '$lib/heldRuns';
+	import { appearance } from '#lib/theme.svelte.ts';
+	import { copyText, MANUAL_COPY_MESSAGE } from '#lib/clipboard.ts';
+	import { NEVER_SEEN, heldRuns, loadHeld } from '#lib/heldRuns.ts';
 	import {
 		GROUP_ORDER,
 		commandId,
@@ -24,14 +24,14 @@
 		pageCommands,
 		themeCommands,
 		type Command
-	} from '$lib/palette/commands';
-	import { providedCommands } from '$lib/palette/context';
-	import { paletteKeydown } from '$lib/palette/keyboard';
-	import { grouped, rank } from '$lib/palette/rank';
-	import { readRecents } from '$lib/palette/recent';
-	import { REMOTE_DEBOUNCE_MS, searchOrkflows, searchRuns } from '$lib/palette/sources';
-	import { withNamespace } from '$lib/namespace';
-	import { errorMessage } from '$lib/client';
+	} from '#lib/palette/commands.ts';
+	import { providedCommands } from '#lib/palette/context.ts';
+	import { paletteKeydown } from '#lib/palette/keyboard.ts';
+	import { grouped, rank } from '#lib/palette/rank.ts';
+	import { readRecents } from '#lib/palette/recent.ts';
+	import { REMOTE_DEBOUNCE_MS, searchOrkflows, searchRuns } from '#lib/palette/sources.ts';
+	import { withNamespace } from '#lib/namespace.ts';
+	import { errorMessage } from '#lib/client.ts';
 
 	interface Props {
 		namespace: string;
@@ -79,7 +79,7 @@
 	const recency = new Map(recents.map((r, i) => [`recent-${i}`, r.at]));
 
 	// CHANGED RUNS: the runs this browser holds a changed mark for, read from
-	// its own store ($lib/heldRuns) — no request.
+	// its own store (#lib/heldRuns.ts) — no request.
 	const changedCommands: Command[] = $derived(heldRuns(loadHeld(), namespace)
 		.slice(0, 8)
 		.map((h) => {

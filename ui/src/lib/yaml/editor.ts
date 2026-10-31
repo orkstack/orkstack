@@ -1,6 +1,6 @@
 // The CodeMirror half of the YAML editor: every extension the editor runs,
 // built from the pure modules beside it. Nothing here decides anything about a
-// document — lint.ts, server.ts, complete.ts and highlight.ts do, and each is
+// document — lint.ts, engine.ts, complete.ts and highlight.ts do, and each is
 // unit-tested — this file only connects them to a view.
 //
 // The theme names tokens and nothing else: CodeMirror's base theme draws its

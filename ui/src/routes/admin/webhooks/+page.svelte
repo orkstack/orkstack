@@ -1,23 +1,23 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import type { FieldFilter } from '$lib/listFilter';
-	import { ListWebhooksRequestSchema } from '$lib/gen/orkstack/v1/webhook_service_pb';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import Dialog from '$lib/components/Dialog.svelte';
-	import { webhookUpdateCli } from '$lib/automation';
-	import type { Webhook } from '$lib/gen/orkstack/v1/webhook_service_pb';
-	import WebhookDeliveries from '$lib/components/WebhookDeliveries.svelte';
-	import { deliveriesHref, webhookDeliveriesFilters } from '$lib/deliveries';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { errorMessage } from '$lib/client';
-	import { webhookClient } from '$lib/clients/webhooks';
-	import { EventType } from '$lib/gen/orkstack/v1/run_pb';
-	import { fmtTimestamp } from '$lib/status';
-	import { RUN_EVENTS, SCOPE_SLUG_PATTERN, TASK_EVENTS, webhookScope } from '$lib/webhooks';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { ListWebhooksRequestSchema } from '#lib/gen/orkstack/v1/webhook_service_pb.ts';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import Dialog from '#lib/components/Dialog.svelte';
+	import { webhookUpdateCli } from '#lib/automation.ts';
+	import type { Webhook } from '#lib/gen/orkstack/v1/webhook_service_pb.ts';
+	import WebhookDeliveries from '#lib/components/WebhookDeliveries.svelte';
+	import { deliveriesHref, webhookDeliveriesFilters } from '#lib/deliveries.ts';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { errorMessage } from '#lib/client.ts';
+	import { webhookClient } from '#lib/clients/webhooks.ts';
+	import { EventType } from '#lib/gen/orkstack/v1/run_pb.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
+	import { RUN_EVENTS, SCOPE_SLUG_PATTERN, TASK_EVENTS, webhookScope } from '#lib/webhooks.ts';
 	import type { PageProps } from './$types';
 	let { data }: PageProps = $props();
 
@@ -25,7 +25,7 @@
 	// deliveriesHref, so the Deliveries panel's own coordinates survive a
 	// change of filters, and its paging keeps them.
 	function applyFilters(filters: FieldFilter[]) {
-		void goto(deliveriesHref(data.coordinates, { subscriptionFilters: filters }), { keepFocus: true, noScroll: true });
+		void goto(deliveriesHref(data.coordinates, { subscriptionFilters: filters }), { reset: false });
 	}
 	const clearHref = $derived(deliveriesHref(data.coordinates, { subscriptionFilters: [] }));
 	let url = $state(''); let selected = $state<EventType[]>([]); let secret = $state(''); let shownSecret = $state(''); let formError = $state(''); let busy = $state(false); let deleting = $state(''); let deleteError = $state('');
