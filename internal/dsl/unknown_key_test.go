@@ -188,7 +188,8 @@ func contains(values []string, want string) bool {
 // decoder's own refusal stands; a key a merge delivered, which no path of the
 // document holds, is named by its line alone, and first when its line is,
 // though the decoder refuses it last; a key under an anchor, refused again at
-// each alias of it, is named once, at the path where it is written.
+// each alias of it, is named once, at the path where it is written; and one
+// key name refused twice on one line is one key, at its first path.
 func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 	t.Parallel()
 	const orkflow = "apiVersion: orkstack/v1\nkind: Orkflow\nname: typo\n"
@@ -227,6 +228,13 @@ func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 			source: orkflow + "tasks:\n  - id: a\n    with: &w {id: b, bogus: 1}\n    wrong1: 1\n" +
 				"  - <<: *w\n",
 			want: `line 6: unknown key "bogus" in the Orkflow (and 1 more unknown key: "wrong1" at line 7)`,
+		},
+		{
+			name:        "one key name refused twice on one line, named at its first path",
+			source:      orkflow + "tasks: [{id: a, uses: shell, x: 1}, {id: b, uses: shell, x: 2}]\n",
+			wantField:   "tasks[0].x",
+			want:        `line 4: unknown key "x" in tasks[0] of the Orkflow; allowed: `,
+			wantAllowed: "needs",
 		},
 		{
 			name:      "a key under an anchor, repeated by an alias",
