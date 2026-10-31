@@ -1034,8 +1034,9 @@ a **Current Version**, the task queue's current version is nil, and
 > — `api@v1.63.4/workflowservice/v1/request_response.pb.go`,
 > `SetWorkerDeploymentCurrentVersionRequest.BuildId`
 
-which a versioned release does not have. So the first release that sets
-`ORK_BUILD_ID` boots two healthy, polling workers that receive **nothing**:
+which a versioned release does not have. So a deployment's first versioned
+release, the first to set `ORK_BUILD_ID`, boots two healthy, polling workers
+that receive **nothing**:
 submitted runs sit at `HistoryLength 2` (`WorkflowExecutionStarted`,
 `WorkflowTaskScheduled`), no pending activities, indefinitely. Nothing in the
 logs says why, because nothing is wrong with the workers.
@@ -1060,8 +1061,9 @@ or **runs started before versioning still executing** (§3.5) — the refusal
 names each and what to start or wait for. The raw cluster
 command it makes underneath is listed in §4, "Underneath: the cluster commands".
 
-Backlogged runs start within seconds of it. §3 step 0 is the full first-release
-procedure; every release after that inherits a Current Version from its
+Backlogged runs start within seconds of it. §3 step 0, "First versioned
+release only", is the full procedure; every release after that inherits a
+Current Version from its
 predecessor, and takes over with the same call at §3 step 4
 (`TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent`).
 
