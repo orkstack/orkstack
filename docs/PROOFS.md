@@ -818,9 +818,18 @@ publishes nothing; one on `main` whose approval is rejected publishes nothing
 either.
 
 No `run:` step splices a workflow input or an event field into its shell; each
-reaches the step through `env:`. Every action is pinned to an exact release of
-its latest major, and Go, Bun, Node and cosign to exact versions; Dependabot
-moves them, one pull request and one proof at a time.
+reaches the step through `env:`. Every action outside this repository, in
+every workflow and composite action, is pinned by the full 40-hex commit SHA
+of a release of its latest major, with that release in a comment on the same
+line (`uses: actions/checkout@<sha> # v7.0.1`): a tag can be moved to other
+code, and a step that runs a moved action in `release.yml` › `publish` could
+read the signing key. One action is one commit and one release in every file
+(`TestWorkflows_ActionsAndToolchainsArePinnedExactly`). Go, Bun, Node and
+cosign are pinned to exact versions. Dependabot moves them, the SHA and its
+comment together, one pull request and one proof at a time; its github-actions
+entry reads `.github/workflows` and both composite actions
+(`.github/actions/proof-host/action.yml`, `.github/actions/proof-fetch/action.yml`;
+`TestDependabot_ReadsEveryActionPin`).
 
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the

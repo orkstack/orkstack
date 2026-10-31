@@ -11,6 +11,10 @@ word for word.
 
 ## [Unreleased]
 
+### Security
+
+- Release workflows pin every action by commit SHA.
+
 ## [0.1.0] - 2026-10-30
 
 First release.

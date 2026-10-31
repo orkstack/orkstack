@@ -80,7 +80,7 @@ jobs:
       pr_base: ${{ steps.base.outputs.pr_base }}
       contains_base: ${{ steps.base.outputs.contains_base }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
@@ -136,17 +136,17 @@ jobs:
       proof_id: ${{ steps.plan.outputs.proof_id }}
       plan_artifact: plan-a${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
-      - uses: oven-sh/setup-bun@v2.2.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         timeout-minutes: 5
         with:
           bun-version: "1.4.3"
@@ -177,7 +177,7 @@ jobs:
             echo "observability=$(jq -r '.observability_required // false' "$dir/integration-plan.json")"
             echo "proof_id=$PROOF_ID"
           } >>"$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -198,16 +198,16 @@ jobs:
     outputs:
       build_artifact: part-build-a${{ github.run_attempt }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
-      - uses: docker/setup-buildx-action@v4.4.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         timeout-minutes: 3
       - name: fetch plan
         uses: ./.github/actions/proof-fetch
@@ -225,7 +225,7 @@ jobs:
             --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \
             --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -245,20 +245,20 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
-      - uses: oven-sh/setup-bun@v2.2.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         timeout-minutes: 5
         with:
           bun-version: "1.4.3"
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         timeout-minutes: 3
         with:
           node-version: "26.12.0"
@@ -283,7 +283,7 @@ jobs:
           scripts/proof.sh --part fast --tier "$TIER" --proof-id "$PROOF_ID" \
             --attempt "$GITHUB_RUN_ATTEMPT" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -303,12 +303,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
@@ -319,7 +319,7 @@ jobs:
           scripts/proof.sh --part race --tier "$TIER" --proof-id "$PROOF_ID" \
             --attempt "$GITHUB_RUN_ATTEMPT" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -340,12 +340,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
@@ -356,7 +356,7 @@ jobs:
           scripts/proof.sh --part race-repeat --tier "$TIER" --proof-id "$PROOF_ID" \
             --attempt "$GITHUB_RUN_ATTEMPT" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -379,12 +379,12 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
@@ -395,7 +395,7 @@ jobs:
           scripts/proof.sh --part fuzz --tier "$TIER" --proof-id "$PROOF_ID" \
             --attempt "$GITHUB_RUN_ATTEMPT" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -418,12 +418,12 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.int_matrix) }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
@@ -462,7 +462,7 @@ jobs:
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -490,16 +490,16 @@ jobs:
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.ui_matrix) }}
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
-      - uses: oven-sh/setup-bun@v2.2.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         timeout-minutes: 5
         with:
           bun-version: "1.4.3"
@@ -613,7 +613,7 @@ jobs:
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -636,12 +636,12 @@ jobs:
       matrix:
         activity: [shell, json, git, template]
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
@@ -674,7 +674,7 @@ jobs:
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -693,12 +693,12 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
@@ -753,7 +753,7 @@ jobs:
             --layouts "$RUNNER_TEMP/ci/build/layouts" \
             --setup-log "$RUNNER_TEMP/ci/setup.log" \
             --base-commit "${{ needs.base.outputs.sha }}" "$PROOF_NAME"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:
@@ -793,12 +793,12 @@ jobs:
             echo "private repository: the full proof runs on a pull request only with the ci:proof label; add it, then push or close and reopen" >&2
             exit 1
           fi
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
@@ -937,7 +937,7 @@ jobs:
             echo
             du -sh "$RUNNER_TEMP/ci/proof" 2>/dev/null || true
           } >>"$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         timeout-minutes: 5
         with:

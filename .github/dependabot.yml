@@ -66,8 +66,13 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # Every action is pinned by the full commit SHA of a release, with the
+  # release in a comment on the same line (`@<sha> # vX.Y.Z`); Dependabot
+  # moves both together (TestWorkflows_ActionsAndToolchainsArePinnedExactly).
+  # "/" reads .github/workflows; each composite action's action.yml is read
+  # only from a directory listed here.
   - package-ecosystem: github-actions
-    directory: /
+    directories: ["/", "/.github/actions/*"]
     schedule:
       interval: weekly
     groups:
