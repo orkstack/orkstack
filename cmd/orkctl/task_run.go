@@ -310,14 +310,19 @@ func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, str
 	case "file":
 		abs, err := filepath.Abs(locator)
 		if err != nil {
-			return "", "", fmt.Errorf("--secret %s: %s: %v", name, locator, err)
+			return "", "", fmt.Errorf("--secret %s: %s: %w", name, locator, err)
 		}
 		if err := ownSecretFlag(name, "file:"+abs, policy); err != nil {
 			return "", "", err
 		}
 		info, err := os.Stat(abs)
 		if err != nil {
-			return "", "", fmt.Errorf("--secret %s: %s: no such file", name, locator)
+			// The sentence names the path already; the cause is what the file
+			// system said of it.
+			if pathErr := (*fs.PathError)(nil); errors.As(err, &pathErr) {
+				err = pathErr.Err
+			}
+			return "", "", fmt.Errorf("--secret %s: %s: %w", name, locator, err)
 		}
 		if !info.Mode().IsRegular() {
 			return "", "", fmt.Errorf("--secret %s: %s: not a regular file", name, locator)

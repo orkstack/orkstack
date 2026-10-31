@@ -73,6 +73,8 @@ word for word.
   image pulled. `RUN_AS_ORKER_UNAVAILABLE`, already raised after the commit
   check and the memo step, is now raised with them, before secrets are staged
   and the image is pulled.
+- `orkctl task run --secret NAME=file:PATH` says why a file cannot be used, as
+  the file system gave it, rather than calling every such file missing.
 
 ## [0.1.0] - 2026-10-30
 

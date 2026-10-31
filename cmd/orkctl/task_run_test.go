@@ -475,6 +475,35 @@ func countRequests(paths []string, method string) int {
 	return n
 }
 
+// TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed: a --secret file that
+// cannot be looked at is refused with the reason the file system gave, kept
+// as the error's cause, so a file the user may not read is not reported as
+// one that does not exist.
+func TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed(t *testing.T) {
+	_, _, err := parseTaskSecretFlag("tok=file:/nonexistent/tok", orker.DefaultSecurityPolicy())
+	if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "--secret tok: /nonexistent/tok: no such file") {
+		t.Errorf("parseTaskSecretFlag(a missing file) = %v, want it to say no such file, with fs.ErrNotExist its cause", err)
+	}
+	if os.Geteuid() == 0 {
+		return // root reads through any mode
+	}
+	locked := filepath.Join(t.TempDir(), "locked")
+	if err := os.Mkdir(locked, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "tok"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	_, _, err = parseTaskSecretFlag("tok=file:"+filepath.Join(locked, "tok"), orker.DefaultSecurityPolicy())
+	if !errors.Is(err, fs.ErrPermission) || strings.Contains(err.Error(), "no such file") {
+		t.Errorf("parseTaskSecretFlag(a file it may not look at) = %v, want fs.ErrPermission its cause", err)
+	}
+}
+
 func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	dir := t.TempDir()
