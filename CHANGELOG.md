@@ -78,6 +78,29 @@ word for word.
   and the image is pulled.
 - `orkctl task run --secret NAME=file:PATH` says why a file cannot be used, as
   the file system gave it, rather than calling every such file missing.
+- `make reset` no longer fails on a workspace an Orker left read-only under
+  `.data/work`, and takes the observability profile's containers and volumes
+  down with the rest instead of reporting them as survivors.
+- The Orker's boot probe no longer leaves `ork-bindprobe-*` or
+  `ork-sigprobe-*` containers behind when its boot is stopped or refused
+  between a container's create and its start. Both probe containers carry
+  the Orker's `ork.orker` label, the Orker removes each itself however the
+  probe ends, and one it could not remove (it was killed first) is reaped by
+  the next boot under the same identity; until then
+  `docker ps --all --filter label=ork.orker=<id>` lists it.
+
+### Security
+
+- The development stack (`deploy/docker-compose.yml`, `make infra-up`)
+  publishes every port on `127.0.0.1` only. Temporal's frontend, the object
+  store with its development key, the unauthenticated registry and, in the
+  observability profile, Grafana with anonymous admin were reachable from
+  any host that could reach the contributor's machine. A contributor who
+  reached the stack from another machine must now tunnel or forward the
+  port, for example `ssh -L 7233:127.0.0.1:7233 <host>` for Temporal. The
+  next `make infra-up` on a running stack recreates its containers to apply
+  this: the object store and the registry keep their volumes, and Temporal's
+  development server, which keeps its history in memory, starts empty.
 
 ## [0.1.0] - 2026-10-30
 

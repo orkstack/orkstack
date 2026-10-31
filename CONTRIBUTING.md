@@ -52,6 +52,16 @@ and a live-event socket opened through it. When it prints "OrkStack is up":
 | Temporal UI | http://localhost:8233 |
 | SeaweedFS filer | http://localhost:8888 (S3 API on http://localhost:9000) |
 
+Every port the infrastructure publishes (`deploy/docker-compose.yml`, the
+observability profile's included) is bound to `127.0.0.1`: Temporal's
+frontend, the object store with its development key, the unauthenticated
+registry and Grafana's anonymous admin are reachable from this machine and
+from no other. Nothing in the stack, the suites or the proofs needs more: an
+activity container reaches only a test's own server on the host, by
+`host.docker.internal` ("Linux hosts" below), and the observability
+profile's services reach each other on the compose network.
+`TestDevCompose_PublishesOnlyOnLoopback` holds the rule.
+
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl apply examples/each-fan-out.ork.yaml` and the
 rest of [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) work as written,
@@ -65,8 +75,10 @@ make reset   # wipe every local run, object and build output
 `make down` also stops the infrastructure `make infra-up` started, which
 other checkouts on the same machine may be using. `make reset` returns the
 machine to a vanilla state: it deletes Temporal history, every object-store
-object (artifacts, archived runs, and the Orkflow catalogue), the local
-artifact store and all build output. The repository itself is untouched.
+object (artifacts, archived runs, and the Orkflow catalogue), the
+observability profile's containers and volumes, the local artifact store,
+the Orker's work directory (a workspace an Orker left read-only included) and
+all build output. The repository itself is untouched.
 
 The individual steps are there when you want them: `make tools`,
 `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.

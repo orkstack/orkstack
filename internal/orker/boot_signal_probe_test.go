@@ -18,7 +18,8 @@ import (
 // says it ran under. Rootful Podman under AppArmor 5 was such a runtime:
 // every cancelled task was killed at the end of its grace without its
 // cleanup, and the Orker booted. A daemon too slow to start that container,
-// or to let its workload say it is ready, is the slow daemon it is.
+// or to let its workload say it is ready, is the slow daemon it is. However
+// the check ends, the Orker removes the container itself.
 func TestBoot_RefusesARuntimeThatDoesNotDeliverSIGTERM(t *testing.T) {
 	const stacked = "containers-default-0.66.0//&crun (enforce)"
 	tests := []struct {
@@ -27,9 +28,6 @@ func TestBoot_RefusesARuntimeThatDoesNotDeliverSIGTERM(t *testing.T) {
 		budget     time.Duration
 		wantReason string   // "" boots
 		want       []string // in the refusal
-		// wantRemoved: the Orker removes the container itself, because it
-		// may still be running; otherwise the daemon removes it on its exit.
-		wantRemoved bool
 	}{
 		{name: "a workload that hears SIGTERM boots"},
 		{
@@ -69,27 +67,24 @@ func TestBoot_RefusesARuntimeThatDoesNotDeliverSIGTERM(t *testing.T) {
 			want:       []string{"never heard SIGTERM", "the runtime refused the SIGTERM itself", "permission denied"},
 		},
 		{
-			name:        "a workload that is not ready within the probe's budget",
-			flags:       map[string]string{"neverready": ""},
-			budget:      time.Second,
-			wantReason:  ReasonBindProbeTimedOut,
-			want:        []string{"let the SIGTERM probe's workload say it is ready within 1s", BindProbeTimeoutVar},
-			wantRemoved: true,
+			name:       "a workload that is not ready within the probe's budget",
+			flags:      map[string]string{"neverready": ""},
+			budget:     time.Second,
+			wantReason: ReasonBindProbeTimedOut,
+			want:       []string{"let the SIGTERM probe's workload say it is ready within 1s", BindProbeTimeoutVar},
 		},
 		{
-			name:        "a daemon that does not start the SIGTERM container is slow, not a weaker posture",
-			flags:       map[string]string{"sigrunslow": ""},
-			budget:      time.Second,
-			wantReason:  ReasonBindProbeTimedOut,
-			want:        []string{"on each of 2 attempts", BindProbeTimeoutVar},
-			wantRemoved: true, // each overrun attempt's container
+			name:       "a daemon that does not start the SIGTERM container is slow, not a weaker posture",
+			flags:      map[string]string{"sigrunslow": ""},
+			budget:     time.Second,
+			wantReason: ReasonBindProbeTimedOut,
+			want:       []string{"on each of 2 attempts", BindProbeTimeoutVar},
 		},
 		{
-			name:        "a daemon whose own deadline error repeats at the SIGTERM container is slow",
-			flags:       map[string]string{"sigruntimeout": ""},
-			wantReason:  ReasonBindProbeTimedOut,
-			want:        []string{"context deadline exceeded", BindProbeTimeoutVar},
-			wantRemoved: true,
+			name:       "a daemon whose own deadline error repeats at the SIGTERM container is slow",
+			flags:      map[string]string{"sigruntimeout": ""},
+			wantReason: ReasonBindProbeTimedOut,
+			want:       []string{"context deadline exceeded", BindProbeTimeoutVar},
 		},
 		{
 			name:       "a daemon that refuses the SIGTERM container for another reason",
@@ -134,12 +129,11 @@ func TestBoot_RefusesARuntimeThatDoesNotDeliverSIGTERM(t *testing.T) {
 					}
 				}
 			}
-			// The probe's container is started detached and removed by the
-			// daemon when it exits, and by the Orker only when it may still
-			// be running.
+			// The probe's container is started detached, never left to the
+			// daemon's --rm, and removed by the Orker however the check ends.
 			var started, removed bool
 			for _, call := range calls {
-				if strings.HasPrefix(call, "run --detach --rm ") && strings.Contains(call, "ork.task="+signalProbeTaskID) {
+				if strings.HasPrefix(call, "run --detach ") && strings.Contains(call, "ork.task="+signalProbeTaskID) {
 					started = true
 				}
 				if strings.HasPrefix(call, "rm ") && strings.Contains(call, "ork-"+signalProbeTaskID+"-") {
@@ -147,10 +141,10 @@ func TestBoot_RefusesARuntimeThatDoesNotDeliverSIGTERM(t *testing.T) {
 				}
 			}
 			if !started {
-				t.Errorf("the SIGTERM probe's container was never started detached with --rm: %q", calls)
+				t.Errorf("the SIGTERM probe's container was never started detached: %q", calls)
 			}
-			if removed != tt.wantRemoved {
-				t.Errorf("the Orker removed the SIGTERM probe's container: %t; want %t: %q", removed, tt.wantRemoved, calls)
+			if !removed {
+				t.Errorf("the Orker did not remove the SIGTERM probe's container: %q", calls)
 			}
 		})
 	}
@@ -158,7 +152,8 @@ func TestBoot_RefusesARuntimeThatDoesNotDeliverSIGTERM(t *testing.T) {
 
 // TestBoot_SIGTERMReachesTheProbeAsACancelledTasksDoes: the signal is sent
 // the way a cancelled task's is (TerminateContainer), once, after the
-// workload said it was ready, and a workload that hears it is never killed.
+// workload said it was ready, and a workload that hears it is never killed
+// while it is cancelled; the removal that follows is the Orker's own.
 func TestBoot_SIGTERMReachesTheProbeAsACancelledTasksDoes(t *testing.T) {
 	fake := newCountingDocker(t)
 	fake.set("present", "")
@@ -173,9 +168,17 @@ func TestBoot_SIGTERMReachesTheProbeAsACancelledTasksDoes(t *testing.T) {
 	}
 	var signals []string
 	for _, call := range fake.calls() {
+		if strings.HasPrefix(call, "rm ") && strings.Contains(call, "ork-"+signalProbeTaskID+"-") {
+			break
+		}
 		if strings.HasPrefix(call, "kill ") && strings.Contains(call, "ork-"+signalProbeTaskID+"-") {
 			signals = append(signals, call)
 		}
+	}
+	// Remove kills before it removes (removeKillTimeout): that one is the
+	// removal's, not the cancellation's.
+	if n := len(signals); n > 0 && strings.HasPrefix(signals[n-1], "kill --signal KILL ") {
+		signals = signals[:n-1]
 	}
 	if len(signals) != 1 || !strings.HasPrefix(signals[0], "kill --signal TERM ork-"+signalProbeTaskID+"-") {
 		t.Fatalf("signals = %q; want one SIGTERM to the probe's container, as a cancelled task's container gets it", signals)

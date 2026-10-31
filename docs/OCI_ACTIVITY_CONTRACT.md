@@ -377,6 +377,20 @@ a comma or control character, a bind the daemon refused within its budget in
 its own words, a bind that is not the Orker's directory, and a probe directory
 that cannot be made; none of those is tried again.
 
+The probe's two containers are labelled `ork.task` (`bindprobe`,
+`sigprobe`) and `ork.orker`, the Orker's identity, as a task's are (§5), and
+neither is left to the daemon's `--rm`, which fires only when a container
+exits and never for one created and not started. The Orker removes each
+itself before the probe returns, however it ends: passed, refused, timed out,
+or stopped while a container's `run` was still in flight (one cut off between
+the daemon's create and its start is left created and never started). A
+removal that fails is named in the refusal or logged. One the Orker could not
+remove, because it was killed first or the daemon finished a create the CLI
+had given up on, is reaped by that label at the next boot under the same
+`ORK_ORKER_ID` (or the same work root, for the default identity); until then
+`ps --all --filter label=ork.orker=<id>` lists it, and a test's is listed by
+`proofrun clean` by the work root its mounts lie in.
+
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt
 directory the Orker creates, populates, mounts read-only, and removes on every
 exit path. Secret bytes never enter a proto message, Temporal history, the
@@ -1294,7 +1308,8 @@ failure.
 **An Orker crash does not stop its container** (§14.17): `--rm` fires on
 container *exit*, and there is no daemon-side "kill when the client
 disconnects". So every container is labelled `ork.run`, `ork.task`,
-`ork.attempt` and `ork.orker` (plus `ork.pin` / `ork.item` when they apply),
+`ork.attempt` and `ork.orker` (plus `ork.pin` / `ork.item` when they apply;
+the boot probe's own carry `ork.task` and `ork.orker`, §3.1),
 and every Orker at boot claims its stable `ORK_ORKER_ID` and force-removes
 every container labelled with it — its own previous life's. Two live Orkers
 must never share an id, or they would reap each other's work; the Orker holds

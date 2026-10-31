@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -77,9 +78,12 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	if got, want := posture(signalProbe), posture(task); !slices.Equal(got, want) {
 		t.Fatalf("the SIGTERM probe's container is not a task's:\n probe %q\n  task %q", got, want)
 	}
-	if signalProbe.Image != BindProbeImage || signalProbe.Labels["ork.task"] != signalProbeTaskID || len(signalProbe.Labels) != 1 {
-		t.Errorf("the SIGTERM probe runs %q labelled %v; want %q labelled ork.task=%s alone",
-			signalProbe.Image, signalProbe.Labels, BindProbeImage, signalProbeTaskID)
+	// Its task and its Orker's identity, as a task's container carries its
+	// Orker's, so the Orker's next boot reaps one it could not remove.
+	wantLabels := map[string]string{"ork.task": signalProbeTaskID, "ork.orker": d.OrkerID}
+	if signalProbe.Image != BindProbeImage || !maps.Equal(signalProbe.Labels, wantLabels) {
+		t.Errorf("the SIGTERM probe runs %q labelled %v; want %q labelled %v",
+			signalProbe.Image, signalProbe.Labels, BindProbeImage, wantLabels)
 	}
 	rendered := strings.Join(posture(probe), " ")
 	for _, want := range []string{
@@ -94,8 +98,17 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	if probe.Image != BindProbeImage {
 		t.Errorf("the probe runs %q; want %q", probe.Image, BindProbeImage)
 	}
-	if _, ok := probe.Labels["ork.orker"]; ok {
-		t.Errorf("the probe's container carries ork.orker (%v): a reaper would meet a probe still being removed", probe.Labels)
+	// Labelled with its Orker's identity, as the SIGTERM probe's is above.
+	firstWS, err := NewWorkspace(filepath.Join(t.TempDir(), "bindprobe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := d.bootProbeSpec(firstWS, "container-nonce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"ork.task": bootProbeTaskID, "ork.orker": d.OrkerID}; !maps.Equal(first.Labels, want) {
+		t.Errorf("the probe's container is labelled %v; want %v", first.Labels, want)
 	}
 }
 

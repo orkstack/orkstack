@@ -58,6 +58,9 @@ it scrapes each binary's `/metrics` on `host.docker.internal:9464`/`9465`
 
 ## Where things are
 
+Every port is published on `127.0.0.1` only, so Grafana's anonymous admin and
+the rest are reachable from this machine and from no other.
+
 | what | where |
 |---|---|
 | Grafana | http://localhost:3000 (anonymous admin — local use only) |

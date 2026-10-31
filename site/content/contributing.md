@@ -22,6 +22,9 @@ make -C images push    # build the first-party activity images into that registr
 make up                # build ork, orker and orkctl; start them and the UI's dev server
 ```
 
+The stack publishes its ports on `127.0.0.1` only: it is reachable from
+this machine and from no other.
+
 The UI is at http://localhost:5173, served by its dev server with hot reload;
 its API and live-stream calls go to the engine on 8080. Use `./bin/orkctl`
 wherever these docs say `orkctl`. `make down` stops what `make up` started.
