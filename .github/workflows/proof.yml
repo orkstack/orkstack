@@ -244,6 +244,8 @@ jobs:
     timeout-minutes: 65
     permissions:
       contents: read
+      # Only the last step uses it, to cancel the run (docs/PROOFS.md §5).
+      actions: write
     steps:
       - uses: actions/checkout@v7.0.1
         timeout-minutes: 3
@@ -271,6 +273,7 @@ jobs:
         working-directory: site
         run: bun install --frozen-lockfile
       - name: fast
+        id: fast
         # 30: the unit gate alone took 689 s on a slower 4-vCPU runner (CI
         # run 40749987883), and lint about four minutes on two vCPUs
         # (docs/PROOFS.md §11.5); the unit gate's own 15-minute hang guard
@@ -292,6 +295,32 @@ jobs:
             proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/
             !proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
+      # GitHub cancels no sibling job, so a proof whose fast part recorded a
+      # failing gate, which no merge excuses (the unit gate exits 0 when every
+      # failure is a quarantined one), would keep its shards running for a
+      # verdict already decided. This step cancels the run then, after the
+      # upload, so the merger reads the failing gate. A failure in a setup
+      # step before the part (an install a rerun may get through) skips the
+      # part and cancels nothing, and neither does a part that stopped before
+      # any gate. The proof job still runs, on always(), and fails.
+      - name: cancel the run, which cannot pass
+        if: ${{ failure() && steps.fast.outcome == 'failure' }}
+        # One API call: within the job's limit with every step's own.
+        timeout-minutes: 1
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gates="proof/$PROOF_NAME-part-fast-a$GITHUB_RUN_ATTEMPT/gates.tsv"
+          if [ -f "$gates" ] && grep -q $'^[^\t]*\tfail\t' "$gates"; then
+            echo "a fast gate failed ($(grep $'^[^\t]*\tfail\t' "$gates" | cut -f1 | paste -sd, -)): cancelling the run, which cannot pass"
+            gh run cancel "$RUN_ID" --repo "$REPO"
+          else
+            echo "the fast part failed before any gate recorded a failure: nothing to cancel"
+          fi
 
   race:
     # The unit suites under the race detector (-short), on a runner of their
@@ -406,13 +435,8 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   integration:
-    # Waits for the fast part (docs/PROOFS.md §5): a red `fast` is never a
-    # passing proof, so a deterministic unit or lint failure stops the shards
-    # before they start. A `fast` that failed in a setup step or lost its
-    # runner left no result; "Re-run failed jobs" runs it again with the
-    # shards that need it, which never ran. The nightly tier has no `fast`.
-    needs: [base, plan, build, fast]
-    if: ${{ !cancelled() && needs.base.result == 'success' && needs.plan.result == 'success' && needs.build.result == 'success' && (needs.fast.result == 'success' || (inputs.tier == 'nightly' && needs.fast.result == 'skipped')) && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    needs: [base, plan, build]
+    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 155
     permissions:
@@ -478,12 +502,11 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   ui-e2e:
-    # Waits for the fast part, as integration does.
-    needs: [base, plan, build, fast]
+    needs: [base, plan, build]
     # Every tier's UI plan names its shards: the nightly tier's hold only the
     # spec files scripts/proof-nightly-specs.txt lists, and none when it lists
     # none.
-    if: ${{ !cancelled() && needs.base.result == 'success' && needs.plan.result == 'success' && needs.build.result == 'success' && (needs.fast.result == 'success' || (inputs.tier == 'nightly' && needs.fast.result == 'skipped')) && needs.plan.outputs.ui_matrix != '[]' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ needs.plan.outputs.ui_matrix != '[]' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     # Its steps' limits sum to 110 (the host Chromium's is 10): the job ends
     # them, never the other way round.
@@ -630,9 +653,8 @@ jobs:
           retention-days: ${{ github.event.repository.private && 1 || 14 }}
 
   activity-fixture:
-    # Waits for the fast part, as integration does.
-    needs: [base, plan, build, fast]
-    if: ${{ inputs.tier != 'nightly' && !cancelled() && needs.base.result == 'success' && needs.plan.result == 'success' && needs.build.result == 'success' && needs.fast.result == 'success' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    needs: [base, plan, build]
+    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:

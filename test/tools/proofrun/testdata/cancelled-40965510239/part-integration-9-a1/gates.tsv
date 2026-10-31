@@ -1,0 +1,3 @@
+temporal	pass	1	temporal.log	part_start_temporal
+binaries	pass	24	binaries.log	part_binaries
+images	pass	3	images.log	part_push_images

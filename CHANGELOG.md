@@ -22,11 +22,10 @@ word for word.
 
 ### Changed
 
-- The full proof's `integration`, `ui-e2e` and `activity-fixture` shards
-  start only once its `fast` part has passed, so a deterministic lint, build
-  or unit failure no longer spends the shards' runner time. A `fast` that
-  failed in a setup step runs again together with the shards. A green run
-  is expected to take about 8 to 11 minutes longer.
+- The full proof's `fast` part cancels the run when one of its gates fails,
+  so a lint, build or unit failure no longer leaves the shards running for a
+  proof that cannot pass. A setup failure, or a quarantined failure, cancels
+  nothing, and a green run takes no longer.
 - `proof-rerun.yml` also runs a failed nightly of `main` again when its only
   failures are parts whose runner was lost or measured below the floor, or
   that failed in a setup step.

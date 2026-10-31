@@ -1097,16 +1097,18 @@ const cancelRun = `gh run cancel "$RUN_ID" --repo "$REPO"`
 // outcomeFailed matches one `steps.<id>.outcome == 'failure'` clause.
 var outcomeFailed = regexp.MustCompile(`steps\.([a-z0-9_-]+)\.outcome == 'failure'`)
 
-// releaseFailFastProblems: only artifacts stops the run, from its last step,
-// and only when one of its own build, smoke or verification steps (every
-// `run:` step before it, each with an id) failed: never on a checkout, a
-// setup or the upload (`uses:` steps), which a rerun of artifacts alone
-// answers, and never on the gate, whose colour is not its verdict.
+// releaseFailFastProblems: only artifacts stops the run from release.yml, from
+// its last step, and only when one of its own build, smoke or verification
+// steps (every `run:` step before it, each with an id) failed: never on a
+// checkout, a setup or the upload (`uses:` steps), which a rerun of artifacts
+// alone answers, and never on the gate's colour, which is not its verdict.
+// The gate may write actions only to hand it to proof.yml's fast part, whose
+// own rule (fastCancelProblems) lets it cancel on a failing gate alone.
 func releaseFailFastProblems(w *wfFile) []string {
 	var p []string
 	for _, name := range w.jobNames() {
 		job := w.Jobs[name]
-		if name != "artifacts" && permLevel(job.Permissions["actions"]) > 1 {
+		if name != "artifacts" && !(name == "gate" && job.Uses == "./.github/workflows/proof.yml") && permLevel(job.Permissions["actions"]) > 1 {
 			p = append(p, fmt.Sprintf("jobs.%s writes actions; only artifacts' cancel step needs to", name))
 		}
 		for i, s := range job.Steps {

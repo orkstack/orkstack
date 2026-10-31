@@ -30,9 +30,9 @@ jq '{result, merge_eligible, ineligible_reasons}' proof/ci-<run>/proof.json
   the proof proves only the tree that lands. Merge `main` into it and push.
 - **A draft:** the `proof` job fails until the pull request is marked ready
   for review.
-- **A failing test, lint, build or vet:** fix it and push. When `fast` fails,
-  the integration, UI and activity-fixture shards never start, on purpose: the
-  proof could not pass anyway.
+- **A failing test, lint, build or vet:** fix it and push. When a gate of
+  `fast` fails, it cancels the run, on purpose: the proof could not pass
+  anyway, and the shards it cancelled are not run again.
 - **A runner GitHub lost, a runner below the health floor, or a fetch or
   install step that failed:** `ineligible_reasons` says so. Re-run that job
   alone, the same day. Re-running `fast` runs the shards that waited for it
