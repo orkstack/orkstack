@@ -42,6 +42,12 @@ test('an unknown key keeps its sentence and lands on its line', () => {
 	expect(lineCol(text, d.from).line).toBe(9);
 	expect(d.path).toBe('tasks[1].need');
 	expect(d.message).toBe('unknown key "need" in tasks[1] of the Orkflow; allowed: id, needs, uses');
+	// The keys after the first are named mid-sentence, and their lines are
+	// not the finding's.
+	const plural = 'line 9: unknown key "need" in tasks[1] of the Orkflow (and 1 more unknown key: "x" at line 5); allowed: id';
+	const [p] = engineFindings(text, [issue('tasks[1].need', plural)]);
+	expect(lineCol(text, p.from).line).toBe(9);
+	expect(p.message).toBe('unknown key "need" in tasks[1] of the Orkflow (and 1 more unknown key: "x" at line 5); allowed: id');
 	// A key a merge delivered has a line and no field.
 	const merged = HEADER + 'name: x\ntasks:\n  - id: a\n    with: &w {id: b, bogus: 1}\n  - <<: *w\n';
 	const [m] = engineFindings(merged, [issue('', 'line 6: unknown key "bogus" in the Orkflow')]);
