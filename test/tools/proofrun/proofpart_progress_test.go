@@ -28,6 +28,14 @@ import (
 // the directory.
 func partRun(t *testing.T, script string) (string, int, string) {
 	t.Helper()
+	return partRunAs(t, "", partIntegrationCall(t), script)
+}
+
+// partRunAs is partRun with prelude run first in the shell that sources the
+// part (the shell options scripts/proof.sh sets before it does), and call in
+// place of part_main's own call of part_run.
+func partRunAs(t *testing.T, prelude, call, script string) (string, int, string) {
+	t.Helper()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is not installed")
@@ -37,8 +45,7 @@ func partRun(t *testing.T, script string) (string, int, string) {
 	if err := os.WriteFile(gate, []byte(script+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	call := partIntegrationCall(t)
-	cmd := exec.Command(bash, "-c", `source "$PART_SH" && `+call+` sh "$GATE"`)
+	cmd := exec.Command(bash, "-c", prelude+`source "$PART_SH" && `+call+` sh "$GATE"`)
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "PART_SH=" + filepath.Join(mustRepoRoot(), "scripts", "proof-part.sh"),
 		"DIR=" + dir, "GATE=" + gate,
@@ -103,27 +110,62 @@ echo "proofrun: start example.com/m TestB"`)
 }
 
 // The gate's own exit status is the gate's result, whatever the progress
-// filter matched.
+// filter matched: a failure, a signal, or a pass whose filter matched no line
+// (grep's exit 1). It holds with scripts/proof.sh's shell options too, which
+// the part runs under, and without them.
 func TestProofPart_TheIntegrationGateKeepsItsExitStatus(t *testing.T) {
-	for _, c := range []struct {
-		script string
-		status int
-	}{
-		{`echo "proofrun: outcome fail example.com/m TestA 1.00"; exit 1`, 1},
-		{`echo "nothing the merger reads"; exit 3`, 3},
-		{`echo "nothing the merger reads"`, 0},
-	} {
-		out, status, dir := partRun(t, c.script)
-		if status != c.status {
-			t.Errorf("%q: part_run exits %d, want %d:\n%s", c.script, status, c.status, out)
+	b, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const proofOptions = "set -uo pipefail"
+	if !strings.Contains(string(b), "\n"+proofOptions+"\n") {
+		t.Fatalf("scripts/proof.sh no longer sets %q; this test runs the part under it", proofOptions)
+	}
+	for _, prelude := range []string{"", proofOptions + "; "} {
+		for _, c := range []struct {
+			script string
+			status int
+		}{
+			{`echo "proofrun: outcome fail example.com/m TestA 1.00"; exit 1`, 1},
+			{`echo "nothing the merger reads"; exit 3`, 3},
+			{`exit 1`, 1},
+			{`echo "proofrun: start example.com/m TestA"; kill -KILL $$`, 128 + int(syscall.SIGKILL)},
+			{`echo "nothing the merger reads"`, 0},
+			{`echo "proofrun: start example.com/m TestA"`, 0},
+		} {
+			out, status, dir := partRunAs(t, prelude, partIntegrationCall(t), c.script)
+			if status != c.status {
+				t.Errorf("%q%q: part_run exits %d, want %d:\n%s", prelude, c.script, status, c.status, out)
+			}
+			g, _ := os.ReadFile(filepath.Join(dir, "gates.tsv"))
+			want := "integration\tpass\t"
+			if c.status != 0 {
+				want = "integration\tfail\t"
+			}
+			if !strings.HasPrefix(string(g), want) {
+				t.Errorf("%q%q: gates.tsv = %q, want %q", prelude, c.script, g, want)
+			}
 		}
-		g, _ := os.ReadFile(filepath.Join(dir, "gates.tsv"))
-		want := "integration\tpass\t"
-		if c.status != 0 {
-			want = "integration\tfail\t"
+	}
+}
+
+// A stream filter that cannot run loses the lines the job's log exists to
+// keep, so it fails a gate that passed, as a log tee cannot write does: the
+// gate's result is never a pass the part could not stream.
+func TestProofPart_TheIntegrationGateFailsWhenItsStreamCannotRun(t *testing.T) {
+	// An extended regular expression grep refuses (exit 2).
+	call := strings.Replace(partIntegrationCall(t), "PART_STREAM='^proofrun: (start|outcome) '", "PART_STREAM='('", 1)
+	if call == partIntegrationCall(t) {
+		t.Fatal("scripts/proof-part.sh's integration gate no longer sets the PART_STREAM this test replaces")
+	}
+	for _, script := range []string{`exit 0`, `echo "proofrun: start example.com/m TestA"`} {
+		out, status, dir := partRunAs(t, "", call, script)
+		if status == 0 {
+			t.Errorf("%q: part_run passes a gate whose stream filter could not run:\n%s", script, out)
 		}
-		if !strings.HasPrefix(string(g), want) {
-			t.Errorf("%q: gates.tsv = %q, want %q", c.script, g, want)
+		if g, _ := os.ReadFile(filepath.Join(dir, "gates.tsv")); !strings.HasPrefix(string(g), "integration\tfail\t") {
+			t.Errorf("%q: gates.tsv = %q, want the gate failed", script, g)
 		}
 	}
 }
