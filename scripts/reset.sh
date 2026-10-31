@@ -11,11 +11,14 @@
 #   - the object store's volume: every artifact, every archived run, and the orkflow
 #     catalogue itself — an applied orkflow lives in the bucket, so after
 #     this the engine boots with nothing to run.
+#   - the observability profile's containers and volumes (Grafana, Loki,
+#     Prometheus, Tempo), when it ran: the compose down takes every profile.
 #   - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results, and the UI
 #     build `make ui` copied into internal/webui/dist (its committed .gitkeep
 #     stays).
 #   - .data/: the local artifact store AND the Orker's work directory
-#     (.data/work), which `make up` recreates on the next start.
+#     (.data/work), which `make up` recreates on the next start, workspaces
+#     an Orker left read-only included.
 #
 # It does NOT touch the repository: source and committed files stay exactly
 # as they are.
@@ -34,6 +37,8 @@ if [ "$force" -ne 1 ]; then
 	say "This deletes ALL local OrkStack state:"
 	say "  - Temporal history and worker deployment versions (docker volume)"
 	say "  - object-store data: artifacts, archived runs, and the orkflow catalogue"
+	say "  - the observability profile's containers and volumes (Grafana, Loki, Prometheus, Tempo)"
+	say "  - .data/: the local artifact store and the Orker's work directory"
 	say "  - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results, internal/webui/dist's UI build"
 	say ""
 	say "The repository itself is untouched."
@@ -50,7 +55,10 @@ say "== stopping everything =="
 "$REPO/scripts/stack.sh" down >/dev/null 2>&1 || true
 
 say "== removing containers and their volumes =="
-"${COMPOSE[@]}" down --volumes --remove-orphans
+# Every profile: a down without one leaves that profile's services and their
+# volumes (the observability profile's Grafana, Loki, Prometheus and Tempo),
+# and the check below then refuses.
+"${COMPOSE[@]}" --profile '*' down --volumes --remove-orphans
 
 say "== removing build output and run state =="
 rm -rf "$REPO/bin" "$REPO/.run" "$REPO/ui/build" "$REPO/ui/.svelte-kit" "$REPO/ui/test-results"
@@ -64,7 +72,21 @@ find "$REPO/internal/webui/dist" -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec 
 # the orkflow catalogue HERE, not in the object store. Wiping only the docker volume
 # leaves those behind, and a fresh engine then lists runs that no longer exist
 # anywhere else. The path is read from the same env var the binaries read.
-rm -rf "$REPO/${ORK_ARTIFACT_DIR:-.data/artifacts}" "$REPO/.data"
+#
+# The Orker seals a workspace's input/ read-only, and one that ended uncleanly
+# (an Orker killed mid-task) leaves it under .data/work, where rm cannot empty
+# it; so every directory is made the owner's to read, enter and write first.
+# That is best effort: a file a workload wrote as another uid is not ours to
+# chmod, though rm may still unlink it from a sticky output/, and rm and the
+# check below are what judge. A symlinked path is left alone, so nothing
+# outside the repository is changed. A file an activity container wrote as
+# root stays the host's to remove (`make proof-clean REMOVE=1` empties a
+# test's work root through a container).
+state=("$REPO/${ORK_ARTIFACT_DIR:-.data/artifacts}" "$REPO/.data")
+for path in "${state[@]}"; do
+	{ [ ! -e "$path" ] || [ -L "$path" ] || chmod -R u+rwX -- "$path"; } 2>/dev/null || true
+done
+rm -rf -- "${state[@]}"
 
 say "== verifying =="
 # bin/ is gone by now, so a survivor's /proc/<pid>/exe reads

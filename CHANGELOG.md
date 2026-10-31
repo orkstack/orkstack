@@ -11,6 +11,12 @@ word for word.
 
 ## [Unreleased]
 
+### Fixed
+
+- `make reset` no longer fails on a workspace an Orker left read-only under
+  `.data/work`, and takes the observability profile's containers and volumes
+  down with the rest instead of reporting them as survivors.
+
 ### Security
 
 - The development stack (`deploy/docker-compose.yml`, `make infra-up`)

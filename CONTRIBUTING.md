@@ -75,8 +75,10 @@ make reset   # wipe every local run, object and build output
 `make down` also stops the infrastructure `make infra-up` started, which
 other checkouts on the same machine may be using. `make reset` returns the
 machine to a vanilla state: it deletes Temporal history, every object-store
-object (artifacts, archived runs, and the Orkflow catalogue), the local
-artifact store and all build output. The repository itself is untouched.
+object (artifacts, archived runs, and the Orkflow catalogue), the
+observability profile's containers and volumes, the local artifact store,
+the Orker's work directory (a workspace an Orker left read-only included) and
+all build output. The repository itself is untouched.
 
 The individual steps are there when you want them: `make tools`,
 `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.

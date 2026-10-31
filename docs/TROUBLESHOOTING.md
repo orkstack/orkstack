@@ -563,7 +563,7 @@ docker run --rm alpine:3.20 getent hosts host.docker.internal
 
 ### What `make down` and `make reset` keep
 
-**Cause.** `make down` stops what `make up` started, and keeps the data ([stack.sh](../scripts/stack.sh), `cmd_down`). `make reset` wipes Temporal history, object-store data and build output ([Makefile](../Makefile), "reset"). `make reset-force` skips the confirmation prompt.
+**Cause.** `make down` stops what `make up` started, and keeps the data ([stack.sh](../scripts/stack.sh), `cmd_down`). `make reset` wipes Temporal history, object-store data, the observability profile's containers and volumes, the Orker's work directory and build output, and makes a workspace an Orker left read-only writable first ([reset.sh](../scripts/reset.sh)). `make reset-force` skips the confirmation prompt.
 
 **Fix.** Use `make down` to stop the stack and keep its data. Use `make reset` only when every run, artifact and build output may go, because the wipe cannot be undone. The script's comment on the artifact backend explains one trap: `ork` and `orker` must share one `ORK_ARTIFACT_BACKEND`. If only one of them is set differently, archived runs and artifacts split between stores, and a reset then leaves runs that the engine still lists ([stack.sh](../scripts/stack.sh), `cmd_up`).
 
