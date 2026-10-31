@@ -544,7 +544,13 @@ on_exit() {
 	local code=$?
 	trap '' TERM INT HUP
 	if [ -n "$SAMPLER" ]; then kill "$SAMPLER" 2>/dev/null; fi
-	if [ -n "$TEMPORAL_STARTED" ]; then docker stop "$TEMPORAL_NAME" >/dev/null 2>&1; fi
+	if [ -n "$TEMPORAL_STARTED" ]; then
+		# The proof's own Temporal runs with --rm: its server log, its end
+		# bounded and compressed, is kept before the stop removes it.
+		"$PR" temporal-log -container "$TEMPORAL_NAME" -out "$DIR/temporal-server.log.gz" >/dev/null ||
+			say "proof: the Temporal server's log could not be kept"
+		docker stop "$TEMPORAL_NAME" >/dev/null 2>&1
+	fi
 	# The Playwright suite's browser-server container (ui/e2e/browser-server.ts)
 	# carries this proof's id; its global teardown stops it, unless the runner
 	# was stopped first (fail-fast, a signal), in which case this does.

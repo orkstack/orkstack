@@ -11,6 +11,12 @@ word for word.
 
 ## [Unreleased]
 
+### Added
+
+- Each proof part that starts its own Temporal, and a local `make proof`,
+  keeps that Temporal server's log as `temporal-server.log.gz` (its last
+  16 MiB, compressed), so an error a test read from Temporal can be traced.
+
 ### Changed
 
 - `proof-rerun.yml` also runs a failed nightly of `main` again when its only

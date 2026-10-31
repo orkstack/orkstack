@@ -108,7 +108,17 @@ make a worker-deployment version report `Drained` in seconds rather than in
 the cluster's default minutes, so the integration tests that wait for a
 release to drain (`orkctl release wait`, the continuation chain's rollout) wait
 seconds (docs/DEPLOY.md §4, "Underneath"). They are development and proof
-settings, not a deployment's.
+settings, not a deployment's. The container runs with `--rm`, so stopping it
+would remove its log: before the stop, `proofrun temporal-log -container NAME
+-out FILE` keeps the server's log, both of its streams, gzip-compressed as
+`temporal-server.log.gz` in the proof's directory (a local proof, unless
+`PROOF_TEMPORAL=shared`) or the part's (each CI part that starts one:
+`integration`, `ui-e2e`, `observability`). A log longer than 16 MiB keeps its
+last 16 MiB (`-max-bytes`), after a line saying how much of its start was left
+out; at the `warn` level the compose file sets, a part's log is far below
+that. A history-read error a test saw (a stream ended on "branch tokens don't
+match", say) is traced there. Keeping it is best effort: a log docker cannot
+give is reported and fails nothing.
 
 The **site gate** runs `bun run check && bun run build` in `site/`, logged to
 `site.log`: the docs sync, the design-token drift check and `astro check`, then
@@ -1021,9 +1031,9 @@ Retention is chosen from `github.event.repository.private`:
 | `part-race-a<n>` | `race-tests.json`, `part.json`; the log and events only when the race gate failed (removed from a part whose gate passed, as the fast part's are) | 1 d / 7 d |
 | `part-race-repeat-a<n>` | `race-repeat-tests.json`, `part.json`; the log and events only when the lane failed | 1 d / 14 d |
 | `part-fuzz-a<n>` | `fuzz-tests.json`, `part.json`, each target's log under `fuzz/`, and `crashers/`: the input of every target the lane broke | 1 d / 14 d |
-| `part-integration-<k>-a<n>` | the shard's ledger, `part.json`, gates, `integration/*.log`, events, its `artifacts/` | 1 d / 14 d |
-| `part-ui-e2e-<k>-a<n>` | ledger, logs, screenshots, the traces of failed tests | 1 d / 14 d |
-| `part-activity-fixture-<A>-a<n>`, `part-observability-a<n>` | logs, `part.json` | 1 d / 14 d |
+| `part-integration-<k>-a<n>` | the shard's ledger, `part.json`, gates, `integration/*.log`, events, its `artifacts/`, its Temporal's `temporal-server.log.gz` (§2.1) | 1 d / 14 d |
+| `part-ui-e2e-<k>-a<n>` | ledger, logs, screenshots, the traces of failed tests, its Temporal's `temporal-server.log.gz` | 1 d / 14 d |
+| `part-activity-fixture-<A>-a<n>`, `part-observability-a<n>` | logs, `part.json`; the observability part's Temporal's `temporal-server.log.gz` | 1 d / 14 d |
 | `proof-<run_id>-a<n>` | the merged proof (below) | 30 d / 90 d |
 | `feature-proof-<run_id>-a<n>` (`ci.yml` › `feature`) | the feature proof directory | 14 d |
 | `flakes-<run_id>-a<n>` (`nightly.yml` › `flakes`) | `flakes.tsv`, `flakes.md` | 30 d |
@@ -1060,8 +1070,8 @@ a log whose merger lines together, or any one line, pass 1 MiB (refused, never
 cut), and a `proofrun` that did not build. A part that did not pass (a gate
 recorded as anything but `pass`, or no `part.json` because its process died)
 also has its events and per-job logs there (`*.events.jsonl`, `integration/`,
-`unit.log`, `race.log`, `race-repeat.log`, `fuzz/`), the files §8 reads a
-failure from; a passing part's are left out, and no part's `bin/`, `layouts/` or `artifacts/` is copied: all of it
+`unit.log`, `race.log`, `race-repeat.log`, `fuzz/`, and its own Temporal's
+`temporal-server.log.gz`), the files §8 reads a failure from; a passing part's are left out, and no part's `bin/`, `layouts/` or `artifacts/` is copied: all of it
 stays in the part's own artifact. A failing fuzz part's `crashers/` is none of
 those: it is copied with the part's other details. `scripts/proof-collect.sh`
 makes the copy, after the merger has read the parts and written `proof.json`,
@@ -1236,7 +1246,10 @@ git cannot read refuses it; with none given, nothing of the nightly is read.
    its shard; that shard's `part.json` names its artifact.
 3. For a failed test, the shard's `integration/<job>.log` and
    `integration.events.jsonl` hold the test's own output; the ledger row's
-   `job` names the log.
+   `job` names the log. An error the test read from Temporal (a history read,
+   a stream that ended) is traced in the part's `temporal-server.log.gz`
+   (§2.1), in the part's own artifact and, for a part that did not pass, in
+   the merged proof.
 4. For a part with no result, `ineligible_reasons` says whether GitHub lost the
    runner (that one job may be re-run), the part ran on a degraded runner
    (`degraded_runners` names the metric, its value and the floor; that one
@@ -1821,6 +1834,7 @@ listing with no bucket at all.
 | `flakes` | `-from GLOB`, `-repo DIR`, `-window N`, `-out FILE`, `-md FILE`, `-min-runs N` |
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S`; or, for `release.yml`'s nightly check, `-commit SHA` with `-nightly DIR` and `-nightly-jobs FILE` |
 | `temporal-args` | `-compose FILE` |
+| `temporal-log` | `-container NAME`, `-out FILE`, `-max-bytes N` |
 | `costs` | `-from DIR`, `-costs-out FILE`, `-slow-out FILE`, `-ui-costs-out FILE`, `-threshold SECONDS` |
 | `overhead` | `-from DIR`, `-out FILE`, `-config FILE` |
 | `push-layout` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |

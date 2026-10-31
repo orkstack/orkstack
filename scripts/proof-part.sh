@@ -299,10 +299,22 @@ part_push_images() {
 	done <"$DIR/images.tsv"
 }
 
+# part_save_temporal_log keeps the part's own Temporal server's log, its end
+# bounded and gzip-compressed, as temporal-server.log.gz beside the part's
+# records: the container was started with --rm, so stopping it removes its
+# log, and a history-read error in a test is traced in the server's log.
+part_save_temporal_log() {
+	"$PR" temporal-log -container "$TEMPORAL_NAME" -out "$DIR/temporal-server.log.gz" ||
+		part_say "proof: the Temporal server's log could not be kept"
+}
+
 part_cleanup() {
 	local code=$?
 	trap '' TERM INT HUP
-	if [ -n "$PART_TEMPORAL_RAN" ]; then docker stop "$TEMPORAL_NAME" >/dev/null 2>&1; fi
+	if [ -n "$PART_TEMPORAL_RAN" ]; then
+		part_save_temporal_log
+		docker stop "$TEMPORAL_NAME" >/dev/null 2>&1
+	fi
 	if [ -n "$PART_IMAGES" ]; then
 		local a
 		for a in $(make -s -C "$REPO/images" print-activities 2>/dev/null); do

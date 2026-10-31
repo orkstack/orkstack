@@ -14,6 +14,7 @@
 //	proofrun merge        merge a proof's parts into one proof.json
 //	proofrun verify       refuse a merge or tag whose proof does not cover it
 //	proofrun temporal-args  the temporal service's image and arguments
+//	proofrun temporal-log   keep a proof's own Temporal server's log, bounded and compressed
 //	proofrun costs        regenerate the cost ledgers and the slow list
 //	proofrun overhead     where an existing proof's wall-clock went
 //	proofrun push-layout  push OCI layouts byte for byte and check the digests
@@ -57,6 +58,7 @@ var subcommands = []subcommand{
 	{"flakes", "derive per-test flake rates from proof ledgers", cmdFlakes},
 	{"verify", "refuse a merge or a tag whose proof does not cover it", cmdVerify},
 	{"temporal-args", "the temporal service's image and arguments", cmdTemporalArgs},
+	{"temporal-log", "keep a proof's own Temporal server's log, its end bounded and compressed", cmdTemporalLog},
 	{"costs", "regenerate the cost ledgers and the slow list", cmdCosts},
 	{"overhead", "where an existing proof's wall-clock went, and its per-process overhead", cmdOverhead},
 	{"push-layout", "push OCI layouts byte for byte and check their digests", cmdPushLayout},
