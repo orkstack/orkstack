@@ -107,6 +107,8 @@ Never give an Orker pod the node's container runtime or its Docker socket. [Run 
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | empty | both. Empty opens no listener |
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | ork. Off keeps every run; on retires runs by their namespace's retention |
 
+Give every Orker of a pool the same `max_concurrent`, caps and capacity, and the same default request, secret and `env` settings and runtime. A task that lands on an Orker that will not run it fails its run. To change a value with runs in flight, follow [DEPLOY.md, "Every Orker of a pool has the same settings"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings).
+
 On a host, an Orker with no `ORK_ORKER_ID` derives a unique id from its host and work directory. In a container, set it explicitly, one distinct id per Orker.
 
 ## Health checks
@@ -130,6 +132,7 @@ The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/P
 - [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#0-topology--what-you-run-and-where-state-lives): the topology, in full
 - [DEPLOY.md, “The web UI”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-web-ui): what the engine serves at `/`, caching, and running it behind a proxy
 - [DEPLOY.md, “1. Configuration”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration): every key and its variable
+- [DEPLOY.md, “Every Orker of a pool has the same settings”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings): the settings a pool's Orkers share, and how to change one with runs in flight
 - [DEPLOY.md, “Orkers on Kubernetes”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): both shapes, sizing, the RuntimeClass and the proof
 - [PRODUCTION_CHECKLIST.md](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md): the full list of care items
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack keeps in the bucket, and where

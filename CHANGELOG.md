@@ -16,6 +16,10 @@ word for word.
 - An Orker that declares no capacity says at boot that its admission is best
   effort, bounded only by `max_concurrent`
   (`capacity not declared: admission is best effort, bounded only by max_concurrent`).
+- `docs/DEPLOY.md`, "Every Orker of a pool has the same settings": the settings
+  every Orker of a pool shares, and the order in which to change one with runs
+  in flight — widen every Orker before any task needs more, narrow only once no
+  run does.
 
 ### Fixed
 

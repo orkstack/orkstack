@@ -600,7 +600,7 @@ for, and give the rare large task a pool of its own whose Orkers set larger
 caps and a smaller ceiling. Set the same caps on every Orker of a pool: a task
 above the cap of the Orker that takes it fails `RESOURCE_REQUEST_REFUSED`, so a
 pool whose Orkers disagree runs a task or fails it depending on which one
-polled first.
+polled first ("Every Orker of a pool has the same settings", below).
 
 ### Declaring an Orker's capacity
 
@@ -666,8 +666,8 @@ a task that declares a request above every one of them
 (`RESOURCES_UNSATISFIABLE`), before a run id exists. That read costs a submit
 whose tasks declare `resources:` one describe per live Orker of the deployment,
 together, each bounded at five seconds; a submit that declares none pays
-nothing for it. Capacity may differ per Orker, but every Orker of a pool should
-set the same cap and default.
+nothing for it. Set the same capacity, cap and default on every Orker of a
+pool, with the rest of the settings the next section lists.
 
 **After a crash**, the Orker's restart reaps its previous life's containers.
 One it could not remove still holds its host, so a declared capacity starts
@@ -676,6 +676,99 @@ with that container's cap reserved, and frees it once a later reap removes it.
 The ledger is held in the process, as a cordon is: never stored, never shared,
 gone with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task.
+
+### Every Orker of a pool has the same settings
+
+Temporal hands a task to whichever Orker of its pool polls for it, and
+OrkStack never chooses a host, so a run can count only on what every Orker of
+the pool offers. Give each Orker of a pool the same:
+
+- per-task caps, `orker.resources.max_cpu` and `max_memory`;
+- default request, `orker.resources.default_cpu` and `default_memory`;
+- capacity, `orker.capacity.cpu` and `memory`, and `orker.max_concurrent`;
+- secret schemes and floor, `ORK_ORKER_SECRET_SCHEMES` and
+  `ORK_ORKER_SECRET_ALLOW`;
+- `env` allow-list, `orker.env_allowlist`, and the values of the variables it
+  names;
+- runtime: `orker.resources.force_user`, and whether a task can run as the
+  Orker's own user. Run a pool on runtimes where it can, or on runtimes where
+  it cannot, not both (a rootless or user-namespaced daemon cannot;
+  [REASONS.md](./REASONS.md), `RUN_AS_ORKER_UNAVAILABLE`);
+- pin hosting, `ORK_ORKER_MAX_PINS` ("Pin hosting is a pool-wide setting",
+  below).
+
+Network modes need no setting: every Orker offers `default` and `none`.
+
+While the settings match, a run never fails because of which Orker took a
+task. When they differ, a task that lands on an Orker that will not run it
+fails there, explicitly and without a retry, with its own reason:
+`RESOURCE_REQUEST_REFUSED`, `SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`,
+`RUN_AS_ORKER_UNAVAILABLE`, or `RENDER_FAILED` for an `env` name outside the
+Orker's allow-list. A differing default
+request gives a task that declares none different limits on different Orkers,
+and a differing capacity or `max_concurrent` fails nothing, only spreads the
+work unevenly. A task whose result is already committed, or whose memo hits,
+is never refused this way: an Orker holds a task to its own settings only
+after the commit check and the memo step, because it then starts no container
+([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#71-the-sequence),
+"§7.1").
+
+#### Changing a setting with runs in flight
+
+Change a setting in the order a schema migration uses: widen every Orker
+before any task needs more, and stop needing it before you narrow them. It
+works with an ordinary rolling update, versioned or not.
+
+**To widen** (raise a cap, allow another scheme or source):
+
+1. Roll every Orker of the pool to the wider setting, and let the rollout
+   finish (`orkctl orker list --filter pool=<pool>` lists the pool's live
+   Orkers).
+2. Only then apply and promote the Orkflow version that needs it
+   (`orkctl apply`, `orkctl orkflow promote <name> <version>`).
+
+During the rollout no task asks for more than the old setting allows, so
+Orkers that still differ are harmless.
+
+**To narrow** (lower a cap, allow less):
+
+1. Promote the Orkflow versions that no longer need the wider setting.
+2. Repoint whatever pins an older version. `orkctl orkflow callers <name>
+   --all-versions` lists the schedules, triggers and composing tasks that pin
+   one. Move a schedule with `orkctl schedule update <name> --version <v>` (or
+   `--follow-current`), a trigger with `orkctl trigger update <id> --version
+   <v>` (or `--follow-current`), and a composing task by applying and promoting
+   a version of its Orkflow that names the new version. Do not use
+   `orkctl run again` on a run from before the promotion until the narrowing is
+   done: it resubmits that run's pinned version unless `--version` says
+   otherwise.
+3. Wait until the runs that may still need the wider setting have finished:
+   in every namespace whose runs use the pool,
+   `orkctl run list --filter 'status=PENDING,RUNNING' --filter 'created_at<T'`
+   lists none, with `T` the instant of the last repoint in step 2, an RFC 3339
+   instant with a zone such as `2026-10-30T12:00:00Z`. A schedule or trigger
+   still pinned to an older version can start a run until it is repointed,
+   and so can a submit that names that version with `--version`. A parent run
+   stays running while its child runs do, so this covers composed tasks too. A
+   task that has already committed is adopted, never run again, so only work
+   still to run matters.
+4. Roll the narrower setting out to every Orker of the pool.
+
+With versioning on, a release is already a generation of settings: change the
+setting in a new release and roll it forward ("3. Rolling a release forward",
+below): new runs go to the new release's Orkers, and a run already in flight
+keeps to its own release's Orkers while they drain.
+
+**What it does not cover:**
+
+- an Orker configured wrong by mistake;
+- an Orker that joins late with stale settings, such as one started from an
+  old template;
+- runs that stay open a long time, such as one waiting on an await: they only
+  make step 3 take longer.
+
+Either of the first two fails the run explicitly, with its own reason, as
+above.
 
 ### Pin hosting is a pool-wide setting
 

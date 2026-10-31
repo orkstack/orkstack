@@ -317,6 +317,14 @@ process-local, exactly as a cordon is: never stored, never shared, gone
 with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task, and OrkStack never chooses a host.
 
+Every Orker of a pool has the same settings — caps, default request,
+capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
+runtime, pin hosting — so a run never fails because of which Orker took a
+task; where they differ, a task with no committed result and no memo hit
+fails explicitly with its own reason, and a committed result or a hit is
+never refused for one (`docs/DEPLOY.md`, "Every Orker of a pool has the same
+settings").
+
 Docker- and Podman-specific details live in the runtime files
 (`internal/orker/runtime_docker.go` and `runtime_dialect.go`) and nowhere else:
 do not spread them through unrelated OrkStack components. Podman is a dialect
