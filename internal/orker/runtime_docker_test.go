@@ -547,6 +547,8 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 	t.Setenv("CLOUDSDK_CONFIG", filepath.Join(dir, "gcloud-config"))
 	t.Setenv("AZURE_CONFIG_DIR", filepath.Join(dir, "azure-config"))
 	t.Setenv("AZURE_CLIENT_CERTIFICATE_PATH", filepath.Join(dir, "azure-client.pem"))
+	t.Setenv("CLOUDSDK_AUTH_ACCESS_TOKEN_FILE", filepath.Join(dir, "gcloud-access-token"))
+	t.Setenv("CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE", filepath.Join(dir, "gcloud-credential.json"))
 	policy := SecurityPolicyFromEnv()
 
 	assertOwn(t, policy,
@@ -561,6 +563,8 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 		"file:"+filepath.Join(dir, "gcloud-config", "credentials.db"),
 		"file:"+filepath.Join(dir, "azure-config", "msal_token_cache.json"),
 		"file:"+filepath.Join(dir, "azure-client.pem"),
+		"file:"+filepath.Join(dir, "gcloud-access-token"),
+		"file:"+filepath.Join(dir, "gcloud-credential.json"),
 		"file:"+filepath.Join(home, ".dockercfg"),
 		"file:"+filepath.Join(dir, "gcp.json"),
 		"file:"+filepath.Join(dir, "azure-token"),
