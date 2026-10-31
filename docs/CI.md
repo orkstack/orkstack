@@ -12,7 +12,7 @@ miss leaves a shard red while the proof passes ([PROOFS.md §12](PROOFS.md#12-kn
 
 | Workflow › job | Trigger | Purpose | Required | Typical duration | When it is red |
 |---|---|---|---|---|---|
-| `ci.yml` › `check` | every push and every pull request | `make check`: lint, vet and the unit tests with `-short`, no Docker | no | 2–5 min | Run `make check` locally and fix what it names. A failing unit test also stops the full proof's shards. |
+| `ci.yml` › `check` | every push and every pull request | `make check`: lint, vet and the unit tests with `-short`, no Docker | no | 2–5 min | Run `make check` locally and fix what it names. This job stops nothing else: the full proof's `fast` part runs its own unit gate, without `-short`, and a failing gate there is what cancels the proof's shards. |
 | `ci.yml` › `vuln` | every push and every pull request | `make vuln`: known Go vulnerabilities the code can reach | no | under 1 min | Bump the module to the exact version the report names, and prove that change like any other ([PROOFS.md §10](PROOFS.md#10-procedures), "Read the nightly after a merge"). |
 | `ci.yml` › `feature` | the `ci:feature` label, a push to `validate/feature/**`, or a dispatch | the optional feature proof of a branch | no: it gates nothing | not measured | Read its README; a refusal (exit 2) names the path or evidence it could not account for ([PROOFS.md §3](PROOFS.md#3-how-proofrun-select-picks-evidence)). |
 | `proof.yml` | a pull request, a merge group, a push to `validate/full/**`, a dispatch, or a call from `nightly.yml` or `release.yml` | the full proof, sharded across runners: every part at once, a failing `fast` gate cancelling the rest (except on a fork's or Dependabot's pull request, whose token cannot), then the `proof` job merges every part ([PROOFS.md §5](PROOFS.md#5-the-ci-job-graph)) | the `proof` job is the merge gate: required once the gate is enforced, and until then the evidence `make merge-check PROOF=` reads | about 15–18 min on a green run; a failing `fast` gate cancels the run when `fast` ends, 12–16 min in ([PROOFS.md §11.5](PROOFS.md#115-measured-numbers)) | On a pull request, `base` fails with "update this branch" when the branch lacks `main`'s tip (merge `main` into it), and a draft's `proof` job fails until it is marked ready ([PROOFS.md §5](PROOFS.md#5-the-ci-job-graph)). Otherwise read `proof.json`: `result`, `merge_eligible`, `ineligible_reasons` ([PROOFS.md §8](PROOFS.md#8-reading-a-failed-proof)). A part whose runner was lost or measured below the floor, or that failed in a setup step, may be re-run alone; a failing test never is: fix it ([PROOFS.md §10](PROOFS.md#10-procedures)). |
@@ -23,10 +23,10 @@ miss leaves a shard red while the proof passes ([PROOFS.md §12](PROOFS.md#12-kn
 | `podman.yml` | a push or pull request that touches the Orker's runtime, 05:41 UTC every day, and a dispatch | the runtime suites on Podman, rootless and rootful ([DEPLOY.md](DEPLOY.md), "Running on Podman") | no | about 5 min | The job's summary and its `logs` step name the failing suite; reproduce with `scripts/integration.sh ./internal/orker` on a Podman host. |
 | `kind-orker.yml` | a push or pull request that touches the Kubernetes Orker bases or the Orker, 06:29 UTC every day, and a dispatch | `scripts/kind-orker.sh`: the Kubernetes Orker check on a throwaway kind cluster ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes") | no | about 7 min | Its summary names the failed check; the `kind-orker-<run>-a<attempt>` artifact holds the logs and the cluster's state. |
 
-Every action a workflow uses is pinned by commit SHA to its latest release,
-and Go, Bun, Node and cosign to exact versions; Dependabot moves them, one
-pull request and one proof at a time. No `run:` step splices a workflow input
-or an event field into its shell: each reaches the step through `env:`.
+Every action a workflow uses is pinned to an exact release of its latest
+major, and Go, Bun, Node and cosign to exact versions; Dependabot moves them,
+one pull request and one proof at a time. No `run:` step splices a workflow
+input or an event field into its shell: each reaches the step through `env:`.
 
 ## See also
 
