@@ -1516,7 +1516,7 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
   pool: string;
 
   /**
-   * "docker"
+   * the engine the Orker drives: "docker" or "podman"
    *
    * @generated from field: string runtime_name = 4;
    */

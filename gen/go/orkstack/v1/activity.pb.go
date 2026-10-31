@@ -2554,7 +2554,7 @@ type DescribeOrkerResult struct {
 	OrkerId         string                 `protobuf:"bytes,1,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
 	BuildId         string                 `protobuf:"bytes,2,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
 	Pool            string                 `protobuf:"bytes,3,opt,name=pool,proto3" json:"pool,omitempty"`
-	RuntimeName     string                 `protobuf:"bytes,4,opt,name=runtime_name,json=runtimeName,proto3" json:"runtime_name,omitempty"` // "docker"
+	RuntimeName     string                 `protobuf:"bytes,4,opt,name=runtime_name,json=runtimeName,proto3" json:"runtime_name,omitempty"` // the engine the Orker drives: "docker" or "podman"
 	RuntimeVersion  string                 `protobuf:"bytes,5,opt,name=runtime_version,json=runtimeVersion,proto3" json:"runtime_version,omitempty"`
 	SecurityProfile string                 `protobuf:"bytes,6,opt,name=security_profile,json=securityProfile,proto3" json:"security_profile,omitempty"` // the profile id the Orker enforces (§9.2)
 	// max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs
