@@ -30,11 +30,12 @@ word for word.
   publishes every port on `127.0.0.1` only. Temporal's frontend, the object
   store with its development key, the unauthenticated registry and, in the
   observability profile, Grafana with anonymous admin were reachable from
-  any host that could reach the contributor's machine. Reach it from another
-  machine through an SSH tunnel. The next `make infra-up` on a running stack
-  recreates its containers to apply this: the object store and the registry
-  keep their volumes, and Temporal's development server, which keeps its
-  history in memory, starts empty.
+  any host that could reach the contributor's machine. A contributor who
+  reached the stack from another machine must now tunnel or forward the
+  port, for example `ssh -L 7233:127.0.0.1:7233 <host>` for Temporal. The
+  next `make infra-up` on a running stack recreates its containers to apply
+  this: the object store and the registry keep their volumes, and Temporal's
+  development server, which keeps its history in memory, starts empty.
 
 ## [0.1.0] - 2026-10-30
 

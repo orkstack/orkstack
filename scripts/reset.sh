@@ -6,8 +6,9 @@
 #   scripts/reset.sh --force  do not ask (CI, scripts)
 #
 # What it destroys, and what that costs:
-#   - Temporal's sqlite volume: every run's history, and every worker
-#     deployment version registered against it.
+#   - Temporal's history: every run's, and every worker deployment version
+#     registered against it. The development server keeps it in memory, so
+#     removing its container is what loses it.
 #   - the object store's volume: every artifact, every archived run, and the orkflow
 #     catalogue itself — an applied orkflow lives in the bucket, so after
 #     this the engine boots with nothing to run.
@@ -35,7 +36,7 @@ say() { printf '%s\n' "$*"; }
 
 if [ "$force" -ne 1 ]; then
 	say "This deletes ALL local OrkStack state:"
-	say "  - Temporal history and worker deployment versions (docker volume)"
+	say "  - Temporal history and worker deployment versions (in the Temporal container's memory)"
 	say "  - object-store data: artifacts, archived runs, and the orkflow catalogue"
 	say "  - the observability profile's containers and volumes (Grafana, Loki, Prometheus, Tempo)"
 	say "  - .data/: the local artifact store and the Orker's work directory"

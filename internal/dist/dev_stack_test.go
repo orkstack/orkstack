@@ -58,7 +58,9 @@ func TestDevCompose_PublishesOnlyOnLoopback(t *testing.T) {
 // down` removes the services of the profiles it enables (every `--profile`,
 // COMPOSE_PROFILES, `*` for all) and, with `--volumes`, their volumes; a
 // profile it does not enable keeps its services' volumes, which `volume ls`
-// then lists, as `orkstack_<profile>-data`.
+// then lists, as `orkstack_<profile>-data`. With a `recreate` flag, `volume
+// ls` (which the script's check runs after its removals) also makes .data/
+// again, as a process still writing there would.
 type resetRepo struct {
 	t    *testing.T
 	root string
@@ -93,6 +95,9 @@ func newResetRepo(t *testing.T) *resetRepo {
 	if err := os.WriteFile(filepath.Join(r.logs, "profiles"), []byte(strings.Join(profiles, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(r.logs, "repo"), []byte(r.root), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	docker := `#!/bin/sh
 S=` + shellQuote(r.logs) + `
 echo "$*" >> "$S/calls"
@@ -117,6 +122,7 @@ compose)
   done < "$S/profiles"
   exit 0 ;;
 volume)
+  [ ! -e "$S/recreate" ] || mkdir -p "$(cat "$S/repo")/.data/work"
   [ -e "$S/down" ] || echo orkstack_seaweedfs-data
   [ ! -e "$S/left" ] || cat "$S/left"
   exit 0 ;;
@@ -203,7 +209,9 @@ func shellQuote(s string) string {
 func TestResetScript_RemovesWorkspacesTheOrkerSealed(t *testing.T) {
 	t.Parallel()
 	if os.Geteuid() == 0 {
-		t.Log("running as root, which removes a read-only directory anyway; the case is the contributor's, who is not root")
+		// root removes a read-only directory anyway, so here the case could
+		// not fail; it is the contributor's, who is not root.
+		t.Skip("running as root, under which a sealed workspace never stops rm, so this case could not fail")
 	}
 	r := newResetRepo(t)
 	ws, err := orker.NewWorkspace(filepath.Join(r.root, ".data", "work", "e2e-run-page-p1-abc", "ork-run-1-task-1"))
@@ -275,5 +283,23 @@ func TestResetScript_RefusesWhenAVolumeSurvives(t *testing.T) {
 
 	if code == 0 || !strings.Contains(out, "volumes survived:") || !strings.Contains(out, "orkstack_stuck-data") {
 		t.Fatalf("scripts/reset.sh --force exited %d with a surviving volume; want a refusal naming it:\n%s", code, out)
+	}
+}
+
+// TestResetScript_RefusesWhenStateSurvives is the positive control of the
+// removals: the reset's own check bites on state found again after them (a
+// process still writing .data/), so a pass above is the removal's doing, not
+// a check that looks at nothing.
+func TestResetScript_RefusesWhenStateSurvives(t *testing.T) {
+	t.Parallel()
+	r := newResetRepo(t)
+	if err := os.WriteFile(filepath.Join(r.logs, "recreate"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	code, out := r.run()
+
+	if code == 0 || !strings.Contains(out, "state survived: "+filepath.Join(r.root, ".data")) {
+		t.Fatalf("scripts/reset.sh --force exited %d with .data/ written again after its removal; want a refusal naming it:\n%s", code, out)
 	}
 }
