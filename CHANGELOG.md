@@ -38,6 +38,10 @@ word for word.
   came back empty. The job records now keep a bounded log of each failed job:
   every line the merger reads and its last 200 lines. A log that cannot be
   read or kept, other than one GitHub does not have, fails its job closed.
+- A local proof's Playwright browser server is no longer stopped by another
+  proof's start while its gate runs: it is labelled with the proof itself as
+  its owner, not with the short-lived process that starts it, and no sweep
+  stops a container whose proof's record says it still runs.
 - A proof shard cancelled, or whose runner was lost, before its artifact was
   uploaded is read by the test it was running: the integration gate now also
   prints its `proofrun` progress lines to the job's log, where none reached

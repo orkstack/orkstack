@@ -499,6 +499,12 @@ PR="$DIR/bin/proofrun"
 
 proc_start() { sed -E 's/^.*\) //' "/proc/$1/stat" 2>/dev/null | awk '{print $20}'; }
 printf '%s %s %s %s\n' "$$" "$$" "$(proc_start $$)" "$PROOF_ID" >"$DIR/proof.pid"
+# The owner every container this proof starts is labelled with
+# (orkstack.proof.owner): this shell, which lives as long as the proof. A
+# sweep reads a container whose owner is gone as a dead proof's leftover, so
+# a container started by a helper that exits (the Playwright gate's browser
+# server, ui/e2e/browser-server.ts) is handed this owner, never its own.
+PROOF_OWNER="$(hostname):$$:$(proc_start $$)"
 
 # tree_hash is the tree of the WORKING TREE — staged and untracked files
 # included, ignored ones excluded — through a temporary index: the exact
@@ -781,26 +787,20 @@ step fuzz fuzz.log "$PR" fuzz -out "$DIR" -budget "$FUZZ_BUDGET"
 TEMPORAL_ADDRESS="127.0.0.1:7233"
 TEMPORAL_IMAGE=""
 SWEPT=""
-# sweep_stale stops every proof Temporal whose owning proof process is gone:
-# a proof that was SIGKILLed, or cut off by a usage limit, never ran its trap.
+# sweep_stale stops every proof's own container (a Temporal, a Playwright
+# browser server) whose proof is gone: a proof that was SIGKILLed, or cut off
+# by a usage limit, never ran its trap. It is `proofrun clean`'s rule, run on
+# the proofs' containers alone: never one whose proof's proof.pid says it
+# still runs, whatever its owner label says.
 sweep_stale() {
-	local id owner host rest pid start name
-	for id in $(docker ps -q --filter label=orkstack.proof 2>/dev/null); do
-		owner="$(docker inspect -f '{{index .Config.Labels "orkstack.proof.owner"}}' "$id" 2>/dev/null)"
-		host="${owner%%:*}"
-		rest="${owner#*:}"
-		pid="${rest%%:*}"
-		start="${rest#*:}"
-		[ "$host" = "$(hostname)" ] || continue
-		if [ -z "$pid" ] || [ "$(proc_start "$pid")" != "$start" ]; then
-			name="$(docker inspect -f '{{.Name}}' "$id" 2>/dev/null)"
-			name="${name#/}"
-			if docker stop "$name" >/dev/null 2>&1; then
-				say "proof: stopped stale $name (its proof, pid $pid, is gone)"
-				SWEPT="$SWEPT $name"
-			fi
-		fi
-	done
+	local name out
+	if ! out="$("$PR" clean -remove -proof-containers 2>&1)"; then
+		say "proof: the stale-container sweep could not run: $(printf '%s\n' "$out" | tail -n 1)"
+	fi
+	while IFS= read -r name; do
+		say "proof: stopped stale $name (its proof is gone)"
+		SWEPT="$SWEPT $name"
+	done < <(printf '%s\n' "$out" | sed -n 's/^stopped \([^ ]*\)$/\1/p')
 }
 start_temporal() {
 	local args port i
@@ -818,7 +818,7 @@ start_temporal() {
 	say "starting $TEMPORAL_NAME: ${args[*]}"
 	docker run -d --rm --name "$TEMPORAL_NAME" \
 		--label "orkstack.proof=$PROOF_ID" \
-		--label "orkstack.proof.owner=$(hostname):$$:$(proc_start $$)" \
+		--label "orkstack.proof.owner=$PROOF_OWNER" \
 		-p 127.0.0.1::7233 "${args[@]}" || return 1
 	port="$(docker port "$TEMPORAL_NAME" 7233/tcp | head -n1 | awk -F: '{print $NF}')"
 	if [ -z "$port" ]; then
@@ -1082,7 +1082,7 @@ ui_e2e_locked() {
 		# (ui/e2e/global-setup.ts) and the second reuses the first's UI build
 		# by its inputs' hash (ui/e2e/build-hash.ts).
 		local server
-		if server="$(cd "$REPO/ui" && bun e2e/browser-server.ts start "$PROOF_ID" 2>>"$DIR/ui-e2e.log")"; then
+		if server="$(cd "$REPO/ui" && ORK_PROOF_OWNER="$PROOF_OWNER" bun e2e/browser-server.ts start "$PROOF_ID" 2>>"$DIR/ui-e2e.log")"; then
 			BROWSER_WS="$(printf '%s' "$server" | sed -n 's/.*"wsEndpoint":"\([^"]*\)".*/\1/p')"
 			BROWSER_CONTAINER="$(printf '%s' "$server" | sed -n 's/.*"container":"\([^"]*\)".*/\1/p')"
 			say "browser server for both invocations: $BROWSER_WS (container ${BROWSER_CONTAINER:0:12})"
@@ -1116,7 +1116,7 @@ BROWSER_CONTAINER=""
 playwright_run() {
 	local report="$1" workers="$2"
 	shift 2
-	(cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" \
+	(cd "$REPO/ui" && env "${STACK_ENV[@]}" ORK_PROOF_DIR="$DIR/artifacts/ui" ORK_PROOF_OWNER="$PROOF_OWNER" \
 		${BROWSER_WS:+ORK_E2E_BROWSER_WS="$BROWSER_WS"} ${BROWSER_CONTAINER:+ORK_E2E_BROWSER_CONTAINER="$BROWSER_CONTAINER"} \
 		PLAYWRIGHT_JSON_OUTPUT_FILE="$report" \
 		PLAYWRIGHT_JSON_OUTPUT_NAME="$report" \

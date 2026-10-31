@@ -210,7 +210,12 @@ part.
 The UI the specs drive is the static build in `ui/build`, served by each
 spec's own engine from `ORK_UI_DIR` on the engine's API port, so a spec runs
 no UI server of its own and its page is on the engine's origin. The gate
-starts one browser server for both invocations, and the second reuses the
+starts one browser server for both invocations, through a `bun
+e2e/browser-server.ts start` that exits once the server listens, so the
+container is labelled with the proof's own shell as its owner
+(`ORK_PROOF_OWNER`, the owner its Temporal carries), never the starter, which
+a sweep would read as gone; the command refuses to start one without it.
+The second invocation reuses the
 first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
 runs both integration and Playwright makes that build earlier, while its
@@ -1804,7 +1809,14 @@ every worktree of this repository, and removes:
   `ORK_ORKER_WORKDIR`, read from the container's own mounts. A Playwright
   spec's Orkers work in such roots too, `e2e-<name>-p<pid>-<suffix>`
   (`orkerEnv` in `ui/e2e/harness.ts`);
-- a proof Temporal container whose proof process is gone;
+- a proof's own container (its Temporal, its Playwright browser server),
+  labelled `orkstack.proof`, whose owner (`orkstack.proof.owner`) is gone,
+  and never one labelled with the id of a proof whose `proof.pid` says it
+  still runs, whatever its owner label says. A proof's start sweeps these
+  alone again, by the same rule, before it starts its own Temporal
+  (`proofrun clean -remove -proof-containers`); on 2026-10-30 a live proof's
+  browser server, labelled with a starter that had exited, was stopped that
+  way 89 specs into its gate;
 
 each only when the process its name records is gone, and never one whose pid
 a still-running proof or `integration.sh` run recorded. A work root or a
@@ -1883,7 +1895,7 @@ listing with no bucket at all.
 | `free-port` | none |
 | `touches` | `-base REF`, `-action NAME`, `-gate-files`, `-scope FILE` |
 | `gates` | `-select FILE` |
-| `clean` | `-remove` |
+| `clean` | `-remove`, `-proof-containers` |
 | `runner-health` | `-out FILE`, `-class NAME`, `-floors FILE`, `-dir DIR`, `-seconds N` |
 | `rerun-plan` | `-repo OWNER/NAME`, `-run ID`, `-attempt N`, `-max-attempts N` |
 | `job-log` | none: the job log on standard input, the bounded log on standard output (§7) |
