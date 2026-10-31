@@ -1546,6 +1546,31 @@ composition, `outputs:`, join policies, caching, schedules) needs the
 preparation in §3, "Releases that add Orkflow constructs" — for join policies
 it is a hold, because the silent outcome is destructive.
 
+**Rolling back below 0.1.1, the release that moved to the Temporal Go SDK
+1.50**, is one-way for the runs it executed. From 0.1.1 the engine records a
+marker in a run's history (the SDK's flag 9, ordered child cancellation) the
+first time one cancellation reaches more than one of the run's open scopes,
+so that they are canceled in the order they were opened. That happens on an
+operator's cancel of a run that declares a failure handler, and on a run that
+fails or is canceled while two or more of its awaits or pins are open. An
+older engine does not know the marker. Handed such a history, it fails the
+run's workflow task on every attempt (`unknown SDK flag: 9` in its log), and
+the run stays `RUNNING`, making no progress, until an engine of 0.1.1 or
+later picks it up again. Nothing is lost, but nothing moves. On an unversioned
+fleet any engine may execute a run's next workflow task, so a run that started
+on the older release can record the marker too. So:
+
+- with versioning on, roll back as above: a run stays on the build that
+  started it, so 0.1.1's runs finish on 0.1.1, whose processes keep running
+  until `orkctl release wait` reports it drained;
+- with versioning off, roll back below 0.1.1 only when no run is open: hold
+  each namespace that takes runs
+  (`orkctl namespace update NS --hold "rolling back"`), let the running runs
+  finish, then replace the engines;
+- an unversioned fleet that mixes older and 0.1.1 engines meets the same
+  failure whenever an older engine picks up such a run, so replace every
+  engine replica together when rolling forward to 0.1.1.
+
 **A release that lets runs carry on into a fresh history** ships after the
 release that reads them (below), and the default turns on only in a release
 after one that already contained the writer. Rolling back below the writer,

@@ -27,6 +27,17 @@ word for word.
   protoc plugins are `go.mod` tool directives, so each generates with the
   version of the runtime it links against, and `make tools` installs only buf,
   at the exact version `ui/package.json` pins.
+- **BREAKING** for a rollback and for an unversioned fleet that mixes
+  releases: the Temporal Go SDK 1.50 records a marker in a run's history the
+  first time one cancellation reaches more than one of the run's open scopes
+  (an operator's cancel of a run that declares a failure handler, or a run
+  that fails or is canceled while two or more awaits or pins are open). An
+  engine of 0.1.0 cannot replay such a run: it fails the run's workflow task
+  on every attempt (`unknown SDK flag: 9`), and the run stays `RUNNING` until
+  an engine of this release picks it up. With versioning on, roll back as
+  before; with versioning off, roll back below this release only when no run
+  is open, and replace every engine replica together when rolling forward
+  (`docs/DEPLOY.md` §4, `docs/UPGRADING.md`).
 - `ork` and `orker` turn off the Temporal SDK's worker environment report.
   From SDK 1.49 every worker's heartbeat would otherwise send the Temporal
   server the Go version, the hosting environment the SDK detects (a
