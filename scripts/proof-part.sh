@@ -227,8 +227,17 @@ part_run() { # <gate> <log> <command...>
 	part_say "== $gate: $*"
 	local started=$SECONDS result=pass code=0
 	if [ -n "${PART_STREAM:-}" ]; then
-		"$@" 2>&1 | tee "$logfile" | grep --line-buffered -E "$PART_STREAM"
-		code=${PIPESTATUS[0]}
+		# The filters ignore the signals the part forwards to its process
+		# group, so a gate that shuts down on one (proofrun integration
+		# finishes its jobs and writes its events and ledger) keeps its log
+		# and its pipe until it exits; grep reads every byte as text (-a) and
+		# prints each matching line as it comes. A log tee cannot write fails
+		# the gate, as the redirect does.
+		"$@" 2>&1 | (trap '' TERM INT HUP && exec tee "$logfile") |
+			(trap '' TERM INT HUP && exec grep -a --line-buffered -E "$PART_STREAM")
+		local status=("${PIPESTATUS[@]}")
+		code=${status[0]}
+		[ "$code" -ne 0 ] || [ "${status[1]}" -eq 0 ] || code=1
 	else
 		"$@" >"$logfile" 2>&1 || code=$?
 	fi
