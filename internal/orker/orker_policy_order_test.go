@@ -65,6 +65,16 @@ var narrowerOrkers = []narrowerOrker{
 		narrow: func(d *OCIDispatcher) { d.Policy.SecretAllow = []string{"env:SANDBOX_POLICY_ORDER_OTHER_*"} },
 	},
 	{
+		// The source is a variable this Orker's own configuration names — a
+		// telemetry sink's header, say — and the first Orker's did not.
+		name:   "a source that is this Orker's own",
+		reason: ReasonSecretNotPermitted,
+		ask:    func(*orkstackv1.ExecuteTaskInput) {},
+		narrow: func(d *OCIDispatcher) {
+			d.Policy = d.Policy.WithOwnVars(OwnVar{Name: orderSecretVar, Why: "its telemetry credentials"})
+		},
+	},
+	{
 		name:   "a runtime where running as the Orker does not land",
 		reason: ReasonRunAsOrkerUnavailable,
 		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.RunAsOrkerUser = true },

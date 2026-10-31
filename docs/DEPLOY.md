@@ -3047,10 +3047,11 @@ name. The work root is the temp directory when `orker.workdir` is unset, so
 there a `file:/tmp/…` source is refused and a floor entry under `/tmp` stops
 the Orker at boot. A `file:` source must also be a plain absolute path, with
 no `..`, `.` or empty segment, of at most 4096 bytes, under any floor. A task
-that names one fails
-`SECRET_NOT_PERMITTED` before its image is pulled; a value a task needs goes
-under a source of the task's own, such as a file in a directory the floor
-names, or a variable the floor names. [SECURITY_MODEL.md](SECURITY_MODEL.md),
+that names one fails `SECRET_NOT_PERMITTED` where the floor is checked: after
+the commit check and a cached task's memo step, so a result already committed
+or a memo hit is still reused, and before its image is pulled. A value a task
+needs goes under a source of the task's own, such as a file in a directory the
+floor names, or a variable the floor names. [SECURITY_MODEL.md](SECURITY_MODEL.md),
 "The Orker's own sources", lists each one and why.
 
 A namespace can therefore only ever narrow what its Orkers permit. The grammar

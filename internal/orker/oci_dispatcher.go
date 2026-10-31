@@ -600,16 +600,32 @@ func (d *OCIDispatcher) checkImagePolicy(ctx context.Context, in *orkstackv1.Exe
 	return nil
 }
 
-// secretFloorFailure holds one secret's source against this Orker's
-// ORK_ORKER_SECRET_ALLOW floor. It names the source and the floor — never
-// what the source resolves to, which nothing on this path has read.
+// secretFloorFailure holds one secret's source against this Orker's floor
+// (SecurityPolicy.AllowsSecretSource): the path rule, the Orker's own
+// sources, and ORK_ORKER_SECRET_ALLOW. It names the source and the rule that
+// refused it — the floor only when the floor did — and never what the source
+// resolves to, which nothing on this path has read.
 func (d *OCIDispatcher) secretFloorFailure(secret *orkstackv1.SecretRef) *Failure {
-	if err := d.Policy.AllowsSecretSource(secret.GetSource()); err != nil {
-		return FailCause(ReasonSecretNotPermitted, err,
-			"secret %q: %v (this orker's %s); a source outside that floor is refused before anything runs",
-			secret.GetName(), err, SecretAllowVar)
+	err := d.Policy.AllowsSecretSource(secret.GetSource())
+	if err == nil {
+		return nil
 	}
-	return nil
+	var own *OwnSourceRefusal
+	var refusal *dsl.SecretSourceRefusal
+	switch {
+	case errors.As(err, &own):
+		return FailCause(ReasonSecretNotPermitted, err,
+			"secret %q: %v; it is refused before anything runs, whatever this orker's %s says",
+			secret.GetName(), err, SecretAllowVar)
+	case errors.As(err, &refusal) && len(refusal.Patterns) == 0:
+		// dsl.CheckSecretPath's refusal, which carries no floor.
+		return FailCause(ReasonSecretNotPermitted, err,
+			"secret %q: %v; a file source is read by a plain absolute name of at most %d bytes, under every "+
+				"floor, and is refused before anything runs", secret.GetName(), err, dsl.MaxSecretPathBytes)
+	}
+	return FailCause(ReasonSecretNotPermitted, err,
+		"secret %q: %v (this orker's %s); a source outside that floor is refused before anything runs",
+		secret.GetName(), err, SecretAllowVar)
 }
 
 // execute is Execute's body, split out so Execute owns only the two lifecycles

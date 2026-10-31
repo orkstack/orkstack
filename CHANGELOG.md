@@ -35,10 +35,11 @@ word for word.
   files its settings name. The work root is the temp directory when
   `ORK_ORKER_WORKDIR` is unset, so there a `file:/tmp/…` source is refused and
   a floor entry under `/tmp` stops the Orker at boot. A task that names one
-  fails `SECRET_NOT_PERMITTED` before its image is pulled, under `orkctl task
-  run` as on an Orker; give the task the value under a source of its own. A
-  floor entry that can match only such
-  sources stops the Orker at boot, and an Orker whose floor is empty logs a
+  fails `SECRET_NOT_PERMITTED` where the floor is checked, after the commit
+  check and a cached task's memo step and before its image is pulled, under
+  `orkctl task run` as on an Orker; give the task the value under a source of
+  its own. A floor entry that can match only such sources stops the Orker at
+  boot, and an Orker whose floor is empty logs a
   warning at boot that names `ORK_ORKER_SECRET_ALLOW`
   ([SECURITY_MODEL.md](docs/SECURITY_MODEL.md), "The Orker's own sources").
 - **BREAKING:** A `file:` secret source must be a plain absolute path, with

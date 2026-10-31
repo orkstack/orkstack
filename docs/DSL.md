@@ -483,7 +483,8 @@ Secret values never enter this YAML or Temporal history. A namespace may bound
 which `source:` values its tasks may name (`allowed_secrets`, shown by
 `orkctl namespace get`), and a source outside that bound is refused at
 validate, apply and submit. The Orker that runs the task refuses at dispatch,
-before the image is pulled, with `SECRET_NOT_PERMITTED`:
+after the commit check and a cached task's memo step and before the image is
+pulled, with `SECRET_NOT_PERMITTED`:
 
 - a `file:` source that is not a plain absolute path — relative, with a `..`,
   `.` or empty segment, or longer than 4096 bytes — whatever its floor says;

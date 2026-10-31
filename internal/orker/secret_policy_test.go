@@ -247,6 +247,46 @@ func TestResolveSecret_RepeatsTheFloorBesideTheRead(t *testing.T) {
 	}
 }
 
+// TestDispatcher_ASecretRefusalSaysWhichRuleRefusedIt: a source is refused by
+// one of three rules, and the refusal says which, whatever the floor holds. A
+// source outside the floor names the floor; one of the Orker's own says no
+// floor admits it; a file named by anything but a plain absolute path says
+// that rule holds under every floor. Neither of the last two speaks of the
+// floor as what refused it, so neither misleads under an empty one.
+func TestDispatcher_ASecretRefusalSaysWhichRuleRefusedIt(t *testing.T) {
+	const (
+		own = `secret "s": "%s" is this orker's own (%s), which no secret floor admits; it is refused ` +
+			`before anything runs, whatever this orker's ORK_ORKER_SECRET_ALLOW says`
+		path = `secret "s": "%s" has a ".." segment, which is refused rather than normalized; a file source ` +
+			`is read by a plain absolute name of at most 4096 bytes, under every floor, and is refused before anything runs`
+	)
+	for _, tc := range []struct {
+		floor  []string
+		source string
+		want   string
+	}{
+		{[]string{"env:SANDBOX_*"}, "env:PROD_DB", `secret "s": "env:PROD_DB" matches none of env:SANDBOX_* ` +
+			`(this orker's ORK_ORKER_SECRET_ALLOW); a source outside that floor is refused before anything runs`},
+		{nil, "env:ORK_S3_SECRET_KEY", fmt.Sprintf(own, "env:ORK_S3_SECRET_KEY", "its OrkStack settings, ORK_*")},
+		{[]string{"env:*"}, "env:ORK_S3_SECRET_KEY", fmt.Sprintf(own, "env:ORK_S3_SECRET_KEY", "its OrkStack settings, ORK_*")},
+		{nil, "file:/proc/self/environ", fmt.Sprintf(own, "file:/proc/self/environ", "one of its files")},
+		{nil, "file:/etc/orkstack/../db", fmt.Sprintf(path, "file:/etc/orkstack/../db")},
+		{[]string{"file:/etc/*/*"}, "file:/etc/orkstack/../db", fmt.Sprintf(path, "file:/etc/orkstack/../db")},
+	} {
+		d := newAttemptDispatcher(t, &capturingRuntime{}, artifacts.NewMemoryAttemptStore())
+		d.Policy.SecretAllow = tc.floor
+		in := baseExportInput("grab")
+		in.Secrets = []*orkstackv1.SecretRef{{Name: "s", Source: tc.source}}
+		failure := d.Validate(in)
+		if failure == nil || failure.Reason != ReasonSecretNotPermitted || failure.Message != tc.want {
+			t.Errorf("floor %q, source %q: Validate = %v, want %s:\n%s", tc.floor, tc.source, failure, ReasonSecretNotPermitted, tc.want)
+		}
+		if _, beside := d.resolveSecret(in.Secrets[0]); beside == nil || beside.Message != tc.want {
+			t.Errorf("floor %q, source %q: resolveSecret = %v, want the same refusal beside the read", tc.floor, tc.source, beside)
+		}
+	}
+}
+
 // TestDispatcher_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAnythingRuns:
 // with no floor set, a task that names the Orker's own environment or process
 // files is refused SECRET_NOT_PERMITTED exactly as a source outside a floor
