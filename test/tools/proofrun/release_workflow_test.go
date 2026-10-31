@@ -508,6 +508,19 @@ var keyUse = regexp.MustCompile(`\[ -n "\$COSIGN_PRIVATE_KEY" \]|-e COSIGN_PRIVA
 // the committed key, after it was signed.
 const signedAfter = `cos verify --key /meta/cosign.pub --insecure-ignore-tlog=true "$ref" >/dev/null` + "\n"
 
+// noTlogEntry is the check every bundle the release writes is held to: it
+// records no transparency-log entry (an absent or empty list is none).
+const noTlogEntry = `(.verificationMaterial.tlogEntries // []) | length == 0`
+
+// bundlesCheck holds the signatures `cosign download signature` prints for one
+// image: at least one, and each a Sigstore bundle with noTlogEntry.
+// bundlesReadBack is publish's read, after the verify, of what the registry
+// holds; the smoke makes the same read of its own registry.
+const (
+	bundlesCheck    = `jq -es 'length > 0 and all(.[]; .mediaType == "application/vnd.dev.sigstore.bundle.v0.3+json" and (` + noTlogEntry + `))'`
+	bundlesReadBack = `cos download signature "$ref" | ` + bundlesCheck + ` >/dev/null`
+)
+
 func releaseSigningProblems(w *wfFile) []string {
 	var p []string
 	if job, ok := w.Jobs["validate"]; !ok || stepIndex(job.Steps, func(s wfStep) bool {
@@ -608,6 +621,9 @@ func releaseSigningProblems(w *wfFile) []string {
 		if !strings.Contains(r[after:], signedAfter) {
 			p = append(p, "the image signing never verifies each signature by digest with the committed key after signing")
 		}
+		if !strings.Contains(r[after:], bundlesReadBack) {
+			p = append(p, "the image signing never reads back the bundles the registry holds and refuses one that records a transparency-log entry ("+bundlesReadBack+")")
+		}
 		for _, want := range []struct{ text, says string }{
 			{`ref="ghcr.io/orkstack/$name@$digest"`, "names each image by its digest"},
 			{`--yes "$ref"`, "signs the digest reference"},
@@ -683,6 +699,15 @@ func TestWorkflows_ReleaseSignsWhatItPublishes(t *testing.T) {
 		}},
 		{"a transparency-log entry not refused", func(w *wfFile) {
 			edit(w, "jq -e '(.verificationMaterial.tlogEntries // []) | length == 0' SHA256SUMS.sigstore.json", "true")
+		}},
+		{"the pushed bundles not read back", func(w *wfFile) { edit(w, bundlesReadBack, "true") }},
+		{"a transparency-log entry in a pushed bundle not refused", func(w *wfFile) {
+			s := &steps(w)[at(w, imageSignCommand)]
+			s.Run = strings.Replace(s.Run, " and ("+noTlogEntry+")", "", 1)
+		}},
+		{"an image with no bundle not refused", func(w *wfFile) {
+			s := &steps(w)[at(w, imageSignCommand)]
+			s.Run = strings.Replace(s.Run, "length > 0 and all(", "all(", 1)
 		}},
 		{"SHA256SUMS.sig not checked", func(w *wfFile) { edit(w, "openssl dgst -sha256 -verify meta/cosign.pub -signature", "true") }},
 		{"a missing key not refused", func(w *wfFile) { edit(w, keyCheck, "true ||") }},
@@ -767,7 +792,7 @@ func TestWorkflows_TheCosignPinIsTheRepositorysPin(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"deploy/cosign-image.txt", "deploy/cosign-signing-config.json", imageSignCommand, blobSignCommand,
-		"--require-signed-by cosign:"} {
+		"cos download signature", bundlesCheck, "--require-signed-by cosign:"} {
 		if !strings.Contains(string(smoke), want) {
 			t.Errorf("scripts/quickstart-smoke.sh never says %q: the smoke would not prove what publish signs", want)
 		}

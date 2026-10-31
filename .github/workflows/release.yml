@@ -580,6 +580,10 @@ jobs:
               cos sign --key env://COSIGN_PRIVATE_KEY --signing-config /signing-config.json --yes "$ref"
             fi
             cos verify --key /meta/cosign.pub --insecure-ignore-tlog=true "$ref" >/dev/null
+            # What the registry holds, read back: every signature of the digest
+            # is a bundle that records no transparency-log entry.
+            cos download signature "$ref" | jq -es 'length > 0 and all(.[]; .mediaType == "application/vnd.dev.sigstore.bundle.v0.3+json" and ((.verificationMaterial.tlogEntries // []) | length == 0))' >/dev/null ||
+              { echo "$ref: a signature in the registry is not a bundle without a transparency-log entry" >&2; exit 1; }
             echo "$ref signed"
           done <meta/images.tsv
       # X.Y moves to this release's images only once every one of them is

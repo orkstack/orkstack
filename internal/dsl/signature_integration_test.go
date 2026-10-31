@@ -292,7 +292,10 @@ func TestIntegration_ACosignBundleFromThePinnedImageVerifies(t *testing.T) {
 	if err := json.Unmarshal(bundle, &parsed); err != nil || parsed["mediaType"] != cosigntest.BundleType {
 		t.Fatalf("the bundle is %s (%v)", bundle, err)
 	}
-	if material, _ := parsed["verificationMaterial"].(map[string]any); material["tlogEntries"] != nil {
+	// The check release.yml, the smoke and the setup script make with jq:
+	// (.verificationMaterial.tlogEntries // []) | length == 0.
+	material, _ := parsed["verificationMaterial"].(map[string]any)
+	if entries, isList := material["tlogEntries"].([]any); material["tlogEntries"] != nil && (!isList || len(entries) > 0) {
 		t.Fatalf("the bundle carries transparency-log entries: %s", bundle)
 	}
 	note("cosign signed %s: bundle %s, no .sig, no transparency-log entry", image.GetPinned(), referrer.Layers[0].Digest)

@@ -251,7 +251,9 @@ else
 			{ cat "$WORK/sign.log" >&2; fail "cosign sign $ref"; }
 		cos verify --key /keys/release/cosign.pub --insecure-ignore-tlog=true --allow-insecure-registry "$ref" >"$WORK/sign.log" 2>&1 ||
 			{ cat "$WORK/sign.log" >&2; fail "cosign verify $ref"; }
-		say "  $name signed, and cosign verify accepts it"
+		cos download signature --allow-insecure-registry "$ref" 2>"$WORK/sign.log" | jq -es 'length > 0 and all(.[]; .mediaType == "application/vnd.dev.sigstore.bundle.v0.3+json" and ((.verificationMaterial.tlogEntries // []) | length == 0))' >/dev/null ||
+			{ cat "$WORK/sign.log" >&2; fail "$ref: a signature in the registry is not a bundle without a transparency-log entry"; }
+		say "  $name signed, cosign verify accepts it, and its bundle records no transparency-log entry"
 	done <"$WORK/images.tsv"
 	# SHA256SUMS's signing, on a file of the smoke's own, with no network as
 	# publish signs it: the docs' two checks, on the bundle and on the

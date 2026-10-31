@@ -799,7 +799,9 @@ by its digest (cosign, from the image `deploy/cosign-image.txt` pins, under
 that signing config and with no deprecated flag, so it writes cosign 3's
 bundle, which OrkStack's verifier reads, and nothing in a public
 transparency log), verifies each signature by digest with
-`deploy/cosign.pub`, moves `X.Y` to each image only once every one is signed
+`deploy/cosign.pub`, reads back every signature the registry holds for each
+digest (`cosign download signature`) and refuses one that is not a bundle or
+that records a transparency-log entry, moves `X.Y` to each image only once every one is signed
 and verified (so a deployment that follows `X.Y`, as the built-in catalog
 does, never meets this release's images unsigned), and only then creates the
 GitHub release (`gh release
@@ -808,7 +810,8 @@ or a pre-release, so `releases/latest/download/` names the newest release),
 with `SHA256SUMS.sig`, `SHA256SUMS.sigstore.json` and `cosign.pub` beside the
 archives. `validate` refuses a dispatch whose `deploy/cosign.pub` is not
 committed, and the `--release` smoke signs every image with a throwaway key by
-the same image, command and signing config and runs an Orkflow in a namespace
+the same image, command and signing config, reads its bundles back the same
+way, and runs an Orkflow in a namespace
 that requires that key. `verify` and `publish`
 download what `gate` and `artifacts` uploaded by the names those jobs output,
 so a re-run of either finds the first attempt's artifact; `artifacts` keeps
@@ -1648,7 +1651,7 @@ secrets, deploys from `main` only and has required reviewers): a release signs
 what it publishes, so `validate` refuses every dispatch until
 `deploy/cosign.pub` is committed, and `publish` pushes nothing until the
 `release` environment holds the private half. A repository administrator runs,
-on their own machine, with `cosign` (2.6 or later) and a signed-in `gh`:
+on their own machine, with `cosign` (2.6 or later), `jq` and a signed-in `gh`:
 
 ```bash
 scripts/release-signing-setup.sh --dry-run    # every action, nothing run
@@ -1659,8 +1662,9 @@ It refuses a key directory (`--dir`, default `~/orkstack-release-key`) inside
 any git work tree, an existing key file, and an environment that already holds
 `COSIGN_PRIVATE_KEY` or a committed `deploy/cosign.pub` unless `--rotate`, all
 before it writes anything. It then generates the pair with `cosign
-generate-key-pair`, proves it by signing and verifying a file with
-`release.yml`'s flags, creates or updates the `release` environment
+generate-key-pair`, proves it by signing and verifying a file under
+`release.yml`'s signing config (refusing a bundle that records a
+transparency-log entry, as `release.yml` does), creates or updates the `release` environment
 (deployments from `main` only, the caller a required reviewer unless
 `--no-reviewer`, so `publish` waits for an approval), sets
 `COSIGN_PRIVATE_KEY` (the whole `.key` file) and `COSIGN_PASSWORD`, and
