@@ -3,6 +3,7 @@ package orker
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -871,6 +872,94 @@ func TestSecurityPolicy_AnOwnFileIsJudgedAsItIsWhenTheSourceIsJudged(t *testing.
 	)
 }
 
+// TestSecurityPolicy_AnUpdateWhileASourceIsJudgedIsSeen: the kubelet may swap
+// a mount while a source is being judged, so the way the judgement walks can
+// come to the directory the update is removing, or pass through the one it
+// made after the own paths were looked at. Either way the source is the
+// Orker's own, because a walk cut short looks again and every name a walk
+// came to is compared with the own paths once more after it; a source that
+// is not the Orker's own stays permitted under the same update.
+func TestSecurityPolicy_AnUpdateWhileASourceIsJudgedIsSeen(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "config")
+	stamp, current := 0, ""
+	dated := func(n int) string {
+		return filepath.Join(cfg, fmt.Sprintf("..2026_10_31_00_00_00.%09d", n))
+	}
+	// update is the kubelet's: a new directory, ..data swapped to it by a
+	// rename, the old one removed.
+	update := func() {
+		stamp++
+		next := dated(stamp)
+		if err := os.MkdirAll(filepath.Join(next, "gcloud"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"orker.yaml", "other.yaml", filepath.Join("gcloud", "credentials.db")} {
+			if err := os.WriteFile(filepath.Join(next, name), []byte(next), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := os.Symlink(filepath.Base(next), filepath.Join(cfg, "..data_tmp")); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(filepath.Join(cfg, "..data_tmp"), filepath.Join(cfg, "..data")); err != nil {
+			t.Fatal(err)
+		}
+		if current != "" {
+			if err := os.RemoveAll(current); err != nil {
+				t.Fatal(err)
+			}
+		}
+		current = next
+	}
+	update()
+	for _, name := range []string{"orker.yaml", "gcloud"} {
+		if err := os.Symlink(filepath.Join("..data", name), filepath.Join(cfg, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	policy := DefaultSecurityPolicy().WithOwnPaths(
+		OwnPath{Path: filepath.Join(cfg, "orker.yaml"), Why: "its configuration"},
+		OwnPath{Path: filepath.Join(cfg, "gcloud"), Why: "its credentials"},
+	)
+	update() // since boot: what the policy resolved then is gone
+
+	for _, tc := range []struct {
+		what string
+		// source and at are asked as the case runs: at is the name the walk
+		// is about to look at when the update lands.
+		source, at func() string
+		own        bool
+	}{
+		{"its file, as the walk comes to the directory the update removes",
+			func() string { return filepath.Join(cfg, "..data", "orker.yaml") }, func() string { return current }, true},
+		{"another file there",
+			func() string { return filepath.Join(cfg, "..data", "other.yaml") }, func() string { return current }, false},
+		{"its directory's file, as the walk comes to the directory the update makes",
+			func() string { return filepath.Join(dated(stamp+1), "gcloud", "credentials.db") },
+			func() string { return dated(stamp + 1) }, true},
+		{"another file there",
+			func() string { return filepath.Join(dated(stamp+1), "other.yaml") }, func() string { return dated(stamp + 1) }, false},
+	} {
+		source, at, landed := "file:"+tc.source(), tc.at(), false
+		lstat = func(name string) (fs.FileInfo, error) {
+			if name == at && !landed {
+				landed = true
+				update()
+			}
+			return os.Lstat(name)
+		}
+		if tc.own {
+			assertOwn(t, policy, source)
+		} else {
+			assertNotOwn(t, policy, source)
+		}
+		lstat = os.Lstat
+		if !landed {
+			t.Fatalf("%s: the walk never came to %s, so no update landed while %s was judged", tc.what, at, source)
+		}
+	}
+}
+
 // TestSecurityPolicy_ASourceWhoseWayPassesThroughAnOwnDirectoryIsTheOrkers: a
 // source is the Orker's own when the kernel, opening it, looks a name up in
 // one of the Orker's directories, wherever it ends. A link to one of the
@@ -975,7 +1064,11 @@ func TestSecurityPolicy_ARefusalQuotesALongSourceByItsHead(t *testing.T) {
 // payload carries, or as long as the kernel opens and running through a link
 // to its own directory again and again — judging it costs a bounded amount
 // of the Orker's CPU, measured on this thread's clock where there is one, so
-// a loaded host cannot move it.
+// a loaded host cannot move it, on an Orker configured with many files of its
+// own. Each name of the way is looked at once a walk, and each own path once
+// before and once after it, in at most two walks, so the looks are counted
+// too: at most two for each name the source holds, and three for each own
+// path.
 func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Symlink(".", filepath.Join(dir, "x")); err != nil {
@@ -991,7 +1084,31 @@ func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T)
 		nowhere += "/a"
 	}
 	payload := "/zz" + strings.Repeat("/a", 100<<10)
-	policy := SecurityPolicyFromEnv().WithWorkRoot(t.TempDir())
+	// A look at a name costs the kernel as much as the depth of the
+	// directory it lies in, which the host's own tree sets and no task
+	// deepens outside the Orker's own directories, where a walk stops; a
+	// tree deeper than most hosts hold stands in for it.
+	deep := filepath.Join(dir, "deep") + strings.Repeat("/a", 64)
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	deep += "/secret"
+	if err := os.WriteFile(deep, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	own := make([]OwnPath, 128)
+	for i := range own {
+		path := filepath.Join(dir, "own", fmt.Sprintf("%03d.yaml", i))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		own[i] = OwnPath{Path: path, Why: "its configuration"}
+	}
+	policy := SecurityPolicyFromEnv().WithWorkRoot(t.TempDir()).WithOwnPaths(own...)
+	roots := len(fixedOwnRoots()) + len(policy.own)
 
 	const bound = 100 * time.Millisecond
 	runtime.LockOSThread()
@@ -999,6 +1116,7 @@ func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T)
 	for _, tc := range []struct{ name, source string }{
 		{"the longest path the kernel opens, through a link to its own directory", "file:" + loop},
 		{"the longest path the kernel opens, of nothing", "file:" + nowhere},
+		{"a path of directories that exist, 64 deep", "file:" + deep},
 		{"a path as long as a start payload", "file:" + payload},
 	} {
 		startCPU, cpu := threadCPU()
@@ -1008,9 +1126,26 @@ func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T)
 		if end, ok := threadCPU(); cpu && ok {
 			cost, clock = end-startCPU, "thread CPU time"
 		}
-		t.Logf("%s (%d bytes): %v of %s", tc.name, len(tc.source), cost, clock)
+
+		var names, looks, ownLooks int
+		for _, name := range strings.Split(tc.source, "/") {
+			if name != "" && name != "." {
+				names++
+			}
+		}
+		lstat = func(name string) (fs.FileInfo, error) { looks++; return os.Lstat(name) }
+		stat = func(name string) (fs.FileInfo, error) { ownLooks++; return os.Stat(name) }
+		_ = policy.AllowsSecretSource(tc.source)
+		lstat, stat = os.Lstat, os.Stat
+
+		t.Logf("%s (%d bytes): %v of %s; %d looks at its %d names, %d at %d own paths",
+			tc.name, len(tc.source), cost, clock, looks, names, ownLooks, roots)
 		if cost > bound {
 			t.Errorf("%s (%d bytes): judging it took %v of %s, want at most %v", tc.name, len(tc.source), cost, clock, bound)
+		}
+		if looks > 2*names || ownLooks > 3*roots {
+			t.Errorf("%s: judging it looked %d times at its %d names and %d times at %d own paths, "+
+				"want at most two looks a name and three an own path", tc.name, looks, names, ownLooks, roots)
 		}
 	}
 }

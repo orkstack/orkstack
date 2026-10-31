@@ -559,31 +559,59 @@ func (p SecurityPolicy) ownNamed(path string) (ownRoot, bool) {
 // Orker's own even when it leaves it again by a link's "..": no lookup in
 // one is judged by what it reads.
 //
-// The own paths are looked at once before the walk and, for the file it
-// ends at, once after, so an update that swaps a mount while the walk runs
-// is seen either way. A path whose links go on past maxLinks is one no read
-// opens, and is left to the read to refuse.
+// An update may swap a mount while the walk runs, so a walk is judged
+// between two looks at the own paths (walkOwn), and a walk cut short at a
+// name it could not look at — the directory an update is removing, perhaps
+// — walks once more, the look after the first walk serving as the look
+// before the second: at most three looks in all. What it ends at then is
+// judged by its name, so a link that leads nowhere yet is seen by where it
+// would lead. A path whose links go on past maxLinks is one no read opens,
+// and is left to the read to refuse.
 func (p SecurityPolicy) reachesOwn(path string) bool {
 	if _, ok := p.ownNamed(path); ok {
 		return true
 	}
 	before := p.ownNow()
-	end, last, stopped := walkPath(path, func(at string, info fs.FileInfo) bool {
-		_, named := p.holds(at)
-		return named || before.holds(info)
+	for walk := 1; ; walk++ {
+		own, end, whole, after := p.walkOwn(path, before)
+		if own || end == "" {
+			return own
+		}
+		if whole || walk == 2 {
+			_, ok := p.holds(end)
+			return ok
+		}
+		before = after
+	}
+}
+
+// walkOwn walks path once (walkPath) and reports whether the way comes to
+// one of the Orker's own: a name within an own path, or a file or directory
+// that is one as the own paths were looked at just before the walk (before)
+// or are just after it, so an update that swaps a mount mid-walk is seen
+// whichever side of it each name was looked at. It also reports where the
+// way ends, whether every name of it could be looked at, and the look after
+// it, which it takes only when the way came to none of the Orker's own
+// before it.
+func (p SecurityPolicy) walkOwn(path string, before ownNodes) (own bool, end string, whole bool, after ownNodes) {
+	var came []fs.FileInfo
+	end, whole, stopped := walkPath(path, func(at string, info fs.FileInfo) bool {
+		if _, named := p.holds(at); named || before.holds(info) {
+			return true
+		}
+		came = append(came, info)
+		return false
 	})
 	if stopped {
-		return true
+		return true, end, whole, nil
 	}
-	if end == "" {
-		return false
+	after = p.ownNow()
+	for _, info := range came {
+		if after.holds(info) {
+			return true, end, whole, after
+		}
 	}
-	// A name the walk could not look at is judged by its name, so a link that
-	// leads nowhere yet is seen by where it would lead.
-	if _, ok := p.holds(end); ok {
-		return true
-	}
-	return last != nil && p.ownNow().holds(last)
+	return false, end, whole, after
 }
 
 // ownNodes is what the Orker's own paths are at one moment: each one's name,
@@ -598,7 +626,7 @@ func (p SecurityPolicy) ownNow() ownNodes {
 	var nodes ownNodes
 	for _, roots := range [][]ownRoot{fixedOwnRoots(), p.own} {
 		for _, root := range roots {
-			if info, err := os.Stat(root.opened); err == nil {
+			if info, err := stat(root.opened); err == nil {
 				nodes = append(nodes, info)
 			}
 		}
@@ -684,13 +712,13 @@ func resolvePath(path string) string {
 // named, so a link that leads nowhere yet is seen by where it would lead.
 //
 // It returns where path leads, "" for a path that is not absolute or whose
-// links go on past maxLinks, and what Lstat said of the name it ends at, nil
-// when that is not there or was reached by a "..". Each name is looked at
-// once, so the cost is bounded by path's length and maxLinks link targets,
-// never by how many of its prefixes exist.
-func walkPath(path string, reached func(at string, info fs.FileInfo) bool) (end string, last fs.FileInfo, stopped bool) {
+// links go on past maxLinks, and whether it looked at every name of the way,
+// false when it was cut short at one it could not look at. Each name is
+// looked at once, so the cost is bounded by path's length and maxLinks link
+// targets, never by how many of its prefixes exist.
+func walkPath(path string, reached func(at string, info fs.FileInfo) bool) (end string, whole, stopped bool) {
 	if !strings.HasPrefix(path, "/") {
-		return "", nil, false
+		return "", false, false
 	}
 	resolved, rest, links := "/", path[1:], 0
 	for rest != "" {
@@ -700,35 +728,40 @@ func walkPath(path string, reached func(at string, info fs.FileInfo) bool) (end 
 		case "", ".":
 			continue
 		case "..":
-			resolved, last = filepath.Dir(resolved), nil
+			resolved = filepath.Dir(resolved)
 			continue
 		}
 		next := filepath.Join(resolved, name)
-		info, err := os.Lstat(next)
+		info, err := lstat(next)
 		if err != nil {
-			return filepath.Join(next, rest), nil, false
+			return filepath.Join(next, rest), false, false
 		}
 		if info.Mode()&fs.ModeSymlink == 0 {
-			resolved, last = next, info
+			resolved = next
 			if reached != nil && reached(next, info) {
-				return next, info, true
+				return next, true, true
 			}
 			continue
 		}
 		if links++; links > maxLinks {
-			return "", nil, false
+			return "", false, false
 		}
 		target, err := os.Readlink(next)
 		if err != nil {
-			return filepath.Join(next, rest), nil, false
+			return filepath.Join(next, rest), false, false
 		}
 		if strings.HasPrefix(target, "/") {
-			resolved, last = "/", nil
+			resolved = "/"
 		}
 		rest = target + "/" + rest
 	}
-	return resolved, last, false
+	return resolved, true, false
 }
+
+// lstat is os.Lstat, as walkPath looks at each name, and stat os.Stat, as
+// ownNow looks at each own path; a test replaces them to change the file
+// system while a walk runs, or to count the looks.
+var lstat, stat = os.Lstat, os.Stat
 
 // within reports whether path is root or lies beneath it. An empty side is
 // never within anything.

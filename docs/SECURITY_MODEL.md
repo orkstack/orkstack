@@ -335,11 +335,15 @@ through one of the Orker's directories is refused even when a link's `..`
 leads out of it again; a Kubernetes ConfigMap or Secret mounted as links into
 a dated directory stays the Orker's own after an update swaps the links to a
 new directory; and a hard link to one of the Orker's own files is that file.
-Judging a name costs the Orker one look at each name it passes through,
-whatever the task wrote, and one look at each of its own paths. A refusal says
-only that the source is one of the Orker's files, or one of its variables, the
-same words for each, never which one, which setting named it or where a link
-led, so a task cannot learn the Orker's configuration by trying names.
+Judging a name costs the Orker one look at each name its way passes through,
+whatever the task wrote — two when the way is cut short at a name that cannot
+be looked at, since it then follows the name once more — and up to three
+looks at each of its own paths. A refusal says only that the source is one of
+the Orker's files, or one of its variables, the same words for each, never
+which one, which setting named it or where a link led. A task that tries
+names can still tell which of them are the Orker's own, since those are
+refused; what it cannot learn from a refusal is which rule, setting or path
+made one so.
 
 Paths are compared byte for byte, as a case-sensitive file system names them.
 On a file system that folds case, `/PROC/self/environ` opens
@@ -356,9 +360,17 @@ read. Each needs write access outside the task's workspace, where no task
 writes — the workspace lies under the work root, which is the Orker's own —
 and [AGENTS.md](../AGENTS.md) §6 forbids host mounts. A Kubernetes update
 swaps a mount's links while the Orker runs, so a name such as
-`..data/orker.yaml` names the Orker's file before the update and after it:
-the Orker looks at its own files before it follows a name and again after,
-so an update that lands while a name is judged is seen either way.
+`..data/orker.yaml` names the Orker's file before the update and after it.
+The Orker looks at its own files before it follows a name and again after,
+compares every file and directory the way came to with both looks, and
+follows the name once more when its way was cut short at a name it could not
+look at, such as the directory an update is removing. So one update that
+lands while a name is judged is seen, whichever of its steps the way met.
+Two cases stay out of reach: two updates of one mount while one name is judged —
+the kubelet updates a mount on its periodic sync, once a minute by default —
+and, in the moment an update writes its new dated directory or removes the
+old one, a name of that directory itself, which the kubelet names with a
+random number no task can list.
 For the same reason the Orker checks a name and then reads it, rather than
 opening the file and judging the descriptor it holds: such a read would close
 a window no task can reach, at the cost of a second, platform-specific
