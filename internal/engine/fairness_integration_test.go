@@ -106,22 +106,45 @@ func startPrivateTemporal(t *testing.T, ctx context.Context, settings ...string)
 	}
 }
 
-// fairShape is the run one namespace queues n task activities with: its
-// definition and input.
-type fairShape func(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload)
-
-// fairTasks queues n plain tasks.
-func fairTasks(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload) {
-	return compile(t, fairDocument(name, n)), nil
+// fairShape is the run one namespace queues n dispatches with: its
+// definition and input, and whether each dispatch is a pin request.
+type fairShape struct {
+	run func(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload)
+	// pins: the run queues n pin requests, so it marks them for keying
+	// (FairnessSelection.PinRequests) and the experiment's Orker is a pin
+	// host that opens one pin at a time. Each pin holds one task, which runs
+	// as soon as its pin opens, so the order the Orker takes the tasks in is
+	// the order the cluster handed out the pin requests.
+	pins bool
 }
 
+// fairTasks queues n plain tasks.
+var fairTasks = fairShape{run: func(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload) {
+	return compile(t, fairDocument(name, n)), nil
+}}
+
 // fairItems queues one fan-out of n items, every one dispatched at once.
-func fairItems(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload) {
+var fairItems = fairShape{run: func(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload) {
 	document := fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\ninputs:\n  parts: {type: array}\n"+
 		"tasks:\n  - id: spread\n    uses: shell\n    each: {over: \"{{ .inputs.parts }}\", max_items: %d}\n"+
 		"    with: {command: \"true\"}\n", name, n)
 	return compile(t, document), payload(t, map[string]any{"parts": guardItems(n)})
-}
+}}
+
+// fairPins queues n pin requests: n pins, each holding one task, every one
+// requested at once.
+var fairPins = fairShape{pins: true, run: func(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\npins:\n", name)
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "  p%03d: {}\n", i)
+	}
+	b.WriteString("tasks:\n")
+	for i := 0; i < n; i++ {
+		fmt.Fprintf(&b, "  - id: t%03d\n    uses: shell\n    pin: p%03d\n    with: {command: \"true\"}\n", i, i)
+	}
+	return compile(t, b.String()), nil
+}}
 
 // lateNamespaceMeanPosition runs the backlog-then-late experiment on one
 // cluster and returns the late namespace's mean dispatch position (0-based,
@@ -132,7 +155,7 @@ func lateNamespaceMeanPosition(t *testing.T, ctx context.Context, address string
 }
 
 // lateNamespaceMeanPositionOf is lateNamespaceMeanPosition with each
-// namespace's task activities queued in the shape given.
+// namespace's dispatches queued in the shape given.
 func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address string, shape fairShape) float64 {
 	t.Helper()
 	c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
@@ -143,7 +166,9 @@ func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address stri
 	runQueue, orkerQueue := "ork-fair-runs", "ork-fair-tasks"
 	bus, runs := engine.NewEventBus(), engine.NewRunStore()
 	snapshots := newTestSnapshotStore()
-	runWorker := worker.New(c, runQueue, worker.Options{DisableRegistrationAliasing: true, LocalActivityWorkerOnly: true})
+	// The run worker has cmd/ork's interceptors, which key a pin request.
+	runWorker := worker.New(c, runQueue, worker.Options{DisableRegistrationAliasing: true, LocalActivityWorkerOnly: true,
+		Interceptors: engine.RunWorkerInterceptors()})
 	engine.RegisterWorkflows(runWorker)
 	runWorker.RegisterActivityWithOptions(engine.NewSnapshotActivities(snapshots).WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot})
@@ -157,22 +182,31 @@ func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address stri
 		t.Cleanup(w.Stop)
 	}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
+	queued := task.ActivityExecuteTask
+	if shape.pins {
+		queued = sessionCreationActivityName
+	}
 	start := func(name string, n int) string {
-		wf, input := shape(t, name, n)
+		wf, input := shape.run(t, name, n)
 		wf.Namespace = name
 		plan := rawPlan(orkerQueue)
 		plan.Namespace = name
 		plan.CommitRoot = "mem://commits"
-		plan.Fairness = &engine.FairnessSelection{Key: engine.FairnessKeyFor(name)}
+		plan.Fairness = &engine.FairnessSelection{Key: engine.FairnessKeyFor(name), PinRequests: shape.pins}
+		if shape.pins {
+			// The last request waits for every pin before it to open and
+			// close, one at a time.
+			plan.PinCreationTimeoutSeconds = 600
+		}
 		runID := fmt.Sprintf("ork-fair-%s-%d", name, time.Now().UnixNano())
 		if err := starter.StartRun(ctx, runID, wf, input, plan); err != nil {
 			t.Fatalf("start %s: %v", runID, err)
 		}
-		// Every task of the run is scheduled before the next run starts.
+		// Every dispatch of the run is scheduled before the next run starts.
 		deadline := time.Now().Add(2 * time.Minute)
-		for scheduledTasks(t, ctx, c, runID) < n {
+		for scheduledOf(t, ctx, c, runID, queued) < n {
 			if time.Now().After(deadline) {
-				t.Fatalf("run %s scheduled %d of its %d tasks", runID, scheduledTasks(t, ctx, c, runID), n)
+				t.Fatalf("run %s scheduled %d of its %d %s", runID, scheduledOf(t, ctx, c, runID, queued), n, queued)
 			}
 			time.Sleep(200 * time.Millisecond)
 		}
@@ -183,10 +217,21 @@ func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address stri
 
 	var mu sync.Mutex
 	var order []string
-	orker := worker.New(c, orkerQueue, worker.Options{
+	orkerOptions := worker.Options{
 		DisableRegistrationAliasing: true, DisableWorkflowWorker: true,
 		MaxConcurrentActivityExecutionSize: 1, MaxConcurrentActivityTaskPollers: 1,
-	})
+	}
+	if shape.pins {
+		// A pin host of one pin; its pins' tasks and closes run on the
+		// pin's own channel, beside the open pin.
+		orkerOptions = worker.Options{
+			DisableRegistrationAliasing: true, DisableWorkflowWorker: true,
+			EnableSessionWorker: true, MaxConcurrentSessionExecutionSize: 1,
+		}
+	}
+	orker := worker.New(c, orkerQueue, orkerOptions)
+	orker.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ReleasePinInput) error { return nil },
+		activity.RegisterOptions{Name: task.ActivityReleasePin})
 	orker.RegisterActivityWithOptions(func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		mu.Lock()
 		order = append(order, in.GetRunId())
@@ -220,7 +265,8 @@ func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address stri
 	return float64(sum) / float64(seen)
 }
 
-func scheduledTasks(t *testing.T, ctx context.Context, c client.Client, runID string) int {
+// scheduledOf counts the activities of activityType a run has scheduled.
+func scheduledOf(t *testing.T, ctx context.Context, c client.Client, runID, activityType string) int {
 	t.Helper()
 	iter := c.GetWorkflowHistory(ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	n := 0
@@ -230,7 +276,7 @@ func scheduledTasks(t *testing.T, ctx context.Context, c client.Client, runID st
 			t.Fatalf("history of %s: %v", runID, err)
 		}
 		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil &&
-			attrs.GetActivityType().GetName() == task.ActivityExecuteTask {
+			attrs.GetActivityType().GetName() == activityType {
 			n++
 		}
 	}
@@ -276,5 +322,29 @@ func TestIntegration_FairDispatchServesALateNamespacesItemsAheadOfABacklog(t *te
 	}
 	if fair+40 > stock {
 		t.Fatalf("with fairness the late namespace's items' mean position is %.1f against %.1f without: they were not served ahead of the backlog", fair, stock)
+	}
+}
+
+// TestIntegration_FairDispatchServesALateNamespacesPinRequestsAheadOfABacklog
+// is the same measurement for pin requests: one namespace's run queues 200
+// pin requests, a second's then queues 20, and only then does one pin host
+// that opens one pin at a time start taking them. Each request carries its
+// run's fairness key (the run worker's interceptor sets it, as cmd/ork's
+// does), so on a cluster with fairness enabled the late namespace's pins are
+// opened in among the backlog; on a stock cluster they wait behind it.
+func TestIntegration_FairDispatchServesALateNamespacesPinRequestsAheadOfABacklog(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	fair := lateNamespaceMeanPositionOf(t, ctx, startPrivateTemporal(t, ctx, "matching.enableFairness=true"), fairPins)
+	stock := lateNamespaceMeanPositionOf(t, ctx, startPrivateTemporal(t, ctx), fairPins)
+	result := fmt.Sprintf("late namespace's pin requests: mean dispatch position of %d: %.1f with fairness, %.1f without "+
+		"(FIFO would be %.1f)\n", fairBacklog+fairLate, fair, stock, float64(fairBacklog)+float64(fairLate-1)/2)
+	proof.Write(t, "engine", "fair-dispatch-pins.txt", []byte(result))
+	t.Logf("EVIDENCE %s", result)
+	if stock < float64(fairBacklog)*0.75 {
+		t.Fatalf("without fairness the late namespace's pin requests' mean position is %.1f; the control does not show a backlog they wait behind", stock)
+	}
+	if fair+40 > stock {
+		t.Fatalf("with fairness the late namespace's pin requests' mean position is %.1f against %.1f without: they were not served ahead of the backlog", fair, stock)
 	}
 }
