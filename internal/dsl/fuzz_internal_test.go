@@ -218,7 +218,9 @@ func FuzzParseCatalog(f *testing.F) {
 // unchanged, and otherwise its one sentence names, first, the earliest key
 // the decoder refused, at that key's line — at the key's field path, with the
 // keys its position takes, sorted, distinct and without the key, or by its
-// line alone — and then every other key the decoder refused, each once.
+// line alone — and then how many other keys the decoder refused, each
+// counted once, naming the first ten of them in line order; outside the
+// quoted keys, it never says the decoder's "not found in type" or a Go type.
 func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 	const orkflow = "apiVersion: orkstack/v1\nkind: Orkflow\nname: typo\n"
 	const iface = "apiVersion: orkstack/v1\nkind: ActivityInterface\n"
@@ -229,6 +231,10 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 		{orkflow + "tasks:\n  - id: a\n    uses: shell\n    need: [a]\n", false},
 		{orkflow + "tsks:\n  - id: a\n", false},
 		{orkflow + "tsks: 1\n\"a\\nb\": 2\npinz: 3\n", false},
+		{orkflow + "\"x not found in type y\": 1\n", false},
+		{orkflow + "pins:\n  p: &p {timeout_second: 1}\n  q: *p\n", false},
+		{orkflow + "tasks:\n  - id: a\n    with: &w {id: b, bogus: 1}\n    wrong1: 1\n  - <<: *w\n", false},
+		{orkflow + "k1: 1\nk2: 1\nk3: 1\nk4: 1\nk5: 1\nk6: 1\nk7: 1\nk8: 1\nk9: 1\nk10: 1\nk11: 1\nk12: 1\n", false},
 		{orkflow + "pins:\n  build:\n    timeout_second: 60\n", false},
 		{orkflow + "tasks:\n  - id: a\n    retry:\n      max_attempts: 3\n", false},
 		{orkflow + "tasks:\n  - id: a\n    secrets:\n      - name: db\n        sorce: env:DB\n", false},
@@ -246,6 +252,8 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 	}
 	// The key may hold a line break, so the pattern is (?s).
 	declared := regexp.MustCompile(`(?s)^line (\d+): field (.*) not found in type \S+$`)
+	// A quoted key, which may say anything the author wrote.
+	quoted := regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
 	type refused struct {
 		line int
 		key  string
@@ -293,18 +301,26 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 			t.Fatalf("refusal %q of the refused keys %v is not a ValidationError", refusal, keys)
 		}
 		message := validation.Error()
+		// Outside the author's own quoted keys, nothing of the decoder's.
+		if unquoted := quoted.ReplaceAllString(message, `""`); strings.Contains(unquoted, "not found in type") ||
+			strings.Contains(unquoted, "dsl.") {
+			t.Fatalf("refusal %q names the decoder's internals", message)
+		}
 		first, rest := keys[0], keys[1:]
 		more := ""
 		if len(rest) > 0 {
-			names := make([]string, len(rest))
-			for i, k := range rest {
-				names[i] = fmt.Sprintf("%q at line %d", k.key, k.line)
-			}
-			noun := "key"
+			named, noun, which := rest, "key", ""
 			if len(rest) > 1 {
 				noun = "keys"
 			}
-			more = fmt.Sprintf(" (and %d more unknown %s: %s)", len(rest), noun, strings.Join(names, ", "))
+			if len(named) > 10 {
+				named, which = named[:10], ", the first 10"
+			}
+			names := make([]string, len(named))
+			for i, k := range named {
+				names[i] = fmt.Sprintf("%q at line %d", k.key, k.line)
+			}
+			more = fmt.Sprintf(" (and %d more unknown %s%s: %s)", len(rest), noun, which, strings.Join(names, ", "))
 		}
 		// By its line alone, with no field; an empty key at the top level
 		// also has the empty path, so the sentence decides, not the field.
