@@ -104,6 +104,38 @@ func TestBootTelemetryZeroConfig(t *testing.T) {
 	if opts.TraceContext != nil {
 		t.Fatal("orkerOptions.TraceContext = non-nil, want nil with no telemetry env set")
 	}
+	if opts.CapacityObserver != nil {
+		t.Fatalf("orkerOptions.CapacityObserver = %v, want nil with no telemetry env set", opts.CapacityObserver)
+	}
+}
+
+// TestOrkerOptionsWithMetricsOn: the capacity metrics are wired only when
+// metrics are exported, and tracing alone does not wire them.
+func TestOrkerOptionsWithMetricsOn(t *testing.T) {
+	clearTelemetryEnv(t)
+	t.Setenv(telemetry.MetricsExporterVar, "otlp")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
+
+	tcfg, sinks, err := telemetry.Boot(telemetry.ServiceOrker)
+	if err != nil {
+		t.Fatalf("telemetry.Boot: %v", err)
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cfg := config{temporalAddress: client.DefaultHostPort, temporalNamespace: "default"}
+	if opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger); opts.CapacityObserver == nil {
+		t.Fatal("orkerOptions.CapacityObserver = nil, want the capacity metrics with OTEL_METRICS_EXPORTER=otlp")
+	}
+
+	clearTelemetryEnv(t)
+	t.Setenv(telemetry.TracesExporterVar, "otlp")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
+	tcfg, sinks, err = telemetry.Boot(telemetry.ServiceOrker)
+	if err != nil {
+		t.Fatalf("telemetry.Boot: %v", err)
+	}
+	if opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger); opts.CapacityObserver != nil {
+		t.Fatalf("orkerOptions.CapacityObserver = %v, want nil with metrics off", opts.CapacityObserver)
+	}
 }
 
 // TestOrkerOptionsWithTracingOn asserts the other side of orkerOptions: with

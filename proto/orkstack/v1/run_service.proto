@@ -3,6 +3,7 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
 import "orkstack/v1/filter.proto";
 import "orkstack/v1/run.proto";
@@ -575,6 +576,39 @@ message LiveAttempt {
   // item is set when the pending activity is one item of a fan-out (read off
   // the scheduled ExecuteTaskInput.each.index).
   optional int32 item = 19;
+  // capacity_wait is set when this attempt is waiting for capacity: it has
+  // been SCHEDULED, with no next_attempt_at, for at least two seconds, its
+  // task is not pinned, and every Orker of its pool that takes new tasks
+  // declares a capacity, runs a task, and has no room for another task within
+  // it. Derived on read, for this answer only, from the Orker inventory
+  // ListOrkers reports. Unset otherwise — including when the inventory could
+  // not be read in time, when any live Orker did not answer (it could serve
+  // this pool, with room), when one of the pool's Orkers declares no
+  // capacity, runs nothing (what it reserves is then its own polls, which
+  // take the next task), or has room but every task slot (max_concurrent)
+  // taken. The attempt is then waiting for an Orker, as it always was.
+  CapacityWait capacity_wait = 20;
+}
+
+// CapacityWait says why a SCHEDULED attempt has not started: every Orker of
+// its pool is at its declared capacity. An Orker has room for another task
+// only while its per-task cap (DescribeOrkerResult.max_request) still fits
+// beside what stands reserved, because it reserves that cap before it asks
+// for a task (docs/DEPLOY.md, "Declaring an Orker's capacity"). It is a
+// reading of the inventory taken for one InspectRun answer, never a record.
+message CapacityWait {
+  // pool is the pool the attempt waits on, as TaskRun.pool spells it.
+  string pool = 1;
+  // orkers is how many Orkers of the pool were counted: each answered when
+  // asked, is not cordoned, and is full. A cordoned Orker takes nothing new
+  // and is not counted.
+  int32 orkers = 2;
+  // reserved sums what stands reserved on those Orkers, and capacity sums
+  // what they admit tasks within. A dimension of capacity is 0 when any of
+  // them leaves it unbounded; a client then reports that dimension of
+  // neither.
+  ResourceQuantity reserved = 3;
+  ResourceQuantity capacity = 4;
 }
 
 message InspectRunResponse {

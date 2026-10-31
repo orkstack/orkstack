@@ -5,8 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -120,11 +122,128 @@ func (s *Service) InspectRun(
 			return attempts[i].GetTaskId() < attempts[j].GetTaskId()
 		}
 	})
+	s.markCapacityWaits(ctx, run, attempts, now)
 	return connect.NewResponse(&orkstackv1.InspectRunResponse{
 		RunStatus:  run.GetStatus(),
 		Attempts:   attempts,
 		ComputedAt: timestamppb.New(now),
 	}), nil
+}
+
+// capacityReadTimeout bounds the one inventory read an InspectRun answer may
+// make. A client polls the live view every few seconds (the run page and
+// `orkctl run inspect --watch` every 5 s), so a reading slower than this is
+// stale by the time it lands. An Orker that has not answered within it keeps
+// every pool from being called full (engine.CapacityWaits), and an inventory
+// not read within it leaves every attempt waiting for an Orker.
+const capacityReadTimeout = 2 * time.Second
+
+// capacityWaitAfter is how long an attempt must have waited before it is
+// asked about: an Orker's outstanding poll takes a task within milliseconds,
+// and while it is out it stands reserved at the per-task cap, so an attempt
+// read in that instant would be called waiting for capacity by the poll that
+// is about to take it. An attempt still not started after this had no poll to
+// take it.
+const capacityWaitAfter = 2 * time.Second
+
+// markCapacityWaits sets capacity_wait on every attempt that is waiting for
+// capacity rather than for an Orker (engine.CapacityWaits).
+//
+// Its cost is bounded, because the run page and `run inspect --watch` call
+// InspectRun on a timer: nothing is read unless an attempt is waiting for an
+// Orker — SCHEDULED with no retry backoff for at least capacityWaitAfter, its
+// task not pinned (a pinned member waits for its pin's host, which no
+// capacity gates) and routed to a pool — and then the Orker inventory is read ONCE for the whole answer,
+// whatever the number of such attempts and pools, within
+// capacityReadTimeout. That is one presence read and one describe per live
+// Orker, the cost of one ListOrkers. Nothing is cached across calls.
+//
+// "Waiting for an Orker" stays true whatever the inventory says, so a read
+// that fails, or one in which a live Orker did not answer, leaves the attempts
+// as they are and is logged; it never fails the live view.
+func (s *Service) markCapacityWaits(
+	ctx context.Context,
+	run *orkstackv1.Run,
+	attempts []*orkstackv1.LiveAttempt,
+	now time.Time,
+) {
+	if s.fleet == nil {
+		return
+	}
+	waiting := map[string][]*orkstackv1.LiveAttempt{}
+	var pools []string
+	var tasks map[string]*orkstackv1.TaskRun
+	for _, attempt := range attempts {
+		if attempt.GetState() != orkstackv1.LiveAttemptState_LIVE_ATTEMPT_STATE_SCHEDULED ||
+			attempt.GetNextAttemptAt() != nil ||
+			attempt.GetAttemptScheduledAt() == nil ||
+			now.Sub(attempt.GetAttemptScheduledAt().AsTime()) < capacityWaitAfter {
+			continue
+		}
+		if tasks == nil {
+			tasks = make(map[string]*orkstackv1.TaskRun, len(run.GetTaskRuns()))
+			for _, taskRun := range run.GetTaskRuns() {
+				tasks[taskRun.GetTaskId()] = taskRun
+			}
+		}
+		pool, ok := waitingPool(tasks[attempt.GetTaskId()], attempt)
+		if !ok {
+			continue
+		}
+		if _, seen := waiting[pool]; !seen {
+			pools = append(pools, pool)
+		}
+		waiting[pool] = append(waiting[pool], attempt)
+	}
+	if len(pools) == 0 {
+		return
+	}
+	readCtx, cancel := context.WithTimeout(ctx, capacityReadTimeout)
+	defer cancel()
+	waits, unanswered, err := engine.CapacityWaits(readCtx, s.fleet, pools)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		// The caller left; there is no one to answer and nothing to report.
+		return
+	case err != nil:
+		s.logger.Warn("inspect run: the Orker inventory could not be read, so no waiting task is "+
+			"reported as waiting for capacity", "run_id", run.GetId(), "error", err)
+		return
+	case unanswered > 0:
+		// Every poll of a run page would repeat it, and ListOrkers already
+		// warns of each Orker that does not answer.
+		s.logger.Debug("inspect run: some live Orkers did not answer when asked, so no waiting task is "+
+			"reported as waiting for capacity", "run_id", run.GetId(), "unanswered", unanswered)
+		return
+	}
+	for pool, list := range waiting {
+		wait := waits[pool]
+		if wait == nil {
+			continue
+		}
+		for _, attempt := range list {
+			attempt.CapacityWait = proto.Clone(wait).(*orkstackv1.CapacityWait)
+		}
+	}
+}
+
+// waitingPool is the pool a SCHEDULED attempt of taskRun waits on, as the
+// snapshot records it — a fan-out item's own row first, then its task's — or
+// false when the attempt cannot be waiting for capacity: its task is pinned,
+// or the snapshot names no pool for it yet (a projection lag of one event).
+func waitingPool(taskRun *orkstackv1.TaskRun, attempt *orkstackv1.LiveAttempt) (string, bool) {
+	if taskRun == nil || taskRun.GetPin() != "" {
+		return "", false
+	}
+	pool := taskRun.GetPool()
+	if attempt.Item != nil {
+		if index := int(attempt.GetItem()); index >= 0 && index < len(taskRun.GetItems()) {
+			if itemPool := taskRun.GetItems()[index].GetPool(); itemPool != "" {
+				pool = itemPool
+			}
+		}
+	}
+	return pool, pool != ""
 }
 
 // itemOrder sorts a task's own attempt (no item) before its items.

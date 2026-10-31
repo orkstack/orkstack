@@ -95,6 +95,9 @@ type Options struct {
 	// no capacity, and the Orker admits by MaxConcurrent alone.
 	CapacityCPU    string
 	CapacityMemory string
+	// CapacityObserver, when set, is told what the ledger does, for the
+	// capacity metrics. Nil — metrics off, the default — observes nothing.
+	CapacityObserver CapacityObserver
 	// TaskQueue is the pool channel the task worker polls. A declared
 	// capacity needs it to tell a task polled there, which holds a permit's
 	// reservation, from a pinned member, which does not.
@@ -194,6 +197,9 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		maxConc = DefaultMaxConcurrent
 	}
 	capacity, capacityErr := newCapacityFor(policy, opts, int(maxConc))
+	if capacity != nil && opts.CapacityObserver != nil {
+		opts.CapacityObserver.Watch(orkerID, capacity.reading)
+	}
 
 	return &Activities{
 		dispatcher: &OCIDispatcher{
@@ -252,7 +258,9 @@ func newCapacityFor(policy SecurityPolicy, opts Options, slots int) (*Capacity, 
 		return nil, fmt.Errorf("a declared capacity needs the task worker's channel (Options.TaskQueue) " +
 			"to tell a polled task from a pinned member")
 	}
-	return newCapacity(limit, ceiling, slots), nil
+	c := newCapacity(limit, ceiling, slots)
+	c.observer = opts.CapacityObserver
+	return c, nil
 }
 
 // Dispatcher exposes the dispatcher for boot-time work — the container reaper

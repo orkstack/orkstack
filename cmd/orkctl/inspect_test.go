@@ -193,6 +193,36 @@ func TestRunInspect_EveryUnavailableReasonAndStateHasAGolden(t *testing.T) {
 			t.Fatalf("output:\n%s", res.stdout)
 		}
 	})
+	t.Run("waiting for capacity", func(t *testing.T) {
+		run := trainRun(orkstackv1.Status_STATUS_RUNNING)
+		run.TaskRuns[0].Status = orkstackv1.Status_STATUS_SUCCEEDED
+		run.TaskRuns[1].Status = orkstackv1.Status_STATUS_RUNNING
+		res := inspectOne(t, "run-inspect-waiting-capacity.golden", run, &orkstackv1.LiveAttempt{
+			TaskId: "eval", Attempt: 1, State: stScheduled,
+			AttemptScheduledAt: liveAt(-2*time.Minute - 10*time.Second), TimeoutSeconds: 600, CancellationGracePeriodSeconds: 30,
+			HeartbeatUnavailableReason: orkstackv1.HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED,
+			CapacityWait: &orkstackv1.CapacityWait{Pool: "gpu", Orkers: 2,
+				Reserved: &orkstackv1.ResourceQuantity{Cpu: 3.5, MemoryBytes: 30 << 30},
+				Capacity: &orkstackv1.ResourceQuantity{Cpu: 4, MemoryBytes: 32 << 30}},
+		})
+		if !strings.Contains(res.stdout, "eval: waiting for capacity for 2m10s") ||
+			strings.Contains(res.stdout, "waiting for an orker") {
+			t.Fatalf("output:\n%s", res.stdout)
+		}
+	})
+	t.Run("waiting for capacity in an unbounded dimension", func(t *testing.T) {
+		run := trainRun(orkstackv1.Status_STATUS_RUNNING)
+		run.TaskRuns[1].Status = orkstackv1.Status_STATUS_RUNNING
+		res := inspectOne(t, "", run, &orkstackv1.LiveAttempt{
+			TaskId: "eval", Attempt: 1, State: stScheduled, AttemptScheduledAt: liveAt(-time.Minute),
+			CapacityWait: &orkstackv1.CapacityWait{Pool: "gpu", Orkers: 1,
+				Reserved: &orkstackv1.ResourceQuantity{Cpu: 4, MemoryBytes: 30 << 30},
+				Capacity: &orkstackv1.ResourceQuantity{Cpu: 4}},
+		})
+		if !strings.Contains(res.stdout, "every orker of pool gpu is full (reserved 4/4 cpu)\n") {
+			t.Fatalf("a dimension no capacity bounds must not be printed; output:\n%s", res.stdout)
+		}
+	})
 	t.Run("retry", func(t *testing.T) {
 		res := inspectOne(t, "run-inspect-retry.golden", running, &orkstackv1.LiveAttempt{
 			TaskId: "fit", Attempt: 3, State: stScheduled,

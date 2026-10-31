@@ -660,6 +660,57 @@ set the same cap and default.
 One it could not remove still holds its host, so a declared capacity starts
 with that container's cap reserved, and frees it once a later reap removes it.
 
+**Seeing a pool at its capacity.** A task no Orker has started is `RUNNING`,
+waiting in its pool. When every Orker of that pool that takes new tasks
+declares a capacity, runs a task and has no room for another within it, the run
+page captions the task `Waiting for capacity · every orker of pool <pool> is
+full (reserved 4/4 cpu) · 2m 10s`, and `orkctl run inspect` prints
+`<task>: waiting for capacity for 2m10s (scheduled …): every orker of pool
+<pool> is full (reserved 4/4 cpu)`. The figures are summed over those Orkers,
+for each dimension their capacity bounds. Otherwise — an Orker of the pool with
+room but every slot taken, one declaring no capacity, one running nothing (what
+it reserves is then its own polls, which take the next task), a pinned member,
+a retry waiting out its backoff, an attempt waiting less than two seconds —
+they keep `Waiting for an orker`. No room means the
+per-task cap no longer fits beside `RESERVED`, so a pool can read full with
+less than its capacity reserved: an Orker with a 2-cpu cap and 3 of 4 cpus
+reserved takes nothing more.
+
+It is derived on read, never stored: `InspectRun` sets `capacity_wait` on a
+waiting attempt from the Orker inventory, the rows `orkctl orker list` shows.
+The inventory is read only when an attempt of the run has waited for an Orker
+for two seconds, once per answer however many attempts and pools wait, and within two seconds —
+one presence read and one describe per live Orker, the cost of one
+`orkctl orker list`. The run page and `orkctl run inspect --watch` ask every 5
+seconds, so a run with a task waiting costs one such read per 5 seconds per
+open page or watch, and nothing once the task starts. While any live Orker does
+not answer within the bound, no pool is called full, because the one that did
+not answer could serve it with room: for the 90 seconds a stopped Orker stays
+listed, every waiting task reads `Waiting for an orker`, as it does when the
+inventory cannot be read at all, which the engine logs.
+
+**Capacity metrics.** With metrics on (`OTEL_METRICS_EXPORTER`, "Metrics"
+below), an Orker that declares a capacity exports, on the default sink:
+
+| Metric | Labels | What it reads |
+|---|---|---|
+| `ork.orker.capacity.cpu`, `ork.orker.capacity.memory` | `ork.orker_id` | the capacity, one gauge per dimension it bounds; an unbounded dimension has none |
+| `ork.orker.capacity.reserved.cpu`, `ork.orker.capacity.reserved.memory` | `ork.orker_id` | what stands reserved, `RESERVED` in `orkctl orker list` |
+| `ork.orker.admission.wait.duration` | `ork.orker_id`, `ork.admission.bound` | seconds a poll for a task waited for room before it was granted; `ork.admission.bound` is `capacity`, or `slots` when every `max_concurrent` slot was taken |
+| `ork.orker.admission.refusals` | `ork.orker_id` | attempts refused `RESOURCE_ADMISSION_MISMATCH` |
+
+The gauges read the ledger when the meter collects. Under `prometheus` they
+render as `ork_orker_capacity_cpu`, `ork_orker_capacity_reserved_memory_bytes`,
+`ork_orker_admission_wait_duration_seconds` and
+`ork_orker_admission_refusals_total`. A poll waits whenever the Orker has no
+room, whether or not a task is queued — an idle Orker whose capacity holds one
+cap waits with its second poller — so the wait measures how long the Orker had
+no room to ask for another task, not how long a task waited (`orkctl run
+timing` answers that). A wait is recorded when its poll is granted, so a poll
+still waiting is not yet in it; `reserved` at or above `capacity` shows that
+one. Overshoot by pinned members is `reserved` minus `capacity`. Recording never blocks admission, and an Orker with metrics off
+records nothing.
+
 The ledger is held in the process, as a cordon is: never stored, never shared,
 gone with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task.
@@ -3630,7 +3681,9 @@ CLI call. `ork_orker_task_log_records_total{outcome=emitted|truncated}` and
 export path below. The Temporal SDK's own `temporal_*` metrics — activity and
 workflow task latency, poll counts, failures — arrive via
 `client.Options.MetricsHandler`, and Go's runtime and process collectors ride
-along on the same `/metrics`.
+along on the same `/metrics`. An Orker that declares a capacity adds
+`ork.orker.capacity.*` and `ork.orker.admission.*` ("Declaring an Orker's
+capacity", above).
 
 `ork.audit.records{action,outcome}` (engine) counts every control-plane
 audit write, once per audited write RPC: `outcome` is `written`, or `dropped`

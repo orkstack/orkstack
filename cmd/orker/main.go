@@ -833,5 +833,18 @@ func orkerOptions(
 		}
 	}
 
+	// The capacity metrics (ork.orker.capacity.*, ork.orker.admission.*): a
+	// process-level signal, so the default sink's, and only when metrics are
+	// exported at all. An Orker declaring no capacity builds no ledger, and
+	// the observer then records nothing.
+	if tcfg.MetricsEnabled() {
+		capacity, err := telemetry.NewCapacityMetrics(sinks.Default(), logger)
+		if err != nil {
+			logger.Warn("telemetry: the Orker's capacity metrics could not be built; capacity is not exported", "error", err)
+		} else {
+			opts.CapacityObserver = capacity
+		}
+	}
+
 	return opts
 }
