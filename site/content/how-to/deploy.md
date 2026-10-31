@@ -57,7 +57,7 @@ Every `ork` replica serves the UI on its API port, so the browser's calls and li
 - Route the whole host to `ork`, not only the API's paths. The UI's pages and assets (`/`, `/_app/`) are on the same port.
 - Forward WebSocket upgrades on `/ws/`.
 - Keep the `Host` header the browser sent. A proxy that rewrites it makes the UI's live streams look cross-origin, and the engine refuses them. If it must, list the page's origin in `ORK_WS_ALLOWED_ORIGINS`.
-- List in `ORK_ALLOWED_HOSTS` every name with a dot the engine is reached by, for example `ORK_ALLOWED_HOSTS=orkstack.example.com`: the browser's name behind a proxy that keeps it, an FQDN, and the name `orkctl` dials. On its own the engine answers an IP address, `localhost` and the names under it, a name without a dot, and the host in `ORK_HTTP_ADDR`. It refuses any other `Host` with `403`, which stops a web page from reaching it by DNS rebinding.
+- List in `ORK_ALLOWED_HOSTS` every name with a dot the engine is reached by, for example `ORK_ALLOWED_HOSTS=orkstack.example.com`: the browser's name behind a proxy that keeps it, an FQDN, and the name `orkctl` dials. On its own the engine answers an IP address, `localhost` and the names under it, a name without a dot, and the host in `ORK_HTTP_ADDR`. It refuses any other `Host` with `403`, which stops a web page from reaching it by DNS rebinding. A Prometheus that scrapes the admin listener by a name with a dot needs that name in `ORK_ADMIN_ALLOWED_HOSTS`.
 - Serve the UI at the root of a host, not under a sub-path.
 - Terminate TLS at the proxy. The engine serves plain HTTP.
 

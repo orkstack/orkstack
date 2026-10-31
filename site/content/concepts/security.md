@@ -46,7 +46,7 @@ The engine serves the web UI on its own API port, so the UI's calls and live str
 
 The page runs under a strict content security policy. It runs only scripts from its own origin, plus the two inline scripts its build names by hash. It refuses to be framed by another site.
 
-The engine answers only the names it knows: an IP address, `localhost` and the names under it, a name without a dot, the host in `ORK_HTTP_ADDR`, and any name listed in `ORK_ALLOWED_HOSTS`. A name without a dot resolves only on the local network. The engine refuses a request under any other `Host` header. A web page that reaches the engine by DNS rebinding through a public name sends such a `Host`, so it is refused.
+The engine answers only the names it knows: an IP address, `localhost` and the names under it, a name without a dot, the host in `ORK_HTTP_ADDR`, and any name listed in `ORK_ALLOWED_HOSTS`. A name without a dot resolves only on the local network. The engine refuses a request under any other `Host` header. A web page that reaches the engine by DNS rebinding through a public name sends such a `Host`, so it is refused. The admin listener, which serves `/metrics`, answers the same names, plus any listed in `ORK_ADMIN_ALLOWED_HOSTS`.
 
 ## What this does not cover
 

@@ -541,6 +541,20 @@ A `404` means the origin is accepted, because the probe run does not exist. A `4
 
 **Fix.** Have the proxy keep the `Host` header the browser sent ([DEPLOY.md](./DEPLOY.md), "The web UI"), or add the page's origin to `ORK_WS_ALLOWED_ORIGINS`, as a comma-separated list of `host:port` or `scheme://host:port` values, and restart the engine, which keeps the setting it started with (`make down && make up` under `make up`). A deployment sets `engine.ws_allowed_origins` on every replica ([DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas").
 
+### A request is refused `403`: "this engine does not answer to Host …"
+
+**Cause.** The engine answers a request only under a `Host` it knows, and refuses any other `403` before a route sees it: the UI, the API and the sockets alike, so a web page cannot reach it by DNS rebinding through a public name. With `ORK_ALLOWED_HOSTS` unset it admits an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_HTTP_ADDR` names. A name with a dot is refused until it is listed: a Kubernetes name such as `ork.orkstack` or `ork.orkstack.svc.cluster.local`, an FQDN, the browser's name behind a proxy that keeps it, and the name `orkctl`, `curl` or a trigger caller dials. The admin listener applies the same rule under its own setting, `ORK_ADMIN_ALLOWED_HOSTS`, so a Prometheus that scrapes `/metrics` by a name with a dot, such as `host.docker.internal`, is refused there and shows its target down ("this admin listener does not answer to Host …"). A refusal is logged as `request refused: Host not allowed`, naming the listener and the `Host`, at most once every 10 seconds (`internal/hostpolicy`, `Guard`; [DEPLOY.md](./DEPLOY.md), "The web UI"). `orkctl` reports it as `permission_denied` with the same message.
+
+**Confirm.** The engine's log has `request refused: Host not allowed`. To ask the engine directly, send it a request under the `Host` the caller uses:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 -H 'Host: orkstack.example.com' http://127.0.0.1:8080/
+```
+
+A `200` means the name is admitted. A `403` means it is refused.
+
+**Fix.** List the name in `ORK_ALLOWED_HOSTS` (`engine.allowed_hosts`) on every replica, without a scheme, a port or a path: `ORK_ALLOWED_HOSTS=orkstack.example.com`, or `*.example.com` for every name under a suffix of two labels or more. For the admin listener, list the scraper's name in `ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`) on both binaries. Restart the engine, which keeps the settings it started with ([DEPLOY.md](./DEPLOY.md), "1. Configuration"; [DEPLOY.md](./DEPLOY.md), "The API listener's bounds").
+
 ### `host.docker.internal` does not resolve inside a container (Linux)
 
 **Cause.** On Linux the name `host.docker.internal` does not resolve inside containers by default. Some integration and browser test suites, and the observability stack, rely on it. The Orker never adds a host mapping to an activity container, by design ([README.md](../README.md), "Linux hosts"; [AGENTS.md](../AGENTS.md), "11.1 Development workflow").

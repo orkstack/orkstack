@@ -14,9 +14,9 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 | Durable log, per stream, per attempt | 16 MiB | `ORK_LOG_MAX_BYTES` |
 | Live log, per attempt | 16 MiB, then one truncation notice | `ORK_ORKER_LOG_MAX_BYTES` |
 | Serialized completion commit | 4 MiB | `ORK_COMMIT_MAX_BYTES` |
-| One API request, as sent and once decompressed | 16 MiB. An apply at the default task ceiling is about 4 MB | `ORK_REQUEST_MAX_BYTES` |
+| One API request, as sent and once decompressed | 1 MiB plus 4 KiB a task of the task ceiling: about 17.4 MB at the default 4,000. It rises with the ceiling, so it never limits how large an Orkflow may be. An apply at the default ceiling is about 4 MB | `ORK_REQUEST_MAX_BYTES`, never under what the ceiling needs |
 | Request headers | 64 KiB, sent within 10 seconds over HTTP/1.1 | Fixed |
-| Request `Host` names | An IP address, `localhost` and names under it, a name without a dot, and the host in `ORK_HTTP_ADDR`. Any other is refused | `ORK_ALLOWED_HOSTS` |
+| Request `Host` names | An IP address, `localhost` and names under it, a name without a dot, and the host the listener's address names. Any other is refused, on the API and the admin listener | `ORK_ALLOWED_HOSTS`; `ORK_ADMIN_ALLOWED_HOSTS` |
 | An idle keep-alive connection to the API | 15 minutes. A live stream is never idle | `ORK_HTTP_IDLE_TIMEOUT` |
 | Trigger request body | 1 MiB | Fixed |
 | Hold reason | 512 bytes | Fixed |

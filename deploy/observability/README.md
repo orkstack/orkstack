@@ -54,7 +54,16 @@ instead.
 
 Metrics reach Prometheus twice: the Collector pushes OTLP metrics to it, and
 it scrapes each binary's `/metrics` on `host.docker.internal:9464`/`9465`
-(`prometheus.yml`). Either path alone is enough.
+(`prometheus.yml`). Either path alone is enough. The admin listeners answer
+only names they know in a request's `Host`, and `host.docker.internal` has a
+dot, so `make up` lists it in the generated file's `admin_allowed_hosts:`
+beside `admin_addr:`; a file of your own lists it too:
+
+```yaml
+telemetry:
+  admin_allowed_hosts:
+    - host.docker.internal
+```
 
 ## Where things are
 
