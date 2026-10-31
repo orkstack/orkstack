@@ -285,11 +285,11 @@ type placementVariant struct {
 // TestIntegration_AMemoHitIsReusedOnASmallerOrker: a memo hit lands on an
 // Orker with a smaller cap, or with a stricter secret floor. Run 1 seeds the
 // memo of the cached 2-cpu task "work" on a seed Orker; a narrower Orker then
-// takes the seed's place on that pool. In run 2, "work" hits on the narrower Orker and starts no
-// container, while the uncached task "other" of the same run runs its
-// container on the cap-2 Orker of the "big" pool. Run 3 changes the input, so
-// "work" misses: the narrower Orker refuses it with the setting's own reason
-// after the memo step and before any container exists.
+// takes the seed's place on that pool. In run 2, "work" hits on the narrower
+// Orker and starts no container, while the uncached task "other" of the same
+// run runs its container on the cap-2 Orker of the "big" pool. Run 3 changes
+// the input, so "work" misses: the narrower Orker refuses it with the
+// setting's own reason after the memo step and before any container exists.
 func TestIntegration_AMemoHitIsReusedOnASmallerOrker(t *testing.T) {
 	const secretVar = "ORK_TEST_PLACEMENT_MEMO_TOKEN"
 	floor := func(allow string) *orker.SecurityPolicy {

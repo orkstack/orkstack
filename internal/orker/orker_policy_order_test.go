@@ -253,6 +253,8 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 		notRun []string
 		// outcome is the cached task's memo outcome on its record.
 		outcome orkstackv1.CacheOutcome
+		// missReason, when set, is the miss reason the record must carry.
+		missReason string
 	}{
 		{name: "uncached", ran: "commit-check", notRun: beforeAnyWork},
 		{
@@ -281,7 +283,8 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 				ref.Sha256 = ""
 				in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Artifacts: []*orkstackv1.ArtifactRef{ref}}}
 			},
-			outcome: orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS,
+			outcome:    orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS,
+			missReason: MemoMissInputUnhashed,
 		},
 		{
 			name: "a cached fan-out item", cached: true, ran: "memo", notRun: afterTheMemo, edit: asItem,
@@ -328,7 +331,10 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 						t.Fatalf("a refused task logged that it runs its container: %q", h.loggedLines())
 					}
 				}
-				if path.outcome == orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS && record.GetCache().GetMissReason() != MemoMissInputUnhashed {
+				if got := record.GetCache().GetMissReason(); path.missReason != "" && got != path.missReason {
+					t.Fatalf("the refused attempt's miss reason = %q, want %q", got, path.missReason)
+				}
+				if path.outcome == orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS && path.missReason != MemoMissInputUnhashed {
 					if gets, _ := h.memos.calls(); gets == 0 {
 						t.Fatal("the cached task was refused before its memo was looked up")
 					}

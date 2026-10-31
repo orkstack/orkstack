@@ -461,9 +461,9 @@ func (d *OCIDispatcher) Execute(
 }
 
 // Validate is the pure, I/O-free half of the contract check: the task's own
-// shape and this Orker's policy, every refusal this Orker makes of a task from
-// its input and its own configuration alone, reading no commit, memo,
-// registry or upstream value. It is separate so the engine's own tests, the
+// shape and this Orker's cap, secret scheme, secret floor and run-as-Orker
+// policy, reading no commit, memo, registry or upstream value. It is separate
+// so the engine's own tests, the
 // activity test suite and orkctl task run can assert the refusals without a
 // daemon.
 //

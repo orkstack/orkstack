@@ -1534,29 +1534,29 @@ heard of.
 | 15 | — | **Cleanup**: remove the container (detached context), remove the workdir and secrets, stop the heartbeat, close the log sink |
 | 16 | — | **Attempt record**: one `TaskAttempt`, best-effort (below) |
 
-**This Orker's own policy comes after the commit check and the memo step.**
-Two Orkers of one pool may hold different caps, secret schemes, floors or
-runtimes. A result another Orker committed (step 3) starts no container here,
-so it is handed back whatever this Orker's settings are: nothing that reads
-them comes before step 3. A memo that hits (step 5b) is handed back whatever
-this Orker's caps, secret schemes, floor or runtime; holding either to them
-would turn a reusable result into a run failure. A memo hit is not spared what
-comes before the lookup: a cached task's image policy (step 3b, a signature
-read with this Orker's registry credentials) and its render (step 5b, an
-`env` name held to this Orker's allow-list) run first, because the key hashes
-the rendered `config.json`, so those refuse it here even where the memo would
-hit. A task with neither is still refused at
+**This Orker's own policy comes after the commit check and the memo step.** Two
+Orkers of one pool may hold different caps, secret schemes, floors or runtimes.
+A result another Orker committed (step 3) starts no container here, so it is
+handed back whatever this Orker's settings are: nothing that refuses for them
+comes before step 3. A memo that hits (step 5b) is handed back whatever this
+Orker's caps, secret schemes, floor or runtime; holding either to them would
+turn a reusable result into a run failure. A memo hit is not spared what comes
+before the lookup: a cached task's image policy (step 3b, which reads a
+required signature with this Orker's registry credentials) and its render (step
+5b, which holds an `env` name to this Orker's allow-list) run first, because
+the key hashes the rendered `config.json`, so those refuse it here even where
+the memo would hit. A task with neither a commit nor a hit is still refused at
 step 3a or 5b′, with its own reason (`RESOURCE_REQUEST_REFUSED`,
 `SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `RUN_AS_ORKER_UNAVAILABLE`),
 before any secret is resolved, any image pulled or any `config.json` written.
-The checks that read nothing of the Orker, the network mode among them, stay
-at step 2. For a cached task the image policy, the workspace, the upstream
-values the key needs and the memo lookup come first, so a failure among them
-is reported ahead of this Orker's refusal; that is the price of never refusing
-a hit. A request above this Orker's cap reserves nothing against a declared
-capacity, whether it is refused, adopted or a hit, and an attempt that starts
-no container frees its reservation when it ends (docs/DEPLOY.md, "Declaring an
-Orker's capacity").
+The checks that read nothing of the Orker, the network mode among them, stay at
+step 2. For a cached task the image policy, the workspace, the upstream values
+the key needs, the render and the memo lookup come first, so a failure among
+them is reported ahead of this Orker's refusal; that is the price of never
+refusing a hit for this Orker's own policy. A request above this Orker's cap
+reserves nothing against a declared capacity, whether it is refused, adopted or
+a hit, and an attempt that starts no container frees its reservation when it
+ends (docs/DEPLOY.md, "Declaring an Orker's capacity").
 
 **IMAGE comes before RENDER, and the order is load-bearing.** `task.json`
 carries `image.platformDigest`, `image.platform` and `image.delivery`, which do

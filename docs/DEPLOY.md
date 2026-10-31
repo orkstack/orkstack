@@ -718,13 +718,14 @@ none ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#71-the-sequence),
 "§7.1"):
 
 - **A result already committed** is never refused for any of these settings:
-  the commit check comes before everything that reads them.
+  the commit check comes before everything that refuses for them.
 - **A memo hit** is never refused for the caps, the secret schemes and floor,
   or the runtime: those are checked only after the memo step misses. But a
   cached task's image policy is checked before its memo lookup, and its
   `with:` is rendered before it too, because the memo key hashes the rendered
-  `config.json`. A differing `env` allow-list, or differing registry
-  credentials, therefore refuse it even where another Orker's memo would hit.
+  `config.json`. So a differing `env` allow-list refuses it when its `with:`
+  names an `env` variable, and differing registry credentials refuse it when
+  the run's image policy requires a signature, even where the memo would hit.
 
 #### Changing a setting with runs in flight
 

@@ -325,7 +325,7 @@ which Orker took a task. Where they differ, a task fails explicitly with its
 own reason. A committed result is never refused for any of them. A memo hit
 is never refused for the caps, secret schemes, floor or runtime, but a cached
 task is rendered and its image policy checked before its memo lookup, so a
-differing `env` allow-list or registry credentials can refuse it even where a
+differing `env` allow-list or registry credentials can refuse it even where the
 memo would hit (`docs/DEPLOY.md`, "Every Orker of a pool has the same
 settings").
 
