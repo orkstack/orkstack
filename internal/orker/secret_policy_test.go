@@ -257,7 +257,7 @@ func TestDispatcher_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAnythingRuns(
 	t.Setenv("ORK_S3_SECRET_KEY", value)
 	for _, tc := range []struct{ source, want string }{
 		{"env:ORK_S3_SECRET_KEY", `secret "s3": "env:ORK_S3_SECRET_KEY" is this orker's own (its OrkStack settings, ORK_*), which no secret floor admits`},
-		{"file:/proc/self/environ", `secret "s3": "file:/proc/self/environ" is this orker's own (its process, /proc), which no secret floor admits`},
+		{"file:/proc/self/environ", `secret "s3": "file:/proc/self/environ" is this orker's own (one of its files), which no secret floor admits`},
 	} {
 		t.Run(tc.source, func(t *testing.T) {
 			attempts := artifacts.NewMemoryAttemptStore()
@@ -319,8 +319,8 @@ func TestNewActivities_TheWorkRootIsTheOrkersOwn(t *testing.T) {
 		activities := NewActivitiesWithOptions(nil, opts)
 		assertOwn(t, activities.Dispatcher().Policy, staged)
 	}
-	if len(explicit.OwnPaths) != 0 {
-		t.Fatalf("the caller's policy was changed in place: %v", explicit.OwnPaths)
+	if len(explicit.own) != 0 {
+		t.Fatalf("the caller's policy was changed in place: %v", explicit.own)
 	}
 	// No work root is the temp dir, where every attempt then lives.
 	activities := NewActivitiesWithOptions(nil, Options{})

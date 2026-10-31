@@ -340,7 +340,7 @@ func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, str
 // before anything is fetched.
 func ownSecretFlag(name, source string, policy orker.SecurityPolicy) error {
 	if err := policy.AllowsSecretSource(source); err != nil {
-		return fmt.Errorf("--secret %s: %v; a local run refuses it as an Orker does, so supply the value "+
+		return fmt.Errorf("--secret %s: %w; a local run refuses it as an Orker does, so supply the value "+
 			"from a file or a variable of its own", name, err)
 	}
 	return nil

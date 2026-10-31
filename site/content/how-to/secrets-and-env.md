@@ -34,7 +34,7 @@ orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.
 ## Name a secret
 
 - `name` matches `^[A-Za-z0-9._-]{1,128}$`. It cannot be `.` or `..`.
-- `source` is `env:NAME` to read a variable on the Orker, or `file:/path` to read a file on the Orker's host.
+- `source` is `env:NAME` to read a variable on the Orker, or `file:/path` to read a file on the Orker's host. A `file:` path is absolute, has no `..`, `.` or empty segment, and is at most 4096 bytes.
 - The task reads the secret at `/orkstack/input/secrets/<name>`. The file is read-only, and it holds the exact bytes.
 - The Orker resolves each secret when it starts the attempt. The value never appears in the Orkflow, the run's history, logs or `task.json`.
 

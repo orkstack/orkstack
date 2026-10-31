@@ -543,6 +543,7 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "aws-credentials"))
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(dir, "gcp.json"))
 	t.Setenv("AZURE_FEDERATED_TOKEN_FILE", filepath.Join(dir, "azure-token"))
+	t.Setenv("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", filepath.Join(dir, "eks-pod-identity-token"))
 	policy := SecurityPolicyFromEnv()
 
 	assertOwn(t, policy,
@@ -551,7 +552,10 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 		"env:CONTAINERS_CONF", "env:CONTAINERS_STORAGE_CONF", "env:REGISTRY_AUTH_FILE",
 		"env:AWS_ACCESS_KEY_ID", "env:AWS_SECRET_ACCESS_KEY", "env:AWS_SESSION_TOKEN",
 		"env:AZURE_CLIENT_SECRET", "env:GOOGLE_APPLICATION_CREDENTIALS",
+		"env:CLOUDSDK_AUTH_ACCESS_TOKEN_FILE", "env:CLOUDSDK_CONFIG",
 		"file:"+filepath.Join(dir, "aws-credentials"),
+		"file:"+filepath.Join(dir, "eks-pod-identity-token"),
+		"file:"+filepath.Join(home, ".dockercfg"),
 		"file:"+filepath.Join(dir, "gcp.json"),
 		"file:"+filepath.Join(dir, "azure-token"),
 		"file:"+filepath.Join(home, ".aws", "credentials"),
@@ -576,6 +580,7 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 	)
 	assertNotOwn(t, policy,
 		"env:CONTAINER_REGISTRY_TOKEN", "env:DOCKERHUB_TOKEN", "env:AWSOME_TOKEN", "env:GOOGLE_API_KEY",
+		"env:CLOUDSDK", "file:"+filepath.Join(home, ".dockercfgx"),
 		"file:"+filepath.Join(home, "task-secrets", "db"),
 		"file:/var/lib/orkstack/task-secrets/db",
 	)

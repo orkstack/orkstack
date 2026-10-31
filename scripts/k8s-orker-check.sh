@@ -14,7 +14,12 @@
 #   --namespace NAME        the namespace the check creates and deletes
 #                           (default: orkstack-check; refused if it exists)
 #   --ork-namespace NAME    the OrkStack namespace its runs are submitted in
-#                           (default: default)
+#                           (default: default). Its allowed_secrets must be
+#                           empty or allow the sources the secrets Orkflow
+#                           names: file:/etc/orkstack/task-secrets/*,
+#                           env:ORK_S3_SECRET_KEY and env:POD_NAME; the check
+#                           expects the Orker, not the namespace, to refuse
+#                           the last two.
 #   --shapes LIST           userns,privileged (the default), or one of them
 #   --pull-policy POLICY    the orker image's pull policy (default: IfNotPresent)
 #   --registry-host H:PORT  a registry the engine pulls task images from, with

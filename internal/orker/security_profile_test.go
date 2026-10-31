@@ -2,10 +2,13 @@ package orker
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -583,11 +586,14 @@ func TestSecurityPolicy_TheDefaultFloorRefusesTheOrkersOwnEnvironment(t *testing
 		"env:ORK_S3_SECRET_KEY", "env:ORK_S3_ACCESS_KEY", "env:ORK_S3_SESSION_TOKEN",
 		"env:ORK_TELEMETRY_SINKS", "env:ORK_CONFIG_FILE", "env:ORK_",
 		"env:OTEL_EXPORTER_OTLP_HEADERS", "env:OTEL_EXPORTER_OTLP_TRACES_HEADERS", "env:OTEL_ANYTHING",
-		"env:HTTP_PROXY", "env:HTTPS_PROXY", "env:http_proxy", "env:https_proxy",
+		"env:HTTP_PROXY", "env:HTTPS_PROXY", "env:http_proxy", "env:https_proxy", "env:ALL_PROXY", "env:all_proxy",
 	}
 	notOwn := []string{
 		"env:SANDBOX_DB", "env:ORK", "env:ORKSTACK_TASK_TOKEN", "env:OTEL",
 		"env:NO_PROXY", "env:HTTPS_PROXY_TOKEN",
+		// A variable's name is case-sensitive, so these are other
+		// variables than the Orker's settings.
+		"env:ork_s3_secret_key", "env:Ork_S3_Secret_Key", "env:otel_exporter_otlp_headers",
 	}
 	for _, policy := range []SecurityPolicy{DefaultSecurityPolicy(), {}} {
 		assertOwn(t, policy, own...)
@@ -614,6 +620,11 @@ func TestSecurityPolicy_TheDefaultFloorRefusesTheOrkersProcessFiles(t *testing.T
 	if err := os.WriteFile(plain, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// A link that leads nowhere yet is judged by where it would lead.
+	dangling := filepath.Join(dir, "dangling")
+	if err := os.Symlink("/proc/self/no-such-file", dangling); err != nil {
+		t.Fatal(err)
+	}
 	own := []string{
 		"file:/proc", "file:/proc/self/environ", "file:/proc/1/environ", "file:/proc/thread-self/environ",
 		"file:/proc/self/root/etc/hostname", "file:/proc/self/fd/0",
@@ -624,11 +635,14 @@ func TestSecurityPolicy_TheDefaultFloorRefusesTheOrkersProcessFiles(t *testing.T
 	}
 	// A link is judged by where it leads, which takes a /proc to lead to.
 	if _, err := os.Stat("/proc/self/environ"); err == nil {
-		own = append(own, "file:"+link, "file:"+dirLink+"/environ")
+		own = append(own, "file:"+link, "file:"+dirLink+"/environ", "file:"+dangling)
 	}
 	notOwn := []string{
 		"file:/procfs/x", "file:/devices/x", "file:/run/secretsx/a", "file:/etc/orkstack/task-secrets/db",
 		"file:" + plain,
+		// A path is compared byte for byte, as a case-sensitive file
+		// system names it, so this is another path than /proc's.
+		"file:/PROC/self/environ",
 	}
 	for _, policy := range []SecurityPolicy{DefaultSecurityPolicy(), {}} {
 		assertOwn(t, policy, own...)
@@ -705,28 +719,116 @@ func TestSecurityPolicy_TheOrkersOwnFilesAreRefusedByNameAndByLink(t *testing.T)
 	if err := os.Symlink(filepath.Join(work, "ork-run-task-1-x", "secrets"), elsewhere); err != nil {
 		t.Fatal(err)
 	}
-
-	policy := DefaultSecurityPolicy()
-	policy.OwnPaths = []OwnPath{
-		{Path: filepath.Join(cfg, "orker.yaml"), Why: "its configuration file"},
-		{Path: work, Why: "its work root"},
+	// A link into the work root that leads nowhere yet: a later attempt's
+	// workspace.
+	dangling := filepath.Join(dir, "dangling")
+	if err := os.Symlink(filepath.Join(work, "ork-run-task-2-y", "secrets", "db"), dangling); err != nil {
+		t.Fatal(err)
 	}
-	assertOwn(t, policy,
-		"file:"+filepath.Join(cfg, "orker.yaml"),
-		"file:"+filepath.Join(cfg, "..data", "orker.yaml"),
-		"file:"+filepath.Join(dated, "orker.yaml"),
-		"file:"+work,
-		"file:"+filepath.Join(work, "ork-run-task-1-x", "secrets", "db"),
-		"file:"+filepath.Join(elsewhere, "db"),
+
+	policy := DefaultSecurityPolicy().WithOwnPaths(
+		OwnPath{Path: filepath.Join(cfg, "orker.yaml"), Why: "its configuration file"},
+		OwnPath{Path: work, Why: "its work root"},
 	)
+	own := []string{
+		"file:" + filepath.Join(cfg, "orker.yaml"),
+		"file:" + filepath.Join(cfg, "..data", "orker.yaml"),
+		"file:" + filepath.Join(dated, "orker.yaml"),
+		"file:" + work,
+		"file:" + filepath.Join(work, "ork-run-task-1-x", "secrets", "db"),
+		"file:" + filepath.Join(elsewhere, "db"),
+		"file:" + dangling,
+	}
+	assertOwn(t, policy, own...)
 	assertNotOwn(t, policy,
 		"file:"+filepath.Join(cfg, "other.yaml"),
 		"file:"+filepath.Join(dir, "workx", "db"),
 	)
 
-	err := policy.AllowsSecretSource("file:" + filepath.Join(elsewhere, "db"))
-	if err == nil || !strings.Contains(err.Error(), "its work root") || strings.Contains(err.Error(), "ork-run-task-1-x") {
-		t.Fatalf("refusal through a link = %v, want it to name why (its work root) and never the link's target", err)
+	// Every refusal of a file says the same thing: never which of the
+	// Orker's files a name is, nor where a link led, so a task cannot learn
+	// the Orker's paths by trying names.
+	for _, source := range own {
+		err := policy.AllowsSecretSource(source)
+		want := fmt.Sprintf("%q is this orker's own (one of its files), which no secret floor admits", source)
+		if err == nil || err.Error() != want {
+			t.Errorf("AllowsSecretSource(%q) = %v, want %q", source, err, want)
+		}
+	}
+}
+
+// TestSecurityPolicy_AnOwnPathIsResolvedAsTheKernelOpensIt: an own path is
+// what the kernel would open for its name, "..", "." and relative names
+// included — a ".." after a link is the link target's parent, not the
+// link's — and its cleaned name is held as the Orker's own too.
+func TestSecurityPolicy_AnOwnPathIsResolvedAsTheKernelOpensIt(t *testing.T) {
+	dir := t.TempDir()
+	deep := filepath.Join(dir, "a", "b")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(deep, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(dir)
+	policy := DefaultSecurityPolicy().WithOwnPaths(
+		OwnPath{Path: filepath.Join(dir, "link") + "/../secret", Why: "its configuration"},
+		OwnPath{Path: "rel/./key", Why: "its configuration"},
+	)
+	assertOwn(t, policy,
+		"file:"+filepath.Join(dir, "a", "secret"),
+		"file:"+filepath.Join(dir, "secret"),
+		"file:"+filepath.Join(dir, "rel", "key"),
+	)
+	assertNotOwn(t, policy,
+		"file:"+filepath.Join(deep, "secret"),
+		"file:"+filepath.Join(dir, "a", "key"),
+	)
+}
+
+// TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName: a task
+// writes its secret's source, so the name is the task's to choose, and the
+// Orker judges it on every attempt. Whatever the name — as long as a start
+// payload carries, or as long as the kernel opens and running through a link
+// to its own directory again and again — judging it costs a bounded amount
+// of the Orker's CPU, measured on this thread's clock where there is one, so
+// a loaded host cannot move it.
+func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Symlink(".", filepath.Join(dir, "x")); err != nil {
+		t.Fatal(err)
+	}
+	loop := dir
+	for len(loop)+len("/x/secret") <= dsl.MaxSecretPathBytes {
+		loop += "/x"
+	}
+	loop += "/secret"
+	nowhere := "/zz"
+	for len(nowhere)+len("/a") <= dsl.MaxSecretPathBytes {
+		nowhere += "/a"
+	}
+	payload := "/zz" + strings.Repeat("/a", 100<<10)
+	policy := SecurityPolicyFromEnv().WithWorkRoot(t.TempDir())
+
+	const bound = 100 * time.Millisecond
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	for _, tc := range []struct{ name, source string }{
+		{"the longest path the kernel opens, through a link to its own directory", "file:" + loop},
+		{"the longest path the kernel opens, of nothing", "file:" + nowhere},
+		{"a path as long as a start payload", "file:" + payload},
+	} {
+		startCPU, cpu := threadCPU()
+		startWall := time.Now()
+		_ = policy.AllowsSecretSource(tc.source)
+		cost, clock := time.Since(startWall), "wall clock"
+		if end, ok := threadCPU(); cpu && ok {
+			cost, clock = end-startCPU, "thread CPU time"
+		}
+		t.Logf("%s (%d bytes): %v of %s", tc.name, len(tc.source), cost, clock)
+		if cost > bound {
+			t.Errorf("%s (%d bytes): judging it took %v of %s, want at most %v", tc.name, len(tc.source), cost, clock, bound)
+		}
 	}
 }
 
@@ -734,9 +836,8 @@ func TestSecurityPolicy_TheOrkersOwnFilesAreRefusedByNameAndByLink(t *testing.T)
 // absolute. A broad floor is a valid floor, and it still admits none of the
 // Orker's own sources.
 func TestSecurityPolicy_NoFloorEntryAdmitsTheOrkersOwn(t *testing.T) {
-	policy := DefaultSecurityPolicy()
+	policy := DefaultSecurityPolicy().WithOwnVars(OwnVar{Name: "VENDOR_KEY", Why: "its telemetry credentials"})
 	policy.SecretAllow = []string{"env:*", "file:/*/*/*"}
-	policy.OwnVars = []OwnVar{{Name: "VENDOR_KEY", Why: "its telemetry credentials"}}
 	if err := policy.Validate(); err != nil {
 		t.Fatalf("Validate() = %v, want a broad floor accepted", err)
 	}
@@ -752,9 +853,9 @@ func TestSecurityPolicy_NoFloorEntryAdmitsTheOrkersOwn(t *testing.T) {
 func TestSecurityPolicy_ValidateRefusesAFloorEntryThatAdmitsOnlyTheOrkersOwn(t *testing.T) {
 	work := t.TempDir()
 	withWork := func(entries ...string) SecurityPolicy {
-		policy := DefaultSecurityPolicy()
-		policy.OwnPaths = []OwnPath{{Path: work, Why: "its work root"}}
-		policy.OwnVars = []OwnVar{{Name: "VENDOR_KEY", Why: "its telemetry credentials"}}
+		policy := DefaultSecurityPolicy().
+			WithOwnPaths(OwnPath{Path: work, Why: "its work root"}).
+			WithOwnVars(OwnVar{Name: "VENDOR_KEY", Why: "its telemetry credentials"})
 		policy.SecretAllow = entries
 		return policy
 	}

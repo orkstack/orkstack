@@ -474,7 +474,7 @@ then the variable it becomes.
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable. An Orker whose boot probe finds that user does not land as the Orker (a rootless or user-namespaced daemon) refuses to start with it set, as `RUN_AS_ORKER_UNAVAILABLE` |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
-| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme except the Orker's own, and logs a warning at boot. No entry admits the Orker's own sources: its `ORK_*` and `OTEL_*` settings, its process files, its configuration and credential files (§5, "Secrets on a shared pool"). A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed, names a scheme not in `orker.secret_schemes`, or can match only the Orker's own sources |
+| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme except the Orker's own, and logs a warning at boot. No entry admits the Orker's own sources: its `ORK_*` and `OTEL_*` settings, its process files, its work root, its configuration and credential files (§5, "Secrets on a shared pool"). With `orker.workdir` unset the work root is the temp directory, so a `file:/tmp/…` source is refused and an entry under `/tmp` stops the Orker at boot: give tasks' secret files a directory of their own. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed, names a scheme not in `orker.secret_schemes`, or can match only the Orker's own sources |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it, and its path must be a plain one: a mount is a comma-separated option list, so an Orker whose work root holds a comma or a control character refuses to start (`WORKDIR_NOT_BINDABLE`, naming `ORK_ORKER_WORKDIR`). The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
@@ -3038,13 +3038,16 @@ places; a source must pass **both**:
 **The Orker's own sources are never admitted.** Whatever the floor says, empty
 or `env:*`, an Orker refuses as a task's source what belongs to it: its
 `ORK_*` and `OTEL_*` settings, its proxy settings and the container CLI's
-(registry credential helpers' `AWS_*`, `AZURE_*` and
+(registry credential helpers' `AWS_*`, `AZURE_*`, `CLOUDSDK_*` and
 `GOOGLE_APPLICATION_CREDENTIALS` among them), `/proc`, `/dev`, its container's
 credentials under `/run/secrets` and `/var/run/secrets`, its work root, its
 configuration file and each file that reads, its telemetry sinks' header
 sources, the container engine's state, and the credential files its settings
-name. A `file:` source must also be a plain absolute path, with no `..`, `.`
-or empty segment, under any floor. A task that names one fails
+name. The work root is the temp directory when `orker.workdir` is unset, so
+there a `file:/tmp/…` source is refused and a floor entry under `/tmp` stops
+the Orker at boot. A `file:` source must also be a plain absolute path, with
+no `..`, `.` or empty segment, of at most 4096 bytes, under any floor. A task
+that names one fails
 `SECRET_NOT_PERMITTED` before its image is pulled; a value a task needs goes
 under a source of the task's own, such as a file in a directory the floor
 names, or a variable the floor names. [SECURITY_MODEL.md](SECURITY_MODEL.md),
@@ -3056,10 +3059,11 @@ never crosses `/`; `?`, `[…]` and `\` are ordinary characters. A `file:`
 source with a `..`, `.` or empty segment is refused outright rather than
 normalized, so `file:/etc/orkstack/secrets/sandbox/../payments/db` never sits
 inside `file:/etc/orkstack/secrets/sandbox/*`. The policy bounds the NAME a
-tenant may write, not the filesystem behind it: a symlink placed under a
-tenant's directory is a grant the operator made, and the Orker reads the path
-as it always has. Nothing here stores, logs or compares a secret value;
-refusals carry the source string only.
+tenant may write. A symbolic link under a tenant's directory is a grant the
+operator made, and the Orker reads it where it leads, unless it leads to one of
+the Orker's own files, which is refused as the Orker's own name is. Nothing
+here stores, logs or compares a secret value; a refusal carries the source
+string and what refused it, never a value.
 
 During a rolling upgrade the namespace list is enforced only by engine
 replicas that know it; the Orker floor is unaffected by the rollout.

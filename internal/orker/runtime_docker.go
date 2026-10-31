@@ -1081,8 +1081,9 @@ var endpointVars = []string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
 // common word, so only the podman CLI's names in it are listed. A pull may
 // run a registry credential helper (ecr-login, gcr, acr), which reads the
 // cloud credentials of the environment it inherits — the Orker's — so
-// AWS_*, AZURE_* and GOOGLE_APPLICATION_CREDENTIALS are the Orker's own too.
-// The object store's client never uses them: it signs with ORK_S3_*.
+// AWS_*, AZURE_*, GOOGLE_APPLICATION_CREDENTIALS and the gcloud SDK's
+// CLOUDSDK_* are the Orker's own too. The object store's client never uses
+// them: it signs with ORK_S3_*.
 var runtimeOwnEnv = []ownName{
 	{"DOCKER_*", "its container CLI's settings, DOCKER_*"},
 	{"CONTAINERS_*", "its container CLI's settings, CONTAINERS_*"},
@@ -1094,12 +1095,14 @@ var runtimeOwnEnv = []ownName{
 	{"AWS_*", "its registry credential helpers' settings, AWS_*"},
 	{"AZURE_*", "its registry credential helpers' settings, AZURE_*"},
 	{"GOOGLE_APPLICATION_CREDENTIALS", "its registry credential helpers' settings"},
+	{"CLOUDSDK_*", "its registry credential helpers' settings, CLOUDSDK_*"},
 }
 
 // runtimeOwnPaths are the files the CLI and the engine behind it hold as
 // their own, where getenv places them: the CLI's registry credentials (the
-// docker CLI's config.json, the podman CLI's auth.json, rootful podman's
-// under /run/containers) and its credential helpers' cloud credentials, the
+// docker CLI's config.json and its older ~/.dockercfg, the podman CLI's
+// auth.json, rootful podman's under /run/containers) and its credential
+// helpers' cloud credentials and tokens, the
 // daemon's TLS client key, the SSH identity a remote engine
 // (DOCKER_HOST=ssh://…, a podman connection) authenticates with, and the
 // engine's own state — images, layers and every container's log, other
@@ -1116,7 +1119,7 @@ func runtimeOwnPaths(getenv func(string) string) []OwnPath {
 	const creds, state = "its container CLI's credentials", "its container engine's state"
 	for _, name := range []string{"DOCKER_CONFIG", "DOCKER_CERT_PATH", "REGISTRY_AUTH_FILE", "CONTAINER_SSHKEY",
 		"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
-		"GOOGLE_APPLICATION_CREDENTIALS", "AZURE_FEDERATED_TOKEN_FILE"} {
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "AZURE_FEDERATED_TOKEN_FILE"} {
 		add(getenv(name), creds)
 	}
 	add("/run/containers", creds)
@@ -1128,7 +1131,7 @@ func runtimeOwnPaths(getenv func(string) string) []OwnPath {
 	}
 	config, data := getenv("XDG_CONFIG_HOME"), getenv("XDG_DATA_HOME")
 	if home := getenv("HOME"); home != "" {
-		for _, dir := range []string{".docker", ".ssh", ".aws", ".azure"} {
+		for _, dir := range []string{".docker", ".dockercfg", ".ssh", ".aws", ".azure"} {
 			add(filepath.Join(home, dir), creds)
 		}
 		if config == "" {

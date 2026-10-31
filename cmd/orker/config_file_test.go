@@ -198,8 +198,7 @@ func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("telemetry.Boot: %v", err)
 	}
-	cfg := loadConfig()
-	cfg.configFiles = doc.Files()
+	cfg := configFrom(doc)
 	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil,
 		slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if opts.Policy == nil {

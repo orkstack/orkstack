@@ -28,20 +28,24 @@ word for word.
   telemetry settings (`env:ORK_*`, `env:OTEL_*`), its proxy settings, the
   container CLI's settings (`env:DOCKER_*`, `env:CONTAINER_HOST` and the like)
   and its registry credential helpers' (`env:AWS_*`, `env:AZURE_*`,
-  `env:GOOGLE_APPLICATION_CREDENTIALS`), `/proc`, `/dev`, its container's
-  credentials under `/run/secrets` and `/var/run/secrets`, its work root, its
-  configuration file and each file that reads, its telemetry sinks' header
-  sources, the container engine's state, and the credential files its
-  settings name. A task that names one fails `SECRET_NOT_PERMITTED` before its
-  image is pulled, under `orkctl task run` as on an Orker; give the task the
-  value under a source of its own. A floor entry that can match only such
+  `env:CLOUDSDK_*`, `env:GOOGLE_APPLICATION_CREDENTIALS`), `/proc`, `/dev`,
+  its container's credentials under `/run/secrets` and `/var/run/secrets`, its
+  work root, its configuration file and each file that reads, its telemetry
+  sinks' header sources, the container engine's state, and the credential
+  files its settings name. The work root is the temp directory when
+  `ORK_ORKER_WORKDIR` is unset, so there a `file:/tmp/…` source is refused and
+  a floor entry under `/tmp` stops the Orker at boot. A task that names one
+  fails `SECRET_NOT_PERMITTED` before its image is pulled, under `orkctl task
+  run` as on an Orker; give the task the value under a source of its own. A
+  floor entry that can match only such
   sources stops the Orker at boot, and an Orker whose floor is empty logs a
   warning at boot that names `ORK_ORKER_SECRET_ALLOW`
   ([SECURITY_MODEL.md](docs/SECURITY_MODEL.md), "The Orker's own sources").
 - **BREAKING:** A `file:` secret source must be a plain absolute path, with
-  no `..`, `.` or empty segment, under every secret floor, the empty one
-  included. Any other name fails `SECRET_NOT_PERMITTED`, as a non-empty floor
-  already refused it.
+  no `..`, `.` or empty segment, of at most 4096 bytes, under every secret
+  floor, the empty one included. Any other name fails `SECRET_NOT_PERMITTED`,
+  as a non-empty floor already refused it, except a name longer than 4096
+  bytes, which no floor checked before and the kernel never opens.
 - `scripts/k8s-orker-check.sh` runs a task's secrets through the Kubernetes
   bases' floor on a live cluster: a key of `orkstack-task-secrets` is read, and
   `ORK_S3_SECRET_KEY` and a variable the floor does not list are refused. It

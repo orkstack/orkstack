@@ -346,10 +346,7 @@ func main() {
 		os.Exit(healthcheck.Run(context.Background(), "orker", os.Getenv, os.Stdout, os.Stderr))
 	}
 
-	cfg := loadConfig()
-	if cfgDoc != nil {
-		cfg.configFiles = cfgDoc.Files()
-	}
+	cfg := configFrom(cfgDoc)
 	// Telemetry configuration is resolved before the process logger exists,
 	// for the same reason as cmd/ork: the logger's own encoding is itself a
 	// telemetry setting, so building it first would mean rebuilding it the
@@ -748,23 +745,34 @@ func awaitStoppedTasks(logger *slog.Logger, activities *orker.Activities) {
 	logger.Info("cancelled tasks stopped", "took", time.Since(started).Round(time.Millisecond))
 }
 
+// configFrom is loadConfig, with the files the configuration document doc
+// read (nil when the process was given none) among this Orker's own.
+func configFrom(doc *cfgfile.Document) config {
+	cfg := loadConfig()
+	if doc != nil {
+		cfg.configFiles = doc.Files()
+	}
+	return cfg
+}
+
 // orkerPolicy is the policy this Orker enforces: the environment's, with what
 // its own configuration read — the configuration file, every {file:} in it,
 // every telemetry sink header's file or variable — among the sources its
 // secret floor never admits (docs/SECURITY_MODEL.md, "The Orker's own
 // sources").
 func orkerPolicy(cfg config, tcfg telemetry.Config) orker.SecurityPolicy {
-	policy := orker.SecurityPolicyFromEnv()
+	var paths []orker.OwnPath
 	for _, path := range cfg.configFiles {
-		policy.OwnPaths = append(policy.OwnPaths, orker.OwnPath{Path: path, Why: "its configuration"})
+		paths = append(paths, orker.OwnPath{Path: path, Why: "its configuration"})
 	}
 	for _, path := range tcfg.Sinks.SourceFiles() {
-		policy.OwnPaths = append(policy.OwnPaths, orker.OwnPath{Path: path, Why: "its telemetry credentials"})
+		paths = append(paths, orker.OwnPath{Path: path, Why: "its telemetry credentials"})
 	}
+	var vars []orker.OwnVar
 	for _, name := range tcfg.Sinks.SourceVars() {
-		policy.OwnVars = append(policy.OwnVars, orker.OwnVar{Name: name, Why: "its telemetry credentials"})
+		vars = append(vars, orker.OwnVar{Name: name, Why: "its telemetry credentials"})
 	}
-	return policy
+	return orker.SecurityPolicyFromEnv().WithOwnPaths(paths...).WithOwnVars(vars...)
 }
 
 // orkerOptions builds the orker.Options this Orker's activities run with,

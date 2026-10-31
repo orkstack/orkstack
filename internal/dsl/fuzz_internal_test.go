@@ -80,13 +80,15 @@ func FuzzCheckSecretSource(f *testing.F) {
 }
 
 // FuzzCheckSecretPath: a file source passes exactly when its locator is an
-// absolute path that cleaning leaves unchanged and is not "/" itself — a name
-// no reader has to normalize — and a source of any other scheme always does.
+// absolute path that cleaning leaves unchanged, is not "/" itself — a name
+// no reader has to normalize — and is no longer than MaxSecretPathBytes, and
+// a source of any other scheme always does.
 // A refusal is the *SecretSourceRefusal that names the source.
 func FuzzCheckSecretPath(f *testing.F) {
 	for _, seed := range []string{
 		"file:/etc/sec/a", "file:/var/run/../proc/self/environ", "file:/a/./b", "file:/a//b", "file:/a/b/",
 		"file:a/b", "file:", "file:/", "file:/...", "file:/a/..b", "env:../x", "nocolon", "file:/é/ü",
+		"file:/" + strings.Repeat("a/", 2047) + "b", "file:/" + strings.Repeat("a/", 2048) + "b",
 	} {
 		f.Add(seed)
 	}
@@ -99,7 +101,8 @@ func FuzzCheckSecretPath(f *testing.F) {
 			}
 			return
 		}
-		plain := strings.HasPrefix(locator, "/") && path.Clean(locator) == locator && locator != "/"
+		plain := strings.HasPrefix(locator, "/") && path.Clean(locator) == locator && locator != "/" &&
+			len(locator) <= MaxSecretPathBytes
 		if plain != (err == nil) {
 			t.Fatalf("CheckSecretPath(%q) = %v, want refused=%v", source, err, !plain)
 		}

@@ -35,6 +35,13 @@ const MaxSecretPatternBytes = 256
 // MaxSecretSchemeBytes bounds the scheme half of an entry.
 const MaxSecretSchemeBytes = 16
 
+// MaxSecretPathBytes bounds a "file" source's path: 4096 bytes, PATH_MAX,
+// the longest name the kernel opens (a longer one fails ENAMETOOLONG), so the
+// bound refuses nothing that could be read. It bounds what judging the name
+// costs the Orker, which judges every source a task writes, on every attempt,
+// by the files the name passes through (orker.SecurityPolicy.AllowsSecretSource).
+const MaxSecretPathBytes = 4096
+
 // ValidSecretPattern reports why one `scheme:pattern` entry cannot be stored
 // or configured, or nil. The rule, stated once and checked in this order:
 //
@@ -178,12 +185,18 @@ func CheckSecretSource(patterns []string, source string) error {
 // after it follows a link, so the path read need not be the path named. It
 // returns the *SecretSourceRefusal CheckSecretSource returns for that source,
 // with no patterns, or nil for a plain absolute path and for every other
-// scheme. The Orker holds every file source to it, floor or no floor
+// scheme. A locator longer than MaxSecretPathBytes is refused first, Why "too
+// long", a rule CheckSecretSource does not apply: it matches a name without
+// looking at the file system, so a long name costs it no more than its
+// length. The Orker holds every file source to it, floor or no floor
 // (orker.SecurityPolicy.AllowsSecretSource).
 func CheckSecretPath(source string) error {
 	scheme, locator, found := strings.Cut(source, ":")
 	if !found || scheme != "file" {
 		return nil
+	}
+	if len(locator) > MaxSecretPathBytes {
+		return &SecretSourceRefusal{Source: source, Why: "too long"}
 	}
 	if why := filePathWhy(locator); why != "" {
 		return &SecretSourceRefusal{Source: source, Why: why}
@@ -205,7 +218,8 @@ type SecretSourceRefusal struct {
 	Source   string
 	Patterns []string
 	// Why is "" for a plain non-match, or the segment rule that refused a
-	// file source before matching: "..", ".", "empty" or "relative".
+	// file source before matching: "..", ".", "empty" or "relative"; or
+	// "too long", for a path over MaxSecretPathBytes (CheckSecretPath).
 	Why string
 }
 
@@ -216,24 +230,37 @@ type SecretSourceRefusal struct {
 //	"file:/etc/orkstack/secrets/sandbox/./db" has a "." segment, which is refused rather than normalized
 //	"file:/etc/orkstack/secrets/sandbox//db" has an empty segment, which is refused rather than normalized
 //	"file:etc/orkstack/secrets/db" is not an absolute path
+//	"file:/zz/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a/a"… is a path of 5000 bytes; a file source's path is at most 4096 bytes, the longest the kernel opens
 //
-// (patterns joined with ", " in the order given).
+// (patterns joined with ", " in the order given). A path too long is quoted
+// by its head alone, so the sentence stays short whatever the task wrote.
 func (r *SecretSourceRefusal) Error() string {
 	switch r.Why {
 	case "":
 		return fmt.Sprintf("%q matches none of %s", r.Source, strings.Join(r.Patterns, ", "))
 	case "relative":
 		return fmt.Sprintf("%q is not an absolute path", r.Source)
+	case "too long":
+		_, locator, _ := strings.Cut(r.Source, ":")
+		head := r.Source[:min(len(r.Source), secretSourceHeadBytes)]
+		return fmt.Sprintf("%q… is a path of %d bytes; a file source's path is at most %d bytes, the longest the kernel opens",
+			head, len(locator), MaxSecretPathBytes)
 	default:
 		return fmt.Sprintf("%q has %s, which is refused rather than normalized", r.Source, SecretRefusalPhrase(r.Why))
 	}
 }
 
+// secretSourceHeadBytes is how much of a source too long a refusal quotes.
+const secretSourceHeadBytes = 64
+
 // SecretRefusalPhrase names what a Why value refused, as the noun phrase a
 // caller's sentence embeds: `a ".." segment`, `a "." segment`, `an empty
-// segment` or `a relative path`; "" for a plain non-match.
+// segment`, `a relative path` or `a path longer than 4096 bytes`; "" for a
+// plain non-match.
 func SecretRefusalPhrase(why string) string {
 	switch why {
+	case "too long":
+		return fmt.Sprintf("a path longer than %d bytes", MaxSecretPathBytes)
 	case "..":
 		return `a ".." segment`
 	case ".":

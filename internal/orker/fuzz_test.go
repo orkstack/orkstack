@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/quantity"
 )
 
@@ -740,4 +743,85 @@ func FuzzEngineFromComponents(f *testing.F) {
 			t.Fatalf("engineFromComponents(%q) = %q; want %q", raw, engine, want)
 		}
 	})
+}
+
+// FuzzSecurityPolicy_TheOrkersOwnSourcesAreNeverAdmitted: a task writes its
+// secrets' sources and an operator the floor's entries, so neither is
+// OrkStack's to choose. Whatever they say, judging them never panics; an
+// ORK_* or OTEL_* variable is always refused as the Orker's own; a file under
+// /proc, /dev or a path the policy holds as its own is always refused as the
+// Orker's own, and a file named by anything but a plain absolute path is
+// always refused; and an entry ownEntry says admits only the Orker's own
+// admits no source a task could write that matches it, under that floor or
+// any other.
+func FuzzSecurityPolicy_TheOrkersOwnSourcesAreNeverAdmitted(f *testing.F) {
+	work := f.TempDir()
+	policy := DefaultSecurityPolicy().WithWorkRoot(work).
+		WithOwnVars(OwnVar{Name: "VENDOR_KEY", Why: "its telemetry credentials"})
+	for _, seed := range []struct{ source, entry, fill string }{
+		{"env:ORK_S3_SECRET_KEY", "env:ORK_*", "S3_SECRET_KEY"},
+		{"env:OTEL_EXPORTER_OTLP_HEADERS", "env:OTEL_*", "EXPORTER_OTLP_HEADERS"},
+		{"env:ork_s3_secret_key", "env:*", "ORK_X"},
+		{"env:VENDOR_KEY", "env:VENDOR_KEY", ""},
+		{"env:SANDBOX_DB", "env:SANDBOX_*", "DB"},
+		{"env:HTTPS_PROXY", "env:HTTPS_PROXY_*", "TOKEN"},
+		{"file:/proc/self/environ", "file:/proc/*/environ", "self"},
+		{"file:/proc/thread-self/root/etc/hostname", "file:/proc/self/*", "environ"},
+		{"file:/dev/fd/0", "file:/dev/*", "zero"},
+		{"file:/PROC/self/environ", "file:/*/environ", "proc"},
+		{"file:/run/secrets/token", "file:/var/run/secrets/*/serviceaccount/token", "kubernetes.io"},
+		{"file:/etc/orkstack/task-secrets/db", "file:/etc/orkstack/task-secrets/*", "db"},
+		{"file:" + work + "/ork-run-task-1-x/input/secrets/db", "file:" + work + "/*", "ork-run-task-1-x"},
+		{"file:/var/run/../proc/self/environ", "file:/*", ""},
+		{"file:proc/self/environ", "file:/*/*/*", "a"},
+		{"file:/proc//self/environ", "env:*", ""},
+		{"file:/" + strings.Repeat("a/", 2100) + "b", "file:/a/*", ".."},
+		{"nocolon", "nocolon", ""},
+		{"", "", ""},
+	} {
+		f.Add(seed.source, seed.entry, seed.fill)
+	}
+	f.Fuzz(func(t *testing.T, source, entry, fill string) {
+		err := policy.AllowsSecretSource(source)
+		var own *OwnSourceRefusal
+		switch scheme, locator := SplitSecretSource(source); scheme {
+		case "env":
+			if (strings.HasPrefix(locator, "ORK_") || strings.HasPrefix(locator, "OTEL_")) && !errors.As(err, &own) {
+				t.Fatalf("AllowsSecretSource(%q) = %v, want it refused as the Orker's own", clip(source), err)
+			}
+		case "file":
+			plain := strings.HasPrefix(locator, "/") && path.Clean(locator) == locator && locator != "/" &&
+				len(locator) <= dsl.MaxSecretPathBytes
+			if !plain && err == nil {
+				t.Fatalf("AllowsSecretSource(%q) = nil, want a name that is not a plain absolute path refused", clip(source))
+			}
+			if plain && (within(locator, "/proc") || within(locator, "/dev") || within(locator, work)) && !errors.As(err, &own) {
+				t.Fatalf("AllowsSecretSource(%q) = %v, want it refused as the Orker's own", clip(source), err)
+			}
+		}
+
+		if dsl.ValidSecretPattern(entry) != nil || policy.ownEntry(entry) == "" {
+			return
+		}
+		built := strings.ReplaceAll(entry, "*", strings.ReplaceAll(fill, "/", ""))
+		if dsl.CheckSecretSource([]string{entry}, built) != nil {
+			return
+		}
+		floor := policy
+		floor.SecretAllow = []string{entry}
+		for _, p := range []SecurityPolicy{policy, floor} {
+			if err := p.AllowsSecretSource(built); err == nil {
+				t.Fatalf("entry %q admits only the Orker's own (%s), yet %q, which it matches, was admitted",
+					entry, policy.ownEntry(entry), clip(built))
+			}
+		}
+	})
+}
+
+// clip is s cut to a length a failure message can quote.
+func clip(s string) string {
+	if len(s) > 120 {
+		return s[:120] + "…"
+	}
+	return s
 }

@@ -238,3 +238,34 @@ func TestSecretPolicyVectors_AreExportedForTheBoundaries(t *testing.T) {
 		assertVector(t, v)
 	}
 }
+
+// TestCheckSecretPath_RefusesAPathLongerThanTheKernelOpens: a file source's
+// path is at most MaxSecretPathBytes, the longest name the kernel opens
+// (PATH_MAX), so the bound refuses nothing that could be read, and it bounds
+// what judging the name costs the Orker. The refusal names the length and
+// the bound, and quotes no more of the source than its head.
+func TestCheckSecretPath_RefusesAPathLongerThanTheKernelOpens(t *testing.T) {
+	// An n-byte plain absolute path, n >= 2.
+	path := func(n int) string { return ("/" + strings.Repeat("a/", n))[:n-1] + "b" }
+	for _, n := range []int{2, 3, MaxSecretPathBytes - 1, MaxSecretPathBytes} {
+		if err := CheckSecretPath("file:" + path(n)); err != nil {
+			t.Errorf("a %d-byte path: %v, want permitted", n, err)
+		}
+	}
+	for _, n := range []int{MaxSecretPathBytes + 1, 200 << 10} {
+		source := "file:" + path(n)
+		err := CheckSecretPath(source)
+		var refusal *SecretSourceRefusal
+		if !errors.As(err, &refusal) || refusal.Why != "too long" || refusal.Source != source {
+			t.Fatalf("a %d-byte path: %#v, want a refusal of its length", n, err)
+		}
+		msg := err.Error()
+		if len(msg) > 256 || !strings.Contains(msg, fmt.Sprint(n)) || !strings.Contains(msg, fmt.Sprint(MaxSecretPathBytes)) {
+			t.Fatalf("a %d-byte path: %q (%d bytes), want a short sentence naming %d and %d", n, msg, len(msg), n, MaxSecretPathBytes)
+		}
+	}
+	// Only a file source is a path.
+	if err := CheckSecretPath("env:" + strings.Repeat("A", 200<<10)); err != nil {
+		t.Errorf("a long variable name: %v, want no path rule", err)
+	}
+}
