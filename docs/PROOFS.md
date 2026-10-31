@@ -609,9 +609,10 @@ ready_for_review — never `labeled`), `merge_group`, a push to
 ```mermaid
 flowchart LR
   base --> plan & build & fast & race & race_repeat["race-repeat"] & fuzz
+  fast --> cancel
   plan --> integration & ui_e2e["ui-e2e"] & observability
   build --> integration & ui_e2e & activity_fixture["activity-fixture"] & observability
-  base & plan & build & fast & race & race_repeat & fuzz & integration & ui_e2e & activity_fixture & observability --> proof
+  base & plan & build & fast & cancel & race & race_repeat & fuzz & integration & ui_e2e & activity_fixture & observability --> proof
   nightly["nightly.yml › nightly"] -. calls .-> callee["proof.yml"]
   gate["release.yml › gate"] -. calls .-> callee
   validate["release.yml › validate"] --> gate --> verify["release.yml › verify"]
@@ -627,32 +628,39 @@ checks the tree anyway. Every job but `proof` carries the same guard: on a
 pull request it runs only when the pull request is not a draft and, while the
 repository is private, carries the `ci:proof` label.
 
-**`fast` cancels a run that cannot pass.** Every part starts as soon as what
+**A failing `fast` gate cancels the run.** Every part starts as soon as what
 it needs is there, so a green run waits for nothing. When one of the `fast`
-part's own gates fails, its last step, after its upload, cancels the run
-(`gh run cancel`, the one step handed the token of the job's `actions:
-write`), as `release.yml` › `artifacts` does on a failure a rerun would
-repeat: a red `fast` gate is never a passing proof, because its unit gate
-exits 0 when every failure is a quarantined one and the merger fails the
-proof on any other red gate of it. A `fast` that failed in a setup step, so
-that its part never ran, or that stopped before any gate (a prerequisite
-absent), cancels nothing: that one job may run again (§7.1), and its shards
-keep their results. The `proof` job still runs, on `always()`, and fails on
-the failing gate; each shard the cancel stopped is a part with no result that
-no rule lets run again (cancelled before any test, or a test running when it
-stopped), never a lost or a degraded runner, and the run concludes
-`cancelled`, which `proof-rerun.yml` does not answer. Both callers grant
-`actions: write`, because a called workflow's job never gets more than its
-caller grants; the nightly tier has no `fast`. A green run's wall clock is
-unchanged; what a cancel saves is the runner time the shards had left when
-`fast` ended (§11.5).
+part's own gates fails, `fast`'s last step says so as a job output, read from
+the part's `gates.tsv` after its upload, and `proof.yml` › `cancel` cancels the
+run (`gh run cancel`), as `release.yml` › `artifacts` does on a failure a rerun
+would repeat: a red `fast` gate is never a passing proof, because its unit
+gate exits 0 when every failure is a quarantined one and the merger fails the
+proof on any other red gate of it. `cancel` is a job of its own because
+`fast` runs the candidate's code, which could change what a later step of
+`fast` runs (`$GITHUB_PATH`, `$GITHUB_ENV`): `cancel` checks out nothing, runs
+nothing of the repository and alone holds `actions: write`; a forged output
+could only cancel the run that forged it. A `fast` that failed in a setup
+step, so that its part never ran, or that stopped before any gate (a
+prerequisite absent), says no gate failed and cancels nothing: that one job
+may run again (§7.1), and its shards keep their results. The `proof` job
+still runs, on `always()`, and fails on the failing gate; each shard the
+cancel stopped is a part with no result that no rule lets run again (cancelled
+before any test, or a test running when it stopped), never a lost or a
+degraded runner, and the run concludes `cancelled`, which `proof-rerun.yml`
+does not answer. Both callers grant `actions: write`, because a called
+workflow's job never gets more than its caller grants; the nightly tier has
+no `fast`. On a pull request from a fork or from Dependabot the token is
+read-only whatever the workflow asks, so `cancel` fails and the shards run to
+their end, as before. A green run's wall clock is unchanged; what a cancel
+saves is the runner time the shards had left when `fast` ended (§11.5).
 
 | Job | Runs | Uploads |
 |---|---|---|
 | `proof.yml` › `base` | decides the base: a pull request's first parent, which must be an ancestor of its head ("update this branch") unless `MERGE_GATE_MODE` is `queue`; a merge group's base; a validate push's first parent; a dispatch's input | nothing; job outputs |
 | `proof.yml` › `plan` | compiles and lists the packages; writes both plans; decides observability | the plans, the listing, the base lists |
 | `proof.yml` › `build` | builds every activity image once as an OCI layout and records its digests | the layouts and `images.tsv` |
-| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build; when one of its gates fails, its last step cancels the run | one part |
+| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build; its last step says whether one of its gates failed (`failed_gate`) | one part |
+| `proof.yml` › `cancel` | only when a `fast` gate failed: cancels the run, from a job that checks out and runs nothing of the repository and alone holds `actions: write` | nothing |
 | `proof.yml` › `race` | the race gate (§2.3), on a runner of its own; the full and release tiers | one part |
 | `proof.yml` › `race-repeat` | the nightly race repeat (§2.3); the nightly tier alone | one part |
 | `proof.yml` › `fuzz` | the nightly fuzz lane (§2.3), `FUZZ_BUDGET` shared by its targets; the nightly tier alone | one part, with the crashers it found |
@@ -780,7 +788,8 @@ commit would only repeat. A failure in its checkout, its Go, QEMU or buildx
 setup, or its upload, which a lost or flaky runner explains, cancels nothing:
 the gate runs on, and "Re-run failed jobs" once the run completes re-runs
 `artifacts` and the jobs that need it, never the gate. The gate cancels the
-run only from its own `fast` part, on a failing gate no proof excuses (above):
+run only from its own `cancel` job, on a failing `fast` gate no proof excuses
+(above):
 its colour is not its verdict (an excused runner-size miss leaves it red while
 its merged proof passes, §12), and a rerun-eligible part (a lost or
 degraded runner, a setup step, §11.2 of `AGENTS.md`) is answered by re-running
@@ -1725,7 +1734,10 @@ again. A run that stopped before its tag step can be dispatched again with
 the same version; once a run has made the tag, only a re-run of that run can
 finish it, and after the 7 days a new patch version is dispatched instead.
 A `nightly` job that refused because the nightly was still running, or had not
-been dispatched, is re-run the same way once that nightly passes. "Re-run
+been dispatched, is re-run the same way once that nightly passes. A run its gate cancelled, on a failing `fast` gate, cannot
+be released by any rerun: a second attempt of a part after a result makes the
+proof ineligible, so `verify` refuses it. Fix the failure, merge the fix, and
+dispatch a new release. "Re-run
 failed jobs" on a run `artifacts` cancelled re-runs the failed job and every
 cancelled one, the gate included; one whose `artifacts` failed in a setup
 step, and so cancelled nothing, re-runs `artifacts` and what needs it.

@@ -28,7 +28,7 @@ jobs:
   nightly:
     # A private repository spends none of its metered minutes on a schedule.
     if: ${{ github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch' }}
-    # actions: write because proof.yml's fast part may cancel the run, and a
+    # actions: write because proof.yml's cancel job may cancel the run, and a
     # called workflow's job never gets more than its caller grants: GitHub
     # refuses to start one that asks for more. The nightly tier skips fast.
     permissions:

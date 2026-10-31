@@ -22,8 +22,8 @@ word for word.
 
 ### Changed
 
-- The full proof's `fast` part cancels the run when one of its gates fails,
-  so a lint, build or unit failure no longer leaves the shards running for a
+- The full proof cancels its run when a gate of its `fast` part fails, so a
+  lint, build or unit failure no longer leaves the shards running for a
   proof that cannot pass. A setup failure, or a quarantined failure, cancels
   nothing, and a green run takes no longer.
 - `proof-rerun.yml` also runs a failed nightly of `main` again when its only

@@ -244,8 +244,9 @@ jobs:
     timeout-minutes: 65
     permissions:
       contents: read
-      # Only the last step uses it, to cancel the run (docs/PROOFS.md §5).
-      actions: write
+    outputs:
+      # Whether one of the part's own gates failed: the cancel job's cue.
+      failed_gate: ${{ steps.gates.outputs.failed }}
     steps:
       - uses: actions/checkout@v7.0.1
         timeout-minutes: 3
@@ -295,17 +296,43 @@ jobs:
             proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/
             !proof/${{ env.PROOF_NAME }}-part-fast-a${{ github.run_attempt }}/bin/**
           retention-days: ${{ github.event.repository.private && 1 || 7 }}
-      # GitHub cancels no sibling job, so a proof whose fast part recorded a
-      # failing gate, which no merge excuses (the unit gate exits 0 when every
-      # failure is a quarantined one), would keep its shards running for a
-      # verdict already decided. This step cancels the run then, after the
-      # upload, so the merger reads the failing gate. A failure in a setup
-      # step before the part (an install a rerun may get through) skips the
-      # part and cancels nothing, and neither does a part that stopped before
-      # any gate. The proof job still runs, on always(), and fails.
-      - name: cancel the run, which cannot pass
+      # Whether a gate of the part failed, for the cancel job, read from the
+      # part's own gates.tsv after the upload. A setup step's failure skips
+      # the part step, so this step, and a part that stopped before any gate
+      # (a prerequisite absent) recorded none: neither says a gate failed.
+      - name: failing gate
+        id: gates
         if: ${{ failure() && steps.fast.outcome == 'failure' }}
-        # One API call: within the job's limit with every step's own.
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          gates="proof/$PROOF_NAME-part-fast-a$GITHUB_RUN_ATTEMPT/gates.tsv"
+          if [ -f "$gates" ] && grep -q $'^[^\t]*\tfail\t' "$gates"; then
+            echo "a fast gate failed: $(grep $'^[^\t]*\tfail\t' "$gates" | cut -f1 | paste -sd, -)"
+            echo "failed=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "the fast part failed before any gate recorded a failure"
+          fi
+
+  cancel:
+    # GitHub cancels no sibling job, so a proof whose fast part recorded a
+    # failing gate, which no merge excuses (the unit gate exits 0 when every
+    # failure is a quarantined one), would keep its shards running for a
+    # verdict already decided: this job cancels the run then, as
+    # release.yml › artifacts does on a failure a rerun would repeat. It is a
+    # job of its own because fast runs the candidate's code, which could
+    # change what a later step of fast runs: this one checks out nothing,
+    # runs nothing of the repository, and alone holds actions: write. The
+    # proof job still runs, on always(), and fails (docs/PROOFS.md §5).
+    needs: fast
+    if: ${{ !cancelled() && needs.fast.result == 'failure' && needs.fast.outputs.failed_gate == 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    permissions:
+      actions: write
+    steps:
+      - name: cancel the run, which cannot pass
         timeout-minutes: 1
         shell: bash
         env:
@@ -314,13 +341,8 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-          gates="proof/$PROOF_NAME-part-fast-a$GITHUB_RUN_ATTEMPT/gates.tsv"
-          if [ -f "$gates" ] && grep -q $'^[^\t]*\tfail\t' "$gates"; then
-            echo "a fast gate failed ($(grep $'^[^\t]*\tfail\t' "$gates" | cut -f1 | paste -sd, -)): cancelling the run, which cannot pass"
-            gh run cancel "$RUN_ID" --repo "$REPO"
-          else
-            echo "the fast part failed before any gate recorded a failure: nothing to cancel"
-          fi
+          echo "a gate of the fast part failed: cancelling the run, which cannot pass"
+          gh run cancel "$RUN_ID" --repo "$REPO"
 
   race:
     # The unit suites under the race detector (-short), on a runner of their
@@ -795,7 +817,7 @@ jobs:
   proof:
     # A skipped required job reports success: `always()` and nothing else.
     if: always()
-    needs: [base, plan, build, fast, race, race-repeat, fuzz, integration, ui-e2e, activity-fixture, observability]
+    needs: [base, plan, build, fast, cancel, race, race-repeat, fuzz, integration, ui-e2e, activity-fixture, observability]
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     permissions:

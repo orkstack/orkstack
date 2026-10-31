@@ -35,8 +35,7 @@ jq '{result, merge_eligible, ineligible_reasons}' proof/ci-<run>/proof.json
   anyway, and the shards it cancelled are not run again.
 - **A runner GitHub lost, a runner below the health floor, or a fetch or
   install step that failed:** `ineligible_reasons` says so. Re-run that job
-  alone, the same day. Re-running `fast` runs the shards that waited for it
-  too.
+  alone, the same day.
 - **Anything else:** never re-run a job that recorded a test result; it makes
   the proof ineligible. Push a fix, which starts a new run.
 

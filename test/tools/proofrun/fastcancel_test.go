@@ -10,20 +10,29 @@ import (
 )
 
 // The fast part fails fast for the whole run (docs/PROOFS.md §5): when one of
-// its own gates fails, its last step cancels the run, as release.yml's
-// artifacts does on a failure a rerun would repeat. The job graph is
-// unchanged, so a green run waits for nothing. A red `fast` gate is never a
-// passing proof (the unit gate exits 0 when every failure is a quarantined
-// one, and the merger fails the proof on any other red gate of it), so the
-// cancel stops only a run that cannot pass. A `fast` that failed in a setup
-// step, or whose runner GitHub lost, recorded no gate and cancels nothing:
-// that one job may run again.
+// its own gates fails, the run is cancelled, as release.yml's artifacts
+// cancels on a failure a rerun would repeat, with the same command and
+// permission. The job graph is unchanged, so a green run waits for nothing.
+// A red `fast` gate is never a passing proof (the unit gate exits 0 when
+// every failure is a quarantined one, and the merger fails the proof on any
+// other red gate of it), so the cancel stops only a run that cannot pass. A
+// `fast` that failed in a setup step, or whose runner GitHub lost, recorded no
+// gate and cancels nothing: that one job may run again.
+//
+// `fast` runs the candidate's code, which can change what later steps of its
+// job run ($GITHUB_PATH, $GITHUB_ENV), so the token that may cancel is never
+// in that job: `fast` only says, as an output, whether a gate failed, and a
+// job of its own, `cancel`, which checks out and runs nothing of the
+// repository, holds `actions: write` and asks GitHub to cancel. A forged
+// output could only cancel the run that forged it.
 
-// fastProofStep and fastCancelIf are the fast part's proof step id and the
-// condition its cancel step runs under.
+// The ids and conditions the fast part and the cancel job are held to.
 const (
-	fastProofStep = "fast"
-	fastCancelIf  = "failure() && steps.fast.outcome == 'failure'"
+	fastProofStep  = "fast"
+	fastGatesStep  = "gates"
+	fastGatesIf    = "failure() && steps.fast.outcome == 'failure'"
+	fastGateOutput = "${{ steps.gates.outputs.failed }}"
+	cancelJobIf    = "!cancelled() && needs.fast.result == 'failure' && needs.fast.outputs.failed_gate == 'true' && (" + proofGuard + ")"
 )
 
 func fastCancelProblems(w *wfFile) []string {
@@ -31,126 +40,151 @@ func fastCancelProblems(w *wfFile) []string {
 	for _, name := range w.jobNames() {
 		job := w.Jobs[name]
 		for _, n := range job.needs() {
-			if n == "fast" && name != "proof" {
-				p = append(p, fmt.Sprintf("jobs.%s waits for fast: the graph stays as it is, and fast cancels the run instead", name))
+			if n == "fast" && name != "proof" && name != "cancel" {
+				p = append(p, fmt.Sprintf("jobs.%s waits for fast: the graph stays as it is, and the run is cancelled instead", name))
 			}
 		}
-		if name != "fast" && permLevel(job.Permissions["actions"]) > 1 {
-			p = append(p, fmt.Sprintf("jobs.%s writes actions; only fast's cancel step needs to", name))
+		if name != "cancel" && permLevel(job.Permissions["actions"]) > 1 {
+			p = append(p, fmt.Sprintf("jobs.%s writes actions; only the cancel job may", name))
 		}
 		for i, s := range job.Steps {
-			if strings.Contains(s.Run, cancelRun) && name != "fast" {
-				p = append(p, fmt.Sprintf("jobs.%s %s cancels the run; only fast may, on a failing gate of its own", name, s.label(i)))
+			if strings.Contains(s.Run, cancelRun) && name != "cancel" {
+				p = append(p, fmt.Sprintf("jobs.%s %s cancels the run; only the cancel job may", name, s.label(i)))
 			}
 		}
 	}
-	job := w.Jobs["fast"]
-	if job == nil {
+
+	fast := w.Jobs["fast"]
+	if fast == nil {
 		return append(p, "proof.yml has no fast job")
 	}
-	if permLevel(job.Permissions["actions"]) != 2 {
-		p = append(p, fmt.Sprintf("jobs.fast.permissions.actions = %q: it cannot cancel the run", job.Permissions["actions"]))
-	}
-	part := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "--part fast") })
-	upload := stepIndex(job.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/upload-artifact@") })
-	cancel := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, cancelRun) })
+	part := stepIndex(fast.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "--part fast") })
+	upload := stepIndex(fast.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/upload-artifact@") })
+	gates := stepIndex(fast.Steps, func(s wfStep) bool { return s.ID == fastGatesStep })
 	switch {
 	case part < 0:
 		return append(p, "jobs.fast never runs its part")
-	case cancel < 0:
-		return append(p, "jobs.fast never cancels the run")
-	case job.Steps[part].ID != fastProofStep:
-		p = append(p, fmt.Sprintf("jobs.fast's part step has id %q, want %q: the cancel reads its outcome", job.Steps[part].ID, fastProofStep))
+	case gates < 0:
+		return append(p, "jobs.fast never says whether one of its gates failed")
 	}
-	if cancel != len(job.Steps)-1 {
-		p = append(p, "jobs.fast's cancel step is not its last")
+	if fast.Steps[part].ID != fastProofStep {
+		p = append(p, fmt.Sprintf("jobs.fast's part step has id %q, want %q: its outcome decides", fast.Steps[part].ID, fastProofStep))
 	}
-	if upload < 0 || upload > cancel {
-		p = append(p, "jobs.fast cancels before it uploads its part: the merger would read no failing gate")
+	if fast.ContinueOnError != nil || fast.Steps[part].ContinueOnError != nil {
+		p = append(p, "jobs.fast, or its part step, continues on error: a failing gate would no longer fail it")
 	}
-	s := job.Steps[cancel]
-	if got := normalizeIf(s.If); got != fastCancelIf {
-		p = append(p, fmt.Sprintf("jobs.fast's cancel step runs under %q, want %q: only the part step failing, never a setup step", got, fastCancelIf))
+	g := fast.Steps[gates]
+	if gates != len(fast.Steps)-1 || upload < 0 || upload > gates {
+		p = append(p, "jobs.fast's gates step is not its last, after its upload")
+	}
+	if got := normalizeIf(g.If); got != fastGatesIf {
+		p = append(p, fmt.Sprintf("jobs.fast's gates step runs under %q, want %q: only the part step failing, never a setup step", got, fastGatesIf))
+	}
+	if !strings.Contains(g.Run, "gates.tsv") || !strings.Contains(g.Run, `\tfail\t'`) || !strings.Contains(g.Run, `failed=true`) || !strings.Contains(g.Run, `"$GITHUB_OUTPUT"`) {
+		p = append(p, "jobs.fast's gates step does not read the part's gates.tsv for a failing gate into its output")
+	}
+	if fast.Outputs["failed_gate"] != fastGateOutput {
+		p = append(p, fmt.Sprintf("jobs.fast.outputs.failed_gate = %q, want %q", fast.Outputs["failed_gate"], fastGateOutput))
+	}
+	if permLevel(fast.Permissions["actions"]) > 1 {
+		p = append(p, "jobs.fast writes actions: it runs the candidate's code")
+	}
+	for i, st := range fast.Steps {
+		if holdsToken(st) {
+			p = append(p, fmt.Sprintf("jobs.fast %s is handed a token: it runs the candidate's code", st.label(i)))
+		}
+	}
+
+	cancel := w.Jobs["cancel"]
+	if cancel == nil {
+		return append(p, "proof.yml has no cancel job")
+	}
+	if needs := cancel.needs(); len(needs) != 1 || needs[0] != "fast" {
+		p = append(p, fmt.Sprintf("jobs.cancel needs %v, want fast alone", needs))
+	}
+	if got := normalizeIf(cancel.If); got != cancelJobIf {
+		p = append(p, fmt.Sprintf("jobs.cancel runs under %q, want %q", got, cancelJobIf))
+	}
+	if len(cancel.Permissions) != 1 || cancel.Permissions["actions"] != "write" {
+		p = append(p, fmt.Sprintf("jobs.cancel.permissions = %v, want actions: write alone", cancel.Permissions))
+	}
+	if len(cancel.Steps) != 1 {
+		return append(p, fmt.Sprintf("jobs.cancel has %d steps, want the one that cancels", len(cancel.Steps)))
+	}
+	s := cancel.Steps[0]
+	if s.Uses != "" || strings.Count(s.Run, cancelRun) != 1 || repoCodeInRun.MatchString(s.Run) || strings.Contains(s.Run, "${{") {
+		p = append(p, "jobs.cancel's step does more than the one cancel, or runs something of the repository")
 	}
 	if envString(s, "RUN_ID") != "${{ github.run_id }}" || envString(s, "REPO") != "${{ github.repository }}" || envString(s, "GH_TOKEN") != "${{ github.token }}" {
-		p = append(p, "jobs.fast cancels without this run's id, repository and token")
-	}
-	if !strings.Contains(s.Run, "gates.tsv") || !strings.Contains(s.Run, `\tfail\t'`) {
-		p = append(p, "jobs.fast's cancel step does not read the part's gates.tsv for a failing gate")
-	}
-	if strings.Count(s.Run, cancelRun) != 1 || repoCodeInRun.MatchString(s.Run) {
-		p = append(p, "jobs.fast's cancel step runs more than the one cancel")
-	}
-	for i, st := range job.Steps {
-		if i != cancel && holdsToken(st) {
-			p = append(p, fmt.Sprintf("jobs.fast %s is handed a token; only the cancel step may be", st.label(i)))
-		}
+		p = append(p, "jobs.cancel cancels without this run's id, repository and token")
 	}
 	return p
 }
 
-func TestWorkflows_TheFastPartCancelsTheRunOnlyOnAFailingGateOfItsOwn(t *testing.T) {
+func TestWorkflows_TheRunIsCancelledOnlyOnAFailingGateOfFastsOwn(t *testing.T) {
 	expectNoProblems(t, "proof.yml", fastCancelProblems(loadWorkflow(t, "proof.yml")))
-	cancel := func(w *wfFile) *wfStep {
+	gates := func(w *wfFile) *wfStep {
 		job := w.Jobs["fast"]
-		return &job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, cancelRun) })]
+		return &job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return s.ID == fastGatesStep })]
+	}
+	partStep := func(w *wfFile) *wfStep {
+		job := w.Jobs["fast"]
+		return &job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "--part fast") })]
 	}
 	expectEachMutationRefused(t, "proof.yml", fastCancelProblems, []mutation{
-		{"no cancel", func(w *wfFile) { job := w.Jobs["fast"]; job.Steps = job.Steps[:len(job.Steps)-1] }},
+		{"no cancel job", func(w *wfFile) { delete(w.Jobs, "cancel") }},
+		{"no gates step", func(w *wfFile) { job := w.Jobs["fast"]; job.Steps = job.Steps[:len(job.Steps)-1] }},
 		{"the shards wait for fast", func(w *wfFile) { w.Jobs["integration"].Needs = []any{"base", "plan", "build", "fast"} }},
-		{"a cancel on any failure, a setup step's included", func(w *wfFile) { cancel(w).If = "${{ failure() }}" }},
-		{"a cancel on a setup step's failure", func(w *wfFile) {
-			cancel(w).If = "${{ failure() && steps.fast.outcome != 'success' }}"
+		{"a cancel on any failure of fast, a setup step's included", func(w *wfFile) {
+			w.Jobs["cancel"].If = strings.Replace(w.Jobs["cancel"].If, " && needs.fast.outputs.failed_gate == 'true'", "", 1)
 		}},
-		{"a cancel on every outcome", func(w *wfFile) { cancel(w).If = "${{ always() && steps.fast.outcome == 'failure' }}" }},
-		{"a cancel without reading the gates", func(w *wfFile) { cancel(w).Run = "set -euo pipefail\n" + cancelRun }},
-		{"a cancel before the upload", func(w *wfFile) {
-			job := w.Jobs["fast"]
-			n := len(job.Steps)
-			job.Steps[n-1], job.Steps[n-2] = job.Steps[n-2], job.Steps[n-1]
+		{"a cancel on a cancelled run", func(w *wfFile) {
+			w.Jobs["cancel"].If = strings.Replace(w.Jobs["cancel"].If, "!cancelled()", "always()", 1)
 		}},
-		{"the part step renamed", func(w *wfFile) {
-			job := w.Jobs["fast"]
-			job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "--part fast") })].ID = "part"
+		{"the gates read on a setup failure", func(w *wfFile) { gates(w).If = "${{ failure() }}" }},
+		{"the gates read on every outcome", func(w *wfFile) { gates(w).If = "${{ always() }}" }},
+		{"a failing gate never read", func(w *wfFile) { gates(w).Run = "echo \"failed=true\" >>\"$GITHUB_OUTPUT\"" }},
+		{"the output not wired", func(w *wfFile) { delete(w.Jobs["fast"].Outputs, "failed_gate") }},
+		{"the part step renamed", func(w *wfFile) { partStep(w).ID = "part" }},
+		{"the part step continues on error", func(w *wfFile) { partStep(w).ContinueOnError = true }},
+		{"the cancel in fast itself", func(w *wfFile) {
+			w.Jobs["fast"].Permissions["actions"] = "write"
 		}},
 		{"a token for the part step", func(w *wfFile) {
-			job := w.Jobs["fast"]
-			s := &job.Steps[stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, "--part fast") })]
+			s := partStep(w)
 			if s.Env == nil {
 				s.Env = map[string]any{}
 			}
 			s.Env["GH_TOKEN"] = "${{ github.token }}"
 		}},
-		{"fast reads actions only", func(w *wfFile) { w.Jobs["fast"].Permissions["actions"] = "read" }},
+		{"the cancel job checks out the candidate", func(w *wfFile) {
+			job := w.Jobs["cancel"]
+			job.Steps = append([]wfStep{{Uses: "actions/checkout@v7.0.1", With: map[string]any{"ref": "${{ github.sha }}"}}}, job.Steps...)
+		}},
+		{"the cancel job runs the repository's code", func(w *wfFile) { w.Jobs["cancel"].Steps[0].Run += "\nscripts/proof.sh --part fast" }},
+		{"the cancel job reads more", func(w *wfFile) { w.Jobs["cancel"].Permissions["contents"] = "read" }},
 		{"a shard writes actions", func(w *wfFile) { w.Jobs["integration"].Permissions["actions"] = "write" }},
 		{"the race gate cancels too", func(w *wfFile) {
-			c := *cancel(w)
-			w.Jobs["race"].Steps = append(w.Jobs["race"].Steps, c)
+			w.Jobs["race"].Steps = append(w.Jobs["race"].Steps, w.Jobs["cancel"].Steps[0])
 		}},
-		{"another run cancelled", func(w *wfFile) { cancel(w).Env["RUN_ID"] = "${{ github.event.workflow_run.id }}" }},
+		{"another run cancelled", func(w *wfFile) { w.Jobs["cancel"].Steps[0].Env["RUN_ID"] = "${{ github.event.workflow_run.id }}" }},
 	})
 }
 
-// runFastCancel runs the fast part's cancel step itself, with a gh that
-// records what it is asked, over a part directory whose gates.tsv is gates
-// ("" leaves the part without one: it never got that far). It returns gh's
-// calls.
-func runFastCancel(t *testing.T, gates string) string {
+// runFastGates runs the fast part's gates step itself over a part directory
+// whose gates.tsv is gates ("" leaves the part without one: it never got that
+// far), and returns what it wrote to the step's output.
+func runFastGates(t *testing.T, gates string) string {
 	t.Helper()
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash is not installed")
 	}
 	job := loadWorkflow(t, "proof.yml").Jobs["fast"]
-	at := stepIndex(job.Steps, func(s wfStep) bool { return strings.Contains(s.Run, cancelRun) })
+	at := stepIndex(job.Steps, func(s wfStep) bool { return s.ID == fastGatesStep })
 	if at < 0 {
-		t.Fatal("jobs.fast has no step that cancels the run")
+		t.Fatal("jobs.fast has no gates step")
 	}
-	step := job.Steps[at]
-	work, bin := t.TempDir(), t.TempDir()
-	calls := filepath.Join(bin, "calls")
-	if err := os.WriteFile(filepath.Join(bin, "gh"), []byte("#!/bin/sh\necho \"gh $*\" >>'"+calls+"'\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	work := t.TempDir()
 	dir := filepath.Join(work, "proof", "pr-ci-77-part-fast-a2")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
@@ -160,23 +194,23 @@ func runFastCancel(t *testing.T, gates string) string {
 			t.Fatal(err)
 		}
 	}
-	cmd := exec.Command("bash", "-c", step.Run)
+	output := filepath.Join(work, "output")
+	cmd := exec.Command("bash", "-c", job.Steps[at].Run)
 	cmd.Dir = work
-	cmd.Env = []string{"PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"), "HOME=" + work,
-		"GH_TOKEN=x", "REPO=o/r", "RUN_ID=77", "PROOF_NAME=pr-ci-77", "GITHUB_RUN_ATTEMPT=2"}
+	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + work, "PROOF_NAME=pr-ci-77", "GITHUB_RUN_ATTEMPT=2", "GITHUB_OUTPUT=" + output}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the cancel step failed: %v\n%s", err, out)
+		t.Fatalf("the gates step failed: %v\n%s", err, out)
 	}
-	b, _ := os.ReadFile(calls)
+	b, _ := os.ReadFile(output)
 	return strings.TrimSpace(string(b))
 }
 
-func TestWorkflows_TheFastPartsCancelStepCancelsOnlyForAFailingGate(t *testing.T) {
+func TestWorkflows_TheFastPartSaysAGateFailedOnlyWhenOneDid(t *testing.T) {
 	pass := "lint\tpass\t40\tlint.log\tmake lint\nbuild\tpass\t30\tbuild.log\tgo build ./...\nunit\tpass\t500\tunit.log\tproofrun unit\n"
 	for _, c := range []struct {
 		name   string
 		gates  string
-		cancel bool
+		failed bool
 	}{
 		{"a failing unit gate", strings.Replace(pass, "unit\tpass", "unit\tfail", 1), true},
 		{"a failing lint gate", strings.Replace(pass, "lint\tpass", "lint\tfail", 1), true},
@@ -190,13 +224,13 @@ func TestWorkflows_TheFastPartsCancelStepCancelsOnlyForAFailingGate(t *testing.T
 		{"a gate named fail", "fail\tpass\t1\tfail.log\tx\n", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			got := runFastCancel(t, c.gates)
+			got := runFastGates(t, c.gates)
 			want := ""
-			if c.cancel {
-				want = "gh run cancel 77 --repo o/r"
+			if c.failed {
+				want = "failed=true"
 			}
 			if got != want {
-				t.Errorf("gh was asked %q, want %q", got, want)
+				t.Errorf("the step's output = %q, want %q", got, want)
 			}
 		})
 	}
@@ -206,7 +240,7 @@ func TestWorkflows_TheFastPartsCancelStepCancelsOnlyForAFailingGate(t *testing.T
 // `fast` failed on a product failure, the unit test the B7 confinement change
 // broke on ext4, and the run was cancelled while integration (1), (2), (3),
 // (7), (8), (9) and ui-e2e (1) were running; `gate / proof` still ran, under
-// always(), and failed. It is the run fast's cancel makes, recorded:
+// always(), and failed. It is the run the cancel job makes, recorded:
 // testdata/cancelled-40965510239 holds GitHub's job listing and annotations
 // for the gate's jobs, and attempt-1.json, the records today's "job records"
 // step writes from them and the failed jobs' logs (each kept bounded); two
@@ -337,9 +371,9 @@ func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 			"gate unit failed",
 			"part integration:1 left no usable result at attempt 1 (a test was running when the job stopped: github.com/orkstack/orkstack/internal/engine.TestIntegration_SoakTasks); it is not rerun-eligible: start a new run",
 		}},
-		// GitHub may end fast itself as cancelled: its cancel step was
-		// running when the cancel arrived.
-		{"fast's own job cancelled by its cancel", func(jobs []githubJob) {
+		// Whatever GitHub records for fast's own job (a cancel by hand can
+		// reach it too), the part.json it left is its result.
+		{"fast's own job recorded cancelled", func(jobs []githubJob) {
 			for i := range jobs {
 				if jobs[i].Name == "gate / fast" {
 					jobs[i].Conclusion = "cancelled"
@@ -347,6 +381,16 @@ func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 				}
 			}
 		}, []string{"gate unit failed", "part integration:1 left no result (attempt 1, it was cancelled before any test started)"}},
+		// A cancel that comes before a shard has started (its plan or
+		// build still running) leaves it no record and no artifact.
+		{"a shard the cancel stopped before it started", func(jobs []githubJob) {
+			for i := range jobs {
+				if jobs[i].Name == "gate / ui-e2e (1)" {
+					jobs[i].Name = "gate / ui-e2e"
+					jobs[i].Conclusion, jobs[i].Steps, jobs[i].RunnerName, jobs[i].Log = "skipped", nil, "", ""
+				}
+			}
+		}, []string{"part ui-e2e:1 left no result: it is not rerun-eligible (only a lost, degraded or setup-failed attempt is); this run cannot become merge-eligible: start a new run"}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r, code := mergeCancelled(t, c.edit)

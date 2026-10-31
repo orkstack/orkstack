@@ -1102,8 +1102,8 @@ var outcomeFailed = regexp.MustCompile(`steps\.([a-z0-9_-]+)\.outcome == 'failur
 // steps (every `run:` step before it, each with an id) failed: never on a
 // checkout, a setup or the upload (`uses:` steps), which a rerun of artifacts
 // alone answers, and never on the gate's colour, which is not its verdict.
-// The gate may write actions only to hand it to proof.yml's fast part, whose
-// own rule (fastCancelProblems) lets it cancel on a failing gate alone.
+// The gate may write actions only to hand it to proof.yml's cancel job, whose
+// own rule (fastCancelProblems) lets it cancel on a failing fast gate alone.
 func releaseFailFastProblems(w *wfFile) []string {
 	var p []string
 	for _, name := range w.jobNames() {
