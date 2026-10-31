@@ -329,16 +329,9 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 		memory = p.DefaultMemory
 	}
 
-	requestedCPU, cpuErr := quantity.ParseCPU(cpu)
-	if cpuErr != nil {
-		return "", "", Fail(ReasonResourceRefused, "cpu %q is not a valid quantity: %v", cpu, cpuErr)
-	}
-	if !quantity.PositiveFinite(requestedCPU) {
-		// Docker reads `--cpus 0` as NO limit, so a non-positive or non-finite
-		// request is an unlimited container, not a small one (§9.2, §9.3).
-		return "", "", Fail(ReasonResourceRefused,
-			"cpu request %q is not a positive, finite quantity; it is refused rather than passed to the "+
-				"runtime, because a zero or negative limit means UNLIMITED there", cpu)
+	requestedCPU, failure := parseRequestCPU(cpu)
+	if failure != nil {
+		return "", "", failure
 	}
 	capCPU, cpuErr := quantity.ParseCPU(p.MaxCPU)
 	if cpuErr == nil && !quantity.PositiveFinite(capCPU) {
@@ -359,16 +352,9 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 			cpu, p.MaxCPU, MaxCPUVar)
 	}
 
-	requestedMem, memErr := quantity.ParseMemory(memory)
-	if memErr != nil {
-		return "", "", Fail(ReasonResourceRefused, "memory %q is not a valid quantity: %v", memory, memErr)
-	}
-	if !quantity.ByteCount(requestedMem) {
-		// The memory half of the same trap: `--memory 0` is no limit, and a
-		// fraction of a byte renders as 0.
-		return "", "", Fail(ReasonResourceRefused,
-			"memory request %q is not a quantity of at least one byte; it is refused rather than passed to the "+
-				"runtime, because a zero or negative limit means UNLIMITED there", memory)
+	requestedMem, failure := parseRequestMemory(memory)
+	if failure != nil {
+		return "", "", failure
 	}
 	capMem, memErr := quantity.ParseMemory(p.MaxMemory)
 	if memErr == nil && !quantity.ByteCount(capMem) {
@@ -389,6 +375,59 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 			memory, p.MaxMemory, MaxMemoryVar)
 	}
 	return cpu, memory, nil
+}
+
+// requestShapeFailure refuses a request whose own fields are malformed,
+// zero, negative or non-finite, exactly as ResolveResources does. It reads
+// nothing of this Orker's policy — an empty field takes the Orker's default
+// later, and boot holds that default valid — so its answer is the same on
+// every Orker, and the dispatcher asks it before the commit check.
+func requestShapeFailure(req *orkstackv1.ResourceRequest) *Failure {
+	if cpu := strings.TrimSpace(req.GetCpu()); cpu != "" {
+		if _, failure := parseRequestCPU(cpu); failure != nil {
+			return failure
+		}
+	}
+	if memory := strings.TrimSpace(req.GetMemory()); memory != "" {
+		if _, failure := parseRequestMemory(memory); failure != nil {
+			return failure
+		}
+	}
+	return nil
+}
+
+// parseRequestCPU parses one cpu request and refuses one that is not a
+// positive, finite quantity.
+func parseRequestCPU(cpu string) (float64, *Failure) {
+	cores, err := quantity.ParseCPU(cpu)
+	if err != nil {
+		return 0, Fail(ReasonResourceRefused, "cpu %q is not a valid quantity: %v", cpu, err)
+	}
+	if !quantity.PositiveFinite(cores) {
+		// Docker reads `--cpus 0` as NO limit, so a non-positive or non-finite
+		// request is an unlimited container, not a small one (§9.2, §9.3).
+		return 0, Fail(ReasonResourceRefused,
+			"cpu request %q is not a positive, finite quantity; it is refused rather than passed to the "+
+				"runtime, because a zero or negative limit means UNLIMITED there", cpu)
+	}
+	return cores, nil
+}
+
+// parseRequestMemory parses one memory request and refuses one that is not a
+// quantity of at least one byte.
+func parseRequestMemory(memory string) (float64, *Failure) {
+	bytes, err := quantity.ParseMemory(memory)
+	if err != nil {
+		return 0, Fail(ReasonResourceRefused, "memory %q is not a valid quantity: %v", memory, err)
+	}
+	if !quantity.ByteCount(bytes) {
+		// The memory half of the same trap: `--memory 0` is no limit, and a
+		// fraction of a byte renders as 0.
+		return 0, Fail(ReasonResourceRefused,
+			"memory request %q is not a quantity of at least one byte; it is refused rather than passed to the "+
+				"runtime, because a zero or negative limit means UNLIMITED there", memory)
+	}
+	return bytes, nil
 }
 
 // ReservedResources is what an attempt of req is granted on this Orker, as

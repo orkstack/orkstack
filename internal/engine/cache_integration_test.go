@@ -66,18 +66,27 @@ func (c *cacheE2E) startCacheOrker(id string, memos artifacts.MemoStore,
 	wrap func(ctx context.Context, in *orkstackv1.ExecuteTaskInput, next func() (*orkstackv1.ExecuteTaskResult, error)) (*orkstackv1.ExecuteTaskResult, error),
 ) worker.Worker {
 	c.t.Helper()
+	return c.startCacheOrkerOn(id, task.DefaultPool, c.orkerQueue, nil, memos, wrap)
+}
+
+// startCacheOrkerOn is startCacheOrker for an Orker of pool polling queue,
+// under policy (the default policy when nil).
+func (c *cacheE2E) startCacheOrkerOn(id, pool, queue string, policy *orker.SecurityPolicy, memos artifacts.MemoStore,
+	wrap func(ctx context.Context, in *orkstackv1.ExecuteTaskInput, next func() (*orkstackv1.ExecuteTaskResult, error)) (*orkstackv1.ExecuteTaskResult, error),
+) worker.Worker {
+	c.t.Helper()
 	if memos == nil {
 		memos = c.memos
 	}
 	refs, _ := c.store.(artifacts.RefPredictor)
 	activities := orker.NewActivitiesWithOptions(c.store, orker.Options{
 		Logs: c.logs, Commits: c.commits, Attempts: c.attempts, Refs: refs, Memos: memos,
-		Pool: task.DefaultPool, OrkerID: id, WorkRoot: c.workRoot,
+		Pool: pool, OrkerID: id, WorkRoot: c.workRoot, Policy: policy,
 	})
 	if err := activities.Boot(c.ctx); err != nil {
 		infraAbsent(c.t, "orker boot checks failed: %v", err)
 	}
-	w := worker.New(c.temporal, c.orkerQueue, worker.Options{
+	w := worker.New(c.temporal, queue, worker.Options{
 		DisableRegistrationAliasing: true, DisableWorkflowWorker: true,
 	})
 	w.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {

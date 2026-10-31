@@ -289,6 +289,7 @@ resolve the activity specification
 check the completion commit
 check the run's image policy
 check a cached task's memo
+check the task against this Orker's own policy, once no commit or memo answers it
 resolve the OCI image and digest
 create an isolated workspace
 materialize input artifacts

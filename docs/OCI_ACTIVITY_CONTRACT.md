@@ -1511,12 +1511,14 @@ heard of.
 | # | Phase | Step |
 |---|---|---|
 | 1 | — | **Open the log sink**, first, always; closed before return |
-| 2 | `start` | **Heartbeat loop start**, until step 15; input validated |
+| 2 | `start` | **Heartbeat loop start**, until step 15; the input checks that are the same on every Orker: a pinned image, a network mode that exists, a well-formed resource request, well-formed secret names |
 | 3 | `commit-check` | **Commit check**: GET `commit_uri` → adopt and jump to 15, or proceed (§5.4) |
+| 3a | — | **This Orker's policy**, a task with no memo step (uncached or pinned): the request against this Orker's caps, its secret schemes and `ORK_ORKER_SECRET_ALLOW` floor, and whether a task that runs as the Orker's user can (§3.1); a refusal ends the attempt here, recorded in phase `commit-check` |
 | 3b | `image-policy` | **Image policy**, only when the input carries one (§4.7) |
 | 4 | `workspace` | **Workspace**: per-attempt dir `0700`; `input/` `0555`, `output/` `1777`, `tmp/` `1777`; a pinned task's shared directory |
 | 5 | `stage-inputs` | **Input stage**: upstream artifacts → `input/artifacts/`, upstream `values.json` → `input/upstream/`, secrets → `input/secrets/` (a cached task: `values.json` only) |
 | 5b | `memo` | **Memo**, a cached task only: render, key, lookup (§5.4.1); a HIT writes this run's commit and jumps to 15 |
+| 5b′ | — | **This Orker's policy**, a cached task after the memo step, unless it hit: step 3a's checks; a refusal ends the attempt here, recorded in phase `memo`, its workspace removed |
 | 5c | `stage-artifacts` | **Deferred staging**, a cached task only: the recorded downloads, then secrets |
 | 6 | `image` | **Image**: `Runtime.Pull(image.pinned)`, or the verified embedded layout (§4.6); record platform digest and delivery |
 | 7 | `render` | **Render**: resources and network resolved against policy; `with:` → `config.json`; `run.json`; `task.json`; input tree sealed |
@@ -1528,6 +1530,24 @@ heard of.
 | 14 | — | **Failure path**: scan `output/artifacts/` under the same §3.5 and readability rules; upload streams and the artifacts that passed; attach refs and any scan note to the error; write NO commit; return the workload's error |
 | 15 | — | **Cleanup**: remove the container (detached context), remove the workdir and secrets, stop the heartbeat, close the log sink |
 | 16 | — | **Attempt record**: one `TaskAttempt`, best-effort (below) |
+
+**This Orker's own policy comes after the commit check and the memo step.**
+Two Orkers of one pool may hold different caps, secret schemes, floors or
+runtimes. A result another Orker committed (step 3), or a memo that hits (step
+5b), starts no container here, so it is handed back whatever this Orker would
+have refused; holding it to this Orker's settings would turn a durably
+committed result into a run failure. A task with neither is still refused at
+step 3a or 5b′, with its own reason (`RESOURCE_REQUEST_REFUSED`,
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `RUN_AS_ORKER_UNAVAILABLE`),
+before any secret is resolved, any image pulled or any `config.json` written.
+The checks that read nothing of the Orker, the network mode among them, stay
+at step 2. For a cached task the image policy, the workspace, the upstream
+values the key needs and the memo lookup come first, so a failure among them
+is reported ahead of this Orker's refusal; that is the price of never refusing
+a hit. A request above this Orker's cap reserves nothing against a declared
+capacity, whether it is refused, adopted or a hit, and an attempt that starts
+no container frees its reservation when it ends (docs/DEPLOY.md, "Declaring an
+Orker's capacity").
 
 **IMAGE comes before RENDER, and the order is load-bearing.** `task.json`
 carries `image.platformDigest`, `image.platform` and `image.delivery`, which do

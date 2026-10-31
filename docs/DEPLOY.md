@@ -629,7 +629,10 @@ one bound it knows in advance, the per-task cap (`orker.resources.max_cpu`,
 - every poll for a task reserves the cap, and is granted only while that fits
   beside everything already reserved;
 - once the task is in hand, its reservation is trimmed to the task's own
-  resolved request, and an activity that runs no container to nothing;
+  resolved request, and an activity that runs no container to nothing. A
+  request above this Orker's cap resolves to nothing, so it reserves nothing,
+  whether it is refused or, for a result already committed or a memo hit,
+  handed back without a container;
 - the reservation is freed when the attempt's container is **removed**. A
   container whose removal failed keeps its reservation, and the Orker tries to
   remove it again every 30 seconds.

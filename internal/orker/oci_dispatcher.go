@@ -460,10 +460,34 @@ func (d *OCIDispatcher) Execute(
 	return result, nil
 }
 
-// Validate is the pure, I/O-free half of the contract check. It is separate so
-// the engine's own tests and the activity test suite can assert the refusals
-// without a daemon.
+// Validate is the pure, I/O-free half of the contract check: the task's own
+// shape and this Orker's policy, which is everything this Orker refuses of a
+// task with no commit and no memo hit before its image policy, its staging and
+// its run. It is separate so the engine's own tests, the activity test suite
+// and orkctl task run can assert the refusals without a daemon.
+//
+// execute does not call it whole. It asks its two halves at their own steps:
+// validateTask, whose answer is the same on every Orker, first; and
+// checkOrkerPolicy, whose answer depends on this Orker's configuration, only
+// after the commit check and, for a cached task, after the memo step.
 func (d *OCIDispatcher) Validate(in *orkstackv1.ExecuteTaskInput) *Failure {
+	if failure := d.validateTask(in); failure != nil {
+		return failure
+	}
+	return d.checkOrkerPolicy(in)
+}
+
+// validateTask refuses what no Orker would run: a missing input, an image
+// that is not pinned to a digest, a network mode that does not exist, a
+// malformed, zero or non-finite resource request, a secret name outside the
+// contract. None of it reads this Orker's configuration, so execute asks it
+// before the commit check.
+//
+// The network mode stays here although ResolveNetwork hangs off the policy:
+// it reads none of it, and a cached task's memo key folds every mode but none
+// into one component, so a mode asked only after the memo step would let a
+// hit succeed for a mode no Orker offers.
+func (d *OCIDispatcher) validateTask(in *orkstackv1.ExecuteTaskInput) *Failure {
 	if in == nil {
 		return Fail(ReasonInputTooLarge, "the activity received no input")
 	}
@@ -481,7 +505,7 @@ func (d *OCIDispatcher) Validate(in *orkstackv1.ExecuteTaskInput) *Failure {
 	if _, failure := d.Policy.ResolveNetwork(in.GetNetwork()); failure != nil {
 		return failure
 	}
-	if _, _, failure := d.Policy.ResolveResources(in.GetResources()); failure != nil {
+	if failure := requestShapeFailure(in.GetResources()); failure != nil {
 		return failure
 	}
 	for _, secret := range in.GetSecrets() {
@@ -489,6 +513,25 @@ func (d *OCIDispatcher) Validate(in *orkstackv1.ExecuteTaskInput) *Failure {
 			return Fail(ReasonSecretSchemeForbid,
 				"secret name %q must match ^[A-Za-z0-9._-]{1,128}$", secret.GetName())
 		}
+	}
+	return nil
+}
+
+// checkOrkerPolicy refuses what THIS Orker will not run: a request above its
+// cap (or any request, when its cap is unreadable), a secret scheme it does
+// not resolve, a secret source outside its floor, and a task that runs as the
+// Orker's own user where its boot probe found that does not land. Two Orkers
+// of one pool may answer differently, so execute asks it only where the
+// attempt is about to do work of its own: after the commit check, so a result
+// another Orker committed is adopted rather than refused, and for a cached
+// task after the memo step, so a hit is reused. It still comes before any
+// secret is resolved or staged, any image is pulled, and any config.json is
+// written.
+func (d *OCIDispatcher) checkOrkerPolicy(in *orkstackv1.ExecuteTaskInput) *Failure {
+	if _, _, failure := d.Policy.ResolveResources(in.GetResources()); failure != nil {
+		return failure
+	}
+	for _, secret := range in.GetSecrets() {
 		scheme, _ := SplitSecretSource(secret.GetSource())
 		if !d.Policy.AllowsSecretScheme(scheme) {
 			return Fail(ReasonSecretSchemeForbid,
@@ -499,6 +542,26 @@ func (d *OCIDispatcher) Validate(in *orkstackv1.ExecuteTaskInput) *Failure {
 		if failure := d.secretFloorFailure(secret); failure != nil {
 			return failure
 		}
+	}
+	return d.runAsOrkerFailure(in)
+}
+
+// runsAsOrkerUser is whether in's container runs as the Orker's own user: the
+// task asked for it, or this Orker forces it for every task.
+func (d *OCIDispatcher) runsAsOrkerUser(in *orkstackv1.ExecuteTaskInput) bool {
+	return in.GetRunAsOrkerUser() || d.Policy.ForceUser
+}
+
+// runAsOrkerFailure refuses a task that runs as the Orker's own user on an
+// Orker whose boot probe found that does not land (§3.1).
+func (d *OCIDispatcher) runAsOrkerFailure(in *orkstackv1.ExecuteTaskInput) *Failure {
+	if !d.runsAsOrkerUser(in) {
+		return nil
+	}
+	if err := d.runAsOrkerUnavailable(); err != nil {
+		return FailCause(ReasonRunAsOrkerUnavailable, err,
+			"task %q runs as the Orker's own user (runAsOrkerUser or %s), which does not work on this Orker: %v",
+			in.GetTaskId(), ForceUserVar, err)
 	}
 	return nil
 }
@@ -561,7 +624,9 @@ func (d *OCIDispatcher) execute(
 	trace *memoTrace,
 	cleanup *attemptCleanup,
 ) (*orkstackv1.ExecuteTaskResult, *Failure) {
-	if failure := d.Validate(in); failure != nil {
+	// The checks whose answer is the same on every Orker. This Orker's own
+	// policy waits for STEP 3a (or 5b′ for a cached task).
+	if failure := d.validateTask(in); failure != nil {
 		return nil, failure
 	}
 
@@ -570,6 +635,21 @@ func (d *OCIDispatcher) execute(
 	beat.Phase("commit-check")
 	if adopted, failure := d.adopt(ctx, in, attempt); adopted != nil || failure != nil {
 		return adopted, failure
+	}
+
+	// STEP 3a. This Orker's own policy, for a task with no memo step (an
+	// uncached or a pinned one; a pinned task is never cached).
+	//
+	// AFTER the commit check: a result another Orker of the pool committed
+	// is adopted above, never refused for a cap or a policy this Orker holds
+	// more narrowly (AGENTS.md §15). BEFORE the image policy, which asks a
+	// registry, and before the workspace, the pin directory, the staged
+	// secrets and the pull: a refused task leaves nothing on disk.
+	cached := cachedInput(in)
+	if !cached {
+		if failure := d.checkOrkerPolicy(in); failure != nil {
+			return nil, failure
+		}
 	}
 
 	// STEP 3b. The image policy the run pinned at submit.
@@ -581,7 +661,7 @@ func (d *OCIDispatcher) execute(
 	// the pin directory, the staged secrets and the pull: a refused image
 	// leaves nothing on disk and is never fetched.
 	//
-	// NOT in Validate, which runs before the commit check.
+	// NOT in validateTask, which runs before the commit check.
 	if failure := d.checkImagePolicy(ctx, in, beat); failure != nil {
 		return nil, failure
 	}
@@ -644,7 +724,6 @@ func (d *OCIDispatcher) execute(
 	// fan-in item commits — and RECORDS the artifact fetches and secrets
 	// (deferBytes): a hit needs neither.
 	beat.Phase("stage-inputs")
-	cached := cachedInput(in)
 	staged, failure := d.stageInputs(ctx, in, ws, cached)
 	if failure != nil {
 		return nil, failure
@@ -686,26 +765,42 @@ func (d *OCIDispatcher) execute(
 			return nil, FailCause(ReasonWorkdirFailed, err, "encode run.json: %v", err)
 		}
 		key, ok := computeMemoKey(in, config, runJSON, staged, item)
+		// note is the miss's log line, written only once STEP 5b′ lets the
+		// container run, so a task this Orker refuses never logs that it is
+		// running one.
+		var note string
 		switch {
 		case !ok:
 			// Even under refresh: nothing can be keyed, and no memo is written.
 			trace.miss(memoKey{}, MemoMissInputUnhashed,
 				"an input reference of task %q carries no sha256, so no memo key can be computed", in.GetTaskId())
-			trace.log("[ork] cache miss (%s): %s; running the container", MemoMissInputUnhashed, trace.result.GetMissDetail())
+			note = fmt.Sprintf("[ork] cache miss (%s): %s; running the container", MemoMissInputUnhashed, trace.result.GetMissDetail())
 		case in.GetCache().GetRefresh():
 			trace.result = &orkstackv1.CacheResult{
 				Outcome:       orkstackv1.CacheOutcome_CACHE_OUTCOME_BYPASSED,
 				Key:           key.Key,
 				KeyComponents: key.Components,
 			}
-			trace.log("[ork] cache bypassed: the run was submitted with no_cache; running the container")
+			note = "[ork] cache bypassed: the run was submitted with no_cache; running the container"
 		default:
 			if hit := d.lookupMemo(ctx, in, attempt, startedAt, key, trace); hit != nil {
 				return d.commitHit(ctx, in, attempt, startedAt, key, hit, trace)
 			}
-			trace.log("[ork] cache miss (%s): %s; running the container",
+			note = fmt.Sprintf("[ork] cache miss (%s): %s; running the container",
 				trace.result.GetMissReason(), trace.result.GetMissDetail())
 		}
+
+		// STEP 5b′. This Orker's own policy, for a cached task: STEP 3a's
+		// check, asked only once the memo step did not hit (a miss, a
+		// bypass, or no key at all), so a hit is never refused for a cap or
+		// a policy this Orker holds more narrowly. BEFORE STEP 5c: no secret
+		// is resolved or staged, and no artifact is fetched, for a task this
+		// Orker refuses. The workspace exists by now; its deferred removal
+		// cleans it up as it does after any other failure here.
+		if failure := d.checkOrkerPolicy(in); failure != nil {
+			return nil, failure
+		}
+		trace.log("%s", note)
 
 		// STEP 5c. What a hit did not need: the recorded artifact fetches,
 		// then the secrets.
@@ -733,17 +828,16 @@ func (d *OCIDispatcher) execute(
 	if netFailure != nil {
 		return nil, netFailure
 	}
-	runAsOrkerUser := in.GetRunAsOrkerUser() || d.Policy.ForceUser
-	// The hatch is refused here, after the memo step and the commit check,
-	// so a task that runs no container is never refused for it, and before
-	// anything is rendered for a container that will not run.
-	if runAsOrkerUser {
-		if err := d.runAsOrkerUnavailable(); err != nil {
-			return nil, FailCause(ReasonRunAsOrkerUnavailable, err,
-				"task %q runs as the Orker's own user (runAsOrkerUser or %s), which does not work on this Orker: %v",
-				in.GetTaskId(), ForceUserVar, err)
-		}
+	// The hatch was refused, where this Orker cannot run it, by
+	// checkOrkerPolicy at STEP 3a or 5b′: after the commit check and the memo
+	// step, so a task that runs no container is never refused for it, and
+	// before any secret, pull or render for a container that will not run.
+	// Asked again here, beside its use, as the resources and network are: the
+	// guard holds whatever a later step order skips.
+	if failure := d.runAsOrkerFailure(in); failure != nil {
+		return nil, failure
 	}
+	runAsOrkerUser := d.runsAsOrkerUser(in)
 
 	// An item of a fan-out resolves its own element of the array the engine
 	// counted, after staging (a task source is read from the staged

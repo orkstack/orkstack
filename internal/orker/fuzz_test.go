@@ -507,6 +507,17 @@ func FuzzResolveResources_AnAcceptedRequestIsALimitWithinTheCap(f *testing.F) {
 
 		gotCPU, gotMemory, failure := policy.ResolveResources(request)
 		reserved := policy.ReservedResources(request)
+		// The half of the check every Orker answers alike, asked before the
+		// commit check, never refuses a request this policy accepts, and
+		// refuses only as RESOURCE_REQUEST_REFUSED.
+		if shape := requestShapeFailure(request); shape != nil {
+			if failure == nil {
+				t.Fatalf("the shape check refused cpu %q memory %q (%q), which the policy accepts", cpu, memory, shape.Message)
+			}
+			if shape.Reason != ReasonResourceRefused || shape.Message == "" {
+				t.Fatalf("the shape check refused as %q: %q", shape.Reason, shape.Message)
+			}
+		}
 		if failure != nil {
 			if failure.Reason != ReasonResourceRefused || failure.Message == "" {
 				t.Fatalf("a refused request failed as %q: %q", failure.Reason, failure.Message)

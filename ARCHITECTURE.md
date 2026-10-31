@@ -133,7 +133,9 @@ re-read. A refusal happens before step 6, so it leaves nothing behind.
 An Orker polls its pool's internal channel and executes the OCI Activity
 Contract for one attempt: check for an existing durable commit, check the
 image against the run's image policy (including a cosign signature), run a
-cached task's memo step, resolve and pin the image, create an isolated
+cached task's memo step, check the task against this Orker's own policy (its
+caps, secret schemes and floor, and whether a task can run as its user) once
+no commit or memo answers it, resolve and pin the image, create an isolated
 `/orkstack` workspace, materialize artifacts and secret files, run the
 container, capture stdout and stderr independently, heartbeat the live phase,
 forward cancellation as SIGTERM then SIGKILL, validate outputs, upload
