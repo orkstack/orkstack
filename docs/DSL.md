@@ -418,7 +418,7 @@ tasks:
       maximum_attempts: 3
       initial_interval_seconds: 1
       backoff_coefficient: 2.0
-      maximum_interval_seconds: 100
+      maximum_interval_seconds: 60
     pool: ""              # optional Orker pool; absent means the default pool
     pin: ""               # optional declared pin; absent means unpinned
     command:              # optional image ENTRYPOINT/CMD override; argv
@@ -451,7 +451,10 @@ B's `needs:`.
 
 `retry:` absent (or `maximum_attempts` of 0 or 1) means one attempt — never
 Temporal's unbounded default. Within `retry:`, an unset interval is 1 s, an
-unset coefficient 2.0 and an unset maximum interval 100 s.
+unset coefficient 2.0 and an unset maximum interval 60 s, or the initial
+interval when that is longer (Temporal refuses a maximum below the initial).
+The 60 s is decided when the run is submitted and kept for the whole run: a
+run submitted by a release before v0.1.1 keeps the 100 s it started with.
 
 `uses:` is the only image selector. A catalog name is resolved at apply time;
 a registry tag or digest may be written directly. In every case the applied

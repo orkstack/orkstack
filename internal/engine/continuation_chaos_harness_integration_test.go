@@ -347,6 +347,7 @@ func (s *chaosStack) startReplica(name string, o replicaOptions) *chaosReplica {
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
 		Identity:                    identity,
+		Interceptors:                engine.RunWorkerInterceptors(),
 	}
 	if o.deployment.BuildID != "" {
 		options = o.deployment.Apply(options)

@@ -44,7 +44,7 @@ export type RetryPolicy = Message<"orkstack.v1.RetryPolicy"> & {
   backoffCoefficient: number;
 
   /**
-   * default 100
+   * default 60, or initial_interval_seconds when longer
    *
    * @generated from field: int32 maximum_interval_seconds = 4;
    */

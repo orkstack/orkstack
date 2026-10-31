@@ -229,8 +229,9 @@ func TestHistoryLimitHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 
 // TestCommittedFixtures_DeclareNoNewPlanFields: no committed fixture before
 // the guard carries a plan field a later path reads — history, continuation,
-// in_flight, definition or snapshot_overlay — in its start or in any child
-// start it recorded, so none of them can enter a new path.
+// in_flight, definition, snapshot_overlay, pin_creation_timeout_seconds,
+// fairness or retry_max_interval_seconds — in its start or in any child start
+// it recorded, so none of them can enter a new path.
 func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 	fixtures := []string{
 		"testdata/history/run-succeeded-v1.json",
@@ -244,7 +245,8 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		"testdata/history/run-cached-v1.json",
 		"testdata/history/run-join-v1.json",
 	}
-	newFields := []string{"history", "continuation", "in_flight", "definition", "snapshot_overlay", "pin_creation_timeout_seconds"}
+	newFields := []string{"history", "continuation", "in_flight", "definition", "snapshot_overlay", "pin_creation_timeout_seconds",
+		"fairness", "retry_max_interval_seconds"}
 	for _, path := range fixtures {
 		recorded := loadHistoryFile(t, path)
 		checked := 0

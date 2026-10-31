@@ -79,7 +79,7 @@ Read an input as `{{ .inputs.<name> }}`.
 | `maximum_attempts` | `1` | Attempts in total. |
 | `initial_interval_seconds` | `1` | Wait before the first retry. |
 | `backoff_coefficient` | `2.0` | Each wait is this many times the last. |
-| `maximum_interval_seconds` | `100` | The longest wait. |
+| `maximum_interval_seconds` | `60` | The longest wait. Left unset, never below the first. |
 
 ## Fan-out
 

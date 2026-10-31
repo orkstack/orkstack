@@ -669,6 +669,9 @@ func runWorkerOptions(cfg config) worker.Options {
 	return cfg.deployment.Apply(worker.Options{
 		DisableRegistrationAliasing: true,
 		LocalActivityWorkerOnly:     true,
+		// A pin's creation request carries its run's fairness key only
+		// through these (engine.RunWorkerInterceptors).
+		Interceptors: engine.RunWorkerInterceptors(),
 	})
 }
 

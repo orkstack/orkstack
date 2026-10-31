@@ -184,3 +184,17 @@ func DisableFairnessKeysGateForTest() (restore func()) {
 	fairnessKeysGateDisabledForTest.Store(true)
 	return func() { fairnessKeysGateDisabledForTest.Store(false) }
 }
+
+// DisableFairnessPinCreationGateForTest makes a pin's creation request take
+// its DefaultVersion branch without asking the fairness-pin-creation version.
+func DisableFairnessPinCreationGateForTest() (restore func()) {
+	fairnessPinCreationGateDisabledForTest.Store(true)
+	return func() { fairnessPinCreationGateDisabledForTest.Store(false) }
+}
+
+// DisableRetryMaxIntervalGateForTest makes a task's retry policy take its
+// DefaultVersion branch without asking the retry-max-interval version.
+func DisableRetryMaxIntervalGateForTest() (restore func()) {
+	retryMaxIntervalGateDisabledForTest.Store(true)
+	return func() { retryMaxIntervalGateDisabledForTest.Store(false) }
+}

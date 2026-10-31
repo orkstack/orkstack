@@ -106,10 +106,34 @@ func startPrivateTemporal(t *testing.T, ctx context.Context, settings ...string)
 	}
 }
 
+// fairShape is the run one namespace queues n task activities with: its
+// definition and input.
+type fairShape func(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload)
+
+// fairTasks queues n plain tasks.
+func fairTasks(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload) {
+	return compile(t, fairDocument(name, n)), nil
+}
+
+// fairItems queues one fan-out of n items, every one dispatched at once.
+func fairItems(t *testing.T, name string, n int) (*orkstackv1.Orkflow, *orkstackv1.Payload) {
+	document := fmt.Sprintf("apiVersion: orkstack/v1\nkind: Orkflow\nname: %s\ninputs:\n  parts: {type: array}\n"+
+		"tasks:\n  - id: spread\n    uses: shell\n    each: {over: \"{{ .inputs.parts }}\", max_items: %d}\n"+
+		"    with: {command: \"true\"}\n", name, n)
+	return compile(t, document), payload(t, map[string]any{"parts": guardItems(n)})
+}
+
 // lateNamespaceMeanPosition runs the backlog-then-late experiment on one
 // cluster and returns the late namespace's mean dispatch position (0-based,
 // out of fairBacklog+fairLate).
 func lateNamespaceMeanPosition(t *testing.T, ctx context.Context, address string) float64 {
+	t.Helper()
+	return lateNamespaceMeanPositionOf(t, ctx, address, fairTasks)
+}
+
+// lateNamespaceMeanPositionOf is lateNamespaceMeanPosition with each
+// namespace's task activities queued in the shape given.
+func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address string, shape fairShape) float64 {
 	t.Helper()
 	c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
 	if err != nil {
@@ -134,14 +158,14 @@ func lateNamespaceMeanPosition(t *testing.T, ctx context.Context, address string
 	}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
 	start := func(name string, n int) string {
-		wf := compile(t, fairDocument(name, n))
+		wf, input := shape(t, name, n)
 		wf.Namespace = name
 		plan := rawPlan(orkerQueue)
 		plan.Namespace = name
 		plan.CommitRoot = "mem://commits"
 		plan.Fairness = &engine.FairnessSelection{Key: engine.FairnessKeyFor(name)}
 		runID := fmt.Sprintf("ork-fair-%s-%d", name, time.Now().UnixNano())
-		if err := starter.StartRun(ctx, runID, wf, nil, plan); err != nil {
+		if err := starter.StartRun(ctx, runID, wf, input, plan); err != nil {
 			t.Fatalf("start %s: %v", runID, err)
 		}
 		// Every task of the run is scheduled before the next run starts.
@@ -229,5 +253,28 @@ func TestIntegration_FairDispatchServesALateNamespaceAheadOfABacklog(t *testing.
 	}
 	if fair+40 > stock {
 		t.Fatalf("with fairness the late namespace's mean position is %.1f against %.1f without: it was not served ahead of the backlog", fair, stock)
+	}
+}
+
+// TestIntegration_FairDispatchServesALateNamespacesItemsAheadOfABacklog is
+// the same measurement for fan-out items: one namespace's fan-out queues 200
+// items, a second's then queues 20, and only then does one Orker with one slot
+// start taking them. Each item carries its run's fairness key, so on a cluster
+// with fairness enabled the late namespace's items are interleaved into the
+// backlog; on a stock cluster they wait behind it.
+func TestIntegration_FairDispatchServesALateNamespacesItemsAheadOfABacklog(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	fair := lateNamespaceMeanPositionOf(t, ctx, startPrivateTemporal(t, ctx, "matching.enableFairness=true"), fairItems)
+	stock := lateNamespaceMeanPositionOf(t, ctx, startPrivateTemporal(t, ctx), fairItems)
+	result := fmt.Sprintf("late namespace's items: mean dispatch position of %d: %.1f with fairness, %.1f without "+
+		"(FIFO would be %.1f)\n", fairBacklog+fairLate, fair, stock, float64(fairBacklog)+float64(fairLate-1)/2)
+	proof.Write(t, "engine", "fair-dispatch-items.txt", []byte(result))
+	t.Logf("EVIDENCE %s", result)
+	if stock < float64(fairBacklog)*0.75 {
+		t.Fatalf("without fairness the late namespace's items' mean position is %.1f; the control does not show a backlog they wait behind", stock)
+	}
+	if fair+40 > stock {
+		t.Fatalf("with fairness the late namespace's items' mean position is %.1f against %.1f without: they were not served ahead of the backlog", fair, stock)
 	}
 }
