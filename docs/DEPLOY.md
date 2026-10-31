@@ -3478,7 +3478,9 @@ spacing of a task scheduled after the upgrade, never a recorded command. A build
 predates the field ignores the plan's
 number, so a rollback to one waits 100 seconds again. The fixtures
 `run-retry-max-interval-v1.json` and `run-retry-max-interval-legacy-v1.json`
-guard it with command and negative tests.
+guard it with command and negative tests, and
+`run-retry-long-initial-v1.json` and `run-retry-long-initial-legacy-v1.json`
+record the raise to the initial interval on both branches.
 
 The replayer compares neither a priority nor a retry policy: it matches a
 scheduled activity by its id and type alone

@@ -152,3 +152,52 @@ func TestIntegration_RecordRetryMaxIntervalHistories(t *testing.T) {
 			requireIntervals(t, maximumIntervals(capture), 1, wantRetryMaxInterval(legacy))
 		})
 }
+
+// retryLongInitialDocument is retryFixtureDocument with a first wait of two
+// minutes and still no maximum: above the plan's 60 seconds and the legacy
+// 100, so either branch raises the maximum to the initial interval.
+const retryLongInitialDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: retry-long-initial
+tasks:
+  - id: prepare
+    uses: shell
+    with: {command: "echo prepare"}
+  - id: fetch
+    uses: shell
+    needs: [prepare]
+    retry: {maximum_attempts: 3, initial_interval_seconds: 120}
+    with: {command: "echo fetch"}
+  - id: report
+    uses: shell
+    needs: [fetch]
+    with: {command: "echo report"}
+`
+
+// TestIntegration_RecordRetryLongInitialHistories records the
+// retry-long-initial fixtures: retryLongInitialDocument under a plan that
+// carries 60 seconds, so the gated run and the legacy one both schedule the
+// retrying task with its maximum raised to its 120 second initial interval,
+// the lowest maximum the cluster accepts.
+func TestIntegration_RecordRetryLongInitialHistories(t *testing.T) {
+	recordE1Pair(t, "retry-long-initial", engine.RetryMaxIntervalChange, retryLongInitialDocument,
+		func(orkerQueue string) engine.RunPlan {
+			plan := rawPlan(orkerQueue)
+			plan.CommitRoot = "mem://commits"
+			plan.RetryMaxIntervalSeconds = int32(retryMaxIntervalPlanned / time.Second)
+			return plan
+		},
+		retryLongInitialGated, retryLongInitialLegacy, engine.DisableRetryMaxIntervalGateForTest,
+		func(t *testing.T, path string, recorded *historypb.History, legacy bool) {
+			if got := retryingIntervals(recorded); len(got) != 1 || got[0] != retryLongInitial {
+				t.Fatalf("%s recorded retrying tasks with maximum intervals %v, want one of %s", path, got, retryLongInitial)
+			}
+			runID, _, _, _, _ := startArgs(t, recorded)
+			capture, err := replayCapturingDispatch(t, recorded, runID)
+			if err != nil {
+				t.Fatalf("the history just recorded does not replay against current code: %v", err)
+			}
+			requireIntervals(t, maximumIntervals(capture), 1, retryLongInitial)
+		})
+}

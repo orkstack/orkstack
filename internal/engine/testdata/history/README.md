@@ -575,6 +575,29 @@ branch.
 - recorder: `TestIntegration_RecordRetryMaxIntervalHistories`
   (`e1_gates_integration_test.go`), as above.
 
+### `run-retry-long-initial-v1.json` and `run-retry-long-initial-legacy-v1.json` — a retry whose first wait is above the maximum it would get
+
+The same chain, where `fetch` retries (`retry: {maximum_attempts: 3,
+initial_interval_seconds: 120}`) with no maximum interval of its own, run to
+completion under a plan that carries `retry_max_interval_seconds: 60`. The
+cluster refuses a maximum below the initial interval by failing the workflow
+task over and over, so `retryPolicyFor` raises an unset maximum to the initial
+interval on both branches (`unsetRetryMaxInterval`). The gated fixture is
+recorded by today's code: the `retry-max-interval` marker once, and `fetch`
+scheduled with a 120 second maximum, not the plan's 60. The `legacy` fixture
+is recorded from the same plan with the gate off: no marker, and 120 seconds,
+not the legacy 100. No build before the raise recorded such a run: it sent the
+refused policy and never got past `prepare`.
+
+- command: `TestRunWorkflow_ReplaysCommittedRetryLongInitialHistories` (it
+  compares the recorded maximum interval with what current code sends on
+  replay, so a change that dropped the raise sends 60 or 100 seconds and
+  fails it)
+- behaviour: `TestRunWorkflow_AnInitialIntervalAboveTheLegacyMaximumIsScheduled`,
+  `TestIntegration_ARetryWithALongInitialIntervalIsScheduled`
+- recorder: `TestIntegration_RecordRetryLongInitialHistories`
+  (`e1_gates_integration_test.go`), as above.
+
 `TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy` is the premise of
 both pairs: `run-pin-creation-timeout-legacy-v1.json`, recorded with no
 priority on any activity, replays clean against code that sends every task and

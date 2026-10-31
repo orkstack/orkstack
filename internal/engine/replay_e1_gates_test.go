@@ -33,9 +33,15 @@ const (
 	fairnessPinCreationLegacy = "testdata/history/run-fairness-pin-creation-legacy-v1.json"
 	retryMaxIntervalGated     = "testdata/history/run-retry-max-interval-v1.json"
 	retryMaxIntervalLegacy    = "testdata/history/run-retry-max-interval-legacy-v1.json"
+	retryLongInitialGated     = "testdata/history/run-retry-long-initial-v1.json"
+	retryLongInitialLegacy    = "testdata/history/run-retry-long-initial-legacy-v1.json"
 
-	// retryMaxIntervalPlanned is the number both retry fixtures' plans carry.
+	// retryMaxIntervalPlanned is the number every retry fixture's plan
+	// carries.
 	retryMaxIntervalPlanned = 60 * time.Second
+	// retryLongInitial is the first wait of the long-initial fixtures'
+	// retrying task, above the plan's number and the legacy 100 seconds.
+	retryLongInitial = 120 * time.Second
 )
 
 func requireE1Fixture(t *testing.T, path, recorder string) {
@@ -252,6 +258,60 @@ func TestRunWorkflow_ReplaysCommittedRetryMaxIntervalHistories(t *testing.T) {
 				t.Fatalf("replaying %s against current code failed: %v", tc.path, err)
 			}
 			requireIntervals(t, maximumIntervals(capture), 1, wantRetryMaxInterval(tc.legacy))
+			want := workflow.Version(1)
+			if tc.legacy {
+				want = workflow.DefaultVersion
+			}
+			requireOneDecision(t, tc.path, capture, engine.RetryMaxIntervalChange, want)
+		})
+	}
+}
+
+// TestRunWorkflow_ReplaysCommittedRetryLongInitialHistories is the command
+// half of the raise: a retry: whose first wait is above both the plan's
+// number and the legacy 100 seconds, with no maximum of its own, was recorded
+// — by today's code and with the gate off — with its maximum raised to that
+// first wait, and current code sends the same on replay. The cluster refuses
+// anything lower, so no build before the raise recorded such a run: it never
+// got past the task.
+func TestRunWorkflow_ReplaysCommittedRetryLongInitialHistories(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		path   string
+		legacy bool
+	}{{"gated", retryLongInitialGated, false}, {"legacy", retryLongInitialLegacy, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			requireE1Fixture(t, tc.path, "TestIntegration_RecordRetryLongInitialHistories")
+			recorded := loadHistoryFile(t, tc.path)
+			runID, wf, _, plan, _ := startArgs(t, recorded)
+			if plan.RetryMaxIntervalSeconds != int32(retryMaxIntervalPlanned/time.Second) {
+				t.Fatalf("%s was started with a plan carrying %d s: the fixture does not say what it was recorded to say",
+					tc.path, plan.RetryMaxIntervalSeconds)
+			}
+			retrying := 0
+			for _, spec := range wf.GetTasks() {
+				if retry := spec.GetRetry(); retry.GetMaximumAttempts() > 1 {
+					retrying++
+					if time.Duration(retry.GetInitialIntervalSeconds())*time.Second != retryLongInitial || retry.GetMaximumIntervalSeconds() != 0 {
+						t.Fatalf("%s's task %s retries with %v, want a first wait of %s and no maximum", tc.path, spec.GetId(), retry, retryLongInitial)
+					}
+				}
+			}
+			if retrying != 1 {
+				t.Fatalf("%s's definition has %d retrying tasks, want 1", tc.path, retrying)
+			}
+			markers := versionMarkers(t, recorded)
+			if tc.legacy != (markers[engine.RetryMaxIntervalChange] == 0) {
+				t.Fatalf("%s records markers %v, want legacy=%v for %s", tc.path, markers, tc.legacy, engine.RetryMaxIntervalChange)
+			}
+			if got := retryingIntervals(recorded); len(got) != 1 || got[0] != retryLongInitial {
+				t.Fatalf("%s recorded retrying tasks with maximum intervals %v, want one of %s", tc.path, got, retryLongInitial)
+			}
+			capture, err := replayCapturingDispatch(t, recorded, runID)
+			if err != nil {
+				t.Fatalf("replaying %s against current code failed: %v", tc.path, err)
+			}
+			requireIntervals(t, maximumIntervals(capture), 1, retryLongInitial)
 			want := workflow.Version(1)
 			if tc.legacy {
 				want = workflow.DefaultVersion
