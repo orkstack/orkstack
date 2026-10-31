@@ -18,6 +18,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"fmt"
+	"html"
 	"io/fs"
 	"net/http"
 	"os"
@@ -116,6 +117,62 @@ const (
 	indexFile    = "index.html"
 )
 
+// The UI's content security policies (docs/SECURITY_MODEL.md, "Transport,
+// listeners and configuration").
+const (
+	// DefaultPagePolicy is a page's policy when the page names none of its
+	// own (pagePolicy): the build's (ui/svelte.config.js, kit.csp) without
+	// its hashes, so no inline script runs, and without 'unsafe-eval'. A
+	// page that names no policy is never the app, whose boot script needs a
+	// hash, so it never needs the editor's eval: the fallback fails closed
+	// (TestDefaultPagePolicy_IsTheBuildsPolicyWithoutItsHashesOrEval).
+	DefaultPagePolicy = "frame-ancestors 'none'; default-src 'self'; script-src 'self'; " +
+		"style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; " +
+		"object-src 'none'; base-uri 'none'; form-action 'self'"
+
+	// FilePolicy is every other response's: a file of the build opened as a
+	// document (an SVG, say) loads and runs nothing.
+	FilePolicy = "default-src 'none'; frame-ancestors 'none'"
+
+	// metaPolicyOpen is how SvelteKit writes a page's policy (kit.csp in
+	// ui/svelte.config.js): a <meta http-equiv> in the page's head, the
+	// policy its content attribute.
+	metaPolicyOpen = `<meta http-equiv="content-security-policy" content="`
+
+	// maxPagePolicy bounds the policy read out of a page.
+	maxPagePolicy = 16 << 10
+)
+
+// pagePolicy is the policy a page is sent with: the one its build wrote into
+// it, the hash of every inline script it runs included, opened with
+// frame-ancestors 'none', which a <meta> cannot carry and which, written
+// first, wins over any the page names. A page that names no policy, or one
+// that cannot be sent as a header whole — unclosed, over maxPagePolicy, or
+// holding a byte outside printable ASCII once unescaped — gets
+// DefaultPagePolicy: a build's policy is used as it is or not at all.
+func pagePolicy(page []byte) string {
+	start := bytes.Index(page, []byte(metaPolicyOpen))
+	if start < 0 {
+		return DefaultPagePolicy
+	}
+	rest := page[start+len(metaPolicyOpen):]
+	rest = rest[:min(len(rest), maxPagePolicy+1)]
+	end := bytes.IndexByte(rest, '"')
+	if end < 0 || end > maxPagePolicy {
+		return DefaultPagePolicy
+	}
+	policy := strings.TrimSpace(html.UnescapeString(string(rest[:end])))
+	if policy == "" {
+		return DefaultPagePolicy
+	}
+	for i := range len(policy) {
+		if policy[i] < 0x20 || policy[i] > 0x7e {
+			return DefaultPagePolicy
+		}
+	}
+	return "frame-ancestors 'none'; " + policy
+}
+
 // contentTypes names every type the build holds, so a response's type never
 // depends on the host's MIME database (Go consults /etc/mime.types, which a
 // distroless image does not have and a developer's machine may spell
@@ -180,6 +237,8 @@ type handler struct {
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 	header.Set("X-Content-Type-Options", "nosniff")
+	// Nothing but a page loads or runs anything; serve replaces this for one.
+	header.Set("Content-Security-Policy", FilePolicy)
 	// An error is never cached: a cache that kept the 404 of a hashed asset
 	// asked for during a rollout would go on serving it once the asset is
 	// there. serve replaces this for a file it answers.
@@ -266,9 +325,17 @@ func (h *handler) serve(w http.ResponseWriter, r *http.Request, name string) {
 		header.Set("Cache-Control", cacheImmutable)
 	}
 	if contentType == contentTypes[".html"] {
+		// The policy is read from the page itself, never its compressed twin.
+		page := data
+		if served != name {
+			if page, err = fs.ReadFile(h.build, name); err != nil {
+				page = nil
+			}
+		}
 		// The app carries the operator's destructive controls (cancel,
-		// delete, promote), so no other origin may frame it.
-		header.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		// delete, promote), so no other origin may frame it, and runs no
+		// script its build did not name.
+		header.Set("Content-Security-Policy", pagePolicy(page))
 		header.Set("X-Frame-Options", "DENY")
 		header.Set("Referrer-Policy", "same-origin")
 	}

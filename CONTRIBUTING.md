@@ -216,9 +216,12 @@ scrape a stack you run by hand:
 
 1. Bind each process's admin listener to the gateway: `ORK_ADMIN_ADDR=172.17.0.1:9464`
    for `ork`, `172.17.0.1:9465` for `orker`.
-2. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
+2. Let each answer the name Prometheus scrapes it by:
+   `ORK_ADMIN_ALLOWED_HOSTS=host.docker.internal`. The admin listener refuses
+   any other `Host` with a dot (`docs/DEPLOY.md`, "The API listener's bounds").
+3. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
    see `docs/DEPLOY.md` §1).
-3. Attach Prometheus to the default bridge:
+4. Attach Prometheus to the default bridge:
 
 ```bash
 docker network connect bridge "$(docker ps -q --filter label=com.docker.compose.service=prometheus)"

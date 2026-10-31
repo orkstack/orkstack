@@ -180,11 +180,62 @@ CORS, and the bridge's same-origin default admits the UI with no
   `Vary: Accept-Encoding`), so nothing in front needs to compress the UI. The
   example gallery's YAML files and the fonts are sent as they are.
 - **Headers.** Every UI response carries `X-Content-Type-Options: nosniff`.
-  The page also carries `Content-Security-Policy: frame-ancestors 'none'`,
-  `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`: the UI holds
-  the operator's destructive controls, so no other origin may frame it
+  The page carries a strict `Content-Security-Policy`: the policy the UI's
+  build writes into the page (`ui/svelte.config.js`, `kit.csp`), which names
+  the SHA-256 hash of each inline script the page runs, opened with
+  `frame-ancestors 'none'`. It allows scripts, styles, fonts, images and
+  connections (the Connect calls and the sockets) from the page's own origin,
+  inline styles, `data:` images, and `eval`, for the YAML editor
+  (SECURITY_MODEL.md says why); it allows no other inline script, no plugin
+  and no `<base>`. The page also carries
+  `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`: the UI holds the
+  operator's destructive controls, so no other origin may frame it. Every
+  other UI response carries `default-src 'none'; frame-ancestors 'none'`
   ([SECURITY_MODEL.md](SECURITY_MODEL.md), "Transport, listeners and
-  configuration").
+  configuration"). Nothing in front needs to add a policy, and a proxy that
+  sets its own `Content-Security-Policy` beside the engine's narrows the page
+  to what both allow.
+- **The names it answers to.** The listener answers a request only under a
+  `Host` it knows, and refuses any other `403` before a route sees it: the
+  UI, the API and the sockets alike (`internal/hostpolicy`). That is what
+  stops a web page from reaching the engine by DNS rebinding through a public
+  name. With `ORK_ALLOWED_HOSTS` unset it admits exactly, on any port, in any
+  case:
+  - an IP address, v4 or v6: `127.0.0.1:8080`, `[::1]:8080`, a pod or node
+    address such as a NodePort's;
+  - `localhost` and every name under it (`app.localhost`);
+  - a name with no dot, written without a trailing dot: a compose service
+    (`ork`), a Kubernetes Service from its own namespace, a host's short
+    name. Such a name resolves only on the local network, never through
+    public DNS. A dotless name a browser reads as an IPv4 address
+    (`2130706433`, `0x7f000001`) is not admitted: a browser sends that
+    address dotted, so only another client sends the number;
+  - the host `ORK_HTTP_ADDR` names, when it names one (`ork.internal:8080`
+    admits `ork.internal`);
+  - a request with no `Host`, which no browser sends.
+
+  That covers the quickstart (`localhost:8080`, and `ork:8080` from its
+  `orkctl` service), the Kubernetes bases (a NodePort or a port-forward on an
+  address), `orkctl`, `curl` and trigger callers reaching the engine by
+  address or `localhost`, the development stack's Vite proxy (which
+  keeps the browser's `localhost:5173`), and a proxy that rewrites `Host` to
+  the address or dotless service name it dials (nginx's
+  `proxy_pass http://ork:8080` default). **Any `Host` with a dot needs the
+  setting**: a Kubernetes name such as `ork.orkstack` or
+  `ork.orkstack.svc.cluster.local`, an FQDN, what a proxy that keeps the
+  browser's `Host` forwards, and the name `orkctl`, `curl` or a trigger
+  caller dials. List each in `ORK_ALLOWED_HOSTS`: a name,
+  `*.example.com` for every name under `example.com` (list the narrowest you
+  can: every name under it is admitted. A pattern over a top-level name,
+  `*.com`, is refused at boot, but one over a suffix anyone may register
+  under, such as `*.co.uk` or `*.github.io`, is not, and admits every name
+  a page's author registers there), or `*` for any `Host`, which turns the
+  check off. A refusal answers with the `Host` and the setting — a Connect client
+  reads it as `permission_denied` — under the headers every other error
+  carries, and is logged as `request refused: Host not allowed`, at most
+  once every 10 seconds, with how many refusals since went unlogged. The
+  admin listener applies the same rule under its own setting
+  (§ "The API listener's bounds", last paragraph).
 
 **Settings.** `ORK_UI_ENABLED` (`engine.ui.enabled`, default `true`) set to
 `false` leaves the listener the API alone, and `/` is a 404. `ORK_UI_DIR`
@@ -212,6 +263,9 @@ API, so route the whole host to `ork`, not only the API's paths:
   to the page's origin: the bridge compares the socket's `Origin` with the
   `Host` it receives, so a proxy that rewrites `Host` makes the UI's own
   sockets look cross-origin and refused;
+- list the name the browser uses in `ORK_ALLOWED_HOSTS` when the proxy keeps
+  it (`ORK_ALLOWED_HOSTS=orkstack.example.com`), on every replica: a name
+  with a dot is refused `403` otherwise ("The names it answers to", above);
 - terminate TLS at the proxy as for any other service. The page derives its
   socket's address from its own, so an `https` page opens `wss` to the same
   host, and the engine behind the proxy stays plain HTTP;
@@ -233,6 +287,81 @@ and until every replica runs one release a reload can meet the same miss.
 Session affinity at the load balancer while two releases are behind one
 address avoids it, and nothing is lost either way: the UI keeps no run state
 of its own, so a reload only redraws what the API already holds.
+
+### The API listener's bounds
+
+The API listener (`ORK_HTTP_ADDR`) bounds what a client may make it wait for
+or hold, and never how long an answer takes (`internal/api/server.go`,
+`NewServerWith` and `NewMux`):
+
+| Bound | Value | What happens past it |
+|---|---|---|
+| Request line and headers, time to send | 10 s, fixed, over HTTP/1.1. Go's HTTP/2 server applies no header timeout: over h2c, a first request whose headers never end opens no stream, so the idle bound closes its connection; on a connection that already carries a stream, nothing bounds an unfinished header block until that stream ends | the connection is closed (over h2c, `GOAWAY` at the bound and the connection a second later) |
+| Request line and headers, size | 64 KiB, fixed | `431 Request Header Fields Too Large` |
+| A keep-alive connection with no request in flight | `ORK_HTTP_IDLE_TIMEOUT`, 15 min | the connection is closed |
+| One Connect request message, as sent and decompressed | `ORK_REQUEST_MAX_BYTES`: unset, 1 MiB + 4 KiB × `engine.orkflow_max_tasks`, 17,432,576 bytes at the default 4,000 | `resource_exhausted` (HTTP `429` on the Connect protocol) |
+| One Connect request's body, in all | twice the read cap | the engine stops reading, answers `resource_exhausted`, and closes the connection (HTTP/1.1) or resets the stream (h2c) |
+| How long a request's body takes to arrive, or a client takes to read an answer | none | — |
+| A plain-HTTP route's body (`/v1/…`) | the route's own: 1 MiB for webhooks and trigger invoke, a run's `values_max_bytes` for an await's completion, 4 KiB for its rejection | the route's own refusal |
+
+- **Streams are never cut.** There is no whole-request read deadline and no
+  write deadline: either would end a run's event stream, a task's live log or
+  a WebSocket mid-way, since each stays open as long as its run or task does.
+  A connection with a stream in flight is never idle. The price is the last
+  row of the table: a client that sends a body slowly, or reads an answer
+  slowly, holds its connection as long as it keeps going. Bound that at the
+  proxy or gateway in front, which sees the client (nginx's
+  `client_body_timeout` and `send_timeout`, Envoy's stream idle timeout), and
+  bound how many connections one client may open there too.
+- **A refused request is answered, not dropped.** The engine reads the rest
+  of an oversized Connect body away, without holding it, before it answers,
+  so the client gets a `resource_exhausted` error naming the cap
+  (`message size N is larger than configured max M`), and the connection
+  goes on serving. The cap bounds what the engine holds in memory: a
+  gzip-compressed message stops inflating at the cap, and plain bytes past
+  it are read and dropped only up to twice the cap. No request carries more
+  than one message, so a body past that is never legitimate: the engine
+  stops reading it, answers, and closes the connection (HTTP/1.1) or resets
+  the stream (h2c), so a body that never ends cannot hold either.
+- **The read cap scales with the task ceiling.** It is a bound on a
+  request, never on how large an Orkflow may be, so it follows
+  `engine.orkflow_max_tasks`: 1 MiB, plus 4 KiB a task. The heaviest task
+  measured (a comment, needs, retry, resources, environment and an inline
+  script) adds about 920 bytes to an apply, so an apply at the ceiling
+  whose tasks average four times that fits, in either encoding: at the
+  default 4,000 tasks, 3.8 MB as JSON against a cap of 17.4 MB. The 1 MiB
+  holds a run's input at its own 256 KiB bound, and the plan of an
+  automation document of a thousand schedules and a thousand triggers
+  (0.5 MB) with half again to spare. Raising or lowering the ceiling moves
+  the cap with it. `ORK_REQUEST_MAX_BYTES` set under that need is refused at
+  boot, naming both settings; set it above the need for an automation
+  document of thousands of objects, or for Orkflows whose tasks average more
+  than 4 KiB, up to 1 GiB. A ceiling that needs more than 1 GiB (above about
+  262,000 tasks) gets what it needs, warned at boot, and may be given up to
+  twice that.
+  The engine holds one such message in memory per request.
+- **Behind a proxy.** 64 KiB of headers is above what nginx (32 KiB) and
+  Envoy (60 KiB) forward by default. Set `ORK_HTTP_IDLE_TIMEOUT` above the
+  backend keep-alive timeout of a load balancer in front, so the balancer
+  always closes an idle connection first: 15 minutes is above the common ones
+  (60 s on most, 610 s on Google Cloud's).
+
+The admin listener (`ORK_ADMIN_ADDR`) has the same kinds of bound at its own
+sizes: 5 s for the request line and headers, 64 KiB of them, and 2 minutes
+idle, with no read or write deadline, so a CPU profile taken over
+`/debug/pprof/profile?seconds=N` is never cut (`internal/telemetry/admin.go`).
+It answers the same `Host`s the API listener does by default — an address,
+`localhost` and the names under it, a dotless name, and the host
+`ORK_ADMIN_ADDR` names — and refuses any other `403`, so a page that
+rebinds a public name to it cannot read `/metrics` or a profile. A scraper
+that dials it by a name with a dot needs that name in
+`ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`), on both
+binaries: a Prometheus static target such as `host.docker.internal`, as the
+observability profile's is (`deploy/observability/README.md`), or a
+Service name. A scraper that dials pod addresses, as Kubernetes service
+discovery does, and a probe of `/healthz` or `/readyz` by address need
+nothing. The setting is the admin listener's own, so a name the API is
+reached by is not answered here, and the other way round.
 
 ### Running M Orker pools
 
@@ -488,6 +617,9 @@ then the variable it becomes.
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
 | `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API, WebSocket bridge, plain-HTTP routes and the web UI at `/` (§ "The web UI") |
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` (space around an entry and empty entries are ignored). Empty admits the engine's own origin only, which is all the UI it serves needs; list a page served from another origin, or the browser's origin behind a proxy that rewrites `Host` |
+| `engine.http_idle_timeout` | `ORK_HTTP_IDLE_TIMEOUT` | `15m` | `ork` | how long a keep-alive connection to the API listener may sit with no request in flight before the engine closes it; at least `1s`, refused at boot otherwise. Set it above the backend keep-alive timeout of a load balancer in front, so the balancer always closes first. A stream in flight is never idle (§ "The API listener's bounds") |
+| `engine.request_max_bytes` | `ORK_REQUEST_MAX_BYTES` | *(derived)* | `ork` | the largest Connect request message the API reads, in bytes, both as sent and once decompressed. Unset derives 1 MiB + 4 KiB × `engine.orkflow_max_tasks` (17,432,576 at the default 4000), so it rises and falls with the task ceiling and an apply at that ceiling always fits. A value under that derivation is refused at boot naming both settings, and so is one over 1 GiB (over twice the derivation, when that is more than 1 GiB, which the boot warns of). A larger request is refused `resource_exhausted`. Raise it for an automation document of thousands of objects, or for Orkflows whose tasks average more than 4 KiB (§ "The API listener's bounds") |
+| `engine.allowed_hosts` | `ORK_ALLOWED_HOSTS` | *(empty)* | `ork` | comma-separated names the API listener answers to in a request's `Host` header, besides the ones it always admits: an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_HTTP_ADDR` names. An entry is a name (`orkstack.example.com`), `*.suffix` for every name under a suffix of two labels or more, or `*` for any `Host`; space around an entry and empty entries are ignored, and an entry with a scheme, a port or a path, or a pattern over a top-level name (`*.com`), is refused at boot. Any other `Host` is refused `403`, which stops DNS rebinding through a public name. List every name with a dot the engine is reached by: a Kubernetes `svc.namespace` name or FQDN, a proxy that keeps the browser's `Host`, the name `orkctl` or a caller dials (§ "The web UI") |
 | `engine.ui.enabled` | `ORK_UI_ENABLED` | `true` | `ork` | serve the web UI at `/` on the API listener, beside the Connect API and the WebSocket bridge; `false` leaves the listener the API alone (§ "The web UI") |
 | `engine.ui.dir` | `ORK_UI_DIR` | *(empty: the build compiled into `ork`)* | `ork` | serve the UI build in this directory (`ui/build`, written by `cd ui && bun run build`) instead of the one compiled into `ork`; refused at boot if it holds no `index.html`, or if `ORK_UI_ENABLED=false` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
@@ -530,6 +662,7 @@ then the variable it becomes.
 | `telemetry.log_format` | `ORK_LOG_FORMAT` | `text` | both | process log encoding: `text` or `json` |
 | `telemetry.log_level` | `ORK_LOG_LEVEL` | `info` | both | minimum process log level: `debug`, `info`, `warn`, `error` |
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | *(empty = no listener)* | both | serves `/healthz`, `/readyz`, `/metrics` (only with the `prometheus` metrics exporter) and `/debug/pprof/` (only with `ORK_PPROF_ENABLED`). Never the API port — see §7 |
+| `telemetry.admin_allowed_hosts` | `ORK_ADMIN_ALLOWED_HOSTS` | *(empty)* | both | comma-separated names the admin listener answers to in a request's `Host` header, besides the ones every OrkStack listener admits: an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_ADMIN_ADDR` names. The grammar is `engine.allowed_hosts`'s, and an entry it refuses stops the boot of either binary. Any other `Host` is refused `403`, so a page that rebinds a public name to the listener cannot read `/metrics` or a profile. List the name a scraper dials when it has a dot: a Prometheus static target such as `host.docker.internal`, or a Service name (§ "The API listener's bounds") |
 | `telemetry.pprof_enabled` | `ORK_PPROF_ENABLED` | `false` | both | mounts `net/http/pprof` on the admin listener. Off by default: an Orker's heap holds resolved secret bytes |
 | `telemetry.high_cardinality` | `ORK_TELEMETRY_HIGH_CARDINALITY` | `false` | both | adds `ork.run_id`/`ork.task_id`/`ork.orkflow.name`/`ork.orkflow.version` labels to `ork_*` metrics — see §7, "High-cardinality labels" |
 | `orker.task_log_export` | `ORK_ORKER_TASK_LOG_EXPORT` | `false` | `orker` | exports every task stdout/stderr line as an OTel log record. Requires `OTEL_LOGS_EXPORTER=otlp` — see §7, "Task logs" |
@@ -3630,6 +3763,19 @@ that an Orker's heap holds resolved secret bytes. Suggested addresses for a
 single-host deployment: `:9464` for `ork`, `:9465` for `orker`, so one host can
 run both without a collision.
 
+**The admin listener answers only names it knows.** It applies the API
+listener's `Host` rule (§ "The API listener's bounds") under its own setting:
+with nothing set it admits an IP address, `localhost` and every name under
+it, a name without a dot, and the host `ORK_ADMIN_ADDR` names, and refuses
+any other `Host` with `403`, logging `request refused: Host not allowed` with
+`listener="admin listener"`. A scraper that dials a name with a dot — a
+Prometheus static target such as `host.docker.internal`, a Kubernetes Service
+FQDN such as `ork-admin.orkstack.svc.cluster.local` — is refused until that
+name is listed in `ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`)
+on the binary it scrapes. A deployment upgrading from 0.1.0 that scrapes by
+such a name sets it before the upgrade. A scraper that dials an IP address,
+such as Kubernetes pod discovery, needs nothing.
+
 ### Recipes
 
 Point `OTEL_EXPORTER_OTLP_ENDPOINT` (and, where noted, the per-signal
@@ -3678,6 +3824,8 @@ telemetry:
   admin_addr:
     ork: ":9464"
     orker: ":9465"
+  admin_allowed_hosts:
+    - host.docker.internal   # the name the profile's Prometheus scrapes by
   exporters:
     logs: otlp
     metrics:

@@ -1503,6 +1503,7 @@ internal/docscheck/    Documentation drift checks (test-only)
 internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
 internal/dist/         Release artifacts: binaries, archives, checksums, release guards; the quickstart's guards
 internal/healthcheck/  The `--healthcheck` probe of ork and orker
+internal/hostpolicy/   The Host allowlist every listener applies (API and admin)
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing
@@ -1575,7 +1576,7 @@ Agent ownership is split as follows:
 - coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, `.github/`,
   the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`,
   `internal/listfilter` and `internal/enumname` (engine and CLI agents share
-  both), `internal/webui` (UI and engine agents share it), and this file.
+  both), `internal/hostpolicy` (the API and admin listeners share it), `internal/webui` (UI and engine agents share it), and this file.
 
 Use Conventional Commits such as `feat(engine): ...`, `fix(orker): ...`,
 `test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. Keep commits scoped and

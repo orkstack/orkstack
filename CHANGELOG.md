@@ -20,6 +20,29 @@ word for word.
   every Orker of a pool shares, and the order in which to change one with runs
   in flight — widen every Orker before any task needs more, narrow only once no
   run does.
+- `SECURITY.md`: report a vulnerability privately through the repository's
+  "Report a vulnerability" form, never in a public issue.
+- The API listener bounds what a client may make it hold. It allows 10 s to
+  send a request's headers over HTTP/1.1 and 64 KiB of them (`431` above
+  that), and closes a keep-alive connection idle for `ORK_HTTP_IDLE_TIMEOUT`
+  (15 minutes). It refuses a Connect request message over
+  `ORK_REQUEST_MAX_BYTES` with `resource_exhausted`, as sent and once
+  decompressed, holding nothing past the cap, and reads a body no further
+  than twice the cap before it closes the connection (or, over h2c, resets
+  the stream). The cap follows the
+  task ceiling: unset, it is 1 MiB plus 4 KiB a task of
+  `engine.orkflow_max_tasks` (17,432,576 bytes at the default 4,000), so it
+  never limits how large an Orkflow may be, and a value under that is
+  refused at boot naming both settings. The admin listener has the same
+  kinds of bound. No deadline cuts a run's event stream, a live log or a
+  WebSocket, so a slow body or a slow reader is the proxy's to bound. See
+  DEPLOY.md, "The API listener's bounds".
+- `ORK_ALLOWED_HOSTS` (`engine.allowed_hosts`): names, `*.suffix` patterns
+  of two labels or more, or `*`, that the API listener answers to in a
+  request's `Host`, besides the names it always admits. A pattern over a
+  top-level name (`*.com`) is refused at boot.
+- `ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`): the same for
+  the admin listener, on both binaries.
 
 ### Changed
 
@@ -63,6 +86,32 @@ word for word.
   `ORK_S3_SECRET_KEY` and a variable the floor does not list are refused. It
   makes the `orkstack-task-secrets` Secret in its own namespace, and leaves a
   fifth Orkflow, `k8s-orker-secrets`.
+- **BREAKING**: the API listener refuses with `403` a request whose `Host` it
+  does not answer to, which stops DNS rebinding through a public name. With
+  nothing set it admits an IP address, `localhost` and every name under it,
+  a name without a dot (such as the quickstart's `ork`, or a Kubernetes
+  Service from its own namespace), and the host `ORK_HTTP_ADDR` names. Set
+  `ORK_ALLOWED_HOSTS` to every name with a dot the engine is reached by:
+  - a Kubernetes name such as `ork.orkstack` or
+    `ork.orkstack.svc.cluster.local`, or any FQDN;
+  - the browser's name, behind a proxy that keeps the browser's `Host`;
+  - the name `orkctl`, `curl` or a trigger caller dials.
+
+  See DEPLOY.md, "The web UI" and "The API listener's bounds".
+- **BREAKING**: the admin listener (`ORK_ADMIN_ADDR`, on `ork` and `orker`)
+  applies the same rule, so a scraper that reads `/metrics` or a profile by a
+  name with a dot is refused `403` until that name is listed in
+  `ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`): a Prometheus
+  static target such as `host.docker.internal` (the observability profile's,
+  which `make up` and `deploy/orkstack.example.yaml` now list), or a
+  Kubernetes Service FQDN. A scraper that dials an IP address needs nothing.
+  See DEPLOY.md, "Telemetry".
+- The web UI's page is sent under a strict content security policy. The UI's
+  build writes it, and the engine sends it as a header. Scripts run only
+  from the page's own origin, and inline ones only when the policy names
+  their hash. No plugin and no `<base>` is allowed. `eval` is allowed only
+  because the YAML editor's schema checks need it. Every other UI response
+  forbids everything.
 
 ### Fixed
 

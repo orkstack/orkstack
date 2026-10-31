@@ -101,6 +101,7 @@ orkctl orker list
 - `network: none` and `network: default` both work. The default network reaches what the pod reaches, cluster Services included. If the cluster routes `172.17.0.0/16`, give the engine's bridge a free range with `--bip`, as [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes) describes.
 - Drain an Orker before you delete its pod: `orkctl orker drain <orker-id>`. Deleting a pod cancels its in-flight work with `SIGTERM`. A task of a deleted pod ends `ORKER_HEARTBEAT_TIMEOUT`, unless its `retry:` runs it again on another Orker.
 - Docker's rootless engine image (`docker:dind-rootless`) is not supported, because it applies none of the container limits.
+- `ork` answers a `Host` with a dot only when it is listed. If you reach it as `ork.<namespace>`, by its full Service name or through an Ingress host, set `ORK_ALLOWED_HOSTS` to that name on the engine. A NodePort, a port-forward and the Service name from its own namespace work as they are.
 
 CI runs the same check on a kind cluster, both shapes, on every change to what the bases run and every day. See [`.github/workflows/kind-orker.yml`](https://github.com/orkstack/orkstack/blob/main/.github/workflows/kind-orker.yml) and [`scripts/kind-orker.sh`](https://github.com/orkstack/orkstack/blob/main/scripts/kind-orker.sh).
 
@@ -109,6 +110,7 @@ CI runs the same check on a kind cluster, both shapes, on every change to what t
 - [DEPLOY.md, "Orkers on Kubernetes"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): the full reference, with sizing, the RuntimeClass and the proof
 - [DEPLOY.md, "Every Orker of a pool has the same settings"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings): the settings a pool's Orkers share, and how to change one with runs in flight
 - [DEPLOY.md, "Secrets on a shared pool"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#secrets-on-a-shared-pool): the secret floor, and how it combines with a namespace's own list
+- [DEPLOY.md, "The web UI"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-web-ui): the names the engine answers to, and `ORK_ALLOWED_HOSTS`
 - [SECURITY_MODEL.md, "The Orker's own access to the host"](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#the-orkers-own-access-to-the-host): how much each shape trusts its engine
 - [PROOFS.md, "5. The CI job graph"](https://github.com/orkstack/orkstack/blob/main/docs/PROOFS.md#5-the-ci-job-graph): where the kind check runs, beside the proof tiers
 - Next: [Deploy OrkStack](/docs/how-to/deploy/), [Choose where tasks run](/docs/how-to/pools-and-pins/)

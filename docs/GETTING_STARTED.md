@@ -68,9 +68,11 @@ controls the machine, so read [SECURITY_MODEL.md](./SECURITY_MODEL.md) before
 running this anywhere but your own machine.
 
 Listening on loopback keeps other machines out, but it is not a login. Any
-program on this machine can reach the API and start a run, and so can a web
-page you open, by DNS rebinding. Stop the stack with `docker compose down`
-when you are done with it. The object store's keys in the compose file
+program on this machine can reach the API and start a run. A web page you
+open cannot, by DNS rebinding through a name of its own: the engine answers
+only `localhost`, an address and a few local names, and refuses any other
+`Host` ([DEPLOY.md](./DEPLOY.md), "The web UI"). Stop the stack with
+`docker compose down` when you are done with it. The object store's keys in the compose file
 (`orkstack` / `orkstack-secret`) are placeholders, and only the stack's own
 services can reach the store.
 
