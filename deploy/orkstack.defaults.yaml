@@ -46,6 +46,9 @@ storage:
 engine:
   http_addr: :8080  # ork
   ws_allowed_origins: []  # ork
+  http_idle_timeout: 15m  # ork
+  request_max_bytes: 16777216  # 16 MiB; ork
+  allowed_hosts: []  # ork; an IP address, localhost and *.localhost, a name without a dot, and the host ORK_HTTP_ADDR names are always admitted
   ui:
     enabled: true  # ork
     dir: ""  # ork; the build compiled into ork

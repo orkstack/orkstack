@@ -1,6 +1,7 @@
 package webui
 
 import (
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -75,6 +76,46 @@ func FuzzHandlerPath(f *testing.F) {
 		}
 		if Reserved(path.Clean("/"+p)) && rec.Code != http.StatusNotFound {
 			t.Fatalf("GET %q is reserved but answered %d", p, rec.Code)
+		}
+	})
+}
+
+// FuzzPagePolicy: a page the engine serves from ORK_UI_DIR is a file OrkStack
+// did not write. Whatever it holds, its policy opens with frame-ancestors
+// 'none', is one line of printable ASCII a header can carry, and is either
+// the default or exactly the policy the page names, unescaped.
+func FuzzPagePolicy(f *testing.F) {
+	for _, seed := range []string{
+		"", "<!doctype html>", metaPolicyOpen, metaPolicyOpen + `"`,
+		metaPolicyOpen + `script-src &#39;self&#39; &#39;sha256-AAAA&#39;">`,
+		metaPolicyOpen + "script-src 'self'\r\nX-Injected: 1\">",
+		metaPolicyOpen + "script-src 'self' é\">", metaPolicyOpen + "  \">",
+		`<meta http-equiv="content-security-policy-report-only" content="script-src *">`,
+		metaPolicyOpen + "a\">" + metaPolicyOpen + "b\">", metaPolicyOpen + "&#10;\">",
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, page []byte) {
+		got := pagePolicy(page)
+		if !strings.HasPrefix(got, "frame-ancestors 'none'; ") {
+			t.Fatalf("pagePolicy(%q) = %q, which does not open with frame-ancestors 'none'", page, got)
+		}
+		for i := range len(got) {
+			if got[i] < 0x20 || got[i] > 0x7e {
+				t.Fatalf("pagePolicy(%q) = %q, which holds byte %#x", page, got, got[i])
+			}
+		}
+		if got == DefaultPagePolicy {
+			return
+		}
+		named := strings.TrimPrefix(got, "frame-ancestors 'none'; ")
+		start := strings.Index(string(page), metaPolicyOpen)
+		if start < 0 {
+			t.Fatalf("pagePolicy(%q) = %q, but the page names no policy", page, got)
+		}
+		raw, _, _ := strings.Cut(string(page[start+len(metaPolicyOpen):]), `"`)
+		if strings.TrimSpace(html.UnescapeString(raw)) != named {
+			t.Fatalf("pagePolicy(%q) = %q, not the policy the page names (%q)", page, got, raw)
 		}
 	})
 }

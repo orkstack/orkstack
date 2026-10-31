@@ -21,9 +21,32 @@ const (
 	PprofPath   = "/debug/pprof/"
 )
 
-// adminReadHeaderTimeout bounds a slow client on the admin port; nothing
-// served here needs more than a request line.
-const adminReadHeaderTimeout = 5 * time.Second
+// The admin listener's bounds, the API listener's kinds (internal/api
+// NewServerWith) at this port's own sizes. Nothing served here needs more
+// than a request line, and no handler reads a body into memory.
+const (
+	// adminReadHeaderTimeout bounds a slow client on the admin port.
+	adminReadHeaderTimeout = 5 * time.Second
+	// adminIdleTimeout closes a keep-alive connection a scraper or a probe
+	// left idle; the next scrape opens another.
+	adminIdleTimeout = 2 * time.Minute
+	// adminMaxHeaderBytes bounds a request's line and headers, as on the API
+	// listener; one over it is 431.
+	adminMaxHeaderBytes = 64 << 10
+)
+
+// newAdminServer serves handler within the admin listener's bounds. Like
+// the API listener it sets no ReadTimeout and no WriteTimeout: a CPU profile
+// or a trace is written only once the seconds it was asked for have passed,
+// and either deadline would cut it.
+func newAdminServer(handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: adminReadHeaderTimeout,
+		IdleTimeout:       adminIdleTimeout,
+		MaxHeaderBytes:    adminMaxHeaderBytes,
+	}
+}
 
 // NewAdminMux serves the operational endpoints. It is a SEPARATE listener
 // from the API on purpose: /metrics and /debug/pprof describe the process, not
@@ -89,10 +112,7 @@ func StartAdmin(cfg Config, providers *Providers, logger *slog.Logger) (addr str
 	if err != nil {
 		return "", nil, fmt.Errorf("%s=%q: %w", AdminAddrVar, cfg.AdminAddr, err)
 	}
-	server := &http.Server{
-		Handler:           NewAdminMux(providers, cfg),
-		ReadHeaderTimeout: adminReadHeaderTimeout,
-	}
+	server := newAdminServer(NewAdminMux(providers, cfg))
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("admin listener stopped", "addr", cfg.AdminAddr, "error", err)

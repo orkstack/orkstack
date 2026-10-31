@@ -61,6 +61,10 @@ type config struct {
 	// listener serves the web UI. uiErr is a refused pair, reported at boot.
 	ui    uiConfig
 	uiErr error
+	// listener is the API listener's own settings (listenerFromEnv), and
+	// listenerErr a refused one, reported at boot.
+	listener    listenerConfig
+	listenerErr error
 	// pool is the OrkStack name for where this engine dispatches a task that
 	// names no pool of its own; orkerQueue is the raw execution channel that
 	// pool resolves to. See task.ResolvePoolBinding for the five ways the two
@@ -211,6 +215,7 @@ func loadConfig() config {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
 	cfg.ui, cfg.uiErr = uiFromEnv()
+	cfg.listener, cfg.listenerErr = listenerFromEnv()
 	return cfg
 }
 
@@ -953,6 +958,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if cfg.uiErr != nil {
 		return cfg.uiErr
 	}
+	if cfg.listenerErr != nil {
+		return cfg.listenerErr
+	}
 	ui, uiSource, err := uiHandler(cfg.ui)
 	if err != nil {
 		return err
@@ -1468,10 +1476,19 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"event_worker", "unversioned")
 
 	mux := api.NewMux(svc, api.MuxOptions{
-		AllowedOrigins: cfg.allowedOrigins,
-		UI:             ui,
+		AllowedOrigins:  cfg.allowedOrigins,
+		RequestMaxBytes: cfg.listener.requestMaxBytes,
+		UI:              ui,
 	})
-	server := api.NewServer(cfg.httpAddr, apiHandler(tcfg, sinks, mux))
+	// The Host allowlist is outermost: a request it refuses reaches no route,
+	// the UI and the sockets included, and is not traced.
+	server := api.NewServerWith(cfg.httpAddr, cfg.listener.hosts.Guard(apiHandler(tcfg, sinks, mux), logger),
+		api.ServerOptions{IdleTimeout: cfg.listener.idleTimeout})
+	logger.Info("API listener",
+		"addr", cfg.httpAddr,
+		"idle_timeout", cfg.listener.idleTimeout,
+		"request_max_bytes", cfg.listener.requestMaxBytes,
+		"allowed_hosts", cfg.listener.allowedHosts)
 	cancelServerHandlers := installServerShutdownContext(server)
 	defer cancelServerHandlers()
 

@@ -253,8 +253,8 @@ func TestHandler_RevalidatesWithAnETag(t *testing.T) {
 func TestHandler_PageRefusesFraming(t *testing.T) {
 	h := webui.Handler(build())
 	res := get(t, h, "GET", "/runs", nil)
-	if got := res.Header.Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
-		t.Errorf("Content-Security-Policy %q, want frame-ancestors 'none'", got)
+	if got := res.Header.Get("Content-Security-Policy"); !strings.HasPrefix(got, "frame-ancestors 'none'; ") {
+		t.Errorf("Content-Security-Policy %q, want one that opens with frame-ancestors 'none'", got)
 	}
 	if got := res.Header.Get("X-Frame-Options"); got != "DENY" {
 		t.Errorf("X-Frame-Options %q, want DENY", got)
@@ -459,5 +459,79 @@ func TestDir_FollowsARebuild(t *testing.T) {
 	write("second build")
 	if res := get(t, h, "GET", "/runs", nil); res.StatusCode != http.StatusOK || body(t, res) != "second build" {
 		t.Errorf("after a rebuild: status %d, want the second build", res.StatusCode)
+	}
+}
+
+// sveltePolicy is the policy sveltePage names, unescaped.
+const sveltePolicy = "default-src 'self'; script-src 'self' 'sha256-AAAA' 'sha256-BBBB'; style-src 'self' 'unsafe-inline'"
+
+// sveltePage is index.html as SvelteKit writes it with kit.csp in hash mode:
+// app.html's inline script, then the policy as a <meta http-equiv> naming the
+// hash of each inline script, then SvelteKit's own boot script.
+const sveltePage = `<!doctype html><html><head><script>theme()</script>` +
+	`<meta http-equiv="content-security-policy" content="default-src &#39;self&#39;; script-src &#39;self&#39; &#39;sha256-AAAA&#39; &#39;sha256-BBBB&#39;; style-src &#39;self&#39; &#39;unsafe-inline&#39;">` +
+	`</head><body><script>boot()</script></body></html>`
+
+// The page's policy is the one the UI build wrote into it, its script hashes
+// included, sent as a header with frame-ancestors, which a <meta> cannot
+// carry. It is read from the page itself, so a precompressed twin is sent
+// under the same policy as the plain file.
+func TestHandler_SendsThePolicyTheBuildWroteIntoThePage(t *testing.T) {
+	h := webui.Handler(fstest.MapFS{
+		"index.html":    {Data: []byte(sveltePage)},
+		"index.html.br": {Data: []byte("BR(index)")},
+	})
+	want := "frame-ancestors 'none'; " + sveltePolicy
+	for _, header := range []map[string]string{nil, {"Accept-Encoding": "br"}} {
+		res := get(t, h, "GET", "/runs/ork-1", header)
+		if got := res.Header.Get("Content-Security-Policy"); got != want {
+			t.Errorf("GET /runs/ork-1 %v: Content-Security-Policy %q, want %q", header, got, want)
+		}
+	}
+	if got := get(t, h, "HEAD", "/", nil).Header.Get("Content-Security-Policy"); got != want {
+		t.Errorf("HEAD /: Content-Security-Policy %q, want %q", got, want)
+	}
+}
+
+// A page that names no policy of its own — the placeholder, a build made
+// without kit.csp — runs no inline script: it gets the strict default.
+func TestHandler_APageWithoutAPolicyRunsNoInlineScript(t *testing.T) {
+	for name, page := range map[string]string{
+		"no meta":             index,
+		"an unclosed meta":    `<meta http-equiv="content-security-policy" content="script-src 'unsafe-inline'`,
+		"a control character": "<meta http-equiv=\"content-security-policy\" content=\"script-src 'self'\nX-Injected: 1\">",
+		"another policy name": `<meta http-equiv="content-security-policy-report-only" content="script-src *">`,
+	} {
+		h := webui.Handler(fstest.MapFS{"index.html": {Data: []byte(page)}})
+		got := get(t, h, "GET", "/", nil).Header.Get("Content-Security-Policy")
+		if got != webui.DefaultPagePolicy {
+			t.Errorf("%s: Content-Security-Policy %q, want the default %q", name, got, webui.DefaultPagePolicy)
+		}
+	}
+	if strings.Contains(webui.DefaultPagePolicy, "unsafe-inline' 'sha") || !strings.Contains(webui.DefaultPagePolicy, "script-src 'self';") {
+		t.Errorf("the default %q lets an inline script run", webui.DefaultPagePolicy)
+	}
+	placeholder := get(t, webui.Handler(webui.Placeholder()), "GET", "/", nil)
+	if got := placeholder.Header.Get("Content-Security-Policy"); got != webui.DefaultPagePolicy {
+		t.Errorf("the placeholder: Content-Security-Policy %q, want the default", got)
+	}
+}
+
+// Every other response the UI sends, an error included, forbids everything,
+// so a file of the build opened as a document (an SVG, say) runs nothing.
+func TestHandler_EveryOtherResponseForbidsEverything(t *testing.T) {
+	h := webui.Handler(build())
+	for _, tc := range []struct{ method, path string }{
+		{"GET", "/_app/immutable/entry/start.abc.js"},
+		{"GET", "/_app/version.json"},
+		{"GET", "/apply/examples/hello.ork.yaml"},
+		{"GET", "/_app/immutable/entry/start.old.js"},
+		{"GET", "/orkstack.v1.RunService/GetRun"},
+		{"POST", "/runs"},
+	} {
+		got := get(t, h, tc.method, tc.path, nil).Header.Get("Content-Security-Policy")
+		if got != webui.FilePolicy {
+			t.Errorf("%s %s: Content-Security-Policy %q, want %q", tc.method, tc.path, got, webui.FilePolicy)
+		}
 	}
 }

@@ -1,7 +1,10 @@
 package api
 
 import (
+	"compress/gzip"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -32,6 +35,11 @@ type MuxOptions struct {
 	// down can quietly re-enable an optimisation an operator turned off.
 	StatsCacheTTL time.Duration
 
+	// RequestMaxBytes bounds one Connect request message, in bytes, both as
+	// sent and once decompressed (ORK_REQUEST_MAX_BYTES). Zero or less takes
+	// DefaultRequestMaxBytes: there is no unbounded setting.
+	RequestMaxBytes int64
+
 	// UI, when set, answers every path no API route takes: the web UI
 	// (internal/webui), mounted at / on this same listener so the browser
 	// reaches the API and the sockets on the page's own origin. Nil leaves
@@ -55,7 +63,21 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	// every unary call, records the audited writes, and passes everything else
 	// through untouched (audit.go). HandlerOptions itself is unchanged, so its
 	// other callers keep exactly the codec they had.
-	handlerOptions := append(HandlerOptions(), connect.WithInterceptors(svc.auditInterceptor()))
+	//
+	// Every handler also shares one read cap. A message over it is refused
+	// resource_exhausted before any handler or interceptor runs, and Connect
+	// reads the rest of the body away first, so the client gets that answer
+	// and its connection stays usable rather than being dropped mid-send.
+	requestMaxBytes := opts.RequestMaxBytes
+	if requestMaxBytes <= 0 {
+		requestMaxBytes = DefaultRequestMaxBytes
+	}
+	handlerOptions := append(HandlerOptions(),
+		connect.WithInterceptors(svc.auditInterceptor()),
+		connect.WithReadMaxBytes(int(requestMaxBytes)),
+		connect.WithCompression("gzip",
+			func() connect.Decompressor { return &boundedGzip{limit: requestMaxBytes + 1} },
+			func() connect.Compressor { return gzip.NewWriter(io.Discard) }))
 
 	orkflowPath, orkflowHandler := orkstackv1connect.NewOrkflowServiceHandler(svc, handlerOptions...)
 	mux.Handle(orkflowPath, orkflowHandler)
@@ -153,6 +175,44 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	return serveMux
 }
 
+// boundedGzip is Connect's gzip decompressor with a ceiling on what one
+// message may inflate to: limit bytes, past which a Read fails. Connect
+// refuses a message that inflates past the read cap either way, but on its
+// own it inflates the whole message first to name its size, so a few
+// kilobytes of gzip could cost seconds of work before the refusal; this
+// stops at the cap, and the refusal is still resource_exhausted.
+type boundedGzip struct {
+	reader      gzip.Reader
+	limit, read int64
+}
+
+var errInflatedPastCap = errors.New("the message inflates past the read cap")
+
+func (d *boundedGzip) Read(p []byte) (int, error) {
+	if d.read >= d.limit {
+		// At the ceiling, a message that ends here ends: only a byte more
+		// is past it.
+		var one [1]byte
+		if _, err := io.ReadFull(&d.reader, one[:]); err != nil {
+			return 0, err
+		}
+		return 0, errInflatedPastCap
+	}
+	if rest := d.limit - d.read; int64(len(p)) > rest {
+		p = p[:rest]
+	}
+	n, err := d.reader.Read(p)
+	d.read += int64(n)
+	return n, err
+}
+
+func (d *boundedGzip) Reset(r io.Reader) error {
+	d.read = 0
+	return d.reader.Reset(r)
+}
+
+func (d *boundedGzip) Close() error { return d.reader.Close() }
+
 // reservedMux mounts API routes, each of which must be reserved from the UI.
 // It offers Handle alone, so no route reaches the mux around the check.
 type reservedMux struct{ serveMux *http.ServeMux }
@@ -164,18 +224,83 @@ func (m reservedMux) Handle(pattern string, handler http.Handler) {
 	m.serveMux.Handle(pattern, handler)
 }
 
-// NewServer returns an HTTP server serving both HTTP/1.1 and unencrypted
-// HTTP/2 (h2c), so connect-go, connect-web, and WebSocket clients share a port.
+// The API listener's bounds (docs/DEPLOY.md, "The API listener's bounds").
+// They bound what a client may make the engine wait for or hold, and never
+// how long an answer takes: a run's event stream, a task's live log and the
+// WebSocket bridge stay open as long as their run or task does.
+const (
+	// ReadHeaderTimeout bounds how long a client may take to send a
+	// request's line and headers, so a connection that opens and never
+	// finishes asking is closed rather than held.
+	ReadHeaderTimeout = 10 * time.Second
+
+	// MaxHeaderBytes bounds a request's line and headers together: 64 KiB,
+	// above what the common proxies forward by default (nginx 32 KiB, Envoy
+	// 60 KiB), so a request a gateway passes on is never refused here. One
+	// over it is 431.
+	MaxHeaderBytes = 64 << 10
+
+	// DefaultIdleTimeout is ORK_HTTP_IDLE_TIMEOUT's default: how long a
+	// keep-alive connection may sit with no request in flight. It is longer
+	// than the backend keep-alive of the common load balancers (60 s on most,
+	// 610 s on Google Cloud's), so the balancer closes an idle connection
+	// first and never sends a request down one the engine is closing.
+	DefaultIdleTimeout = 15 * time.Minute
+
+	// DefaultRequestMaxBytes is ORK_REQUEST_MAX_BYTES's default: the largest
+	// Connect request message the engine reads, 16 MiB. The largest
+	// legitimate requests measured are an apply of an Orkflow at the default
+	// task ceiling written heavily, about 920 bytes a task (3.8 MB as JSON),
+	// and the plan of an automation document of a thousand schedules and a
+	// thousand triggers (0.5 MB); the cap is four times the larger
+	// (TestDefaultRequestMaxBytes_IsFourTimesTheLargestMeasuredRequest).
+	DefaultRequestMaxBytes = 16 << 20
+
+	// MinRequestMaxBytes is the smallest ORK_REQUEST_MAX_BYTES the engine
+	// accepts: 1 MiB, the bound the plain-HTTP routes already read under,
+	// and room for a run's input at its own 256 KiB bound in either encoding.
+	MinRequestMaxBytes = 1 << 20
+)
+
+// ServerOptions tunes the API listener (NewServerWith). A zero field takes
+// its default.
+type ServerOptions struct {
+	// IdleTimeout is ORK_HTTP_IDLE_TIMEOUT; zero takes DefaultIdleTimeout.
+	IdleTimeout time.Duration
+}
+
+// NewServer is NewServerWith with every option at its default.
 func NewServer(addr string, handler http.Handler) *http.Server {
+	return NewServerWith(addr, handler, ServerOptions{})
+}
+
+// NewServerWith returns an HTTP server serving both HTTP/1.1 and unencrypted
+// HTTP/2 (h2c), so connect-go, connect-web, and WebSocket clients share a
+// port, within the listener's bounds.
+//
+// It sets no ReadTimeout and no WriteTimeout, deliberately. Either is a
+// deadline on the whole connection while a request is answered: a write
+// deadline cuts a stream once it passes, and over HTTP/1.1 a read deadline
+// cancels the request's context once it passes, ending a server stream the
+// same way. What a request may send is bounded by size instead (NewMux's
+// read cap, and the plain-HTTP routes' own).
+func NewServerWith(addr string, handler http.Handler, opts ServerOptions) *http.Server {
 	if addr == "" {
 		addr = DefaultHTTPAddr
+	}
+	idle := opts.IdleTimeout
+	if idle == 0 {
+		idle = DefaultIdleTimeout
 	}
 	protocols := new(http.Protocols)
 	protocols.SetHTTP1(true)
 	protocols.SetUnencryptedHTTP2(true)
 	return &http.Server{
-		Addr:      addr,
-		Handler:   handler,
-		Protocols: protocols,
+		Addr:              addr,
+		Handler:           handler,
+		Protocols:         protocols,
+		ReadHeaderTimeout: ReadHeaderTimeout,
+		IdleTimeout:       idle,
+		MaxHeaderBytes:    MaxHeaderBytes,
 	}
 }

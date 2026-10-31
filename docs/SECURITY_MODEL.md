@@ -413,11 +413,30 @@ its own writes (`internal/api/audit.go`). A record is written once to
   any origin (below). The bridge's default, with `ORK_WS_ALLOWED_ORIGINS` unset,
   admits a socket only from the engine's own origin, and that is all the UI
   needs; the setting is only for a page served from another origin. Every UI
-  response carries `X-Content-Type-Options: nosniff`, and the page refuses to be
-  framed (`Content-Security-Policy: frame-ancestors 'none'`,
-  `X-Frame-Options: DENY`), because it carries the operator's destructive
-  controls. The build holds no credential, and the engine serves only its files:
-  no listing, no dot file, nothing outside the build (a directory named by
+  response carries `X-Content-Type-Options: nosniff`.
+- **The page runs only the scripts its build names.** The page is sent under a
+  content security policy the UI's build writes into it (`ui/svelte.config.js`,
+  `kit.csp`) and the engine sends as a header (`internal/webui`,
+  `pagePolicy`): scripts, styles, fonts and connections from the page's own
+  origin only, and an inline script only when the policy names its SHA-256
+  hash: app.html's theme script and SvelteKit's boot script, and nothing a
+  page could have injected. There is no `'unsafe-inline'` for scripts, no
+  plugin (`object-src 'none'`), no `<base>` (`base-uri 'none'`), and forms
+  post only to the page's origin. Scripts allow `'unsafe-eval'`: the YAML
+  editor's schema checks compile their validators at run time (ajv,
+  `ui/src/lib/yaml/lint.ts`), from the generated schemas the build carries
+  and nothing a caller sends. Styles allow `'unsafe-inline'`, because Svelte
+  and the YAML editor style elements inline at run time; images allow
+  `data:`, which the editor draws its markers with.
+  The page refuses to be framed (`frame-ancestors 'none'`, which opens the
+  policy, and `X-Frame-Options: DENY`), because it carries the operator's
+  destructive controls. A page that names no policy, such as the placeholder,
+  is sent the same policy with no hash, so it runs no inline script; every
+  other UI response is sent `default-src 'none'; frame-ancestors 'none'`, so a
+  file of the build opened as a document runs nothing.
+- **The UI serves only its own build.** The build holds no credential, and the
+  engine serves only its files: no listing, no dot file, nothing outside the
+  build (a directory named by
   `ORK_UI_DIR` is opened so that a link leading out of it is never followed),
   and never a path the API owns. Serving the UI adds no authentication: the
   engine still authenticates no caller, a browser's calls are a caller's like
@@ -444,7 +463,44 @@ its own writes (`internal/api/audit.go`). A record is written once to
 
   Such a page cannot read a response either, since none grants it. This holds
   for a page on another origin only: a page that reaches the engine by DNS
-  rebinding has the engine's own origin (below).
+  rebinding has the engine's own origin, and the `Host` allowlist (below) is
+  what refuses it.
+- **The engine answers only its own names.** DNS rebinding is a page on a
+  domain its author controls whose name is then made to resolve to the
+  engine. Its requests carry the engine's own origin, so no origin check can
+  tell them from the UI's, but they carry the attacker's domain as their
+  `Host`. The API listener refuses, `403` before any route sees it, a request
+  whose `Host` it does not answer to (`internal/api/hosts.go`,
+  `HostPolicy`). With nothing set it answers an IP address, `localhost` and
+  every name under it, a name with no dot (written without a trailing one),
+  the host `ORK_HTTP_ADDR` names, and a request with no `Host`. A page's
+  author can make only a name registered in public DNS resolve where they
+  like, and every such name has a dot; a dotless name resolves only on the
+  local network. `ORK_ALLOWED_HOSTS` adds names, a `*.suffix` or `*` for any
+  `Host`; any `Host` with a dot that is not listed is refused. What this
+  does not stop: a page under a name the operator listed (a `*.suffix` admits
+  every name under it, so a subdomain someone else controls is admitted
+  too); anything once `*` is set; and an attacker who already controls name
+  resolution on the local network, who can answer for a dotless name. Behind
+  an authenticating gateway, the gateway's own check of the caller still
+  stands either way. The admin listener does not check `Host`: a page that
+  reached it by rebinding could read what it serves, `/debug/pprof/` too
+  when `ORK_PPROF_ENABLED=true`, so keep `ORK_ADMIN_ADDR` on a private
+  address ([DEPLOY.md](DEPLOY.md), "The web UI").
+- **The listeners bound what a client may make them hold in memory.** The
+  API listener closes an HTTP/1.1 connection that takes more than 10 s to
+  send a request's headers, and any connection idle longer than
+  `ORK_HTTP_IDLE_TIMEOUT`; it answers headers over 64 KiB with `431`; and it
+  refuses a Connect message over `ORK_REQUEST_MAX_BYTES` (16 MiB by default),
+  as sent or once decompressed, `resource_exhausted` before any handler runs,
+  holding none of what is past the cap and inflating gzip no further than it.
+  The plain-HTTP routes bound their own bodies. The admin listener has the
+  same kinds of bound. Neither sets a whole-request or write deadline, so a
+  run's event stream, a live log or a WebSocket is never cut, and so neither
+  bounds how long a body takes to arrive or an answer to be read: a slow
+  client holds its connection while it keeps going. That, and how many
+  connections a client may open, are for the proxy or gateway in front to
+  bound ([DEPLOY.md](DEPLOY.md), "The API listener's bounds").
 - **The admin listener is separate.** `ORK_ADMIN_ADDR` opens a listener only when it
   is set. It serves `/healthz` and `/readyz`, and `/metrics` when Prometheus is
   asked for. `/debug/pprof/` is mounted only when `ORK_PPROF_ENABLED=true`
@@ -455,11 +511,10 @@ its own writes (`internal/api/audit.go`). A record is written once to
   credential key for that connection (`internal/config/config.go`, `temporal.*`).
 - **Loopback is not an authentication boundary.** The quickstart publishes its
   ports on `127.0.0.1` only (`compose.yaml`). That keeps other machines out,
-  but any process on the machine reaches the API, and so can a web page by
-  DNS rebinding: the API checks neither the `Host` header nor a Connect
-  request's `Origin`, and the WebSocket bridge accepts an `Origin` whose host
-  equals the request's `Host` (`internal/api/ws.go`, `originAllowed`), which a
-  rebinding page satisfies. Any process on the machine can also push to the
+  but any process on the machine reaches the API. A web page can reach it only
+  under a `Host` the engine answers to: by DNS rebinding through a name with a
+  dot, never, since the `Host` allowlist (above) refuses such a name. Any
+  process on the machine can also push to the
   quickstart's image registry, which takes a push without a login: its
   catalog names the first-party activities by a tag there, and an apply pins
   whatever digest that tag names at that moment. A deployment anyone else can

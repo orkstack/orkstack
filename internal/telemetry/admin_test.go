@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -108,5 +109,51 @@ func TestStartAdminListens(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET %s%s = %d, want 200", addr, HealthzPath, resp.StatusCode)
+	}
+}
+
+// The admin listener has the API listener's bounds on what a client may make
+// it wait for or hold, and no whole-request or write deadline: a CPU profile
+// is written only once the seconds it was asked for have passed.
+func TestNewAdminServer_BoundsHeadersAndIdleConnectionsAndNothingElse(t *testing.T) {
+	server := newAdminServer(http.NotFoundHandler())
+	if server.ReadHeaderTimeout != adminReadHeaderTimeout || server.ReadHeaderTimeout <= 0 {
+		t.Errorf("ReadHeaderTimeout = %s, want %s", server.ReadHeaderTimeout, adminReadHeaderTimeout)
+	}
+	if server.IdleTimeout != adminIdleTimeout || server.IdleTimeout <= 0 {
+		t.Errorf("IdleTimeout = %s, want %s", server.IdleTimeout, adminIdleTimeout)
+	}
+	if server.MaxHeaderBytes != adminMaxHeaderBytes || server.MaxHeaderBytes <= 0 {
+		t.Errorf("MaxHeaderBytes = %d, want %d", server.MaxHeaderBytes, adminMaxHeaderBytes)
+	}
+	if server.ReadTimeout != 0 || server.WriteTimeout != 0 {
+		t.Errorf("ReadTimeout = %s, WriteTimeout = %s; want neither", server.ReadTimeout, server.WriteTimeout)
+	}
+}
+
+func TestStartAdmin_RefusesHeadersOverTheBound(t *testing.T) {
+	addr, stop, err := StartAdmin(Config{AdminAddr: "127.0.0.1:0"}, nil, slog.Default())
+	if err != nil {
+		t.Fatalf("StartAdmin: %v", err)
+	}
+	defer func() { _ = stop(context.Background()) }()
+	get := func(header string) int {
+		request, err := http.NewRequest(http.MethodGet, "http://"+addr+HealthzPath, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("X-Pad", header)
+		resp, err := http.DefaultClient.Do(request)
+		if err != nil {
+			t.Fatalf("GET %s: %v", HealthzPath, err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode
+	}
+	if code := get(strings.Repeat("a", 4<<10)); code != http.StatusOK {
+		t.Errorf("a 4 KiB header: %d, want 200", code)
+	}
+	if code := get(strings.Repeat("a", 80<<10)); code != http.StatusRequestHeaderFieldsTooLarge {
+		t.Errorf("an 80 KiB header: %d, want 431", code)
 	}
 }

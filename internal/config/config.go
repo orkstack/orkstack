@@ -130,6 +130,12 @@ var Schema = []Var{
 
 	{Path: "engine.http_addr", Env: "ORK_HTTP_ADDR", Binaries: usesOrk, Kind: KindString, Default: api.DefaultHTTPAddr},
 	{Path: "engine.ws_allowed_origins", Env: "ORK_WS_ALLOWED_ORIGINS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault},
+	// The API listener's two settings; its fixed bounds are internal/api
+	// constants (ReadHeaderTimeout, MaxHeaderBytes).
+	{Path: "engine.http_idle_timeout", Env: "ORK_HTTP_IDLE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultIdleTimeout)},
+	{Path: "engine.request_max_bytes", Env: "ORK_REQUEST_MAX_BYTES", Binaries: usesOrk, Kind: KindInt, Default: formatBytes(api.DefaultRequestMaxBytes)},
+	{Path: "engine.allowed_hosts", Env: "ORK_ALLOWED_HOSTS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault,
+		DerivedNote: "an IP address, localhost and *.localhost, a name without a dot, and the host ORK_HTTP_ADDR names are always admitted"},
 	{Path: "engine.ui.enabled", Env: "ORK_UI_ENABLED", Binaries: usesOrk, Kind: KindBool, Default: formatBool(api.DefaultUIEnabled)},
 	{Path: "engine.ui.dir", Env: "ORK_UI_DIR", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "the build compiled into ork"},
 	// ORK_IDEMPOTENCY_TTL's fallback is engine.DefaultClaimTTL, the same

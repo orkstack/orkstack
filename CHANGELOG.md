@@ -15,6 +15,39 @@ word for word.
 
 - `SECURITY.md`: report a vulnerability privately through the repository's
   "Report a vulnerability" form, never in a public issue.
+- The API listener bounds what a client may make it hold. It allows 10 s to
+  send a request's headers over HTTP/1.1 and 64 KiB of them (`431` above
+  that), and closes a keep-alive connection idle for `ORK_HTTP_IDLE_TIMEOUT`
+  (15 minutes). It refuses a Connect request message over
+  `ORK_REQUEST_MAX_BYTES` (16 MiB by default, as sent and once decompressed)
+  with `resource_exhausted`, holding nothing past the cap. The admin listener
+  has the same kinds of bound. No deadline cuts a run's event stream, a live
+  log or a WebSocket, so a slow body or a slow reader is the proxy's to
+  bound. See DEPLOY.md, "The API listener's bounds".
+- `ORK_ALLOWED_HOSTS` (`engine.allowed_hosts`): names, `*.suffix` patterns or
+  `*` that the API listener answers to in a request's `Host`, besides the
+  names it always admits.
+
+### Changed
+
+- **BREAKING**: the API listener refuses with `403` a request whose `Host` it
+  does not answer to, which stops DNS rebinding through a public name. With
+  nothing set it admits an IP address, `localhost` and every name under it,
+  a name without a dot (such as the quickstart's `ork`, or a Kubernetes
+  Service from its own namespace), and the host `ORK_HTTP_ADDR` names. Set
+  `ORK_ALLOWED_HOSTS` to every name with a dot the engine is reached by:
+  - a Kubernetes name such as `ork.orkstack` or
+    `ork.orkstack.svc.cluster.local`, or any FQDN;
+  - the browser's name, behind a proxy that keeps the browser's `Host`;
+  - the name `orkctl`, `curl` or a trigger caller dials.
+
+  See DEPLOY.md, "The web UI".
+- The web UI's page is sent under a strict content security policy. The UI's
+  build writes it, and the engine sends it as a header. Scripts run only
+  from the page's own origin, and inline ones only when the policy names
+  their hash. No plugin and no `<base>` is allowed. `eval` is allowed only
+  because the YAML editor's schema checks need it. Every other UI response
+  forbids everything.
 
 ## [0.1.0] - 2026-10-30
 
