@@ -260,7 +260,7 @@ reference.
   [Error reasons](./docs/REASONS.md) · [Changelog](./CHANGELOG.md)
 - **Contributing:** [Contributing](./CONTRIBUTING.md) ·
   [Engineering contract](./AGENTS.md) · [Proofs and CI](./docs/PROOFS.md) ·
-  [How OrkStack is proven](./docs/PROVEN.md) ·
+  [CI workflows](./docs/CI.md) · [How OrkStack is proven](./docs/PROVEN.md) ·
   [Replay fixtures](./internal/engine/testdata/history/README.md)
 
 ## Contributing

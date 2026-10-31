@@ -537,6 +537,16 @@
 							"source": "site/content/contributing.md"
 						}
 					]
+				},
+				{
+					"route": "docs/how-to/read-ci",
+					"title": "Read a red CI run",
+					"description": "Find out why a check is red, and whether to fix it or run one job again.",
+					"parts": [
+						{
+							"source": "site/content/how-to/read-ci.md"
+						}
+					]
 				}
 			]
 		}

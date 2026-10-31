@@ -16,6 +16,9 @@ word for word.
 - Each proof part that starts its own Temporal, and a local `make proof`,
   keeps that Temporal server's log as `temporal-server.log.gz` (its last
   16 MiB, compressed), so an error a test read from Temporal can be traced.
+- `docs/CI.md`: every CI workflow, its trigger, whether a merge waits for
+  it, how long it takes and what to do when it is red, with the site page
+  "Read a red CI run".
 
 ### Changed
 
