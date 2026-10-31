@@ -25,12 +25,12 @@
 # explicitly.
 FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS gomplate
 ARG TARGETARCH
-ARG GOMPLATE_VERSION=4.3.3
+ARG GOMPLATE_VERSION=5.3.1
 # Where the release asset is fetched; an air-gapped builder points it at a mirror.
 ARG GOMPLATE_BASE_URL=https://github.com/hairyhenderson/gomplate/releases/download
-# From checksums-v4.3.3_sha256.txt of the v4.3.3 GitHub release.
-ARG GOMPLATE_SHA256_AMD64=ca281666e86f2f09218c1653e1908f572c0e349e9de64cb4ea93ade9333f0596
-ARG GOMPLATE_SHA256_ARM64=25bd73720ff470cec0dfaa31ca2c436b30f86142db9af68382ce64e0f3e7b9c5
+# From checksums-v5.3.1_sha256.txt of the v5.3.1 GitHub release.
+ARG GOMPLATE_SHA256_AMD64=2a618bfb02a54dd3c76d92ae4375ccc1f33eeb0545d6565ea7c3388359cb93f8
+ARG GOMPLATE_SHA256_ARM64=d00242bd08eda5badcea34491b392437237722e7d7e00f8ed05686124a43f61b
 RUN set -eu; \
     case "${TARGETARCH:-}" in \
       amd64) sum="$GOMPLATE_SHA256_AMD64" ;; \

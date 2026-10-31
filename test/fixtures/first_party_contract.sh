@@ -755,7 +755,8 @@ cases_template() {
     put "$w" input/c.yaml $'missingKey: zero\n'
     put "$w" input/t.tmpl $'{{ .nope }}\n'
     rc=$(drun "$w" "${cfgenv[@]}")
-    check "T10(f4) the file's missingKey is kept over --missing-key error (gomplate 4.3.3)" "0:<no value>" "$rc:$(cat "$w/output/artifacts/t" 2>/dev/null)"
+    check "T10(f4) the image's --missing-key error beats the file's missingKey (gomplate 5.3.1)" "1:" "$rc:$(artifacts "$w")"
+    contains "T10(f4) … gomplate's own message" "map has no entry for key" "$(cat "$w/stderr")"
     w=$(mkws '{"op":"render","src":"t.tmpl","values":{"x":"X","y":"Y"}}')
     put "$w" input/c.yaml $'execPipe: true\npostExec: [cat]\n'
     put "$w" input/t.tmpl $'{{ .x }}\n'
@@ -774,7 +775,7 @@ cases_template() {
     w=$(mkws '{"op":"render","src":"t.tmpl"}')
     put "$w" input/t.tmpl 'x'
     rc=$(drun "$w")
-    check "T11 stdout's first line" "activity-template: gomplate version 4.3.3" "$(first_line "$w")"
+    check "T11 stdout's first line" "activity-template: gomplate version 5.3.1" "$(first_line "$w")"
 
     section "T12 the artifact name"
     w=$(mkws '{"op":"render","src":"app.conf.tmpl"}')
@@ -816,7 +817,7 @@ cases_template() {
     done
 
     section "T16 the caching inventory's witness"
-    local tmpl=$'{{ time.Since (time.Parse "2006" "2020") }}\n{{ time.Until (time.Parse "2006" "2100") }}\n{{ jq "now" . }}\n{{ include "file:///etc/hostname" }}\n{{ getenv "HOSTNAME" "none" }}\n'
+    local tmpl=$'{{ time.Since (time.Parse "2006" "2020") }}\n{{ time.Until (time.Parse "2006" "2100") }}\n{{ jq "now" . }}\n{{ include "file:///etc/hostname" }}\n{{ getenv "HOSTNAME" "none" }}\n{{ uuid.V7 }}\n{{ net.GenerateMAC }}\n{{ crypto.EncryptAES "0123456789abcdef0123456789abcdef" "m" | base64.Encode }}\n{{ crypto.Ed25519GenerateKey | base64.Encode }}\n'
     w=$(mkws '{"op":"render","src":"t.tmpl"}')
     put "$w" input/t.tmpl "$tmpl"
     a1=$(drun "$w")
@@ -824,7 +825,7 @@ cases_template() {
     put "$w2" input/t.tmpl "$tmpl"
     a2=$(drun "$w2")
     check "T16 both renders exit 0" "0 0" "$a1 $a2"
-    for i in 1 2 3 4 5; do
+    for i in 1 2 3 4 5 6 7 8 9; do
         l1=$(grep -v '^$' "$w/output/artifacts/t" 2>/dev/null | sed -n "${i}p")
         l2=$(grep -v '^$' "$w2/output/artifacts/t" 2>/dev/null | sed -n "${i}p")
         differs "T16 line $i differs between two containers with identical inputs" "$l1" "$l2"
@@ -842,6 +843,45 @@ cases_template() {
     w=$(mkws '{"op":null}')
     rc=$(drun "$w")
     check "T17 op: null exits 2" "2" "$rc"
+
+    section "T18 the names gomplate 5 removed"
+    for call in 'contains "abc" "b"' 'hasPrefix "ab" "a"' 'hasSuffix "ab" "b"' 'split "a,b" ","' \
+                'splitN "a,b" "," 1' 'trim " x " " "' 'bool "true"'; do
+        w=$(mkws '{"op":"render","src":"t.tmpl"}')
+        put "$w" input/t.tmpl "{{ $call }}"$'\n'
+        rc=$(drun "$w")
+        check "T18 the removed bare ${call%% *} exits 1" "1:" "$rc:$(artifacts "$w")"
+        contains "T18 … naming it" "function \\\"${call%% *}\\\" not defined" "$(cat "$w/stderr")"
+    done
+    for call in 'strings.Sort (coll.Slice "b" "a")|Sort' 'net.ParseIP "1.2.3.4"|ParseIP' \
+                'net.ParseIPPrefix "1.2.3.0/24"|ParseIPPrefix' 'net.ParseIPRange "1.2.3.4-1.2.3.5"|ParseIPRange' \
+                'conv.Bool "true"|Bool'; do
+        w=$(mkws '{"op":"render","src":"t.tmpl"}')
+        put "$w" input/t.tmpl "{{ ${call%%|*} }}"$'\n'
+        rc=$(drun "$w")
+        check "T18 the removed ${call%% *} exits 1" "1:" "$rc:$(artifacts "$w")"
+        contains "T18 … naming it" "can't evaluate field ${call#*|} in type" "$(cat "$w/stderr")"
+    done
+    w=$(mkws '{"op":"render","src":"t.tmpl"}')
+    put "$w" input/c.yaml $'templates:\n  - p=file:///orkstack/input/p.tmpl\n'
+    put "$w" input/p.tmpl 'P'
+    put "$w" input/t.tmpl $'x\n'
+    rc=$(drun "$w" "${cfgenv[@]}")
+    check "T18 a configuration file listing templates as a sequence exits 1" "1:" "$rc:$(artifacts "$w")"
+    contains "T18 … gomplate 5 reads a map" "cannot unmarshal !!seq" "$(cat "$w/stderr")"
+    w=$(mkws '{"op":"render","src":"t.tmpl"}')
+    put "$w" input/t.tmpl $'{{ crypto.EncryptAES "0123456789abcdef0123456789abcdef" "m" | len }}\n'
+    rc=$(drun "$w")
+    check "T18 the deprecated alias crypto.EncryptAES still renders, with no GOMPLATE_EXPERIMENTAL" "0:32" "$rc:$(cat "$w/output/artifacts/t" 2>/dev/null)"
+    contains "T18 … with gomplate's deprecation warning" "crypto.EncryptAES is deprecated - use crypto.AESEncrypt" "$(cat "$w/stderr")"
+    w=$(mkws '{"op":"render","src":"t.tmpl"}')
+    put "$w" input/t.tmpl $'{{ env.HasEnv "TZ" }} {{ env.HasEnv "NO_SUCH_VARIABLE" }} {{ (env.Env).TZ }}\n'
+    rc=$(drun "$w")
+    check "T18 env.HasEnv and env.Env read the environment" "0:true false UTC" "$rc:$(cat "$w/output/artifacts/t" 2>/dev/null)"
+    w=$(mkws '{"op":"render","src":"t.tmpl"}')
+    put "$w" input/t.tmpl $'{{ strings.Contains "b" "abc" }} {{ slice (coll.Slice 1 2 3) 1 }}\n'
+    rc=$(drun "$w")
+    check "T18 strings.Contains takes the input last; bare slice is Go's builtin" "0:true [2 3]" "$rc:$(cat "$w/output/artifacts/t" 2>/dev/null)"
 }
 
 # ============================================================================

@@ -495,11 +495,11 @@ func TestFirstPartyImages_SharedHelpersAreByteIdentical(t *testing.T) {
 func TestActivityTemplate_GomplateIsAPinnedVerifiedRelease(t *testing.T) {
 	dockerfile := readImageFile(t, "activity-template", "Dockerfile")
 	for _, want := range []string{
-		"ARG GOMPLATE_VERSION=4.3.3",
+		"ARG GOMPLATE_VERSION=5.3.1",
 		"ARG GOMPLATE_BASE_URL=https://github.com/hairyhenderson/gomplate/releases/download",
 		`"${GOMPLATE_BASE_URL}/v${GOMPLATE_VERSION}/gomplate_linux-${TARGETARCH}"`,
-		"ARG GOMPLATE_SHA256_AMD64=ca281666e86f2f09218c1653e1908f572c0e349e9de64cb4ea93ade9333f0596",
-		"ARG GOMPLATE_SHA256_ARM64=25bd73720ff470cec0dfaa31ca2c436b30f86142db9af68382ce64e0f3e7b9c5",
+		"ARG GOMPLATE_SHA256_AMD64=2a618bfb02a54dd3c76d92ae4375ccc1f33eeb0545d6565ea7c3388359cb93f8",
+		"ARG GOMPLATE_SHA256_ARM64=d00242bd08eda5badcea34491b392437237722e7d7e00f8ed05686124a43f61b",
 		"sha256sum -c",
 	} {
 		if !strings.Contains(dockerfile, want) {
