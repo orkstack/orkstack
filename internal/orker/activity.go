@@ -181,6 +181,9 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	if opts.Policy != nil {
 		policy = *opts.Policy
 	}
+	// Every attempt's workspace is under the work root, so it is this
+	// Orker's own whoever built the policy.
+	policy = policy.WithWorkRoot(workRoot)
 	orkerID := opts.OrkerID
 	if orkerID == "" {
 		orkerID = defaultOrkerID(workRoot)
@@ -574,6 +577,14 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// (§9.3, AGENTS.md §6).
 	if err := a.dispatcher.Policy.Validate(); err != nil {
 		return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
+	}
+	// An empty floor is the default, not an error: it admits every source of
+	// an allowed scheme except the Orker's own. On a pool several namespaces
+	// share that is rarely meant, so say it once, naming the setting.
+	if len(a.dispatcher.Policy.SecretAllow) == 0 {
+		a.dispatcher.logger().Warn("secret floor is empty: a task may name any env or file source on this orker "+
+			"except the orker's own; set "+SecretAllowVar+" on every orker of a shared pool",
+			"setting", SecretAllowVar)
 	}
 	// A capacity that cannot be read, or that the per-task cap does not fit
 	// in, would be an Orker that admits nothing or admits blindly; either

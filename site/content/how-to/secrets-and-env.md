@@ -44,7 +44,7 @@ A source must pass two lists. Each list matches `scheme:pattern`, and `*` matche
 
 | List | Set by | Checked |
 |---|---|---|
-| The Orker's floor | `ORK_ORKER_SECRET_ALLOW` on each Orker. An empty value allows every `env` and `file` source. | When the Orker starts the attempt |
+| The Orker's floor | `ORK_ORKER_SECRET_ALLOW` on each Orker. An empty value allows every `env` and `file` source except the Orker's own, and the Orker warns at boot. | When the Orker starts the attempt |
 | The namespace's list | `orkctl namespace update <name> --allow-secret 'env:GIT_*'`. An empty list is unrestricted. | At apply and at every submit |
 
 ## Set environment variables
@@ -70,7 +70,7 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 
 | Code | Category | Meaning | Retried under `retry:` |
 |---|---|---|---|
-| `SECRET_NOT_PERMITTED` | ContractViolation | The source is outside the Orker's floor. | no |
+| `SECRET_NOT_PERMITTED` | ContractViolation | The source is outside the Orker's floor, or is one of the Orker's own. | no |
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | The Orker does not read that kind of source. | no |
 | `SECRET_UNRESOLVED` | InfrastructureError | The variable is unset, or the file cannot be read. | yes |
 
@@ -83,5 +83,6 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 
 - [Security model, “Secrets”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#secrets): how values are resolved and kept out of records
 - [Security model, “Which sources may be named”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#which-sources-may-be-named): the two lists in full
+- [Security model, “The Orker's own sources”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#the-orkers-own-sources): what no floor admits, and why
 - [Security model, “Environment values are configuration”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#environment-values-are-configuration): what `env:` may and may not hold
 - [DEPLOY, “Secrets on a shared pool”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#secrets-on-a-shared-pool): operator settings

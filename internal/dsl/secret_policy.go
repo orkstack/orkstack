@@ -156,10 +156,7 @@ func CheckSecretSource(patterns []string, source string) error {
 		return refuse("")
 	}
 	if scheme == "file" {
-		if !strings.HasPrefix(locator, "/") {
-			return refuse("relative")
-		}
-		if why := badPathSegment(locator); why != "" {
+		if why := filePathWhy(locator); why != "" {
 			return refuse(why)
 		}
 	}
@@ -173,6 +170,34 @@ func CheckSecretSource(patterns []string, source string) error {
 		}
 	}
 	return refuse("")
+}
+
+// CheckSecretPath reports why a "file" source cannot be judged by its name:
+// a locator that is not absolute, or that has a "..", "." or empty segment.
+// Reading such a name means normalizing it, and the kernel normalizes ".."
+// after it follows a link, so the path read need not be the path named. It
+// returns the *SecretSourceRefusal CheckSecretSource returns for that source,
+// with no patterns, or nil for a plain absolute path and for every other
+// scheme. The Orker holds every file source to it, floor or no floor
+// (orker.SecurityPolicy.AllowsSecretSource).
+func CheckSecretPath(source string) error {
+	scheme, locator, found := strings.Cut(source, ":")
+	if !found || scheme != "file" {
+		return nil
+	}
+	if why := filePathWhy(locator); why != "" {
+		return &SecretSourceRefusal{Source: source, Why: why}
+	}
+	return nil
+}
+
+// filePathWhy is the rule CheckSecretSource and CheckSecretPath share for a
+// "file" locator: "relative", the segment rule it breaks, or "".
+func filePathWhy(locator string) string {
+	if !strings.HasPrefix(locator, "/") {
+		return "relative"
+	}
+	return badPathSegment(locator)
 }
 
 // SecretSourceRefusal is why a source was not permitted.

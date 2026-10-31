@@ -21,6 +21,28 @@ word for word.
   in flight — widen every Orker before any task needs more, narrow only once no
   run does.
 
+### Changed
+
+- **BREAKING:** An Orker's secret floor never admits the Orker's own sources,
+  whatever `ORK_ORKER_SECRET_ALLOW` says, empty or not: its OrkStack and
+  telemetry settings (`env:ORK_*`, `env:OTEL_*`), its proxy settings, the
+  container CLI's settings (`env:DOCKER_*`, `env:CONTAINER_HOST` and the like)
+  and its registry credential helpers' (`env:AWS_*`, `env:AZURE_*`,
+  `env:GOOGLE_APPLICATION_CREDENTIALS`), `/proc`, `/dev`, its container's
+  credentials under `/run/secrets` and `/var/run/secrets`, its work root, its
+  configuration file and each file that reads, its telemetry sinks' header
+  sources, the container engine's state, and the credential files its
+  settings name. A task that names one fails `SECRET_NOT_PERMITTED` before its
+  image is pulled, under `orkctl task run` as on an Orker; give the task the
+  value under a source of its own. A floor entry that can match only such
+  sources stops the Orker at boot, and an Orker whose floor is empty logs a
+  warning at boot that names `ORK_ORKER_SECRET_ALLOW`
+  ([SECURITY_MODEL.md](docs/SECURITY_MODEL.md), "The Orker's own sources").
+- **BREAKING:** A `file:` secret source must be a plain absolute path, with
+  no `..`, `.` or empty segment, under every secret floor, the empty one
+  included. Any other name fails `SECRET_NOT_PERMITTED`, as a non-empty floor
+  already refused it.
+
 ### Fixed
 
 - An Orker's own policy checks — its cpu and memory caps, secret schemes and

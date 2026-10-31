@@ -216,6 +216,34 @@ func (t *SinkTable) Resolve(lookupEnv func(string) (string, bool), readFile func
 	return nil
 }
 
+// SourceFiles names, sorted and once each, the files the table's header
+// sources read: the process's own collector credentials, which an Orker's
+// secret floor admits as no task's source (docs/SECURITY_MODEL.md, "The
+// Orker's own sources"). It names paths and reads none of them.
+func (t SinkTable) SourceFiles() []string { return t.sources("file") }
+
+// SourceVars is SourceFiles for the environment variables the table's
+// header sources read.
+func (t SinkTable) SourceVars() []string { return t.sources("env") }
+
+// sources names, sorted and once each, the locators of the header sources
+// of one scheme.
+func (t SinkTable) sources(scheme string) []string {
+	seen := map[string]bool{}
+	var locators []string
+	for _, spec := range t.sinks {
+		for _, source := range spec.Headers {
+			got, locator := orker.SplitSecretSource(source.Source)
+			if got == scheme && !seen[locator] {
+				seen[locator] = true
+				locators = append(locators, locator)
+			}
+		}
+	}
+	sort.Strings(locators)
+	return locators
+}
+
 // String lists every sink's name and endpoints for a boot log line. It names
 // headers, never their values or their sources — a source names an
 // environment variable or a file path, which is closer to a value than a

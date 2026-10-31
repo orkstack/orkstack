@@ -106,6 +106,10 @@ type config struct {
 	// empty declare none.
 	capacityCPU    string
 	capacityMemory string
+	// configFiles is the configuration file this process was started with
+	// and every {file:} it read (config.Document.Files): the Orker's own,
+	// which its secret floor admits as no task's source (orkerPolicy).
+	configFiles []string
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -343,6 +347,9 @@ func main() {
 	}
 
 	cfg := loadConfig()
+	if cfgDoc != nil {
+		cfg.configFiles = cfgDoc.Files()
+	}
 	// Telemetry configuration is resolved before the process logger exists,
 	// for the same reason as cmd/ork: the logger's own encoding is itself a
 	// telemetry setting, so building it first would mean rebuilding it the
@@ -741,6 +748,25 @@ func awaitStoppedTasks(logger *slog.Logger, activities *orker.Activities) {
 	logger.Info("cancelled tasks stopped", "took", time.Since(started).Round(time.Millisecond))
 }
 
+// orkerPolicy is the policy this Orker enforces: the environment's, with what
+// its own configuration read — the configuration file, every {file:} in it,
+// every telemetry sink header's file or variable — among the sources its
+// secret floor never admits (docs/SECURITY_MODEL.md, "The Orker's own
+// sources").
+func orkerPolicy(cfg config, tcfg telemetry.Config) orker.SecurityPolicy {
+	policy := orker.SecurityPolicyFromEnv()
+	for _, path := range cfg.configFiles {
+		policy.OwnPaths = append(policy.OwnPaths, orker.OwnPath{Path: path, Why: "its configuration"})
+	}
+	for _, path := range tcfg.Sinks.SourceFiles() {
+		policy.OwnPaths = append(policy.OwnPaths, orker.OwnPath{Path: path, Why: "its telemetry credentials"})
+	}
+	for _, name := range tcfg.Sinks.SourceVars() {
+		policy.OwnVars = append(policy.OwnVars, orker.OwnVar{Name: name, Why: "its telemetry credentials"})
+	}
+	return policy
+}
+
 // orkerOptions builds the orker.Options this Orker's activities run with,
 // including the three telemetry-derived seams: TaskLogs, Phases and
 // TraceContext. It is a single seam so a test can assert what those three
@@ -795,6 +821,8 @@ func orkerOptions(
 		HeartbeatInterval: cfg.tick(),
 		Logger:            logger,
 	}
+	policy := orkerPolicy(cfg, tcfg)
+	opts.Policy = &policy
 
 	// Task log export: an ADDITIONAL best-effort path from a task's
 	// stdout/stderr to a log provider, beside the durable chunk store above.

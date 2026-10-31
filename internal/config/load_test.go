@@ -693,3 +693,40 @@ func TestLoad_DuplicateKey_Refused(t *testing.T) {
 		})
 	}
 }
+
+// TestLoad_FilesNamesTheDocumentAndEveryFileItRead: Files is the file itself
+// and every {file:} it read, scalar or map entry, relative ones anchored as
+// Load anchored them — every one absolute, for the Orker to hold as its own
+// (docs/SECURITY_MODEL.md, "The Orker's own sources").
+func TestLoad_FilesNamesTheDocumentAndEveryFileItRead(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"s3-secret", "otlp-header"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	configPath := filepath.Join(dir, "orkstack.yaml")
+	body := "storage:\n  s3:\n    secret_key: {file: s3-secret}\n" +
+		"telemetry:\n  otlp:\n    headers:\n      x-api-key: {file: " + filepath.Join(dir, "otlp-header") + "}\n"
+	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Chdir(dir)
+
+	doc, err := Load("orkstack.yaml", BinaryOrker)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := []string{configPath, filepath.Join(dir, "s3-secret"), filepath.Join(dir, "otlp-header")}
+	if got := doc.Files(); strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("Files() = %q, want %q", got, want)
+	}
+
+	empty, err := Load(writeTemp(t, "empty.yaml", "# nothing\n"), BinaryOrker)
+	if err != nil {
+		t.Fatalf("Load empty: %v", err)
+	}
+	if got := empty.Files(); len(got) != 1 || !filepath.IsAbs(got[0]) {
+		t.Fatalf("Files() of an empty document = %q, want the document alone", got)
+	}
+}

@@ -1706,7 +1706,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `RENDER_FAILED` | ContractViolation | no | template error, missing key, `<no value>`, or an `env` name not allowlisted |
 | `SECRET_UNRESOLVED` | InfrastructureError | yes | a `SecretRef.source` could not be resolved |
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | the Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed |
-| `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor (`docs/DEPLOY.md`, "Secrets on a shared pool") |
+| `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor, or is one of the Orker's own sources, which no floor admits (`docs/DEPLOY.md`, "Secrets on a shared pool"; `docs/SECURITY_MODEL.md`, "The Orker's own sources") |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | the request exceeds the Orker's cap, or is not a positive finite quantity |
 | `RESOURCE_ADMISSION_MISMATCH` | ContractViolation | no | on an Orker declaring a capacity, the resolved request is larger than the reservation it was polled under and free capacity cannot cover it; it cannot happen while every poll reserves the per-task cap |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | the requested mode is not `default` or `none` |
@@ -1901,7 +1901,9 @@ Orker's environment, `file:/path` from its filesystem;
 `ORK_ORKER_SECRET_SCHEMES`). An unknown scheme is refused rather than ignored,
 and a source outside the Orker's `ORK_ORKER_SECRET_ALLOW` floor or the
 namespace's allowed list is refused (`docs/DEPLOY.md`, "Secrets on a shared
-pool"). Secret bytes never appear in a proto message, Temporal history, the
+pool"), as is one of the Orker's own sources — its settings, its process
+files, its configuration and credential files — whatever the floor says
+(`docs/SECURITY_MODEL.md`, "The Orker's own sources"). Secret bytes never appear in a proto message, Temporal history, the
 run archive, a log chunk, or `task.json` — which carries names and paths only.
 The per-attempt secrets directory is removed on every exit path, including
 panic and cancellation. A cached task resolves no secret on a hit, which is why
@@ -2202,7 +2204,10 @@ before the container starts.
 **Secrets.** None is resolved implicitly. Every declared secret must be
 supplied (`--secret NAME=file:PATH` or `NAME=env:VAR`) or explicitly skipped
 (`--omit-secret NAME`); an unaccounted one refuses before any byte is fetched.
-No value is printed, reported, or kept with `--keep`.
+A supplied source is held to the Orker's secret floor, as on an Orker: one of
+this machine's own sources is refused at the flag (`docs/SECURITY_MODEL.md`,
+"The Orker's own sources"). No value is printed, reported, or kept with
+`--keep`.
 
 **What it never does.** It calls only the engine's read and validate RPCs and
 never dials Temporal or object storage. Its dispatcher has no commit, attempt,

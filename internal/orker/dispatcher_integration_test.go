@@ -817,6 +817,41 @@ func TestIntegration_ContractViolationsAreRefusedWithTheirReasonCode(t *testing.
 	imagePolicyContractRows(t)
 }
 
+// TestIntegration_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAPull: with
+// no floor set, a task naming the Orker's own setting or its process files is
+// refused SECRET_NOT_PERMITTED before the real runtime is asked anything, and
+// the refusal carries no value.
+func TestIntegration_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAPull(t *testing.T) {
+	requireDocker(t)
+	t.Setenv("ORK_S3_SECRET_KEY", "never-staged")
+	for _, source := range []string{"env:ORK_S3_SECRET_KEY", "file:/proc/self/environ"} {
+		t.Run(source, func(t *testing.T) {
+			dispatcher, _ := newDispatcher(t)
+			if len(dispatcher.Policy.SecretAllow) != 0 {
+				t.Fatalf("floor = %q, want the default, empty floor", dispatcher.Policy.SecretAllow)
+			}
+			counting := &countingRuntime{ContainerRuntime: dispatcher.Runtime}
+			dispatcher.Runtime = counting
+			in := baseInput(t, "own-secret", "/bin/sh", "-c", `cat /orkstack/input/secrets/s3`)
+			in.Secrets = []*orkstackv1.SecretRef{{Name: "s3", Source: source}}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			_, err := dispatcher.Execute(ctx, in)
+			if err == nil || !strings.Contains(err.Error(), orker.ReasonSecretNotPermitted) ||
+				!strings.Contains(err.Error(), "this orker's own") {
+				t.Fatalf("error = %v, want %s naming the orker's own source", err, orker.ReasonSecretNotPermitted)
+			}
+			if strings.Contains(err.Error(), "never-staged") {
+				t.Fatalf("the refusal carries the value: %v", err)
+			}
+			if pulls, creates := counting.counts(); pulls != 0 || creates != 0 {
+				t.Fatalf("runtime asked %d pulls and %d creates; want none", pulls, creates)
+			}
+		})
+	}
+}
+
 // countingRuntime passes every call to the real runtime and counts the two
 // that mean work began: a pull and a container creation.
 type countingRuntime struct {

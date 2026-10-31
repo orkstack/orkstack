@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -242,5 +244,117 @@ func TestResolveSecret_RepeatsTheFloorBesideTheRead(t *testing.T) {
 	value, failure := d.resolveSecret(&orkstackv1.SecretRef{Name: "db", Source: "env:PROD_DB_PASSWORD"})
 	if value != nil || failure == nil || failure.Reason != ReasonSecretNotPermitted {
 		t.Fatalf("resolveSecret = %q, %v; want no value and %s", value, failure, ReasonSecretNotPermitted)
+	}
+}
+
+// TestDispatcher_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAnythingRuns:
+// with no floor set, a task that names the Orker's own environment or process
+// files is refused SECRET_NOT_PERMITTED exactly as a source outside a floor
+// is — before a pull, a workspace or a container, with one non-retryable
+// attempt record, and with the value nowhere.
+func TestDispatcher_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAnythingRuns(t *testing.T) {
+	value := mintSecret(t)
+	t.Setenv("ORK_S3_SECRET_KEY", value)
+	for _, tc := range []struct{ source, want string }{
+		{"env:ORK_S3_SECRET_KEY", `secret "s3": "env:ORK_S3_SECRET_KEY" is this orker's own (its OrkStack settings, ORK_*), which no secret floor admits`},
+		{"file:/proc/self/environ", `secret "s3": "file:/proc/self/environ" is this orker's own (its process, /proc), which no secret floor admits`},
+	} {
+		t.Run(tc.source, func(t *testing.T) {
+			attempts := artifacts.NewMemoryAttemptStore()
+			runtime := &capturingRuntime{}
+			d := newAttemptDispatcher(t, runtime, attempts)
+			in := baseExportInput("grab")
+			in.Secrets = []*orkstackv1.SecretRef{{Name: "s3", Source: tc.source}}
+
+			failure := d.Validate(in)
+			if failure == nil || failure.Reason != ReasonSecretNotPermitted {
+				t.Fatalf("Validate = %v, want %s", failure, ReasonSecretNotPermitted)
+			}
+			if !strings.HasPrefix(failure.Message, tc.want) {
+				t.Fatalf("Validate message =\n%s\nwant it to begin\n%s", failure.Message, tc.want)
+			}
+			if _, failure := d.resolveSecret(in.Secrets[0]); failure == nil || failure.Reason != ReasonSecretNotPermitted {
+				t.Fatalf("resolveSecret = %v, want %s beside the read", failure, ReasonSecretNotPermitted)
+			}
+
+			err := runOnce(t, d, in)
+			if err == nil {
+				t.Fatal("a task naming the orker's own source ran")
+			}
+			if runtime.pulls != 0 || runtime.creates != 0 {
+				t.Fatalf("runtime asked: %d pulls, %d creates; want none", runtime.pulls, runtime.creates)
+			}
+			records, lerr := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
+			if lerr != nil {
+				t.Fatalf("ListAttempts: %v", lerr)
+			}
+			if len(records) != 1 || records[0].GetError().GetCode() != ReasonSecretNotPermitted ||
+				records[0].GetError().GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION ||
+				records[0].GetError().GetRetryable() {
+				t.Fatalf("attempt records = %v, want one %s / CONTRACT_VIOLATION / not retryable", records, ReasonSecretNotPermitted)
+			}
+			recordJSON, _ := protojson.Marshal(records[0])
+			for _, h := range []string{err.Error(), failure.Message, string(recordJSON)} {
+				if strings.Contains(h, value) {
+					t.Fatalf("the secret value leaked into %q", h)
+				}
+			}
+		})
+	}
+}
+
+// TestNewActivities_TheWorkRootIsTheOrkersOwn: every attempt's workspace —
+// another task's staged secrets among it — lives under the work root, so the
+// constructor every Orker and `orkctl task run` is built with adds it to the
+// exclusion, whether the policy came from the environment or the caller.
+func TestNewActivities_TheWorkRootIsTheOrkersOwn(t *testing.T) {
+	t.Setenv(WorkRootVar, "")
+	root := t.TempDir()
+	staged := "file:" + filepath.Join(root, "ork-run-task-1-x", "input", "secrets", "db")
+	explicit := DefaultSecurityPolicy()
+	for _, opts := range []Options{
+		{WorkRoot: root},
+		{WorkRoot: root, Policy: &explicit},
+	} {
+		activities := NewActivitiesWithOptions(nil, opts)
+		assertOwn(t, activities.Dispatcher().Policy, staged)
+	}
+	if len(explicit.OwnPaths) != 0 {
+		t.Fatalf("the caller's policy was changed in place: %v", explicit.OwnPaths)
+	}
+	// No work root is the temp dir, where every attempt then lives.
+	activities := NewActivitiesWithOptions(nil, Options{})
+	assertOwn(t, activities.Dispatcher().Policy, "file:"+filepath.Join(os.TempDir(), "ork-run-task-1-x", "input", "secrets", "db"))
+}
+
+// TestBoot_WarnsThatAnEmptySecretFloorAdmitsEverySourceButTheOrkersOwn: an
+// Orker with no floor says so at boot, naming the setting, and one with a
+// floor does not.
+func TestBoot_WarnsThatAnEmptySecretFloorAdmitsEverySourceButTheOrkersOwn(t *testing.T) {
+	for _, tc := range []struct {
+		allow []string
+		warn  bool
+	}{{nil, true}, {[]string{"env:SANDBOX_*"}, false}} {
+		fake := newCountingDocker(t)
+		fake.set("present", "")
+		var logs lockedBuffer
+		policy := DefaultSecurityPolicy()
+		policy.SecretAllow = tc.allow
+		activities := NewActivitiesWithOptions(nil, Options{
+			OrkerID:  fmt.Sprintf("orker-floor-warn-%d-%t", os.Getpid(), tc.warn),
+			WorkRoot: t.TempDir(),
+			Runtime:  &DockerRuntime{Bin: fake.bin},
+			Policy:   &policy,
+			Logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+		})
+		t.Cleanup(activities.Close)
+		if err := activities.Boot(context.Background()); err != nil {
+			t.Fatalf("Boot = %v", err)
+		}
+		warned := strings.Contains(logs.String(), "level=WARN msg=\"secret floor is empty") &&
+			strings.Contains(logs.String(), SecretAllowVar)
+		if warned != tc.warn {
+			t.Errorf("floor %q: warned = %t, want %t; logs:\n%s", tc.allow, warned, tc.warn, logs.String())
+		}
 	}
 }

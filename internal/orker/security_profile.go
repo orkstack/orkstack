@@ -4,12 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/quantity"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // Network modes. Exactly two exist, and named Orker-defined profiles are
@@ -116,6 +118,18 @@ type SecurityPolicy struct {
 	// is the security boundary (AGENTS.md §2.3) and trusts no caller to have
 	// checked first.
 	SecretAllow []string
+	// OwnPaths are the files and directories this process's own settings
+	// name — its work root, its configuration and the files that read, its
+	// credential files — beside the fixed ones every Orker holds (ownFiles).
+	// They, and everything beneath them, are the Orker's own: no floor admits
+	// one as a task's source, empty or not (AllowsSecretSource).
+	// SecurityPolicyFromEnv fills what the environment names; a caller adds
+	// what only it knows (WithWorkRoot, cmd/orker's configuration file).
+	OwnPaths []OwnPath
+	// OwnVars are environment variables this process's own settings name —
+	// a telemetry sink header's env: source — beside the fixed names every
+	// Orker holds (ownEnv). They are the Orker's own as OwnPaths are.
+	OwnVars []OwnVar
 }
 
 // DefaultSecurityPolicy returns the policy an Orker enforces with no operator
@@ -183,6 +197,7 @@ func SecurityPolicyFromEnv() SecurityPolicy {
 		}
 		policy.SecretAllow = allow
 	}
+	policy.OwnPaths = ownPathsFromEnv(os.Getenv)
 	return policy
 }
 
@@ -220,14 +235,296 @@ func (p SecurityPolicy) AllowsSecretScheme(scheme string) bool {
 	return false
 }
 
-// AllowsSecretSource reports whether this Orker's floor permits a source:
-// nil when SecretAllow is empty or the source matches, otherwise the
-// *dsl.SecretSourceRefusal for the caller to wrap with its coordinates.
+// AllowsSecretSource reports whether this Orker's floor permits a source,
+// whatever SecretAllow says: a *dsl.SecretSourceRefusal when a file source is
+// not a plain absolute path (dsl.CheckSecretPath), an *OwnSourceRefusal when
+// the source is one of the Orker's own; otherwise nil when SecretAllow is
+// empty or the source matches it, and the *dsl.SecretSourceRefusal when it
+// does not. The caller wraps any of them with its coordinates.
 func (p SecurityPolicy) AllowsSecretSource(source string) error {
+	// A file is read by its name. A name with a "..", "." or empty segment, or
+	// a relative one, would be normalized by the kernel after it follows a
+	// link, so the file read need not be the file named and no check of the
+	// name would hold: it is refused, floor or no floor, as a floor refuses it.
+	if err := dsl.CheckSecretPath(source); err != nil {
+		return err
+	}
+	if refusal := p.ownSource(source); refusal != nil {
+		return refusal
+	}
 	if len(p.SecretAllow) == 0 {
 		return nil
 	}
 	return dsl.CheckSecretSource(p.SecretAllow, source)
+}
+
+// The Orker's own sources.
+//
+// A task's secret names a source the Orker reads from its OWN environment
+// and filesystem. Part of what is there is the Orker's own: the settings it
+// was started with, the credentials it and the container CLI it drives use,
+// its process, and the files its configuration names. None of it is a
+// task's, so the floor never admits any of it — not when SecretAllow is
+// empty, and not when an entry would match it. The exclusion is absolute,
+// with no entry that re-admits one: a pattern written for convenience
+// ("env:*") must not hand a task the Orker's credentials, and an operator who
+// means a task to hold such a value supplies it under a source of the task's
+// own, which is what supplying a workload secret explicitly means (AGENTS.md
+// §2.3).
+//
+// It bounds names, as the floor does, and reads no value. A file: source is
+// a plain absolute path (dsl.CheckSecretPath), judged by its name and by the
+// path its links resolve to, and an own path by both of its own, so no link
+// reaches an own file under another name.
+
+// OwnPath is a file or directory of the Orker's own: it and everything
+// beneath it. Why names it in a refusal, as a label, never as the path.
+type OwnPath struct {
+	Path string
+	Why  string
+}
+
+// OwnVar is an environment variable of the Orker's own, by its exact name.
+// Why names it in a refusal.
+type OwnVar struct {
+	Name string
+	Why  string
+}
+
+// ownName is an environment variable of the Orker's own: an exact name, or
+// a prefix when it ends in "*".
+type ownName struct {
+	pattern string
+	why     string
+}
+
+func (n ownName) matches(name string) bool {
+	if prefix, ok := strings.CutSuffix(n.pattern, "*"); ok {
+		return strings.HasPrefix(name, prefix)
+	}
+	return name == n.pattern
+}
+
+// ownEnv is the Orker's own environment, OrkStack's half; runtimeOwnEnv
+// (runtime_docker.go) is the container CLI's, its credential helpers' cloud
+// credentials among them.
+var ownEnv = []ownName{
+	// Every OrkStack setting, the object store's keys among them.
+	{"ORK_*", "its OrkStack settings, ORK_*"},
+	// The telemetry exporters', whose headers carry a collector's
+	// credentials.
+	{"OTEL_*", "its telemetry settings, OTEL_*"},
+	// The proxies its HTTP clients and the container CLI dial through; a
+	// proxy URL may carry a user and a password. NO_PROXY carries neither.
+	{"HTTP_PROXY", "its proxy settings"},
+	{"HTTPS_PROXY", "its proxy settings"},
+	{"http_proxy", "its proxy settings"},
+	{"https_proxy", "its proxy settings"},
+}
+
+// ownFiles are the paths every Orker holds as its own, wherever it runs.
+var ownFiles = []OwnPath{
+	// Its environment, memory, descriptors and root, and every other
+	// process's that the host or the pod shows it.
+	{Path: "/proc", Why: "its process, /proc"},
+	// /dev/fd, /dev/stdin and the rest are its own descriptors through
+	// /proc/self/fd, and a device is never a secret: /dev/zero would be
+	// read without end.
+	{Path: "/dev", Why: "its devices, /dev"},
+	// Where Kubernetes mounts the pod's service-account and projected
+	// tokens (IRSA, EKS Pod Identity, workload identity), and Docker and
+	// Compose the container's secrets: the identity of the Orker's own pod
+	// or container. A task's secrets belong in a directory of their own
+	// that the floor names, as the Kubernetes bases' task-secrets volume.
+	{Path: "/run/secrets", Why: "its container's credentials, /run/secrets"},
+	{Path: "/var/run/secrets", Why: "its container's credentials, /var/run/secrets"},
+}
+
+// ownPathsFromEnv are the files this process's own settings name as a
+// credential or as its own data, and the container CLI's (runtimeOwnPaths).
+// What only the caller knows — the work root, the configuration file — the
+// caller adds (WithWorkRoot, cmd/orker).
+func ownPathsFromEnv(getenv func(string) string) []OwnPath {
+	var paths []OwnPath
+	add := func(path, why string) {
+		if path != "" {
+			paths = append(paths, OwnPath{Path: path, Why: why})
+		}
+	}
+	// The registry credentials signature verification reads: this binary's,
+	// and the engine's, which `orkctl activity test` reads too.
+	add(getenv(RegistryAuthFileVar), "its registry credentials, "+RegistryAuthFileVar)
+	add(getenv("ORK_REGISTRY_AUTH_FILE"), "its registry credentials, ORK_REGISTRY_AUTH_FILE")
+	// The OTLP exporters' TLS files, a client key among them.
+	for _, signal := range []string{"", "TRACES_", "METRICS_", "LOGS_"} {
+		for _, kind := range []string{"CERTIFICATE", "CLIENT_CERTIFICATE", "CLIENT_KEY"} {
+			add(getenv("OTEL_EXPORTER_OTLP_"+signal+kind), "its telemetry TLS files, OTEL_EXPORTER_OTLP_*")
+		}
+	}
+	// The local artifact store holds every run's artifacts, commits and
+	// logs, of every namespace.
+	backend, dir := getenv("ORK_ARTIFACT_BACKEND"), getenv("ORK_ARTIFACT_DIR")
+	if backend == "" {
+		backend = artifacts.DefaultBackend
+	}
+	if dir == "" {
+		dir = artifacts.DefaultLocalDir
+	}
+	if backend == artifacts.BackendLocal {
+		add(dir, "its artifact store, ORK_ARTIFACT_DIR")
+	}
+	return append(paths, runtimeOwnPaths(getenv)...)
+}
+
+// WithWorkRoot returns the policy with root, this Orker's work root — the
+// temp dir when root is empty, as makeAttemptDir falls back to it — among
+// its own paths: every attempt's workspace lives there, another task's
+// staged secrets, inputs and outputs and every pin's shared directory among
+// them. The caller's policy is not changed.
+func (p SecurityPolicy) WithWorkRoot(root string) SecurityPolicy {
+	if root == "" {
+		root = os.TempDir()
+	}
+	p.OwnPaths = append(append([]OwnPath(nil), p.OwnPaths...), OwnPath{Path: root, Why: "its work root, " + WorkRootVar})
+	return p
+}
+
+// OwnSourceRefusal is why a source was refused as one of the Orker's own.
+type OwnSourceRefusal struct {
+	Source string
+	// Why is what the source is, e.g. "its OrkStack settings, ORK_*".
+	Why string
+}
+
+// Error renders, for example:
+//
+//	"env:ORK_S3_SECRET_KEY" is this orker's own (its OrkStack settings, ORK_*), which no secret floor admits
+//
+// It names the source a task wrote and the label of what it is: one sentence
+// whether the name or a link led there, and never the path a link led to.
+func (r *OwnSourceRefusal) Error() string {
+	return fmt.Sprintf("%q is this orker's own (%s), which no secret floor admits", r.Source, r.Why)
+}
+
+// ownSource reports which of the Orker's own sources source is, or nil.
+func (p SecurityPolicy) ownSource(source string) *OwnSourceRefusal {
+	scheme, locator := SplitSecretSource(source)
+	switch scheme {
+	case "env":
+		for _, names := range [][]ownName{ownEnv, runtimeOwnEnv} {
+			for _, own := range names {
+				if own.matches(locator) {
+					return &OwnSourceRefusal{Source: source, Why: own.why}
+				}
+			}
+		}
+		for _, own := range p.OwnVars {
+			if own.Name != "" && own.Name == locator {
+				return &OwnSourceRefusal{Source: source, Why: own.Why}
+			}
+		}
+	case "file":
+		named := absPath(locator)
+		resolved := resolvePath(named)
+		for _, own := range p.ownPaths() {
+			// An empty path names nothing; made absolute it would name the
+			// working directory.
+			if own.Path == "" {
+				continue
+			}
+			ownNamed := absPath(own.Path)
+			ownResolved := resolvePath(ownNamed)
+			for _, path := range []string{named, resolved} {
+				if within(path, ownNamed) || within(path, ownResolved) {
+					return &OwnSourceRefusal{Source: source, Why: own.Why}
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// ownEntry reports why a floor entry admits nothing but the Orker's own, or
+// "" when it admits a source of a task's own too. Every match of an entry
+// begins with its pattern up to the first "*": for env, a name prefix; for
+// file, the directory that prefix ends in. When an own source holds that
+// whole prefix, every match is the Orker's own.
+func (p SecurityPolicy) ownEntry(entry string) string {
+	scheme, pattern := SplitSecretSource(entry)
+	literal, wild := pattern, false
+	if i := strings.IndexByte(pattern, '*'); i >= 0 {
+		literal, wild = pattern[:i], true
+	}
+	switch scheme {
+	case "env":
+		for _, names := range [][]ownName{ownEnv, runtimeOwnEnv} {
+			for _, own := range names {
+				prefix, isPrefix := strings.CutSuffix(own.pattern, "*")
+				if (isPrefix && strings.HasPrefix(literal, prefix)) || (!wild && literal == own.pattern) {
+					return own.why
+				}
+			}
+		}
+		for _, own := range p.OwnVars {
+			if own.Name != "" && !wild && literal == own.Name {
+				return own.Why
+			}
+		}
+	case "file":
+		dir := literal
+		if wild {
+			// A file pattern begins with "/" (dsl.ValidSecretPattern), so
+			// the cut keeps at least "/".
+			dir = literal[:strings.LastIndexByte(literal, '/')+1]
+		}
+		if refusal := p.ownSource("file:" + dir); refusal != nil {
+			return refusal.Why
+		}
+	}
+	return ""
+}
+
+// ownPaths is every path this policy holds as the Orker's own.
+func (p SecurityPolicy) ownPaths() []OwnPath {
+	return append(append([]OwnPath(nil), ownFiles...), p.OwnPaths...)
+}
+
+// absPath is path made absolute and cleaned, as os.ReadFile would open it:
+// a relative path from this process's working directory. It reads nothing.
+func absPath(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return filepath.Clean(path)
+}
+
+// resolvePath is where path's links lead: its longest prefix that resolves,
+// resolved, with the rest appended as named — so a link to a directory of
+// the Orker's own is seen before anything appears beneath it — or "" when
+// nothing of it resolves. path is absolute and clean.
+func resolvePath(path string) string {
+	rest := ""
+	for prefix := path; ; prefix = filepath.Dir(prefix) {
+		if resolved, err := filepath.EvalSymlinks(prefix); err == nil {
+			return filepath.Join(resolved, rest)
+		}
+		if prefix == filepath.Dir(prefix) {
+			return ""
+		}
+		rest = filepath.Join(filepath.Base(prefix), rest)
+	}
+}
+
+// within reports whether path is root or lies beneath it. An empty side is
+// never within anything.
+func within(path, root string) bool {
+	if path == "" || root == "" {
+		return false
+	}
+	if root == "/" {
+		return true
+	}
+	return path == root || strings.HasPrefix(path, root+"/")
 }
 
 // validateSecretAllow holds the floor to the shared grammar and to this
@@ -245,6 +542,13 @@ func (p SecurityPolicy) validateSecretAllow() error {
 			return fmt.Errorf("%s entry %q names scheme %q, which %s (%s) does not resolve; "+
 				"add the scheme there or drop the entry", SecretAllowVar, entry, scheme,
 				SecretSchemesVar, strings.Join(p.SecretSchemes, ", "))
+		}
+		// The same rule for an entry that can match nothing but the Orker's
+		// own sources, which no floor admits.
+		if why := p.ownEntry(entry); why != "" {
+			return fmt.Errorf("%s entry %q admits only this orker's own sources (%s), which no secret floor "+
+				"admits; drop the entry, and give a task that needs such a value a source of its own",
+				SecretAllowVar, entry, why)
 		}
 	}
 	return nil

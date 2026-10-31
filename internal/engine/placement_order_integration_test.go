@@ -291,7 +291,7 @@ type placementVariant struct {
 // the input, so "work" misses: the narrower Orker refuses it with the
 // setting's own reason after the memo step and before any container exists.
 func TestIntegration_AMemoHitIsReusedOnASmallerOrker(t *testing.T) {
-	const secretVar = "ORK_TEST_PLACEMENT_MEMO_TOKEN"
+	const secretVar = "SANDBOX_PLACEMENT_MEMO_TOKEN"
 	floor := func(allow string) *orker.SecurityPolicy {
 		policy := cappedPolicy("2")
 		policy.SecretAllow = []string{allow}
@@ -304,7 +304,7 @@ func TestIntegration_AMemoHitIsReusedOnASmallerOrker(t *testing.T) {
 		},
 		{
 			name: "secret-floor", reason: orker.ReasonSecretNotPermitted,
-			seed: floor("env:" + secretVar), small: floor("env:ORK_TEST_PLACEMENT_MEMO_OTHER_*"),
+			seed: floor("env:" + secretVar), small: floor("env:SANDBOX_PLACEMENT_MEMO_OTHER_*"),
 			secrets: []*orkstackv1.SecretRef{{Name: "token", Source: "env:" + secretVar}},
 		},
 	} {

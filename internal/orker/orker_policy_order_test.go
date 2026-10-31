@@ -26,7 +26,7 @@ import (
 // config.json is written.
 
 // orderSecretVar is the one secret every input of these tests names.
-const orderSecretVar = "ORK_TEST_POLICY_ORDER_TOKEN"
+const orderSecretVar = "SANDBOX_POLICY_ORDER_TOKEN"
 
 // narrowerOrker is one per-Orker setting a second Orker of a pool may hold
 // more narrowly than the Orker that ran the first attempt.
@@ -62,7 +62,7 @@ var narrowerOrkers = []narrowerOrker{
 		name:   "a secret floor that names other sources",
 		reason: ReasonSecretNotPermitted,
 		ask:    func(*orkstackv1.ExecuteTaskInput) {},
-		narrow: func(d *OCIDispatcher) { d.Policy.SecretAllow = []string{"env:ORK_TEST_POLICY_ORDER_OTHER_*"} },
+		narrow: func(d *OCIDispatcher) { d.Policy.SecretAllow = []string{"env:SANDBOX_POLICY_ORDER_OTHER_*"} },
 	},
 	{
 		name:   "a runtime where running as the Orker does not land",

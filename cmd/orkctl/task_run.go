@@ -288,7 +288,10 @@ func parseTaskArtifactFlag(value string) (suppliedArtifact, error) {
 }
 
 // parseTaskSecretFlag parses one --secret NAME=SOURCE and checks the source
-// resolves on this machine. It never reads the value: the dispatcher does.
+// resolves on this machine, and that the dispatcher's secret floor admits it:
+// a local run refuses the machine's own sources as an Orker refuses its own,
+// and says so here rather than after the run starts. It never reads the
+// value: the dispatcher does.
 func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, string, error) {
 	malformed := fmt.Errorf("invalid --secret %q: want NAME=file:PATH or NAME=env:VAR", value)
 	name, source, found := strings.Cut(value, "=")
@@ -309,6 +312,9 @@ func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, str
 		if err != nil {
 			return "", "", fmt.Errorf("--secret %s: %s: %v", name, locator, err)
 		}
+		if err := ownSecretFlag(name, "file:"+abs, policy); err != nil {
+			return "", "", err
+		}
 		info, err := os.Stat(abs)
 		if err != nil {
 			return "", "", fmt.Errorf("--secret %s: %s: no such file", name, locator)
@@ -318,6 +324,9 @@ func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, str
 		}
 		return name, "file:" + abs, nil
 	case "env":
+		if err := ownSecretFlag(name, source, policy); err != nil {
+			return "", "", err
+		}
 		if _, ok := os.LookupEnv(locator); !ok {
 			return "", "", fmt.Errorf("--secret %s: environment variable %s is not set", name, locator)
 		}
@@ -325,6 +334,16 @@ func parseTaskSecretFlag(value string, policy orker.SecurityPolicy) (string, str
 	default:
 		return "", "", malformed
 	}
+}
+
+// ownSecretFlag is the dispatcher's floor, asked of one --secret source
+// before anything is fetched.
+func ownSecretFlag(name, source string, policy orker.SecurityPolicy) error {
+	if err := policy.AllowsSecretSource(source); err != nil {
+		return fmt.Errorf("--secret %s: %v; a local run refuses it as an Orker does, so supply the value "+
+			"from a file or a variable of its own", name, err)
+	}
+	return nil
 }
 
 // checkSharedSeed holds --shared to a directory of regular files and

@@ -340,3 +340,40 @@ sinks:
 		t.Errorf("error is not an errors.Join result: %T", err)
 	}
 }
+
+// TestSinkTableSourceFilesNamesEveryHeaderFile: the files and variables the
+// table's header sources read are the process's own collector credentials;
+// SourceFiles and SourceVars name each one once, sorted, and no literal.
+func TestSinkTableSourceFilesNamesEveryHeaderFile(t *testing.T) {
+	table, err := ParseSinks([]byte(`
+sinks:
+  datadog:
+    endpoint: http://x
+    headers:
+      DD-API-KEY: { source: "file:/etc/orkstack/dd-key" }
+      DD-APP-KEY: { source: "env:DD_APP_KEY" }
+  honeycomb:
+    endpoint: http://y
+    headers:
+      X-Honeycomb-Team: { source: "file:/etc/orkstack/hc-key" }
+      X-Literal: { value: "plain" }
+      X-Again: { source: "file:/etc/orkstack/dd-key" }
+`))
+	if err != nil {
+		t.Fatalf("ParseSinks: %v", err)
+	}
+	want := []string{"/etc/orkstack/dd-key", "/etc/orkstack/hc-key"}
+	if got := table.SourceFiles(); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("SourceFiles() = %q, want %q", got, want)
+	}
+	if got := table.SourceVars(); strings.Join(got, ",") != "DD_APP_KEY" {
+		t.Fatalf("SourceVars() = %q, want [DD_APP_KEY]", got)
+	}
+	var none SinkTable
+	if got := none.SourceFiles(); len(got) != 0 {
+		t.Fatalf("SourceFiles() of an empty table = %q, want none", got)
+	}
+	if got := none.SourceVars(); len(got) != 0 {
+		t.Fatalf("SourceVars() of an empty table = %q, want none", got)
+	}
+}

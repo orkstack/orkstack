@@ -96,6 +96,33 @@ func markBinaries(n *schemaNode) {
 type Document struct {
 	path   string
 	values map[string]resolvedValue
+	// files is every {file: PATH} the document read, absolute, in the order
+	// read.
+	files []string
+}
+
+// Files is the file this document was loaded from and every {file: PATH}
+// it read, in that order, each absolute: the files a binary configured from
+// it holds as its own. An Orker's secret floor admits none of them as a
+// task's source (docs/SECURITY_MODEL.md, "The Orker's own sources").
+func (d *Document) Files() []string {
+	return append([]string{absolute(d.path)}, d.files...)
+}
+
+// loadContext is what one Load carries through the walk: the directory a
+// relative {file: path} resolves against, and every file it read.
+type loadContext struct {
+	dir   string
+	files []string
+}
+
+// absolute is path made absolute against this process's working directory,
+// as the file was opened, or path itself when that cannot be known.
+func absolute(path string) string {
+	if abs, err := filepath.Abs(path); err == nil {
+		return abs
+	}
+	return path
 }
 
 // Load reads path and strictly validates it for binary: an unknown key is
@@ -127,8 +154,8 @@ func Load(path string, binary Binary) (*Document, error) {
 	if mapping.Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("config: %s: the document must be a top-level mapping", path)
 	}
-	configDir := filepath.Dir(path)
-	if err := walkNode(mapping, schemaRoot, nil, binary, values, configDir); err != nil {
+	lc := &loadContext{dir: filepath.Dir(path)}
+	if err := walkNode(mapping, schemaRoot, nil, binary, values, lc); err != nil {
 		return nil, fmt.Errorf("config: %s: %w", path, err)
 	}
 	// Every value reaches its daemon as an environment variable, which cannot
@@ -139,7 +166,7 @@ func Load(path string, binary Binary) (*Document, error) {
 			return nil, fmt.Errorf("config: %s: %s: the value holds a NUL byte, which an environment variable cannot", path, v.Path)
 		}
 	}
-	return &Document{path: path, values: values}, nil
+	return &Document{path: path, values: values, files: lc.files}, nil
 }
 
 // dotted joins a path prefix and a final segment with ".", the form every
@@ -152,10 +179,10 @@ func dotted(prefix []string, key string) string {
 }
 
 // walkNode validates one YAML mapping node against the schema subtree
-// rooted at snode, recording every leaf it finds into values. configDir is
+// rooted at snode, recording every leaf it finds into values. lc.dir is
 // the directory containing the config file being loaded, so a relative
 // {file: path} can be resolved against it rather than the process's cwd.
-func walkNode(node *yaml.Node, snode *schemaNode, prefix []string, binary Binary, values map[string]resolvedValue, configDir string) error {
+func walkNode(node *yaml.Node, snode *schemaNode, prefix []string, binary Binary, values map[string]resolvedValue, lc *loadContext) error {
 	seen := make(map[string]bool, len(node.Content)/2)
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		keyNode, valNode := node.Content[i], node.Content[i+1]
@@ -183,7 +210,7 @@ func walkNode(node *yaml.Node, snode *schemaNode, prefix []string, binary Binary
 			if valNode.Kind != yaml.MappingNode {
 				return fmt.Errorf("%s: expected a mapping", path)
 			}
-			if err := walkNode(valNode, child, fullPath, binary, values, configDir); err != nil {
+			if err := walkNode(valNode, child, fullPath, binary, values, lc); err != nil {
 				return err
 			}
 			continue
@@ -223,7 +250,7 @@ func walkNode(node *yaml.Node, snode *schemaNode, prefix []string, binary Binary
 			if valNode.Kind != yaml.MappingNode {
 				return fmt.Errorf("%s: must be a mapping", path)
 			}
-			rendered, err := renderMap(valNode, path, configDir)
+			rendered, err := renderMap(valNode, path, lc)
 			if err != nil {
 				return err
 			}
@@ -233,7 +260,7 @@ func walkNode(node *yaml.Node, snode *schemaNode, prefix []string, binary Binary
 			values[v.Env] = resolvedValue{value: rendered, origin: originFile}
 
 		default: // KindString, KindInt, KindBool, KindDuration, KindSecret
-			raw, present, err := resolveScalar(valNode, v, binary, path, configDir)
+			raw, present, err := resolveScalar(valNode, v, binary, path, lc)
 			if err != nil {
 				return err
 			}
@@ -301,9 +328,9 @@ func isScalarKind(k Kind) bool {
 // simply absent for this binary, not an error), or when the node is a YAML
 // null (`null`, `~`, `Null`, `NULL`): a null leaf means "not set" and falls
 // through to the environment or default, exactly like a key that was never
-// written, rather than becoming the literal text "null". configDir anchors
-// a relative {file: path}.
-func resolveScalar(node *yaml.Node, v Var, binary Binary, path, configDir string) (value string, present bool, err error) {
+// written, rather than becoming the literal text "null". lc anchors a
+// relative {file: path} and records the file read.
+func resolveScalar(node *yaml.Node, v Var, binary Binary, path string, lc *loadContext) (value string, present bool, err error) {
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!null" {
 		return "", false, nil
 	}
@@ -329,11 +356,11 @@ func resolveScalar(node *yaml.Node, v Var, binary Binary, path, configDir string
 			if !ok {
 				return "", false, nil
 			}
-			return resolveScalar(selected, v, binary, path, configDir)
+			return resolveScalar(selected, v, binary, path, lc)
 		}
 
 		if len(keys) == 1 && keys[0] == "file" {
-			return readSecretFile(byKey["file"], path, configDir)
+			return readSecretFile(byKey["file"], path, lc)
 		}
 
 		return "", false, fmt.Errorf("%s: expected a value, {ork: ..., orker: ...}, or {file: PATH}", path)
@@ -357,16 +384,17 @@ func resolveFilePath(configDir, p string) string {
 }
 
 // readSecretFile implements {file: /path}: the file's contents with one
-// trailing line ending ("\r\n" or "\n") trimmed.
-func readSecretFile(pathNode *yaml.Node, key, configDir string) (string, bool, error) {
+// trailing line ending ("\r\n" or "\n") trimmed, the file recorded in lc.
+func readSecretFile(pathNode *yaml.Node, key string, lc *loadContext) (string, bool, error) {
 	if pathNode == nil || pathNode.Kind != yaml.ScalarNode {
 		return "", false, fmt.Errorf("%s: file: must be a string path", key)
 	}
-	resolved := resolveFilePath(configDir, pathNode.Value)
+	resolved := resolveFilePath(lc.dir, pathNode.Value)
 	data, err := os.ReadFile(resolved)
 	if err != nil {
 		return "", false, fmt.Errorf("%s: read secret file %s: %w", key, resolved, err)
 	}
+	lc.files = append(lc.files, absolute(resolved))
 	return trimOneLineEnding(string(data)), true, nil
 }
 
@@ -410,12 +438,12 @@ func checkScalarType(kind Kind, raw, path string) error {
 // as OTEL_RESOURCE_ATTRIBUTES or OTEL_EXPORTER_OTLP_HEADERS. Each value may
 // itself be {file: path}, since a header may carry a secret
 // (telemetry.otlp.headers.*).
-func renderMap(node *yaml.Node, path, configDir string) (string, error) {
+func renderMap(node *yaml.Node, path string, lc *loadContext) (string, error) {
 	var parts []string
 	for i := 0; i+1 < len(node.Content); i += 2 {
 		key := node.Content[i].Value
 		entryPath := path + "." + key
-		val, err := mapEntryValue(node.Content[i+1], entryPath, configDir)
+		val, err := mapEntryValue(node.Content[i+1], entryPath, lc)
 		if err != nil {
 			return "", err
 		}
@@ -426,12 +454,12 @@ func renderMap(node *yaml.Node, path, configDir string) (string, error) {
 
 // mapEntryValue resolves one map entry's value: a plain scalar, or
 // {file: path}.
-func mapEntryValue(node *yaml.Node, path, configDir string) (string, error) {
+func mapEntryValue(node *yaml.Node, path string, lc *loadContext) (string, error) {
 	if node.Kind == yaml.ScalarNode {
 		return node.Value, nil
 	}
 	if node.Kind == yaml.MappingNode && len(node.Content) == 2 && node.Content[0].Value == "file" {
-		value, _, err := readSecretFile(node.Content[1], path, configDir)
+		value, _, err := readSecretFile(node.Content[1], path, lc)
 		return value, err
 	}
 	return "", fmt.Errorf("%s: must be a string or {file: PATH}", path)

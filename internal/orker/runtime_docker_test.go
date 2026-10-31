@@ -522,3 +522,70 @@ func TestBindProbeImage_IsQualifiedAndPinned(t *testing.T) {
 		t.Fatalf("BindProbeImage = %q; want it qualified with its registry and repository", BindProbeImage)
 	}
 }
+
+// TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers: the Docker or
+// Podman CLI this Orker drives inherits its environment, so the variables
+// and files that CLI reads as its own — the daemon it reaches, its registry
+// credentials and its credential helpers' cloud credentials, its TLS client
+// key, the SSH identity a remote engine authenticates with — and the engine's
+// own state are the Orker's own, under either dialect.
+func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("XDG_RUNTIME_DIR", filepath.Join(dir, "run"))
+	t.Setenv("DOCKER_CONFIG", filepath.Join(dir, "docker"))
+	t.Setenv("DOCKER_CERT_PATH", filepath.Join(dir, "certs"))
+	t.Setenv("REGISTRY_AUTH_FILE", filepath.Join(dir, "podman-auth.json"))
+	t.Setenv("CONTAINER_SSHKEY", filepath.Join(dir, "id_podman"))
+	t.Setenv("XDG_DATA_HOME", "")
+	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "aws-credentials"))
+	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(dir, "gcp.json"))
+	t.Setenv("AZURE_FEDERATED_TOKEN_FILE", filepath.Join(dir, "azure-token"))
+	policy := SecurityPolicyFromEnv()
+
+	assertOwn(t, policy,
+		"env:DOCKER_HOST", "env:DOCKER_CONFIG", "env:DOCKER_CERT_PATH", "env:DOCKER_AUTH_CONFIG", "env:DOCKER_CONTEXT",
+		"env:CONTAINER_HOST", "env:CONTAINER_SSHKEY", "env:CONTAINER_PASSPHRASE", "env:CONTAINER_CONNECTION",
+		"env:CONTAINERS_CONF", "env:CONTAINERS_STORAGE_CONF", "env:REGISTRY_AUTH_FILE",
+		"env:AWS_ACCESS_KEY_ID", "env:AWS_SECRET_ACCESS_KEY", "env:AWS_SESSION_TOKEN",
+		"env:AZURE_CLIENT_SECRET", "env:GOOGLE_APPLICATION_CREDENTIALS",
+		"file:"+filepath.Join(dir, "aws-credentials"),
+		"file:"+filepath.Join(dir, "gcp.json"),
+		"file:"+filepath.Join(dir, "azure-token"),
+		"file:"+filepath.Join(home, ".aws", "credentials"),
+		"file:"+filepath.Join(home, ".azure", "msal_token_cache.json"),
+		"file:"+filepath.Join(home, ".config", "gcloud", "credentials.db"),
+		"file:"+filepath.Join(home, ".local", "share", "containers", "storage", "overlay"),
+		"file:"+filepath.Join(home, ".local", "share", "docker", "containers", "x", "x-json.log"),
+		"file:/var/lib/docker/containers/x/x-json.log",
+		"file:/var/lib/containers/storage/overlay",
+		"file:/var/lib/containerd/io.containerd.content.v1.content",
+		"file:/run/docker/runtime-runc",
+		"file:/run/containerd/containerd.toml",
+		"file:"+filepath.Join(dir, "docker", "config.json"),
+		"file:"+filepath.Join(dir, "certs", "key.pem"),
+		"file:"+filepath.Join(dir, "podman-auth.json"),
+		"file:"+filepath.Join(dir, "id_podman"),
+		"file:"+filepath.Join(dir, "run", "containers", "auth.json"),
+		"file:"+filepath.Join(home, ".docker", "config.json"),
+		"file:"+filepath.Join(home, ".config", "containers", "auth.json"),
+		"file:"+filepath.Join(home, ".ssh", "id_ed25519"),
+		"file:/run/containers/0/auth.json",
+	)
+	assertNotOwn(t, policy,
+		"env:CONTAINER_REGISTRY_TOKEN", "env:DOCKERHUB_TOKEN", "env:AWSOME_TOKEN", "env:GOOGLE_API_KEY",
+		"file:"+filepath.Join(home, "task-secrets", "db"),
+		"file:/var/lib/orkstack/task-secrets/db",
+	)
+
+	// XDG_CONFIG_HOME and XDG_DATA_HOME move Podman's configuration and
+	// storage, and the move is followed.
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "xdg"))
+	t.Setenv("XDG_DATA_HOME", filepath.Join(dir, "data"))
+	assertOwn(t, SecurityPolicyFromEnv(),
+		"file:"+filepath.Join(dir, "xdg", "containers", "auth.json"),
+		"file:"+filepath.Join(dir, "xdg", "gcloud", "credentials.db"),
+		"file:"+filepath.Join(dir, "data", "containers", "storage"))
+}
