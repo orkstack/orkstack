@@ -204,6 +204,46 @@ func TestDockerRuntime_ARefusalNamesTheProbeContainerItCouldNotRemove(t *testing
 	}
 }
 
+// TestDockerRuntime_TheSIGTERMContainersRetryHandsBackWhatItCouldNotRemove:
+// the SIGTERM container's detached start retries as the first container's
+// run does, and an attempt the daemon ended with its own deadline error, and
+// whose container it then would not remove, is handed back with the started
+// run, naming that attempt's container, for the caller to report.
+func TestDockerRuntime_TheSIGTERMContainersRetryHandsBackWhatItCouldNotRemove(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("sigtimeoutruns", "1")
+	fake.set("rmfailall", "")
+	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
+	ws, err := NewWorkspace(filepath.Join(t.TempDir(), "ork-sigprobe-test"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec, err := (&OCIDispatcher{Policy: DefaultSecurityPolicy()}).signalProbeSpec(ws)
+	if err != nil {
+		t.Fatalf("signalProbeSpec: %v", err)
+	}
+
+	run, err := runtime.StartBootProbe(context.Background(), spec)
+
+	if err != nil {
+		t.Fatalf("StartBootProbe = %v; want the retry to start", err)
+	}
+	ran, removed := probeContainerNames(t, fake.calls())
+	if len(ran) != 2 || ran[0] == ran[1] {
+		t.Fatalf("runs %q; want two attempts, each with a container of its own", ran)
+	}
+	if !slices.Equal(removed, ran[:1]) {
+		t.Errorf("removed %q; want only the first attempt's container, %q", removed, ran[0])
+	}
+	if run.Container != ContainerID(ran[1]) {
+		t.Errorf("the run handed back %q; want the started attempt's container %q", run.Container, ran[1])
+	}
+	if len(run.Leftovers) != 1 || run.Leftovers[0].Container != ContainerID(ran[0]) || run.Leftovers[0].Err == nil {
+		t.Errorf("the run handed back leftovers %+v; want the first attempt's container %q with the daemon's refusal", run.Leftovers, ran[0])
+	}
+}
+
 // TestBoot_ARetryThatPassesLogsTheContainerItCouldNotRemove: an attempt that
 // overran, and whose container the daemon then would not remove, is not
 // forgotten because the retry passed. Boot logs it by name, as it logs a

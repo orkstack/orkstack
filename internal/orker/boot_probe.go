@@ -289,7 +289,8 @@ func (d *OCIDispatcher) probeContainerSpec(ws *Workspace, taskID string, command
 	// up on) is reaped by the next boot under the same identity, and
 	// `proofrun clean` finds it and the test whose work root its mounts lie
 	// in. The Orker removes every probe container before ProbeRuntime
-	// returns, so its own reap, which runs after the probe, never meets one.
+	// returns, so its own reap, which runs after the probe, meets only one
+	// whose removal failed, and tries to remove it again.
 	spec.Labels = map[string]string{"ork.task": taskID}
 	if d.OrkerID != "" {
 		spec.Labels["ork.orker"] = d.OrkerID
@@ -311,7 +312,7 @@ func (d *OCIDispatcher) removeProbeContainer(ctx context.Context, id ContainerID
 // removed, by name: the container an operator looks for.
 func (d *OCIDispatcher) warnProbeLeftovers(leftovers []ProbeLeftover) {
 	for _, left := range leftovers {
-		d.logger().Warn("boot probe: a container of its could not be removed and may remain "+
+		d.logger().Warn("boot probe: a container of the probe could not be removed and may remain "+
 			"until the next boot under this Orker's identity reaps it",
 			"container", left.Container, "error", left.Err)
 	}

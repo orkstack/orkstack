@@ -55,7 +55,9 @@ import (
 // SIGTERM, neverready makes it never say it is ready, termrefused makes the
 // runtime refuse SIGTERM itself, and sigrunslow, sigruntimeout and sigrunother
 // make that run hang for 30 s, answer the daemon's own deadline error, or be
-// refused for another reason. Every `kill --signal TERM` touches termsent.
+// refused for another reason; sigtimeoutruns (its content N) makes only the
+// first N such runs answer the deadline error. Every `kill --signal TERM`
+// touches termsent.
 type countingDocker struct {
 	t   *testing.T
 	dir string
@@ -127,6 +129,13 @@ case "$1" in
           echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
         fi
         if [ -e "$S/sigrunother" ]; then echo "docker: Error response from daemon: no space left on device" >&2; exit 125; fi
+        if [ -e "$S/sigtimeoutruns" ]; then
+          m=0; if [ -e "$S/sigruns" ]; then m=$(cat "$S/sigruns"); fi
+          m=$((m+1)); echo "$m" > "$S/sigruns"
+          if [ "$m" -le "$(cat "$S/sigtimeoutruns")" ]; then
+            echo "docker: Error response from daemon: failed to create task for container: failed to create shim task: context deadline exceeded: unknown." >&2; exit 125
+          fi
+        fi
         out=""
         for a in "$@"; do
           case "$a" in type=bind,source=*,destination=/orkstack/output) out=${a#type=bind,source=}; out=${out%%,destination=*} ;; esac
