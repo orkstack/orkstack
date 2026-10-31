@@ -17,6 +17,9 @@ word for word.
   tab now also asks the engine for the UI's build version
   (`/_app/version.json`) every hour and when the tab regains focus, as
   SvelteKit 3 does by default.
+- The web UI and the site are type-checked with TypeScript 6.0.3. TypeScript
+  7 waits until SvelteKit, svelte-check and `@astrojs/check`, which all
+  accept only TypeScript 6, support it.
 
 ## [0.1.0] - 2026-10-30
 

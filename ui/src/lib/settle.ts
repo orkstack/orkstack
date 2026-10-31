@@ -9,7 +9,14 @@
 // e2e/run-origin.spec.ts — the trigger link, clicked as RUN_SUCCEEDED
 // arrived, never left /runs/<id>). SvelteKit 3 lets the navigation win
 // instead (client.js `_invalidate` gives up when a navigation began or landed
-// while it loaded), so it is the re-read that is dropped.
+// while it loaded), so it is the re-read that is dropped, silently:
+// invalidate() still resolves. When the navigation left the page that costs
+// nothing. When it stayed — a query-parameter link reruns only the loads that
+// read that parameter, and the run page's load reads only `ns` — the page
+// keeps the data the event said was stale, and the run page would mark a
+// pre-terminal snapshot as its terminal one. So under SvelteKit 3 this guard no longer
+// keeps the click (the e2e specs that click as a run resolves pass without
+// it); it keeps the re-read (test/settle.test.ts models the router's rule).
 //
 // afterNavigation waits out every navigation in flight first, then re-reads
 // only if the page that asked is still mounted: a navigation that left it has

@@ -299,6 +299,9 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await expectNamespace(page, DEFAULT_NS);
 	await expect(page).toHaveURL(/[?&]ns=default(&|$)/);
 	const written = await addressWrites();
+	// The ns= in the address bar came from at least one counted write, so the
+	// counter saw the write it bounds.
+	expect(written).toBeGreaterThan(0);
 	expect(written).toBeLessThanOrEqual(3);
 	// Ten painted frames: the page kept running, and wrote nothing more.
 	await page.evaluate(
