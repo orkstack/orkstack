@@ -616,7 +616,7 @@ func assertPinCreationIsVersioned(
 	if !creation.versioned {
 		t.Errorf("run %s opened its pin on a worker that is NOT using versioning; the SDK is "+
 			"expected to KEEP versioning on the session creation worker "+
-			"(newSessionWorker, internal_worker.go:551-553)", runID)
+			"(newSessionWorker, internal_worker.go:603-604)", runID)
 	}
 	transcript.result(fmt.Sprintf("run %s: pin creation on %s dispatched to build=%s versioned=%v",
 		runID, creation.queue, creation.build, creation.versioned))
