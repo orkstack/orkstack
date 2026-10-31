@@ -740,8 +740,8 @@ task is not pinned, carries `capacity_wait` when every live Orker answered and
 every one of its pool that takes new tasks declares a capacity, runs a task and
 has no room for another within it: the pool, how many Orkers were counted, and
 what they reserve against what they admit within, summed. It is derived from
-the Orker inventory, read only when such an attempt waits and at most once per
-answer
+the Orker inventory, read only when such an attempt waits and shared by the
+engine replica's callers, at most once every five seconds
 ([DEPLOY.md](DEPLOY.md), "Declaring an Orker's capacity"); both clients then
 say the attempt is waiting for capacity rather than for an Orker.
 

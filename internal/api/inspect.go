@@ -130,14 +130,6 @@ func (s *Service) InspectRun(
 	}), nil
 }
 
-// capacityReadTimeout bounds the one inventory read an InspectRun answer may
-// make. A client polls the live view every few seconds (the run page and
-// `orkctl run inspect --watch` every 5 s), so a reading slower than this is
-// stale by the time it lands. An Orker that has not answered within it keeps
-// every pool from being called full (engine.CapacityWaits), and an inventory
-// not read within it leaves every attempt waiting for an Orker.
-const capacityReadTimeout = 2 * time.Second
-
 // capacityWaitAfter is how long an attempt must have waited before it is
 // asked about: an Orker's outstanding poll takes a task within milliseconds,
 // and while it is out it stands reserved at the per-task cap, so an attempt
@@ -147,16 +139,15 @@ const capacityReadTimeout = 2 * time.Second
 const capacityWaitAfter = 2 * time.Second
 
 // markCapacityWaits sets capacity_wait on every attempt that is waiting for
-// capacity rather than for an Orker (engine.CapacityWaits).
+// capacity rather than for an Orker (engine.CapacityWaitsOf).
 //
 // Its cost is bounded, because the run page and `run inspect --watch` call
 // InspectRun on a timer: nothing is read unless an attempt is waiting for an
-// Orker — SCHEDULED with no retry backoff for at least capacityWaitAfter, its
-// task not pinned (a pinned member waits for its pin's host, which no
-// capacity gates) and routed to a pool — and then the Orker inventory is read ONCE for the whole answer,
-// whatever the number of such attempts and pools, within
-// capacityReadTimeout. That is one presence read and one describe per live
-// Orker, the cost of one ListOrkers. Nothing is cached across calls.
+// Orker (waitingByPool), and then the answer reads the replica's shared
+// inventory (sharedInventory): one presence read and one describe per live
+// Orker — the cost of one ListOrkers — at most once per capacityInventoryTTL
+// for every page and watch on this replica, each read bounded by
+// capacityReadTimeout.
 //
 // "Waiting for an Orker" stays true whatever the inventory says, so a read
 // that fails, or one in which a live Orker did not answer, leaves the attempts
@@ -167,9 +158,53 @@ func (s *Service) markCapacityWaits(
 	attempts []*orkstackv1.LiveAttempt,
 	now time.Time,
 ) {
-	if s.fleet == nil {
+	if s.inventory == nil {
 		return
 	}
+	waiting, pools := waitingByPool(run, attempts, now)
+	if len(pools) == 0 {
+		return
+	}
+	orkers, err := s.inventory.read(ctx)
+	switch {
+	case err != nil && ctx.Err() != nil:
+		// The caller left; there is no one to answer and nothing to report.
+		return
+	case err != nil:
+		if s.inventory.warnDue() {
+			s.logger.Warn("inspect run: the Orker inventory could not be read, so no waiting task is "+
+				"reported as waiting for capacity (said at most once a minute)",
+				"run_id", run.GetId(), "error", err)
+		}
+		return
+	}
+	waits, unanswered := engine.CapacityWaitsOf(orkers, pools)
+	if unanswered > 0 {
+		// Every poll of a run page would repeat it, and ListOrkers already
+		// warns of each Orker that does not answer.
+		s.logger.Debug("inspect run: some live Orkers did not answer when asked, so no waiting task is "+
+			"reported as waiting for capacity", "run_id", run.GetId(), "unanswered", unanswered)
+		return
+	}
+	for pool, list := range waiting {
+		wait := waits[pool]
+		if wait == nil {
+			continue
+		}
+		for _, attempt := range list {
+			attempt.CapacityWait = proto.Clone(wait).(*orkstackv1.CapacityWait)
+		}
+	}
+}
+
+// waitingByPool collects the attempts that may be waiting for capacity, by
+// the pool each waits on, and the pools in the order first met: SCHEDULED
+// with no retry backoff for at least capacityWaitAfter, and waitingPool's.
+func waitingByPool(
+	run *orkstackv1.Run,
+	attempts []*orkstackv1.LiveAttempt,
+	now time.Time,
+) (map[string][]*orkstackv1.LiveAttempt, []string) {
 	waiting := map[string][]*orkstackv1.LiveAttempt{}
 	var pools []string
 	var tasks map[string]*orkstackv1.TaskRun
@@ -195,36 +230,7 @@ func (s *Service) markCapacityWaits(
 		}
 		waiting[pool] = append(waiting[pool], attempt)
 	}
-	if len(pools) == 0 {
-		return
-	}
-	readCtx, cancel := context.WithTimeout(ctx, capacityReadTimeout)
-	defer cancel()
-	waits, unanswered, err := engine.CapacityWaits(readCtx, s.fleet, pools)
-	switch {
-	case err != nil && ctx.Err() != nil:
-		// The caller left; there is no one to answer and nothing to report.
-		return
-	case err != nil:
-		s.logger.Warn("inspect run: the Orker inventory could not be read, so no waiting task is "+
-			"reported as waiting for capacity", "run_id", run.GetId(), "error", err)
-		return
-	case unanswered > 0:
-		// Every poll of a run page would repeat it, and ListOrkers already
-		// warns of each Orker that does not answer.
-		s.logger.Debug("inspect run: some live Orkers did not answer when asked, so no waiting task is "+
-			"reported as waiting for capacity", "run_id", run.GetId(), "unanswered", unanswered)
-		return
-	}
-	for pool, list := range waiting {
-		wait := waits[pool]
-		if wait == nil {
-			continue
-		}
-		for _, attempt := range list {
-			attempt.CapacityWait = proto.Clone(wait).(*orkstackv1.CapacityWait)
-		}
-	}
+	return waiting, pools
 }
 
 // waitingPool is the pool a SCHEDULED attempt of taskRun waits on, as the

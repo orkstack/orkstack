@@ -599,14 +599,14 @@ its pool is at its declared capacity. An Orker has room for another task
 only while its per-task cap (DescribeOrkerResult.max_request) still fits
 beside what stands reserved, because it reserves that cap before it asks
 for a task (docs/DEPLOY.md, "Declaring an Orker's capacity"). It is a
-reading of the inventory taken for one InspectRun answer, never a record.
+reading of the inventory at most five seconds old, never a record.
 
 | Field | Type | Description |
 |---|---|---|
 | `pool` | `string` | pool is the pool the attempt waits on, as TaskRun.pool spells it. |
 | `orkers` | `int32` | orkers is how many Orkers of the pool were counted: each answered when asked, is not cordoned, and is full. A cordoned Orker takes nothing new and is not counted. |
-| `reserved` | [`ResourceQuantity`](#resourcequantity) | reserved sums what stands reserved on those Orkers, and capacity sums what they admit tasks within. A dimension of capacity is 0 when any of them leaves it unbounded; a client then reports that dimension of neither. |
-| `capacity` | [`ResourceQuantity`](#resourcequantity) |  |
+| `reserved` | [`ResourceQuantity`](#resourcequantity) | reserved sums what stands reserved on those Orkers (DescribeOrkerResult.reserved): each outstanding poll at the per-task cap, each task's request and each container not yet removed. |
+| `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity sums what those Orkers admit tasks within (DescribeOrkerResult.capacity). A dimension is 0 when any of them leaves it unbounded; a client then reports that dimension of neither capacity nor reserved. |
 
 ### CommitRef
 
@@ -1748,7 +1748,7 @@ answer is the TaskAttempt record the Orker writes.
 | `bytes_logged` | `int64` | bytes_logged is every byte the workload has written to stdout AND stderr, counted before the per-stream retention cap drops any — so it keeps growing after retention stops. Zero with heartbeat_available true means the workload has written nothing. |
 | `orker_id` | `string` | orker_id is the Orker that sent the heartbeat, as it names itself (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id carry. Empty when the beat came from an Orker built before the detail carried it. |
 | `item` | optional `int32` | item is set when the pending activity is one item of a fan-out (read off the scheduled ExecuteTaskInput.each.index). |
-| `capacity_wait` | [`CapacityWait`](#capacitywait) | capacity_wait is set when this attempt is waiting for capacity: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, and every Orker of its pool that takes new tasks declares a capacity, runs a task, and has no room for another task within it. Derived on read, for this answer only, from the Orker inventory ListOrkers reports. Unset otherwise — including when the inventory could not be read in time, when any live Orker did not answer (it could serve this pool, with room), when one of the pool's Orkers declares no capacity, runs nothing (what it reserves is then its own polls, which take the next task), or has room but every task slot (max_concurrent) taken. The attempt is then waiting for an Orker, as it always was. |
+| `capacity_wait` | [`CapacityWait`](#capacitywait) | capacity_wait is set when this attempt is waiting for capacity: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, and every Orker of its pool that takes new tasks declares a capacity, runs a task, and has no room for another task within it. Derived on read from the Orker inventory ListOrkers reports, in a reading at most five seconds old that one engine replica shares among every caller. Unset otherwise — including when the inventory could not be read in time, when any live Orker did not answer (it could serve this pool, with room), when one of the pool's Orkers declares no capacity, runs nothing (what it reserves is then its own polls, which take the next task), or has room but every task slot (max_concurrent) taken. The attempt is then waiting for an Orker, as it always was. |
 
 ### Namespace
 

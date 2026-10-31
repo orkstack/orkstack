@@ -58,16 +58,29 @@ func (c *poolCensus) read(ctx context.Context) error {
 			c.err = err
 			return
 		}
-		for _, orker := range orkers {
-			if orker.Err != nil || orker.Described == nil {
-				c.unanswered = append(c.unanswered, orker.Presence.Identity)
-				continue
-			}
-			pool := orker.Described.GetPool()
-			c.byPool[pool] = append(c.byPool[pool], orker)
-		}
+		c.fill(orkers)
 	})
 	return c.err
+}
+
+// fill groups an inventory by the pool each Orker answered for. Once.
+func (c *poolCensus) fill(orkers []FleetOrker) {
+	c.byPool = map[string][]FleetOrker{}
+	for _, orker := range orkers {
+		if orker.Err != nil || orker.Described == nil {
+			c.unanswered = append(c.unanswered, orker.Presence.Identity)
+			continue
+		}
+		pool := orker.Described.GetPool()
+		c.byPool[pool] = append(c.byPool[pool], orker)
+	}
+}
+
+// censusOf is the census of an inventory already read (ReadFleet).
+func censusOf(orkers []FleetOrker) *poolCensus {
+	c := &poolCensus{}
+	c.once.Do(func() { c.fill(orkers) })
+	return c
 }
 
 // taking is the Orkers of one pool that answered on their own channel and

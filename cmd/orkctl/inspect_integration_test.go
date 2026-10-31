@@ -481,6 +481,10 @@ tasks:
 		metricValue(waits, "ork_orker_admission_wait_duration_seconds_count", orkerID, `ork_admission_bound="capacity"`))
 }
 
+// scrapeClient bounds each scrape, so an admin listener that accepts and
+// never answers fails one attempt rather than the whole wait.
+var scrapeClient = &http.Client{Timeout: 5 * time.Second}
+
 // scrapeOrkerMetrics reads an Orker's /metrics until ready says the body
 // holds what the caller waits for, and returns that body.
 func scrapeOrkerMetrics(ctx context.Context, t *testing.T, admin string, ready func(string) bool) string {
@@ -492,7 +496,7 @@ func scrapeOrkerMetrics(ctx context.Context, t *testing.T, admin string, ready f
 		if err != nil {
 			t.Fatal(err)
 		}
-		if resp, err := http.DefaultClient.Do(req); err == nil {
+		if resp, err := scrapeClient.Do(req); err == nil {
 			raw, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
 			body = string(raw)

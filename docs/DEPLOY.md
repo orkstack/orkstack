@@ -676,18 +676,22 @@ per-task cap no longer fits beside `RESERVED`, so a pool can read full with
 less than its capacity reserved: an Orker with a 2-cpu cap and 3 of 4 cpus
 reserved takes nothing more.
 
-It is derived on read, never stored: `InspectRun` sets `capacity_wait` on a
-waiting attempt from the Orker inventory, the rows `orkctl orker list` shows.
-The inventory is read only when an attempt of the run has waited for an Orker
-for two seconds, once per answer however many attempts and pools wait, and within two seconds —
-one presence read and one describe per live Orker, the cost of one
-`orkctl orker list`. The run page and `orkctl run inspect --watch` ask every 5
-seconds, so a run with a task waiting costs one such read per 5 seconds per
-open page or watch, and nothing once the task starts. While any live Orker does
-not answer within the bound, no pool is called full, because the one that did
+It is derived on read, never stored as state: `InspectRun` sets
+`capacity_wait` on a waiting attempt from the Orker inventory, the rows
+`orkctl orker list` shows. The inventory is read only when an attempt has
+waited for an Orker for two seconds — one presence read and one describe per
+live Orker, the cost of one `orkctl orker list`, bounded at two seconds — and
+each engine replica shares one reading among every caller: a read in flight is
+joined by every answer that asks meanwhile, and a successful reading answers
+for five seconds, the run page's and `orkctl run inspect --watch`'s own poll
+period. However many pages and watches are open, while its reads succeed a
+replica asks the Orkers at most once every five seconds for them, and nothing
+once no task waits; a caption is never older than one poll. While any live
+Orker does not answer within the bound, no pool is called full, because the one that did
 not answer could serve it with room: for the 90 seconds a stopped Orker stays
 listed, every waiting task reads `Waiting for an orker`, as it does when the
-inventory cannot be read at all, which the engine logs.
+inventory cannot be read at all. A failed read is never kept, and the engine
+warns of one at most once a minute.
 
 **Capacity metrics.** With metrics on (`OTEL_METRICS_EXPORTER`, "Metrics"
 below), an Orker that declares a capacity exports, on the default sink:

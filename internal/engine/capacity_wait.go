@@ -9,36 +9,45 @@ import (
 
 // CapacityWaits answers, for each pool named, whether a task that no Orker of
 // the pool has started is waiting for capacity rather than for an Orker
-// (orkstackv1.CapacityWait, InspectRun's live view). A pool is in the map only
-// when it is.
-//
-// It is derived on read and held nowhere (AGENTS.md §7): one poolCensus,
-// taken at most once however many pools ask, of the Orkers that answered on
-// their own channel and are not cordoned — the Orkers submit counts. Unlike a
-// submit, it claims nothing while any live Orker did not answer: which pool
-// that Orker serves is what it did not say, so "every Orker of the pool is
-// full" could not be known, and the answer stays "waiting for an Orker", which
-// is true either way. unanswered says how many did not, for the caller to
-// record. Only a failed presence read is an error; no pools reads nothing.
+// (orkstackv1.CapacityWait, InspectRun's live view). It reads the Orker
+// inventory once (ReadFleet) and applies CapacityWaitsOf to it. Only a failed
+// presence read is an error; no pools reads nothing.
 func CapacityWaits(ctx context.Context, fleet FleetReader, pools []string) (waits map[string]*orkstackv1.CapacityWait, unanswered int, err error) {
-	waits = map[string]*orkstackv1.CapacityWait{}
 	if len(pools) == 0 || fleet == nil {
-		return waits, 0, nil
+		return map[string]*orkstackv1.CapacityWait{}, 0, nil
 	}
-	census := newPoolCensus(fleet)
+	orkers, err := ReadFleet(ctx, fleet)
+	if err != nil {
+		return nil, 0, err
+	}
+	waits, unanswered = CapacityWaitsOf(orkers, pools)
+	return waits, unanswered, nil
+}
+
+// CapacityWaitsOf is the rule over an inventory already read: a pool is in
+// the map only when its waiting task is waiting for capacity.
+//
+// It is derived on read and held nowhere (AGENTS.md §7), over the Orkers that
+// answered on their own channel and are not cordoned — the Orkers submit
+// counts (poolCensus). Unlike a submit, it claims nothing while any live Orker
+// did not answer: which pool that Orker serves is what it did not say, so
+// "every Orker of the pool is full" could not be known, and the answer stays
+// "waiting for an Orker", which is true either way. unanswered says how many
+// did not, for the caller to record.
+func CapacityWaitsOf(orkers []FleetOrker, pools []string) (waits map[string]*orkstackv1.CapacityWait, unanswered int) {
+	waits = map[string]*orkstackv1.CapacityWait{}
+	census := censusOf(orkers)
+	if unanswered = len(census.unanswered); unanswered > 0 {
+		return waits, unanswered
+	}
 	for _, pool := range pools {
-		orkers, err := census.taking(ctx, pool)
-		if err != nil {
-			return nil, 0, err
-		}
-		if wait := capacityWait(pool, orkers); wait != nil {
+		// The census is already read, so taking asks nothing and fails never.
+		taking, _ := census.taking(context.Background(), pool)
+		if wait := capacityWait(pool, taking); wait != nil {
 			waits[pool] = wait
 		}
 	}
-	if unanswered = census.unansweredCount(); unanswered > 0 {
-		return map[string]*orkstackv1.CapacityWait{}, unanswered, nil
-	}
-	return waits, 0, nil
+	return waits, 0
 }
 
 // capacityWait is the rule for one pool: every Orker counted declares a

@@ -1040,8 +1040,9 @@ export type LiveAttempt = Message<"orkstack.v1.LiveAttempt"> & {
    * been SCHEDULED, with no next_attempt_at, for at least two seconds, its
    * task is not pinned, and every Orker of its pool that takes new tasks
    * declares a capacity, runs a task, and has no room for another task within
-   * it. Derived on read, for this answer only, from the Orker inventory
-   * ListOrkers reports. Unset otherwise — including when the inventory could
+   * it. Derived on read from the Orker inventory ListOrkers reports, in a
+   * reading at most five seconds old that one engine replica shares among
+   * every caller. Unset otherwise — including when the inventory could
    * not be read in time, when any live Orker did not answer (it could serve
    * this pool, with room), when one of the pool's Orkers declares no
    * capacity, runs nothing (what it reserves is then its own polls, which
@@ -1066,7 +1067,7 @@ export const LiveAttemptSchema: GenMessage<LiveAttempt> = /*@__PURE__*/
  * only while its per-task cap (DescribeOrkerResult.max_request) still fits
  * beside what stands reserved, because it reserves that cap before it asks
  * for a task (docs/DEPLOY.md, "Declaring an Orker's capacity"). It is a
- * reading of the inventory taken for one InspectRun answer, never a record.
+ * reading of the inventory at most five seconds old, never a record.
  *
  * @generated from message orkstack.v1.CapacityWait
  */
@@ -1088,16 +1089,20 @@ export type CapacityWait = Message<"orkstack.v1.CapacityWait"> & {
   orkers: number;
 
   /**
-   * reserved sums what stands reserved on those Orkers, and capacity sums
-   * what they admit tasks within. A dimension of capacity is 0 when any of
-   * them leaves it unbounded; a client then reports that dimension of
-   * neither.
+   * reserved sums what stands reserved on those Orkers
+   * (DescribeOrkerResult.reserved): each outstanding poll at the per-task cap,
+   * each task's request and each container not yet removed.
    *
    * @generated from field: orkstack.v1.ResourceQuantity reserved = 3;
    */
   reserved?: ResourceQuantity | undefined;
 
   /**
+   * capacity sums what those Orkers admit tasks within
+   * (DescribeOrkerResult.capacity). A dimension is 0 when any of them leaves
+   * it unbounded; a client then reports that dimension of neither capacity
+   * nor reserved.
+   *
    * @generated from field: orkstack.v1.ResourceQuantity capacity = 4;
    */
   capacity?: ResourceQuantity | undefined;

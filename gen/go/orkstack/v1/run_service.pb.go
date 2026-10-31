@@ -1871,8 +1871,9 @@ type LiveAttempt struct {
 	// been SCHEDULED, with no next_attempt_at, for at least two seconds, its
 	// task is not pinned, and every Orker of its pool that takes new tasks
 	// declares a capacity, runs a task, and has no room for another task within
-	// it. Derived on read, for this answer only, from the Orker inventory
-	// ListOrkers reports. Unset otherwise — including when the inventory could
+	// it. Derived on read from the Orker inventory ListOrkers reports, in a
+	// reading at most five seconds old that one engine replica shares among
+	// every caller. Unset otherwise — including when the inventory could
 	// not be read in time, when any live Orker did not answer (it could serve
 	// this pool, with room), when one of the pool's Orkers declares no
 	// capacity, runs nothing (what it reserves is then its own polls, which
@@ -2058,7 +2059,7 @@ func (x *LiveAttempt) GetCapacityWait() *CapacityWait {
 // only while its per-task cap (DescribeOrkerResult.max_request) still fits
 // beside what stands reserved, because it reserves that cap before it asks
 // for a task (docs/DEPLOY.md, "Declaring an Orker's capacity"). It is a
-// reading of the inventory taken for one InspectRun answer, never a record.
+// reading of the inventory at most five seconds old, never a record.
 type CapacityWait struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// pool is the pool the attempt waits on, as TaskRun.pool spells it.
@@ -2067,11 +2068,14 @@ type CapacityWait struct {
 	// asked, is not cordoned, and is full. A cordoned Orker takes nothing new
 	// and is not counted.
 	Orkers int32 `protobuf:"varint,2,opt,name=orkers,proto3" json:"orkers,omitempty"`
-	// reserved sums what stands reserved on those Orkers, and capacity sums
-	// what they admit tasks within. A dimension of capacity is 0 when any of
-	// them leaves it unbounded; a client then reports that dimension of
-	// neither.
-	Reserved      *ResourceQuantity `protobuf:"bytes,3,opt,name=reserved,proto3" json:"reserved,omitempty"`
+	// reserved sums what stands reserved on those Orkers
+	// (DescribeOrkerResult.reserved): each outstanding poll at the per-task cap,
+	// each task's request and each container not yet removed.
+	Reserved *ResourceQuantity `protobuf:"bytes,3,opt,name=reserved,proto3" json:"reserved,omitempty"`
+	// capacity sums what those Orkers admit tasks within
+	// (DescribeOrkerResult.capacity). A dimension is 0 when any of them leaves
+	// it unbounded; a client then reports that dimension of neither capacity
+	// nor reserved.
 	Capacity      *ResourceQuantity `protobuf:"bytes,4,opt,name=capacity,proto3" json:"capacity,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

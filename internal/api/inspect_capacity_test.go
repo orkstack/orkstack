@@ -1,7 +1,11 @@
 package api_test
 
 import (
+	"context"
 	"errors"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -203,5 +207,105 @@ func TestInspectRun_AnOrkerThatDidNotAnswerKeepsEveryPoolFromBeingCalledFull(t *
 	}
 	if len(fleet.describes) != 3 {
 		t.Fatalf("describes = %v, want every live Orker asked", fleet.describes)
+	}
+}
+
+// hungFleet is a stubFleet one of whose Orkers never answers until it is
+// given up on, and which records the deadline it was given.
+type hungFleet struct {
+	*stubFleet
+	hung     string
+	mu       sync.Mutex
+	deadline time.Time
+}
+
+func (f *hungFleet) DescribeOrkerByID(ctx context.Context, id string) (*orkstackv1.DescribeOrkerResult, error) {
+	if id != f.hung {
+		return f.stubFleet.DescribeOrkerByID(ctx, id)
+	}
+	deadline, _ := ctx.Deadline()
+	f.mu.Lock()
+	f.deadline = deadline
+	f.mu.Unlock()
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// TestInspectRun_AHungOrkerStillAnswersWithinTheReadBound: an Orker that
+// never answers is given up on at the read's own bound, well inside the live
+// view's poll, and the attempt keeps today's caption.
+func TestInspectRun_AHungOrkerStillAnswersWithinTheReadBound(t *testing.T) {
+	run := inspectRun("ork-capacity-5", orkstackv1.Status_STATUS_RUNNING, "build")
+	routeTasksTo(run, "build", "build")
+	stub := capacityFleet()
+	stub.presence = append(stub.presence, engine.OrkerPresence{Identity: "orker-hung", LastSeen: fleetSeen})
+	fleet := &hungFleet{stubFleet: stub, hung: "orker-hung"}
+	reader := &fakeReader{runs: map[string]*orkstackv1.Run{run.GetId(): run}}
+	liveReader := &liveFakeReader{fakeReader: reader, live: engine.LiveRun{Attempts: []*orkstackv1.LiveAttempt{waitingAttempt("build")}}}
+	f := newReaderFixtureWith(t, reader, func(cfg *api.Config) {
+		cfg.Reader = liveReader
+		cfg.Now = func() time.Time { return inspectNow }
+		cfg.Fleet = fleet
+	})
+	asked := time.Now()
+	resp, err := (&inspectFixture{readerFixture: f, live: liveReader}).inspect(t,
+		&orkstackv1.InspectRunRequest{RunId: run.GetId()})
+	if err != nil {
+		t.Fatalf("InspectRun with a hung Orker: %v", err)
+	}
+	if got := resp.GetAttempts()[0].GetCapacityWait(); got != nil {
+		t.Fatalf("capacity_wait = %v with an Orker that never answered, want today's caption", got)
+	}
+	fleet.mu.Lock()
+	deadline := fleet.deadline
+	fleet.mu.Unlock()
+	if deadline.IsZero() || deadline.Sub(asked) > 3*time.Second {
+		t.Fatalf("the hung Orker was asked with deadline %v, %v after the call; want the 2 s read bound",
+			deadline, deadline.Sub(asked))
+	}
+}
+
+// TestInspectRun_AFailedInventoryReadIsWarnedAtMostOncePerInterval: every
+// open run page polls, so a failed read is warned once per interval per
+// replica rather than once per poll per viewer.
+func TestInspectRun_AFailedInventoryReadIsWarnedAtMostOncePerInterval(t *testing.T) {
+	run := inspectRun("ork-capacity-6", orkstackv1.Status_STATUS_RUNNING, "build")
+	routeTasksTo(run, "build", "build")
+	fleet := capacityFleet()
+	fleet.observeEr = errors.New("frontend unavailable")
+	var logs syncBuffer
+	now := inspectNow
+	var clock sync.Mutex
+	reader := &fakeReader{runs: map[string]*orkstackv1.Run{run.GetId(): run}}
+	liveReader := &liveFakeReader{fakeReader: reader, live: engine.LiveRun{Attempts: []*orkstackv1.LiveAttempt{waitingAttempt("build")}}}
+	fixture := newReaderFixtureWith(t, reader, func(cfg *api.Config) {
+		cfg.Reader = liveReader
+		cfg.Now = func() time.Time { clock.Lock(); defer clock.Unlock(); return now }
+		cfg.Fleet = fleet
+		cfg.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+	})
+	f := &inspectFixture{readerFixture: fixture, live: liveReader}
+	warned := func() int {
+		return strings.Count(logs.String(), "the Orker inventory could not be read")
+	}
+	for i := 0; i < 3; i++ {
+		if _, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()}); err != nil {
+			t.Fatalf("InspectRun: %v", err)
+		}
+	}
+	if got := warned(); got != 1 {
+		t.Fatalf("three failed reads warned %d times, want 1", got)
+	}
+	if fleet.observeOrkers != 3 {
+		t.Fatalf("presence reads = %d, want 3: a failure is never kept", fleet.observeOrkers)
+	}
+	clock.Lock()
+	now = now.Add(time.Minute)
+	clock.Unlock()
+	if _, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()}); err != nil {
+		t.Fatalf("InspectRun: %v", err)
+	}
+	if got := warned(); got != 2 {
+		t.Fatalf("a failure a minute later warned %d times in all, want 2", got)
 	}
 }
