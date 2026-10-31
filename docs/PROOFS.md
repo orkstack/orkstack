@@ -740,8 +740,10 @@ runs `scripts/quickstart-smoke.sh` (the README's Quickstart as written, on a
 clone of the commit, built from source) before it uploads anything.
 It restores no cache, and runs QEMU's installer and BuildKit from images
 pinned by digest in `with:`, which Dependabot does not see, so those two pins
-are moved by hand. GitHub cancels no sibling job, so `artifacts` stops the run
-itself, from its last step (`gh run cancel`, the one step given its `actions:
+are moved by hand, with proof.yml's build job, which runs the same BuildKit
+(`TestWorkflows_TheProofBuildsWithTheReleasesBuildKit`). GitHub cancels no
+sibling job, so `artifacts` stops the run itself, from its last step
+(`gh run cancel`, the one step given its `actions:
 write`), but only when one of its own build, smoke or verification steps
 failed — the archives, the images, either smoke, or the checksums, notes and
 image list (each named by `steps.<id>.outcome`), which a rerun on the same
@@ -831,7 +833,8 @@ pins each by digest, and the stack then starts with `--pull never`, so a
 missing image is an explicit failure and never a stall), cosign v2.6.5 is
 downloaded through it as the release's linux/amd64 binary and kept only if it
 hashes to the SHA-256 the release's `cosign_checksums.txt` lists, and the one
-container the action runs from Docker Hub by tag is bounded with `timeout`.
+container the action runs from Docker Hub, the first-party images' alpine by
+digest, is bounded with `timeout`.
 Its fetches run inside the caller's `proof host` step, which has a limit of
 10 minutes of its own.
 

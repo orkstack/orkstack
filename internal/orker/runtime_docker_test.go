@@ -528,9 +528,9 @@ func TestBindProbeImage_IsQualifiedAndPinned(t *testing.T) {
 // the first-party images build from, at the digest they pin, and the copies
 // of it outside the Orker move with it: the PROBE_IMAGE of the Podman
 // workflow, the Kubernetes check and the kind script, the shell example's
-// base, and the documents that quote the probe's image for an operator to
-// mirror or pull. Dependabot moves only the Dockerfiles
-// (.github/dependabot.yml), so a copy it left behind fails here.
+// base, the proof-host action's container, and the documents that quote the
+// probe's image for an operator to mirror or pull. Dependabot moves only the
+// Dockerfiles (.github/dependabot.yml), so a copy it left behind fails here.
 func TestBindProbeImage_IsTheFirstPartyImagesBase(t *testing.T) {
 	root := filepath.Join("..", "..")
 	base := strings.TrimPrefix(BindProbeImage, "docker.io/library/")
@@ -538,7 +538,8 @@ func TestBindProbeImage_IsTheFirstPartyImagesBase(t *testing.T) {
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no first-party Dockerfiles found: %v", err)
 	}
-	files = append(files, filepath.Join(root, "examples", "custom-image-shell", "Dockerfile"))
+	files = append(files, filepath.Join(root, "examples", "custom-image-shell", "Dockerfile"),
+		filepath.Join(root, ".github", "actions", "proof-host", "action.yml"))
 	for _, doc := range []string{"OCI_ACTIVITY_CONTRACT.md", "REASONS.md", "TROUBLESHOOTING.md", "UPGRADING.md"} {
 		files = append(files, filepath.Join(root, "docs", doc))
 	}
