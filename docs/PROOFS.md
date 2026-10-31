@@ -1741,7 +1741,7 @@ a still-running proof or `integration.sh` run recorded. A work root or a
 container whose owner cannot be told is listed and left alone, and the
 development bucket, the dev stack's work root and its Orker's containers are
 never touched. The recorded names are the source of truth for buckets: the
-development store, SeaweedFS 4.48 with its auth off, answers the S3 bucket
+development store, SeaweedFS 4.51 with its auth off, answers the S3 bucket
 listing with no bucket at all.
 
 ## 11. Reference

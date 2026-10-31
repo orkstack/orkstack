@@ -15,7 +15,7 @@ import (
 	"time"
 )
 
-// fakeCleanStore holds buckets; it lists only those in listed (SeaweedFS 4.48
+// fakeCleanStore holds buckets; it lists only those in listed (SeaweedFS 4.51
 // with its auth off lists none) and records what it removed.
 type fakeCleanStore struct {
 	mu      sync.Mutex

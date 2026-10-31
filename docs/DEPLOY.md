@@ -1690,7 +1690,7 @@ a delay set by two dynamic-config values. Both default to three minutes:
 count, which gives a workflow that started on the version a moment before it
 stopped being current time to reach visibility, and
 `matching.wv.VersionDrainageStatusRefreshInterval` between the counts that
-follow (Temporal server 1.31, which the development image pins). The
+follow (Temporal server 1.32, which the development image pins). The
 `temporal` service of `deploy/docker-compose.yml` passes
 `--dynamic-config-value` for both, `10s` and `3s`, so every test that waits for
 a release to drain waits seconds rather than minutes. The proofs read the same

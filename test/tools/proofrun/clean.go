@@ -53,7 +53,7 @@ import (
 // emptied through a throwaway container: see removeTreeArgs for what it is.
 //
 // It finds buckets by the names proofs recorded, not by the store's listing
-// alone: the development store, SeaweedFS 4.48 with its auth off, answers the
+// alone: the development store, SeaweedFS 4.51 with its auth off, answers the
 // S3 bucket listing with no bucket at all. Every proof directory and
 // scripts/integration.sh run directory of every worktree of this repository
 // is read: each process's hand-off file (integration/<job>.bucket) and the
