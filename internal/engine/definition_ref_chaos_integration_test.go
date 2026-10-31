@@ -5,6 +5,7 @@ package engine_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -18,6 +19,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // The definition-by-reference chaos scenarios (T5, C33–C36): a definition passed by reference
@@ -277,30 +280,74 @@ func TestIntegration_DefinitionChaosC35_FrontendCutDuringTheLoad(t *testing.T) {
 	}
 }
 
+// cancelDuringTheLoad starts a C36 run: object storage is cut at
+// generation 0's first definition read, onWrite stands in front of the
+// replica's event snapshot writes, and the operator's cancel is sent once
+// Temporal has retried the failing read — a second read has begun, and the
+// cut has refused a connection. It returns the run id and when the cancel
+// was sent.
+func (s *chaosStack) cancelDuringTheLoad(t *testing.T, name string, proxy *faultproxy.Proxy,
+	onWrite func(sequence int64, attempt int32),
+) (string, time.Time) {
+	t.Helper()
+	hook := newBlockingHook(nthFirstRead(1))
+	hook.onEntry = proxy.Cut
+	t.Cleanup(func() { hook.open(nil) })
+	var mu sync.Mutex
+	reads := 0
+	retried := make(chan struct{})
+	store := storeHooks{
+		SnapshotStore: s.snapshotStoreVia(proxy),
+		onWrite: func(sequence int64, attempt int32) error {
+			onWrite(sequence, attempt)
+			return nil
+		},
+		onRead: func() {
+			mu.Lock()
+			defer mu.Unlock()
+			if reads++; reads == 2 {
+				close(retried)
+			}
+		},
+	}
+	_, budget := s.tcPlan()
+	runID, _, _ := s.definitionChaosRun(t, name, budget, replicaOptions{store: store}, hook)
+	hook.open(nil)
+	select {
+	case <-retried:
+	case <-time.After(time.Minute):
+		t.Fatal("Temporal never retried the failing definition read within a minute of the cut")
+	}
+	if proxy.Stats().Refused == 0 {
+		t.Fatal("no read met the cut: the outage was not exercised")
+	}
+	s.transcript.step("the definition read failed and was retried under the cut (%+v)", proxy.Stats())
+	canceledAt := time.Now()
+	if err := s.starter.CancelRun(s.ctx, runID, ""); err != nil {
+		t.Fatal(err)
+	}
+	return runID, canceledAt
+}
+
 // TestIntegration_DefinitionChaosC36_CancelDuringTheLoad: an operator's
-// cancel while generation 0's definition reads fail and Temporal backs off
-// between them ends the run RUN_CANCELED within 30 s, through endBeforeStart
-// — RUN_CREATED then RUN_CANCELED, read through the API's StreamRunEvents —
-// with an archive body, never RUN_DEFINITION_*.
+// cancel while generation 0's definition reads fail and Temporal retries
+// them ends the run RUN_CANCELED within 30 s, through endBeforeStart —
+// RUN_CREATED then RUN_CANCELED, read through the API's StreamRunEvents —
+// with an archive body, never RUN_DEFINITION_*. Object storage comes back
+// when the ending writes its first snapshot: by then the cancel has reached
+// the read, since nothing in generation 0 writes one before its definition
+// is loaded.
 func TestIntegration_DefinitionChaosC36_CancelDuringTheLoad(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
 	s := newChaosStack(t, ctx, "C36")
 	proxy := s.minioProxy()
-	hook := newBlockingHook(nthFirstRead(1))
-	hook.onEntry = proxy.Cut
-	t.Cleanup(func() { hook.open(nil) })
-	_, budget := s.tcPlan()
-	runID, _, _ := s.definitionChaosRun(t, "c36-cancel", budget, replicaOptions{store: s.snapshotStoreVia(proxy)}, hook)
-	hook.open(nil)
-	// Long enough that Temporal is backing off between failing reads.
-	time.Sleep(20 * time.Second)
-	canceledAt := time.Now()
-	if err := s.starter.CancelRun(ctx, runID, ""); err != nil {
-		t.Fatal(err)
-	}
-	reached := s.waitReadCanceled(t, runID, time.Minute)
-	proxy.Restore()
+	writes := &runCreatedWrites{}
+	var restore sync.Once
+	runID, canceledAt := s.cancelDuringTheLoad(t, "c36-cancel", proxy, func(sequence int64, attempt int32) {
+		writes.note(sequence, attempt)
+		restore.Do(proxy.Restore)
+	})
 	status, _ := s.wait(runID, 2*time.Minute)
 	latency := time.Since(canceledAt)
 	if status != enums.WORKFLOW_EXECUTION_STATUS_CANCELED {
@@ -308,6 +355,10 @@ func TestIntegration_DefinitionChaosC36_CancelDuringTheLoad(t *testing.T) {
 	}
 	if latency > 30*time.Second {
 		t.Fatalf("the run ended %s after the cancel, over 30 s", latency)
+	}
+	reached := s.waitReadCanceled(t, runID, time.Minute)
+	if n, _, _ := writes.counts(); n != 1 {
+		t.Fatalf("RUN_CREATED's writes began %d times, want once, with the store back", n)
 	}
 	a := s.serveAPI(api.Config{})
 	served := apiEvents(t, ctx, a, runID)
@@ -326,6 +377,100 @@ func TestIntegration_DefinitionChaosC36_CancelDuringTheLoad(t *testing.T) {
 	s.transcript.figure("cancel_latency", latency.String())
 	t.Logf("C36: canceled during generation 0's definition load: RUN_CANCELED %s after the cancel, RUN_CREATED and "+
 		"RUN_CANCELED through StreamRunEvents, archived", latency)
+}
+
+// TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding is C36 with
+// object storage still cut when the canceled run writes RUN_CREATED, and
+// through every attempt of that write. Back for the next write, the run
+// writes RUN_CREATED again under sequence 1 and then RUN_CANCELED:
+// StreamRunEvents serves both, from 1, and the archive holds them
+// (run-created-first, emitRunCreatedFirst). Before that gate the next write
+// was RUN_CANCELED at 2, and the stream and archive held it alone, for good.
+// Cut through both writes, the run writes nothing past RUN_CREATED, and the
+// reader serves the execution's close as its one event, at 1.
+func TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// backAt is the write of sequence 1 the store comes back for, or 0
+		// for none: then it comes back once the run has closed.
+		backAt int
+		want   string
+		// others is whether anything past RUN_CREATED is written.
+		others bool
+	}{
+		{"back for the second write", 2, "[1:RUN_CREATED 2:RUN_CANCELED]", true},
+		{"cut through both writes", 0, "[1:RUN_CANCELED]", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+			defer cancel()
+			s := newChaosStack(t, ctx, fmt.Sprintf("C36/cut-%d", tc.backAt))
+			proxy := s.minioProxy()
+			writes := &runCreatedWrites{}
+			var restore, ending sync.Once
+			var endingAt time.Time
+			runID, canceledAt := s.cancelDuringTheLoad(t, fmt.Sprintf("c36-cut-%d", tc.backAt), proxy,
+				func(sequence int64, attempt int32) {
+					ending.Do(func() { endingAt = time.Now() })
+					// Any write past sequence 1 brings the store back too, so
+					// a build that writes past an unwritten RUN_CREATED
+					// publishes what it wrote, and the stream shows it.
+					if n := writes.note(sequence, attempt); tc.backAt > 0 && (n >= tc.backAt || sequence != 1) {
+						restore.Do(proxy.Restore)
+					}
+				})
+			status, _ := s.wait(runID, 2*time.Minute)
+			restore.Do(proxy.Restore)
+			if status != enums.WORKFLOW_EXECUTION_STATUS_CANCELED {
+				t.Fatalf("the run closed %v, want Canceled", status)
+			}
+			// The cancel's own latency: how long until the run began to end.
+			// What the ending takes after that is its writes' retries under
+			// the cut, which C36 above bounds with the store back.
+			ending.Do(func() { t.Fatal("the run ended without writing a snapshot") })
+			latency := endingAt.Sub(canceledAt)
+			if latency > 30*time.Second {
+				t.Fatalf("the run began to end %s after the cancel, over 30 s", latency)
+			}
+			n, tries, others := writes.counts()
+			if tries <= n {
+				t.Fatalf("RUN_CREATED's writes made %d attempts over %d writes: the first never met the cut", tries, n)
+			}
+			a := s.serveAPI(api.Config{})
+			served := apiEvents(t, ctx, a, runID)
+			if got := fmt.Sprint(definitionEventTypes(served)); got != tc.want {
+				t.Fatalf("StreamRunEvents served %s, want %s", got, tc.want)
+			}
+			if n != 2 || (others > 0) != tc.others {
+				t.Fatalf("RUN_CREATED was written %d times and %d attempts wrote past it, want 2 writes and others=%v",
+					n, others, tc.others)
+			}
+			if tc.others {
+				archived := awaitArchivedEvents(t, ctx, s.archive, runID)
+				if strings.Join(eventKeys(archived), "\n") != strings.Join(eventKeys(served), "\n") {
+					t.Fatal("the archive body's events differ from the stream")
+				}
+			} else {
+				// The run reads canceled from its close alone. It published
+				// nothing — no PublishEvent was ever scheduled — so nothing
+				// can archive it: the documented cost of an ending that
+				// cannot write RUN_CREATED (emitRunCreatedFirst).
+				run, err := s.reader.GetRun(ctx, runID)
+				if err != nil || run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != "RUN_CANCELED" {
+					t.Fatalf("GetRun = %v (%v), want CANCELED with RUN_CANCELED", run, err)
+				}
+				if published := publishedOf(t, s.history(runID, "")); len(published) != 0 {
+					t.Fatalf("the run published %v past an unwritten RUN_CREATED", definitionEventTypes(published))
+				}
+				if _, err := s.archive.LoadRun(ctx, runID); !errors.Is(err, artifacts.ErrNotFound) {
+					t.Fatalf("the archive body = %v, want none: nothing published a terminal event", err)
+				}
+			}
+			s.transcript.figure("cancel_latency", latency.String())
+			t.Logf("C36 (%s): StreamRunEvents served %s, %s after the cancel; RUN_CREATED written %d times in %d attempts",
+				tc.name, tc.want, latency, n, tries)
+		})
+	}
 }
 
 // requireCategory: the run's error reads with want from the terminal

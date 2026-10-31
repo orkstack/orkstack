@@ -3406,6 +3406,27 @@ recorded with the gate off) guard it with command, behaviour and negative
 tests (`internal/engine/testdata/history/README.md`); a missing fixture fails
 those tests, it never skips them.
 
+**An ending before start writes `RUN_CREATED` first.** A run whose definition,
+passed by reference, cannot be used ends in its first generation with
+`RUN_CREATED` at sequence 1 and its terminal event at 2. When object storage
+refuses `RUN_CREATED`'s snapshot, it is written again under the same number;
+when that write fails too, the run writes nothing after it, and its close
+reads as its one event, at 1, with the run's code. Such a run publishes no
+terminal event, so, like every run that publishes none, it has no archive
+body, sends no webhook, and becomes unreadable once the cluster's retention
+expires it. Before this, the terminal
+event was written at 2 regardless, and a store that came back between the two
+writes left the stream and the archive with that event alone, for good. It
+records the `run-created-first` version, asked lazily where `RUN_CREATED`'s
+write first fails: an ending whose writes take records no marker. A history
+recorded before the gate replays its `DefaultVersion` branch, which wrote the
+terminal event next; version 1 is the new path. The fixtures
+`run-created-first-v1.json` (the second write takes),
+`run-created-first-unwritten-v1.json` (neither does) and
+`run-created-first-legacy-v1.json` (recorded with the gate off) guard it with
+command, behaviour and negative tests
+(`internal/engine/testdata/history/README.md`).
+
 **A pin's creation timeout is a versioned change.** A run's plan carries
 `engine.pin_creation_timeout` in whole seconds, pinned at submit and copied
 into each child run's start, and the engine uses it as the wait of every pin

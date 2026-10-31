@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -371,18 +372,13 @@ func (s *runState) loadDefinition(ctx workflow.Context, stub *orkstackv1.Orkflow
 // every stream begins there, as a start that failed before Temporal begins
 // its own (recordFailedStart) — and then RUN_FAILED (or RUN_CANCELED) at
 // sequence 2, each with its snapshot, so the run has a stream and an archive
-// body. It returns the ApplicationError, or the cancel.
+// body. Nothing is written past a RUN_CREATED it could not write
+// (emitRunCreatedFirst). It returns the ApplicationError, or the cancel.
 func (s *runState) endBeforeStart(ctx workflow.Context, code, message string) (*orkstackv1.Run, error) {
 	canceled := ctx.Err() != nil || code == restoreCanceled
 	ectx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
-	if err := s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "", orkstackv1.Status_STATUS_PENDING,
-		fmt.Sprintf("run created for orkflow %s@%s", s.wf.GetName(), s.wf.GetVersion())); err != nil {
-		// Object storage is down: the reader synthesizes the run's end from
-		// the execution's own close, mapped to the same code (closedExecution).
-		workflow.GetLogger(ctx).Error("write the first snapshot of a run whose definition could not be used failed",
-			"run_id", s.runID, "code", code, "error", err)
-	}
+	proceed := s.emitRunCreatedFirst(ectx, code, message)
 	s.finished = timestamppb.New(workflow.Now(ectx))
 	eventType := orkstackv1.EventType_EVENT_TYPE_RUN_FAILED
 	s.status = orkstackv1.Status_STATUS_FAILED
@@ -393,14 +389,82 @@ func (s *runState) endBeforeStart(ctx workflow.Context, code, message string) (*
 		s.runError = &orkstackv1.Error{Code: "RUN_CANCELED", Message: "run canceled",
 			Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED}
 	}
-	if err := s.emit(ectx, eventType, "", s.status, s.runError.GetMessage()); err != nil {
-		workflow.GetLogger(ctx).Error("write the terminal snapshot of a run whose definition could not be used failed",
-			"run_id", s.runID, "code", s.runError.GetCode(), "error", err)
+	if proceed {
+		if err := s.emit(ectx, eventType, "", s.status, s.runError.GetMessage()); err != nil {
+			workflow.GetLogger(ctx).Error("write the terminal snapshot of a run whose definition could not be used failed",
+				"run_id", s.runID, "code", s.runError.GetCode(), "error", err)
+		}
 	}
 	if canceled {
 		return s.snapshot(), temporal.NewCanceledError()
 	}
 	return s.snapshot(), temporal.NewNonRetryableApplicationError(message, code, nil)
+}
+
+// RunCreatedFirstChange is the workflow.GetVersion change id of
+// emitRunCreatedFirst's rule that endBeforeStart writes nothing past a
+// RUN_CREATED it could not write.
+//
+// Before it, a failed RUN_CREATED write was logged and the terminal event
+// written anyway, at sequence 2: when object storage came back between the
+// two writes, the run's stream and archive held that event alone, with
+// nothing at 1, for good. Writing RUN_CREATED again, and stopping when that
+// fails too, is a different command sequence, so it is asked LAZILY, only
+// where RUN_CREATED's write first fails: an ending whose writes take records
+// no marker, and a history recorded before the gate replays its
+// DefaultVersion branch, which is the old one. It is asked in generation 0
+// only, which ends the run, so no carry ever holds it.
+const RunCreatedFirstChange = "run-created-first"
+
+// runCreatedFirstGateDisabledForTest is a TEST-ONLY switch, the precedent of
+// refusedRouteGateDisabledForTest: when set, emitRunCreatedFirst takes the
+// DefaultVersion branch WITHOUT asking its version, so a recorder can write a
+// history in the shape of the builds before the gate. Never set in
+// production code.
+var runCreatedFirstGateDisabledForTest atomic.Bool
+
+// emitRunCreatedFirst emits endBeforeStart's RUN_CREATED and reports whether
+// endBeforeStart goes on to its terminal event: true once RUN_CREATED is
+// written, and on the DefaultVersion branch, which always went on. When
+// RUN_CREATED's snapshot cannot be written it is written once more, under
+// the same sequence number — the one deliberate exception to emit's burned
+// numbers: the run's state has not moved, so both writes of that number hold
+// the same run, and a late write of the failed one changes nothing. When
+// that write fails too, nothing is written after it: the run ends with no
+// event of its own, and the reader numbers the execution's close from 1,
+// mapped to the same code (closeRun, closedExecution), so the stream never
+// starts past an event that does not exist. Nothing is written at 1 in its
+// place either: a late write of a failed RUN_CREATED attempt to that same
+// key could replace it with a run that never ended. Like every run whose
+// terminal event is never published, it then has no archive body, and is
+// readable only until the cluster's retention expires it. ectx is
+// endBeforeStart's disconnected context.
+func (s *runState) emitRunCreatedFirst(ectx workflow.Context, code, message string) bool {
+	created := fmt.Sprintf("run created for orkflow %s@%s", s.wf.GetName(), s.wf.GetVersion())
+	sequence := s.eventSeq
+	err := s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "", orkstackv1.Status_STATUS_PENDING, created)
+	if err == nil {
+		return true
+	}
+	logger := workflow.GetLogger(ectx)
+	logger.Error("write the first snapshot of a run whose definition could not be used failed",
+		"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", sequence+1, "code", code,
+		"message", message, "error", err)
+	if runCreatedFirstGateDisabledForTest.Load() || s.version(ectx, RunCreatedFirstChange, 1) < 1 {
+		return true
+	}
+	s.eventSeq = sequence
+	err = s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "", orkstackv1.Status_STATUS_PENDING, created)
+	if err == nil {
+		logger.Info("wrote the first snapshot of a run whose definition could not be used on its second try",
+			"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", sequence+1, "code", code)
+		return true
+	}
+	logger.Error("write the first snapshot of a run whose definition could not be used failed again: "+
+		"the run ends with no event of its own, its close is read as its one event, and it has no archive body",
+		"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", sequence+1, "code", code,
+		"message", message, "error", err)
+	return false
 }
 
 // definitionBytes is what this run's definition passed by reference takes

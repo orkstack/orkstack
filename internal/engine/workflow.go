@@ -2694,7 +2694,9 @@ func (s *runState) snapshot() *orkstackv1.Run {
 // history, and a replay must produce identical history. A snapshot write failure
 // is terminal (fails the run), so the gap is visible only to auditors examining
 // the history: the bus and archive contain sequences 1..N-1 and N+1..M, never
-// with a gap that crosses a run boundary.
+// with a gap that crosses a run boundary. The one exception is
+// emitRunCreatedFirst, which writes an ending before start's RUN_CREATED again
+// under its own number, because nothing about the run moved in between.
 func (s *runState) emit(
 	ctx workflow.Context,
 	eventType orkstackv1.EventType,

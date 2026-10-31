@@ -11,6 +11,17 @@ word for word.
 
 ## [Unreleased]
 
+### Fixed
+
+- A run whose definition, passed by reference, could not be used no longer
+  publishes its terminal event at sequence 2 when object storage refused its
+  `RUN_CREATED`: the stream and the archive held that event alone, with
+  nothing at 1, for good. `RUN_CREATED` is now written again under the same
+  number, and when that write fails too the run publishes nothing, so its
+  close reads as its one event, at 1; such a run has no archive body, like
+  every run that publishes no terminal event (`docs/DEPLOY.md` §6, "An ending
+  before start writes `RUN_CREATED` first").
+
 ## [0.1.0] - 2026-10-30
 
 First release.
