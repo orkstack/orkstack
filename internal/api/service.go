@@ -429,6 +429,10 @@ type Service struct {
 	// fleet is the Orker inventory and cordon seam. It holds no Orker list:
 	// every answer is read from the cluster and from the Orker itself.
 	fleet engine.OrkerFleet
+	// inventory is the Orker inventory InspectRun's capacity answer reads,
+	// shared by every caller on this replica (capacity_inventory.go); nil
+	// without a fleet.
+	inventory *sharedInventory
 	// releases is the release routing seam (Config.Releases).
 	releases engine.ReleaseCluster
 	// capabilities is the fleet check (Config.Capabilities).
@@ -658,6 +662,9 @@ func NewService(cfg Config) *Service {
 	}
 	svc.usage = newUsageMeter(cfg.Archive, cfg.Attempts, cfg.UsageCacheTTL, svc.now)
 	svc.poolScope = newPoolScopeCache(PoolScopeCacheTTL, svc.now)
+	if svc.fleet != nil {
+		svc.inventory = newSharedInventory(svc.fleet, svc.now)
+	}
 	svc.runReads = newRunReadMemo(taskTerminalMemoTTL)
 	if svc.deliveries != nil {
 		svc.deliveryRecorder = NewDeliveryRecorder(svc.deliveries, svc.logger)

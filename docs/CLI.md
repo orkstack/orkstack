@@ -1547,6 +1547,11 @@ zero. A heartbeat older than two ceiling ticks is STALE: the Orker is gone
 or partitioned, and the footer names the instant Temporal will time the
 attempt out.
 
+An attempt no Orker has started is waiting for an orker on its pool. When
+every Orker of that pool is at its declared capacity, the footer says it
+is waiting for capacity instead, with what stands reserved against what
+the pool's Orkers admit within.
+
 With --watch the table is printed again every --interval until the run is
 terminal, and the exit code is the run's (0 succeeded, 2 failed,
 3 canceled). --json prints the raw response; with --watch, one compact

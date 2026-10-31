@@ -53,6 +53,17 @@ word for word.
 - `docs/CI.md`: every CI workflow, its trigger, whether a merge waits for
   it, how long it takes and what to do when it is red, with the site page
   "Read a red CI run".
+- A task waiting on a pool whose every Orker is at its declared capacity now
+  says so: the run page captions it `Waiting for capacity`, and
+  `orkctl run inspect` prints `waiting for capacity … every orker of pool
+  <pool> is full (reserved 4/4 cpu)`, both read from the Orker inventory
+  (`InspectRun`'s new `LiveAttempt.capacity_wait`). Any other waiting task
+  still reads `Waiting for an orker`.
+- Capacity metrics on an Orker that declares a capacity, when metrics are on:
+  `ork.orker.capacity.cpu` and `.memory`, `ork.orker.capacity.reserved.cpu`
+  and `.memory`, `ork.orker.admission.wait.duration` and
+  `ork.orker.admission.refusals` (docs/DEPLOY.md, "Declaring an Orker's
+  capacity").
 
 ### Changed
 

@@ -1,4 +1,9 @@
-import { HeartbeatUnavailableReason, LiveAttemptState, type LiveAttempt } from './gen/orkstack/v1/run_service_pb';
+import {
+	HeartbeatUnavailableReason,
+	LiveAttemptState,
+	type CapacityWait,
+	type LiveAttempt
+} from './gen/orkstack/v1/run_service_pb';
 
 // The run page's live line: what an in-flight attempt is doing right now,
 // derived from ONE InspectRun answer and the engine's clock.
@@ -12,7 +17,7 @@ import { HeartbeatUnavailableReason, LiveAttemptState, type LiveAttempt } from '
 // look dead. The sentences match `orkctl run inspect` (cmd/orkctl/inspect.go).
 
 /** The kind of live line a task card shows. */
-export type LiveKind = 'started' | 'waiting' | 'retry' | 'cancelling' | 'unavailable';
+export type LiveKind = 'started' | 'waiting' | 'capacity' | 'retry' | 'cancelling' | 'unavailable';
 
 export interface LiveLine {
 	kind: LiveKind;
@@ -42,6 +47,40 @@ export function formatBytes(n: bigint | number): string {
 		scaled /= 1024;
 	}
 	return `${scaled.toFixed(1)} GiB`;
+}
+
+/**
+ * formatMemory is a byte count in the Kubernetes binary spelling an Orker's
+ * capacity is configured in (`32Gi`) when it is a whole number of one, `0` for
+ * none, and in bytes otherwise — the CLI's own (cmd/orkctl/orker.go).
+ */
+function formatMemory(bytes: bigint): string {
+	if (bytes === 0n) return '0';
+	for (const [suffix, size] of [
+		['Ti', 1n << 40n],
+		['Gi', 1n << 30n],
+		['Mi', 1n << 20n],
+		['Ki', 1n << 10n]
+	] as const) {
+		if (bytes % size === 0n) return `${bytes / size}${suffix}`;
+	}
+	return `${bytes}`;
+}
+
+/**
+ * reservedOfCapacity is a capacity wait's ` (reserved 3.5/4 cpu, 30Gi/32Gi
+ * memory)`: what stands reserved on the pool's orkers against what they admit
+ * within, in each dimension their capacity bounds, and nothing when it bounds
+ * none.
+ */
+function reservedOfCapacity(wait: CapacityWait): string {
+	const parts: string[] = [];
+	if ((wait.capacity?.cpu ?? 0) > 0) parts.push(`${wait.reserved?.cpu ?? 0}/${wait.capacity?.cpu} cpu`);
+	const capacityBytes = wait.capacity?.memoryBytes ?? 0n;
+	if (capacityBytes > 0n) {
+		parts.push(`${formatMemory(wait.reserved?.memoryBytes ?? 0n)}/${formatMemory(capacityBytes)} memory`);
+	}
+	return parts.length === 0 ? '' : ` (reserved ${parts.join(', ')})`;
 }
 
 /** A span of whole seconds, in the run page's own style (`42s`, `2m 10s`). */
@@ -107,6 +146,15 @@ export function liveLine(attempt: LiveAttempt | undefined, nowMs: number): LiveL
 			}
 			const scheduled = ms(attempt.attemptScheduledAt);
 			const waited = scheduled === undefined ? 0 : Math.max(0, Math.round((nowMs - scheduled) / 1000));
+			const wait = attempt.capacityWait;
+			if (wait) {
+				return {
+					kind: 'capacity',
+					text: `Waiting for capacity · every orker of pool ${wait.pool} is full${reservedOfCapacity(wait)} · ${span(waited)}`,
+					title: `No orker of pool ${wait.pool} has room for another task: an orker takes one only while its per-task cap still fits beside what it has reserved.`,
+					stale: false
+				};
+			}
 			return {
 				kind: 'waiting',
 				text: `Waiting for an orker · ${span(waited)}`,

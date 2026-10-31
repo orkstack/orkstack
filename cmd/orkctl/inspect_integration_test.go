@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 
 	"go.temporal.io/sdk/converter"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -92,6 +95,16 @@ type liveAttemptDoc struct {
 	ContainerID                    string `json:"containerId"`
 	BytesLogged                    int64  `json:"bytesLogged,string"`
 	OrkerID                        string `json:"orkerId"`
+	CapacityWait                   *struct {
+		Pool     string `json:"pool"`
+		Orkers   int    `json:"orkers"`
+		Reserved struct {
+			CPU float64 `json:"cpu"`
+		} `json:"reserved"`
+		Capacity struct {
+			CPU float64 `json:"cpu"`
+		} `json:"capacity"`
+	} `json:"capacityWait"`
 }
 
 // inspectDoc is `run inspect --json`.
@@ -359,6 +372,162 @@ tasks:
 	t.Logf("I2 after the orker started: state=%s phase=%s orkerId=%s", started.State, started.Phase, started.OrkerID)
 	final := awaitTerminalOnB(ctx, t, s.replicas[0], runID)
 	t.Logf("I2 run finished %s", final.GetStatus())
+}
+
+// TestIntegration_InspectRunShowsAnAttemptWaitingForCapacity: an Orker that
+// declares a capacity of 1 cpu, with a per-task cap of 1 cpu, is full while
+// one task runs. A second run's task then waits for capacity, which
+// `run inspect` says in JSON and in words, and the Orker's own /metrics
+// reports the same capacity and reservation. Once the first run is cancelled
+// and its container removed, the waiting task runs, and the poll that waited
+// is on the record under the bound that held it.
+func TestIntegration_InspectRunShowsAnAttemptWaitingForCapacity(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	s := newTimingStack(ctx, t, 1)
+	defer s.writeTranscript("run-inspect-waiting-capacity.txt")
+
+	orkerID := uniqueName("orker-inspect-cap")
+	admin := freeAddress(t)
+	startOrkerWith(ctx, t, s.orkerPath, s.address, s.namespace, s.queue,
+		"ORK_ORKER_ID="+orkerID, "ORK_ORKER_HEARTBEAT_INTERVAL=1s",
+		"ORK_ORKER_CAPACITY_CPU=1", "ORK_ORKER_MAX_CPU=1",
+		"OTEL_METRICS_EXPORTER=prometheus", "ORK_ADMIN_ADDR="+admin)
+
+	hold, wait := uniqueName("inspect-cap-hold"), uniqueName("inspect-cap-wait")
+	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
+version: "0.1.0"
+description: live attempt introspection probe — fills the orker's capacity until cancelled.
+tasks:
+  - id: hold
+    uses: shell
+    timeout_seconds: 300
+    cancellation_grace_period_seconds: 5
+    resources:
+      cpu: "1"
+    with:
+      op: exec
+      command: ["sh", "-c", "trap 'exit 0' TERM; while true; do sleep 1; done"]
+`, hold))
+	s.apply(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
+version: "0.1.0"
+description: live attempt introspection probe — waits for capacity.
+tasks:
+  - id: work
+    uses: shell
+    timeout_seconds: 60
+    resources:
+      cpu: "1"
+    with:
+      op: exec
+      command: ["echo", "ran"]
+`, wait))
+
+	// Submitted before the Orker is sure to have registered, as
+	// TestIntegration_InspectRunShowsAnAttemptWaitingForAnOrker does: the hold
+	// task waits for it.
+	holdRun := s.submit(hold, "--allow-empty-pool")
+	s.awaitInspect(0, holdRun, 3*time.Minute, "the hold task STARTED", func(d *inspectDoc) bool {
+		a := d.attempt("hold")
+		return a != nil && a.State == "STARTED"
+	})
+	waitRun := s.submit(wait)
+	waiting := s.awaitInspect(0, waitRun, 2*time.Minute, "a SCHEDULED attempt waiting for capacity", func(d *inspectDoc) bool {
+		a := d.attempt("work")
+		return a != nil && a.State == "SCHEDULED" && a.CapacityWait != nil
+	}).attempt("work")
+	if w := waiting.CapacityWait; w.Pool == "" || w.Orkers != 1 || w.Reserved.CPU != 1 || w.Capacity.CPU != 1 {
+		t.Fatalf("capacity wait = %+v, want one orker of the pool at 1 of 1 cpu", *w)
+	}
+	t.Logf("C1 capacityWait=%+v", *waiting.CapacityWait)
+	human := s.mustCLI(0, "run", "inspect", waitRun)
+	if !strings.Contains(human, "work: waiting for capacity for ") ||
+		!strings.Contains(human, " is full (reserved 1/1 cpu)\n") {
+		t.Fatalf("human output does not say it is waiting for capacity:\n%s", human)
+	}
+
+	// The Orker's own reading, on its admin listener.
+	gauges := scrapeOrkerMetrics(ctx, t, admin, func(body string) bool {
+		return metricValue(body, "ork_orker_capacity_cpu", orkerID) == "1" &&
+			metricValue(body, "ork_orker_capacity_reserved_cpu", orkerID) == "1"
+	})
+	for _, line := range strings.Split(gauges, "\n") {
+		if strings.HasPrefix(line, "ork_orker_capacity") || strings.HasPrefix(line, "ork_orker_admission") {
+			t.Logf("C2 %s", line)
+		}
+	}
+	// The hold task's default memory request stands reserved, while a
+	// capacity that bounds no memory exports no memory capacity at all.
+	if got := metricValue(gauges, "ork_orker_capacity_reserved_memory_bytes", orkerID); got == "" || got == "0" {
+		t.Fatalf("reserved memory = %q, want the hold task's default request", got)
+	}
+	if got := metricValue(gauges, "ork_orker_capacity_memory_bytes", orkerID); got != "" {
+		t.Fatalf("memory capacity = %q, want no sample: the capacity leaves memory unbounded", got)
+	}
+
+	s.mustCLI(0, "run", "cancel", holdRun)
+	if final := awaitTerminalOnB(ctx, t, s.replicas[0], waitRun); final.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("the waiting run ended %s once capacity freed, want SUCCEEDED", final.GetStatus())
+	}
+	waits := scrapeOrkerMetrics(ctx, t, admin, func(body string) bool {
+		count := metricValue(body, "ork_orker_admission_wait_duration_seconds_count", orkerID, `ork_admission_bound="capacity"`)
+		return count != "" && count != "0"
+	})
+	t.Logf("C3 /metrics: admission waits held by capacity = %s",
+		metricValue(waits, "ork_orker_admission_wait_duration_seconds_count", orkerID, `ork_admission_bound="capacity"`))
+}
+
+// scrapeClient bounds each scrape, so an admin listener that accepts and
+// never answers fails one attempt rather than the whole wait.
+var scrapeClient = &http.Client{Timeout: 5 * time.Second}
+
+// scrapeOrkerMetrics reads an Orker's /metrics until ready says the body
+// holds what the caller waits for, and returns that body.
+func scrapeOrkerMetrics(ctx context.Context, t *testing.T, admin string, ready func(string) bool) string {
+	t.Helper()
+	deadline := time.Now().Add(time.Minute)
+	var body string
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+admin+"/metrics", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if resp, err := scrapeClient.Do(req); err == nil {
+			raw, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			body = string(raw)
+			if ready(body) {
+				return body
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the orker's /metrics never held what was waited for; last body:\n%s", body)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+// metricValue is the value of the first sample of name in a Prometheus text
+// body whose labels carry this Orker's id and every other label given.
+func metricValue(body, name, orkerID string, labels ...string) string {
+	for _, line := range strings.Split(body, "\n") {
+		if !strings.HasPrefix(line, name+"{") || !strings.Contains(line, `ork_orker_id="`+orkerID+`"`) {
+			continue
+		}
+		matched := true
+		for _, label := range labels {
+			matched = matched && strings.Contains(line, label)
+		}
+		if !matched {
+			continue
+		}
+		return line[strings.LastIndex(line, " ")+1:]
+	}
+	return ""
 }
 
 // TestIntegration_InspectRunNeverShowsAPreviousAttemptsDetail.

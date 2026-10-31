@@ -99,6 +99,67 @@ const rows: Row[] = [
 		stale: false
 	},
 	{
+		name: 'U15 waiting for capacity: every orker of the pool is full',
+		attempt: attempt({
+			state: LiveAttemptState.SCHEDULED,
+			attemptScheduledAt: at('2026-09-23T09:14:02Z'),
+			heartbeatUnavailableReason: HeartbeatUnavailableReason.NOT_STARTED,
+			capacityWait: {
+				pool: 'gpu',
+				orkers: 2,
+				reserved: { cpu: 3.5, memoryBytes: 30n * 1024n ** 3n },
+				capacity: { cpu: 4, memoryBytes: 32n * 1024n ** 3n }
+			}
+		}),
+		now: nowAt('2026-09-23T09:16:12Z'),
+		kind: 'capacity',
+		text: 'Waiting for capacity · every orker of pool gpu is full (reserved 3.5/4 cpu, 30Gi/32Gi memory) · 2m 10s',
+		title:
+			'No orker of pool gpu has room for another task: an orker takes one only while its per-task cap still fits beside what it has reserved.',
+		stale: false
+	},
+	{
+		name: 'U16 waiting for capacity: a dimension no capacity bounds is not shown',
+		attempt: attempt({
+			state: LiveAttemptState.SCHEDULED,
+			attemptScheduledAt: at('2026-09-23T09:16:00Z'),
+			capacityWait: {
+				pool: 'cap',
+				orkers: 1,
+				reserved: { cpu: 1, memoryBytes: 1024n ** 3n },
+				capacity: { cpu: 1, memoryBytes: 0n }
+			}
+		}),
+		now: nowAt('2026-09-23T09:16:12Z'),
+		kind: 'capacity',
+		text: 'Waiting for capacity · every orker of pool cap is full (reserved 1/1 cpu) · 12s',
+		stale: false
+	},
+	{
+		name: 'U17 waiting for capacity: memory alone bounded, nothing reserved, and a size that is no whole unit',
+		attempt: attempt({
+			state: LiveAttemptState.SCHEDULED,
+			attemptScheduledAt: at('2026-09-23T09:16:00Z'),
+			capacityWait: { pool: 'mem', orkers: 1, capacity: { cpu: 0, memoryBytes: 1500n } }
+		}),
+		now: nowAt('2026-09-23T09:16:12Z'),
+		kind: 'capacity',
+		text: 'Waiting for capacity · every orker of pool mem is full (reserved 0/1500 memory) · 12s',
+		stale: false
+	},
+	{
+		name: 'U18 waiting for capacity: a capacity with no bounded dimension says nothing of figures',
+		attempt: attempt({
+			state: LiveAttemptState.SCHEDULED,
+			attemptScheduledAt: at('2026-09-23T09:16:00Z'),
+			capacityWait: { pool: 'cap', orkers: 1, reserved: { cpu: 2, memoryBytes: 0n } }
+		}),
+		now: nowAt('2026-09-23T09:16:12Z'),
+		kind: 'capacity',
+		text: 'Waiting for capacity · every orker of pool cap is full · 12s',
+		stale: false
+	},
+	{
 		name: 'U5 (L5) a retry waiting out its backoff',
 		attempt: attempt({
 			attempt: 3,
