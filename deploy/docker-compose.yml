@@ -127,7 +127,7 @@ services:
   # was written.
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.160.0
+    image: otel/opentelemetry-collector-contrib:0.164.0
     profiles: ["observability"]
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
@@ -140,7 +140,7 @@ services:
       - prometheus
 
   loki:
-    image: grafana/loki:3.7.7
+    image: grafana/loki:3.7.9
     profiles: ["observability"]
     command: ["-config.file=/etc/loki/loki.yaml"]
     volumes:
@@ -150,7 +150,7 @@ services:
       - "3100:3100"   # native OTLP too: http://localhost:3100/otlp
 
   tempo:
-    image: grafana/tempo:3.0.3
+    image: grafana/tempo:3.1.1
     profiles: ["observability"]
     command: ["-config.file=/etc/tempo.yaml"]
     volumes:
@@ -161,7 +161,7 @@ services:
       - "4317:4317"   # OTLP/gRPC, direct or via the collector
 
   prometheus:
-    image: prom/prometheus:v3.14.0
+    image: prom/prometheus:v3.15.1
     profiles: ["observability"]
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -178,7 +178,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   grafana:
-    image: grafana/grafana:13.2.1
+    image: grafana/grafana:13.3.0
     profiles: ["observability"]
     environment:
       # Anonymous admin is for a local stack only — see deploy/observability/README.md.
