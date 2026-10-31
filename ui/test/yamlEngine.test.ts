@@ -35,8 +35,22 @@ test('a strict-mapping refusal keeps its sentence and lands on its line', () => 
 	expect(d.message.startsWith('yes is a boolean')).toBe(true);
 });
 
+test('an unknown key keeps its sentence and lands on its line', () => {
+	const text = HEADER + 'name: x\ntasks:\n  - id: a\n    uses: shell\n  - id: b\n    uses: shell\n    need: [a]\n';
+	const message = 'line 9: unknown key "need" in tasks[1] of the Orkflow; allowed: id, needs, uses';
+	const [d] = engineFindings(text, [issue('tasks[1].need', message)]);
+	expect(lineCol(text, d.from).line).toBe(9);
+	expect(d.path).toBe('tasks[1].need');
+	expect(d.message).toBe('unknown key "need" in tasks[1] of the Orkflow; allowed: id, needs, uses');
+	// A key a merge delivered has a line and no field.
+	const merged = HEADER + 'name: x\ntasks:\n  - id: a\n    with: &w {id: b, bogus: 1}\n  - <<: *w\n';
+	const [m] = engineFindings(merged, [issue('', 'line 6: unknown key "bogus" in the Orkflow')]);
+	expect(lineCol(merged, m.from).line).toBe(6);
+	expect(m.message).toBe('unknown key "bogus" in the Orkflow');
+});
+
 test('a decode error with no field is placed on the line yaml.v3 names inside its sentence', () => {
-	const message = 'parse yaml: yaml: unmarshal errors:\n  line 7: field need not found in type dsl.task';
+	const message = 'parse yaml: yaml: unmarshal errors:\n  line 7: cannot unmarshal !!str `abc` into int32';
 	const [d] = engineFindings(SRC, [issue('', message)]);
 	expect(lineCol(SRC, d.from).line).toBe(7);
 	expect(d.message).toBe(message);
