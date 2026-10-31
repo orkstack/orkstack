@@ -2262,8 +2262,21 @@ type actionUse struct {
 
 // actionUses are the `uses:` of one workflow or action file, at any depth,
 // that name an action outside this repository (a local `./` action is this
-// tree's own code).
+// tree's own code, whose file the rule reads in turn).
 func actionUses(file, src string) ([]actionUse, error) {
+	all, err := allUses(file, src)
+	var out []actionUse
+	for _, u := range all {
+		if !strings.HasPrefix(u.ref, "./") {
+			out = append(out, u)
+		}
+	}
+	return out, err
+}
+
+// allUses are every `uses:` of one workflow or action file, at any depth,
+// local ones included.
+func allUses(file, src string) ([]actionUse, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
 		return nil, fmt.Errorf("%s: %w", file, err)
@@ -2274,7 +2287,7 @@ func actionUses(file, src string) ([]actionUse, error) {
 		if n.Kind == yaml.MappingNode {
 			for i := 0; i+1 < len(n.Content); i += 2 {
 				k, v := n.Content[i], n.Content[i+1]
-				if k.Value != "uses" || v.Kind != yaml.ScalarNode || strings.HasPrefix(v.Value, "./") {
+				if k.Value != "uses" || v.Kind != yaml.ScalarNode {
 					continue
 				}
 				comment := v.LineComment
@@ -2422,6 +2435,21 @@ func TestWorkflows_ActionsAndToolchainsArePinnedExactly(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// A local action's own `uses:` are judged only when its file is one
+		// the rule reads.
+		locals, _ := allUses(rel, files[rel])
+		for _, u := range locals {
+			if !strings.HasPrefix(u.ref, "./") {
+				continue
+			}
+			target := strings.TrimPrefix(u.ref, "./")
+			if strings.HasPrefix(target, ".github/actions/") {
+				target += "/action.yml"
+			}
+			if _, ok := files[target]; !ok {
+				t.Errorf("%s uses the local %s, whose own uses the pin rule does not read (compositeActions, allWorkflows)", u.where, u.ref)
+			}
+		}
 		// The node walk must see every `uses:` the step model sees, or a
 		// form it does not read would escape the rule.
 		if len(uses) != stepUses[rel] {
@@ -2475,9 +2503,10 @@ func TestDependabot_ReadsEveryActionPin(t *testing.T) {
 }
 
 // TestWorkflows_TheActionPinRuleRefusesEachWeakening: each way back to a
-// moving ref fails the rule, on release.yml's actions/download-artifact (the
-// publish job, which holds the signing key, runs it) and on site.yml's
-// checkout, and so does one use of an action moved apart from its others.
+// moving ref fails the rule, on the last actions/download-artifact of
+// release.yml (the publish job's, which runs beside the signing key) and on
+// site.yml's checkout, and so does one use of an action moved apart from its
+// others.
 func TestWorkflows_TheActionPinRuleRefusesEachWeakening(t *testing.T) {
 	type textMutation struct {
 		name string
@@ -2540,8 +2569,12 @@ func TestWorkflows_TheActionPinRuleRefusesEachWeakening(t *testing.T) {
 			t.Fatalf("%s uses no %s", target.file, target.action)
 		}
 		old := pin.ref + " " + pin.comment
+		at := strings.LastIndex(src, old)
+		if at < 0 {
+			t.Fatalf("%s does not spell %q on one line", target.file, old)
+		}
 		for _, c := range cases {
-			mutated := strings.Replace(src, old, c.edit(pin.ref, pin.comment), 1)
+			mutated := src[:at] + c.edit(pin.ref, pin.comment) + src[at+len(old):]
 			if mutated == src {
 				t.Fatalf("%s: the weakening %q changed nothing", target.file, c.name)
 			}
@@ -2552,7 +2585,7 @@ func TestWorkflows_TheActionPinRuleRefusesEachWeakening(t *testing.T) {
 	}
 }
 
-func TestWorkflows_ThePinRuleRefusesFloatingRefsAndVersions(t *testing.T) {
+func TestWorkflows_TheToolchainPinRuleRefusesFloatingVersions(t *testing.T) {
 	goMinor := goModMinor(t)
 	stepUsing := func(w *wfFile, job, action string) *wfStep {
 		for i := range w.Jobs[job].Steps {
