@@ -13,9 +13,9 @@ import (
 // A rerun is a request to GitHub for a new attempt; the merger judges the
 // attempts, so the workflow can make a proof ineligible by a wrong rerun and can
 // never pass one. What it must never do is run on anything but a proof of a
-// candidate branch of this repository, run a stranger's code with its token, or
-// run more than twice for one run. These rules pin that shape, each with the
-// weakenings it must refuse.
+// candidate branch of this repository or a nightly of its default branch, run a
+// stranger's code with its token, or run more than twice for one run. These
+// rules pin that shape, each with the weakenings it must refuse.
 
 const proofRerunFile = "proof-rerun.yml"
 
@@ -23,16 +23,29 @@ const proofRerunFile = "proof-rerun.yml"
 var rerunGuardTerms = []string{
 	"vars.PROOF_AUTO_RERUN == 'true'",
 	"github.event.workflow_run.conclusion == 'failure'",
-	"github.event.workflow_run.event == 'push'",
-	"startsWith(github.event.workflow_run.head_branch, 'validate/full/')",
 	"github.event.workflow_run.head_repository.full_name == github.repository",
+	rerunWhichRuns,
 }
+
+// rerunWhichRuns is the one term of the guard that may hold an `||`, in
+// parentheses: the two kinds of run it answers, each pinned to its workflow
+// file, its event and its branch. A proof of a candidate is a push to
+// validate/full/**; a nightly is a schedule or a dispatch on the default
+// branch, the only runs whose proof is main's nightly (docs/PROOFS.md §6).
+const rerunWhichRuns = "((github.event.workflow_run.path == '.github/workflows/proof.yml'" +
+	" && github.event.workflow_run.event == 'push'" +
+	" && startsWith(github.event.workflow_run.head_branch, 'validate/full/'))" +
+	" || (github.event.workflow_run.path == '.github/workflows/nightly.yml'" +
+	" && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')" +
+	" && github.event.workflow_run.head_branch == github.event.repository.default_branch))"
 
 var rerunCapRE = regexp.MustCompile(`github\.event\.workflow_run\.run_attempt < ([0-9]+)`)
 
 func proofRerunProblems(w *wfFile) []string {
 	var p []string
-	// The one trigger: a completed proof, nothing a stranger can start.
+	// The one trigger: a completed proof or nightly, nothing a stranger can
+	// start. The nightly calls proof.yml as a reusable workflow, which raises
+	// no workflow_run of its own.
 	if len(w.On) != 1 {
 		p = append(p, fmt.Sprintf("proof-rerun.yml has %d triggers, want workflow_run alone", len(w.On)))
 	}
@@ -40,8 +53,8 @@ func proofRerunProblems(w *wfFile) []string {
 	if !ok {
 		return append(p, "proof-rerun.yml does not trigger on workflow_run")
 	}
-	if got := fmt.Sprint(run["workflows"]); got != "[proof]" {
-		p = append(p, fmt.Sprintf("workflow_run.workflows = %s, want [proof]", got))
+	if got := fmt.Sprint(run["workflows"]); got != "[proof nightly]" {
+		p = append(p, fmt.Sprintf("workflow_run.workflows = %s, want [proof, nightly]", got))
 	}
 	if types, _ := w.onTypes("workflow_run"); strings.Join(types, ",") != "completed" {
 		p = append(p, fmt.Sprintf("workflow_run.types = %v, want [completed]", types))
@@ -223,8 +236,26 @@ func TestWorkflows_TheAutomaticRerunIsGuardedToACandidatesCompletedProof(t *test
 		dropTerm("startsWith(github.event.workflow_run.head_branch, 'validate/full/')"),
 		dropTerm("github.event.workflow_run.head_repository.full_name == github.repository"),
 		dropTerm("github.event.workflow_run.run_attempt < 3"),
+		dropTerm("github.event.workflow_run.path == '.github/workflows/proof.yml'"),
+		dropTerm("github.event.workflow_run.path == '.github/workflows/nightly.yml'"),
+		dropTerm("github.event.workflow_run.head_branch == github.event.repository.default_branch"),
 		{"every validate branch", func(w *wfFile) {
 			w.Jobs["rerun"].If = strings.Replace(w.Jobs["rerun"].If, "'validate/full/'", "'validate/'", 1)
+		}},
+		{"a nightly from a push", func(w *wfFile) {
+			w.Jobs["rerun"].If = strings.Replace(w.Jobs["rerun"].If, "github.event.workflow_run.event == 'schedule'", "github.event.workflow_run.event == 'push'", 1)
+		}},
+		{"a nightly of a pull request", func(w *wfFile) {
+			w.Jobs["rerun"].If = strings.Replace(w.Jobs["rerun"].If, "github.event.workflow_run.event == 'workflow_dispatch'", "github.event.workflow_run.event == 'pull_request'", 1)
+		}},
+		{"a nightly of any branch", func(w *wfFile) {
+			w.Jobs["rerun"].If = strings.Replace(w.Jobs["rerun"].If, "github.event.workflow_run.head_branch == github.event.repository.default_branch", "github.event.workflow_run.head_branch != ''", 1)
+		}},
+		{"the candidate's rule for the nightly's file", func(w *wfFile) {
+			w.Jobs["rerun"].If = strings.Replace(w.Jobs["rerun"].If, "'.github/workflows/proof.yml'", "'.github/workflows/nightly.yml'", 1)
+		}},
+		{"the which-runs term OR-ed with a third", func(w *wfFile) {
+			w.Jobs["rerun"].If = strings.Replace(w.Jobs["rerun"].If, "default_branch))", "default_branch) || github.event.workflow_run.event == 'workflow_run')", 1)
 		}},
 		{"a cap of four attempts", func(w *wfFile) {
 			w.Jobs["rerun"].If = strings.Replace(w.Jobs["rerun"].If, "run_attempt < 3", "run_attempt < 4", 1)
@@ -234,7 +265,9 @@ func TestWorkflows_TheAutomaticRerunIsGuardedToACandidatesCompletedProof(t *test
 		{"a second trigger", func(w *wfFile) { w.On["pull_request_target"] = map[string]any{} }},
 		{"a push trigger", func(w *wfFile) { w.On["push"] = map[string]any{} }},
 		{"the wrong workflow", func(w *wfFile) { w.On["workflow_run"].(map[string]any)["workflows"] = []any{"ci"} }},
-		{"a second workflow", func(w *wfFile) { w.On["workflow_run"].(map[string]any)["workflows"] = []any{"proof", "ci"} }},
+		{"a third workflow", func(w *wfFile) { w.On["workflow_run"].(map[string]any)["workflows"] = []any{"proof", "nightly", "ci"} }},
+		{"the candidate's proof alone", func(w *wfFile) { w.On["workflow_run"].(map[string]any)["workflows"] = []any{"proof"} }},
+		{"the release's gate", func(w *wfFile) { w.On["workflow_run"].(map[string]any)["workflows"] = []any{"proof", "release"} }},
 		{"more event types", func(w *wfFile) { w.On["workflow_run"].(map[string]any)["types"] = []any{"completed", "requested"} }},
 		{"a branch filter", func(w *wfFile) { w.On["workflow_run"].(map[string]any)["branches"] = []any{"**"} }},
 		{"workflow-level contents: write", func(w *wfFile) { w.Permissions["contents"] = "write" }},

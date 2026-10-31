@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -33,6 +35,7 @@ type fakeJob struct {
 	annErr      bool
 	log         string
 	logErr      bool
+	logFail     string // the error of a log read that failed for another reason than a missing log
 }
 
 // fakeAPI answers the three reads the planner makes, by exact path, and
@@ -100,6 +103,9 @@ func (f *fakeAPI) get(path string, paginate bool) ([]byte, error) {
 		if path == fmt.Sprintf("repos/%s/actions/jobs/%d/logs", planRepo, j.id) {
 			if j.logErr {
 				return nil, errors.New("HTTP 410")
+			}
+			if j.logFail != "" {
+				return nil, errors.New(j.logFail)
 			}
 			return []byte(j.log), nil
 		}
@@ -332,6 +338,34 @@ func TestRerunPlan_ADegradedMarkerIsAcceptedOnlyFromTheProofStepsOwnAnnotation(t
 	}
 }
 
+// A log GitHub does not keep (HTTP 404 or 410: a lost runner's) is no log, and
+// the job is classified from its annotations. A log read that failed for any
+// other reason may have hidden a failing test, so the job fails closed: a lost
+// runner whose log could not be read is not run again.
+func TestRerunPlan_ALogReadThatFailedIsNoMissingLog(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		fail  string
+		gone  bool
+		rerun bool
+	}{
+		{"a log GitHub keeps none of (410)", "", true, true},
+		{"a log GitHub has not (404)", "gh api repos/o/r/actions/jobs/2/logs: exit status 1: gh: Not Found (HTTP 404)", false, true},
+		{"a server error", "gh api repos/o/r/actions/jobs/2/logs: exit status 1: gh: Server Error (HTTP 502)", false, false},
+		{"a refused body", "gh api repos/o/r/actions/jobs/2/logs: exit status 1: the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway", false, false},
+		{"a timeout", "gh api repos/o/r/actions/jobs/2/logs: signal: killed: ", false, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			j := lostJob(2, "integration (2)")
+			j.logErr, j.logFail = c.gone, c.fail
+			d := decide(t, &fakeAPI{jobs: []fakeJob{j, proofJob(9)}}, planAttempt, 3)
+			if d.Rerun != c.rerun {
+				t.Errorf("decision = %+v, want a rerun: %v", d, c.rerun)
+			}
+		})
+	}
+}
+
 func TestRerunPlan_AFailedReadFailsClosed(t *testing.T) {
 	f := &fakeAPI{jobsErr: errors.New("HTTP 403: Resource not accessible by integration")}
 	d := decide(t, f, planAttempt, 3)
@@ -492,11 +526,51 @@ func TestCmdRerunPlan_RefusesAnInvocationItCannotTrust(t *testing.T) {
 	}
 }
 
-func TestGhArgs_AsksForEveryPageOnlyWhenToldTo(t *testing.T) {
-	if got := strings.Join(ghArgs("repos/o/r/actions/jobs/1/logs", false), " "); got != "api repos/o/r/actions/jobs/1/logs" {
-		t.Errorf("args = %q", got)
+// The argument list of every read the planner makes. A job's log is the one
+// raw, non-JSON body among them, and it carries terminal escape sequences
+// (a test's colours, a tool's progress bars): gh 2.103, which the runner image
+// ships, refuses to print such a body unless it is passed
+// --allow-escape-sequences, and the planner then had no log at all. The JSON
+// reads need no such flag, and get none.
+func TestGhArgs_HoldsTheArgumentListOfEachRead(t *testing.T) {
+	for _, c := range []struct {
+		path     string
+		paginate bool
+		want     string
+	}{
+		{"repos/o/r/actions/jobs/1/logs", false, "api --allow-escape-sequences repos/o/r/actions/jobs/1/logs"},
+		{"repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100", true, "api --paginate repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100"},
+		{"repos/o/r/check-runs/5/annotations?per_page=100", true, "api --paginate repos/o/r/check-runs/5/annotations?per_page=100"},
+	} {
+		if got := strings.Join(ghArgs(c.path, c.paginate), " "); got != c.want {
+			t.Errorf("ghArgs(%q, %v) = %q, want %q", c.path, c.paginate, got, c.want)
+		}
 	}
-	if got := strings.Join(ghArgs("repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100", true), " "); got != "api --paginate repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100" {
-		t.Errorf("args = %q", got)
+}
+
+// ghExec reads a job's log through a gh that behaves as 2.103 does: a raw body
+// with an escape sequence is refused unless the flag allows it. The log the
+// planner gets is the body, escape sequences included; it never prints it.
+func TestGhExec_ReadsAJobLogThatCarriesEscapeSequences(t *testing.T) {
+	dir := t.TempDir()
+	fake := `#!/bin/sh
+allow=no
+for a in "$@"; do [ "$a" = --allow-escape-sequences ] && allow=yes; done
+if [ "$allow" = no ]; then
+	echo "the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway" >&2
+	exit 1
+fi
+printf '2026-10-30T15:33:40Z \033[31mrunner-health: verdict below-floor\033[0m\n'
+`
+	if err := os.WriteFile(filepath.Join(dir, "gh"), []byte(fake), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	got, err := ghExec("repos/o/r/actions/jobs/1/logs", false)
+	if err != nil {
+		t.Fatalf("the log read failed: %v", err)
+	}
+	if want := "2026-10-30T15:33:40Z \x1b[31mrunner-health: verdict below-floor\x1b[0m\n"; string(got) != want {
+		t.Errorf("log = %q, want %q", got, want)
 	}
 }

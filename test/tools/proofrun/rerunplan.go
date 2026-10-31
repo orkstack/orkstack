@@ -51,11 +51,18 @@ type ghAPI func(path string, paginate bool) ([]byte, error)
 // rerunPlanGH is the ghAPI cmdRerunPlan reads with; a test replaces it.
 var rerunPlanGH ghAPI = ghExec
 
-// ghArgs is the argument list of one `gh api` call.
+// ghArgs is the argument list of one `gh api` call. A job's log is the one
+// raw, non-JSON body the planner reads, and it carries terminal escape
+// sequences; gh (2.103, the runner image's) refuses to print such a body
+// without --allow-escape-sequences, even into a pipe, and the planner then
+// read no log at all. The body is read, never printed.
 func ghArgs(path string, paginate bool) []string {
 	args := []string{"api"}
 	if paginate {
 		args = append(args, "--paginate")
+	}
+	if strings.HasSuffix(path, "/logs") {
+		args = append(args, "--allow-escape-sequences")
 	}
 	return append(args, path)
 }
@@ -197,7 +204,11 @@ func planRerun(gh ghAPI, repo, run string, attempt, maxAttempts int) rerunDecisi
 	}
 	var parts []plannedPart
 	for _, job := range jobs {
-		if job.Conclusion == "success" || job.Conclusion == "skipped" || job.Name == proofAggregatorName {
+		// A nightly calls proof.yml as a reusable workflow, so its aggregator
+		// is `nightly / proof`: the caller's prefix is stripped as the merger
+		// strips it from a part's name.
+		if job.Conclusion == "success" || job.Conclusion == "skipped" ||
+			strings.TrimSpace(reusableWorkflowPrefix.ReplaceAllString(strings.TrimSpace(job.Name), "")) == proofAggregatorName {
 			continue
 		}
 		part := partFromJobName(job.Name)
@@ -250,11 +261,15 @@ func classifyForRerun(gh ghAPI, repo, part string, job apiJob) (string, bool) {
 			}
 		}
 	}
-	// Best effort, as in the merger: GitHub keeps no log for a runner it lost.
+	// GitHub keeps no log for a runner it lost: a 404 or 410 is no log, and the
+	// job is classified from its annotations. Any other failed read may have
+	// hidden a failing test, so it fails closed, as the job records do.
 	logRead := false
 	if gj.ReadError == "" {
 		if raw, err := gh(fmt.Sprintf("repos/%s/actions/jobs/%d/logs", repo, job.ID), false); err == nil {
 			gj.Log, logRead = string(raw), true
+		} else if !noLogKept(err) {
+			gj.ReadError = "log: the API call failed"
 		}
 	}
 	var class attemptClass
@@ -273,6 +288,14 @@ func classifyForRerun(gh ghAPI, repo, part string, job apiJob) (string, bool) {
 	}
 	return "", false
 }
+
+// noLogKeptRE is gh's error for a job log GitHub does not have: Not Found
+// (HTTP 404) or Gone (HTTP 410).
+var noLogKeptRE = regexp.MustCompile(`\bHTTP 4(?:04|10)\b`)
+
+// noLogKept says a failed log read is GitHub saying it keeps no log for the
+// job, not a read that failed.
+func noLogKept(err error) bool { return noLogKeptRE.MatchString(err.Error()) }
 
 // degradedByMarker says a stack part's job stopped on a runner below the
 // floor, given that its check run carries the part's annotation: the job

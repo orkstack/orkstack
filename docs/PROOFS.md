@@ -392,9 +392,9 @@ phase, and is one CI part (§5):
   unit test reads the budgets the repository sets, not the one a dispatch
   supplies: a dispatched `fuzz_budget` above 120 minutes ends in the step's
   timeout, with no ledger.
-  The CI budget is 105 minutes for the 82 targets (`go test -list '^Fuzz'
-  ./...`) of this tree: a turn of about 77 seconds, of which the first
-  targets fuzz 31 beside the assumed 45 seconds of overhead, and later ones
+  The CI budget is 105 minutes for the 93 targets (`go test -list '^Fuzz'
+  ./...`) of this tree: a turn of about 68 seconds, of which the first
+  targets fuzz 22 beside the assumed 45 seconds of overhead, and later ones
   more, since a measured overhead is usually well under the assumed one. The
   fuzz step is limited to 135 minutes and its job to 155. Its ledger,
   `fuzz-tests.json`, has one entry per target with the `seconds` it took and
@@ -666,12 +666,12 @@ build is stopped before it merges; the workflow publishes only a build that
 passed.
 
 `proof-rerun.yml` is not part of the proof and holds no required check; it
-asks GitHub for a new attempt of a failed candidate proof, when nothing in it
-recorded a result (§10):
+asks GitHub for a new attempt of a failed candidate proof, or of a failed
+nightly of `main`, when nothing in it recorded a result (§10):
 
 | Job | Runs |
 |---|---|
-| `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
+| `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` or `nightly` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run is of this repository, its run attempt is below 3 (so at most two automatic reruns), and it is either a `proof.yml` run of a push to `validate/full/**` or a `nightly.yml` run, scheduled or dispatched, on the default branch (the nightly calls `proof.yml` as a reusable workflow, which raises no `proof` completion of its own). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`, a log with `--allow-escape-sequences` (gh 2.103 refuses to print a body that carries terminal escapes without it, and a job log does), and reads the caller's `nightly / ` prefix off a job's name as the merger does. A log read GitHub answers 404 or 410 for is no log; any other failed read makes that job a result, so it is not run again; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
 
 `podman.yml` is not part of the proof and holds no required check; it runs the
 runtime-facing suites on Podman, OrkStack's second engine
@@ -1044,7 +1044,20 @@ The merged artifact `proof-<run_id>-a<n>` carries `proof.json`, the merged
 `race-tests.json` of a full or release proof or the `race-repeat-tests.json`
 and `fuzz-tests.json` of a nightly one, both plans, every part's records under `parts/` — its `part.json`, gates, ledgers,
 setup log and gate logs — and GitHub's record of every attempt's jobs under
-`jobs/`, with the logs of failed jobs. A part that did not pass (a gate
+`jobs/` (`attempt-N.json`), with a bounded log of each job that did not
+succeed. The proof job's "job records" step reads that log with
+`--allow-escape-sequences` and keeps, through `proofrun job-log`, every line
+the merger and the rerun planner read anything from (a `proofrun: start` or
+`proofrun: outcome` line, or a test event in JSON, §7.1) wherever it is, byte
+for byte, and the log's last 200 lines, each cut at 400 bytes, terminal escapes
+removed, a run of lines left out marked with how many; a line its cleanup
+would turn into one the merger reads is left out too. `FuzzBoundJobLog` holds
+that the merger reads the same from the bounded log as from the whole. A log
+GitHub answers 404 or 410 for (a lost runner keeps none) is left empty, as
+before. Every other way the step cannot keep a log fails that job's record
+closed, with a `read_error` naming why: a read that failed for another reason,
+a log whose merger lines together, or any one line, pass 1 MiB (refused, never
+cut), and a `proofrun` that did not build. A part that did not pass (a gate
 recorded as anything but `pass`, or no `part.json` because its process died)
 also has its events and per-job logs there (`*.events.jsonl`, `integration/`,
 `unit.log`, `race.log`, `race-repeat.log`, `fuzz/`), the files §8 reads a
@@ -1432,15 +1445,17 @@ failure in any other step before the proof step (a checkout, a toolchain's
 setup), and any failure of the plan or the build, is not rerun-eligible: start
 a new run, below.
 
-**Run failed candidates again automatically.** `proof-rerun.yml` does what the
+**Run failed candidates and nightlies again automatically.** `proof-rerun.yml` does what the
 three recoveries above do by hand, and only that: when a `proof` run for a push
-to `validate/full/**` of this repository fails, and the run attempt is below 3,
+to `validate/full/**` of this repository, or a scheduled or dispatched
+`nightly` run on the default branch, fails, and the run attempt is below 3,
 `proofrun rerun-plan` classifies every failed job with the merger's own
 `classify` from GitHub's record of the attempt (its jobs, its check-run
 annotations, the logs of failed jobs), and `gh run rerun --failed` runs only if
 every failed job is the `proof` job or a part that is lost, setup-failed or
 degraded. A part with a result, a cancel, a failed `base`, `plan` or `build`,
-a job it cannot read and a job whose name is not a part of the workflow all
+a job it cannot read and a job whose name is not a part of the workflow (a
+nightly's `vuln`, `quickstart` or `flakes` among them) all
 mean no rerun, so a run that can never become merge-eligible is not rerun. The
 planner reads only the failed jobs of the attempt that just completed: a job
 "Re-run failed jobs" carried forward (§7.1) succeeded, so it never decides a
@@ -1533,7 +1548,9 @@ git rev-parse main
   failure ends with the last 80 lines of the stack's `activities`, `ork` and
   `orker` logs. `make quickstart-smoke` on that commit reproduces it.
 - Only `runner-degraded` parts failed: a runner failure, not a regression
-  (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree.
+  (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree:
+  `proof-rerun.yml` asks for it where `PROOF_AUTO_RERUN` is on, and "Re-run
+  failed jobs" does it by hand.
 
 After any merge that moves `main`, once it is pushed, a dispatched run has its
 verdict sooner than the schedule's.
@@ -1815,6 +1832,7 @@ listing with no bucket at all.
 | `clean` | `-remove` |
 | `runner-health` | `-out FILE`, `-class NAME`, `-floors FILE`, `-dir DIR`, `-seconds N` |
 | `rerun-plan` | `-repo OWNER/NAME`, `-run ID`, `-attempt N`, `-max-attempts N` |
+| `job-log` | none: the job log on standard input, the bounded log on standard output (§7) |
 
 ### 11.4 The scripts
 
@@ -2108,13 +2126,22 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   another make is checked by its operator.
 - **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
   `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
-  planner is proven against fakes of `gh api`, and its workflow shape by the
-  rules in `test/tools/proofrun`. Two things only a run can show: that the
-  `proof` workflow's completion fires `workflow_run` for an attempt that this
-  workflow's own `GITHUB_TOKEN` asked for (if it does not, one automatic rerun
-  follows a run, and a person's rerun arms the next), and that a failed
-  job's log, annotations and `check_run_url` read as the planner expects. Both
-  fail toward fewer reruns, never toward a false pass.
+  planner is proven against fakes of `gh api` and against GitHub's recorded
+  answers for nightly 41080705584 (whose `integration (2)` measured an fsync
+  p95 of 99.43 ms against its 30 ms floor), and its workflow shape by the
+  rules in `test/tools/proofrun`. Until 2026-10-30 its log read could not
+  work at all: gh 2.103 refuses to print a job log that carries terminal
+  escapes unless it is given `--allow-escape-sequences`, so the planner read
+  no log and answered `not-eligible` for a degraded part (candidate proof
+  41001701958), and the proof job's job records kept every log empty. Three
+  things only a run can show: that the `proof` and `nightly` workflows'
+  completions fire `workflow_run` for an attempt that this workflow's own
+  `GITHUB_TOKEN` asked for (if they do not, one automatic rerun follows a
+  run, and a person's rerun arms the next), that a scheduled nightly's
+  `workflow_run` carries the `path`, `event` and `head_branch` the guard
+  reads, and that a failed job's log, annotations and `check_run_url` read on
+  the runner as the planner expects. All fail toward fewer reruns, never
+  toward a false pass.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
   result, never silently changed. The soaks themselves carry no row of

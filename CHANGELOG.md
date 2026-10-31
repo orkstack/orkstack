@@ -11,6 +11,21 @@ word for word.
 
 ## [Unreleased]
 
+### Changed
+
+- `proof-rerun.yml` also runs a failed nightly of `main` again when its only
+  failures are parts whose runner was lost or measured below the floor, or
+  that failed in a setup step.
+
+### Fixed
+
+- The proof's automatic rerun and its job records read GitHub's job logs
+  again: gh 2.103 refuses to print a log that carries terminal escape
+  sequences unless it is given `--allow-escape-sequences`, so every log read
+  came back empty. The job records now keep a bounded log of each failed job:
+  every line the merger reads and its last 200 lines. A log that cannot be
+  read or kept, other than one GitHub does not have, fails its job closed.
+
 ## [0.1.0] - 2026-10-30
 
 First release.
