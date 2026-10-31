@@ -121,7 +121,11 @@ const (
 // listeners and configuration").
 const (
 	// DefaultPagePolicy is a page's policy when the page names none of its
-	// own (pagePolicy): the app's, without a hash, so no inline script runs.
+	// own (pagePolicy): the build's (ui/svelte.config.js, kit.csp) without
+	// its hashes, so no inline script runs, and without 'unsafe-eval'. A
+	// page that names no policy is never the app, whose boot script needs a
+	// hash, so it never needs the editor's eval: the fallback fails closed
+	// (TestDefaultPagePolicy_IsTheBuildsPolicyWithoutItsHashesOrEval).
 	DefaultPagePolicy = "frame-ancestors 'none'; default-src 'self'; script-src 'self'; " +
 		"style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; " +
 		"object-src 'none'; base-uri 'none'; form-action 'self'"

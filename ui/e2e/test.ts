@@ -5,6 +5,7 @@ import {
   type Request,
   type Response,
 } from "@playwright/test";
+import { CspWatch, violationsError } from "./csp";
 
 export { expect, type Page } from "@playwright/test";
 
@@ -251,10 +252,98 @@ export function guardContext(context: BrowserContext): void {
   context.on("page", guardPage);
 }
 
-export const test = base.extend({
-  context: async ({ context }, use) => {
+// Every page of every spec runs under the UI's content security policy, and
+// a page the policy refuses something is a broken page: a chunk that did not
+// load, a style that did not apply, a handler that did not run. So every
+// refusal a page of the test's context reports (a `securitypolicyviolation`
+// event, from before the page's first script runs) is recorded, and the
+// test fails after it ran when any remain, naming each (./csp.ts, which the
+// UI's unit suite tests). Contexts a spec opens itself with
+// `browser.newContext()` are watched the same way. A spec that provokes a
+// refusal on purpose (the positive control in security-headers.spec.ts)
+// declares it first with `cspViolations.expect`.
+//
+// What escapes it: a refusal in a `beforeAll` or `afterAll` hook, which no
+// test owns, and one in a worker, where no init script runs (the UI starts
+// none).
+
+/** The watch of the test now running, or null between tests. */
+let currentWatch: CspWatch | null = null;
+const watchedContexts = new WeakSet<BrowserContext>();
+
+/** How long a page may take to answer the round trip that flushes its reports. */
+const FLUSH_MS = 5_000;
+
+/**
+ * flushReports returns once every page of `context` has answered one round
+ * trip, so a refusal it reported just before is delivered first (a binding
+ * call precedes the answer on the wire), or after FLUSH_MS for a page that
+ * does not answer.
+ */
+async function flushReports(context: BrowserContext): Promise<void> {
+  await Promise.all(
+    context.pages().map(async (page) => {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        page.evaluate(() => 0).catch(() => {}),
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, FLUSH_MS);
+        }),
+      ]);
+      clearTimeout(timer);
+    }),
+  );
+}
+
+/**
+ * watchContext records every refusal a page of `context` reports into the
+ * running test's watch, and flushes the reports before the context closes.
+ */
+async function watchContext(context: BrowserContext): Promise<void> {
+  if (watchedContexts.has(context)) return;
+  await context.exposeBinding("__orkCspViolation", (_source, what: string) => {
+    currentWatch?.record(what);
+  });
+  await context.addInitScript(() => {
+    document.addEventListener(
+      "securitypolicyviolation",
+      (e) => {
+        const report = (window as unknown as { __orkCspViolation?: (what: string) => void })
+          .__orkCspViolation;
+        report?.(`${location.pathname}: ${e.effectiveDirective} ${e.blockedURI}`);
+      },
+      true,
+    );
+  });
+  const close = context.close.bind(context);
+  context.close = async (options) => {
+    await flushReports(context);
+    return close(options);
+  };
+  watchedContexts.add(context);
+}
+
+export const test = base.extend<{ cspViolations: CspWatch }>({
+  cspViolations: [
+    async ({}, use) => {
+      const watch = new CspWatch();
+      currentWatch = watch;
+      try {
+        await use(watch);
+      } finally {
+        currentWatch = null;
+      }
+      const err = violationsError(watch.unexpected);
+      if (err) throw err;
+    },
+    { auto: true },
+  ],
+  context: async ({ context, cspViolations }, use) => {
+    void cspViolations;
     guardContext(context);
+    await watchContext(context);
     await use(context);
+    await flushReports(context);
   },
   browser: [
     async ({ browser }, use) => {
@@ -262,6 +351,12 @@ export const test = base.extend({
       browser.newContext = async (options) => {
         const context = await newContext(options);
         guardContext(context);
+        try {
+          await watchContext(context);
+        } catch (err) {
+          await context.close().catch(() => {});
+          throw err;
+        }
         return context;
       };
       await use(browser);

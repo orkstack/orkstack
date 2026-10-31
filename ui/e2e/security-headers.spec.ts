@@ -101,17 +101,13 @@ test.afterAll(async () => {
 	removeBucket(BUCKET);
 });
 
-test('the UI runs under a strict content security policy, and only the scripts its build names run', async ({ page }) => {
+test('the UI runs under a strict content security policy, and only the scripts its build names run', async ({
+	page,
+	cspViolations
+}) => {
 	// Every refusal the browser makes, on every page this test opens, is
-	// recorded here in the test, from before each page's first script runs.
-	const refused: string[] = [];
-	await page.exposeFunction('reportRefusal', (what: string) => refused.push(what));
-	await page.addInitScript(() => {
-		const report = (window as unknown as { reportRefusal: (what: string) => void }).reportRefusal;
-		document.addEventListener('securitypolicyviolation', (e) =>
-			report(`${location.pathname}: ${e.effectiveDirective} ${e.blockedURI}`)
-		);
-	});
+	// recorded by the shared fixture (./test.ts), which fails any spec that
+	// leaves one it did not declare; this test declares its positive control.
 
 	// 1. The page's policy: the build's own, sent as a header, with
 	//    frame-ancestors. Scripts come from the page's origin only, with no
@@ -126,6 +122,15 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	expect(directive(policy, 'object-src')).toEqual(["'none'"]);
 	expect(directive(policy, 'base-uri')).toEqual(["'none'"]);
 	expect(directive(policy, 'connect-src')).toEqual(["'self'"]);
+	// Styles may be inline: app.html wraps the app in a styled element, Svelte
+	// renders style attributes from its templates and adds a <style> element
+	// for a transition, and the YAML editor styles itself at run time. Images
+	// may be data: URLs, which the editor draws its markers with. Neither can
+	// run a script.
+	expect(directive(policy, 'style-src')).toEqual(["'self'", "'unsafe-inline'"]);
+	expect(directive(policy, 'img-src')).toEqual(["'self'", 'data:']);
+	expect(directive(policy, 'font-src')).toEqual(["'self'"]);
+	expect(directive(policy, 'form-action')).toEqual(["'self'"]);
 	const meta = await page.locator('meta[http-equiv="content-security-policy"]').getAttribute('content');
 	expect(policy).toBe(`frame-ancestors 'none'; ${meta}`);
 	expect(response?.headers()['x-frame-options']).toBe('DENY');
@@ -173,17 +178,34 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	await shot(page, 'security-headers-apply.png');
 	// The run and task-log sockets ride connect-src 'self'; the run page
 	// specs open them under this same policy.
-	expect(refused).toEqual([]);
+	expect(cspViolations.unexpected).toEqual([]);
 
 	// 4. The positive control: an inline script the build did not name is
-	//    refused, and does not run.
+	//    refused, and does not run. Declared first, since both policies on
+	//    the page (the header and the meta tag) report it.
+	cspViolations.expect(/^\/apply: script-src-elem inline$/);
 	await page.evaluate(() => {
 		const script = document.createElement('script');
 		script.textContent = 'window.injected = true';
 		document.head.appendChild(script);
 	});
-	await expect.poll(() => refused).toContainEqual(expect.stringMatching(/^\/apply: script-src-elem inline$/));
+	await expect.poll(() => cspViolations.expected.length).toBeGreaterThan(0);
 	expect(await page.evaluate(() => (window as unknown as { injected?: boolean }).injected)).toBeUndefined();
+});
+
+// The shared fixture fails a spec that leaves a refusal it did not declare:
+// this test leaves one and is expected to fail. It proves the fixture is
+// wired into every spec; what it decides, and the message it fails with,
+// are the UI unit suite's (test/csp.test.ts).
+test('a refusal no spec accounts for fails the spec', async ({ page, cspViolations }) => {
+	test.fail();
+	await page.goto(`${UI}/?ns=default`);
+	await page.evaluate(() => {
+		const script = document.createElement('script');
+		script.textContent = 'window.injected = true';
+		document.head.appendChild(script);
+	});
+	await expect.poll(() => cspViolations.unexpected.length).toBeGreaterThan(0);
 });
 
 test('the listener answers its own address and refuses a Host it does not know', async () => {

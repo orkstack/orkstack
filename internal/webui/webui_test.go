@@ -508,8 +508,8 @@ func TestHandler_APageWithoutAPolicyRunsNoInlineScript(t *testing.T) {
 			t.Errorf("%s: Content-Security-Policy %q, want the default %q", name, got, webui.DefaultPagePolicy)
 		}
 	}
-	if strings.Contains(webui.DefaultPagePolicy, "unsafe-inline' 'sha") || !strings.Contains(webui.DefaultPagePolicy, "script-src 'self';") {
-		t.Errorf("the default %q lets an inline script run", webui.DefaultPagePolicy)
+	if !strings.Contains(webui.DefaultPagePolicy, "script-src 'self';") {
+		t.Errorf("the default %q runs more than the page's own scripts", webui.DefaultPagePolicy)
 	}
 	placeholder := get(t, webui.Handler(webui.Placeholder()), "GET", "/", nil)
 	if got := placeholder.Header.Get("Content-Security-Policy"); got != webui.DefaultPagePolicy {
