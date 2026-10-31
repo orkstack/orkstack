@@ -323,7 +323,8 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 	}
 
 	// Generous but bounded. Proof 1 alone is pinAffinityRuns real runs of two
-	// real containers each, and Proof 2 waits out a session failure.
+	// real containers each, Proof 1b pinAffinityOpenPins more held open at
+	// once, and Proof 2 waits out a session failure.
 	ctx, cancel := context.WithTimeout(context.Background(), 900*time.Second)
 	defer cancel()
 
@@ -604,7 +605,13 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 		}
 	}
 	// While they are all open, each pin's /orkstack/shared is on its own
-	// host's disk and on no other's.
+	// host's disk and on no other's. Being handed a task is not having its
+	// directory: the dispatcher acquires the pin's directory after the commit
+	// check, the image policy and the workspace, and only then enters
+	// "stage-inputs" — so each host is waited into that phase first.
+	for _, runID := range gated {
+		dep.awaitPinPhase(t, ctx, pinHost[runID], runID, "writer", "stage-inputs")
+	}
 	for _, runID := range gated {
 		for _, o := range dep.orkers {
 			want := 0
