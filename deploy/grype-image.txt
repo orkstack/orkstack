@@ -1,0 +1,7 @@
+# The Grype image that scans the release images for known vulnerabilities
+# (make vuln-images, .github/workflows/nightly.yml › vuln-images), pinned by
+# its multi-arch index digest, which ghcr.io and Docker Hub serve alike for
+# the tag. deploy/grype.yaml is what it reports and fails on. Dependabot does
+# not read this file: a bump is by hand, a pull request that moves the tag and
+# the digest together and runs the scan.
+ghcr.io/anchore/grype:v0.121.0@sha256:621d56d1d68106b787022c81546f7e0a36202a25d1239f0c20195fab8c16f7ea

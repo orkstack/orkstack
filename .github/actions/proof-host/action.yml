@@ -54,7 +54,7 @@ runs:
     # anonymous pulls an hour per address. One job saves them, every job loads
     # them (plan §3.3). A miss pulls normally.
     - name: Stack image cache
-      uses: actions/cache@v6.1.0
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: /tmp/orkstack-stack-images.tar
         key: stack-images-v2-${{ hashFiles('deploy/docker-compose.yml', 'images/*/Dockerfile') }}

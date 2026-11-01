@@ -1538,6 +1538,8 @@ func TestWorkflows_ReleaseChecksTheNightlyOfItsCommit(t *testing.T) {
 	})
 	for _, m := range []mutation{
 		{"no vuln job", func(w *wfFile) { delete(w.Jobs, "vuln") }},
+		{"no vuln-js job", func(w *wfFile) { delete(w.Jobs, "vuln-js") }},
+		{"no vuln-images job", func(w *wfFile) { delete(w.Jobs, "vuln-images") }},
 		{"no quickstart job", func(w *wfFile) { delete(w.Jobs, "quickstart") }},
 		{"the nightly proof from elsewhere", func(w *wfFile) { w.Jobs["nightly"].Uses = "./.github/workflows/other.yml" }},
 	} {

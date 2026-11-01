@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -2241,9 +2242,126 @@ func TestWorkflows_RunStepsNeverInterpolateInputs(t *testing.T) {
 }
 
 var (
-	exactActionRef = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+@v[0-9]+\.[0-9]+\.[0-9]+$`)
+	// actionCommitRef is an action outside this repository named by the full
+	// commit its release tag points at: a tag can be moved to other code, a
+	// commit cannot.
+	actionCommitRef = regexp.MustCompile(`^([A-Za-z0-9_.-]+/[A-Za-z0-9_./-]+)@[0-9a-f]{40}$`)
+	// releaseComment is the comment on that line: the release the commit is,
+	// in the form Dependabot rewrites together with the SHA.
+	releaseComment = regexp.MustCompile(`^#\s*v[0-9]+\.[0-9]+\.[0-9]+$`)
 	exactVersion   = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+$`)
 )
+
+// actionUse is one `uses:` of an action outside this repository as its file
+// writes it: the ref and the comment on its line. The step model drops
+// comments, so these are read from yaml.v3's nodes.
+type actionUse struct {
+	where   string // the file and line
+	ref     string
+	comment string
+}
+
+// actionUses are the `uses:` of one workflow or action file, at any depth,
+// that name an action outside this repository (a local `./` action is this
+// tree's own code, whose file the rule reads in turn).
+func actionUses(file, src string) ([]actionUse, error) {
+	all, err := allUses(file, src)
+	var out []actionUse
+	for _, u := range all {
+		if !strings.HasPrefix(u.ref, "./") {
+			out = append(out, u)
+		}
+	}
+	return out, err
+}
+
+// allUses are every `uses:` of one workflow or action file, at any depth,
+// local ones included.
+func allUses(file, src string) ([]actionUse, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal([]byte(src), &doc); err != nil {
+		return nil, fmt.Errorf("%s: %w", file, err)
+	}
+	var out []actionUse
+	var walk func(n *yaml.Node)
+	walk = func(n *yaml.Node) {
+		if n.Kind == yaml.MappingNode {
+			for i := 0; i+1 < len(n.Content); i += 2 {
+				k, v := n.Content[i], n.Content[i+1]
+				if k.Value != "uses" || v.Kind != yaml.ScalarNode {
+					continue
+				}
+				comment := v.LineComment
+				if comment == "" {
+					comment = k.LineComment
+				}
+				out = append(out, actionUse{fmt.Sprintf("%s:%d", file, v.Line), v.Value, strings.TrimSpace(comment)})
+			}
+		}
+		for _, c := range n.Content {
+			walk(c)
+		}
+	}
+	walk(&doc)
+	return out, nil
+}
+
+// actionPinProblems holds every use of an action outside this repository to
+// the pin rule: the full 40-hex commit SHA its release tag points at, with
+// that release (`# vMAJOR.MINOR.PATCH`) as the comment on the same line, and
+// one repository at one commit and one release in every file. A tag is a
+// moving name: whoever can move it runs code in the job, and release.yml's
+// publish job holds the signing key. The repository is the owner/repo part,
+// lower-cased as GitHub resolves it, so an action in a subdirectory
+// (actions/cache/restore) or a spelling in another case is the same pin.
+func actionPinProblems(uses []actionUse) []string {
+	var p []string
+	first := map[string]actionUse{}
+	for _, u := range uses {
+		m := actionCommitRef.FindStringSubmatch(u.ref)
+		if m == nil {
+			p = append(p, fmt.Sprintf("%s uses %q, not an action pinned by its full 40-hex commit SHA", u.where, u.ref))
+			continue
+		}
+		if !releaseComment.MatchString(u.comment) {
+			p = append(p, fmt.Sprintf("%s pins %s with the comment %q, not the release it is (# vMAJOR.MINOR.PATCH)", u.where, u.ref, u.comment))
+			continue
+		}
+		parts := strings.SplitN(m[1], "/", 3)
+		repo := strings.ToLower(parts[0] + "/" + parts[1])
+		f, ok := first[repo]
+		if !ok {
+			first[repo] = u
+			continue
+		}
+		if commitOf(f.ref) != commitOf(u.ref) || f.comment != u.comment {
+			p = append(p, fmt.Sprintf("%s pins %s %s, and %s pins %s %s: one action is one release everywhere",
+				u.where, u.ref, u.comment, f.where, f.ref, f.comment))
+		}
+	}
+	return p
+}
+
+// commitOf is the commit a pinned `uses:` names.
+func commitOf(ref string) string {
+	_, sha, _ := strings.Cut(ref, "@")
+	return sha
+}
+
+// pinFiles are the files whose `uses:` the action pin rule reads, by their
+// path in the repository: every workflow and every composite action.
+func pinFiles(t *testing.T) map[string]string {
+	t.Helper()
+	files := map[string]string{}
+	for _, name := range allWorkflows {
+		files[".github/workflows/"+name] = workflowFile(t, name)
+	}
+	for _, a := range compositeActions {
+		rel := ".github/actions/" + a + "/action.yml"
+		files[rel] = readRepoFileForPins(t, rel)
+	}
+	return files
+}
 
 // pinKeys are the `with:` keys that name a toolchain; each is an exact version.
 // cosign is no longer one: proof-host downloads its binary by URL and hash
@@ -2251,19 +2369,13 @@ var (
 // proofHostProblems pin the pair.
 var pinKeys = []string{"go-version", "bun-version", "node-version"}
 
-// pinProblems holds steps to the pin rule: no floating ref. Every action is
-// named by an exact release, and every toolchain in pinKeys by an exact
-// version, Go's also on go.mod's minor line. seen counts the pins it judged by
-// key, so a caller can refuse a check that judged nothing.
+// pinProblems holds steps to the toolchain pin rule: every toolchain in
+// pinKeys by an exact version, Go's also on go.mod's minor line (actions are
+// actionPinProblems'). seen counts the pins it judged by key, so a caller can
+// refuse a check that judged nothing.
 func pinProblems(where string, steps []wfStep, goMinor string, seen map[string]int) []string {
 	var p []string
 	for i, s := range steps {
-		if s.Uses != "" && !strings.HasPrefix(s.Uses, "./") {
-			seen["uses"]++
-			if !exactActionRef.MatchString(s.Uses) {
-				p = append(p, fmt.Sprintf("%s %s uses %q, not an exact vMAJOR.MINOR.PATCH release", where, s.label(i), s.Uses))
-			}
-		}
 		for _, key := range pinKeys {
 			v := withString(s, key)
 			if v == "" {
@@ -2291,30 +2403,215 @@ func goModMinor(t *testing.T) string {
 }
 
 // TestWorkflows_ActionsAndToolchainsArePinnedExactly: no floating ref. Every
-// action is named by an exact release of its latest major (Dependabot moves
-// them, one pull request and one proof at a time), and every toolchain by an
+// action outside this repository is named by the commit SHA of a release of
+// its latest major, with that release in the line's comment (Dependabot moves
+// both, one pull request and one proof at a time), and every toolchain by an
 // exact version: the Go patch of go.mod's line, Bun's own release, the Node
-// release the site is built on, cosign's.
+// release the site is built on.
 func TestWorkflows_ActionsAndToolchainsArePinnedExactly(t *testing.T) {
 	goMinor := goModMinor(t)
 	seen := map[string]int{}
+	stepUses := map[string]int{}
+	countUses := func(file string, steps []wfStep) {
+		for _, s := range steps {
+			if s.Uses != "" && !strings.HasPrefix(s.Uses, "./") {
+				stepUses[file]++
+			}
+		}
+	}
 	for _, file := range allWorkflows {
 		w := loadWorkflow(t, file)
 		for _, name := range w.jobNames() {
 			expectNoProblems(t, file, pinProblems(file+" › "+name, w.Jobs[name].Steps, goMinor, seen))
+			countUses(".github/workflows/"+file, w.Jobs[name].Steps)
+			if u := w.Jobs[name].Uses; u != "" && !strings.HasPrefix(u, "./") {
+				stepUses[".github/workflows/"+file]++
+			}
 		}
 	}
 	for _, a := range compositeActions {
-		expectNoProblems(t, "the "+a+" action", pinProblems("the "+a+" action", compositeSteps(t, a), goMinor, seen))
+		steps := compositeSteps(t, a)
+		expectNoProblems(t, "the "+a+" action", pinProblems("the "+a+" action", steps, goMinor, seen))
+		countUses(".github/actions/"+a+"/action.yml", steps)
 	}
-	for _, key := range append([]string{"uses"}, pinKeys...) {
+	for _, key := range pinKeys {
 		if seen[key] == 0 {
 			t.Errorf("no step names %s: the pin check is vacuous", key)
 		}
 	}
+	files := pinFiles(t)
+	var all []actionUse
+	for _, rel := range sortedKeys(files) {
+		uses, err := actionUses(rel, files[rel])
+		if err != nil {
+			t.Fatal(err)
+		}
+		// A local action's own `uses:` are judged only when its file is one
+		// the rule reads.
+		locals, _ := allUses(rel, files[rel])
+		for _, u := range locals {
+			if !strings.HasPrefix(u.ref, "./") {
+				continue
+			}
+			target := strings.TrimPrefix(u.ref, "./")
+			if strings.HasPrefix(target, ".github/actions/") {
+				target += "/action.yml"
+			}
+			if _, ok := files[target]; !ok {
+				t.Errorf("%s uses the local %s, whose own uses the pin rule does not read (compositeActions, allWorkflows)", u.where, u.ref)
+			}
+		}
+		// The node walk must see every `uses:` the step model sees, or a
+		// form it does not read would escape the rule.
+		if len(uses) != stepUses[rel] {
+			t.Errorf("%s: the pin rule read %d action uses, and its jobs and steps hold %d", rel, len(uses), stepUses[rel])
+		}
+		all = append(all, uses...)
+	}
+	expectNoProblems(t, "the action pins", actionPinProblems(all))
+	if n, _ := actionUses("release.yml", workflowFile(t, "release.yml")); len(n) == 0 {
+		t.Error("release.yml uses no action: the pin check is vacuous")
+	}
 }
 
-func TestWorkflows_ThePinRuleRefusesFloatingRefsAndVersions(t *testing.T) {
+// TestDependabot_ReadsEveryActionPin: the github-actions entry of
+// .github/dependabot.yml reads the workflows ("/") and every composite action
+// the pin rule holds, so no SHA pin is left for a hand to move. Dependabot
+// reads an action.yml only at the root of a directory the entry lists.
+func TestDependabot_ReadsEveryActionPin(t *testing.T) {
+	var cfg struct {
+		Updates []struct {
+			Ecosystem   string   `yaml:"package-ecosystem"`
+			Directory   string   `yaml:"directory"`
+			Directories []string `yaml:"directories"`
+		} `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal([]byte(readRepoFileForPins(t, ".github/dependabot.yml")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	var dirs []string
+	for _, u := range cfg.Updates {
+		if u.Ecosystem == "github-actions" {
+			dirs = append(append(dirs, u.Directories...), u.Directory)
+		}
+	}
+	covered := func(dir string) bool {
+		for _, d := range dirs {
+			if ok, err := path.Match(d, dir); err == nil && ok {
+				return true
+			}
+		}
+		return false
+	}
+	if !covered("/") {
+		t.Errorf("dependabot's github-actions entries list %q, not \"/\": the workflows' pins are never moved", dirs)
+	}
+	for _, a := range compositeActions {
+		if !covered("/.github/actions/" + a) {
+			t.Errorf("dependabot's github-actions entries list %q: the %s action's pins are never moved", dirs, a)
+		}
+	}
+}
+
+// TestWorkflows_TheActionPinRuleRefusesEachWeakening: each way back to a
+// moving ref fails the rule, on the last actions/download-artifact of
+// release.yml (the publish job's, which runs beside the signing key) and on
+// site.yml's checkout, and so does one use of an action moved apart from its
+// others, under its own path, a subdirectory of it or another case. The same
+// commit and release under a subdirectory or another case is the same pin.
+func TestWorkflows_TheActionPinRuleRefusesEachWeakening(t *testing.T) {
+	type textMutation struct {
+		name string
+		edit func(ref, comment string) string // the new `<ref> <comment>`
+	}
+	action := func(ref string) string { a, _, _ := strings.Cut(ref, "@"); return a }
+	release := func(comment string) string { return strings.TrimSpace(strings.TrimPrefix(comment, "#")) }
+	cases := []textMutation{
+		{"a release tag", func(ref, c string) string { return action(ref) + "@" + release(c) }},
+		{"a release tag, with the comment kept", func(ref, c string) string { return action(ref) + "@" + release(c) + " " + c }},
+		{"a major tag", func(ref, c string) string { return action(ref) + "@" + strings.Split(release(c), ".")[0] + " " + c }},
+		{"a branch", func(ref, c string) string { return action(ref) + "@main " + c }},
+		{"a short SHA", func(ref, c string) string { return ref[:len(ref)-28] + " " + c }},
+		{"an upper-case SHA", func(ref, c string) string { return action(ref) + "@" + strings.ToUpper(commitOf(ref)) + " " + c }},
+		{"no comment", func(ref, c string) string { return ref }},
+		{"a comment that is a major", func(ref, c string) string { return ref + " # " + strings.Split(release(c), ".")[0] }},
+		{"a comment that is not a release", func(ref, c string) string { return ref + " # latest" }},
+		{"another commit under the same release", func(ref, c string) string {
+			return action(ref) + "@" + strings.Repeat("0", 40) + " " + c
+		}},
+		{"the same commit under another release", func(ref, c string) string { return ref + " # v0.0.1" }},
+		{"a subdirectory of the action at another commit", func(ref, c string) string {
+			return action(ref) + "/sub@" + strings.Repeat("0", 40) + " " + c
+		}},
+		{"the action in another case at another commit", func(ref, c string) string {
+			return strings.ToUpper(action(ref)) + "@" + strings.Repeat("0", 40) + " " + c
+		}},
+	}
+	samePin := []textMutation{
+		{"a subdirectory of the action", func(ref, c string) string { return action(ref) + "/sub@" + commitOf(ref) + " " + c }},
+		{"the action in another case", func(ref, c string) string { return strings.ToUpper(action(ref)) + "@" + commitOf(ref) + " " + c }},
+	}
+	for _, target := range []struct{ file, action string }{
+		{"release.yml", "actions/download-artifact"},
+		{"site.yml", "actions/checkout"},
+	} {
+		src := workflowFile(t, target.file)
+		// A file is judged with every other pinned file, so a release one file
+		// moves alone is seen against the rest.
+		var others []actionUse
+		for rel, other := range pinFiles(t) {
+			if rel != ".github/workflows/"+target.file {
+				uses, err := actionUses(rel, other)
+				if err != nil {
+					t.Fatal(err)
+				}
+				others = append(others, uses...)
+			}
+		}
+		rule := func(src string) []string {
+			uses, err := actionUses(target.file, src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return actionPinProblems(append(uses, others...))
+		}
+		if p := rule(src); len(p) > 0 {
+			t.Fatalf("%s already fails the rule:\n  %s", target.file, strings.Join(p, "\n  "))
+		}
+		uses, _ := actionUses(target.file, src)
+		var pin *actionUse
+		for i := range uses {
+			if action(uses[i].ref) == target.action {
+				pin = &uses[i]
+				break
+			}
+		}
+		if pin == nil {
+			t.Fatalf("%s uses no %s", target.file, target.action)
+		}
+		old := pin.ref + " " + pin.comment
+		at := strings.LastIndex(src, old)
+		if at < 0 {
+			t.Fatalf("%s does not spell %q on one line", target.file, old)
+		}
+		for _, c := range cases {
+			mutated := src[:at] + c.edit(pin.ref, pin.comment) + src[at+len(old):]
+			if mutated == src {
+				t.Fatalf("%s: the weakening %q changed nothing", target.file, c.name)
+			}
+			if p := rule(mutated); len(p) == 0 {
+				t.Errorf("%s: the rule accepts the weakening %q", target.file, c.name)
+			}
+		}
+		for _, c := range samePin {
+			if p := rule(src[:at] + c.edit(pin.ref, pin.comment) + src[at+len(old):]); len(p) > 0 {
+				t.Errorf("%s: the rule refuses %s at the same commit and release:\n  %s", target.file, c.name, strings.Join(p, "\n  "))
+			}
+		}
+	}
+}
+
+func TestWorkflows_TheToolchainPinRuleRefusesFloatingVersions(t *testing.T) {
 	goMinor := goModMinor(t)
 	stepUsing := func(w *wfFile, job, action string) *wfStep {
 		for i := range w.Jobs[job].Steps {
@@ -2340,11 +2637,6 @@ func TestWorkflows_ThePinRuleRefusesFloatingRefsAndVersions(t *testing.T) {
 		{"node on lts", func(w *wfFile) { stepUsing(w, "build", "actions/setup-node").With["node-version"] = "lts/*" }},
 		{"node on latest", func(w *wfFile) { stepUsing(w, "build", "actions/setup-node").With["node-version"] = "latest" }},
 		{"bun on latest", func(w *wfFile) { stepUsing(w, "build", "oven-sh/setup-bun").With["bun-version"] = "latest" }},
-		{"an action on a major", func(w *wfFile) { stepUsing(w, "build", "actions/checkout").Uses = "actions/checkout@v7" }},
-		{"an action on a branch", func(w *wfFile) { stepUsing(w, "deploy", "actions/deploy-pages").Uses = "actions/deploy-pages@main" }},
-		{"the pages upload on a branch", func(w *wfFile) {
-			stepUsing(w, "build", "actions/upload-pages-artifact").Uses = "actions/upload-pages-artifact@main"
-		}},
 	})
 	expectEachMutationRefused(t, "ci.yml", rule("ci.yml"), []mutation{
 		{"go on another minor line", func(w *wfFile) { stepUsing(w, "check", "actions/setup-go").With["go-version"] = "1.26.0" }},

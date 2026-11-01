@@ -2,7 +2,8 @@ name: nightly
 
 # The nightly tier: the scale and soak tests a merge proof defers, and two
 # lanes of its own, the race repeat and the fuzz lane; the vulnerability
-# scan, which needs the network and so is in no proof; and the README's
+# scan of the Go module, the JavaScript dependencies and the release images,
+# which needs the network and so is in no proof; and the README's
 # Quickstart on a clone of main, which no proof runs. A red
 # nightly is a regression on main: fixing it, or reverting what broke it, is
 # the next work, but it holds no other merge; the pre-release gate, which runs
@@ -55,17 +56,75 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
       - name: vuln
         timeout-minutes: 10
         run: make vuln
+
+  vuln-js:
+    # bun audit (`make vuln-js`) over the UI's and the site's lockfiles, which
+    # installs nothing: every advisory is listed, and one of high or critical
+    # severity makes the nightly red, like `vuln`; the fix is the version
+    # `bun audit fix` names. It reads the npm advisory database over the
+    # network, which is why it is here and in no proof.
+    if: ${{ github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        timeout-minutes: 5
+        with:
+          bun-version: "1.4.4"
+      - name: vuln-js
+        timeout-minutes: 5
+        run: make vuln-js
+
+  vuln-images:
+    # The images a release of this commit publishes (ork, orker, orkctl and
+    # every activity), built for linux/amd64 as release.yml builds them and
+    # scanned by the pinned Grype (`make vuln-images`, deploy/grype.yaml): a
+    # vulnerability with a fix, of high or critical severity, in an image's OS
+    # packages or a third-party binary it carries makes the nightly red, like
+    # `vuln`; OrkStack's own Go code is `vuln`'s. It reads Grype's database
+    # over the network, which is why it is here and in no proof.
+    if: ${{ github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 80
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      # The OCI layouts make release-images writes need a BuildKit builder:
+      # release.yml's, pinned by digest (Dependabot does not see an image in
+      # `with:`; TestWorkflows_TheNightlyScansJavaScriptAndImages holds the two
+      # equal).
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        timeout-minutes: 3
+        with:
+          driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+      - name: vuln-images
+        timeout-minutes: 60
+        run: make vuln-images
 
   quickstart:
     # The getting-started path, end to end: the README's Quickstart as
@@ -83,7 +142,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           persist-credentials: false
@@ -107,12 +166,12 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         timeout-minutes: 3
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-go@v7.0.0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
@@ -141,7 +200,7 @@ jobs:
           go run ./test/tools/proofrun flakes -from "$RUNNER_TEMP/ci/flakes/*" -repo . \
             -out "$RUNNER_TEMP/ci/flakes.tsv" -md "$RUNNER_TEMP/ci/flakes.md"
           cat "$RUNNER_TEMP/ci/flakes.md" >>"$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@v7.0.2
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         timeout-minutes: 5
         with:
           name: flakes-${{ github.run_id }}-a${{ github.run_attempt }}

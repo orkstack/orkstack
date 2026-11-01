@@ -740,9 +740,11 @@ Orker bases ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes"):
 |---|---|
 | `kind-orker.yml` › `kind-orker` | on a push or pull request that touches `deploy/kubernetes/`, either script, `internal/orker/`, `cmd/orker/`, the source build (`deploy/source/`), the release `deploy/Dockerfile`, the shell or file activity, or the workflow, at 06:29 UTC every day, and by dispatch. It first lifts the runner's AppArmor restriction on unprivileged user namespaces, which the rootless engine the script measures needs, and records the kernel and that setting in its summary. The script pins every tool: kind's and kubectl's release binaries by SHA-256, the node image and crane's image by digest. The check refuses a missing prerequisite with exit 77 before it deploys anything, so on kind a refusal fails the lane like a failed check. Both shapes run artifacts, both network modes, a cancel, the Orker's declared capacity, the per-task cap (a task above it refused at submit, one at it run with it as its limit), an out-of-memory task and a pod deletion; the Orker must refuse a mismatched work root, the user-namespaced engine must refuse to start without its RuntimeClass, and Docker's rootless engine must be seen to drop a container's limits. Its summary names the check that failed and the last of the namespace's and the cluster's state then; the artifact `kind-orker-<run>-a<attempt>` holds both scripts' logs, the check's evidence and that state in full, without the throwaway cluster's kubeconfig or the registry's keys |
 
-`nightly.yml` holds four jobs, scheduled at 05:17 UTC on the default branch:
+`nightly.yml` holds six jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
-`make vuln`, `nightly.yml` › `quickstart` runs `scripts/quickstart-smoke.sh`,
+`make vuln`, `nightly.yml` › `vuln-js` runs `make vuln-js`,
+`nightly.yml` › `vuln-images` runs `make vuln-images`,
+`nightly.yml` › `quickstart` runs `scripts/quickstart-smoke.sh`,
 and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
 suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
@@ -753,6 +755,42 @@ is a regression on `main` like any red nightly (§6). The fix is to bump the mod
 version (an exact one, §11.1 of `AGENTS.md`) and prove that change like any
 other; `go tool govulncheck -show verbose ./...` lists the ones the code cannot
 reach, which fail nothing.
+`vuln-js` and `vuln-images` are the vulnerability scan's other two lanes, each
+independent of the proof like `vuln`, and each reads an advisory database over
+the network, so neither is in any proof. `vuln-js` runs `bun audit` over
+`ui/bun.lock` and `site/bun.lock`, which installs nothing: it lists every
+advisory and fails the run on one of high or critical severity. It audits the
+development dependencies too, because Svelte and SvelteKit, which the UI lists
+there, compile into the bundle `ork` serves. The fix is the version
+`bun audit fix` names, in a pull request proven like any other.
+`vuln-images` builds what a release of the commit publishes — the `ork`,
+`orker` and `orkctl` images and every activity image — for linux/amd64 as
+`release.yml` › `artifacts` builds them (`make dist`, `make release-images`,
+on the BuildKit image `release.yml` pins), and scans each OCI layout with the
+Grype image `deploy/grype-image.txt` pins by version and index digest, run
+with no capability, no new privilege and a read-only root, by the policy
+`deploy/grype.yaml` states. A
+vulnerability with a fixed version, of high or critical severity, in an image's
+OS packages or in a third-party binary it carries (the `orker` image's docker
+CLI, the template activity's gomplate) fails the run; a fixed one of lower
+severity is listed and fails nothing; one with no fix is not listed, since no
+pull request can act on it. A database Grype could not check for an update
+fails the scan too. The Go modules of OrkStack's own binaries are
+`vuln`'s, which judges them by reachability, so the scan sets them aside
+(`TestVulnImages_TheScannerAndItsPolicyArePinned` holds that list to the
+binaries `deploy/Dockerfile` copies). linux/arm64 is not scanned: its images
+come from the same multi-arch base digests and package pins, and building them
+needs QEMU. The fix is to move the base image's digest, the package's pin or
+the bundled binary's version the report names. Where a bundled binary's latest
+release still carries the vulnerability, the user may approve a waiver in
+`deploy/grype.yaml`: one vulnerability, by its GHSA or CVE id, in one package
+named by its exact name, version, type and location, with a reason that opens
+with a review-by date at most 30 days ahead.
+`TestVulnImages_EveryWaiverIsScopedReasonedAndDated` refuses a waiver of any
+other shape and fails once its date has passed; the waiver is removed when the
+fix ships. Dependabot does not read
+`deploy/grype-image.txt`, so the scanner is bumped by hand. A red `vuln-js` or
+`vuln-images` is a regression on `main` like any red nightly (§6).
 `quickstart` is independent of the proof too: it runs the README's Quickstart
 as written on a clone of the commit, where the root `compose.yaml` builds the
 stack from source, and checks that a run of `each-fan-out` succeeds and that
@@ -821,10 +859,11 @@ completes. It downloads the completed run's newest unexpired
 `proof-<run>-a<n>` artifact and judges it with `proofrun verify -commit SHA
 -nightly DIR -nightly-jobs FILE`: the rule `make merge-check NIGHTLY=`
 applies (a passing nightly proof, eligible but for its tier, clean, of this
-commit's tree), plus the conclusions of the run's `vuln` and `quickstart`
-jobs, which the proof does not hold. No nightly run of the commit, or one that
-kept no proof, is a refusal that says to dispatch one; re-running the job
-after that nightly passes finishes the release.
+commit's tree), plus the conclusions of the run's `vuln`, `vuln-js`,
+`vuln-images` and `quickstart` jobs, which the proof does not hold. No
+nightly run of the commit, or one that kept no proof, is a refusal that says
+to dispatch one; re-running the job after that nightly passes finishes the
+release.
 `release.yml` › `publish` runs only on `main`, after `verify` and `nightly`, in the
 `release` environment, whose required reviewers approve it once: one job, so
 one approval, and a dispatch off `main` never asks. Before anything leaves it,
@@ -880,9 +919,19 @@ and verifies, and publishes nothing; one on `main` whose approval is rejected
 publishes nothing either.
 
 No `run:` step splices a workflow input or an event field into its shell; each
-reaches the step through `env:`. Every action is pinned to an exact release of
-its latest major, and Go, Bun, Node and cosign to exact versions; Dependabot
-moves them, one pull request and one proof at a time.
+reaches the step through `env:`. Every action outside this repository, in
+every workflow and composite action, is pinned by the full 40-hex commit SHA
+of a release of its latest major, with that release in a comment on the same
+line (`uses: actions/checkout@<sha> # v7.0.1`): a tag can be moved to other
+code, and a step that runs a moved action in `release.yml` › `publish` could
+read the signing key. One action is one commit and one release in every file
+(`TestWorkflows_ActionsAndToolchainsArePinnedExactly`). Go, Bun, Node and
+cosign are pinned to exact versions. Dependabot moves them, the SHA and its
+comment together, one pull request and one proof at a time; its
+github-actions entry reads `.github/workflows` and both composite actions
+(`.github/actions/proof-host/action.yml`,
+`.github/actions/proof-fetch/action.yml`;
+`TestDependabot_ReadsEveryActionPin`).
 
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the
@@ -1618,6 +1667,20 @@ git rev-parse main
   module and the version that fixes it; bump the module to exactly that
   version, run `make check`, and merge that change on its own proof. A
   vulnerability the code cannot reach is not reported and fails nothing.
+- Only `nightly.yml` › `vuln-js` failed: a high or critical advisory against a
+  package in `ui/bun.lock` or `site/bun.lock`, or an audit that could not run
+  (the registry unreachable), which is a regression on `main` too. The job's
+  log lists every advisory and the package path that pulls the vulnerable one
+  in; `bun audit fix --dry-run` in that directory names the versions that fix
+  it. Move them, run `make check`, and merge that change on its own proof.
+  `make vuln-js` reproduces it.
+- Only `nightly.yml` › `vuln-images` failed: a fixed high or critical
+  vulnerability in an image a release would publish, or a scan that could not
+  run, which is a regression on `main` too. The job's log has one Grype table
+  per image; its `FIXED IN` column names the version. Move the base image's
+  digest, the package's pin or the bundled binary's version in that image's
+  Dockerfile, and merge that change on its own proof. `make vuln-images`
+  reproduces it.
 - Only `nightly.yml` › `quickstart` failed: the README's Quickstart no longer
   works on a clone of `headSha`, which is a regression on `main` too. The
   job's log names the Quickstart command that failed, or the check, and on a
@@ -1871,6 +1934,8 @@ listing with no bucket at all.
 | `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept, except for `GIT_STATE_PACKAGES` (the packages whose unit tests run git, whose reads the cache cannot see), run with `-count=1`; no Docker |
 | `make vuln` | `go tool govulncheck ./...`: the known vulnerabilities whose vulnerable code the module reaches. It needs the network, so it is in no proof gate; `ci.yml` and `nightly.yml` run it (§5) |
 | `make proto-breaking` | `buf breaking` of `proto/` against the tree of the tag `PROTO_BASE` (default `v0.1.0`, which the clone must hold), under `buf.yaml`'s rules, by the buf image `deploy/buf-image.txt` pins, run with no network; `ci.yml` › `proto` runs it (§5) |
+| `make vuln-js` | `bun audit` over `ui/` and `site/`: every advisory listed, a high or critical one fails. It needs the network, so it is in no proof gate; `nightly.yml` runs it (§5) |
+| `make vuln-images` | build the release images for linux/amd64 (`make dist`, `make release-images`; `LAYOUTS=<dir>` scans layouts already built) and scan each with the Grype `deploy/grype-image.txt` pins, by `deploy/grype.yaml`: a fixed high or critical vulnerability fails. It needs the network, so it is in no proof gate; `nightly.yml` runs it (§5) |
 | `make proof` | the full proof, the merge gate |
 | `make proof-ui` | the same; the full proof already runs the UI suites |
 | `make test-race` | the race gate's `go test`, without its ledger: `-race -short` over `RACE_PACKAGES` (default `./...`), `RACE_COUNT` times (default 1) |
@@ -2197,11 +2262,12 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   re-running the failed jobs, kept that tag and published everything. The
   one-approval job graph, `artifacts` and its release smoke, the `nightly`
   job and its wait, and the tag made through the API have therefore all run
-  there. `nightly.yml` has four jobs, `nightly`, `vuln`, `quickstart` and
-  `flakes`, and all four have run, as has `proof.yml` as a reusable workflow
-  through them (`workflow_call`; the flakes job passed in run 40555387388);
-  `quickstart` passed in nightly 41080705584 in 2 min 11 s, under the 40
-  minutes its job allows (5 minutes cold on the 16-CPU reference host). The
+  there. `nightly.yml` has six jobs, `nightly`, `vuln`, `vuln-js`,
+  `vuln-images`, `quickstart` and `flakes`; `vuln-js` and `vuln-images` have
+  not run on GitHub yet, and the other four have, as has `proof.yml` as a
+  reusable workflow through them (`workflow_call`; the flakes job passed in
+  run 40555387388); `quickstart` passed in nightly 41080705584 in 2 min 11 s,
+  under the 40 minutes its job allows (5 minutes cold on the 16-CPU reference host). The
   first release dispatch (run 40979860354, a dry run on `main` under the old
   `tag` input) failed in `artifacts`, at the release smoke: the script handed
   docker the relative `dist/layouts`, which docker reads as a volume name; the

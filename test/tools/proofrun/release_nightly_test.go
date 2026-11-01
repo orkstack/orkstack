@@ -18,7 +18,8 @@ import (
 // conclusions of the jobs its proof does not hold.
 
 func nightlyJobs(over map[string]string) map[string]string {
-	jobs := map[string]string{"nightly / proof": "failure", "vuln": "success", "quickstart": "success", "flakes": "failure"}
+	jobs := map[string]string{"nightly / proof": "failure", "vuln": "success", "vuln-js": "success", "vuln-images": "success",
+		"quickstart": "success", "flakes": "failure"}
 	for k, v := range over {
 		if v == "" {
 			delete(jobs, k)
@@ -54,6 +55,12 @@ func TestVerify_AReleaseNeedsTheNightlyOfItsCommitToHavePassed(t *testing.T) {
 		{"an unreadable proof", func(t *testing.T) string { return filepath.Join(t.TempDir(), "gone") }, "main-tree", nightlyJobs(nil), "is unreadable"},
 		{"a vulnerability", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
 			nightlyJobs(map[string]string{"vuln": "failure"}), "the nightly run's vuln job concluded failure"},
+		{"a JavaScript advisory", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
+			nightlyJobs(map[string]string{"vuln-js": "failure"}), "the nightly run's vuln-js job concluded failure"},
+		{"an image vulnerability", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
+			nightlyJobs(map[string]string{"vuln-images": "failure"}), "the nightly run's vuln-images job concluded failure"},
+		{"no image scan job", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
+			nightlyJobs(map[string]string{"vuln-images": ""}), "the nightly run has no vuln-images job"},
 		{"the Quickstart cancelled", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
 			nightlyJobs(map[string]string{"quickstart": "cancelled"}), "the nightly run's quickstart job concluded cancelled"},
 		{"no Quickstart job", func(t *testing.T) string { return nightlyProof(t, nil) }, "main-tree",
@@ -81,16 +88,16 @@ func TestVerify_TheReleaseNightlyCheckReadsADownloadedNightly(t *testing.T) {
 	}
 	t.Chdir(dir)
 	quiet(t)
-	writeJobs("nightly / proof\tsuccess\nvuln\tsuccess\nquickstart\tsuccess\nflakes\tsuccess\n")
+	writeJobs("nightly / proof\tsuccess\nvuln\tsuccess\nvuln-js\tsuccess\nvuln-images\tsuccess\nquickstart\tsuccess\nflakes\tsuccess\n")
 	if code := cmdVerify([]string{"-commit", mainTip, "-nightly", nightly, "-nightly-jobs", jobs}); code != 0 {
 		t.Fatalf("a passing nightly of the commit was refused: exit %d", code)
 	}
 	if code := cmdVerify([]string{"-commit", "HEAD", "-nightly", nightly, "-nightly-jobs", jobs}); code != 1 {
 		t.Errorf("the nightly of main's tip passed for another commit: exit %d", code)
 	}
-	writeJobs("vuln\tfailure\nquickstart\tsuccess\n")
+	writeJobs("vuln\tsuccess\nvuln-js\tsuccess\nvuln-images\tfailure\nquickstart\tsuccess\n")
 	if code := cmdVerify([]string{"-commit", mainTip, "-nightly", nightly, "-nightly-jobs", jobs}); code != 1 {
-		t.Errorf("a nightly whose vulnerability scan failed passed: exit %d", code)
+		t.Errorf("a nightly whose image scan failed passed: exit %d", code)
 	}
 	writeJobs("vuln success\n")
 	if code := cmdVerify([]string{"-commit", mainTip, "-nightly", nightly, "-nightly-jobs", jobs}); code != 1 {
@@ -124,7 +131,7 @@ case "$1 $2" in
 	elif [ "$n" -le "${STUB_RUNNING:-0}" ]; then echo '[{"databaseId":77,"status":"in_progress"}]'
 	else echo '[{"databaseId":77,"status":"completed"}]'
 	fi | jq -r "$jqf" ;;
-"run view") echo '{"jobs":[{"name":"nightly / proof","conclusion":"success"},{"name":"vuln","conclusion":"success"},{"name":"quickstart","conclusion":"success"}]}' | jq -r "$jqf" ;;
+"run view") echo '{"jobs":[{"name":"nightly / proof","conclusion":"success"},{"name":"vuln","conclusion":"success"},{"name":"vuln-js","conclusion":"success"},{"name":"vuln-images","conclusion":"success"},{"name":"quickstart","conclusion":"success"}]}' | jq -r "$jqf" ;;
 "api repos/o/r/actions/runs/77/artifacts?per_page=100")
 	if [ -n "$STUB_NO_PROOF" ]; then echo '{"artifacts":[{"name":"nightly-part","expired":false}]}'
 	else echo '{"artifacts":[{"name":"proof-77-a1","expired":false},{"name":"proof-77-a2","expired":false},{"name":"proof-77-a3","expired":true}]}'

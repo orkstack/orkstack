@@ -727,11 +727,12 @@ func nightlyProofOfTreeProblems(nightlyDir, tree, treeName string) []string {
 }
 
 // nightlyRunJobs are the jobs of nightly.yml outside its proof, whose own
-// conclusion is their verdict: the vulnerability scan and the README's
+// conclusion is their verdict: the vulnerability scan's three lanes (the Go
+// module, the JavaScript dependencies, the release images) and the README's
 // Quickstart. The proof's own jobs are judged by its proof.json, never by
 // their colour (an excused timing miss leaves a part red while the proof
 // passes); `flakes` reports and gates nothing.
-var nightlyRunJobs = []string{"vuln", "quickstart"}
+var nightlyRunJobs = []string{"vuln", "vuln-js", "vuln-images", "quickstart"}
 
 // verifyNightlyOf is release.yml's nightly check: the release is not tagged
 // while the nightly of its commit is red (AGENTS.md §11).
@@ -754,7 +755,8 @@ func verifyNightlyOf(nightlyDir, commit, jobsFile string) int {
 		return 1
 	}
 	fmt.Printf("release-nightly: %s is a passing nightly proof of %s (tree %s), and its run's %s passed.\n",
-		nightlyDir, short(commit), short(strings.TrimSpace(tree)), strings.Join(nightlyRunJobs, " and "))
+		nightlyDir, short(commit), short(strings.TrimSpace(tree)),
+		strings.Join(nightlyRunJobs[:len(nightlyRunJobs)-1], ", ")+" and "+nightlyRunJobs[len(nightlyRunJobs)-1])
 	return 0
 }
 
