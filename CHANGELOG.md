@@ -205,22 +205,28 @@ version's own, and its text is the release's notes on GitHub, word for word.
   before; with versioning off, roll back below this release only when no run
   is open, and replace every engine replica together when rolling forward
   (`docs/DEPLOY.md` §4, `docs/UPGRADING.md`).
-- Connect 1.21 codes three failures differently. A connection reset under a
-  call reaches a Go client as `canceled`; before, it was `unavailable` when
-  the reset came before any response, `invalid_argument` when it cut a stream
-  between messages, and `unknown` when it cut one inside a message. A stream
-  that ends cleanly partway through a message is `internal` (it was
-  `invalid_argument`). And an engine's write to a client that has gone away
-  is `canceled` (it was `unknown`). `orkctl run watch` and
-  `orkctl run inspect --watch` resume on such a reset as on `unavailable`, so
-  a watch whose stream is reset partway through now resumes where it used to
-  stop. A Ctrl-C still ends them, and so does a stream that ends cleanly
-  partway through a message, now as `internal`. Other `orkctl` commands print
-  `canceled:` for a reset connection, with the same exit status. None of the
-  three reaches an audit record, which is written after a request is read
-  and before its response is; no OrkStack metric carries a Connect code; and
-  the Temporal SDK's `failure_reason` attribute names only its own failure
-  kinds, so none of them changes.
+- Connect 1.21 codes four failures differently. A connection reset under a
+  call reaches a Go client as `canceled` when the client's read is the first
+  to meet it; before, it was `unavailable` when the reset came before any
+  response, `invalid_argument` when it cut a stream between messages, and
+  `unknown` when it cut one inside a message. A connection that ends between
+  messages of a stream is `internal` (it was `invalid_argument`); that is
+  what the engine closing it gives, and what a reset gives when the client's
+  own write meets it first (an HTTP/2 acknowledgement or flow-control
+  update). Such an end is still `unavailable` before any response and
+  `unknown` inside a message. A stream that ends cleanly partway through a
+  message is `internal` (it was `invalid_argument`). And an engine's write to
+  a client that has gone away is `canceled` (it was `unknown`).
+  `orkctl run watch` and `orkctl run inspect --watch` resume on a `canceled`
+  they did not cause as on `unavailable`, so a watch whose stream is reset
+  partway through now resumes where it used to stop when the reset reaches
+  it as `canceled`. A Ctrl-C still ends them, and so does a connection that
+  ends partway through a stream (`internal` or `unknown`). Other `orkctl`
+  commands print the new code for the same failure, with the same exit
+  status. None of the four reaches an audit record, which is written after a
+  request is read and before its response is; no OrkStack metric carries a
+  Connect code; and the Temporal SDK's `failure_reason` attribute names only
+  its own failure kinds, so none of them changes.
 - `ork` and `orker` turn off the environment report in the Temporal SDK's
   worker heartbeats. From SDK 1.49 a worker's first heartbeat would otherwise
   also send the Temporal server the Go version, the hosting environment the

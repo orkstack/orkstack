@@ -1806,9 +1806,11 @@ watch consumes RunService.StreamEvents and prints each event as it arrives,
 exiting when the run reaches a terminal state. The exit code reflects the
 final status: 0 succeeded, 2 failed, 3 canceled.
 
-A stream the engine ends as unavailable, or whose connection to the
-engine drops, is opened again after the last event printed, so no event
-is printed twice or skipped; each resume is said on stderr. After
+A stream that ends as unavailable, or as canceled when watch did not
+cancel it (a reset connection to the engine), is opened again after the
+last event printed, so no event is printed twice or skipped; each resume
+is said on stderr. A connection that ends partway through the stream
+ends the watch with that error. After
 6 resumes in a row that deliver no event, watch gives up with the
 engine's error.
 

@@ -62,8 +62,9 @@ type scriptedStream struct {
 type resumingRuns struct {
 	orkstackv1connect.UnimplementedRunServiceHandler
 	script []scriptedStream
-	// reset resets every connection the server holds; watchAgainst sets it.
-	reset func()
+	// reset resets every connection the server holds, and closeWrite ends
+	// each with a FIN; watchAgainst sets both.
+	reset, closeWrite func()
 
 	mu    sync.Mutex
 	froms []int64
@@ -141,7 +142,7 @@ func watchAgainstTo(t *testing.T, handler *resumingRuns, out io.Writer, args ...
 	server.Config.Protocols.SetUnencryptedHTTP2(true)
 	listener := &resetListener{Listener: server.Listener}
 	server.Listener = listener
-	handler.reset = listener.reset
+	handler.reset, handler.closeWrite = listener.reset, listener.closeWrite
 	server.Start()
 	t.Cleanup(server.Close)
 

@@ -3,6 +3,7 @@ package main
 import (
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -13,7 +14,8 @@ import (
 )
 
 // A connection the engine resets under a call reaches orkctl as CANCELED from
-// connect-go v1.21.1 on, where it was UNAVAILABLE (engineInterrupted). These
+// connect-go v1.21.1 on when orkctl's read is the first to meet the reset, and
+// as the connection's end when its own write is (engineInterrupted). These
 // tests reset real TCP connections, over the h2c orkctl dials, and hold that
 // `run watch` and `run inspect --watch` ride the reset out — and that
 // orkctl's own cancel, a Ctrl-C, still ends them with no resume.
@@ -50,6 +52,19 @@ func (l *resetListener) reset() {
 	}
 }
 
+// closeWrite ends every connection's server side with a FIN, leaving it open
+// for the client to close.
+func (l *resetListener) closeWrite() {
+	l.mu.Lock()
+	conns := l.conns
+	l.mu.Unlock()
+	for _, conn := range conns {
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+	}
+}
+
 func TestRunWatch_ResumesAStreamWhoseConnectionWasReset(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -58,17 +73,37 @@ func TestRunWatch_ResumesAStreamWhoseConnectionWasReset(t *testing.T) {
 		// the stream resets it as the call arrives.
 		resetOn string
 		froms   []int64
+		// ways are how the reset can reach orkctl. Linux hands an RST to the
+		// first syscall that meets it, as ECONNRESET, and a read after that
+		// sees the connection end. A read that meets it is CANCELED
+		// (connect-go's isClientDisconnected). A write meets it first only
+		// when it is one whose error Go's HTTP/2 client drops — the SETTINGS
+		// acknowledgement (processSettings), or a flow-control update once a
+		// response is being read — and the read loop then sees the end,
+		// io.ErrUnexpectedEOF, which before any response is UNAVAILABLE
+		// (connect-go's makeRequest).
+		ways []resetWay
 	}{
 		{
 			name:   "before any event",
 			script: []scriptedStream{{reset: true}, {send: []int64{1, 2, 3, 4, 5}}},
 			froms:  []int64{0, 0},
+			// The server resets once it has read the request, and the
+			// client's read loop may not yet have read the server's
+			// SETTINGS: on a loaded host it reads them after the reset,
+			// and the acknowledgement's write meets the reset first.
+			ways: []resetWay{resetRead, resetAfterDroppedWrite},
 		},
 		{
 			name:    "mid-stream",
 			script:  []scriptedStream{{send: []int64{1, 2}, stall: true}, {send: []int64{3, 4, 5}}},
 			resetOn: "event 2",
 			froms:   []int64{0, 2},
+			// Event 2 printed, so the client had read every frame before
+			// it, the server's SETTINGS first, and it writes nothing after
+			// it: the events are far below the 4 KiB a flow-control update
+			// waits for, and orkctl sends no pings. Its read meets the reset.
+			ways: []resetWay{resetRead},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -85,10 +120,51 @@ func TestRunWatch_ResumesAStreamWhoseConnectionWasReset(t *testing.T) {
 					got, tc.froms)
 			}
 			lines := resumeLines(outcome.stderr)
-			if len(lines) != 1 || !strings.Contains(lines[0], "canceled") {
-				t.Fatalf("stderr = %q, want one resume line naming the reset's canceled", outcome.stderr)
+			if len(lines) != 1 || !slices.ContainsFunc(tc.ways, func(way resetWay) bool { return way.saidBy(lines[0]) }) {
+				t.Fatalf("stderr = %q, want one resume line saying one of %v", outcome.stderr, tc.ways)
 			}
 		})
+	}
+}
+
+// resetWay is one way a reset reaches orkctl: the code its resume line names
+// and the cause that code carries.
+type resetWay struct{ code, cause string }
+
+var (
+	resetRead              = resetWay{code: "canceled", cause: "connection reset by peer"}
+	resetAfterDroppedWrite = resetWay{code: "unavailable", cause: "unexpected EOF"}
+)
+
+func (w resetWay) saidBy(line string) bool {
+	said, ok := strings.CutPrefix(line, "watch run: the event stream was interrupted ("+w.code+": ")
+	return ok && strings.Contains(said, w.cause)
+}
+
+// TestRunWatch_EndsWhenTheConnectionEndsMidStream holds what DEPLOY.md and the
+// changelog say of a connection that ends partway through a stream: an engine
+// that closes its side (a FIN, what a replica that exits sends, or what a
+// client whose write met a reset first then reads) is the connection's end,
+// INTERNAL between messages (connect-go's envelopeReader.Read), and the watch
+// reports it without a resume. CloseWrite sends the FIN whatever the server
+// left unread, where a Close could send an RST instead.
+func TestRunWatch_EndsWhenTheConnectionEndsMidStream(t *testing.T) {
+	handler := &resumingRuns{script: []scriptedStream{
+		{send: []int64{1, 2}, stall: true},
+		{send: []int64{3, 4, 5}},
+	}}
+	out := &liveWriter{triggers: map[string]func(){"event 2": func() { handler.closeWrite() }}}
+	outcome := watchAgainstTo(t, handler, out)
+	outcome.requireExit(t, exitError)
+	if want := "Error: watch run: internal: protocol error: incomplete envelope: unexpected EOF"; !strings.Contains(outcome.stderr, want) {
+		t.Fatalf("stderr = %q, want %q", outcome.stderr, want)
+	}
+	requireSequences(t, printedSequences(t, out.buf.String()), 1, 2)
+	if got := handler.calls(); len(got) != 1 {
+		t.Fatalf("streams opened = %d, want 1: a connection that ends mid-stream is not resumed", len(got))
+	}
+	if lines := resumeLines(outcome.stderr); len(lines) != 0 {
+		t.Fatalf("resume lines = %v, want none", lines)
 	}
 }
 
