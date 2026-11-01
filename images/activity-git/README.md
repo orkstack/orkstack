@@ -33,9 +33,9 @@ Token authentication only, and nothing that writes to a remote.
     tokenSecret: git-token
 ```
 
-The computing tool is git 2.45 (Alpine's `git~2.45`, patch releases only); the
+The computing tool is git 2.54 (Alpine's `git~2.54`, patch releases only); the
 first line of every task's stdout names the exact version, e.g.
-`activity-git: git version 2.45.4`.
+`activity-git: git version 2.54.0`.
 
 ## Why this is a first-party image and not `shell op: exec`
 

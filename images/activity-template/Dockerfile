@@ -23,14 +23,14 @@
 # empty and the build stops with "no pinned gomplate checksum for architecture
 # 'unset'". An architecture without a pinned checksum fails the same way,
 # explicitly.
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc AS gomplate
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS gomplate
 ARG TARGETARCH
-ARG GOMPLATE_VERSION=4.3.3
+ARG GOMPLATE_VERSION=5.3.1
 # Where the release asset is fetched; an air-gapped builder points it at a mirror.
 ARG GOMPLATE_BASE_URL=https://github.com/hairyhenderson/gomplate/releases/download
-# From checksums-v4.3.3_sha256.txt of the v4.3.3 GitHub release.
-ARG GOMPLATE_SHA256_AMD64=ca281666e86f2f09218c1653e1908f572c0e349e9de64cb4ea93ade9333f0596
-ARG GOMPLATE_SHA256_ARM64=25bd73720ff470cec0dfaa31ca2c436b30f86142db9af68382ce64e0f3e7b9c5
+# From checksums-v5.3.1_sha256.txt of the v5.3.1 GitHub release.
+ARG GOMPLATE_SHA256_AMD64=2a618bfb02a54dd3c76d92ae4375ccc1f33eeb0545d6565ea7c3388359cb93f8
+ARG GOMPLATE_SHA256_ARM64=d00242bd08eda5badcea34491b392437237722e7d7e00f8ed05686124a43f61b
 RUN set -eu; \
     case "${TARGETARCH:-}" in \
       amd64) sum="$GOMPLATE_SHA256_AMD64" ;; \
@@ -42,12 +42,12 @@ RUN set -eu; \
     echo "${sum}  /tmp/gomplate" | sha256sum -c -; \
     mkdir -p /out; install -m 0555 /tmp/gomplate /out/gomplate
 
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 # jq builds the root context and checks JSON datasources before the render;
 # tzdata is what makes a task's own TZ (say Europe/Berlin) mean that zone —
 # without zone data, Go reads every zone name as UTC, silently.
-RUN apk add --no-cache 'jq~1.7' tzdata
+RUN apk add --no-cache 'jq~1.8' tzdata
 
 COPY --from=gomplate /out/gomplate /usr/local/bin/gomplate
 COPY entry.sh /usr/local/bin/entry.sh

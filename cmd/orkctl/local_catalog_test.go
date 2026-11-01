@@ -35,7 +35,7 @@ func requireContainerCanReach(ctx context.Context, t *testing.T, url string) {
 	t.Helper()
 	image := os.Getenv("ORK_TEST_CONTAINER_IMAGE")
 	if image == "" {
-		image = "alpine:3.20"
+		image = "alpine:3.24"
 	}
 	probe := exec.CommandContext(ctx, "docker", "run", "--rm", image,
 		"wget", "-q", "-O", "/dev/null", url)

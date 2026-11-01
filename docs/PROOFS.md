@@ -788,8 +788,10 @@ runs `scripts/quickstart-smoke.sh` (the README's Quickstart as written, on a
 clone of the commit, built from source) before it uploads anything.
 It restores no cache, and runs QEMU's installer and BuildKit from images
 pinned by digest in `with:`, which Dependabot does not see, so those two pins
-are moved by hand. GitHub cancels no sibling job, so `artifacts` stops the run
-itself, from its last step (`gh run cancel`, the one step given its `actions:
+are moved by hand, with proof.yml's build job, which runs the same BuildKit
+(`TestWorkflows_TheProofBuildsWithTheReleasesBuildKit`). GitHub cancels no
+sibling job, so `artifacts` stops the run itself, from its last step
+(`gh run cancel`, the one step given its `actions:
 write`), but only when one of its own build, smoke or verification steps
 failed — the archives, the images, either smoke, or the checksums, notes and
 image list (each named by `steps.<id>.outcome`), which a rerun on the same
@@ -893,7 +895,8 @@ downloaded through it as the release's linux/amd64 binary and kept only if it
 hashes to the SHA-256 the release's `cosign_checksums.txt` lists, the cosign
 image `deploy/cosign-image.txt` pins (which the bundle interop test runs with
 `--pull never`) is pulled through it when the daemon lacks it, and the one
-container the action runs from Docker Hub by tag is bounded with `timeout`.
+container the action runs from Docker Hub, the first-party images' alpine by
+digest, is bounded with `timeout`.
 Its fetches run inside the caller's `proof host` step, which has a limit of
 10 minutes of its own.
 
@@ -1856,7 +1859,7 @@ a still-running proof or `integration.sh` run recorded. A work root or a
 container whose owner cannot be told is listed and left alone, and the
 development bucket, the dev stack's work root and its Orker's containers are
 never touched. The recorded names are the source of truth for buckets: the
-development store, SeaweedFS 4.48 with its auth off, answers the S3 bucket
+development store, SeaweedFS 4.51 with its auth off, answers the S3 bucket
 listing with no bucket at all.
 
 ## 11. Reference

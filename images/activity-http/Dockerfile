@@ -7,7 +7,7 @@
 #
 # jq reads and writes the JSON; curl performs the request. Neither is an SDK —
 # they are the Unix tools for the job, and any image may use them.
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 RUN apk add --no-cache jq curl ca-certificates
 

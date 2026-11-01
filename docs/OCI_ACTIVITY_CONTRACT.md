@@ -335,7 +335,7 @@ The boot probe runs a container built exactly as a task's is: the same spec
 builder and the same §9.2 argument vector, a task's four mounts from a probe
 directory under the work root, the policy's default resources, network `none`,
 the escape hatch's user, and the image
-`docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc`
+`docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a`
 (`orker.BindProbeImage`, qualified and pinned, so no short-name search list or
 moved tag decides what runs). It judges what the daemon gave that container,
 from the host and from inside it (`internal/orker/boot_probe.go`):
@@ -1707,7 +1707,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | `ORK_ORKER_WORKDIR`'s path holds a comma or control character, or the daemon refused the boot probe's bind within its budget in its own words, or the probe's container and the Orker did not read back each other's nonce (the daemon bound a directory of its own), or no probe directory could be made: `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
 | `RUNTIME_POSTURE_REFUSED` | InfrastructureError | — | the boot probe's container, built as a task's is, was refused for a reason that is neither a bind nor a deadline, exited non-zero, or saw a weaker posture than §9.2 from inside (privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable it was never given, cgroup v2 limits other than it asked for), or its SIGTERM container's workload, cancelled as a task is, never heard SIGTERM (§3.1); the Orker refuses to start, naming each |
 | `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start one of the probe's two containers within it, or ended it with a deadline error of its own, or the second one's workload did not say it was ready within it; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
-| `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`orker.BindProbeImage`, alpine 3.20 by digest) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
+| `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`orker.BindProbeImage`, alpine 3.24 by digest) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `RUN_AS_ORKER_UNAVAILABLE` | InfrastructureError | **no** | the task runs as the Orker's own user (`runAsOrkerUser`, or `ORK_ORKER_FORCE_USER`), and the boot probe found that user does not land as the Orker on this host: a `0600` file its container wrote as that user is one the Orker cannot read. Refused before a container is created; under `ORK_ORKER_FORCE_USER` the Orker refuses to start instead |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created, or the Orker had no file descriptor left to hold an output artifact open |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |
@@ -2019,7 +2019,7 @@ the ABI.
 
 ```dockerfile
 # first-party images pin their own bases
-FROM alpine:3.20@sha256:…
+FROM alpine:3.24@sha256:…
 RUN apk add --no-cache jq
 COPY entry.sh /usr/local/bin/entry.sh
 RUN chmod 0555 /usr/local/bin/entry.sh

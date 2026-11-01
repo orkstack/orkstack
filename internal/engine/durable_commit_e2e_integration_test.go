@@ -633,14 +633,14 @@ func requireDockerForCommitE2E(t *testing.T) {
 	}
 }
 
-// pinnedAlpineForCommitE2E resolves alpine:3.20 to the digest form the
+// pinnedAlpineForCommitE2E resolves alpine:3.24 to the digest form the
 // dispatcher accepts. The dispatcher refuses a tag outright: a running
 // execution must never silently switch images because a tag moved.
 func pinnedAlpineForCommitE2E(t *testing.T) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	const tag = "alpine:3.20"
+	const tag = "alpine:3.24"
 	if _, err := exec.CommandContext(ctx, "docker", "image", "inspect", tag).CombinedOutput(); err != nil {
 		if out, pullErr := exec.CommandContext(ctx, "docker", "pull", "--quiet", tag).CombinedOutput(); pullErr != nil {
 			infraAbsent(t, "cannot pull %s: %v: %s", tag, pullErr, out)

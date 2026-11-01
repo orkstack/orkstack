@@ -13,8 +13,9 @@
 # makes the group literally "65532   # never root" and the daemon refuses the
 # container with "unable to find group".
 #
-# alpine:3.20's index digest below is the one §14.4 resolved and §14.15 used.
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+# alpine 3.24's index digest, the base every first-party image pins and the
+# Orker's boot probe runs (orker.BindProbeImage).
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
 # jq is the only "SDK": a JSON reader.
 RUN apk add --no-cache jq

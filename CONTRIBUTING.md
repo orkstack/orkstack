@@ -202,7 +202,7 @@ echo '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts
 sudo ufw allow in on docker0 from 172.17.0.0/16 proto tcp
 
 # verify
-docker run --rm alpine:3.20 getent hosts host.docker.internal
+docker run --rm alpine:3.24 getent hosts host.docker.internal
 ```
 
 `172.17.0.1` is the gateway of Docker's default bridge; a host with a

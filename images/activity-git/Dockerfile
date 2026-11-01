@@ -9,12 +9,12 @@
 # is what makes an https:// remote verifiable — this image speaks HTTPS only.
 # openssh is deliberately absent: an SSH transport would mean a private key
 # inside the container and a host-key decision nobody is there to make. The
-# `~2.45` constraint admits Alpine's patch releases of git 2.45 and refuses
+# `~2.54` constraint admits Alpine's patch releases of git 2.54 and refuses
 # another minor version, so a rebuild cannot silently change how a tarball is
 # made.
-FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
-RUN apk add --no-cache 'git~2.45' 'jq~1.7' ca-certificates
+RUN apk add --no-cache 'git~2.54' 'jq~1.8' ca-certificates
 
 COPY entry.sh /usr/local/bin/entry.sh
 RUN chmod 0555 /usr/local/bin/entry.sh

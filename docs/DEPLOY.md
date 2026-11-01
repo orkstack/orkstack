@@ -2042,7 +2042,7 @@ a delay set by two dynamic-config values. Both default to three minutes:
 count, which gives a workflow that started on the version a moment before it
 stopped being current time to reach visibility, and
 `matching.wv.VersionDrainageStatusRefreshInterval` between the counts that
-follow (Temporal server 1.31, which the development image pins). The
+follow (Temporal server 1.32, which the development image pins). The
 `temporal` service of `deploy/docker-compose.yml` passes
 `--dynamic-config-value` for both, `10s` and `3s`, so every test that waits for
 a release to drain waits seconds rather than minutes. The proofs read the same
@@ -2327,7 +2327,7 @@ missing:
 - **A subordinate uid and gid range of at least 65536** for the Orker's user
   (`/etc/subuid`, `/etc/subgid`), for rootless Podman.
 - **Qualified image references.** Podman's enforcing short-name mode refuses
-  `alpine:3.20` where more than one search registry is configured; the boot
+  `alpine:3.24` where more than one search registry is configured; the boot
   probe's image is fully qualified and pinned, and an activity's reference
   is resolved before it reaches the runtime.
 - **`insecure = true` for a plain-HTTP registry** in `registries.conf`, the
