@@ -99,12 +99,14 @@ needs `ORK_S3_*` either way.
   same stream with nothing repeated and nothing skipped. A stream that ends
   `unavailable` is resumed that way by `orkctl run watch` and the UI's run
   page, each up to six times in a row without an event; `orkctl run watch`
-  resumes too when its connection to the engine is reset. The engine itself
-  restarts a history read the cluster says changed under it
-  (`CurrentBranchChanged`, which can answer a long poll of a run that has
-  just completed), up to three times in a row without a new event, so that
-  answer reaches a client only when it persists (`internal/engine/reader.go`,
-  `historyBranchChanged`).
+  resumes too when a reset of its connection to the engine reaches it as
+  `canceled`. A connection that ends partway through a stream — the engine
+  closed it, or orkctl's own write met the reset first — ends the watch as
+  `internal` or `unknown`. The engine itself restarts a history read the
+  cluster says changed under it (`CurrentBranchChanged`, which can answer a
+  long poll of a run that has just completed), up to three times in a row
+  without a new event, so that answer reaches a client only when it persists
+  (`internal/engine/reader.go`, `historyBranchChanged`).
 - **Task logs are the same claim, over the bucket.** `StreamTaskLogs` and
   `/ws/runs/{id}/tasks/{task}/logs` read the chunks an Orker wrote and the
   task's state from the cluster, so any replica follows any task — one whose

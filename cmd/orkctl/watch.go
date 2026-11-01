@@ -19,9 +19,11 @@ func newRunWatchCommand(g *globalFlags) *cobra.Command {
 		Long: "watch consumes RunService.StreamEvents and prints each event as it arrives,\n" +
 			"exiting when the run reaches a terminal state. The exit code reflects the\n" +
 			"final status: 0 succeeded, 2 failed, 3 canceled.\n\n" +
-			"A stream the engine ends as unavailable, or whose connection to the\n" +
-			"engine drops, is opened again after the last event printed, so no event\n" +
-			"is printed twice or skipped; each resume is said on stderr. After\n" +
+			"A stream that ends as unavailable, or as canceled when watch did not\n" +
+			"cancel it (a reset connection to the engine), is opened again after the\n" +
+			"last event printed, so no event is printed twice or skipped; each resume\n" +
+			"is said on stderr. A connection that ends partway through the stream\n" +
+			"ends the watch with that error. After\n" +
 			fmt.Sprintf("%d resumes in a row that deliver no event, watch gives up with the\n", watchResumeLimit) +
 			"engine's error.\n\n" +
 			"The run is addressed inside the namespace this command acts in; a run of\n" +
@@ -53,10 +55,11 @@ var (
 // The stream can end without a terminal event (for example when resuming past
 // one), so the final status always comes from GetRun.
 //
-// A stream the engine ends as unavailable, or whose connection to the engine
-// drops (engineInterrupted), is opened again after the last event printed, as
-// the UI's run page does: any replica can serve it, and the sequence makes the
-// resume exact, so no event is printed twice or skipped.
+// A stream the engine ends as unavailable, or whose connection the engine
+// resets (engineInterrupted says which resets), is opened again after the
+// last event printed, as the UI's run page does: any replica can serve it,
+// and the sequence makes the resume exact, so no event is printed twice or
+// skipped.
 // Each resume is said on stderr; stdout carries only the watch's output.
 func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int64) error {
 	out := cmd.OutOrStdout()
