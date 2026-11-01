@@ -1947,7 +1947,14 @@ export const RunService: GenService<{
    * continues after that event, so a client that passes the last sequence it
    * received sees nothing repeated and nothing skipped, from any replica. A
    * stream that ends Unavailable is resumed that way; `orkctl run watch` and
-   * the UI's run page do it, a bounded number of times in a row.
+   * the UI's run page do it, a bounded number of times in a row. A stream
+   * that reaches a gap in the run's events ends DataLoss, after the events
+   * before it, naming the range and its cause: numbers the run never
+   * published (a run whose definition could not be used, its RUN_CREATED
+   * refused by object storage), read live or from the archive; or events
+   * lost from object storage before the run was archived, read from the
+   * archive, since a live read that meets lost events ends Unavailable.
+   * Resuming past a DataLoss gap's last number serves what follows it.
    *
    * @generated from rpc orkstack.v1.RunService.StreamEvents
    */

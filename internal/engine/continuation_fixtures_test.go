@@ -17,14 +17,15 @@ import (
 // recordedWithTheWriter reports whether a committed fixture was recorded
 // under a plan that carries the writer's fields — the continued and
 // in-flight-cap fixtures, the cancel-before-dispatch fixture recorded
-// through a switch, the definition-by-reference fixture and the
-// snapshot-overlay fixture — so it is
+// through a switch, the definition-by-reference fixtures (a run that loads
+// its definition, and the run-created-first endings of runs that cannot)
+// and the snapshot-overlay fixture — so it is
 // not one of the histories that predate the writer, which the premise and
 // negative tests over every fixture are about.
 func recordedWithTheWriter(path string) bool {
 	return strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") ||
 		strings.Contains(path, "cancel-before-dispatch") || strings.Contains(path, "definition-ref") ||
-		strings.Contains(path, "snapshot-overlay")
+		strings.Contains(path, "snapshot-overlay") || strings.Contains(path, "run-created-first")
 }
 
 // isRefusedRouteHistory reports whether a committed fixture is one of the

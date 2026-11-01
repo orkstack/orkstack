@@ -33,10 +33,11 @@ import (
 // history. Each line is canonical protojson compacted to a single line, so the
 // body round-trips exactly and stays greppable.
 //
-// A run whose stream lost part of itself before it was archived — an earlier
-// generation's event segment missing from object storage, or altered — has
-// one gap line per lost range, in sequence order among the events, so the
-// archive records the loss explicitly rather than dropping the run:
+// A run whose stream has a gap when it is archived — an earlier generation's
+// event segment missing from object storage, or altered, or numbers its
+// history never published (UnpublishedEventsReason) — has one gap line per
+// range, in sequence order among the events, so the archive records the gap
+// explicitly rather than dropping the run:
 //
 //	{"kind":"gap","gap":{"first":1201,"last":2400,"reason":"segment object missing"}}
 const (
@@ -44,7 +45,8 @@ const (
 	ArchiveKindRun = "run"
 	// ArchiveKindEvent marks an event line.
 	ArchiveKindEvent = "event"
-	// ArchiveKindGap marks a line recording events lost before archiving.
+	// ArchiveKindGap marks a line recording a gap in the run's events: a range
+	// lost before archiving, or one never published.
 	ArchiveKindGap = "gap"
 	// DefaultArchivePageSize bounds an unlimited archive query, so a list never
 	// fetches an unbounded number of bodies.
@@ -62,39 +64,88 @@ type archiveLine struct {
 	Gap   *EventGap       `json:"gap,omitempty"`
 }
 
-// EventGap is a range of a run's event sequence that was lost from object
-// storage before the run was archived: an earlier generation's event segment
-// that was missing or failed verification. First and Last are inclusive.
+// EventGap is a range of a run's event sequence its stream does not hold,
+// for one of two causes: lost from object storage before the run was
+// archived (an earlier generation's event segment that was missing or failed
+// verification), or never published (numbers below the run's first event,
+// Unpublished). First and Last are inclusive.
 type EventGap struct {
 	First  int64  `json:"first"`
 	Last   int64  `json:"last"`
 	Reason string `json:"reason"`
 }
 
-// ErrArchivedEventsLost reports an archived run whose stream records a gap.
-// The run's outcome and its other events are intact.
-var ErrArchivedEventsLost = errors.New("events of the run were lost from object storage before it was archived")
+// UnpublishedEventsReason is the reason of a gap whose numbers the run never
+// published (unpublishedStart), and what tells it from a loss: every other
+// gap's reason says how its events were lost. internal/evidence carries the
+// same text, for the bundle's notice.
+const UnpublishedEventsReason = "the run's history holds no event under these numbers"
 
-// ArchivedEventsLostError names every range an archived run lost. It wraps
-// ErrArchivedEventsLost.
+// Unpublished reports whether the gap's numbers were never published, rather
+// than their events lost from object storage.
+func (g EventGap) Unpublished() bool { return g.Reason == UnpublishedEventsReason }
+
+// ErrArchivedEventsLost reports an archived run whose stream records a gap:
+// events lost from object storage before it was archived, or numbers it never
+// published. The run's outcome and its other events are intact.
+var ErrArchivedEventsLost = errors.New("events of the run are missing from its archive")
+
+// ArchivedEventsLostError names every range an archived run's stream does not
+// hold. It wraps ErrArchivedEventsLost.
 type ArchivedEventsLostError struct {
 	RunID string
 	Gaps  []EventGap
 }
 
 func (e *ArchivedEventsLostError) Error() string {
-	ranges := make([]string, 0, len(e.Gaps))
+	var lost, unpublished []string
 	for _, gap := range e.Gaps {
-		ranges = append(ranges, fmt.Sprintf("%d–%d (%s)", gap.First, gap.Last, gap.Reason))
+		if gap.Unpublished() {
+			unpublished = append(unpublished, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+			continue
+		}
+		lost = append(lost, fmt.Sprintf("%d–%d (%s)", gap.First, gap.Last, gap.Reason))
 	}
-	return fmt.Sprintf("events %s of run %s were lost from object storage before the run was archived",
-		strings.Join(ranges, ", "), e.RunID)
+	var clauses []string
+	if len(lost) > 0 {
+		clauses = append(clauses, fmt.Sprintf("events %s of run %s were lost from object storage before the run was archived",
+			strings.Join(lost, ", "), e.RunID))
+	}
+	if len(unpublished) > 0 {
+		clauses = append(clauses, fmt.Sprintf("events %s of run %s were never published (%s)",
+			strings.Join(unpublished, ", "), e.RunID, UnpublishedEventsReason))
+	}
+	return strings.Join(clauses, "; ")
 }
 
 func (e *ArchivedEventsLostError) Unwrap() error { return ErrArchivedEventsLost }
 
+// ErrEventsUnpublished reports a live read of a run's stream over numbers the
+// run never published.
+var ErrEventsUnpublished = errors.New("events of the run were never published")
+
+// UnpublishedEventsError names the numbers below a run's first published
+// event that a live read of its stream asked for: the gap its archive records
+// (unpublishedStart). It wraps ErrEventsUnpublished.
+type UnpublishedEventsError struct {
+	RunID string
+	Gaps  []EventGap
+}
+
+func (e *UnpublishedEventsError) Error() string {
+	ranges := make([]string, 0, len(e.Gaps))
+	for _, gap := range e.Gaps {
+		ranges = append(ranges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+	}
+	return fmt.Sprintf("events %s of run %s were never published (%s)", strings.Join(ranges, ", "), e.RunID,
+		UnpublishedEventsReason)
+}
+
+func (e *UnpublishedEventsError) Unwrap() error { return ErrEventsUnpublished }
+
 // MarshalRunArchive renders a run and its events as the archive body, with
-// one gap line per lost range, placed after the events that precede it.
+// one gap line per gap in the events, placed after the events that precede
+// it.
 func MarshalRunArchive(run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...EventGap) ([]byte, error) {
 	if run.GetId() == "" {
 		return nil, fmt.Errorf("engine: archive run: run id is required")
@@ -140,7 +191,7 @@ func MarshalRunArchive(run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...
 }
 
 // UnmarshalRunArchiveGaps returns the gap lines of an archive body, in the
-// order they were written; nil for a body that lost nothing.
+// order they were written; nil for a body with no gap in its events.
 func UnmarshalRunArchiveGaps(body []byte) ([]EventGap, error) {
 	var gaps []EventGap
 	for number, raw := range bytes.Split(body, []byte("\n")) {
@@ -323,8 +374,9 @@ func NewRunArchiver(archive artifacts.RunArchive) *RunArchiver {
 // The index time comes from the run itself (created, else started, else
 // finished), never from the clock, so repeated calls address the same keys.
 //
-// gaps are the ranges of the stream lost before archiving (EventsForArchive);
-// each becomes a gap line, so the archive says what it is missing.
+// gaps are the ranges missing from the stream when it is archived, lost or
+// never published (EventsForArchive); each becomes a gap line, so the archive
+// says what it is missing.
 func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...EventGap) error {
 	if a == nil {
 		return nil

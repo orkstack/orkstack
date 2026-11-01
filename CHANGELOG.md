@@ -228,6 +228,31 @@ word for word.
   policy Temporal accepts: the maximum raised to the initial interval, a
   coefficient between 0 and 1 raised to 1, and, in a run submitted from this
   release on, a coefficient that is not a number read as the default 2.
+- A run whose definition, passed by reference, could not be used no longer
+  serves a stream that silently begins at sequence 2 when object storage
+  refused its `RUN_CREATED`. `RUN_CREATED` is now written again under the same
+  number, so a store that is back for that write leaves both events, from 1.
+  When it is refused again, the terminal event is still published at 2, and
+  the missing 1 is said, not skipped: a read of the run's stream from its
+  start now fails `DataLoss`, naming 1 as never published, live and from its
+  archive, which records it as a gap line; a read from 1 serves the terminal
+  event; and the run's evidence bundle is `schema_version` 2, with the gap in
+  `event_gaps`, as every bundle of a gapped archive already was. A run a
+  release before this left the same way, after one refused write, is read the
+  same way (`docs/DEPLOY.md` §6, "An ending before start writes `RUN_CREATED`
+  first").
+- A gap in a run's events is named for its cause wherever it is reported —
+  the `DataLoss` error, the evidence bundle's notice, and `orkctl run evidence
+  verify`, whose rows are now labelled `event gaps` rather than `events lost`:
+  events "lost from object storage before the run was archived", or "never
+  published". The run page's socket (`/ws/runs/{id}`) now closes with that
+  sentence, shortened to fit a close frame, instead of "event stream failed".
+- `ExportRunEvidence` of a finished run that published no terminal event
+  (its ending could not be written to object storage, or it was terminated)
+  now says the run has no archive and never will, instead of asking to retry.
+  It does not cover every run left without an archive: one that published its
+  terminal event, but whose archive write then failed on every attempt, still
+  gets "retry shortly" (`docs/RUN_EVIDENCE.md`, "The export, step by step").
 
 ### Security
 

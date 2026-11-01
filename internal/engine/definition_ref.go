@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -371,18 +372,15 @@ func (s *runState) loadDefinition(ctx workflow.Context, stub *orkstackv1.Orkflow
 // every stream begins there, as a start that failed before Temporal begins
 // its own (recordFailedStart) — and then RUN_FAILED (or RUN_CANCELED) at
 // sequence 2, each with its snapshot, so the run has a stream and an archive
-// body. It returns the ApplicationError, or the cancel.
+// body; a RUN_CREATED it cannot write is written once more, and when that
+// fails too the terminal event still goes at 2, and the reader names 1 as
+// never published (emitRunCreatedFirst). It returns the ApplicationError, or
+// the cancel.
 func (s *runState) endBeforeStart(ctx workflow.Context, code, message string) (*orkstackv1.Run, error) {
 	canceled := ctx.Err() != nil || code == restoreCanceled
 	ectx, cancel := workflow.NewDisconnectedContext(ctx)
 	defer cancel()
-	if err := s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "", orkstackv1.Status_STATUS_PENDING,
-		fmt.Sprintf("run created for orkflow %s@%s", s.wf.GetName(), s.wf.GetVersion())); err != nil {
-		// Object storage is down: the reader synthesizes the run's end from
-		// the execution's own close, mapped to the same code (closedExecution).
-		workflow.GetLogger(ctx).Error("write the first snapshot of a run whose definition could not be used failed",
-			"run_id", s.runID, "code", code, "error", err)
-	}
+	s.emitRunCreatedFirst(ectx, code, message)
 	s.finished = timestamppb.New(workflow.Now(ectx))
 	eventType := orkstackv1.EventType_EVENT_TYPE_RUN_FAILED
 	s.status = orkstackv1.Status_STATUS_FAILED
@@ -395,12 +393,77 @@ func (s *runState) endBeforeStart(ctx workflow.Context, code, message string) (*
 	}
 	if err := s.emit(ectx, eventType, "", s.status, s.runError.GetMessage()); err != nil {
 		workflow.GetLogger(ctx).Error("write the terminal snapshot of a run whose definition could not be used failed",
-			"run_id", s.runID, "code", s.runError.GetCode(), "error", err)
+			"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", s.eventSeq,
+			"code", s.runError.GetCode(), "error", err)
 	}
 	if canceled {
 		return s.snapshot(), temporal.NewCanceledError()
 	}
 	return s.snapshot(), temporal.NewNonRetryableApplicationError(message, code, nil)
+}
+
+// RunCreatedFirstChange is the workflow.GetVersion change id of
+// emitRunCreatedFirst's second write of a RUN_CREATED that endBeforeStart
+// could not write.
+//
+// Before it, a failed RUN_CREATED write was logged and the terminal event
+// written next, at sequence 2: when object storage came back for it, the
+// run's stream and archive held that event alone, with nothing at 1 and no
+// word of it. Writing RUN_CREATED again first is a different command
+// sequence, so it is asked LAZILY, only where RUN_CREATED's write first
+// fails: an ending whose writes take records no marker, and a history
+// recorded before the gate replays its DefaultVersion branch, which is the
+// old one. It is asked in generation 0 only, which ends the run, so no carry
+// ever holds it.
+const RunCreatedFirstChange = "run-created-first"
+
+// runCreatedFirstGateDisabledForTest is a TEST-ONLY switch, the precedent of
+// refusedRouteGateDisabledForTest: when set, emitRunCreatedFirst takes the
+// DefaultVersion branch WITHOUT asking its version, so a recorder can write a
+// history in the shape of the builds before the gate. Never set in
+// production code.
+var runCreatedFirstGateDisabledForTest atomic.Bool
+
+// emitRunCreatedFirst emits endBeforeStart's RUN_CREATED. When its snapshot
+// cannot be written it is written once more, under the same sequence
+// number — the one deliberate exception to emit's burned numbers: the run's
+// state has not moved, so both writes of that number hold the same run, and
+// a late write of the failed one changes nothing. When that write fails too
+// (or on the DefaultVersion branch, which never wrote it again), the number
+// stays burned and endBeforeStart goes on to its terminal event at 2, under
+// a key of its own: never at 1, where a late write of a failed RUN_CREATED
+// attempt could replace it with a run that never ended. Its stream then
+// starts at 2, and the reader says so (unpublishedStart): a read from 0
+// fails naming 1 as never published, live and from the archive, which
+// records 1 as a gap. Were the terminal write refused as well, the reader
+// numbers the execution's close from 1 and nothing archives it, as for any
+// run that publishes no terminal event. ectx is endBeforeStart's
+// disconnected context.
+func (s *runState) emitRunCreatedFirst(ectx workflow.Context, code, message string) {
+	created := fmt.Sprintf("run created for orkflow %s@%s", s.wf.GetName(), s.wf.GetVersion())
+	sequence := s.eventSeq
+	err := s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "", orkstackv1.Status_STATUS_PENDING, created)
+	if err == nil {
+		return
+	}
+	logger := workflow.GetLogger(ectx)
+	logger.Error("write the first snapshot of a run whose definition could not be used failed",
+		"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", sequence+1, "code", code,
+		"message", message, "error", err)
+	if runCreatedFirstGateDisabledForTest.Load() || s.version(ectx, RunCreatedFirstChange, 1) < 1 {
+		return
+	}
+	s.eventSeq = sequence
+	err = s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, "", orkstackv1.Status_STATUS_PENDING, created)
+	if err == nil {
+		logger.Info("wrote the first snapshot of a run whose definition could not be used on its second try",
+			"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", sequence+1, "code", code)
+		return
+	}
+	logger.Error("write the first snapshot of a run whose definition could not be used failed again: "+
+		"the run's stream starts at its terminal event, and its archive records the number as a gap",
+		"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", sequence+1, "code", code,
+		"message", message, "error", err)
 }
 
 // definitionBytes is what this run's definition passed by reference takes
