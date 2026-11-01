@@ -190,6 +190,9 @@ type activitySuite struct {
 	// resolution is the pin's resolution, which carries the image's
 	// interface label as apply would read it.
 	resolution *dsl.Resolution
+	// resolveImage pins the image; nil is resolve, the registry as apply
+	// reads it. A test supplies its own to build the suite with no registry.
+	resolveImage func(context.Context) (*dsl.Resolution, error)
 }
 
 func (s *activitySuite) run(ctx context.Context) (*activityTestReport, error) {
@@ -314,7 +317,11 @@ func (s *activitySuite) build(ctx context.Context) error {
 	// Resolved ONCE, for the same reason the Orker pins: a tag that moved
 	// between two assertions would make the suite report on two different
 	// images and call it one.
-	resolution, err := s.resolve(ctx)
+	resolve := s.resolve
+	if s.resolveImage != nil {
+		resolve = s.resolveImage
+	}
+	resolution, err := resolve(ctx)
 	if err != nil {
 		return err
 	}
