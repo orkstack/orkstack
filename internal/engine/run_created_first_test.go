@@ -49,16 +49,17 @@ func (a *snapshotAttempts) of(sequence int64) int {
 	return a.tries[sequence]
 }
 
-// TestRunWorkflow_AnEndingBeforeStartPublishesNothingPastAnUnwrittenRunCreated:
+// TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd:
 // generation 0 of a run whose definition could not be used ends through
-// endBeforeStart, which writes RUN_CREATED and then the terminal event. Its
-// stream starts at sequence 1 or holds nothing the run wrote: when
-// RUN_CREATED's write fails, it is written again under the same number,
-// and when that fails too, nothing is written after it, so the reader
-// numbers the execution's close from 1 (closeRun). A terminal event at 2
-// with no event at 1 is the gap this rules out: once published, the stream
-// and the archive keep it for good.
-func TestRunWorkflow_AnEndingBeforeStartPublishesNothingPastAnUnwrittenRunCreated(t *testing.T) {
+// endBeforeStart, which writes RUN_CREATED and then the terminal event. When
+// RUN_CREATED's write fails, it is written again under the same number
+// before the terminal event, so a store back for that second write leaves
+// both, from 1. When that fails too, the terminal event still goes at 2,
+// under a key of its own, and the archive records 1 as a gap
+// (recordUnwrittenStart, TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap).
+// When the terminal write fails as well, nothing is published and the reader
+// numbers the execution's close from 1.
+func TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd(t *testing.T) {
 	endings := []struct {
 		name     string
 		cancel   bool
@@ -83,11 +84,12 @@ func TestRunWorkflow_AnEndingBeforeStartPublishesNothingPastAnUnwrittenRunCreate
 	}{
 		{"its write takes", 0, false, "1:RUN_CREATED 2:", 1},
 		{"its first write fails and the second takes", 3, false, "1:RUN_CREATED 2:", 4},
-		{"neither write takes", -1, false, "", 6},
+		{"neither write takes", -1, false, "2:", 6},
 		// The terminal event's own failure is the one any run may meet: the
-		// reader numbers the close after RUN_CREATED.
+		// reader numbers the close after the last event published.
 		{"its write takes and the terminal's does not", 0, true, "1:RUN_CREATED", 1},
 		{"its second write takes and the terminal's does not", 3, true, "1:RUN_CREATED", 4},
+		{"nothing takes", -1, true, "", 6},
 	}
 	for _, ending := range endings {
 		for _, w := range writes {
@@ -120,13 +122,14 @@ func TestRunWorkflow_AnEndingBeforeStartPublishesNothingPastAnUnwrittenRunCreate
 				if got := strings.Join(definitionEventTypes(published), " "); got != want {
 					t.Fatalf("published %q, want %q", got, want)
 				}
-				requireContiguous(t, published)
 				if got := attempts.of(1); got != w.tries {
 					t.Errorf("RUN_CREATED's writes made %d attempts, want %d", got, w.tries)
 				}
-				if want == "" && attempts.of(2) != 0 {
-					t.Errorf("the terminal snapshot was written %d times past an unwritten RUN_CREATED, want never",
-						attempts.of(2))
+				// The terminal event's snapshot is written, at 2, whatever
+				// became of RUN_CREATED; nothing is ever written past it.
+				if attempts.of(2) == 0 || attempts.of(3) != 0 {
+					t.Errorf("snapshot attempts by sequence %v, want the terminal event's at 2 and nothing after it",
+						attempts.tries)
 				}
 			})
 		}

@@ -15,8 +15,9 @@ import (
 //   - gated: by today's code, RUN_CREATED's first write failed and the
 //     second took: the lazy run-created-first marker, RUN_CREATED written
 //     again under sequence 1, then the terminal event at 2;
-//   - unwritten: by today's code, both writes failed: the marker, two failed
-//     writes, and nothing published;
+//   - gap: by today's code, both RUN_CREATED writes failed: the marker, two
+//     failed writes, then the terminal event at 2, whose archive records 1
+//     as a gap;
 //   - legacy: with the gate off, which is the command sequence of every
 //     build before it — the terminal event written at sequence 2 right after
 //     the failed write.
@@ -28,7 +29,7 @@ var runCreatedFirstFixtures = []struct {
 	legacy     bool
 }{
 	{"gated", "testdata/history/run-created-first-v1.json", false},
-	{"unwritten", "testdata/history/run-created-first-unwritten-v1.json", false},
+	{"gap", "testdata/history/run-created-first-gap-v1.json", false},
 	{"legacy", "testdata/history/run-created-first-legacy-v1.json", true},
 }
 
@@ -66,24 +67,25 @@ func TestRunWorkflow_ReplaysCommittedRunCreatedFirstHistories(t *testing.T) {
 }
 
 // TestRunCreatedFirstHistories_CatchTheGateRemoved is the negative test: with
-// the gate skipped — a build that never asked — the gated fixture must fail
-// to replay as nondeterministic, so it pins the marker and the second
-// RUN_CREATED write it brings. The unwritten fixture is not here: the old
-// path's terminal write takes the place of the second RUN_CREATED write, so
-// its commands are the same two failed writes, only the marker differs, and
-// the SDK does not reject a marker the code does not ask for. It still pins
-// that nothing follows them: a build that wrote anything after the second
-// failure would not replay it.
+// the gate skipped — a build that never asked — every gated fixture must fail
+// to replay as nondeterministic, so each pins the marker and the second
+// RUN_CREATED write it brings.
 func TestRunCreatedFirstHistories_CatchTheGateRemoved(t *testing.T) {
-	path := runCreatedFirstFixtures[0].path
-	requireRunCreatedFirstFixture(t, path)
-	recorded := loadHistoryFile(t, path)
-	runID, _, _, _, _ := startArgs(t, recorded)
 	restore := engine.DisableRunCreatedFirstGateForTest()
 	defer restore()
-	err := replayAs(t, recorded, runID)
-	if err == nil || !strings.Contains(err.Error(), "TMPRL1100") {
-		t.Fatalf("%s replayed with the gate removed = %v, want the nondeterminism error (TMPRL1100)", path, err)
+	for _, f := range runCreatedFirstFixtures {
+		if f.legacy {
+			continue
+		}
+		t.Run(f.name, func(t *testing.T) {
+			requireRunCreatedFirstFixture(t, f.path)
+			recorded := loadHistoryFile(t, f.path)
+			runID, _, _, _, _ := startArgs(t, recorded)
+			err := replayAs(t, recorded, runID)
+			if err == nil || !strings.Contains(err.Error(), "TMPRL1100") {
+				t.Fatalf("%s replayed with the gate removed = %v, want the nondeterminism error (TMPRL1100)", f.path, err)
+			}
+			t.Logf("with the gate removed, %s does not replay: %v", f.path, err)
+		})
 	}
-	t.Logf("with the gate removed, %s does not replay: %v", path, err)
 }

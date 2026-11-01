@@ -147,7 +147,10 @@ A run that carries on into a fresh history reads the events of its earlier
 histories from immutable event segments in object storage. When one of them
 was missing or altered by the time the run was archived, the archive records
 the lost range as a `gap` line in `run.jsonl` (`docs/STORAGE.md`) rather than
-leaving the run unarchived, and the bundle of such a run is written with
+leaving the run unarchived. So it does for a run whose definition could not be
+used and whose `RUN_CREATED` object storage refused twice: its stream starts at
+its terminal event, at 2, and 1 is recorded as never written
+(`docs/DEPLOY.md` §6). The bundle of such a run is written with
 `schema_version: 2` and one more key:
 
 ```json

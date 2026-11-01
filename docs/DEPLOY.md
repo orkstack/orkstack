@@ -3409,20 +3409,23 @@ those tests, it never skips them.
 **An ending before start writes `RUN_CREATED` first.** A run whose definition,
 passed by reference, cannot be used ends in its first generation with
 `RUN_CREATED` at sequence 1 and its terminal event at 2. When object storage
-refuses `RUN_CREATED`'s snapshot, it is written again under the same number;
-when that write fails too, the run writes nothing after it, and its close
-reads as its one event, at 1, with the run's code. Such a run publishes no
-terminal event, so, like every run that publishes none, it has no archive
-body, sends no webhook, and becomes unreadable once the cluster's retention
-expires it. Before this, the terminal
-event was written at 2 regardless, and a store that came back between the two
-writes left the stream and the archive with that event alone, for good. It
-records the `run-created-first` version, asked lazily where `RUN_CREATED`'s
-write first fails: an ending whose writes take records no marker. A history
-recorded before the gate replays its `DefaultVersion` branch, which wrote the
-terminal event next; version 1 is the new path. The fixtures
+refuses `RUN_CREATED`'s snapshot, it is written again under the same number,
+so a store that is back for that write leaves both events. When that write
+fails too, the number stays unused and the terminal event is still written at
+2, under a key of its own: the stream starts there, and when the run is
+archived the reader records 1 as an explicit gap (`docs/STORAGE.md`), which a
+read of the archive over it names. Before this, the terminal event was written
+at 2 the same way, with no gap recorded. When the terminal write fails as
+well, the run publishes nothing, its close reads as its one event, at 1, and,
+like every run that publishes no terminal event, it has no archive body and
+becomes unreadable once the cluster's retention expires it. It records the
+`run-created-first` version, asked lazily where `RUN_CREATED`'s write first
+fails: an ending whose writes take records no marker. A history recorded
+before the gate replays its `DefaultVersion` branch, which wrote the terminal
+event next; version 1 is the new path. The gap is the reader's, so a run
+recorded before the gate is archived with it too. The fixtures
 `run-created-first-v1.json` (the second write takes),
-`run-created-first-unwritten-v1.json` (neither does) and
+`run-created-first-gap-v1.json` (neither does) and
 `run-created-first-legacy-v1.json` (recorded with the gate off) guard it with
 command, behaviour and negative tests
 (`internal/engine/testdata/history/README.md`).

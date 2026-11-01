@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"go.temporal.io/api/enums/v1"
@@ -381,41 +382,51 @@ func TestIntegration_DefinitionChaosC36_CancelDuringTheLoad(t *testing.T) {
 
 // TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding is C36 with
 // object storage still cut when the canceled run writes RUN_CREATED, and
-// through every attempt of that write. Back for the next write, the run
-// writes RUN_CREATED again under sequence 1 and then RUN_CANCELED:
-// StreamRunEvents serves both, from 1, and the archive holds them
-// (run-created-first, emitRunCreatedFirst). Before that gate the next write
-// was RUN_CANCELED at 2, and the stream and archive held it alone, for good.
-// Cut through both writes, the run writes nothing past RUN_CREATED, and the
-// reader serves the execution's close as its one event, at 1.
+// through every attempt of that write (run-created-first,
+// emitRunCreatedFirst):
+//
+//   - back for RUN_CREATED's second write: RUN_CREATED and RUN_CANCELED,
+//     from 1, served and archived alike;
+//   - back only for the terminal event: RUN_CANCELED at 2 is served, and the
+//     archive holds it with 1 recorded as an explicit gap, which a read of
+//     the archive over 1 names (DataLoss);
+//   - cut through every write: nothing is published, the run reads canceled
+//     from its close, at 1, and nothing archives it (as for any run that
+//     publishes no terminal event).
+//
+// Before that gate the next write after a refused RUN_CREATED was
+// RUN_CANCELED at 2, archived with no word of the missing 1.
 func TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding(t *testing.T) {
 	for _, tc := range []struct {
-		name string
-		// backAt is the write of sequence 1 the store comes back for, or 0
-		// for none: then it comes back once the run has closed.
-		backAt int
-		want   string
-		// others is whether anything past RUN_CREATED is written.
-		others bool
+		name, label string
+		// back reports whether the store comes back for an attempt at
+		// sequence, the n-th write of sequence 1 (0 for another sequence).
+		back func(n int, sequence int64) bool
+		want string
+		// writes is how many writes of sequence 1 begin; terminal, whether
+		// the terminal event is written; gap, whether the archive records 1.
+		writes        int
+		terminal, gap bool
 	}{
-		{"back for the second write", 2, "[1:RUN_CREATED 2:RUN_CANCELED]", true},
-		{"cut through both writes", 0, "[1:RUN_CANCELED]", false},
+		{"back for the second write", "second", func(n int, _ int64) bool { return n >= 2 },
+			"[1:RUN_CREATED 2:RUN_CANCELED]", 2, true, false},
+		{"back only for the terminal event", "terminal", func(_ int, sequence int64) bool { return sequence != 1 },
+			"[2:RUN_CANCELED]", 2, true, true},
+		{"cut through every write", "every", func(int, int64) bool { return false },
+			"[1:RUN_CANCELED]", 2, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 			defer cancel()
-			s := newChaosStack(t, ctx, fmt.Sprintf("C36/cut-%d", tc.backAt))
+			s := newChaosStack(t, ctx, "C36/cut-"+tc.label)
 			proxy := s.minioProxy()
 			writes := &runCreatedWrites{}
 			var restore, ending sync.Once
 			var endingAt time.Time
-			runID, canceledAt := s.cancelDuringTheLoad(t, fmt.Sprintf("c36-cut-%d", tc.backAt), proxy,
+			runID, canceledAt := s.cancelDuringTheLoad(t, "c36-cut-"+tc.label, proxy,
 				func(sequence int64, attempt int32) {
 					ending.Do(func() { endingAt = time.Now() })
-					// Any write past sequence 1 brings the store back too, so
-					// a build that writes past an unwritten RUN_CREATED
-					// publishes what it wrote, and the stream shows it.
-					if n := writes.note(sequence, attempt); tc.backAt > 0 && (n >= tc.backAt || sequence != 1) {
+					if tc.back(writes.note(sequence, attempt), sequence) {
 						restore.Do(proxy.Restore)
 					}
 				})
@@ -436,40 +447,77 @@ func TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding(t *testing.T) {
 			if tries <= n {
 				t.Fatalf("RUN_CREATED's writes made %d attempts over %d writes: the first never met the cut", tries, n)
 			}
+			if n != tc.writes || others == 0 {
+				t.Fatalf("RUN_CREATED's writes began %d times and %d attempts were at other numbers, want %d writes "+
+					"and the terminal event attempted", n, others, tc.writes)
+			}
 			a := s.serveAPI(api.Config{})
 			served := apiEvents(t, ctx, a, runID)
 			if got := fmt.Sprint(definitionEventTypes(served)); got != tc.want {
 				t.Fatalf("StreamRunEvents served %s, want %s", got, tc.want)
 			}
-			if n != 2 || (others > 0) != tc.others {
-				t.Fatalf("RUN_CREATED was written %d times and %d attempts wrote past it, want 2 writes and others=%v",
-					n, others, tc.others)
+			run, err := s.reader.GetRun(ctx, runID)
+			if err != nil || run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != "RUN_CANCELED" {
+				t.Fatalf("GetRun = %v (%v), want CANCELED with RUN_CANCELED", run, err)
 			}
-			if tc.others {
-				archived := awaitArchivedEvents(t, ctx, s.archive, runID)
-				if strings.Join(eventKeys(archived), "\n") != strings.Join(eventKeys(served), "\n") {
-					t.Fatal("the archive body's events differ from the stream")
-				}
-			} else {
-				// The run reads canceled from its close alone. It published
-				// nothing — no PublishEvent was ever scheduled — so nothing
-				// can archive it: the documented cost of an ending that
-				// cannot write RUN_CREATED (emitRunCreatedFirst).
-				run, err := s.reader.GetRun(ctx, runID)
-				if err != nil || run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != "RUN_CANCELED" {
-					t.Fatalf("GetRun = %v (%v), want CANCELED with RUN_CANCELED", run, err)
-				}
+			if !tc.terminal {
 				if published := publishedOf(t, s.history(runID, "")); len(published) != 0 {
-					t.Fatalf("the run published %v past an unwritten RUN_CREATED", definitionEventTypes(published))
+					t.Fatalf("the run published %v with every write refused", definitionEventTypes(published))
 				}
 				if _, err := s.archive.LoadRun(ctx, runID); !errors.Is(err, artifacts.ErrNotFound) {
 					t.Fatalf("the archive body = %v, want none: nothing published a terminal event", err)
 				}
+				s.transcript.figure("cancel_latency", latency.String())
+				return
 			}
+			s.requireArchivedWith(t, a, runID, served, "RUN_CANCELED", tc.gap)
 			s.transcript.figure("cancel_latency", latency.String())
-			t.Logf("C36 (%s): StreamRunEvents served %s, %s after the cancel; RUN_CREATED written %d times in %d attempts",
-				tc.name, tc.want, latency, n, tries)
+			t.Logf("C36 (%s): StreamRunEvents served %s, %s after the cancel; RUN_CREATED's writes began %d times "+
+				"in %d attempts; archive gap at 1: %v", tc.name, tc.want, latency, n, tries, tc.gap)
 		})
+	}
+}
+
+// requireArchivedWith: the run's archive body holds the events served and
+// the run's code, and records 1 as a gap exactly when gap is set — which a
+// read of the archive from the start names, DataLoss, with what lies past it
+// still readable from 1.
+func (s *chaosStack) requireArchivedWith(t *testing.T, a *chaosAPI, runID string, served []*orkstackv1.Event, code string, gap bool) {
+	t.Helper()
+	deadline := time.Now().Add(time.Minute)
+	var archived []*orkstackv1.Event
+	var err error
+	for {
+		archived, err = s.archive.LoadRunEvents(s.ctx, runID)
+		if !errors.Is(err, artifacts.ErrNotFound) || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	var lost *engine.ArchivedEventsLostError
+	switch {
+	case gap && !errors.As(err, &lost):
+		t.Fatalf("LoadRunEvents = %v, want the archive to record 1 as a gap", err)
+	case gap && (len(lost.Gaps) != 1 || lost.Gaps[0].First != 1 || lost.Gaps[0].Last != 1):
+		t.Fatalf("the archive records gaps %+v, want 1–1 alone", lost.Gaps)
+	case !gap && err != nil:
+		t.Fatalf("LoadRunEvents: %v", err)
+	}
+	if strings.Join(eventKeys(archived), "\n") != strings.Join(eventKeys(served), "\n") {
+		t.Fatalf("the archive body's events %v differ from the stream %v", definitionEventTypes(archived), definitionEventTypes(served))
+	}
+	run, err := s.archive.LoadRun(s.ctx, runID)
+	if err != nil || run.GetError().GetCode() != code {
+		t.Fatalf("the archived run = %v (%v), want %s", run.GetError(), err, code)
+	}
+	if !gap {
+		return
+	}
+	if _, err := a.svc.ArchivedEvents(s.ctx, runID, 0); connect.CodeOf(err) != connect.CodeDataLoss || !strings.Contains(err.Error(), "1–1") {
+		t.Fatalf("ArchivedEvents from 0 = %v, want DataLoss naming 1–1", err)
+	}
+	if past, err := a.svc.ArchivedEvents(s.ctx, runID, 1); err != nil || fmt.Sprint(definitionEventTypes(past)) != fmt.Sprint(definitionEventTypes(served)) {
+		t.Fatalf("ArchivedEvents from 1 = %v (%v), want %v", definitionEventTypes(past), err, definitionEventTypes(served))
 	}
 }
 

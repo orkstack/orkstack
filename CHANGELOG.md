@@ -14,12 +14,13 @@ word for word.
 ### Fixed
 
 - A run whose definition, passed by reference, could not be used no longer
-  publishes its terminal event at sequence 2 when object storage refused its
-  `RUN_CREATED`: the stream and the archive held that event alone, with
-  nothing at 1, for good. `RUN_CREATED` is now written again under the same
-  number, and when that write fails too the run publishes nothing, so its
-  close reads as its one event, at 1; such a run has no archive body, like
-  every run that publishes no terminal event (`docs/DEPLOY.md` §6, "An ending
+  loses its `RUN_CREATED` without a word when object storage refuses it:
+  before, its terminal event was published at sequence 2 with nothing at 1,
+  and the stream and the archive kept it that way. `RUN_CREATED` is now
+  written again under the same number, so a store that is back for that
+  write leaves both events, from 1. When that write is refused too, the
+  terminal event is still published at 2, and the run's archive records 1 as
+  a gap that a read of the archive names (`docs/DEPLOY.md` §6, "An ending
   before start writes `RUN_CREATED` first").
 
 ## [0.1.0] - 2026-10-30

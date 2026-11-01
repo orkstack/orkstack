@@ -445,7 +445,7 @@ build before it, and must keep replaying through the `DefaultVersion` branch.
   committed, so the replay tests above fail, never skip, when one is missing;
   only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).
 
-### `run-created-first-v1.json`, `run-created-first-unwritten-v1.json` and `run-created-first-legacy-v1.json` — an ending before start whose `RUN_CREATED` write failed
+### `run-created-first-v1.json`, `run-created-first-gap-v1.json` and `run-created-first-legacy-v1.json` — an ending before start whose `RUN_CREATED` write failed
 
 Generation 0 of a three-task chain whose definition travels by reference and
 whose stub names another version than the object: the load ends
@@ -454,27 +454,27 @@ the replica's store refuses `RUN_CREATED`'s write, every attempt of its local
 activity. The gated fixture is recorded by today's code with the first write
 refused: it carries the lazy `run-created-first` marker (`emitRunCreatedFirst`,
 asked where the write first fails), `RUN_CREATED` written again under sequence
-1, and then `RUN_FAILED` at 2. The `unwritten` fixture is recorded by today's
-code with both writes refused: the marker, two failed writes, and nothing
-published, so the reader reads the close as the run's one event. The `legacy`
-fixture is recorded with the gate switched off
+1, and then `RUN_FAILED` at 2. The `gap` fixture is recorded by today's code
+with both writes refused: the marker, two failed writes, then `RUN_FAILED` at
+2, so the reader archives the run with 1 as a gap (`recordUnwrittenStart`).
+The `legacy` fixture is recorded with the gate switched off
 (`DisableRunCreatedFirstGateForTest`), which is the command sequence of every
 build before it: no marker, and `RUN_FAILED` written at 2 right after the
-failed write, with nothing at 1. It must keep replaying through the
-`DefaultVersion` branch. Beside each, its `.objects/` directory holds that
-run's definition object (`definition.pb.gz`, byte for byte as stored), the
-definition its stub names.
+failed write. It must keep replaying through the `DefaultVersion` branch.
+Beside each, its `.objects/` directory holds that run's definition object
+(`definition.pb.gz`, byte for byte as stored), the definition its stub names.
 
 - command: `TestRunWorkflow_ReplaysCommittedRunCreatedFirstHistories`
-- negative: `TestRunCreatedFirstHistories_CatchTheGateRemoved` (the gated
-  fixture replayed with the gate skipped fails as nondeterministic; the
-  unwritten one is not there: with the gate skipped its commands are the same
-  two failed writes, only the marker differs, and the SDK does not reject a
-  marker the code does not ask for — it pins that nothing follows them)
-- behaviour: `TestRunWorkflow_AnEndingBeforeStartPublishesNothingPastAnUnwrittenRunCreated`,
+- negative: `TestRunCreatedFirstHistories_CatchTheGateRemoved` (each gated
+  fixture replayed with the gate skipped fails as nondeterministic)
+- reader: `TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap`
+  (what each history serves live and to the archive, and the same with every
+  publish removed)
+- behaviour: `TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd`,
   `TestRunWorkflow_TheRunCreatedFirstGateIsAskedOnlyWhereItsWriteFails`,
   `TestRunWorkflow_AGateOffEndingBeforeStartKeepsTheLegacyWrites`, and on the
-  cluster `TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding`
+  cluster `TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding` and
+  `TestIntegration_ARefusedRunCreatedReadsBackTheDefinitionCode`
 - recorder: `TestIntegration_RecordRunCreatedFirstHistories`
   (`run_created_first_integration_test.go`). It never skips. The fixtures are
   committed, so the replay tests above fail, never skip, when one is missing;

@@ -57,6 +57,24 @@ func newScanState(tolerateLostSegments bool) *scanState {
 	}
 }
 
+// unwrittenStartReason is the reason an archive gives for the first events
+// of a run that were never published: an ending before start whose
+// RUN_CREATED snapshot object storage refused (emitRunCreatedFirst).
+const unwrittenStartReason = "never written: object storage refused their snapshot, so the run published nothing under these numbers"
+
+// recordUnwrittenStart records, on the archive path, the numbers below the
+// first event a run's first execution published as an explicit gap. Every
+// run publishes RUN_CREATED at 1 first; the one that publishes later
+// numbers without it is an ending before start whose RUN_CREATED could not
+// be written, which goes on to its terminal event at 2. Read live, the
+// stream is what was published; the archive says what is missing.
+func (st *scanState) recordUnwrittenStart(event *orkstackv1.Event) {
+	if !st.tolerateLostSegments || st.carried || st.lastSequence != 0 || len(st.seen) != 0 || event.GetSequence() <= 1 {
+		return
+	}
+	st.gaps = append(st.gaps, EventGap{First: 1, Last: event.GetSequence() - 1, Reason: unwrittenStartReason})
+}
+
 // deliver hands one decoded event to the caller — send, or the projection's
 // events for an event read — once per sequence, and reports whether the walk
 // stops here (a stream at the run's terminal event).

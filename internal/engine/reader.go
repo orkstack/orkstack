@@ -1209,6 +1209,7 @@ func (r *TemporalRunReader) scanExecution(
 			if event == nil {
 				continue
 			}
+			st.recordUnwrittenStart(event)
 			if isTerminalRunEvent(event) {
 				projection.sawTerminal = true
 			}

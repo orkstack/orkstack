@@ -1720,8 +1720,20 @@ The engine's own codes, independent of any one DSL feature:
 | `RUN_STATE_UNSUPPORTED` | run `Error.code`, ContractViolation, not retryable | the run carried on into a fresh history under a newer release, and this release cannot carry on its saved state (its format is newer, or an older release picked it up and refused it before any side effect). The run stops explicitly and still publishes its terminal event: tasks that finished keep their outcome, the rest are `CANCELED`. Roll the engines forward (`docs/DEPLOY.md` §4). A composed task whose child ends this way fails `CHILD_RUN_FAILED`, ContractViolation |
 | `RUN_STATE_CORRUPT` | run `Error.code`, ContractViolation, not retryable | the run's saved state failed verification (a hash, size, location, structure or row check) and was not used; the run has stopped, with its terminal event. A composed task whose child ends this way fails `CHILD_RUN_FAILED`, ContractViolation |
 | `RUN_STATE_UNAVAILABLE` | run `Error.code`, InfrastructureError, not retryable | the run's saved state could not be read from object storage within its restore timeout; the run has stopped, with its terminal event. A composed task whose child ends this way fails `CHILD_RUN_FAILED`, InfrastructureError |
-| `RUN_DEFINITION_UNAVAILABLE` | run `Error.code`, InfrastructureError, not retryable | the run's definition, too large to travel with its start and passed by reference (`docs/DEPLOY.md` §1, `engine.definition_by_reference`), could not be read from object storage before the restore timeout; the run has stopped, with its terminal event (a run that stops before its first task publishes `RUN_CREATED` and `RUN_FAILED`; when object storage refuses `RUN_CREATED` twice it publishes neither, its close reads as its one event, with this code, and it has no archive body, so it is readable only until the cluster's retention expires it) |
-| `RUN_DEFINITION_CORRUPT` | run `Error.code`, ContractViolation, not retryable | the run's definition passed by reference failed verification (a hash, size or structure check, or it is not the definition the run started with) and was not used; the run has stopped, with its terminal event |
+| `RUN_DEFINITION_UNAVAILABLE` | run `Error.code`, InfrastructureError, not retryable | the run's definition, too large to travel with its start and passed by reference (`docs/DEPLOY.md` §1, `engine.definition_by_reference`), could not be read from object storage before the restore timeout; the run has stopped (what it publishes: below the table) |
+| `RUN_DEFINITION_CORRUPT` | run `Error.code`, ContractViolation, not retryable | the run's definition passed by reference failed verification (a hash, size or structure check, or it is not the definition the run started with) and was not used; the run has stopped (what it publishes: below the table) |
+
+A run whose definition passed by reference cannot be used — it ends
+`RUN_DEFINITION_UNAVAILABLE` or `RUN_DEFINITION_CORRUPT`, or `RUN_CANCELED`
+when an operator cancels it while the definition is still being read — stops
+with its terminal event. In a later part of a long run, that event follows the
+run's own. When it stops before its first task, it publishes `RUN_CREATED` at
+1 and the terminal event at 2. When object storage refuses `RUN_CREATED`
+twice, the terminal event is published alone, at 2, and the run's archive
+records 1 as a gap, which a read of the archive over it names. When object
+storage refuses the terminal event as well, the run publishes nothing: its
+close reads as its one event, at 1, with its code, and it has no archive, so
+it can no longer be read once it is retired.
 
 Codes that belong to one construct — pins (`PIN_HOST_LOST`,
 `PIN_UNAVAILABLE`, `PIN_TIMEOUT`, …), joins (`CONDITION_FAILED`), awaits,
