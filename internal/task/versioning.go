@@ -114,7 +114,7 @@ func (d Deployment) String() string {
 // declares its own behaviour at registration (RunWorkflow is Pinned, the
 // idempotency claim is AutoUpgrade). It also MUST stay unset while
 // UseVersioning is false, because the SDK panics on that combination
-// (sdk@v1.47.0/internal/internal_worker.go:2321-2323) — which is why it lives
+// (sdk@v1.50.0/internal/internal_worker.go:2422-2425) — which is why it lives
 // behind the guard rather than beside it.
 func (d Deployment) Apply(opts worker.Options) worker.Options {
 	if !d.Versioned() {

@@ -310,9 +310,10 @@ func (r *replica) stopOrker() {
 	r.orker.Stop()
 }
 
-// stop stops every worker. Worker.Stop is idempotent (SDK v1.47.0
-// internal/internal_worker.go:1614 returns early once stopC is closed), so a
-// test that already stopped the Orker may still defer this.
+// stop stops every worker. Worker.Stop is idempotent (SDK v1.50.0
+// internal/internal_worker.go:1702-1711: only the first call stops the worker,
+// and a later one waits for that cleanup to finish), so a test that already
+// stopped the Orker may still defer this.
 func (r *replica) stop() {
 	r.run.Stop()
 	r.orker.Stop()
@@ -549,7 +550,7 @@ func assertTaskBuilds(
 		if attrs := event.GetActivityTaskStartedEventAttributes(); attrs != nil {
 			// The deprecated stamp is the only per-activity worker identity
 			// Temporal records in history; ActivityTaskStarted has no
-			// replacement field (api@v1.63.4/history/v1/message.pb.go).
+			// replacement field (api@v1.64.0/history/v1/message.pb.go).
 			//lint:ignore SA1019 no replacement field exists
 			stamp := attrs.GetWorkerVersion()
 			switch activityByScheduledID[attrs.GetScheduledEventId()] {

@@ -432,7 +432,7 @@ func taskWorkerOptions(cfg config, activities *orker.Activities) (worker.Options
 
 // checkTunerCompatible refuses the options worker.New would PANIC on beside a
 // Tuner (go.temporal.io/sdk internal_worker.go setWorkerOptionsDefaults,
-// v1.47.0). MaxConcurrentSessionExecutionSize is not in that set and stays.
+// v1.50.0). MaxConcurrentSessionExecutionSize is not in that set and stays.
 func checkTunerCompatible(opts worker.Options) error {
 	for _, field := range []struct {
 		name string

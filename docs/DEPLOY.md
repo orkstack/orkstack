@@ -98,7 +98,8 @@ needs `ORK_S3_*` either way.
   workflow assigns it — so resuming against a *different* replica yields the
   same stream with nothing repeated and nothing skipped. A stream that ends
   `unavailable` is resumed that way by `orkctl run watch` and the UI's run
-  page, each up to six times in a row without an event. The engine itself
+  page, each up to six times in a row without an event; `orkctl run watch`
+  resumes too when its connection to the engine is reset. The engine itself
   restarts a history read the cluster says changed under it
   (`CurrentBranchChanged`, which can answer a long poll of a run that has
   just completed), up to three times in a row without a new event, so that
@@ -1343,7 +1344,7 @@ a **Current Version**, the task queue's current version is nil, and
 
 > A nil Current Version represents all the unversioned workers
 >
-> — `api@v1.63.4/workflowservice/v1/request_response.pb.go`,
+> — `api@v1.64.0/workflowservice/v1/request_response.pb.go`,
 > `SetWorkerDeploymentCurrentVersionRequest.BuildId`
 
 which a versioned release does not have. So a deployment's first versioned
@@ -1394,7 +1395,7 @@ Deployment Version — with one exception:
 > workflow's Deployment Version, in which case the activity will be sent to the
 > **Current Deployment Version of its own task queue**.
 >
-> — `api@v1.63.4/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_PINNED`
+> — `api@v1.64.0/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_PINNED`
 
 So if the Orker polling `ORK_ORKER_QUEUE` does not carry the engine's exact
 `(ORK_DEPLOYMENT_NAME, ORK_BUILD_ID)`, the exception fires and an in-flight
@@ -1760,7 +1761,7 @@ started unversioned has **nothing pinning it**.
 > Workflow execution does not have a Versioning Behavior and is called
 > Unversioned. This is the legacy behavior.
 >
-> — `api@v1.63.4/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_UNSPECIFIED`
+> — `api@v1.64.0/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_UNSPECIFIED`
 
 So when the first version becomes Current, an unversioned run in flight
 **upgrades onto it** at its next workflow task, and is pinned there from then
@@ -1859,6 +1860,40 @@ otherwise abandon, not as a routine tool.
 composition, `outputs:`, join policies, caching, schedules) needs the
 preparation in §3, "Releases that add Orkflow constructs" — for join policies
 it is a hold, because the silent outcome is destructive.
+
+**Rolling back below 0.1.1, the release that moved to the Temporal Go SDK
+1.50**, is one-way for the runs it executed. From 0.1.1 the engine records a
+marker in a run's history (the SDK's flag 9, ordered child cancellation) the
+first time one cancellation reaches more than one of the run's open scopes,
+so that they are canceled in the order they were opened. That happens on an
+operator's cancel of a run that declares a failure handler, and on a run that
+fails or is canceled while two or more of its awaits or pins are open. An
+older engine does not know the marker. Handed such a history, it fails the
+run's workflow task on every attempt (`unknown SDK flag: 9` in its log), and
+the run stays `RUNNING`, making no progress, until an engine of 0.1.1 or
+later picks it up again. Nothing is lost, but nothing moves. On an unversioned
+fleet any engine may execute a run's next workflow task, so a run that started
+on the older release can record the marker too. So:
+
+- with versioning on, roll back as above: a run stays on the build that
+  started it, so 0.1.1's runs finish on 0.1.1, whose processes keep running
+  until `orkctl release wait` reports it drained;
+- with versioning off, roll back below 0.1.1 only when no run is open. Any
+  run that was open while a 0.1.1 engine ran may carry the marker, whenever
+  it was created, so the check counts every open run, not only those created
+  since 0.1.1. For each namespace that takes runs:
+  1. hold it: `orkctl namespace update NS --hold "rolling back"`;
+  2. wait until
+     `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run.
+     A run waiting on an await stays open until the await is resolved or its
+     deadline passes, which may be hours: resolve it
+     (`orkctl run resolve`) or cancel it (`orkctl run cancel`) rather than
+     wait;
+  3. once every namespace is empty, replace the engines, then release each
+     hold: `orkctl namespace update NS --release-hold`;
+- an unversioned fleet that mixes older and 0.1.1 engines meets the same
+  failure whenever an older engine picks up such a run, so replace every
+  engine replica together when rolling forward to 0.1.1.
 
 **A release that lets runs carry on into a fresh history** ships after the
 release that reads them (below), and the default turns on only in a release

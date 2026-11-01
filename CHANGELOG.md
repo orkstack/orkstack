@@ -165,6 +165,57 @@ word for word.
   applies to runs submitted from this release on. Fan-out items,
   pinned tasks, runs that carry on and composed child runs already carried
   the key; this is now stated and tested.
+- Every Go dependency is on its latest release: the Temporal Go SDK 1.50.0
+  (API 1.64.0), Connect 1.21.1, gRPC 1.85.0, OpenTelemetry Go 1.47.0 (its logs
+  API and SDK are now stable, 1.47.0) with otelhttp 0.72.0, the AWS SDK for Go
+  v2 1.47.5 (S3 1.114.6) and the Prometheus client 1.25.0. The Temporal SDK's
+  `temporal_activity_execution_failed` and
+  `temporal_local_activity_execution_failed` metrics now carry a
+  `failure_reason` attribute, `ActivityError`, or `PayloadsTooLarge` for an
+  activity whose result was over the payload limit, and
+  `temporal_sticky_cache_total_forced_eviction` no longer counts a worker's
+  shutdown, so a dashboard built on them may need adjusting.
+- Code generation is pinned exactly: buf 1.75.0, protobuf-es and
+  protoc-gen-es 2.16.0, and connect-es 2.3.0 in `ui/package.json`. The Go
+  protoc plugins are `go.mod` tool directives, so each generates with the
+  version of the runtime it links against, and `make tools` installs only buf,
+  at the release `deploy/buf-image.txt` pins, and refuses a `ui/package.json`
+  that pins another.
+- **BREAKING** for a rollback and for an unversioned fleet that mixes
+  releases: the Temporal Go SDK 1.50 records a marker in a run's history the
+  first time one cancellation reaches more than one of the run's open scopes
+  (an operator's cancel of a run that declares a failure handler, or a run
+  that fails or is canceled while two or more awaits or pins are open). An
+  engine of 0.1.0 cannot replay such a run: it fails the run's workflow task
+  on every attempt (`unknown SDK flag: 9`), and the run stays `RUNNING` until
+  an engine of this release picks it up. With versioning on, roll back as
+  before; with versioning off, roll back below this release only when no run
+  is open, and replace every engine replica together when rolling forward
+  (`docs/DEPLOY.md` §4, `docs/UPGRADING.md`).
+- Connect 1.21 codes three failures differently. A connection reset under a
+  call reaches a Go client as `canceled`; before, it was `unavailable` when
+  the reset came before any response, `invalid_argument` when it cut a stream
+  between messages, and `unknown` when it cut one inside a message. A stream
+  that ends cleanly partway through a message is `internal` (it was
+  `invalid_argument`). And an engine's write to a client that has gone away
+  is `canceled` (it was `unknown`). `orkctl run watch` and
+  `orkctl run inspect --watch` resume on such a reset as on `unavailable`, so
+  a watch whose stream is reset partway through now resumes where it used to
+  stop. A Ctrl-C still ends them, and so does a stream that ends cleanly
+  partway through a message, now as `internal`. Other `orkctl` commands print
+  `canceled:` for a reset connection, with the same exit status. None of the
+  three reaches an audit record, which is written after a request is read
+  and before its response is; no OrkStack metric carries a Connect code; and
+  the Temporal SDK's `failure_reason` attribute names only its own failure
+  kinds, so none of them changes.
+- `ork` and `orker` turn off the environment report in the Temporal SDK's
+  worker heartbeats. From SDK 1.49 a worker's first heartbeat would otherwise
+  also send the Temporal server the Go version, the hosting environment the
+  SDK detects (a container, Kubernetes, a cloud platform) and the OS
+  platform, which nothing in OrkStack asks for. The heartbeats are otherwise
+  unchanged: they still carry what the SDK sends for its own worker
+  accounting, among it the host name, the process id, the host's CPU and
+  memory use, the SDK version, the task queue and the deployment version.
 
 ### Fixed
 

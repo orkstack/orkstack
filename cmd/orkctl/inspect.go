@@ -166,7 +166,7 @@ func (i *runInspector) poll(ctx context.Context, watching bool) (orkstackv1.Stat
 }
 
 // pollError carries which of the two reads failed, so the watch loop can
-// tell a transient Unavailable from an answer that ends it.
+// tell an interrupted engine (engineInterrupted) from an answer that ends it.
 type pollError struct {
 	err error
 	op  string
@@ -194,7 +194,7 @@ func (i *runInspector) watch(interval time.Duration) error {
 			if !errors.As(err, &failed) {
 				return err
 			}
-			if connect.CodeOf(failed.err) != connect.CodeUnavailable {
+			if !engineInterrupted(ctx, failed.err) {
 				return failed.rendered()
 			}
 			var connectErr *connect.Error

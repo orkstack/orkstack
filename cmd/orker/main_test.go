@@ -362,9 +362,9 @@ func TestWorkerOptions_BecomeAPinHostOnlyWhenAsked(t *testing.T) {
 //
 // The SDK's doc comment on `DeploymentOptions.UseVersioning` says it "NOTE:
 // Cannot be enabled at the same time as [WorkerOptions.EnableSessionWorker]"
-// (sdk@v1.47.0/internal/worker.go:80), but the only enforced panic covers the
+// (sdk@v1.50.0/internal/worker.go:85), but the only enforced panic covers the
 // DEPRECATED flag — `options.EnableSessionWorker && options.UseBuildIDForVersioning`
-// (internal_worker.go:2312-2316, citing temporalio/sdk-go#1227) — which
+// (internal_worker.go:2413-2417, citing temporalio/sdk-go#1227) — which
 // task.Deployment.Apply never sets. So a pin host on a versioned deployment
 // builds a real worker, and this test is what says so without a cluster:
 // worker.New is where every WorkerOptions panic lives, and a lazy client makes

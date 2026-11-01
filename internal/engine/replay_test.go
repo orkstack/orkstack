@@ -107,7 +107,7 @@ func TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream(t *testing.T) {
 	}
 	// Any error would satisfy the line above — a missing fixture, a decode
 	// failure — so name the class. TMPRL1100 is the SDK's determinism-violation
-	// code (sdk@v1.47.0/internal/internal_command_state_machine.go, via
+	// code (sdk@v1.50.0/internal/internal_command_state_machine.go, via
 	// panicIllegalState); here it is "lookup failed for scheduledEventID to
 	// activityID", the history running out of the activity the extra command
 	// needs.

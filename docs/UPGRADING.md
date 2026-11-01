@@ -195,7 +195,7 @@ orkctl release wait "$NEW" --timeout 2h
 
 `rollback` makes a release that was current before the current one current again, and runs the same check as `promote`. New runs go back to the old release at once. Runs already pinned to the new release keep finishing there, so keep the new release's workers running until they drain ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
-Rolling back past a release that added Orkflow constructs needs the preparation in the table above. Four cases need more than a rollback:
+Rolling back past a release that added Orkflow constructs needs the preparation in the table above. Five cases need more than a rollback:
 
 | The release being rolled back past added | Before you roll back |
 |---|---|
@@ -203,6 +203,7 @@ Rolling back past a release that added Orkflow constructs needs the preparation 
 | A fan-out maximum above 1,000 items | Lower `engine.each_max_items` to at most 1,000, then wait until every run created before the change has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Definitions passed by reference | Set `engine.definition_by_reference` to `false` on every replica, then wait until every run started with its definition by reference has finished. An older release cannot read such a run's definition ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Snapshot overlays | Set `engine.snapshot_overlays` to `false` on every replica, then wait until every run started while it was on has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
+| The Temporal Go SDK 1.50 (0.1.1) | With versioning on, nothing more: a run 0.1.1 started finishes on 0.1.1. With versioning off, hold each namespace that takes runs, wait until `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run in any of them, roll back, then release each hold: `orkctl namespace update NS --release-hold`. Count every open run, however old: any run open while 0.1.1 ran may carry the marker. A run waiting on an await stays open until the await is resolved or its deadline passes, so resolve or cancel it rather than wait. An older engine cannot replay a run in which 0.1.1 recorded an ordered cancellation, and the run stays `RUNNING` until a 0.1.1 engine picks it up. For the same reason, replace every engine replica of an unversioned fleet together when rolling forward to 0.1.1 ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 
 Two floors do not move. Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a gap in its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 

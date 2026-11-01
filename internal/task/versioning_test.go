@@ -30,7 +30,7 @@ func lazyClient(t *testing.T) client.Client {
 //
 // The DefaultVersioningBehavior half is not cosmetic. The SDK panics when it
 // is set while UseVersioning is false
-// (sdk@v1.47.0/internal/internal_worker.go:2321-2323), so an implementation
+// (sdk@v1.50.0/internal/internal_worker.go:2422-2425), so an implementation
 // that hoisted it out of the guard would take every binary down at boot.
 func TestDeploymentOptions_UnsetEnvLeavesVersioningOff(t *testing.T) {
 	t.Setenv(task.EnvDeploymentName, "")

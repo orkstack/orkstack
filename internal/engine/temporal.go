@@ -107,8 +107,8 @@ func (s *TemporalStarter) WithOriginIndex(indexed bool) *TemporalStarter {
 //
 // That last one defaults to false, and its default is a live hazard: the SDK
 // then swallows the server's already-started error and hands back a handle to
-// whichever execution holds the id (v1.47.0
-// internal/internal_workflow_client.go:2201), so a replica whose id collided
+// whichever execution holds the id (v1.50.0
+// internal/internal_workflow_client.go:2238), so a replica whose id collided
 // would report someone else's run as its own.
 func (s *TemporalStarter) StartRun(
 	ctx context.Context,

@@ -549,8 +549,8 @@ func (r *TemporalRunReader) PublishedTerminalEvent(ctx context.Context, runID st
 // the run's terminal event.
 //
 // A live run blocks in the iterator rather than polling: GetWorkflowHistory
-// with isLongPoll=true does not finish until the workflow does (SDK v1.47.0
-// internal/client.go:186-188), so the iterator *is* the stream.
+// with isLongPoll=true does not finish until the workflow does (SDK v1.50.0
+// internal/client.go:198-200), so the iterator *is* the stream.
 func (r *TemporalRunReader) StreamEvents(
 	ctx context.Context,
 	runID string,
