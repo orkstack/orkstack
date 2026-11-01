@@ -2707,7 +2707,9 @@ OrkStack records it and does not authenticate it.
   other reason text) and a terminated run name nobody. On SDK 1.47 that
   request is sent to the frontend directly, so the engine asks again itself
   on `Unavailable`, `ResourceExhausted` and `Aborted`, as the SDK does:
-  200 ms apart, doubling to 1 s, for at most 10 s
+  200 ms apart, doubling to 1 s, for at most 10 s (shorter than the SDK's
+  60 s; a `CancelRun` refused so answers `UNAVAILABLE` or
+  `RESOURCE_EXHAUSTED`, and may be asked again)
   (`TemporalStarter.CancelRun`); a cancel with no principal goes through the
   SDK as before. During a rollout, a run canceled through an engine of an
   earlier release names nobody, and one whose end an earlier release's

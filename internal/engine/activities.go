@@ -233,6 +233,8 @@ func (a *EventActivities) PublishEvent(
 	// without the name rather than not at all, and the archive write below
 	// walks again. Every other event keeps its order and its one read.
 	var archived *ArchiveRead
+	// Only where the archive write would walk anyway; cmd/ork always wires
+	// an archive.
 	if run != nil && a.archive != nil && a.events != nil &&
 		event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
 		read, err := a.archivedEvents(ctx, event.GetRunId())

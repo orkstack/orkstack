@@ -2691,11 +2691,14 @@ func cancelErrorCode(err error) connect.Code {
 	var (
 		unavailable *serviceerror.Unavailable
 		exhausted   *serviceerror.ResourceExhausted
+		canceled    *serviceerror.Canceled
+		deadline    *serviceerror.DeadlineExceeded
 	)
 	switch {
-	case errors.Is(err, context.Canceled):
+	// The cluster's own spellings of the two, which unwrap to neither.
+	case errors.Is(err, context.Canceled), errors.As(err, &canceled):
 		return connect.CodeCanceled
-	case errors.Is(err, context.DeadlineExceeded):
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &deadline):
 		return connect.CodeDeadlineExceeded
 	case errors.As(err, &unavailable):
 		return connect.CodeUnavailable

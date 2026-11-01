@@ -35,14 +35,17 @@ func (c *cancelClient) WorkflowService() workflowservice.WorkflowServiceClient {
 type cancelService struct {
 	workflowservice.WorkflowServiceClient
 	refusals []error
-	// endless, when set, is every answer once refusals are spent.
+	// endless, when set, is every answer once refusals are spent; hang, when
+	// set, makes the call after them wait out its context instead, answering
+	// as the SDK does for a call whose context ended.
 	endless  error
+	hang     bool
 	onCall   func()
 	requests []*workflowservice.RequestCancelWorkflowExecutionRequest
 }
 
 func (s *cancelService) RequestCancelWorkflowExecution(
-	_ context.Context,
+	ctx context.Context,
 	in *workflowservice.RequestCancelWorkflowExecutionRequest,
 	_ ...grpc.CallOption,
 ) (*workflowservice.RequestCancelWorkflowExecutionResponse, error) {
@@ -57,6 +60,13 @@ func (s *cancelService) RequestCancelWorkflowExecution(
 	}
 	if s.endless != nil {
 		return nil, s.endless
+	}
+	if s.hang {
+		<-ctx.Done()
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil, serviceerror.NewCanceled(ctx.Err().Error())
+		}
+		return nil, serviceerror.NewDeadlineExceeded(ctx.Err().Error())
 	}
 	return &workflowservice.RequestCancelWorkflowExecutionResponse{}, nil
 }
@@ -186,4 +196,30 @@ func TestCancelRun_ACallerThatGivesUpIsToldSo(t *testing.T) {
 	if len(fake.service.requests) != 1 {
 		t.Fatalf("sent %d requests after the caller gave up, want 1", len(fake.service.requests))
 	}
+}
+
+// A call that hangs past the budget is answered with the refusal that made
+// the starter ask again, and a caller that gives up during a call is told it
+// gave up — the cluster's own spelling of either unwraps to neither.
+func TestCancelRun_AnswersForACallThatOutlivesItsContext(t *testing.T) {
+	t.Run("the budget ends under a call", func(t *testing.T) {
+		starter, fake := newCancelStarter(serviceerror.NewUnavailable("frontend restarting"))
+		fake.service.hang = true
+		err := starter.CancelRun(context.Background(), "ork-1", engine.CancelRequest{Principal: "dana@acme"})
+		var refused *serviceerror.Unavailable
+		if !errors.As(err, &refused) {
+			t.Fatalf("CancelRun = %v, want the cluster's last refusal", err)
+		}
+	})
+	t.Run("the caller gives up during a call", func(t *testing.T) {
+		fake := &cancelClient{service: &cancelService{hang: true}}
+		starter := engine.NewTemporalStarter(fake, "").WithClusterIdentity("ork-main", "engine-a").
+			WithCancelRetryForTest(time.Millisecond, time.Hour)
+		ctx, cancel := context.WithCancel(context.Background())
+		fake.service.onCall = cancel
+		err := starter.CancelRun(ctx, "ork-1", engine.CancelRequest{Principal: "dana@acme"})
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("CancelRun = %v, want the caller's cancellation", err)
+		}
+	})
 }

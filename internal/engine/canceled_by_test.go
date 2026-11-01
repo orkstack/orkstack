@@ -196,6 +196,9 @@ func TestTemporalRunReader_TheFirstRequestIsTheOneNamed(t *testing.T) {
 			}
 			second := cancelRequestedEvent(4, tt.second)
 			history = append(history[:4], append([]*historypb.HistoryEvent{second}, history[4:]...)...)
+			for i, event := range history {
+				event.EventId = int64(i + 1) // one id per event, in order, as a cluster numbers them
+			}
 			reader, _ := readerOver(history, runID)
 			reader.WithSnapshotStore(store)
 			run, err := reader.GetRun(context.Background(), runID)

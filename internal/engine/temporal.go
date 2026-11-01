@@ -242,7 +242,8 @@ func (s *TemporalStarter) IndexAnswers() (namespaceIndexed, originIndexed bool) 
 // client was dialed with (WithClusterIdentity). The SDK's own retry of a
 // transient refusal is reached only through its CancelWorkflow, so this call
 // asks again itself, on the refusals the SDK retries (cancelRetryable), under
-// one request id the cluster dedupes on, for at most the SDK's own 10 s. A
+// one request id the cluster dedupes on, for at most 10 s — shorter than the
+// SDK's 60 s, so an operator is answered while the incident is still on. A
 // request with no principal is today's CancelWorkflow, retries included.
 func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request CancelRequest) error {
 	if request.Principal == "" {
@@ -273,14 +274,24 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request C
 	}
 	budgetCtx, done := context.WithTimeout(ctx, budget)
 	defer done()
+	var refused error // the cluster's last transient refusal
 	for {
 		_, err := s.client.WorkflowService().RequestCancelWorkflowExecution(budgetCtx, cancel)
-		if err == nil {
+		switch {
+		case err == nil:
 			return nil
-		}
-		if !cancelRetryable(err) {
+		case ctx.Err() != nil:
+			// The caller gave up, during the call or before it: that is the
+			// answer, the cluster's own the context.
+			return fmt.Errorf("cancel run %s: %w (the cluster last answered: %v)", runID, ctx.Err(), err)
+		case budgetCtx.Err() != nil && refused != nil:
+			// The budget ran out under this call: the answer is the refusal
+			// that made it ask again.
+			return fmt.Errorf("cancel run %s: %w", runID, refused)
+		case !cancelRetryable(err):
 			return fmt.Errorf("cancel run %s: %w", runID, err)
 		}
+		refused = err
 		select {
 		case <-budgetCtx.Done():
 			if ctx.Err() != nil {
@@ -308,10 +319,10 @@ func cancelRetryable(err error) bool {
 	return errors.As(err, &unavailable) || errors.As(err, &exhausted) || errors.As(err, &aborted)
 }
 
-// cancelRetryInterval, cancelRetryMaxInterval and cancelRetryBudget are the
-// SDK's own: 200 ms between the first tries, doubling to at most 1 s, for at
-// most 10 s in all, so an unreachable frontend is an answer rather than a hung
-// request.
+// cancelRetryInterval, cancelRetryMaxInterval and cancelRetryBudget: 200 ms
+// between the first tries, as the SDK waits, doubling to at most 1 s, for at
+// most 10 s in all — the SDK's per-call timeout rather than its 60 s retry
+// budget — so an unreachable frontend is an answer rather than a hung request.
 const (
 	cancelRetryInterval    = 200 * time.Millisecond
 	cancelRetryMaxInterval = time.Second

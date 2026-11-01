@@ -634,6 +634,8 @@ func TestCancelRun_SaysWhetherAskingAgainCanHelp(t *testing.T) {
 		{"the cluster is rate-limiting", fmt.Errorf("cancel run run-001: %w", serviceerror.NewResourceExhausted(0, "busy")), connect.CodeResourceExhausted},
 		{"the caller gave up", fmt.Errorf("cancel run run-001: %w (the cluster last answered: %v)", context.Canceled,
 			serviceerror.NewUnavailable("frontend down")), connect.CodeCanceled},
+		{"the cluster's own deadline", fmt.Errorf("cancel run run-001: %w", serviceerror.NewDeadlineExceeded("timed out")), connect.CodeDeadlineExceeded},
+		{"the cluster's own cancellation", fmt.Errorf("cancel run run-001: %w", serviceerror.NewCanceled("canceled")), connect.CodeCanceled},
 		{"the starter cannot record the name", fmt.Errorf("cancel run run-001: %w", engine.ErrCancelNotWired), connect.CodeInternal},
 		{"anything else", errors.New("boom"), connect.CodeInternal},
 	}
