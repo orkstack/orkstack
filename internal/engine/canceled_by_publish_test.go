@@ -94,9 +94,11 @@ func TestPublishEvent_ACanceledRunNamesWhoCanceledIt(t *testing.T) {
 	}
 }
 
-// A record that cannot be read costs the announcement the name, never the
-// announcement: the webhook goes out, the activity returns the error, and
-// its retry — the read healed — archives the run with the name.
+// A record that cannot be read on the last attempt — a direct call has no
+// retry behind it, so it is its own last — costs the announcement the name,
+// never the announcement: the webhook goes out, the activity returns the
+// archive read's error, and its retry — the read healed — archives the run
+// with the name.
 func TestPublishEvent_AnUnreadableRecordStillAnnouncesTheEnd(t *testing.T) {
 	source := &canceledSource{events: []*orkstackv1.Event{{RunId: "ork-canceled", Sequence: 3,
 		Type: orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED}}, canceledBy: "dana@acme", failures: 2}
@@ -166,6 +168,44 @@ func TestPublishEvent_OnlyACanceledEndReadsTheRecordFirst(t *testing.T) {
 // The run's record is what names the principal (here, the source the archive
 // read answers from; on a cluster, the run's own cancellation request).
 func TestRunWorkflow_ACanceledRunIsNamedByTheProjectionNotTheRun(t *testing.T) {
+	stored, archived, announced := runCanceledUnderTestEnv(t, &canceledSource{canceledBy: "dana@acme"})
+	for surface, by := range map[string]string{"stored": stored, "archived": archived, "announced": announced} {
+		if by != "dana@acme" {
+			t.Fatalf("%s canceled_by = %q, want dana@acme", surface, by)
+		}
+	}
+}
+
+// A record that cannot be read on the first attempts is read on a retry
+// before anything is announced, so the webhook names who canceled; only on
+// the activity's last attempt does the end go out without the name — and the
+// archive, read once more, still has it.
+func TestRunWorkflow_AFailedReadIsRetriedBeforeTheEndIsAnnounced(t *testing.T) {
+	tests := []struct {
+		name          string
+		failures      int
+		wantAnnounced string
+	}{
+		{"the first attempt's read fails", 1, "dana@acme"},
+		{"every attempt's first read fails", 3, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := &canceledSource{canceledBy: "dana@acme", failures: tt.failures}
+			_, archived, announced := runCanceledUnderTestEnv(t, source)
+			if announced != tt.wantAnnounced || archived != "dana@acme" {
+				t.Fatalf("announced %q, archived %q; want announced %q, archived dana@acme",
+					announced, archived, tt.wantAnnounced)
+			}
+		})
+	}
+}
+
+// runCanceledUnderTestEnv runs a real RunWorkflow canceled while its task
+// runs, through the real archiving projection over source, and returns who
+// the stored run, the archived run and the RUN_CANCELED delivery name.
+func runCanceledUnderTestEnv(t *testing.T, source *canceledSource) (stored, archived, announced string) {
+	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 	env.SetTestTimeout(30 * time.Second)
@@ -184,7 +224,6 @@ func TestRunWorkflow_ACanceledRunIsNamedByTheProjectionNotTheRun(t *testing.T) {
 	archiver, archive, _ := newArchiveFixture(t)
 	runs := engine.NewRunStore()
 	notifier := &recordingNotifier{}
-	source := &canceledSource{canceledBy: "dana@acme"}
 	env.RegisterActivityWithOptions(
 		engine.NewArchivingEventActivities(engine.NewEventBus(), runs, archiver).
 			WithEventSource(source).WithSnapshotStore(snapshots).WithRunNotifier(notifier).PublishEvent,
@@ -195,30 +234,33 @@ func TestRunWorkflow_ACanceledRunIsNamedByTheProjectionNotTheRun(t *testing.T) {
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("the run did not end")
 	}
-	<-canceled
-
-	stored, ok := runs.Get("ork-canceled-env")
-	if !ok || stored.GetStatus() != orkstackv1.Status_STATUS_CANCELED || stored.GetError().GetCode() != "RUN_CANCELED" {
-		t.Fatalf("stored run = %v / %v, want CANCELED / RUN_CANCELED", stored.GetStatus(), stored.GetError())
+	select {
+	case <-canceled:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the task was never canceled")
 	}
-	if stored.GetCanceledBy() != "dana@acme" || source.reads == 0 {
-		t.Fatalf("stored canceled_by = %q after %d reads, want dana@acme", stored.GetCanceledBy(), source.reads)
+
+	run, ok := runs.Get("ork-canceled-env")
+	if !ok || run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != "RUN_CANCELED" {
+		t.Fatalf("stored run = %v / %v, want CANCELED / RUN_CANCELED", run.GetStatus(), run.GetError())
 	}
 	body, err := archive.GetRun(context.Background(), "ork-canceled-env")
 	if err != nil {
 		t.Fatalf("the run was not archived: %v", err)
 	}
-	if archived, _, err := engine.UnmarshalRunArchive(body); err != nil || archived.GetCanceledBy() != "dana@acme" {
-		t.Fatalf("archived canceled_by = %q, %v; want dana@acme", archived.GetCanceledBy(), err)
+	archivedRun, _, err := engine.UnmarshalRunArchive(body)
+	if err != nil {
+		t.Fatalf("decode the archived run: %v", err)
 	}
-	var announced *orkstackv1.Run
+	deliveries := 0
 	for i, event := range notifier.events {
 		if event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
-			announced = notifier.runs[i]
+			deliveries++
+			announced = notifier.runs[i].GetCanceledBy()
 		}
 	}
-	if announced.GetCanceledBy() != "dana@acme" {
-		t.Fatalf("the RUN_CANCELED delivery's run = %v, want it naming dana@acme", announced)
+	if deliveries != 1 {
+		t.Fatalf("the end was announced %d times, want once", deliveries)
 	}
 	// Every snapshot the run itself wrote names nobody.
 	snapshots.mu.Lock()
@@ -236,4 +278,5 @@ func TestRunWorkflow_ACanceledRunIsNamedByTheProjectionNotTheRun(t *testing.T) {
 			t.Fatalf("the run wrote canceled_by %q into %s; only the projection may", snapshot.GetCanceledBy(), uri)
 		}
 	}
+	return run.GetCanceledBy(), archivedRun.GetCanceledBy(), announced
 }

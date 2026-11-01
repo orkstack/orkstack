@@ -55,6 +55,7 @@ func TestRenderRunList_SaysWhoCanceledEachRun(t *testing.T) {
 		{"named", "dana@acme", "ork-1 deploy 1.0.0 submit CANCELED by dana@acme (asserted) 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z"},
 		{"nobody", "", "ork-1 deploy 1.0.0 submit CANCELED 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z"},
 		{"a tab in the header", "dana\t@acme\x1b[2J", "ork-1 deploy 1.0.0 submit CANCELED by dana @acme [2J (asserted) 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z"},
+		{"a bidi override", "dana\u202e@acme", "ork-1 deploy 1.0.0 submit CANCELED by dana @acme (asserted) 2026-01-02T03:04:05Z 2026-01-02T03:04:05Z"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -69,7 +70,7 @@ func TestRenderRunList_SaysWhoCanceledEachRun(t *testing.T) {
 			if got := collapseSpaces(lines[1]); got != tt.want {
 				t.Fatalf("row = %q, want %q", got, tt.want)
 			}
-			if strings.ContainsAny(lines[1], "\t\x1b") {
+			if strings.ContainsAny(lines[1], "\t\x1b\u202e") {
 				t.Fatalf("row carries a control character: %q", lines[1])
 			}
 		})

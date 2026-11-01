@@ -2683,15 +2683,27 @@ func (s *Service) CancelRun(
 }
 
 // cancelErrorCode is the code a refused cancellation answers with: a cluster
-// that refused for a moment, even after the starter asked again, is worth
-// asking again later. Anything else — engine.ErrCancelNotWired, a mis-wired
-// process, included — is the internal error it always was.
+// that was unavailable or rate-limited, even after the starter asked again,
+// is worth asking again later, and a caller that gave up is told so. Anything
+// else — engine.ErrCancelNotWired, a mis-wired process, included — is the
+// internal error it always was.
 func cancelErrorCode(err error) connect.Code {
-	var unavailable *serviceerror.Unavailable
-	if errors.As(err, &unavailable) {
+	var (
+		unavailable *serviceerror.Unavailable
+		exhausted   *serviceerror.ResourceExhausted
+	)
+	switch {
+	case errors.Is(err, context.Canceled):
+		return connect.CodeCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		return connect.CodeDeadlineExceeded
+	case errors.As(err, &unavailable):
 		return connect.CodeUnavailable
+	case errors.As(err, &exhausted):
+		return connect.CodeResourceExhausted
+	default:
+		return connect.CodeInternal
 	}
-	return connect.CodeInternal
 }
 
 // StreamEvents server-streams a run's events: everything after from_sequence,

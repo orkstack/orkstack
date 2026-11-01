@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"sync"
 
+	"go.temporal.io/sdk/activity"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -227,19 +228,23 @@ func (a *EventActivities) PublishEvent(
 	// record holds (applyCanceledBy). The walk the archive write makes anyway
 	// is made here instead, BEFORE anything is applied or published, so the
 	// store, the notifier, the observer and the archived body all carry the
-	// same run. A walk that fails costs the announcement the name, never the
-	// announcement: it goes out as before, and the archive write below walks
-	// again, returning its error so the activity retries the archive alone.
-	// Every other event keeps its order and its one read.
+	// same run. A walk that fails is retried with nothing announced while the
+	// activity has attempts left; on its last attempt the end is announced
+	// without the name rather than not at all, and the archive write below
+	// walks again. Every other event keeps its order and its one read.
 	var archived *ArchiveRead
-	if run != nil && a.events != nil && event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
+	if run != nil && a.archive != nil && a.events != nil &&
+		event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
 		read, err := a.archivedEvents(ctx, event.GetRunId())
-		if err != nil {
-			slog.Warn("publishing a canceled run's end without who canceled it: its record could not be read",
-				"run_id", event.GetRunId(), "error", err)
-		} else {
+		switch {
+		case err == nil:
 			applyCanceledBy(run, read.CanceledBy)
 			archived = &read
+		case !lastPublishAttempt(ctx):
+			return err
+		default:
+			slog.Warn("publishing a canceled run's end without who canceled it: its record could not be read on the last attempt",
+				"run_id", event.GetRunId(), "error", err)
 		}
 	}
 	if run != nil {
@@ -277,7 +282,9 @@ func (a *EventActivities) PublishEvent(
 		}
 		archived = &read
 		// The walk above failed and this one did not: the archived run still
-		// says who canceled it.
+		// says who canceled it. On a copy — the notifier and the observer
+		// were handed this run already, and what they were told stands.
+		snapshot = proto.Clone(snapshot).(*orkstackv1.Run)
 		applyCanceledBy(snapshot, read.CanceledBy)
 	}
 	// Returning the error makes Temporal retry the activity, so a transient
@@ -286,6 +293,18 @@ func (a *EventActivities) PublishEvent(
 	// whose earlier events are gone still reaches the archive (AGENTS.md
 	// §15), and every read of the lost range says so.
 	return a.archive.Archive(ctx, snapshot, archived.Events, archived.Gaps...)
+}
+
+// publishAttempts is how many attempts RunWorkflow gives the projection
+// activity (eventActivityOptions; TestPublishAttempts_MatchTheRetryPolicy
+// holds the two together).
+const publishAttempts = 3
+
+// lastPublishAttempt reports whether this PublishEvent is the last attempt the
+// run will make, so nothing it holds back is held back for good. A call made
+// outside an activity has no retry behind it, so it is its own last attempt.
+func lastPublishAttempt(ctx context.Context) bool {
+	return !activity.IsActivity(ctx) || activity.GetInfo(ctx).Attempt >= publishAttempts
 }
 
 func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orkstackv1.Run, error) {

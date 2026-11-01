@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
@@ -34,6 +35,9 @@ func (c *cancelClient) WorkflowService() workflowservice.WorkflowServiceClient {
 type cancelService struct {
 	workflowservice.WorkflowServiceClient
 	refusals []error
+	// endless, when set, is every answer once refusals are spent.
+	endless  error
+	onCall   func()
 	requests []*workflowservice.RequestCancelWorkflowExecutionRequest
 }
 
@@ -43,17 +47,26 @@ func (s *cancelService) RequestCancelWorkflowExecution(
 	_ ...grpc.CallOption,
 ) (*workflowservice.RequestCancelWorkflowExecutionResponse, error) {
 	s.requests = append(s.requests, in)
+	if s.onCall != nil {
+		s.onCall()
+	}
 	if len(s.refusals) > 0 {
 		err := s.refusals[0]
 		s.refusals = s.refusals[1:]
 		return nil, err
 	}
+	if s.endless != nil {
+		return nil, s.endless
+	}
 	return &workflowservice.RequestCancelWorkflowExecutionResponse{}, nil
 }
 
+// newCancelStarter is a starter over a fake cluster answering refusals in
+// turn, asking again 1 ms apart for at most 200 ms.
 func newCancelStarter(refusals ...error) (*engine.TemporalStarter, *cancelClient) {
 	fake := &cancelClient{service: &cancelService{refusals: refusals}}
-	return engine.NewTemporalStarter(fake, "").WithClusterIdentity("ork-main", "engine-a"), fake
+	return engine.NewTemporalStarter(fake, "").WithClusterIdentity("ork-main", "engine-a").
+		WithCancelRetryForTest(time.Millisecond, 200*time.Millisecond), fake
 }
 
 // A principal travels in the cancellation request itself, on the namespace
@@ -110,37 +123,67 @@ func TestCancelRun_RefusesAPrincipalItCannotRecord(t *testing.T) {
 	}
 }
 
-// A cluster that answers Unavailable is asked again, a bounded number of
-// times, under the one request id it dedupes on; any other refusal is the
-// answer at once.
-func TestCancelRun_AsksAgainOnlyWhileTheClusterIsUnavailable(t *testing.T) {
+// A cluster that refuses for a moment — unavailable, rate-limiting, aborting
+// the call — is asked again under the one request id it dedupes on, until it
+// accepts or the budget is spent; any other refusal is the answer at once.
+func TestCancelRun_AsksAgainOnlyWhileTheRefusalIsTransient(t *testing.T) {
 	unavailable := serviceerror.NewUnavailable("frontend restarting")
 	tests := []struct {
 		name     string
 		refusals []error
-		wantSent int
+		endless  error
+		wantSent int // 0: more than one, however many the budget held
 		wantErr  bool
 	}{
-		{"unavailable twice, then accepted", []error{unavailable, unavailable}, 3, false},
-		{"unavailable every time", []error{unavailable, unavailable, unavailable, unavailable}, 3, true},
-		{"not found is final", []error{serviceerror.NewNotFound("workflow execution already completed")}, 1, true},
+		{"unavailable twice, then accepted", []error{unavailable, unavailable}, nil, 3, false},
+		{"rate-limited, then accepted", []error{serviceerror.NewResourceExhausted(0, "busy")}, nil, 2, false},
+		{"aborted, then accepted", []error{serviceerror.NewAborted("try again")}, nil, 2, false},
+		{"unavailable until the budget is spent", nil, unavailable, 0, true},
+		{"not found is final", []error{serviceerror.NewNotFound("workflow execution already completed")}, nil, 1, true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			starter, fake := newCancelStarter(tt.refusals...)
+			fake.service.endless = tt.endless
 			err := starter.CancelRun(context.Background(), "ork-1", engine.CancelRequest{Principal: "dana@acme"})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("CancelRun = %v, want error %t", err, tt.wantErr)
 			}
-			if got := len(fake.service.requests); got != tt.wantSent {
-				t.Fatalf("sent %d requests, want %d", got, tt.wantSent)
+			sent := len(fake.service.requests)
+			if (tt.wantSent > 0 && sent != tt.wantSent) || (tt.wantSent == 0 && sent < 2) {
+				t.Fatalf("sent %d requests, want %d", sent, tt.wantSent)
 			}
-			for _, sent := range fake.service.requests[1:] {
-				if sent.GetRequestId() != fake.service.requests[0].GetRequestId() {
+			for _, request := range fake.service.requests[1:] {
+				if request.GetRequestId() != fake.service.requests[0].GetRequestId() {
 					t.Fatalf("request ids %q and %q differ; the cluster could not dedupe them",
-						fake.service.requests[0].GetRequestId(), sent.GetRequestId())
+						fake.service.requests[0].GetRequestId(), request.GetRequestId())
+				}
+			}
+			if tt.endless != nil {
+				var refused *serviceerror.Unavailable
+				if !errors.As(err, &refused) {
+					t.Fatalf("a spent budget answered %v, want the cluster's last refusal", err)
 				}
 			}
 		})
+	}
+}
+
+// A caller that gives up while the starter waits to ask again is answered
+// that it gave up — not that the cluster was unavailable, which would tell
+// it to ask again.
+func TestCancelRun_ACallerThatGivesUpIsToldSo(t *testing.T) {
+	fake := &cancelClient{service: &cancelService{endless: serviceerror.NewUnavailable("frontend restarting")}}
+	starter := engine.NewTemporalStarter(fake, "").WithClusterIdentity("ork-main", "engine-a").
+		WithCancelRetryForTest(time.Hour, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	fake.service.onCall = cancel
+	err := starter.CancelRun(ctx, "ork-1", engine.CancelRequest{Principal: "dana@acme"})
+	var refused *serviceerror.Unavailable
+	if !errors.Is(err, context.Canceled) || errors.As(err, &refused) {
+		t.Fatalf("CancelRun = %v, want the caller's cancellation and not the cluster's refusal", err)
+	}
+	if len(fake.service.requests) != 1 {
+		t.Fatalf("sent %d requests after the caller gave up, want 1", len(fake.service.requests))
 	}
 }

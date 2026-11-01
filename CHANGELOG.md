@@ -21,6 +21,13 @@ word for word.
   is retired. A cancel without the header, and runs canceled before this
   release, show no name.
 
+### Changed
+
+- `CancelRun` answers `UNAVAILABLE` (or `RESOURCE_EXHAUSTED`) when the
+  cluster could not take the cancellation, and `CANCELED` or
+  `DEADLINE_EXCEEDED` when the caller gave up first, instead of `INTERNAL`.
+  A client may retry the first two.
+
 ## [0.1.0] - 2026-10-30
 
 First release.

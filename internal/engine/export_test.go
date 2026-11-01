@@ -184,3 +184,11 @@ func DisableFairnessKeysGateForTest() (restore func()) {
 	fairnessKeysGateDisabledForTest.Store(true)
 	return func() { fairnessKeysGateDisabledForTest.Store(false) }
 }
+
+// WithCancelRetryForTest makes CancelRun's own retry wait interval between
+// tries, for at most budget, so a test of it does not wait the production
+// spacing.
+func (s *TemporalStarter) WithCancelRetryForTest(interval, budget time.Duration) *TemporalStarter {
+	s.cancelRetryInterval, s.cancelRetryBudget = interval, budget
+	return s
+}

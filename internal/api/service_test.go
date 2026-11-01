@@ -621,7 +621,8 @@ func TestCancelRun_PassesTheAssertedPrincipal(t *testing.T) {
 	}
 }
 
-// A cluster that is unavailable answers Unavailable, worth asking again; a
+// A cluster that is unavailable or rate-limiting answers so, worth asking
+// again; a caller that gave up is told so, not that the cluster refused; a
 // starter that cannot record the name is an internal error.
 func TestCancelRun_SaysWhetherAskingAgainCanHelp(t *testing.T) {
 	tests := []struct {
@@ -630,6 +631,9 @@ func TestCancelRun_SaysWhetherAskingAgainCanHelp(t *testing.T) {
 		want connect.Code
 	}{
 		{"the cluster is unavailable", fmt.Errorf("cancel run run-001: %w", serviceerror.NewUnavailable("frontend down")), connect.CodeUnavailable},
+		{"the cluster is rate-limiting", fmt.Errorf("cancel run run-001: %w", serviceerror.NewResourceExhausted(0, "busy")), connect.CodeResourceExhausted},
+		{"the caller gave up", fmt.Errorf("cancel run run-001: %w (the cluster last answered: %v)", context.Canceled,
+			serviceerror.NewUnavailable("frontend down")), connect.CodeCanceled},
 		{"the starter cannot record the name", fmt.Errorf("cancel run run-001: %w", engine.ErrCancelNotWired), connect.CodeInternal},
 		{"anything else", errors.New("boom"), connect.CodeInternal},
 	}

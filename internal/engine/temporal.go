@@ -56,6 +56,11 @@ type TemporalStarter struct {
 	// refused (ErrCancelNotWired).
 	clusterNamespace string
 	clusterIdentity  string
+	// cancelRetryInterval and cancelRetryBudget replace the constants of the
+	// same names when set: a test's, never production's
+	// (WithCancelRetryForTest).
+	cancelRetryInterval time.Duration
+	cancelRetryBudget   time.Duration
 }
 
 // NewTemporalStarter returns a starter that dispatches RunWorkflow onto queue.
@@ -236,8 +241,8 @@ func (s *TemporalStarter) IndexAnswers() (namespaceIndexed, originIndexed bool) 
 // request goes to the service directly, naming the namespace and identity the
 // client was dialed with (WithClusterIdentity). The SDK's own retry of a
 // transient refusal is reached only through its CancelWorkflow, so this call
-// asks again itself, at most cancelAttempts times and only while the cluster
-// answers Unavailable, under one request id the cluster dedupes on. A
+// asks again itself, on the refusals the SDK retries (cancelRetryable), under
+// one request id the cluster dedupes on, for at most the SDK's own 10 s. A
 // request with no principal is today's CancelWorkflow, retries included.
 func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request CancelRequest) error {
 	if request.Principal == "" {
@@ -262,35 +267,55 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request C
 		RequestId: newActivityID("cancel-run"),
 		Reason:    reason,
 	}
-	backoff := cancelRetryInterval
-	for attempt := 1; ; attempt++ {
-		attemptCtx, done := context.WithTimeout(ctx, cancelAttemptTimeout)
-		_, err := s.client.WorkflowService().RequestCancelWorkflowExecution(attemptCtx, cancel)
-		done()
+	interval, budget := cancelRetryInterval, cancelRetryBudget
+	if s.cancelRetryInterval > 0 {
+		interval, budget = s.cancelRetryInterval, s.cancelRetryBudget
+	}
+	budgetCtx, done := context.WithTimeout(ctx, budget)
+	defer done()
+	for {
+		_, err := s.client.WorkflowService().RequestCancelWorkflowExecution(budgetCtx, cancel)
 		if err == nil {
 			return nil
 		}
-		var unavailable *serviceerror.Unavailable
-		if !errors.As(err, &unavailable) || attempt == cancelAttempts {
+		if !cancelRetryable(err) {
 			return fmt.Errorf("cancel run %s: %w", runID, err)
 		}
 		select {
-		case <-ctx.Done():
-			return fmt.Errorf("cancel run %s: %w", runID, errors.Join(ctx.Err(), err))
-		case <-time.After(backoff):
+		case <-budgetCtx.Done():
+			if ctx.Err() != nil {
+				// The caller gave up: that is the answer, the cluster's last
+				// refusal only its context.
+				return fmt.Errorf("cancel run %s: %w (the cluster last answered: %v)", runID, ctx.Err(), err)
+			}
+			return fmt.Errorf("cancel run %s: %w", runID, err)
+		case <-time.After(interval):
 		}
-		backoff *= 2
+		interval = min(2*interval, cancelRetryMaxInterval)
 	}
 }
 
-// cancelAttempts, cancelRetryInterval and cancelAttemptTimeout bound
-// CancelRun's own retry of a cluster that answered Unavailable: three tries,
-// 200 ms then 400 ms apart, each given at most the SDK's own 10 s per call,
-// so an unreachable frontend is an answer rather than a hung request.
+// cancelRetryable is the refusals the SDK's own CancelWorkflow asks again on
+// that a cancellation can be: the cluster unavailable, rate-limited, or
+// aborting the call. Every other answer — the run already closed included —
+// is the answer.
+func cancelRetryable(err error) bool {
+	var (
+		unavailable *serviceerror.Unavailable
+		exhausted   *serviceerror.ResourceExhausted
+		aborted     *serviceerror.Aborted
+	)
+	return errors.As(err, &unavailable) || errors.As(err, &exhausted) || errors.As(err, &aborted)
+}
+
+// cancelRetryInterval, cancelRetryMaxInterval and cancelRetryBudget are the
+// SDK's own: 200 ms between the first tries, doubling to at most 1 s, for at
+// most 10 s in all, so an unreachable frontend is an answer rather than a hung
+// request.
 const (
-	cancelAttempts       = 3
-	cancelRetryInterval  = 200 * time.Millisecond
-	cancelAttemptTimeout = 10 * time.Second
+	cancelRetryInterval    = 200 * time.Millisecond
+	cancelRetryMaxInterval = time.Second
+	cancelRetryBudget      = 10 * time.Second
 )
 
 // ErrRunEnded reports that a run's execution has already closed, so nothing

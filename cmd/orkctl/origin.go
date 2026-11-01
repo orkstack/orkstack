@@ -18,12 +18,14 @@ const originKindPrefix = "RUN_ORIGIN_KIND_"
 const principalCaption = "(asserted by the gateway; not authenticated)"
 
 // assertedName is an asserted principal as this CLI prints it, with every
-// control character — the tab an HTTP header may carry included — as a space,
-// so a gateway's value can neither break a table's columns nor reach the
-// terminal as a control sequence.
+// control character (the tab an HTTP header may carry included), format
+// character (a bidi override, a zero-width joiner) and line or paragraph
+// separator as a space, so a gateway's value can neither break a table's
+// columns, reorder the caption beside it, nor reach the terminal as a control
+// sequence.
 func assertedName(principal string) string {
 	return strings.Map(func(r rune) rune {
-		if unicode.IsControl(r) {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
 			return ' '
 		}
 		return r
@@ -87,6 +89,6 @@ func writeOriginLines(table io.Writer, origin *orkstackv1.RunOrigin) {
 		fmt.Fprintf(table, "Reference:\t%s\n", reference)
 	}
 	if principal := origin.GetPrincipal(); principal != "" {
-		fmt.Fprintf(table, "Principal:\t%s  %s\n", principal, principalCaption)
+		fmt.Fprintf(table, "Principal:\t%s  %s\n", assertedName(principal), principalCaption)
 	}
 }

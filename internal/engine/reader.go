@@ -966,8 +966,10 @@ type runProjection struct {
 	// cluster ignores a second on an execution whose cancellation is already
 	// requested — and only the execution that ends the run counts, so it is
 	// cleared when an execution starts or continues as new. applyCanceledBy
-	// decides whether the run shows it.
+	// decides whether the run shows it. cancelSeen records that the
+	// execution's first request was read, so no later one replaces it.
 	canceledBy string
+	cancelSeen bool
 }
 
 // scan walks a run's history once and decodes it: every generation of it.
@@ -1183,7 +1185,7 @@ func (r *TemporalRunReader) scanExecution(
 			// A request belongs to the execution that recorded it, and a
 			// restarted read may land on a successor without passing the
 			// switch that clears it.
-			projection.canceledBy = ""
+			projection.canceledBy, projection.cancelSeen = "", false
 			carry, err := r.decodeCarry(attrs)
 			if err != nil {
 				return "", fmt.Errorf("engine: run %s: %w", runID, err)
@@ -1207,9 +1209,13 @@ func (r *TemporalRunReader) scanExecution(
 			// not end the run, and the archive write — which reads at that
 			// publish — could never see it, so GetRun and the archived run
 			// would disagree.
-			if !projection.sawTerminal {
+			if !projection.sawTerminal && !projection.cancelSeen {
 				projection.canceledBy = cancelPrincipal(attrs.GetCause())
 			}
+			// The first request is the one that took effect: the cluster
+			// records no second, and were one recorded it would not have
+			// canceled anything.
+			projection.cancelSeen = true
 			continue
 		}
 		if attrs := historyEvent.GetWorkflowExecutionContinuedAsNewEventAttributes(); attrs != nil {
@@ -1219,7 +1225,7 @@ func (r *TemporalRunReader) scanExecution(
 			// must still read the successor to be complete. A run does not
 			// switch while its cancellation is requested (continueAsNew), so
 			// no request of this execution is the successor's.
-			projection.canceledBy = ""
+			projection.canceledBy, projection.cancelSeen = "", false
 			return attrs.GetNewExecutionRunId(), nil
 		}
 		if r.isPublishEvent(historyEvent) {

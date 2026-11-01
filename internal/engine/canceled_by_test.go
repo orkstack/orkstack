@@ -174,6 +174,41 @@ func TestTemporalRunReader_GetRunNamesWhoCanceledTheRun(t *testing.T) {
 	}
 }
 
+// The first request of an execution is the one that took effect, so a
+// second recorded one never replaces it, named or not.
+func TestTemporalRunReader_TheFirstRequestIsTheOneNamed(t *testing.T) {
+	tests := []struct {
+		name          string
+		first, second string
+		want          string
+	}{
+		{"named, then another name", mustCancelCause(t, "dana@acme"), mustCancelCause(t, "eve@acme"), "dana@acme"},
+		{"nameless, then a name", "", mustCancelCause(t, "eve@acme"), ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			const runID = "ork-canceled-twice"
+			history, store := canceledRun(t, runID, tt.first, true)
+			if tt.first == "" {
+				// canceledRun omits an empty cause's event; a nameless request is
+				// still a request.
+				history = append(history[:3], append([]*historypb.HistoryEvent{cancelRequestedEvent(4, "")}, history[3:]...)...)
+			}
+			second := cancelRequestedEvent(4, tt.second)
+			history = append(history[:4], append([]*historypb.HistoryEvent{second}, history[4:]...)...)
+			reader, _ := readerOver(history, runID)
+			reader.WithSnapshotStore(store)
+			run, err := reader.GetRun(context.Background(), runID)
+			if err != nil {
+				t.Fatalf("GetRun: %v", err)
+			}
+			if got := run.GetCanceledBy(); got != tt.want {
+				t.Fatalf("canceled_by = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 // A run whose cancellation was requested and that was then terminated —
 // stuck, so an operator ended it from outside — was not ended by the
 // request: it names nobody.
@@ -320,4 +355,12 @@ func FuzzCancelPrincipal(f *testing.F) {
 			}
 		}
 	})
+}
+
+// PublishEvent holds a canceled run's end back only while the workflow will
+// retry it; the two numbers are one.
+func TestPublishAttempts_MatchTheRetryPolicy(t *testing.T) {
+	if got := eventActivityOptions().RetryPolicy.MaximumAttempts; got != publishAttempts {
+		t.Fatalf("the projection activity gets %d attempts, PublishEvent assumes %d", got, publishAttempts)
+	}
 }
