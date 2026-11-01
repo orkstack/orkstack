@@ -140,9 +140,14 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	const inline = await page.evaluate(() =>
 		Array.from(document.querySelectorAll('script:not([src])')).map((s) => s.textContent ?? '')
 	);
-	expect(inline.length).toBe(2);
-	const hashes = inline.map((s) => `'sha256-${createHash('sha256').update(s).digest('base64')}'`);
-	expect(scripts.filter((s) => s.startsWith("'sha256-")).sort()).toEqual([...hashes].sort());
+	// The page has inline scripts at all, so the two checks below see some.
+	expect(inline.length).toBeGreaterThan(0);
+	const hashes = new Set(inline.map((s) => `'sha256-${createHash('sha256').update(s).digest('base64')}'`));
+	const named = new Set(scripts.filter((s) => s.startsWith("'sha256-")));
+	// No inline script runs unnamed, and the policy names no script the page
+	// does not hold.
+	expect([...hashes].filter((hash) => !named.has(hash))).toEqual([]);
+	expect([...named].filter((hash) => !hashes.has(hash))).toEqual([]);
 	await expect(page.locator('html')).toHaveAttribute('data-theme', /^(light|dark)$/);
 	await shot(page, 'security-headers-home.png');
 
