@@ -132,12 +132,12 @@ func TestReaderErrors_NameNoGenerationCheckpointOrCarry(t *testing.T) {
 				seen++
 				requireRunVocabulary(t, "StreamEvents", err.Error())
 			}
-			_, gaps, err := f.reader.EventsForArchive(ctx, f.runID)
+			read, err := f.reader.EventsForArchive(ctx, f.runID)
 			if err != nil {
 				seen++
 				requireRunVocabulary(t, "EventsForArchive", err.Error())
 			}
-			for _, gap := range gaps {
+			for _, gap := range read.Gaps {
 				seen++
 				requireRunVocabulary(t, "an archived gap's reason", gap.Reason)
 			}

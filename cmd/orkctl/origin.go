@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -15,6 +16,19 @@ const originKindPrefix = "RUN_ORIGIN_KIND_"
 // words the audit trail uses: the value is the gateway's assertion, recorded
 // and never checked.
 const principalCaption = "(asserted by the gateway; not authenticated)"
+
+// assertedName is an asserted principal as this CLI prints it, with every
+// control character — the tab an HTTP header may carry included — as a space,
+// so a gateway's value can neither break a table's columns nor reach the
+// terminal as a control sequence.
+func assertedName(principal string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, principal)
+}
 
 // unrecordedOrigin is what a run recorded before origins existed renders as.
 // It is never "submit": nothing supports the claim that a person submitted it.

@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"google.golang.org/protobuf/proto"
@@ -45,7 +46,19 @@ type RunEventSource interface {
 	// permanently gone (missing, or failing verification) becomes an
 	// EventGap instead of an error; a transient failure is still an error,
 	// so the activity retries exactly as today.
-	EventsForArchive(ctx context.Context, runID string) ([]*orkstackv1.Event, []EventGap, error)
+	EventsForArchive(ctx context.Context, runID string) (ArchiveRead, error)
+}
+
+// ArchiveRead is what the archive write reads from the system of record: the
+// run's whole event stream, the ranges of it permanently lost, and who
+// canceled the run, when its cancellation recorded a principal.
+type ArchiveRead struct {
+	Events []*orkstackv1.Event
+	Gaps   []EventGap
+	// CanceledBy is the principal the run's cancellation request recorded
+	// (cancelPrincipal), or empty; applyCanceledBy decides whether the run
+	// shows it.
+	CanceledBy string
 }
 
 // EventActivities projects workflow-produced state into the in-process read
@@ -209,6 +222,27 @@ func (a *EventActivities) PublishEvent(
 			return err
 		}
 		run = read
+	}
+	// A canceled run's end names who canceled it, which only the run's own
+	// record holds (applyCanceledBy). The walk the archive write makes anyway
+	// is made here instead, BEFORE anything is applied or published, so the
+	// store, the notifier, the observer and the archived body all carry the
+	// same run. A walk that fails costs the announcement the name, never the
+	// announcement: it goes out as before, and the archive write below walks
+	// again, returning its error so the activity retries the archive alone.
+	// Every other event keeps its order and its one read.
+	var archived *ArchiveRead
+	if run != nil && a.events != nil && event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
+		read, err := a.archivedEvents(ctx, event.GetRunId())
+		if err != nil {
+			slog.Warn("publishing a canceled run's end without who canceled it: its record could not be read",
+				"run_id", event.GetRunId(), "error", err)
+		} else {
+			applyCanceledBy(run, read.CanceledBy)
+			archived = &read
+		}
+	}
+	if run != nil {
 		a.store.Apply(run)
 	}
 	firstPublication := false
@@ -236,16 +270,22 @@ func (a *EventActivities) PublishEvent(
 	if snapshot == nil {
 		return nil
 	}
-	archived, gaps, err := a.archivedEvents(ctx, event.GetRunId())
-	if err != nil {
-		return err
+	if archived == nil {
+		read, err := a.archivedEvents(ctx, event.GetRunId())
+		if err != nil {
+			return err
+		}
+		archived = &read
+		// The walk above failed and this one did not: the archived run still
+		// says who canceled it.
+		applyCanceledBy(snapshot, read.CanceledBy)
 	}
 	// Returning the error makes Temporal retry the activity, so a transient
 	// storage failure heals itself instead of silently dropping the run. A
 	// permanent loss cannot heal, so it is archived as an explicit gap: a run
 	// whose earlier events are gone still reaches the archive (AGENTS.md
 	// §15), and every read of the lost range says so.
-	return a.archive.Archive(ctx, snapshot, archived, gaps...)
+	return a.archive.Archive(ctx, snapshot, archived.Events, archived.Gaps...)
 }
 
 func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orkstackv1.Run, error) {
@@ -278,15 +318,15 @@ func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orksta
 func (a *EventActivities) archivedEvents(
 	ctx context.Context,
 	runID string,
-) ([]*orkstackv1.Event, []EventGap, error) {
+) (ArchiveRead, error) {
 	if a.events == nil {
-		return a.bus.Events(runID, 0), nil, nil
+		return ArchiveRead{Events: a.bus.Events(runID, 0)}, nil
 	}
-	events, gaps, err := a.events.EventsForArchive(ctx, runID)
+	read, err := a.events.EventsForArchive(ctx, runID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read events of run %s for the archive: %w", runID, err)
+		return ArchiveRead{}, fmt.Errorf("read events of run %s for the archive: %w", runID, err)
 	}
-	return events, gaps, nil
+	return read, nil
 }
 
 // mergedSnapshot prefers the store's copy of a run: it still carries the

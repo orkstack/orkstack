@@ -15,6 +15,7 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/coder/websocket"
+	"go.temporal.io/api/serviceerror"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -22,6 +23,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // fakeStarter records started runs instead of talking to Temporal.
@@ -32,7 +34,11 @@ type fakeStarter struct {
 	plans    []engine.RunPlan
 	orkflows []*orkstackv1.Orkflow
 	canceled []string
-	err      error
+	// cancelRequests is each CancelRun's request, in call order; cancelErr is
+	// what every CancelRun returns.
+	cancelRequests []engine.CancelRequest
+	cancelErr      error
+	err            error
 	// signals is every resolution delivered, in order, and signalErr makes
 	// delivery fail. onSignal, when set, runs inside the delivery — what a
 	// test uses to observe ordering against the store.
@@ -85,11 +91,12 @@ func (f *fakeStarter) StartRun(
 	return nil
 }
 
-func (f *fakeStarter) CancelRun(_ context.Context, runID, _ string) error {
+func (f *fakeStarter) CancelRun(_ context.Context, runID string, request engine.CancelRequest) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.canceled = append(f.canceled, runID)
-	return nil
+	f.cancelRequests = append(f.cancelRequests, request)
+	return f.cancelErr
 }
 
 func (f *fakeStarter) startedRuns() []string {
@@ -562,6 +569,90 @@ func TestCancelRunForwardsToStarter(t *testing.T) {
 	defer f.starter.mu.Unlock()
 	if len(f.starter.canceled) != 1 || f.starter.canceled[0] != "run-001" {
 		t.Errorf("canceled runs = %v, want [run-001]", f.starter.canceled)
+	}
+}
+
+// The Ork-Principal on a CancelRun travels with the cancellation, bounded as
+// an origin's principal is, so the run can record who asked; with no header
+// it is empty.
+func TestCancelRun_PassesTheAssertedPrincipal(t *testing.T) {
+	overlong := strings.Repeat("d", 300)
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{"asserted", "dana@acme", "dana@acme"},
+		{"none", "", ""},
+		{"bounded", overlong, overlong[:256-len(artifacts.AttemptTruncationMarker)] + artifacts.AttemptTruncationMarker},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+			if _, err := f.orkflowClient().ApplyOrkflow(ctx,
+				connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if _, err := f.runClient().SubmitRun(ctx,
+				connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err != nil {
+				t.Fatalf("SubmitRun: %v", err)
+			}
+			req := connect.NewRequest(&orkstackv1.CancelRunRequest{RunId: "run-001", Reason: "stop"})
+			if tt.header != "" {
+				req.Header().Set(api.AuditPrincipalHeader, tt.header)
+			}
+			if _, err := f.runClient().CancelRun(ctx, req); err != nil {
+				t.Fatalf("CancelRun: %v", err)
+			}
+			f.starter.mu.Lock()
+			defer f.starter.mu.Unlock()
+			if len(f.starter.cancelRequests) != 1 {
+				t.Fatalf("cancel requests = %v, want one", f.starter.cancelRequests)
+			}
+			got := f.starter.cancelRequests[0]
+			if got.Principal != tt.want || got.Reason != "stop" {
+				t.Fatalf("cancel request = %+v, want principal %q and reason stop", got, tt.want)
+			}
+			if len(got.Principal) > engine.CanceledByMaxBytes {
+				t.Fatalf("principal of %d bytes is over the bound the run reads back", len(got.Principal))
+			}
+		})
+	}
+}
+
+// A cluster that is unavailable answers Unavailable, worth asking again; a
+// starter that cannot record the name is an internal error.
+func TestCancelRun_SaysWhetherAskingAgainCanHelp(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want connect.Code
+	}{
+		{"the cluster is unavailable", fmt.Errorf("cancel run run-001: %w", serviceerror.NewUnavailable("frontend down")), connect.CodeUnavailable},
+		{"the starter cannot record the name", fmt.Errorf("cancel run run-001: %w", engine.ErrCancelNotWired), connect.CodeInternal},
+		{"anything else", errors.New("boom"), connect.CodeInternal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newFixture(t)
+			ctx := context.Background()
+			if _, err := f.orkflowClient().ApplyOrkflow(ctx,
+				connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
+				t.Fatalf("Apply: %v", err)
+			}
+			if _, err := f.runClient().SubmitRun(ctx,
+				connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err != nil {
+				t.Fatalf("SubmitRun: %v", err)
+			}
+			f.starter.mu.Lock()
+			f.starter.cancelErr = tt.err
+			f.starter.mu.Unlock()
+			_, err := f.runClient().CancelRun(ctx, connect.NewRequest(&orkstackv1.CancelRunRequest{RunId: "run-001"}))
+			if connect.CodeOf(err) != tt.want {
+				t.Fatalf("CancelRun = %v (%s), want %s", err, connect.CodeOf(err), tt.want)
+			}
+		})
 	}
 }
 

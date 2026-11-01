@@ -297,7 +297,7 @@ func (noopStarter) StartRun(context.Context, string, *orkstackv1.Orkflow, *orkst
 	return nil
 }
 
-func (noopStarter) CancelRun(context.Context, string, string) error { return nil }
+func (noopStarter) CancelRun(context.Context, string, engine.CancelRequest) error { return nil }
 func (noopStarter) SignalAwait(context.Context, string, *orkstackv1.AwaitSignal) error {
 	return nil
 }

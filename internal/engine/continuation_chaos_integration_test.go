@@ -518,7 +518,7 @@ func TestIntegration_ContinuationChaosC4_CancelRacingTheSwitch(t *testing.T) {
 	defer cancel()
 	s := newChaosStack(t, ctx, "C4/racing")
 	runID, stream, _ := s.raceTheSwitch(t, "c4-race", func(runID string) {
-		if err := s.starter.CancelRun(ctx, runID, ""); err != nil {
+		if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
 			t.Fatalf("cancel: %v", err)
 		}
 		s.transcript.step("the operator's cancel recorded while the switching task was open")
@@ -557,7 +557,7 @@ func TestIntegration_ContinuationChaosC4_CancelAfterTheSwitch(t *testing.T) {
 	// The await keeps the run alive in its new generation; cancel it there,
 	// once that generation has restored its state.
 	s.logs.wait(t, ctx, logRestored, runID, time.Minute)
-	if err := s.starter.CancelRun(ctx, runID, ""); err != nil {
+	if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
 		t.Fatalf("cancel: %v", err)
 	}
 	status, _ := s.wait(runID, 3*time.Minute)
@@ -2168,7 +2168,7 @@ func TestIntegration_ContinuationChaosC19_CancelWhileReadsBackOff(t *testing.T) 
 	// Long enough that Temporal is backing off between failing reads.
 	time.Sleep(20 * time.Second)
 	canceledAt := time.Now()
-	if err := s.starter.CancelRun(ctx, runID, ""); err != nil {
+	if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	// Storage stays down until the cancel has reached the retrying read —
@@ -2234,7 +2234,7 @@ func TestIntegration_ContinuationChaosC19_CancelWhileAReadIsBlocked(t *testing.T
 	_, budget := s.tcPlan()
 	runID, _, carry := s.switchThenHoldTheRead(t, "c19-blocked", budget, replicaOptions{}, hook)
 	canceledAt := time.Now()
-	if err := s.starter.CancelRun(ctx, runID, ""); err != nil {
+	if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	status, _ := s.wait(runID, 2*time.Minute)

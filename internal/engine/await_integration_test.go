@@ -431,7 +431,7 @@ func TestIntegration_RunCanceledWhileAwaitingEndsCanceled(t *testing.T) {
 		t.Fatalf("StartRun: %v", err)
 	}
 	s.waitTask(runID, "gate", orkstackv1.Status_STATUS_AWAITING)
-	if err := s.starter.CancelRun(s.ctx, runID, "operator"); err != nil {
+	if err := s.starter.CancelRun(s.ctx, runID, engine.CancelRequest{Reason: "operator"}); err != nil {
 		t.Fatalf("CancelRun: %v", err)
 	}
 	run := s.waitRun(runID)

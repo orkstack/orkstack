@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 
@@ -46,6 +48,14 @@ type TemporalStarter struct {
 	// two origin attributes now, and stamping one it does not have fails
 	// every submit.
 	originIndexed bool
+
+	// clusterNamespace and clusterIdentity are what a cancellation that
+	// records its principal names on the cluster (CancelRun): the client's
+	// own Temporal namespace and identity, which the SDK client does not
+	// expose. Empty until WithClusterIdentity; a principal cancel is then
+	// refused (ErrCancelNotWired).
+	clusterNamespace string
+	clusterIdentity  string
 }
 
 // NewTemporalStarter returns a starter that dispatches RunWorkflow onto queue.
@@ -80,6 +90,15 @@ func (s *TemporalStarter) WithNamespaceIndex(indexed bool) *TemporalStarter {
 // records the namespace answer.
 func (s *TemporalStarter) WithOriginIndex(indexed bool) *TemporalStarter {
 	s.originIndexed = indexed
+	return s
+}
+
+// WithClusterIdentity records the Temporal namespace this starter's client is
+// bound to and the identity it reports, which CancelRun names when it asks the
+// cluster for a cancellation that records who asked. cmd/ork passes the
+// values it dialed the client with.
+func (s *TemporalStarter) WithClusterIdentity(namespace, identity string) *TemporalStarter {
+	s.clusterNamespace, s.clusterIdentity = namespace, identity
 	return s
 }
 
@@ -203,12 +222,76 @@ func (s *TemporalStarter) IndexAnswers() (namespaceIndexed, originIndexed bool) 
 }
 
 // CancelRun requests cancellation of a running workflow.
-func (s *TemporalStarter) CancelRun(ctx context.Context, runID, _ string) error {
-	if err := s.client.CancelWorkflow(ctx, runID, ""); err != nil {
+//
+// A request with a principal carries it in the cancellation itself: the
+// cluster's cancel request takes a reason, which it keeps on the run's own
+// record of that request, so the run says who canceled it with the request
+// that did — one call, nothing to reconcile, and a second request on a run
+// whose cancellation is already requested records nothing, so the name is
+// always the one that took effect. The reader reads it back
+// (cancelPrincipal, applyCanceledBy). request.Reason is not sent: the audit
+// trail records it.
+//
+// The SDK's CancelWorkflow takes no reason (go.temporal.io/sdk 1.47), so that
+// request goes to the service directly, naming the namespace and identity the
+// client was dialed with (WithClusterIdentity). The SDK's own retry of a
+// transient refusal is reached only through its CancelWorkflow, so this call
+// asks again itself, at most cancelAttempts times and only while the cluster
+// answers Unavailable, under one request id the cluster dedupes on. A
+// request with no principal is today's CancelWorkflow, retries included.
+func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request CancelRequest) error {
+	if request.Principal == "" {
+		if err := s.client.CancelWorkflow(ctx, runID, ""); err != nil {
+			return fmt.Errorf("cancel run %s: %w", runID, err)
+		}
+		return nil
+	}
+	if s.clusterNamespace == "" {
+		return fmt.Errorf("cancel run %s: %w", runID, ErrCancelNotWired)
+	}
+	reason, err := encodeCancelRequest(request.Principal)
+	if err != nil {
 		return fmt.Errorf("cancel run %s: %w", runID, err)
 	}
-	return nil
+	cancel := &workflowservice.RequestCancelWorkflowExecutionRequest{
+		Namespace:         s.clusterNamespace,
+		WorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: runID},
+		Identity:          s.clusterIdentity,
+		// A collision-free token (activityid.go), serving what the SDK's own
+		// uuid does: the cluster dedupes a request asked again under it.
+		RequestId: newActivityID("cancel-run"),
+		Reason:    reason,
+	}
+	backoff := cancelRetryInterval
+	for attempt := 1; ; attempt++ {
+		attemptCtx, done := context.WithTimeout(ctx, cancelAttemptTimeout)
+		_, err := s.client.WorkflowService().RequestCancelWorkflowExecution(attemptCtx, cancel)
+		done()
+		if err == nil {
+			return nil
+		}
+		var unavailable *serviceerror.Unavailable
+		if !errors.As(err, &unavailable) || attempt == cancelAttempts {
+			return fmt.Errorf("cancel run %s: %w", runID, err)
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("cancel run %s: %w", runID, errors.Join(ctx.Err(), err))
+		case <-time.After(backoff):
+		}
+		backoff *= 2
+	}
 }
+
+// cancelAttempts, cancelRetryInterval and cancelAttemptTimeout bound
+// CancelRun's own retry of a cluster that answered Unavailable: three tries,
+// 200 ms then 400 ms apart, each given at most the SDK's own 10 s per call,
+// so an unreachable frontend is an answer rather than a hung request.
+const (
+	cancelAttempts       = 3
+	cancelRetryInterval  = 200 * time.Millisecond
+	cancelAttemptTimeout = 10 * time.Second
+)
 
 // ErrRunEnded reports that a run's execution has already closed, so nothing
 // can be delivered to it.

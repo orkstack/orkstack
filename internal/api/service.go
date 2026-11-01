@@ -22,6 +22,7 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+	"go.temporal.io/api/serviceerror"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
@@ -2649,6 +2650,10 @@ func mergeRuns(preferred, others []*orkstackv1.Run) []*orkstackv1.Run {
 // resolved through the read model and inside the request's namespace, so a
 // replica can cancel a run it did not start and no namespace can cancel
 // another's.
+//
+// The Ork-Principal header, bounded as an origin's principal is, travels with
+// the cancellation, and the run records it as who canceled it
+// (Run.canceled_by): asserted by the gateway, never authenticated.
 func (s *Service) CancelRun(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.CancelRunRequest],
@@ -2667,10 +2672,26 @@ func (s *Service) CancelRun(
 	if binding.Starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
 	}
-	if err := binding.Starter.CancelRun(ctx, req.Msg.GetRunId(), req.Msg.GetReason()); err != nil {
-		return nil, connect.NewError(connect.CodeInternal, err)
+	request := engine.CancelRequest{
+		Reason:    req.Msg.GetReason(),
+		Principal: boundOriginAssertion(req.Header().Get(AuditPrincipalHeader)),
+	}
+	if err := binding.Starter.CancelRun(ctx, req.Msg.GetRunId(), request); err != nil {
+		return nil, connect.NewError(cancelErrorCode(err), err)
 	}
 	return connect.NewResponse(&orkstackv1.CancelRunResponse{Run: run}), nil
+}
+
+// cancelErrorCode is the code a refused cancellation answers with: a cluster
+// that refused for a moment, even after the starter asked again, is worth
+// asking again later. Anything else — engine.ErrCancelNotWired, a mis-wired
+// process, included — is the internal error it always was.
+func cancelErrorCode(err error) connect.Code {
+	var unavailable *serviceerror.Unavailable
+	if errors.As(err, &unavailable) {
+		return connect.CodeUnavailable
+	}
+	return connect.CodeInternal
 }
 
 // StreamEvents server-streams a run's events: everything after from_sequence,

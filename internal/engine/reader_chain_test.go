@@ -697,10 +697,11 @@ func TestLiveAttempts_ReadsTheDescribedExecution(t *testing.T) {
 func TestTemporalRunReader_EventsForArchiveRecordsALostSegmentAsAGap(t *testing.T) {
 	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 2, finish: true})
 	delete(f.store.objects, f.carry.GetSegments()[0].GetObject().GetUri())
-	events, gaps, err := f.reader.EventsForArchive(context.Background(), f.runID)
+	read, err := f.reader.EventsForArchive(context.Background(), f.runID)
 	if err != nil {
 		t.Fatalf("EventsForArchive: %v", err)
 	}
+	events, gaps := read.Events, read.Gaps
 	if len(gaps) != 1 || gaps[0].First != 1 || gaps[0].Last != 5 || gaps[0].Reason != "segment object missing" {
 		t.Fatalf("gaps = %v, want 1–5 (segment object missing)", gaps)
 	}
@@ -708,7 +709,7 @@ func TestTemporalRunReader_EventsForArchiveRecordsALostSegmentAsAGap(t *testing.
 	// A transient failure is still an error, so the archive write retries.
 	f2 := newChain(t, chainSpec{closed: []int{5}, current: 1, finish: true})
 	f2.store.fail[f2.carry.GetSegments()[0].GetObject().GetUri()] = errors.New("store is down")
-	if _, _, err := f2.reader.EventsForArchive(context.Background(), f2.runID); !errors.Is(err, ErrEventSegmentUnavailable) {
+	if _, err := f2.reader.EventsForArchive(context.Background(), f2.runID); !errors.Is(err, ErrEventSegmentUnavailable) {
 		t.Fatalf("transient failure = %v, want an error", err)
 	}
 }

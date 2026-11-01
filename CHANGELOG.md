@@ -11,6 +11,16 @@ word for word.
 
 ## [Unreleased]
 
+### Added
+
+- A canceled run shows who canceled it: the name your gateway asserted in
+  `Ork-Principal` on the cancel request (`ORK_PRINCIPAL` for `orkctl`),
+  marked as asserted and never authenticated. The API returns it as the
+  run's `canceled_by`, `orkctl run get` prints `Canceled by:` and
+  `orkctl run list` shows `CANCELED by … (asserted)`. It stays after the run
+  is retired. A cancel without the header, and runs canceled before this
+  release, show no name.
+
 ## [0.1.0] - 2026-10-30
 
 First release.

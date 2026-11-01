@@ -1391,6 +1391,11 @@ and holding an id is not authority over somebody else's tenant.
 A failing run's failure handlers are stopped too; the run still ends
 FAILED with its original reason.
 
+A run this request cancels records who asked: the Ork-Principal your
+gateway asserts, or $ORK_PRINCIPAL when this CLI talks to the engine
+directly. It is an assertion, never authenticated; `run get` and
+`run list` show it as asserted.
+
 Flags:
 
 - `--reason STRING` — human readable cancellation reason

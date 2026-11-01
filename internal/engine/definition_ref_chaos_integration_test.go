@@ -296,7 +296,7 @@ func TestIntegration_DefinitionChaosC36_CancelDuringTheLoad(t *testing.T) {
 	// Long enough that Temporal is backing off between failing reads.
 	time.Sleep(20 * time.Second)
 	canceledAt := time.Now()
-	if err := s.starter.CancelRun(ctx, runID, ""); err != nil {
+	if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	reached := s.waitReadCanceled(t, runID, time.Minute)

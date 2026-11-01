@@ -359,7 +359,11 @@ func newRunCancelCommand(g *globalFlags) *cobra.Command {
 			"in. A run of another namespace is not found here: cancelling is a write,\n" +
 			"and holding an id is not authority over somebody else's tenant.\n\n" +
 			"A failing run's failure handlers are stopped too; the run still ends\n" +
-			"FAILED with its original reason.",
+			"FAILED with its original reason.\n\n" +
+			"A run this request cancels records who asked: the Ork-Principal your\n" +
+			"gateway asserts, or $ORK_PRINCIPAL when this CLI talks to the engine\n" +
+			"directly. It is an assertion, never authenticated; `run get` and\n" +
+			"`run list` show it as asserted.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
@@ -421,6 +425,9 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	if run.GetError() != nil {
 		fmt.Fprintf(header, "Error:\t%s\n", errorLine(run.GetError()))
 	}
+	if by := run.GetCanceledBy(); by != "" {
+		fmt.Fprintf(header, "Canceled by:\t%s  %s\n", assertedName(by), principalCaption)
+	}
 	if err := header.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
@@ -478,6 +485,16 @@ func runStatusLabel(run *orkstackv1.Run) string {
 	return statusLabel(run.GetStatus())
 }
 
+// runListStatus is the run list's STATUS cell: the status, and for a run a
+// CancelRun ended, who asked, marked as asserted — the list has no room for
+// the full caption `run get` prints.
+func runListStatus(run *orkstackv1.Run) string {
+	if by := run.GetCanceledBy(); by != "" {
+		return statusLabel(run.GetStatus()) + " by " + assertedName(by) + " (asserted)"
+	}
+	return statusLabel(run.GetStatus())
+}
+
 // renderRunJoinTable is one row per task whose TaskRun.join is set, in run
 // order.
 func renderRunJoinTable(out io.Writer, run *orkstackv1.Run) error {
@@ -512,7 +529,7 @@ func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {
 	for _, run := range runs {
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion(), originColumn(run.GetOrigin()),
-			statusLabel(run.GetStatus()), formatTime(run.GetCreatedAt()), formatTime(run.GetFinishedAt()))
+			runListStatus(run), formatTime(run.GetCreatedAt()), formatTime(run.GetFinishedAt()))
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
