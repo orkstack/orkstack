@@ -8,12 +8,12 @@
 	// pill it qualifies — and it is drawn only when there is something to say,
 	// so an ordinary run carries no extra chrome at all.
 	//
-	// The wording is decided in $lib/attempts, not here, because the run
+	// The wording is decided in #lib/attempts.ts, not here, because the run
 	// header's chip and the CLI's table count the same tries and must agree.
-	import type { TaskAttempt } from '$lib/gen/orkstack/v1/run_pb';
-	import type { FlakeGroup } from '$lib/gen/orkstack/v1/stats_pb';
-	import { retryBadgeLabel } from '$lib/attempts';
-	import { flakeBadgeLabel, flakeHistoryTitle } from '$lib/flakes';
+	import type { TaskAttempt } from '#lib/gen/orkstack/v1/run_pb.ts';
+	import type { FlakeGroup } from '#lib/gen/orkstack/v1/stats_pb.ts';
+	import { retryBadgeLabel } from '#lib/attempts.ts';
+	import { flakeBadgeLabel, flakeHistoryTitle } from '#lib/flakes.ts';
 
 	interface Props {
 		attempts: TaskAttempt[];

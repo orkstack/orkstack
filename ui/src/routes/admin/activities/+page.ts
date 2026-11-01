@@ -1,9 +1,9 @@
-import { errorMessage } from '$lib/client';
-import { activityClient } from '$lib/clients/activities';
-import type { ActivityInfo } from '$lib/gen/orkstack/v1/activity_service_pb';
-import type { DescribeOrkerResult } from '$lib/gen/orkstack/v1/activity_pb';
-import { namespaceFrom } from '$lib/namespace';
-import { filtersFromUrl } from '$lib/listFilter';
+import { errorMessage } from '#lib/client.ts';
+import { activityClient } from '#lib/clients/activities.ts';
+import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
+import type { DescribeOrkerResult } from '#lib/gen/orkstack/v1/activity_pb.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
+import { filtersFromUrl } from '#lib/listFilter.ts';
 import type { PageLoad } from './$types';
 
 // The activity catalog is GLOBAL: what this deployment can run, which is

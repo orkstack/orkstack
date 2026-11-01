@@ -17,12 +17,12 @@
 	import { page } from '$app/state';
 	import { create } from '@bufbuild/protobuf';
 	import type { JsonObject } from '@bufbuild/protobuf';
-	import { errorMessage } from '$lib/client';
-	import { namespaceClient } from '$lib/clients/namespaces';
-	import { orkflowClient } from '$lib/clients/orkflows';
-	import { runClient } from '$lib/clients/runs';
-	import { defaultsForInputs, inputSpecs, parseInputObject, planCli, submitCli } from '$lib/authoring';
-	import { parseAssumeFailed, parseAssumedOutputs } from '$lib/plan';
+	import { errorMessage } from '#lib/client.ts';
+	import { namespaceClient } from '#lib/clients/namespaces.ts';
+	import { orkflowClient } from '#lib/clients/orkflows.ts';
+	import { runClient } from '#lib/clients/runs.ts';
+	import { defaultsForInputs, inputSpecs, parseInputObject, planCli, submitCli } from '#lib/authoring.ts';
+	import { parseAssumeFailed, parseAssumedOutputs } from '#lib/plan.ts';
 	import AwaitCallbacks from './AwaitCallbacks.svelte';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import DeclaredInputs from './DeclaredInputs.svelte';
@@ -30,13 +30,13 @@
 	import HoldBanner from './HoldBanner.svelte';
 	import PlanTable from './PlanTable.svelte';
 	import Select from './Select.svelte';
-	import { PayloadSchema } from '$lib/gen/orkstack/v1/common_pb';
-	import type { NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
-	import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
-	import { namespaceLabel } from '$lib/namespace';
-	import type { OrkflowVersion, PlanRunResponse } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-import type { AwaitCallback } from '$lib/gen/orkstack/v1/run_service_pb';
-	import type { Payload } from '$lib/gen/orkstack/v1/common_pb';
+	import { PayloadSchema } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import type { NamespaceHold } from '#lib/gen/orkstack/v1/namespace_pb.ts';
+	import type { Orkflow } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import type { OrkflowVersion, PlanRunResponse } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
+	import type { Payload } from '#lib/gen/orkstack/v1/common_pb.ts';
 
 	interface Props {
 		namespace: string;

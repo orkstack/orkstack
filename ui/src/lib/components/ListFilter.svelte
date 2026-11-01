@@ -20,7 +20,7 @@
 	import CliEquivalent from './CliEquivalent.svelte';
 	import Icon from './Icon.svelte';
 	import Select from './Select.svelte';
-	import { sinceInputValue } from '$lib/browsing';
+	import { sinceInputValue } from '#lib/browsing.ts';
 	import {
 		FilterOperator,
 		OPERATOR_LABELS,
@@ -32,7 +32,7 @@
 		utcInstant,
 		type FieldFilter,
 		type FilterField
-	} from '$lib/listFilter';
+	} from '#lib/listFilter.ts';
 
 	interface Props {
 		/** The list request whose allowlist this form offers, e.g. ListNamespacesRequestSchema. */

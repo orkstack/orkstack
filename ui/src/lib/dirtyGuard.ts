@@ -14,8 +14,7 @@
 // saved (or reset) a second ago must leave without a question. It is handed
 // the navigation, so a page whose form survives a navigation to its own route
 // (a filter, a page of the list, the namespace switcher) can say so.
-import { beforeNavigate } from '$app/navigation';
-import type { BeforeNavigate } from '@sveltejs/kit';
+import { beforeNavigate, type BeforeNavigate } from '$app/navigation';
 
 export type UnsavedVerdict = 'proceed' | 'cancel';
 

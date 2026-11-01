@@ -1,18 +1,18 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { guardUnsaved } from '$lib/dirtyGuard';
-	import { exampleHref } from '$lib/examples';
-	import { errorMessage } from '$lib/client';
-	import { orkflowClient } from '$lib/clients/orkflows';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import YamlField from '$lib/yaml/YamlField.svelte';
-	import YamlProblems from '$lib/yaml/YamlProblems.svelte';
-	import { YamlSession } from '$lib/yaml/session.svelte';
-	import { setTitleBlock } from '$lib/sheet.svelte';
-	import { ValidationSeverity } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-	import { namespaceLabel, withNamespace } from '$lib/namespace';
-	import { API_VERSION, ORKFLOW_PLACEHOLDER } from '$lib/placeholders';
+	import { guardUnsaved } from '#lib/dirtyGuard.ts';
+	import { exampleHref } from '#lib/examples.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { orkflowClient } from '#lib/clients/orkflows.ts';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import YamlField from '#lib/yaml/YamlField.svelte';
+	import YamlProblems from '#lib/yaml/YamlProblems.svelte';
+	import { YamlSession } from '#lib/yaml/session.svelte.ts';
+	import { setTitleBlock } from '#lib/sheet.svelte.ts';
+	import { ValidationSeverity } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { API_VERSION, ORKFLOW_PLACEHOLDER } from '#lib/placeholders.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -38,7 +38,7 @@
 	}, 'Apply also refuses a version already stored with other content.');
 
 	// An example's YAML is fetched when its card is chosen, not shipped with
-	// the page ($lib/examples). A second click while one is loading is not
+	// the page (#lib/examples.ts). A second click while one is loading is not
 	// offered, so the editor ends up holding the example last asked for.
 	let loadingExample = $state('');
 	let exampleError = $state('');

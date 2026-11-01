@@ -281,9 +281,38 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	// which namespace it is showing even before anybody chooses one, so a URL
 	// copied out of it carries the sender's namespace rather than leaving the
 	// reader's browser to answer for them.
+	//
+	// The address is written once and then left alone. The write is shallow,
+	// so the page's own URL stays bare; a layout that answered its own write
+	// would write again for as long as the tab is open, and hang it.
+	await page.addInitScript(() => {
+		const w = window as unknown as { __addressWrites: number };
+		w.__addressWrites = 0;
+		const replace = history.replaceState.bind(history);
+		history.replaceState = (data: unknown, unused: string, url?: string | URL | null) => {
+			if (url !== undefined && url !== null) w.__addressWrites++;
+			replace(data, unused, url);
+		};
+	});
+	const addressWrites = () => page.evaluate(() => (window as unknown as { __addressWrites: number }).__addressWrites);
 	await page.goto(`${UI_ORIGIN}/orkflows`);
 	await expectNamespace(page, DEFAULT_NS);
 	await expect(page).toHaveURL(/[?&]ns=default(&|$)/);
+	const written = await addressWrites();
+	// The ns= in the address bar came from at least one counted write, so the
+	// counter saw the write it bounds.
+	expect(written).toBeGreaterThan(0);
+	expect(written).toBeLessThanOrEqual(3);
+	// Ten painted frames: the page kept running, and wrote nothing more.
+	await page.evaluate(
+		() =>
+			new Promise<void>((done) => {
+				let frames = 0;
+				const next = () => (++frames === 10 ? done() : requestAnimationFrame(next));
+				requestAnimationFrame(next);
+			})
+	);
+	expect(await addressWrites()).toBe(written);
 	await expect(page.getByTestId(`orkflow-row-${ORKFLOW}`)).toHaveCount(0);
 
 	// Switching scopes the list and writes the choice into the URL.

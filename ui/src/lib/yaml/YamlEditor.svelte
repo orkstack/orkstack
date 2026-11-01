@@ -8,7 +8,7 @@
 	import { EditorState } from '@codemirror/state';
 	import { documentText, editorExtensions, engineFindingsField, separatorOf, setEngineFindings, showFindings } from './editor';
 	import { lintDocument } from './lint';
-	import { engineFindings } from './server';
+	import { engineFindings } from './engine';
 	import { localFindings } from './status';
 	import type { Finding, YamlSession } from './session.svelte';
 	import type { Diagnostic, DocumentKind } from './types';

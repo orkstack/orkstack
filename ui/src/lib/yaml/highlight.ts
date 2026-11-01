@@ -7,7 +7,7 @@
 // The Lezer YAML grammar tags every plain scalar alike; whether `300`, `true`
 // or `nightly` is a number, a literal or a string is decided here, by YAML
 // 1.2's core schema, which is how an editor reads it. That is a colour, not a
-// verdict: whether the engine takes `yes` is the engine's answer (./server.ts).
+// verdict: whether the engine takes `yes` is the engine's answer (./engine.ts).
 // A `{{ … }}` inside any string is a template (docs/DSL.md, "Templating").
 import { parser } from '@lezer/yaml';
 import type { Tree } from '@lezer/common';

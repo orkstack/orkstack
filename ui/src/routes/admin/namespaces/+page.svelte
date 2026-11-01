@@ -9,29 +9,29 @@
 	// and `default`'s delete control is disabled BEFORE any click, with the
 	// reason inline.
 	import { goto, invalidateAll } from '$app/navigation';
-	import { guardUnsaved, leavesRoute } from '$lib/dirtyGuard';
+	import { guardUnsaved, leavesRoute } from '#lib/dirtyGuard.ts';
 	import { navigating, page } from '$app/state';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import Pagination from '$lib/components/Pagination.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import TelemetryFields from '$lib/components/TelemetryFields.svelte';
-	import SignerField from '$lib/components/SignerField.svelte';
-	import { isStaleEtagConflict } from '$lib/adminErrors';
-	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
-	import { createdNamespaceHref, namespacesEmptyState } from '$lib/namespaceList';
-	import type { FieldFilter } from '$lib/listFilter';
-	import { ListNamespacesRequestSchema } from '$lib/gen/orkstack/v1/namespace_service_pb';
-	import { errorMessage } from '$lib/client';
-	import { namespaceClient } from '$lib/clients/namespaces';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import Pagination from '#lib/components/Pagination.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import TelemetryFields from '#lib/components/TelemetryFields.svelte';
+	import SignerField from '#lib/components/SignerField.svelte';
+	import { isStaleEtagConflict } from '#lib/adminErrors.ts';
+	import { listHref, pageStackKey, readPageStack, writePageStack } from '#lib/browsing.ts';
+	import { createdNamespaceHref, namespacesEmptyState } from '#lib/namespaceList.ts';
+	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { ListNamespacesRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { namespaceClient } from '#lib/clients/namespaces.ts';
 	import { create } from '@bufbuild/protobuf';
-	import { NamespaceHoldSchema, type Budget, type Namespace, type NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
-	import { TaskLogExport } from '$lib/gen/orkstack/v1/telemetry_pb';
-	import { DEFAULT_NAMESPACE, namespaceLabel, rememberNamespace, withNamespace } from '$lib/namespace';
+	import { NamespaceHoldSchema, type Budget, type Namespace, type NamespaceHold } from '#lib/gen/orkstack/v1/namespace_pb.ts';
+	import { TaskLogExport } from '#lib/gen/orkstack/v1/telemetry_pb.ts';
+	import { DEFAULT_NAMESPACE, namespaceLabel, rememberNamespace, withNamespace } from '#lib/namespace.ts';
 	import {
 		DEFAULT_POOL_NAME,
 		parseAttributeLines,
@@ -39,13 +39,13 @@
 		parseSecretPatternLines,
 		validateNamespaceForm,
 		type NamespaceFormErrors
-	} from '$lib/namespaceRules';
-	import { hoursToMs, parseRetentionHours } from '$lib/retentionForm';
-	import { shellQuote } from '$lib/runDetail';
-	import { fmtDuration } from '$lib/stats';
-	import { budgetConfigLabel } from '$lib/usage';
-	import { shellWord } from '$lib/flakes';
-	import { fmtTimestamp } from '$lib/status';
+	} from '#lib/namespaceRules.ts';
+	import { hoursToMs, parseRetentionHours } from '#lib/retentionForm.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
+	import { fmtDuration } from '#lib/stats.ts';
+	import { budgetConfigLabel } from '#lib/usage.ts';
+	import { shellWord } from '#lib/flakes.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import type { Duration } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
@@ -276,7 +276,7 @@
 	// the set it leaves is dropped rather than trusted later.
 	function applyFilters(filters: FieldFilter[]) {
 		writePageStack(stackKey, []);
-		void goto(href({ size: sizeDraft, cursor: '', page: '' }, { filter: filters }), { keepFocus: true, noScroll: true });
+		void goto(href({ size: sizeDraft, cursor: '', page: '' }, { filter: filters }), { reset: false });
 	}
 	const clearHref = $derived(href({ cursor: '', page: '' }, {}));
 	const emptyState = $derived(
@@ -409,7 +409,7 @@
 			// the list paged, the page it sorts onto is not necessarily the one
 			// on screen. invalidateAll, because the address may not change (it
 			// was already filtered to this name) and the row must still appear.
-			await goto(createdNamespaceHref(coordinates, createdName), { invalidateAll: true, keepFocus: true, noScroll: true });
+			await goto(createdNamespaceHref(coordinates, createdName), { invalidateAll: true, reset: false });
 		} catch (err) {
 			createServerError = errorMessage(err);
 		} finally {
@@ -647,7 +647,7 @@
 			// namespace registry at all (internal/api/namespaces.go's own
 			// `registry()`) — and only the first is fixed by "reload and
 			// re-apply". isStaleEtagConflict tells them apart by the server's
-			// own words (see $lib/adminErrors.ts): a FailedPrecondition that
+			// own words (see #lib/adminErrors.ts): a FailedPrecondition that
 			// is NOT a stale etag is shown as an ordinary write error, with no
 			// conflict-recovery button that would just repeat the failure.
 			if (isStaleEtagConflict(err)) {
@@ -796,7 +796,7 @@
 			if (namespaceLabel(data.namespace) === deletedName) {
 				rememberNamespace(DEFAULT_NAMESPACE);
 				await goto(withNamespace(page.url.pathname + page.url.search, DEFAULT_NAMESPACE), {
-					replaceState: true,
+					replace: true,
 					invalidateAll: true
 				});
 			} else {

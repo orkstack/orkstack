@@ -1,8 +1,8 @@
-import { errorMessage } from '$lib/client';
-import { statsClient } from '$lib/clients/stats';
-import { namespaceFrom } from '$lib/namespace';
+import { errorMessage } from '#lib/client.ts';
+import { statsClient } from '#lib/clients/stats.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
 import { durationFromMs, timestampFromDate } from '@bufbuild/protobuf/wkt';
-import { statsWindowError } from '$lib/browsing';
+import { statsWindowError } from '#lib/browsing.ts';
 import type { PageLoad } from './$types';
 
 // The dashboard is the home page. A redirect to /orkflows would answer "how

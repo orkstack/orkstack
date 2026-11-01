@@ -9,7 +9,7 @@
 	// does not is not asked to read a shell command to use a button.
 	import Icon from './Icon.svelte';
 	import Popover from './Popover.svelte';
-	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '$lib/clipboard';
+	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '#lib/clipboard.ts';
 
 	interface Props {
 		command: string;
@@ -38,7 +38,7 @@
 	}
 
 	// On an origin with no clipboard the command shown above is selected
-	// instead, and the status says to copy it by hand ($lib/clipboard).
+	// instead, and the status says to copy it by hand (#lib/clipboard.ts).
 	async function copy(): Promise<void> {
 		if ((await copyText(command)) === 'copied') {
 			copied = 'Copied';

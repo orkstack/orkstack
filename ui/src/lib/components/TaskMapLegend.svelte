@@ -3,10 +3,10 @@
 	// its drawn mark and its count. Pressing one moves the map's cursor to that
 	// status's first cell. A status whose cells the run ended before they ever
 	// started says so ("never started"), in the same words as their rows.
-	import type { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { statusLabel } from '$lib/status';
-	import { statusClassWord, statusMark } from '$lib/statusMarks';
-	import { STATUS_ORDER } from '$lib/taskMap';
+	import type { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { statusLabel } from '#lib/status.ts';
+	import { statusClassWord, statusMark } from '#lib/statusMarks.ts';
+	import { STATUS_ORDER } from '#lib/taskMap.ts';
 
 	let {
 		counts,

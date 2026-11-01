@@ -1,7 +1,7 @@
-import { errorMessage } from '$lib/client';
-import { systemClient } from '$lib/clients/system';
-import type { ListReleasesResponse } from '$lib/gen/orkstack/v1/system_service_pb';
-import { filtersFromUrl } from '$lib/listFilter';
+import { errorMessage } from '#lib/client.ts';
+import { systemClient } from '#lib/clients/system.ts';
+import type { ListReleasesResponse } from '#lib/gen/orkstack/v1/system_service_pb.ts';
+import { filtersFromUrl } from '#lib/listFilter.ts';
 import type { PageLoad } from './$types';
 
 // ListReleases is the deployment's releases as the cluster routes them

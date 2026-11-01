@@ -1,11 +1,11 @@
-import { errorMessage } from '$lib/client';
-import { webhookClient } from '$lib/clients/webhooks';
-import { pageNumber } from '$lib/browsing';
-import { DEFAULT_DELIVERY_LIMIT, DELIVERY_FILTER_PARAM, deliveryLimit, type DeliveryCoordinates } from '$lib/deliveries';
-import type { ListDeliveriesResponse } from '$lib/gen/orkstack/v1/webhook_service_pb';
-import { namespaceFrom, namespaceLabel } from '$lib/namespace';
-import { filtersFromUrl } from '$lib/listFilter';
-import type { Webhook } from '$lib/gen/orkstack/v1/webhook_service_pb';
+import { errorMessage } from '#lib/client.ts';
+import { webhookClient } from '#lib/clients/webhooks.ts';
+import { pageNumber } from '#lib/browsing.ts';
+import { DEFAULT_DELIVERY_LIMIT, DELIVERY_FILTER_PARAM, deliveryLimit, type DeliveryCoordinates } from '#lib/deliveries.ts';
+import type { ListDeliveriesResponse } from '#lib/gen/orkstack/v1/webhook_service_pb.ts';
+import { namespaceFrom, namespaceLabel } from '#lib/namespace.ts';
+import { filtersFromUrl } from '#lib/listFilter.ts';
+import type { Webhook } from '#lib/gen/orkstack/v1/webhook_service_pb.ts';
 import type { PageLoad } from './$types';
 
 // Two independent reads: the subscriptions and what their deliveries did.

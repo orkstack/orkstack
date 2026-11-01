@@ -216,6 +216,13 @@ word for word.
   unchanged: they still carry what the SDK sends for its own worker
   accounting, among it the host name, the process id, the host's CPU and
   memory use, the SDK version, the task queue and the deployment version.
+- The web UI is built with SvelteKit 3, Vite 8 and Svelte 5.57. An open UI
+  tab now also asks the engine for the UI's build version
+  (`/_app/version.json`) every hour and when the tab regains focus, as
+  SvelteKit 3 does by default.
+- The web UI and the site are type-checked with TypeScript 6.0.3. TypeScript
+  7 waits until SvelteKit, svelte-check and `@astrojs/check`, which all
+  accept only TypeScript 6, support it.
 
 ### Fixed
 

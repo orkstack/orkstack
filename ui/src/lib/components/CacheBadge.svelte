@@ -6,10 +6,10 @@
 	// to the run whose container produced the bytes; a miss says why it ran; a
 	// bypass says the run asked not to look. A cached task that SUCCEEDED with
 	// no decision at all ran on an Orker that predates caching. Nothing is
-	// drawn for any other task. The wording is $lib/cache's, shared with the
+	// drawn for any other task. The wording is #lib/cache.ts's, shared with the
 	// CLI.
-	import type { CacheResult } from '$lib/gen/orkstack/v1/activity_pb';
-	import { cacheOutcomeLabel, cacheOutcomeWord, cacheSourceHref, missReasonSentence } from '$lib/cache';
+	import type { CacheResult } from '#lib/gen/orkstack/v1/activity_pb.ts';
+	import { cacheOutcomeLabel, cacheOutcomeWord, cacheSourceHref, missReasonSentence } from '#lib/cache.ts';
 
 	interface Props {
 		cache?: CacheResult;

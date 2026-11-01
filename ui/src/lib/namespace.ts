@@ -46,7 +46,7 @@ export function namespaceFrom(url: URL): string {
 
 // hasNamespaceParam distinguishes "this URL says default" from "this URL says
 // nothing". Only the second is a candidate for the remembered choice.
-export function hasNamespaceParam(url: URL): boolean {
+export function hasNamespaceParam(url: { readonly searchParams: Pick<URLSearchParams, "has"> }): boolean {
   return url.searchParams.has(NAMESPACE_PARAM);
 }
 

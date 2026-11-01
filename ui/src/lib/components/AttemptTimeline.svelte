@@ -16,20 +16,20 @@
 	//      leaving a reader to think the page dropped something.
 	//   3. NOTHING IS INVENTED. A field the record does not carry is not drawn,
 	//      so a row with no timing shows no timing rather than a zero.
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import FailurePanel from '$lib/components/FailurePanel.svelte';
-	import { AttemptOutcome, type TaskAttempt } from '$lib/gen/orkstack/v1/run_pb';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import FailurePanel from '#lib/components/FailurePanel.svelte';
+	import { AttemptOutcome, type TaskAttempt } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import {
 		UNREPORTED_CAPTION,
 		attemptOutcomeClasses,
 		attemptOutcomeLabel,
 		isUnreported
-	} from '$lib/attempts';
-	import { hasError } from '$lib/activity';
-	import { formatDuration, runCommand } from '$lib/runDetail';
-	import { fmtTime } from '$lib/status';
-	import { attemptPhases, formatQuantity, phasesLine, type TaskTiming } from '$lib/timing';
-	import { attemptCacheLine, keyComponentRows } from '$lib/cache';
+	} from '#lib/attempts.ts';
+	import { hasError } from '#lib/activity.ts';
+	import { formatDuration, runCommand } from '#lib/runDetail.ts';
+	import { fmtTime } from '#lib/status.ts';
+	import { attemptPhases, formatQuantity, phasesLine, type TaskTiming } from '#lib/timing.ts';
+	import { attemptCacheLine, keyComponentRows } from '#lib/cache.ts';
 
 	interface Props {
 		runId: string;
@@ -44,7 +44,7 @@
 		pool?: string;
 		/** The attempt that decided the task (TaskRun.attempt). */
 		decidedOn?: number;
-		/** The task's derived timing ($lib/timing), for the wait for an Orker. */
+		/** The task's derived timing (#lib/timing.ts), for the wait for an Orker. */
 		timing?: TaskTiming;
 		/** One item of a fan-out: the timeline is that item's, and its CLI says --item. */
 		item?: number;

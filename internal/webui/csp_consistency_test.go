@@ -11,7 +11,7 @@ import (
 	"github.com/orkstack/orkstack/internal/webui"
 )
 
-// cspKeywords are the source keywords SvelteKit writes quoted (kit.csp takes
+// cspKeywords are the source keywords SvelteKit writes quoted (csp takes
 // them bare); every other source it writes as it is given.
 var cspKeywords = map[string]bool{
 	"self": true, "none": true, "unsafe-eval": true, "unsafe-inline": true, "unsafe-hashes": true,
@@ -19,18 +19,19 @@ var cspKeywords = map[string]bool{
 }
 
 // buildDirectives reads the directives the UI's build writes into its pages
-// (ui/svelte.config.js, kit.csp), as SvelteKit renders them, without the
+// (ui/vite.config.ts, the sveltekit plugin's csp), as SvelteKit renders
+// them, without the
 // hashes the config computes (an identifier, not a literal) or the build
 // adds.
 func buildDirectives(t *testing.T) map[string][]string {
 	t.Helper()
-	source, err := os.ReadFile(filepath.Join("..", "..", "ui", "svelte.config.js"))
+	source, err := os.ReadFile(filepath.Join("..", "..", "ui", "vite.config.ts"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	block := regexp.MustCompile(`(?s)csp:\s*\{\s*mode:\s*'hash',\s*directives:\s*\{([^}]*)\}`).FindSubmatch(source)
 	if block == nil {
-		t.Fatal("ui/svelte.config.js has no kit.csp block in hash mode: the build's policy moved, and this test must follow it")
+		t.Fatal("ui/vite.config.ts has no csp block in hash mode: the build's policy moved, and this test must follow it")
 	}
 	directives := map[string][]string{}
 	for _, entry := range regexp.MustCompile(`'([a-z-]+)':\s*\[([^\]]*)\]`).FindAllSubmatch(block[1], -1) {
@@ -50,7 +51,7 @@ func buildDirectives(t *testing.T) map[string][]string {
 		directives[string(entry[1])] = sources
 	}
 	if len(directives) == 0 {
-		t.Fatal("ui/svelte.config.js's kit.csp names no directive")
+		t.Fatal("ui/vite.config.ts's csp names no directive")
 	}
 	return directives
 }
@@ -66,7 +67,7 @@ func policyDirectives(policy string) map[string][]string {
 	return directives
 }
 
-// The default page policy is the build's own (ui/svelte.config.js, kit.csp)
+// The default page policy is the build's own (ui/vite.config.ts, csp)
 // without its hashes and without 'unsafe-eval', opened with frame-ancestors
 // 'none': every directive the build writes, with the same sources but
 // those. A page the engine serves without a policy of its own runs under

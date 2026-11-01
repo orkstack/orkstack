@@ -1,8 +1,8 @@
-import { errorMessage } from '$lib/client';
-import { orkflowClient } from '$lib/clients/orkflows';
-import { runClient } from '$lib/clients/runs';
-import { namespaceFrom } from '$lib/namespace';
-import type { RunArtifact } from '$lib/gen/orkstack/v1/run_service_pb';
+import { errorMessage } from '#lib/client.ts';
+import { orkflowClient } from '#lib/clients/orkflows.ts';
+import { runClient } from '#lib/clients/runs.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
+import type { RunArtifact } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 import type { PageLoad } from './$types';
 
 // The run page renders in the browser only. Server-rendered, a run at the
@@ -38,7 +38,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			// The retry history of every task is NOT read here: the run, its
 			// statuses and its logs need only GetRun, and a run of a thousand
 			// fan-out items should not wait on its whole attempt timeline to
-			// draw. The page reads it once it has rendered ($lib/attempts
+			// draw. The page reads it once it has rendered (#lib/attempts.ts
 			// readAttemptSeed) and fills timing in when it lands.
 			try {
 				const wfRes = await orkflowClient(fetch).getOrkflow({

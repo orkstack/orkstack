@@ -1,8 +1,8 @@
-import { errorMessage } from '$lib/client';
-import { namespaceClient } from '$lib/clients/namespaces';
-import type { Pool } from '$lib/gen/orkstack/v1/namespace_pb';
-import { namespaceFrom } from '$lib/namespace';
-import { filtersFromUrl } from '$lib/listFilter';
+import { errorMessage } from '#lib/client.ts';
+import { namespaceClient } from '#lib/clients/namespaces.ts';
+import type { Pool } from '#lib/gen/orkstack/v1/namespace_pb.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
+import { filtersFromUrl } from '#lib/listFilter.ts';
 import type { PageLoad } from './$types';
 
 // Pools is the one Admin view that RESPECTS the namespace switcher: it answers "the pools THIS namespace may dispatch onto", which

@@ -15,7 +15,7 @@
 	// takes its container's width — never wider than its natural size, never
 	// narrower than DAG_MIN_SCALE of it — so a typical Orkflow is drawn whole
 	// in its frame, and one too wide for that scrolls in it.
-	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
+	import type { Task } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
 	import {
 		DAG_DASH,
 		DAG_LINE_CHARS,
@@ -29,12 +29,12 @@
 		type DagDirection,
 		type DagNode,
 		type NodeState
-	} from '$lib/dag';
-	import { activityLabel } from '$lib/activity';
-	import { isFailureHandler, joinTitle, joinWord } from '$lib/join';
-	import { statusLabel } from '$lib/status';
-	import { statusClassWord, svgMark } from '$lib/statusMarks';
-	import type { JoinPolicy } from '$lib/gen/orkstack/v1/activity_pb';
+	} from '#lib/dag.ts';
+	import { activityLabel } from '#lib/activity.ts';
+	import { isFailureHandler, joinTitle, joinWord } from '#lib/join.ts';
+	import { statusLabel } from '#lib/status.ts';
+	import { statusClassWord, svgMark } from '#lib/statusMarks.ts';
+	import type { JoinPolicy } from '#lib/gen/orkstack/v1/activity_pb.ts';
 
 	interface Props {
 		tasks: Task[];

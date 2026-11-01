@@ -11,12 +11,12 @@
 	import { untrack } from 'svelte';
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { errorMessage } from '$lib/client';
-	import { systemClient } from '$lib/clients/system';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { errorMessage } from '#lib/client.ts';
+	import { systemClient } from '#lib/clients/system.ts';
 	import {
 		confirmMatches,
 		hoursToMs,
@@ -24,8 +24,8 @@
 		lowerConsequence,
 		parseRetentionHours,
 		retentionHours
-	} from '$lib/retentionForm';
-	import { fmtDuration } from '$lib/stats';
+	} from '#lib/retentionForm.ts';
+	import { fmtDuration } from '#lib/stats.ts';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
 

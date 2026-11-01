@@ -12,11 +12,11 @@
 	// the listing, so it is not invented here; the run's own digest is in the
 	// title block.
 	import { onMount } from 'svelte';
-	import { errorMessage } from '$lib/client';
-	import { orkflowClient } from '$lib/clients/orkflows';
-	import type { OrkflowVersion } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-	import { withNamespace } from '$lib/namespace';
-	import { fmtTimestamp } from '$lib/status';
+	import { errorMessage } from '#lib/client.ts';
+	import { orkflowClient } from '#lib/clients/orkflows.ts';
+	import type { OrkflowVersion } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+	import { withNamespace } from '#lib/namespace.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 
 	interface Props {
 		namespace: string;

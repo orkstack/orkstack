@@ -1,5 +1,5 @@
-import { exampleResponse } from '$lib/examples';
-import { EXAMPLE_SOURCES } from '$lib/server/examples';
+import { exampleResponse } from '#lib/examples.ts';
+import { EXAMPLE_SOURCES } from '#lib/server/examples.ts';
 import type { EntryGenerator, RequestHandler } from './$types';
 
 // One example's YAML, byte for byte as it is in examples/, written into the

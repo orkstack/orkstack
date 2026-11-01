@@ -11,14 +11,14 @@
 	// It refetches on its own 60 s timer, never through invalidate('ork:stats'):
 	// the dashboard's 5 s refresh would otherwise re-ask a measurement the
 	// server caches for minutes (ORK_USAGE_CACHE_TTL).
-	import { pollWhileVisible } from '$lib/visibility';
+	import { pollWhileVisible } from '#lib/visibility.ts';
 	import { durationFromMs, timestampFromDate, type Duration } from '@bufbuild/protobuf/wkt';
-	import { errorMessage } from '$lib/client';
-	import { statsClient } from '$lib/clients/stats';
-	import type { Budget } from '$lib/gen/orkstack/v1/namespace_pb';
-	import type { GetUsageResponse } from '$lib/gen/orkstack/v1/stats_pb';
-	import { namespaceLabel } from '$lib/namespace';
-	import { fmtAge, groupBySpelling } from '$lib/stats';
+	import { errorMessage } from '#lib/client.ts';
+	import { statsClient } from '#lib/clients/stats.ts';
+	import type { Budget } from '#lib/gen/orkstack/v1/namespace_pb.ts';
+	import type { GetUsageResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import { fmtAge, groupBySpelling } from '#lib/stats.ts';
 	import {
 		USAGE_DIMENSIONS,
 		USAGE_REFRESH_MS,
@@ -31,7 +31,7 @@
 		usageCell,
 		usageCli,
 		usageFooter
-	} from '$lib/usage';
+	} from '#lib/usage.ts';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 	import CountCell from './CountCell.svelte';
@@ -97,7 +97,7 @@
 		void groupBy;
 		void load();
 		// The refetch and the clock tick run only while the tab is visible
-		// ($lib/visibility); returning refreshes both at once.
+		// (#lib/visibility.ts); returning refreshes both at once.
 		return pollWhileVisible(() => {
 			now = Date.now();
 			void load();

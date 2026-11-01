@@ -121,7 +121,7 @@ const (
 // listeners and configuration").
 const (
 	// DefaultPagePolicy is a page's policy when the page names none of its
-	// own (pagePolicy): the build's (ui/svelte.config.js, kit.csp) without
+	// own (pagePolicy): the build's (ui/vite.config.ts, csp) without
 	// its hashes, so no inline script runs, and without 'unsafe-eval'. A
 	// page that names no policy is never the app, whose boot script needs a
 	// hash, so it never needs the editor's eval: the fallback fails closed
@@ -134,8 +134,8 @@ const (
 	// document (an SVG, say) loads and runs nothing.
 	FilePolicy = "default-src 'none'; frame-ancestors 'none'"
 
-	// metaPolicyOpen is how SvelteKit writes a page's policy (kit.csp in
-	// ui/svelte.config.js): a <meta http-equiv> in the page's head, the
+	// metaPolicyOpen is how SvelteKit writes a page's policy (csp in
+	// ui/vite.config.ts): a <meta http-equiv> in the page's head, the
 	// policy its content attribute.
 	metaPolicyOpen = `<meta http-equiv="content-security-policy" content="`
 

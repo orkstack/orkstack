@@ -8,14 +8,14 @@
 	// of that race a result that never happened.
 	import { untrack } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import DiffView from '$lib/components/DiffView.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import InterfaceFindings from '$lib/components/InterfaceFindings.svelte';
-	import { errorMessage } from '$lib/client';
-	import { orkflowClient } from '$lib/clients/orkflows';
-	import { runClient } from '$lib/clients/runs';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import DiffView from '#lib/components/DiffView.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import InterfaceFindings from '#lib/components/InterfaceFindings.svelte';
+	import { errorMessage } from '#lib/client.ts';
+	import { orkflowClient } from '#lib/clients/orkflows.ts';
+	import { runClient } from '#lib/clients/runs.ts';
 	import {
 		breakingCount,
 		callerLabel,
@@ -30,18 +30,18 @@
 		unavailableSchedules,
 		verdictChipClass,
 		verdictWord
-	} from '$lib/compat';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { runWindowFilters } from '$lib/browsing';
+	} from '#lib/compat.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { runWindowFilters } from '#lib/browsing.ts';
 	import {
 		InterfaceVerdict,
 		OrkflowCallerKind,
 		type CompareInterfacesResponse,
 		type OrkflowCaller,
 		type OrkflowVersion
-} from '$lib/gen/orkstack/v1/orkflow_service_pb';
-	import { namespaceLabel, withNamespace } from '$lib/namespace';
-	import { fmtTimestamp } from '$lib/status';
+} from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 
 	interface Props {
 		name: string;

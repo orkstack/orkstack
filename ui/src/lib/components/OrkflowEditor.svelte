@@ -24,17 +24,17 @@
 	//    token and leaves the text exactly as it was typed.
 	import { untrack } from 'svelte';
 	import { goto } from '$app/navigation';
-	import { guardUnsaved } from '$lib/dirtyGuard';
+	import { guardUnsaved } from '#lib/dirtyGuard.ts';
 	import { Code, ConnectError } from '@connectrpc/connect';
-	import DiffView from '$lib/components/DiffView.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import YamlField from '$lib/yaml/YamlField.svelte';
-	import YamlProblems from '$lib/yaml/YamlProblems.svelte';
-	import { YamlSession } from '$lib/yaml/session.svelte';
-	import { errorMessage } from '$lib/client';
-	import { orkflowClient } from '$lib/clients/orkflows';
-	import { ValidationSeverity } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-	import { namespaceLabel } from '$lib/namespace';
+	import DiffView from '#lib/components/DiffView.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import YamlField from '#lib/yaml/YamlField.svelte';
+	import YamlProblems from '#lib/yaml/YamlProblems.svelte';
+	import { YamlSession } from '#lib/yaml/session.svelte.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { orkflowClient } from '#lib/clients/orkflows.ts';
+	import { ValidationSeverity } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
 
 	interface Props {
 		name: string;

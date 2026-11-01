@@ -171,7 +171,9 @@ CORS, and the bridge's same-origin default admits the UI with no
   else — `index.html`, `/_app/version.json`, the example gallery — is sent
   `Cache-Control: no-cache` with a strong `ETag`, so a browser revalidates it
   on every use (a `304` when it is unchanged) and picks up a new release at
-  its next page load. An error from the UI (a `404`, a `405`) is sent
+  its next page load. An open tab also reads `/_app/version.json` every hour
+  and whenever it regains focus; it reloads only as a rollout's failed
+  navigation does (below). An error from the UI (a `404`, a `405`) is sent
   `Cache-Control: no-store`, so no cache keeps the 404 of an asset asked for
   during a rollout. Content types come from a fixed table, never the host's
   MIME database.
@@ -182,9 +184,9 @@ CORS, and the bridge's same-origin default admits the UI with no
   example gallery's YAML files and the fonts are sent as they are.
 - **Headers.** Every UI response carries `X-Content-Type-Options: nosniff`.
   The page carries a strict `Content-Security-Policy`: the policy the UI's
-  build writes into the page (`ui/svelte.config.js`, `kit.csp`), which names
-  the SHA-256 hash of each inline script the page runs, opened with
-  `frame-ancestors 'none'`. It allows scripts, styles, fonts, images and
+  build writes into the page (`ui/vite.config.ts`, the `sveltekit` plugin's
+  `csp`), which names the SHA-256 hash of each inline script the page runs,
+  opened with `frame-ancestors 'none'`. It allows scripts, styles, fonts, images and
   connections (the Connect calls and the sockets) from the page's own origin,
   inline styles, `data:` images, and `eval`, for the YAML editor
   (SECURITY_MODEL.md says why); it allows no other inline script, no plugin

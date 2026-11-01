@@ -1,7 +1,7 @@
 <script lang="ts">
-	// One authored icon ($lib/icons.ts), drawn in currentColor and hidden from
+	// One authored icon (#lib/icons.ts), drawn in currentColor and hidden from
 	// assistive technology: the control it sits in carries the name.
-	import { ICONS, type IconName } from '$lib/icons';
+	import { ICONS, type IconName } from '#lib/icons.ts';
 
 	let { name, class: className = 'size-4' }: { name: IconName; class?: string } = $props();
 </script>

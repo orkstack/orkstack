@@ -1,11 +1,11 @@
 <script lang="ts">
 	// Appearance: follow the system, or choose light or dark. Three pressed
 	// buttons in one group; the choice is shared with the drawer and the
-	// palette through $lib/theme.svelte.ts.
+	// palette through #lib/theme.svelte.ts.
 	import Icon from './Icon.svelte';
-	import { appearance } from '$lib/theme.svelte';
-	import type { Theme } from '$lib/theme';
-	import type { IconName } from '$lib/icons';
+	import { appearance } from '#lib/theme.svelte.ts';
+	import type { Theme } from '#lib/theme.ts';
+	import type { IconName } from '#lib/icons.ts';
 
 	const choices: { theme: Theme; icon: IconName; label: string; testid: string }[] = [
 		{ theme: 'system', icon: 'monitor', label: 'Use system appearance', testid: 'theme-system' },

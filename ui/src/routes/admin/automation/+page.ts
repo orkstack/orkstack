@@ -1,4 +1,4 @@
-import { namespaceFrom } from '$lib/namespace';
+import { namespaceFrom } from '#lib/namespace.ts';
 import type { PageLoad } from './$types';
 
 // Automation RESPECTS the namespace switcher, as Pools does: a document

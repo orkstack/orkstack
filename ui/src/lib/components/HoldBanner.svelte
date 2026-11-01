@@ -7,8 +7,8 @@
 	// is refused by the same check (docs/UI_CLI_PARITY.md). The release
 	// command is the CLI's, so the fix is one copy away.
 	import CliEquivalent from './CliEquivalent.svelte';
-	import type { NamespaceHold } from '$lib/gen/orkstack/v1/namespace_pb';
-	import { fmtTimestamp } from '$lib/status';
+	import type { NamespaceHold } from '#lib/gen/orkstack/v1/namespace_pb.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 
 	interface Props {
 		namespace: string;

@@ -1,7 +1,7 @@
-import { errorMessage } from "$lib/client";
-import { namespaceClient } from "$lib/clients/namespaces";
-import type { Budget, NamespaceHold } from "$lib/gen/orkstack/v1/namespace_pb";
-import { namespaceFrom, namespaceLabel } from "$lib/namespace";
+import { errorMessage } from "#lib/client.ts";
+import { namespaceClient } from "#lib/clients/namespaces.ts";
+import type { Budget, NamespaceHold } from "#lib/gen/orkstack/v1/namespace_pb.ts";
+import { namespaceFrom, namespaceLabel } from "#lib/namespace.ts";
 import type { LayoutLoad } from "./$types";
 
 // The UI is a static single-page app the engine serves (internal/webui):

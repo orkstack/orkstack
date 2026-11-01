@@ -11,18 +11,18 @@
 	// is refused by the engine, and the refusal is shown in the dialog.
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { listHref } from '$lib/browsing';
-	import { errorMessage } from '$lib/client';
-	import { systemClient } from '$lib/clients/system';
-	import { FilterOperator, filterOf, type FieldFilter } from '$lib/listFilter';
-	import { ListReleasesRequestSchema, ReleaseRole, type ListReleasesResponse, type Release } from '$lib/gen/orkstack/v1/system_service_pb';
-	import { withNamespace } from '$lib/namespace';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { listHref } from '#lib/browsing.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { systemClient } from '#lib/clients/system.ts';
+	import { FilterOperator, filterOf, type FieldFilter } from '#lib/listFilter.ts';
+	import { ListReleasesRequestSchema, ReleaseRole, type ListReleasesResponse, type Release } from '#lib/gen/orkstack/v1/system_service_pb.ts';
+	import { withNamespace } from '#lib/namespace.ts';
 	import {
 		canPromote,
 		canRamp,
@@ -38,9 +38,9 @@
 		stateLabel,
 		validRampPercent,
 		versioningOffSentence
-	} from '$lib/releases';
-	import { shellQuote } from '$lib/runDetail';
-	import { fmtTimestamp } from '$lib/status';
+	} from '#lib/releases.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -67,7 +67,7 @@
 	// rows says nothing about whether one exists.
 	const filtered = $derived(data.applied.length > 0);
 	function applyFilters(filters: FieldFilter[]) {
-		void goto(listHref('/admin/releases', {}, { filter: filters }), { keepFocus: true, noScroll: true });
+		void goto(listHref('/admin/releases', {}, { filter: filters }), { reset: false });
 	}
 	const clearHref = listHref('/admin/releases', {});
 

@@ -9,16 +9,16 @@
 	// views patched from item events, the attempt timelines keyed convert[97],
 	// the live map — and this component draws it and reports what the reader
 	// chose.
-	import type { EachSpec } from '$lib/gen/orkstack/v1/orkflow_pb';
-	import type { TaskAttempt, TaskEach } from '$lib/gen/orkstack/v1/run_pb';
-	import type { LiveAttempt, RunArtifact } from '$lib/gen/orkstack/v1/run_service_pb';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { eachSummary, isCachedItem, itemAriaLabel, itemCli, itemLabel, itemStatusText, type ItemView } from '$lib/each';
+	import type { EachSpec } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
+	import type { TaskAttempt, TaskEach } from '#lib/gen/orkstack/v1/run_pb.ts';
+	import type { LiveAttempt, RunArtifact } from '#lib/gen/orkstack/v1/run_service_pb.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { eachSummary, isCachedItem, itemAriaLabel, itemCli, itemLabel, itemStatusText, type ItemView } from '#lib/each.ts';
 	import CacheBadge from './CacheBadge.svelte';
-	import { STATUS_CLASSES, fmtTimestamp, isTerminal } from '$lib/status';
-	import { attemptsSeen } from '$lib/attempts';
-	import { formatDuration } from '$lib/runDetail';
-	import { liveLine } from '$lib/live';
+	import { STATUS_CLASSES, fmtTimestamp, isTerminal } from '#lib/status.ts';
+	import { attemptsSeen } from '#lib/attempts.ts';
+	import { formatDuration } from '#lib/runDetail.ts';
+	import { liveLine } from '#lib/live.ts';
 	import AttemptTimeline from './AttemptTimeline.svelte';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import FailurePanel from './FailurePanel.svelte';

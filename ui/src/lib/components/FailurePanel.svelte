@@ -9,20 +9,20 @@
 	// the category says WHO can fix it, the code says WHAT rule was broken,
 	// and the message says which file or value broke it.
 	//
-	// What happened to the retries is one phrase ($lib/attempts retryPhrase),
+	// What happened to the retries is one phrase (#lib/attempts.ts retryPhrase),
 	// read off the failing task's tries rather than this error's own flag: a
 	// run's RUN_FAILED wrapper is never retryable itself, and printing its
 	// flag beside the task's "retries exhausted" told two stories.
-	import { FailureCategory } from '$lib/gen/orkstack/v1/common_pb';
-	import type { Error as OrkError } from '$lib/gen/orkstack/v1/common_pb';
+	import { FailureCategory } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import type { Error as OrkError } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import {
 		categoryTestid,
 		failureCategoryBlurb,
 		failureCategoryClasses,
 		failureCategoryLabel
-	} from '$lib/activity';
-	import { retryPhrase, type FailureTries } from '$lib/attempts';
-	import { plainFailure } from '$lib/failureText';
+	} from '#lib/activity.ts';
+	import { retryPhrase, type FailureTries } from '#lib/attempts.ts';
+	import { plainFailure } from '#lib/failureText.ts';
 
 	interface Props {
 		error: OrkError;

@@ -4,10 +4,10 @@
 	// words. It is read here, on mount and when "every version" changes, not
 	// in the page loader: the engine answers it with a scan of the namespace,
 	// which not every tab should pay for (docs/UI_CLI_PARITY.md "Interface compatibility").
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { errorMessage } from '$lib/client';
-	import { orkflowClient } from '$lib/clients/orkflows';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import { errorMessage } from '#lib/client.ts';
+	import { orkflowClient } from '#lib/clients/orkflows.ts';
 	import {
 		callerHref,
 		callerKindWord,
@@ -15,9 +15,9 @@
 		callersCommand,
 		callersFooter,
 		pinsLabel
-	} from '$lib/compat';
-	import { OrkflowCallerKind, type ListOrkflowCallersResponse } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-	import { namespaceLabel } from '$lib/namespace';
+	} from '#lib/compat.ts';
+	import { OrkflowCallerKind, type ListOrkflowCallersResponse } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
 
 	interface Props {
 		name: string;

@@ -1,18 +1,18 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import HoldBanner from '$lib/components/HoldBanner.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import Pagination from '$lib/components/Pagination.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { setTitleBlock } from '$lib/sheet.svelte';
-	import { listHref, pageStackKey, readPageStack, writePageStack } from '$lib/browsing';
-	import { fmtTimestamp } from '$lib/status';
-	import { namespaceLabel, withNamespace } from '$lib/namespace';
-	import { shellQuote } from '$lib/runDetail';
-	import type { FieldFilter } from '$lib/listFilter';
-	import { ListOrkflowsRequestSchema } from '$lib/gen/orkstack/v1/orkflow_service_pb';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import HoldBanner from '#lib/components/HoldBanner.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import Pagination from '#lib/components/Pagination.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { setTitleBlock } from '#lib/sheet.svelte.ts';
+	import { listHref, pageStackKey, readPageStack, writePageStack } from '#lib/browsing.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
+	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
+	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { ListOrkflowsRequestSchema } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -62,7 +62,7 @@
 	});
 	function applyFilters(filters: FieldFilter[]) {
 		writePageStack(stackKey, []);
-		void goto(href({ size: sizeDraft, cursor: '', page: '' }, { filter: filters }), { keepFocus: true, noScroll: true });
+		void goto(href({ size: sizeDraft, cursor: '', page: '' }, { filter: filters }), { reset: false });
 	}
 	const clearHref = $derived(href({ cursor: '', page: '' }, {}));
 	const command = $derived(['orkctl', '-n', shellQuote(namespaceLabel(data.namespace)), 'orkflow', 'list']);

@@ -48,7 +48,8 @@ declare module 'bun:test' {
 // vocabulary.test.ts walks the user-facing sources, and testidBaseline.test.ts
 // rewrites its fixture on request.
 declare module 'node:fs' {
-	export function readFileSync(path: string, encoding: 'utf8'): string;
+	/** A URL too: vite.config.ts reads src/app.html beside itself to hash its theme script. */
+	export function readFileSync(path: string | URL, encoding: 'utf8'): string;
 	/** Without an encoding: the file's bytes (e2e/build-hash.ts hashes them). */
 	export function readFileSync(path: string): Uint8Array;
 	export function readdirSync(path: string, options?: { recursive?: boolean }): string[];
@@ -88,10 +89,12 @@ declare module 'node:os' {
 
 // The hash e2e/build-hash.ts takes over the UI build's inputs; its test under
 // ui/test imports that module, so the one member it uses is declared here.
+// vite.config.ts takes the same hash, in base64, of app.html's theme script
+// for the content security policy.
 declare module 'node:crypto' {
 	export function createHash(algorithm: 'sha256'): {
-		update(data: string | Uint8Array): void;
-		digest(encoding: 'hex'): string;
+		update(data: string | Uint8Array): { digest(encoding: 'hex' | 'base64'): string };
+		digest(encoding: 'hex' | 'base64'): string;
 	};
 }
 
