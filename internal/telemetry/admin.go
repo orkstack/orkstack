@@ -48,16 +48,31 @@ var AdminListener = hostpolicy.Listener{
 	AllowedKey: "telemetry.admin_allowed_hosts",
 }
 
-// newAdminServer serves handler within the admin listener's bounds. Like
-// the API listener it sets no ReadTimeout and no WriteTimeout: a CPU profile
-// or a trace is written only once the seconds it was asked for have passed,
-// and either deadline would cut it.
-func newAdminServer(handler http.Handler) *http.Server {
+// adminBounds are the limits newAdminServer puts on a client. StartAdmin
+// serves within defaultAdminBounds; a test shrinks the two waits to watch a
+// connection be closed in a fraction of a second rather than in minutes.
+type adminBounds struct {
+	readHeaderTimeout, idleTimeout time.Duration
+	maxHeaderBytes                 int
+}
+
+// defaultAdminBounds are the bounds the admin listener runs with.
+var defaultAdminBounds = adminBounds{
+	readHeaderTimeout: adminReadHeaderTimeout,
+	idleTimeout:       adminIdleTimeout,
+	maxHeaderBytes:    adminMaxHeaderBytes,
+}
+
+// newAdminServer serves handler within bounds. Like the API listener it sets
+// no ReadTimeout and no WriteTimeout: a CPU profile or a trace is written
+// only once the seconds it was asked for have passed, and either deadline
+// would cut it.
+func newAdminServer(handler http.Handler, bounds adminBounds) *http.Server {
 	return &http.Server{
 		Handler:           handler,
-		ReadHeaderTimeout: adminReadHeaderTimeout,
-		IdleTimeout:       adminIdleTimeout,
-		MaxHeaderBytes:    adminMaxHeaderBytes,
+		ReadHeaderTimeout: bounds.readHeaderTimeout,
+		IdleTimeout:       bounds.idleTimeout,
+		MaxHeaderBytes:    bounds.maxHeaderBytes,
 	}
 }
 
@@ -115,6 +130,11 @@ func NewAdminMux(providers *Providers, cfg Config) *http.ServeMux {
 // only logged because ":0" resolves to an ephemeral port a caller (or a test)
 // needs back to reach the listener it just opened.
 func StartAdmin(cfg Config, providers *Providers, logger *slog.Logger) (addr string, stop func(context.Context) error, err error) {
+	return startAdmin(cfg, providers, logger, defaultAdminBounds)
+}
+
+// startAdmin is StartAdmin serving within bounds.
+func startAdmin(cfg Config, providers *Providers, logger *slog.Logger, bounds adminBounds) (addr string, stop func(context.Context) error, err error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -129,7 +149,7 @@ func StartAdmin(cfg Config, providers *Providers, logger *slog.Logger) (addr str
 	if err != nil {
 		return "", nil, fmt.Errorf("%s=%q: %w", AdminAddrVar, cfg.AdminAddr, err)
 	}
-	server := newAdminServer(hosts.Guard(NewAdminMux(providers, cfg), logger))
+	server := newAdminServer(hosts.Guard(NewAdminMux(providers, cfg), logger), bounds)
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Error("admin listener stopped", "addr", cfg.AdminAddr, "error", err)

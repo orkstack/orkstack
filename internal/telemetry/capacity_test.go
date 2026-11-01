@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
@@ -130,13 +131,38 @@ func TestCapacityMetrics_RecordWaitsAndRefusals(t *testing.T) {
 	}
 }
 
-// Disabled telemetry is a no-op that never fails the Orker.
+// Disabled telemetry is a no-op that never fails the Orker, and never reaches
+// the process: nil Providers register no callback, so the ledger is not read
+// for them (the gauges read it at collection), not even by a meter provider
+// installed process-wide that a careless fallback would find, and nothing
+// recorded reaches one.
 func TestCapacityMetrics_DisabledProvidersRecordNothing(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	global := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	previous := otel.GetMeterProvider()
+	otel.SetMeterProvider(global)
+	t.Cleanup(func() {
+		otel.SetMeterProvider(previous)
+		_ = global.Shutdown(context.Background())
+	})
+
 	m, err := NewCapacityMetrics(nil, nil)
 	if err != nil {
 		t.Fatalf("NewCapacityMetrics(nil): %v", err)
 	}
-	m.Watch("orker-a", func() orker.CapacityReading { return orker.CapacityReading{CapacityCPU: 1} })
+	reads := 0
+	m.Watch("orker-a", func() orker.CapacityReading {
+		reads++
+		return orker.CapacityReading{CapacityCPU: 1}
+	})
 	m.PollWaited(time.Second, orker.AdmissionBoundCapacity)
 	m.AdmissionRefused()
+
+	points := metricPoints(t, reader)
+	if reads != 0 {
+		t.Errorf("the ledger was read %d times for disabled telemetry, want none: a callback was registered", reads)
+	}
+	if len(points) != 0 {
+		t.Errorf("disabled telemetry reached the process-wide meter provider: %+v", points)
+	}
 }
