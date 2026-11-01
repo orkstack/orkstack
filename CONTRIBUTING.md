@@ -283,9 +283,9 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
-6. Update the docs the change makes false, and add the CHANGELOG.md
-   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1; "The
-   changelog", below). The
+6. Update the docs the change makes false, and, when the change may affect
+   the people who run or use OrkStack, add its CHANGELOG.md `[Unreleased]`
+   entry (AGENTS.md §11.1, step 7; "The changelog", below). The
    site's pages (`site/content/`) are short pages written for readers that
    cite the repository docs they summarise: update the page that describes a
    behaviour you change, and give a new doc under `docs/` a site page that
@@ -305,10 +305,20 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 
 ## The changelog
 
-CHANGELOG.md follows Keep a Changelog 1.1.0. A user-visible change adds its
-entry under `## [Unreleased]` in the same pull request, in the subsection of
-its kind (`### Added`, `### Changed`, `### Deprecated`, `### Removed`,
-`### Fixed` or `### Security`), and marks a breaking change **BREAKING**
+CHANGELOG.md follows Keep a Changelog 1.1.0 and is written for the people
+who run or use OrkStack. A change that cannot affect them gets no entry,
+however large: documentation edits; CI, workflows and the proof harness,
+unless the change alters what a release publishes; tests; refactors; internal
+tooling, such as the development stack (`make up`); and a dependency bump
+that cannot affect them. A change that may affect them (behaviour, the DSL,
+the CLI, the API and its error reasons, configuration, the activity contract,
+storage layout, what a release publishes and any security fix to it, a
+vulnerable dependency's bump among them even when they see nothing change, a
+dependency bump that changes what they see, a deprecation, a breaking change)
+adds an entry under `## [Unreleased]` in the same pull request, in the
+subsection of its kind (`### Added`, `### Changed`, `### Deprecated`,
+`### Removed`, `### Fixed` or `### Security`); the entry says what they must
+do about it, if anything, and a breaking change's entry is marked **BREAKING**
 (AGENTS.md §11.1, step 7). Write it for the people who read the release: at a
 release the `[Unreleased]` section becomes the version's own,
 `## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
@@ -349,14 +359,15 @@ A change is done when it is on `main` and a full proof passed on the exact
 tree `main` then points at — the `proof` check of the pull request (or merge
 group) that landed it, or a local `make proof` — and when every reference doc
 that describes what changed says the new thing, with a CHANGELOG.md
-`[Unreleased]` entry for a user-visible change. Done is judged by the merge
-gate: the few scale tests listed in `scripts/proof-nightly-tests.txt`, and
-the specs listed in `scripts/proof-nightly-specs.txt`, run nightly and before
-a release. A failure there is a regression on `main`: fixing it, or reverting
-what broke it, is the next work, but it holds no other merge, and no release
-is tagged until the pre-release proof, which runs them all, passes;
-`release.yml` also refuses a commit whose own nightly did not pass. A feature
-proof means "ready for the merge proof", never "done". No proof, not done.
+`[Unreleased]` entry for a change that may affect the people who run or use
+OrkStack. Done is judged by the merge gate: the few scale tests listed in
+`scripts/proof-nightly-tests.txt`, and the specs listed in
+`scripts/proof-nightly-specs.txt`, run nightly and before a release. A
+failure there is a regression on `main`: fixing it, or reverting what broke
+it, is the next work, but it holds no other merge, and no release is tagged
+until the pre-release proof, which runs them all, passes; `release.yml` also
+refuses a commit whose own nightly did not pass. A feature proof means "ready
+for the merge proof", never "done". No proof, not done.
 
 ## Style
 

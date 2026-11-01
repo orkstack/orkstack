@@ -4,7 +4,7 @@ This guide is the procedure for moving OrkStack forward and back. It starts with
 
 ## Breaking changes
 
-- Every breaking change is listed in [CHANGELOG.md](../CHANGELOG.md), in the **Changed** or **Removed** section, and marked **BREAKING**. The changelog follows the Keep a Changelog 1.1.0 format named in its header.
+- Every breaking change is listed in [CHANGELOG.md](../CHANGELOG.md), in the section of its kind (most often **Changed** or **Removed**), and marked **BREAKING**. The changelog follows the Keep a Changelog 1.1.0 format named in its header.
 - OrkStack makes no promise of deprecation windows beyond that listing.
 - Releases follow Semantic Versioning from the first, 0.1.0 ([CHANGELOG.md](../CHANGELOG.md), header). Its section says only "First release.": there is no earlier release to upgrade from, so it lists no breaking change. Every release is on the [releases page](https://github.com/orkstack/orkstack/releases).
 

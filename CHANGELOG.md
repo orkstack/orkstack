@@ -5,9 +5,11 @@ All notable changes to OrkStack are recorded here. The format follows
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each
 breaking change is marked **BREAKING**.
 
-A change lands with its entry under `[Unreleased]`. At a release that section
-becomes the version's own, and its text is the release's notes on GitHub,
-word for word.
+It is written for the people who run or use OrkStack: a change that may
+affect them lands with its entry under `[Unreleased]`, saying what they must
+do about it, if anything, and a change that cannot affect them, such as a
+documentation or test change, has none. At a release that section becomes the
+version's own, and its text is the release's notes on GitHub, word for word.
 
 ## [Unreleased]
 

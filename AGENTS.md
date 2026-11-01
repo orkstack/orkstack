@@ -1060,15 +1060,30 @@ Every code change follows this order:
    affected integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
-7. Documentation is part of the change. A change that alters behaviour users
-   or operators see — DSL keys and rules, CLI commands and flags, API fields,
-   error reasons, configuration, the activity contract, storage layout, proof
-   and CI behaviour — updates the reference doc that describes it, and
-   deletes the text it makes false, in the same change. A user-visible change
-   adds its entry under CHANGELOG.md's `[Unreleased]` section (Keep a
-   Changelog 1.1.0), a breaking change marked **BREAKING**. Specs and design
-   documents still never go in the repository. A change is not done while a
-   doc describes the old behaviour.
+7. Documentation is part of the change. A change that alters behaviour users,
+   operators or contributors see — DSL keys and rules, CLI commands and
+   flags, API fields, error reasons, configuration, the activity contract,
+   storage layout, proof and CI behaviour — updates the reference doc that
+   describes it, and deletes the text it makes false, in the same change.
+   Specs and design documents still never go in the repository. A change is
+   not done while a doc describes the old behaviour.
+
+   CHANGELOG.md is for the people who run or use OrkStack, and its entries
+   name only changes that may affect them: behaviour, the DSL, the CLI, the
+   API and its error reasons, configuration, the activity contract, storage
+   layout, what a release publishes and any security fix to it, a
+   deprecation, a breaking change. Such a change adds an entry under
+   CHANGELOG.md's `[Unreleased]` section (Keep a Changelog 1.1.0) that says
+   what they must do about it, if anything; a breaking change's entry is
+   marked **BREAKING**. A change that cannot affect them gets no entry,
+   however large: documentation edits; CI, workflows and the proof harness,
+   unless the change alters what a release publishes; tests; refactors;
+   internal tooling, such as the development stack (`make up`); and a
+   dependency bump that cannot affect them. A bump that changes what they
+   see, such as an activity image's tools, gets one, and so does every
+   security fix to what a release publishes, a vulnerable dependency's bump
+   among them, even when they see nothing change. A change with no entry
+   still updates the reference doc that describes it.
 8. Optionally, check the change's evidence with
    `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'` (§11.2). It is a
    scoped check on the branch and gates nothing (decided 2026-10-28): the
@@ -1208,10 +1223,10 @@ full proof passed on the exact tree `main` then points at (§11.3) — the
 `make proof`, or a CI full proof of that exact tree downloaded and passed to
 `make merge-check PROOF=` (§11.3(b)) — and when every reference doc that
 describes what changed says the new thing, with a CHANGELOG.md `[Unreleased]`
-entry for a user-visible change. Done is judged by the merge gate; a deferred
-test's regression is a regression on `main`, found by the nightly or the
-pre-release proof (§11). A feature proof means "ready for the merge proof",
-never "done".
+entry for a change that may affect the people who run or use OrkStack
+(§11.1, step 7). Done is judged by the merge gate; a deferred test's
+regression is a regression on `main`, found by the nightly or the pre-release
+proof (§11). A feature proof means "ready for the merge proof", never "done".
 
 **The four tiers.** A **full proof** is the merge gate. A **feature proof**
 is an optional, scoped check of a change on its branch and never merge

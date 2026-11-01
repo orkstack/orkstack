@@ -45,11 +45,17 @@ its seeds, and `go test -list '^Fuzz' ./...` lists them all (see "Fuzzing" in
 
 ## Record the change
 
-A change people can see adds its entry under `[Unreleased]` in the
+A change that may affect users adds its entry under `[Unreleased]` in the
 [changelog](/docs/reference/changelog/), with a breaking one marked
 **BREAKING**. At a release that section becomes the version's own, and its
 text is the release's notes on GitHub, word for word (see "The changelog" in
 [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).
+
+The entry says what users must do about the change, if anything, and every
+security fix to what a release publishes has one, a vulnerable dependency's
+bump among them. A change that cannot affect users gets none: a documentation,
+test or refactoring change, internal tooling, a dependency bump that cannot
+affect them, or a CI change that leaves what a release publishes as it was.
 
 ## See also
 

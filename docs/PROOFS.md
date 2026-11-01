@@ -1549,13 +1549,16 @@ make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
 ```
 
 **Write the release notes.** A release's notes on its GitHub release page
-are its CHANGELOG.md section, word for word. Each user-visible change lands
-with its entry under `## [Unreleased]` (AGENTS.md §11.1, step 7; CONTRIBUTING.md,
-"The changelog"). Before a release is dispatched, a change to `main`, proved
-and merged like any other, cuts the version's section: it renames
-`## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, the version without its `v`
-and the day the section is cut, puts an empty `## [Unreleased]` above it, and
-edits the entries into what the release page should say, under Keep a
+are its CHANGELOG.md section, word for word. Each change that may affect the
+people who run or use OrkStack lands with its entry under `## [Unreleased]`
+(AGENTS.md §11.1, step 7; CONTRIBUTING.md, "The changelog"), and no other
+change has one; the cut drops any that slipped in. Before a release is
+dispatched, a change to `main`, proved and merged like any other, cuts the
+version's section: it renames `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`,
+the version without its `v` and the day the section is cut, puts an empty
+`## [Unreleased]` above it, drops any entry for a change that cannot affect
+those people (a security fix to what a release publishes always can), and
+edits the rest into what the release page should say, under Keep a
 Changelog's `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
 `### Fixed` and `### Security`, each breaking change marked **BREAKING**.
 Nothing writes the date at tag time: the tag names a commit a proof passed
