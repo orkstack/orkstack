@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -249,13 +250,29 @@ func (r terminalReader) PublishedTerminalEvent(context.Context, string) (bool, e
 	return r.published, r.err
 }
 
+// locateFailsAfterFirst is a router whose first Locate answers and every
+// later one fails: the export finds the run, and then cannot locate it again
+// to ask whether it published its terminal event.
+type locateFailsAfterFirst struct {
+	engine.NamespaceRouter
+	calls atomic.Int32
+}
+
+func (r *locateFailsAfterFirst) Locate(ctx context.Context, runID string) (engine.Binding, error) {
+	if r.calls.Add(1) > 1 {
+		return engine.Binding{}, errors.New("cluster unreachable")
+	}
+	return r.NamespaceRouter.Locate(ctx, runID)
+}
+
 // TestEvidenceExport_ARunNeverArchivedSaysSo: a finished run with no archive
 // body is "not yet archived; retry shortly" only while an archive can still
 // come. A run whose history shows it published no terminal event — its
 // ending's snapshot refused, or terminated — never gets one, and the export
 // says that instead of asking for a retry that cannot help. A run that did
-// publish it, and a history that cannot be read, still answer retry; the
-// unreadable history is logged at warn with the run and the error.
+// publish it, a history that cannot be read and a run that cannot be located
+// again still answer retry; the last two are logged at warn with the run and
+// the error.
 func TestEvidenceExport_ARunNeverArchivedSaysSo(t *testing.T) {
 	const never = `run "ork-never" has no archive and will never have one: it published no terminal event`
 	const retry = `run "ork-never" is finished but not yet archived; retry shortly`
@@ -263,20 +280,30 @@ func TestEvidenceExport_ARunNeverArchivedSaysSo(t *testing.T) {
 		name      string
 		published bool
 		err       error
-		want      string
-		// logged is what the warn log must say, or "" for no warn.
-		logged string
+		// locateFails is whether the run cannot be located a second time.
+		locateFails bool
+		want        string
+		// logged is what the warn log must say, or "" for no warn; cause is
+		// the error it must carry.
+		logged, cause string
 	}{
-		{"it published no terminal event", false, nil, never, ""},
-		{"it published its terminal event", true, nil, retry, ""},
-		{"its history cannot be read", false, errors.New("history unavailable"), retry,
-			"could not read whether a run with no archive published its terminal event"},
+		{"it published no terminal event", false, nil, false, never, "", ""},
+		{"it published its terminal event", true, nil, false, retry, "", ""},
+		{"its history cannot be read", false, errors.New("history unavailable"), false, retry,
+			"could not read whether a run with no archive published its terminal event", "history unavailable"},
+		{"it cannot be located again", false, nil, true, retry,
+			"could not locate a run with no archive", "cluster unreachable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var logs bytes.Buffer
+			var router *locateFailsAfterFirst
 			f := newEvidenceFixture(t, withConfig(func(cfg *api.Config) {
 				cfg.Reader = terminalReader{cfg.Reader.(*fakeReader), tc.published, tc.err}
 				cfg.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+				if tc.locateFails {
+					router = &locateFailsAfterFirst{NamespaceRouter: engine.NewSingleRouter(engine.Binding{Reader: cfg.Reader})}
+					cfg.Router = router
+				}
 			}))
 			f.reader.setRun(&orkstackv1.Run{Id: "ork-never", OrkflowName: "evidence", Status: orkstackv1.Status_STATUS_FAILED})
 			r := f.collectEvidence(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-never"})
@@ -289,9 +316,14 @@ func TestEvidenceExport_ARunNeverArchivedSaysSo(t *testing.T) {
 			switch logged := logs.String(); {
 			case tc.logged == "" && logged != "":
 				t.Fatalf("export logged %s, want nothing at warn", logged)
-			case tc.logged != "" && (!strings.Contains(logged, tc.logged) || !strings.Contains(logged, `"run_id":"ork-never"`) ||
-				!strings.Contains(logged, `"error":"history unavailable"`)):
-				t.Fatalf("export logged %q, want a warn saying %q with the run id and the error", logged, tc.logged)
+			case tc.logged != "" && (!strings.Contains(logged, `"level":"WARN"`) || !strings.Contains(logged, tc.logged) ||
+				!strings.Contains(logged, `"run_id":"ork-never"`) || !strings.Contains(logged, tc.cause)):
+				t.Fatalf("export logged %q, want a warn saying %q with the run id and %q", logged, tc.logged, tc.cause)
+			}
+			// The second Locate is neverArchived's: without it the warn
+			// above could not be the one under test.
+			if router != nil && router.calls.Load() < 2 {
+				t.Fatalf("the router was asked %d times, want the export to locate the run again", router.calls.Load())
 			}
 		})
 	}

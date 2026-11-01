@@ -2283,16 +2283,20 @@ const maxCloseReason = 123
 // hold every range, the closing clause goes first; then each cause keeps its
 // first range and counts the rest; and last, for ranges too long to name
 // beside both causes, each cause counts its ranges. Every form names each
-// cause, and the last fits the frame for any count a slice can hold.
+// cause, and the last fits the frame for any count a slice can hold. A tier
+// is built only when the one before it does not fit.
 func (e *streamGapError) closeReason() string {
+	if len(e.gaps) == 0 {
+		return "the stream of this run ended at a gap it could not name"
+	}
 	every := strings.Join(e.gapClauses("this run", false), "; ")
-	for _, reason := range []string{
-		every + "; its outcome and other events are intact",
-		every,
-		e.firstRangesReason(),
+	for _, reason := range []func() string{
+		func() string { return every + "; its outcome and other events are intact" },
+		func() string { return every },
+		e.firstRangesReason,
 	} {
-		if len(reason) <= maxCloseReason {
-			return reason
+		if r := reason(); len(r) <= maxCloseReason {
+			return r
 		}
 	}
 	return e.countedReason()
@@ -2924,8 +2928,9 @@ func (s *Service) replayArchivedEvents(
 	if err != nil {
 		return err
 	}
-	// Every event below the first lost range is sent, then the loss is the
-	// stream's error: a reader never mistakes a gapped stream for a whole one.
+	// Every event below the first gap is sent, then the gap — lost or never
+	// published — is the stream's error: a reader never mistakes a gapped
+	// stream for a whole one.
 	for _, event := range archived {
 		if err := send(event); err != nil {
 			return err

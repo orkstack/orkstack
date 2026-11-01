@@ -12,7 +12,8 @@ import (
 // socket closes with at a gap fits a close frame (123 bytes, valid UTF-8)
 // and names the cause of every gap it reached, whatever the number of
 // ranges, their sizes and their mix: the closing clause goes first, then
-// every range but the first of each cause, then the ranges themselves.
+// every range but the first of each cause, then the ranges themselves. An
+// error with no gap at all still closes with a sentence.
 func TestStreamGapError_CloseReasonNamesEveryCauseWithinTheFrame(t *testing.T) {
 	lost := func(first, last int64) engine.EventGap {
 		return engine.EventGap{First: first, Last: last, Reason: "segment object missing"}
@@ -49,6 +50,7 @@ func TestStreamGapError_CloseReasonNamesEveryCauseWithinTheFrame(t *testing.T) {
 			"events 1201–2400 and 1 more range of this run were lost from object storage, and 5000–5000 were never published", 0},
 		{"both causes, ranges too long to name", []engine.EventGap{unpublished(1, big-1), lost(big, 2*big-1)},
 			"events of this run in 1 range were lost from object storage, in 1 range never published", 0},
+		{"no gaps", nil, "the stream of this run ended at a gap it could not name", 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := (&streamGapError{runID: "ork-gap", gaps: tc.gaps}).closeReason()

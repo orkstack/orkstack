@@ -191,7 +191,7 @@ func MarshalRunArchive(run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...
 }
 
 // UnmarshalRunArchiveGaps returns the gap lines of an archive body, in the
-// order they were written; nil for a body that lost nothing.
+// order they were written; nil for a body with no gap in its events.
 func UnmarshalRunArchiveGaps(body []byte) ([]EventGap, error) {
 	var gaps []EventGap
 	for number, raw := range bytes.Split(body, []byte("\n")) {
