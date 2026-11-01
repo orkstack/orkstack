@@ -656,7 +656,7 @@ message DescribeOrkerResult {
   string orker_id = 1;
   string build_id = 2;
   string pool = 3;
-  string runtime_name = 4;      // "docker"
+  string runtime_name = 4;      // the engine the Orker drives: "docker" or "podman"
   string runtime_version = 5;
   string security_profile = 6;  // the profile id the Orker enforces (§9.2)
   // max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs

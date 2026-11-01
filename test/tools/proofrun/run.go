@@ -1618,3 +1618,6 @@ func readJSON(path string, v any) error {
 
 // stdout is where the runners report; tests replace it.
 var stdout io.Writer = os.Stdout
+
+// stdin is what a subcommand that filters reads (job-log); tests replace it.
+var stdin io.Reader = os.Stdin

@@ -3,13 +3,17 @@ package orker
 import (
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/quantity"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // Network modes. Exactly two exist, and named Orker-defined profiles are
@@ -108,7 +112,7 @@ type SecurityPolicy struct {
 	// SecretAllow is the floor of SecretRef.source values this Orker
 	// resolves, as scheme:pattern entries in the grammar
 	// internal/dsl.ValidSecretPattern states. Empty means every source of an
-	// allowed scheme, which is what every Orker resolves today. It is the
+	// allowed scheme but the Orker's own, which no floor admits. It is the
 	// operator's half of the policy Namespace.allowed_secrets is the tenant's
 	// half of, and it composes with that list by intersection: a source must
 	// pass both, so a namespace can only narrow what its Orkers permit. It is
@@ -116,6 +120,20 @@ type SecurityPolicy struct {
 	// is the security boundary (AGENTS.md §2.3) and trusts no caller to have
 	// checked first.
 	SecretAllow []string
+	// own are the files and directories this process's own settings name —
+	// its work root, its configuration and the files that read, its
+	// credential files — beside the fixed ones every Orker holds (ownFiles),
+	// each resolved by name once, when the policy took it (WithOwnPaths), and
+	// looked at as it is whenever a source is judged (ownNow). They, and
+	// everything beneath them, are the Orker's own: no floor admits one as a
+	// task's source, empty or not (AllowsSecretSource).
+	// SecurityPolicyFromEnv adds what the environment names; a caller adds
+	// what only it knows (WithWorkRoot, cmd/orker's configuration file).
+	own []ownRoot
+	// ownVars are environment variables this process's own settings name —
+	// a telemetry sink header's env: source — beside the fixed names every
+	// Orker holds (ownEnv). They are the Orker's own as own paths are.
+	ownVars []OwnVar
 }
 
 // DefaultSecurityPolicy returns the policy an Orker enforces with no operator
@@ -183,7 +201,7 @@ func SecurityPolicyFromEnv() SecurityPolicy {
 		}
 		policy.SecretAllow = allow
 	}
-	return policy
+	return policy.WithOwnPaths(ownPathsFromEnv(os.Getenv)...)
 }
 
 func positivePolicyInt(key, raw string) (int64, error) {
@@ -220,14 +238,542 @@ func (p SecurityPolicy) AllowsSecretScheme(scheme string) bool {
 	return false
 }
 
-// AllowsSecretSource reports whether this Orker's floor permits a source:
-// nil when SecretAllow is empty or the source matches, otherwise the
-// *dsl.SecretSourceRefusal for the caller to wrap with its coordinates.
+// AllowsSecretSource reports whether this Orker's floor permits a source,
+// whatever SecretAllow says: a *dsl.SecretSourceRefusal when a file source is
+// not a plain absolute path or is longer than the kernel opens
+// (dsl.CheckSecretPath), an *OwnSourceRefusal when the source is one of the
+// Orker's own; otherwise nil when SecretAllow is empty or the source matches
+// it, and the *dsl.SecretSourceRefusal when it does not. The caller wraps any
+// of them with its coordinates.
 func (p SecurityPolicy) AllowsSecretSource(source string) error {
+	// A file is read by its name. A name with a "..", "." or empty segment, or
+	// a relative one, would be normalized by the kernel after it follows a
+	// link, so the file read need not be the file named and no check of the
+	// name would hold: it is refused, floor or no floor, as a floor refuses it.
+	// A name longer than the kernel opens is refused too, before anything
+	// looks at the file system for it.
+	if err := dsl.CheckSecretPath(source); err != nil {
+		return err
+	}
+	if refusal := p.ownSource(source); refusal != nil {
+		return refusal
+	}
 	if len(p.SecretAllow) == 0 {
 		return nil
 	}
 	return dsl.CheckSecretSource(p.SecretAllow, source)
+}
+
+// The Orker's own sources.
+//
+// A task's secret names a source the Orker reads from its OWN environment
+// and filesystem. Part of what is there is the Orker's own: the settings it
+// was started with, the credentials it and the container CLI it drives use,
+// its process, and the files its configuration names. None of it is a
+// task's, so the floor never admits any of it — not when SecretAllow is
+// empty, and not when an entry would match it. The exclusion is absolute,
+// with no entry that re-admits one: a pattern written for convenience
+// ("env:*") must not hand a task the Orker's credentials, and an operator who
+// means a task to hold such a value supplies it under a source of the task's
+// own, which is what supplying a workload secret explicitly means (AGENTS.md
+// §2.3).
+//
+// It bounds names, as the floor does, and reads no value. A file: source is
+// a plain absolute path of at most PATH_MAX bytes (dsl.CheckSecretPath),
+// followed as the kernel follows it to open it, and it is the Orker's own
+// when its name, a directory its way passes through or the file it ends at
+// is one of the Orker's own, by name or as the file system holds it at that
+// moment (reachesOwn). So a symbolic link does not reach an own file under
+// another name, a Kubernetes mount whose links an update swaps after boot
+// does not either, and a hard link to an own file is that file. What the way
+// there cannot show is out of this check's reach: a file beneath an own
+// directory that a bind mount or a hard link shows under another name, and a
+// link swapped between the check and the read. Each needs write access
+// outside the task's workspace, which no task has (AGENTS.md §6 forbids host
+// mounts).
+
+// OwnPath is a file or directory of the Orker's own: it and everything
+// beneath it. Why says what it is in the boot refusal of a floor entry that
+// admits only it; a task's refusal says only that the source is one of the
+// Orker's files (ownFileLabel).
+type OwnPath struct {
+	Path string
+	Why  string
+}
+
+// OwnVar is an environment variable of the Orker's own, by its exact name.
+// Why names it in the boot refusal of a floor entry that admits only it; a
+// task's refusal says only that the source is one of the Orker's variables
+// (ownVarLabel).
+type OwnVar struct {
+	Name string
+	Why  string
+}
+
+// ownFileLabel and ownVarLabel are what a task's refusal says of every file
+// and every variable of the Orker's own: one label for each scheme, never
+// which file or variable it is, which rule or setting made it the Orker's,
+// nor where a link led. A task that tries names still learns which are the
+// Orker's own, since those are refused; what a refusal never tells it is
+// which rule, setting or path made one so.
+const (
+	ownFileLabel = "one of its files"
+	ownVarLabel  = "one of its variables"
+)
+
+// ownRoot is an OwnPath as the policy compares it. By name: its name made
+// absolute and cleaned, and where that name led as the kernel follows it
+// (resolvePath), both worked out once, when the policy took it. As it is:
+// opened, its name made absolute as a read of it opens it, never cleaned,
+// which each judgement of a source looks at afresh (ownNow).
+type ownRoot struct {
+	OwnPath
+	opened, named, resolved string
+}
+
+// newOwnRoot resolves own: a relative path from this process's working
+// directory, as a read of it would open it.
+func newOwnRoot(own OwnPath) (ownRoot, error) {
+	raw := own.Path
+	if !filepath.IsAbs(raw) {
+		wd, err := os.Getwd()
+		if err != nil {
+			return ownRoot{}, fmt.Errorf("%s, %q, is a relative path, and the working directory it is relative to "+
+				"cannot be read: %w", own.Why, raw, err)
+		}
+		raw = wd + "/" + raw
+	}
+	return ownRoot{OwnPath: own, opened: raw, named: filepath.Clean(raw), resolved: resolvePath(raw)}, nil
+}
+
+// WithOwnPaths returns the policy with paths among the Orker's own, each
+// resolved now for the comparison by name. What each one is — the file or
+// directory its name leads to — is looked at again whenever a source is
+// judged, so a link an operator or Kubernetes swaps at one of these names
+// later is seen at once. An empty path names nothing and is skipped; a
+// relative one that cannot be placed is an error Validate reports. The
+// caller's policy is not changed.
+func (p SecurityPolicy) WithOwnPaths(paths ...OwnPath) SecurityPolicy {
+	own := append([]ownRoot(nil), p.own...)
+	for _, path := range paths {
+		if path.Path == "" {
+			continue
+		}
+		root, err := newOwnRoot(path)
+		if err != nil {
+			p.configErr = errors.Join(p.configErr, err)
+			continue
+		}
+		own = append(own, root)
+	}
+	p.own = own
+	return p
+}
+
+// WithOwnVars returns the policy with vars among the Orker's own variables.
+// An empty name names nothing and is skipped. The caller's policy is not
+// changed.
+func (p SecurityPolicy) WithOwnVars(vars ...OwnVar) SecurityPolicy {
+	own := append([]OwnVar(nil), p.ownVars...)
+	for _, v := range vars {
+		if v.Name != "" {
+			own = append(own, v)
+		}
+	}
+	p.ownVars = own
+	return p
+}
+
+// ownName is an environment variable of the Orker's own: an exact name, or
+// a prefix when it ends in "*".
+type ownName struct {
+	pattern string
+	why     string
+}
+
+// ownEnv is the Orker's own environment, OrkStack's half; runtimeOwnEnv
+// (runtime_docker.go) is the container CLI's, its credential helpers' cloud
+// credentials among them.
+var ownEnv = []ownName{
+	// Every OrkStack setting, the object store's keys among them.
+	{"ORK_*", "its OrkStack settings, ORK_*"},
+	// The telemetry exporters', whose headers carry a collector's
+	// credentials.
+	{"OTEL_*", "its telemetry settings, OTEL_*"},
+	// The proxies its HTTP clients and the container CLI dial through; a
+	// proxy URL may carry a user and a password. NO_PROXY carries neither.
+	{"HTTP_PROXY", "its proxy settings"},
+	{"HTTPS_PROXY", "its proxy settings"},
+	{"ALL_PROXY", "its proxy settings"},
+	{"http_proxy", "its proxy settings"},
+	{"https_proxy", "its proxy settings"},
+	{"all_proxy", "its proxy settings"},
+}
+
+// ownFiles are the paths every Orker holds as its own, wherever it runs,
+// resolved once (fixedOwnRoots).
+var ownFiles = []OwnPath{
+	// Its environment, memory, descriptors and root, and every other
+	// process's that the host or the pod shows it.
+	{Path: "/proc", Why: "its process, /proc"},
+	// /dev/fd, /dev/stdin and the rest are its own descriptors through
+	// /proc/self/fd, and a device is never a secret: /dev/zero would be
+	// read without end.
+	{Path: "/dev", Why: "its devices, /dev"},
+	// Where Kubernetes mounts the pod's service-account and projected
+	// tokens (IRSA, EKS Pod Identity, workload identity), and Docker and
+	// Compose the container's secrets: the identity of the Orker's own pod
+	// or container. A task's secrets belong in a directory of their own
+	// that the floor names, as the Kubernetes bases' task-secrets volume.
+	{Path: "/run/secrets", Why: "its container's credentials, /run/secrets"},
+	{Path: "/var/run/secrets", Why: "its container's credentials, /var/run/secrets"},
+}
+
+// fixedOwnRoots is ownFiles, resolved the first time a source is judged.
+// Every path in it is absolute, so none fails to place.
+var fixedOwnRoots = sync.OnceValue(func() []ownRoot {
+	return DefaultSecurityPolicy().WithOwnPaths(ownFiles...).own
+})
+
+// ownPathsFromEnv are the files this process's own settings name as a
+// credential or as its own data, and the container CLI's (runtimeOwnPaths).
+// What only the caller knows — the work root, the configuration file — the
+// caller adds (WithWorkRoot, cmd/orker).
+func ownPathsFromEnv(getenv func(string) string) []OwnPath {
+	var paths []OwnPath
+	add := func(path, why string) {
+		if path != "" {
+			paths = append(paths, OwnPath{Path: path, Why: why})
+		}
+	}
+	// The registry credentials signature verification reads: this binary's,
+	// and the engine's, which `orkctl activity test` reads too.
+	add(getenv(RegistryAuthFileVar), "its registry credentials, "+RegistryAuthFileVar)
+	add(getenv("ORK_REGISTRY_AUTH_FILE"), "its registry credentials, ORK_REGISTRY_AUTH_FILE")
+	// The OTLP exporters' TLS files, a client key among them.
+	for _, signal := range []string{"", "TRACES_", "METRICS_", "LOGS_"} {
+		for _, kind := range []string{"CERTIFICATE", "CLIENT_CERTIFICATE", "CLIENT_KEY"} {
+			add(getenv("OTEL_EXPORTER_OTLP_"+signal+kind), "its telemetry TLS files, OTEL_EXPORTER_OTLP_*")
+		}
+	}
+	// The local artifact store holds every run's artifacts, commits and
+	// logs, of every namespace.
+	backend, dir := getenv("ORK_ARTIFACT_BACKEND"), getenv("ORK_ARTIFACT_DIR")
+	if backend == "" {
+		backend = artifacts.DefaultBackend
+	}
+	if dir == "" {
+		dir = artifacts.DefaultLocalDir
+	}
+	if backend == artifacts.BackendLocal {
+		add(dir, "its artifact store, ORK_ARTIFACT_DIR")
+	}
+	return append(paths, runtimeOwnPaths(getenv)...)
+}
+
+// WithWorkRoot returns the policy with root, this Orker's work root — the
+// temp dir when root is empty, as makeAttemptDir falls back to it — among
+// its own paths: every attempt's workspace lives there, another task's
+// staged secrets, inputs and outputs and every pin's shared directory among
+// them. The caller's policy is not changed.
+func (p SecurityPolicy) WithWorkRoot(root string) SecurityPolicy {
+	if root == "" {
+		root = os.TempDir()
+	}
+	return p.WithOwnPaths(OwnPath{Path: root, Why: "its work root, " + WorkRootVar})
+}
+
+// OwnSourceRefusal is why a source was refused as one of the Orker's own.
+type OwnSourceRefusal struct {
+	Source string
+	// Why is the label of what the source is: ownVarLabel for every
+	// variable, ownFileLabel for every file.
+	Why string
+}
+
+// Error renders exactly one of:
+//
+//	"env:ORK_S3_SECRET_KEY" is this orker's own (one of its variables), which no secret floor admits
+//	"file:/proc/self/environ" is this orker's own (one of its files), which no secret floor admits
+//
+// It names the source a task wrote, quoted as dsl.QuoteSecretSource quotes
+// it, and one label per scheme: never which of the Orker's own it is.
+func (r *OwnSourceRefusal) Error() string {
+	return fmt.Sprintf("%s is this orker's own (%s), which no secret floor admits", dsl.QuoteSecretSource(r.Source), r.Why)
+}
+
+// ownSource reports which of the Orker's own sources source is, or nil.
+func (p SecurityPolicy) ownSource(source string) *OwnSourceRefusal {
+	scheme, locator := SplitSecretSource(source)
+	switch scheme {
+	case "env":
+		if p.ownVar(locator, false) != "" {
+			return &OwnSourceRefusal{Source: source, Why: ownVarLabel}
+		}
+	case "file":
+		if p.reachesOwn(locator) {
+			return &OwnSourceRefusal{Source: source, Why: ownFileLabel}
+		}
+	}
+	return nil
+}
+
+// ownVar reports why name is a variable of the Orker's own, or "". With
+// prefix set, name is the literal head of a floor entry's pattern, and only
+// an own prefix that head begins with holds every name the entry matches.
+func (p SecurityPolicy) ownVar(name string, prefix bool) string {
+	for _, names := range [][]ownName{ownEnv, runtimeOwnEnv} {
+		for _, own := range names {
+			if head, isPrefix := strings.CutSuffix(own.pattern, "*"); isPrefix && strings.HasPrefix(name, head) {
+				return own.why
+			}
+			if !prefix && name == own.pattern {
+				return own.why
+			}
+		}
+	}
+	for _, own := range p.ownVars {
+		if !prefix && name == own.Name {
+			return own.Why
+		}
+	}
+	return ""
+}
+
+// ownNamed reports which own path holds path, an absolute path, by its name
+// alone. A path that is not absolute is no own path's; AllowsSecretSource
+// refuses it before it gets here.
+func (p SecurityPolicy) ownNamed(path string) (ownRoot, bool) {
+	if !filepath.IsAbs(path) {
+		return ownRoot{}, false
+	}
+	return p.holds(filepath.Clean(path))
+}
+
+// reachesOwn reports whether reading path, an absolute path, would reach the
+// Orker's own: whether its name lies within an own path, or the way the
+// kernel takes to open it (walkPath) looks a name up in, or ends at, one of
+// the Orker's own — by name, or as the file system holds that own path at
+// this moment (ownNow), which is what makes a Kubernetes mount whose links
+// an update has swapped since boot, and a hard link to an own file, the
+// Orker's own too. A way that passes through an own directory is the
+// Orker's own even when it leaves it again by a link's "..": no lookup in
+// one is judged by what it reads.
+//
+// An update may swap a mount while the walk runs, so a walk is judged
+// between two looks at the own paths (walkOwn), and a walk cut short at a
+// name it could not look at — the directory an update is removing, perhaps
+// — walks once more, the look after the first walk serving as the look
+// before the second: at most three looks in all. What it ends at then is
+// judged by its name, so a link that leads nowhere yet is seen by where it
+// would lead. A path whose links go on past maxLinks is one no read opens,
+// and is left to the read to refuse.
+func (p SecurityPolicy) reachesOwn(path string) bool {
+	if _, ok := p.ownNamed(path); ok {
+		return true
+	}
+	before := p.ownNow()
+	for walk := 1; ; walk++ {
+		own, end, whole, after := p.walkOwn(path, before)
+		if own || end == "" {
+			return own
+		}
+		if whole || walk == 2 {
+			_, ok := p.holds(end)
+			return ok
+		}
+		before = after
+	}
+}
+
+// walkOwn walks path once (walkPath) and reports whether the way comes to
+// one of the Orker's own: a name within an own path, or a file or directory
+// that is one as the own paths were looked at just before the walk (before)
+// or are just after it, so an update that swaps a mount mid-walk is seen
+// whichever side of it each name was looked at. It also reports where the
+// way ends, whether every name of it could be looked at, and the look after
+// it, which it takes only when the way came to none of the Orker's own
+// before it.
+func (p SecurityPolicy) walkOwn(path string, before ownNodes) (own bool, end string, whole bool, after ownNodes) {
+	var came []fs.FileInfo
+	end, whole, stopped := walkPath(path, func(at string, info fs.FileInfo) bool {
+		if _, named := p.holds(at); named || before.holds(info) {
+			return true
+		}
+		came = append(came, info)
+		return false
+	})
+	if stopped {
+		return true, end, whole, nil
+	}
+	after = p.ownNow()
+	for _, info := range came {
+		if after.holds(info) {
+			return true, end, whole, after
+		}
+	}
+	return false, end, whole, after
+}
+
+// ownNodes is what the Orker's own paths are at one moment: each one's name,
+// as a read of it opens it, followed to the file or directory it leads to
+// (os.Stat). A path that is not there, or cannot be looked at, has none and
+// is compared by name alone.
+type ownNodes []fs.FileInfo
+
+// ownNow is the Orker's own paths, fixed and configured, as the file system
+// holds them now.
+func (p SecurityPolicy) ownNow() ownNodes {
+	var nodes ownNodes
+	for _, roots := range [][]ownRoot{fixedOwnRoots(), p.own} {
+		for _, root := range roots {
+			if info, err := stat(root.opened); err == nil {
+				nodes = append(nodes, info)
+			}
+		}
+	}
+	return nodes
+}
+
+// holds reports whether info is one of the nodes: the same file or
+// directory, whatever names lead to it (os.SameFile).
+func (n ownNodes) holds(info fs.FileInfo) bool {
+	for _, own := range n {
+		if os.SameFile(own, info) {
+			return true
+		}
+	}
+	return false
+}
+
+// holds reports which own path path, absolute and clean, lies within by name.
+func (p SecurityPolicy) holds(path string) (ownRoot, bool) {
+	for _, roots := range [][]ownRoot{fixedOwnRoots(), p.own} {
+		for _, root := range roots {
+			if within(path, root.named) || within(path, root.resolved) {
+				return root, true
+			}
+		}
+	}
+	return ownRoot{}, false
+}
+
+// ownEntry reports why a floor entry admits nothing but the Orker's own, or
+// "" when it admits a source of a task's own too. Every match of an entry
+// begins with its pattern up to the first "*": for env, a name prefix; for
+// file, the directory that prefix ends in. When an own source holds that
+// whole prefix by its name, every match is the Orker's own by its name. A
+// directory that is the Orker's own only through a link is not judged here:
+// a link beneath it may lead out again, so the entry may admit a task's
+// source, and AllowsSecretSource judges each match by its links instead.
+func (p SecurityPolicy) ownEntry(entry string) string {
+	scheme, pattern := SplitSecretSource(entry)
+	literal, wild := pattern, false
+	if i := strings.IndexByte(pattern, '*'); i >= 0 {
+		literal, wild = pattern[:i], true
+	}
+	switch scheme {
+	case "env":
+		return p.ownVar(literal, wild)
+	case "file":
+		dir := literal
+		if wild {
+			// A file pattern begins with "/" (dsl.ValidSecretPattern), so
+			// the cut keeps at least "/".
+			dir = literal[:strings.LastIndexByte(literal, '/')+1]
+		}
+		if root, ok := p.ownNamed(dir); ok {
+			return root.Why
+		}
+	}
+	return ""
+}
+
+// maxLinks bounds how many links resolvePath follows for one name: the bound
+// filepath.EvalSymlinks keeps, well above the 40 Linux follows before it
+// refuses to open a name (ELOOP). A name the kernel opens is resolved in
+// full; a name past the bound is one no read opens.
+const maxLinks = 255
+
+// resolvePath is where path leads as the kernel follows it to open it
+// (walkPath), or "" for a path that is not absolute or whose links go on past
+// maxLinks.
+func resolvePath(path string) string {
+	end, _, _ := walkPath(path, nil)
+	return end
+}
+
+// walkPath follows path as the kernel follows it to open it: from the root,
+// one name at a time, a link replaced by its target and a ".." taken from
+// where the path has led so far. It calls reached, when it is not nil, with
+// every name it comes to that is not a link — each directory the way looks a
+// name up in, and the file it ends at — and what Lstat said of it, and stops
+// the first time reached returns true, reporting stopped. Where a name does
+// not exist, or cannot be looked at, it and the rest of path are kept as
+// named, so a link that leads nowhere yet is seen by where it would lead.
+//
+// It returns where path leads, "" for a path that is not absolute or whose
+// links go on past maxLinks, and whether it looked at every name of the way,
+// false when it was cut short at one it could not look at. Each name is
+// looked at once, so the cost is bounded by path's length and maxLinks link
+// targets, never by how many of its prefixes exist.
+func walkPath(path string, reached func(at string, info fs.FileInfo) bool) (end string, whole, stopped bool) {
+	if !strings.HasPrefix(path, "/") {
+		return "", false, false
+	}
+	resolved, rest, links := "/", path[1:], 0
+	for rest != "" {
+		var name string
+		name, rest, _ = strings.Cut(rest, "/")
+		switch name {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, name)
+		info, err := lstat(next)
+		if err != nil {
+			return filepath.Join(next, rest), false, false
+		}
+		if info.Mode()&fs.ModeSymlink == 0 {
+			resolved = next
+			if reached != nil && reached(next, info) {
+				return next, true, true
+			}
+			continue
+		}
+		if links++; links > maxLinks {
+			return "", false, false
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			return filepath.Join(next, rest), false, false
+		}
+		if strings.HasPrefix(target, "/") {
+			resolved = "/"
+		}
+		rest = target + "/" + rest
+	}
+	return resolved, true, false
+}
+
+// lstat is os.Lstat, as walkPath looks at each name, and stat os.Stat, as
+// ownNow looks at each own path; a test replaces them to change the file
+// system while a walk runs, or to count the looks.
+var lstat, stat = os.Lstat, os.Stat
+
+// within reports whether path is root or lies beneath it. An empty side is
+// never within anything.
+func within(path, root string) bool {
+	if path == "" || root == "" {
+		return false
+	}
+	if root == "/" {
+		return true
+	}
+	return path == root || strings.HasPrefix(path, root+"/")
 }
 
 // validateSecretAllow holds the floor to the shared grammar and to this
@@ -245,6 +791,13 @@ func (p SecurityPolicy) validateSecretAllow() error {
 			return fmt.Errorf("%s entry %q names scheme %q, which %s (%s) does not resolve; "+
 				"add the scheme there or drop the entry", SecretAllowVar, entry, scheme,
 				SecretSchemesVar, strings.Join(p.SecretSchemes, ", "))
+		}
+		// The same rule for an entry that can match nothing but the Orker's
+		// own sources, which no floor admits.
+		if why := p.ownEntry(entry); why != "" {
+			return fmt.Errorf("%s entry %q admits only this orker's own sources (%s), which no secret floor "+
+				"admits; drop the entry, and give a task that needs such a value a source of its own",
+				SecretAllowVar, entry, why)
 		}
 	}
 	return nil
@@ -329,16 +882,9 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 		memory = p.DefaultMemory
 	}
 
-	requestedCPU, cpuErr := quantity.ParseCPU(cpu)
-	if cpuErr != nil {
-		return "", "", Fail(ReasonResourceRefused, "cpu %q is not a valid quantity: %v", cpu, cpuErr)
-	}
-	if !quantity.PositiveFinite(requestedCPU) {
-		// Docker reads `--cpus 0` as NO limit, so a non-positive or non-finite
-		// request is an unlimited container, not a small one (§9.2, §9.3).
-		return "", "", Fail(ReasonResourceRefused,
-			"cpu request %q is not a positive, finite quantity; it is refused rather than passed to the "+
-				"runtime, because a zero or negative limit means UNLIMITED there", cpu)
+	requestedCPU, failure := parseRequestCPU(cpu)
+	if failure != nil {
+		return "", "", failure
 	}
 	capCPU, cpuErr := quantity.ParseCPU(p.MaxCPU)
 	if cpuErr == nil && !quantity.PositiveFinite(capCPU) {
@@ -359,16 +905,9 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 			cpu, p.MaxCPU, MaxCPUVar)
 	}
 
-	requestedMem, memErr := quantity.ParseMemory(memory)
-	if memErr != nil {
-		return "", "", Fail(ReasonResourceRefused, "memory %q is not a valid quantity: %v", memory, memErr)
-	}
-	if !quantity.ByteCount(requestedMem) {
-		// The memory half of the same trap: `--memory 0` is no limit, and a
-		// fraction of a byte renders as 0.
-		return "", "", Fail(ReasonResourceRefused,
-			"memory request %q is not a quantity of at least one byte; it is refused rather than passed to the "+
-				"runtime, because a zero or negative limit means UNLIMITED there", memory)
+	requestedMem, failure := parseRequestMemory(memory)
+	if failure != nil {
+		return "", "", failure
 	}
 	capMem, memErr := quantity.ParseMemory(p.MaxMemory)
 	if memErr == nil && !quantity.ByteCount(capMem) {
@@ -389,6 +928,59 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 			memory, p.MaxMemory, MaxMemoryVar)
 	}
 	return cpu, memory, nil
+}
+
+// requestShapeFailure refuses a request whose own fields are malformed,
+// zero, negative or non-finite, exactly as ResolveResources does. It reads
+// nothing of this Orker's policy — an empty field takes the Orker's default
+// later, and boot holds that default valid — so its answer is the same on
+// every Orker, and the dispatcher asks it before the commit check.
+func requestShapeFailure(req *orkstackv1.ResourceRequest) *Failure {
+	if cpu := strings.TrimSpace(req.GetCpu()); cpu != "" {
+		if _, failure := parseRequestCPU(cpu); failure != nil {
+			return failure
+		}
+	}
+	if memory := strings.TrimSpace(req.GetMemory()); memory != "" {
+		if _, failure := parseRequestMemory(memory); failure != nil {
+			return failure
+		}
+	}
+	return nil
+}
+
+// parseRequestCPU parses one cpu request and refuses one that is not a
+// positive, finite quantity.
+func parseRequestCPU(cpu string) (float64, *Failure) {
+	cores, err := quantity.ParseCPU(cpu)
+	if err != nil {
+		return 0, Fail(ReasonResourceRefused, "cpu %q is not a valid quantity: %v", cpu, err)
+	}
+	if !quantity.PositiveFinite(cores) {
+		// Docker reads `--cpus 0` as NO limit, so a non-positive or non-finite
+		// request is an unlimited container, not a small one (§9.2, §9.3).
+		return 0, Fail(ReasonResourceRefused,
+			"cpu request %q is not a positive, finite quantity; it is refused rather than passed to the "+
+				"runtime, because a zero or negative limit means UNLIMITED there", cpu)
+	}
+	return cores, nil
+}
+
+// parseRequestMemory parses one memory request and refuses one that is not a
+// quantity of at least one byte.
+func parseRequestMemory(memory string) (float64, *Failure) {
+	bytes, err := quantity.ParseMemory(memory)
+	if err != nil {
+		return 0, Fail(ReasonResourceRefused, "memory %q is not a valid quantity: %v", memory, err)
+	}
+	if !quantity.ByteCount(bytes) {
+		// The memory half of the same trap: `--memory 0` is no limit, and a
+		// fraction of a byte renders as 0.
+		return 0, Fail(ReasonResourceRefused,
+			"memory request %q is not a quantity of at least one byte; it is refused rather than passed to the "+
+				"runtime, because a zero or negative limit means UNLIMITED there", memory)
+	}
+	return bytes, nil
 }
 
 // ReservedResources is what an attempt of req is granted on this Orker, as

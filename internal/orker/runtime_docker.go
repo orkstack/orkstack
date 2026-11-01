@@ -1070,6 +1070,156 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 var endpointVars = []string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
 	"CONTAINER_HOST", "CONTAINER_CONNECTION", "CONTAINERS_STORAGE_CONF"}
 
+// runtimeOwnEnv is the environment the CLI this Orker drives reads as its
+// own. The CLI runs with the Orker's environment, so it is the Orker's own,
+// and the secret floor admits none of it (security_profile.go, "The Orker's
+// own sources"): the daemon it reaches, its registry credentials
+// (DOCKER_AUTH_CONFIG, REGISTRY_AUTH_FILE), its TLS client key
+// (DOCKER_CERT_PATH), a remote engine's SSH identity and passphrase
+// (CONTAINER_SSHKEY, CONTAINER_PASSPHRASE), and its configuration.
+// DOCKER_* and CONTAINERS_* are the two CLIs' own prefixes; CONTAINER_ is a
+// common word, so only the podman CLI's names in it are listed. A pull may
+// run a registry credential helper (ecr-login, gcr, acr), which reads the
+// cloud credentials of the environment it inherits — the Orker's — so
+// AWS_*, AZURE_*, GOOGLE_APPLICATION_CREDENTIALS and the gcloud SDK's
+// CLOUDSDK_* are the Orker's own too. The object store's client never uses
+// them: it signs with ORK_S3_*.
+var runtimeOwnEnv = []ownName{
+	{"DOCKER_*", "its container CLI's settings, DOCKER_*"},
+	{"CONTAINERS_*", "its container CLI's settings, CONTAINERS_*"},
+	{"CONTAINER_HOST", "its container CLI's settings"},
+	{"CONTAINER_CONNECTION", "its container CLI's settings"},
+	{"CONTAINER_SSHKEY", "its container CLI's settings"},
+	{"CONTAINER_PASSPHRASE", "its container CLI's settings"},
+	{"REGISTRY_AUTH_FILE", "its container CLI's settings"},
+	{"AWS_*", "its registry credential helpers' settings, AWS_*"},
+	{"AZURE_*", "its registry credential helpers' settings, AZURE_*"},
+	{"GOOGLE_APPLICATION_CREDENTIALS", "its registry credential helpers' settings"},
+	{"CLOUDSDK_*", "its registry credential helpers' settings, CLOUDSDK_*"},
+}
+
+// engineStateWhy is why the engine's state directories are the Orker's own.
+const engineStateWhy = "its container engine's state"
+
+// EngineState asks the engine where it keeps its state (stateQuery), wherever
+// its own settings put it, as paths of the Orker's own: a state directory
+// moved off the defaults runtimeOwnPaths lists still holds every container's
+// writable layer, which a task writes. The question is bounded by
+// controlTimeout. It returns every directory the engine named that the Orker
+// can hold, and beside them an error, naming the engine settings to check,
+// when the engine could not be asked, did not answer in time, or named
+// nothing the Orker can hold or something else too.
+func (d *DockerRuntime) EngineState(ctx context.Context) ([]OwnPath, error) {
+	return d.engineStateWithin(ctx, controlTimeout)
+}
+
+// engineStateWithin is EngineState with the whole question — which engine it
+// is, and where it keeps its state — bounded by one within.
+func (d *DockerRuntime) engineStateWithin(ctx context.Context, within time.Duration) ([]OwnPath, error) {
+	check := d.grammar().stateSettings()
+	askCtx, cancel := context.WithTimeout(ctx, within)
+	defer cancel()
+	timedOut := func() bool { return askCtx.Err() != nil && ctx.Err() == nil }
+	spoken, overran, err := d.dialectWithin(askCtx, within)
+	switch {
+	case overran || timedOut():
+		return nil, fmt.Errorf("the container engine did not say which engine it is within %s, so where it keeps "+
+			"its state is not known (check %s)", within, check)
+	case err != nil:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %w", check, err)
+	}
+	check = spoken.stateSettings()
+	query := spoken.stateQuery()
+	answer, overran, err := d.runWithin(askCtx, within, "info", "--format", query)
+	switch {
+	case overran || timedOut():
+		return nil, fmt.Errorf("the container engine did not answer `%s info --format %q` within %s (check %s)",
+			spoken.cli, query, within, check)
+	case err != nil:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %w", check, err)
+	case answer.code != 0:
+		return nil, fmt.Errorf("ask where the container engine keeps its state (check %s): %s info --format %q exited %d: %s",
+			check, spoken.cli, query, answer.code, answer.said())
+	}
+	dirs, refused := statePaths(answer.stdout)
+	if len(dirs) == 0 {
+		return nil, fmt.Errorf("the container engine named no directory the orker can hold as its state (check %s): "+
+			"%s info --format %q answered %q", check, spoken.cli, query, truncateString(strings.TrimSpace(answer.stdout), 200))
+	}
+	paths := make([]OwnPath, 0, len(dirs))
+	for _, dir := range dirs {
+		paths = append(paths, OwnPath{Path: dir, Why: engineStateWhy})
+	}
+	if len(refused) > 0 {
+		quoted := make([]string, 0, len(refused))
+		for _, line := range refused {
+			quoted = append(quoted, strconv.Quote(line))
+		}
+		return paths, fmt.Errorf("the container engine also named %s, which is no directory the orker can hold "+
+			"as its state (check %s)", truncateString(strings.Join(quoted, ", "), 200), check)
+	}
+	return paths, nil
+}
+
+// runtimeOwnPaths are the files the CLI and the engine behind it hold as
+// their own, where getenv places them: the CLI's registry credentials (the
+// docker CLI's config.json and its older ~/.dockercfg, the podman CLI's
+// auth.json, rootful podman's under /run/containers) and its credential
+// helpers' cloud credentials and tokens — the gcloud SDK's and the Azure
+// CLI's configuration directories wherever CLOUDSDK_CONFIG and
+// AZURE_CONFIG_DIR move them, the token and credential files the gcloud
+// SDK's CLOUDSDK_AUTH_* settings name, and an Azure client certificate — the
+// daemon's TLS client key, the SSH identity a remote engine
+// (DOCKER_HOST=ssh://…, a podman connection) authenticates with, and the
+// engine's own state — images, layers and every container's log, other
+// tasks' among them. The docker CLI's home directory is listed even when
+// DOCKER_CONFIG moves it, because the podman CLI falls back to it for
+// credentials.
+func runtimeOwnPaths(getenv func(string) string) []OwnPath {
+	var paths []OwnPath
+	add := func(path, why string) {
+		if path != "" {
+			paths = append(paths, OwnPath{Path: path, Why: why})
+		}
+	}
+	const creds, state = "its container CLI's credentials", engineStateWhy
+	for _, name := range []string{"DOCKER_CONFIG", "DOCKER_CERT_PATH", "REGISTRY_AUTH_FILE", "CONTAINER_SSHKEY",
+		"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE", "AWS_WEB_IDENTITY_TOKEN_FILE",
+		"AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", "GOOGLE_APPLICATION_CREDENTIALS", "CLOUDSDK_CONFIG",
+		"CLOUDSDK_AUTH_ACCESS_TOKEN_FILE", "CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE",
+		"AZURE_FEDERATED_TOKEN_FILE", "AZURE_CONFIG_DIR", "AZURE_CLIENT_CERTIFICATE_PATH"} {
+		add(getenv(name), creds)
+	}
+	add("/run/containers", creds)
+	for _, dir := range []string{"/var/lib/docker", "/var/lib/containerd", "/var/lib/containers", "/run/docker", "/run/containerd"} {
+		add(dir, state)
+	}
+	if dir := getenv("XDG_RUNTIME_DIR"); dir != "" {
+		add(filepath.Join(dir, "containers"), creds)
+	}
+	config, data := getenv("XDG_CONFIG_HOME"), getenv("XDG_DATA_HOME")
+	if home := getenv("HOME"); home != "" {
+		for _, dir := range []string{".docker", ".dockercfg", ".ssh", ".aws", ".azure"} {
+			add(filepath.Join(home, dir), creds)
+		}
+		if config == "" {
+			config = filepath.Join(home, ".config")
+		}
+		if data == "" {
+			data = filepath.Join(home, ".local", "share")
+		}
+	}
+	if config != "" {
+		add(filepath.Join(config, "containers"), creds)
+		add(filepath.Join(config, "gcloud"), creds)
+	}
+	if data != "" {
+		add(filepath.Join(data, "docker"), state)
+		add(filepath.Join(data, "containers"), state)
+	}
+	return paths
+}
+
 // Endpoint names, without asking it, the daemon this runtime's commands
 // reach: the CLI's grammar and binary, and every variable that points either
 // CLI elsewhere. `orkctl task run` keys the containers of a run that is gone
@@ -1133,8 +1283,9 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 	return info, nil
 }
 
-// RunBootProbe runs the boot probe's container once, to its end, and returns
-// what it wrote on stdout. The spec is built by the dispatcher exactly as a
+// RunBootProbe runs the boot probe's container once, to its end, and hands
+// back what it wrote on stdout and the container's name; the exited container
+// is the caller's to remove. The spec is built by the dispatcher exactly as a
 // task's is (bootProbeSpec), and its flags are rendered by the same function
 // a task's `create` is, so what the daemon refuses or weakens here it would
 // refuse or weaken for every task. What the output says is judged by the
@@ -1149,7 +1300,7 @@ func (d *DockerRuntime) Describe(ctx context.Context) (RuntimeInfo, error) {
 // refused the container for any other reason within the budget, or the
 // container exited non-zero (ErrPostureRefused). An Orker that is stopped
 // meanwhile gets the context's own error.
-func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (string, error) {
+func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (BootProbeRun, error) {
 	// Every step of the probe that waits on the daemon is bounded by the
 	// probe's budget and not by controlTimeout, which is meant for
 	// bookkeeping: under load a daemon has needed more than 30 s to answer
@@ -1164,16 +1315,16 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 	spoken, overran, err := d.dialectWithin(ctx, budget)
 	switch {
 	case ctx.Err() != nil:
-		return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+		return BootProbeRun{}, fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	case overran:
-		return "", probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
+		return BootProbeRun{}, probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
 	case err != nil:
-		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
 	// A spec this CLI cannot render is refused before anything waits on the
 	// daemon: no retry changes it.
 	if _, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]), spoken); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
 
 	// The probe image is fetched first, under the PULL timeout rather than the
@@ -1184,20 +1335,20 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 	present, overran, err := d.imagePresent(ctx, budget, image)
 	switch {
 	case ctx.Err() != nil:
-		return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+		return BootProbeRun{}, fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	case overran:
-		return "", probeTimedOut(fmt.Sprintf("answer `docker image inspect %s` within %s", image, budget), nil, nil)
+		return BootProbeRun{}, probeTimedOut(fmt.Sprintf("answer `docker image inspect %s` within %s", image, budget), nil, nil)
 	case err != nil:
-		return "", fmt.Errorf("%w: the bind probe image %s: %w", ErrProbeImageUnavailable, image, err)
+		return BootProbeRun{}, fmt.Errorf("%w: the bind probe image %s: %w", ErrProbeImageUnavailable, image, err)
 	}
 	if !present {
 		answer, err := d.controlWithin(ctx, d.pullTimeout(), "pull", "--quiet", image)
 		if err != nil {
-			return "", fmt.Errorf("%w: the bind probe image %s could not be pulled: %w",
+			return BootProbeRun{}, fmt.Errorf("%w: the bind probe image %s could not be pulled: %w",
 				ErrProbeImageUnavailable, image, err)
 		}
 		if answer.code != 0 {
-			return "", fmt.Errorf("%w: the bind probe image %s could not be pulled: docker exited %d: %s",
+			return BootProbeRun{}, fmt.Errorf("%w: the bind probe image %s could not be pulled: docker exited %d: %s",
 				ErrProbeImageUnavailable, image, answer.code, answer.said())
 		}
 	}
@@ -1205,40 +1356,51 @@ func (d *DockerRuntime) RunBootProbe(ctx context.Context, spec ContainerSpec) (s
 	return d.runProbeContainer(ctx, spec, spoken, budget, false)
 }
 
-// StartBootProbe starts spec's container detached, to be removed by the
-// daemon when it exits (`run --detach --rm`), and returns its name: the boot
-// probe's SIGTERM container, which the dispatcher then cancels as a task's
-// container is cancelled. It runs after RunBootProbe has passed, so the
-// engine is known and the image is local, and its run has RunBootProbe's
-// budget, retry and classification, and its errors are RunBootProbe's. The
-// flags are a task's, rendered by the same function `create` uses.
-func (d *DockerRuntime) StartBootProbe(ctx context.Context, spec ContainerSpec) (ContainerID, error) {
+// StartBootProbe starts spec's container detached (`run --detach`) and
+// hands back its name: the boot probe's SIGTERM container, which the dispatcher
+// then cancels as a task's container is cancelled and removes. It runs after
+// RunBootProbe has passed, so the engine is known and the image is local, and
+// its run has RunBootProbe's budget, retry and classification, and its errors
+// are RunBootProbe's. The flags are a task's, rendered by the same function
+// `create` uses.
+func (d *DockerRuntime) StartBootProbe(ctx context.Context, spec ContainerSpec) (BootProbeRun, error) {
 	budget := d.bindProbeTimeout()
 	spoken, overran, err := d.dialectWithin(ctx, budget)
 	switch {
 	case ctx.Err() != nil:
-		return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+		return BootProbeRun{}, fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	case overran:
-		return "", probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
+		return BootProbeRun{}, probeTimedOut(fmt.Sprintf("say which engine it is and whether it is rootless (`version`, `info`) within %s", budget), nil, nil)
 	case err != nil:
-		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
 	if _, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]), spoken); err != nil {
-		return "", fmt.Errorf("%w: %w", ErrPostureRefused, err)
+		return BootProbeRun{}, fmt.Errorf("%w: %w", ErrPostureRefused, err)
 	}
-	name, err := d.runProbeContainer(ctx, spec, spoken, budget, true)
-	return ContainerID(name), err
+	return d.runProbeContainer(ctx, spec, spoken, budget, true)
 }
 
 // runProbeContainer runs a boot probe's container, attached to its end or
-// detached once it has started, and returns its stdout or, detached, its
-// name.
+// detached once it has started, and hands back its name and its stdout
+// (empty for one started detached).
+//
+// The container is never left to the daemon's --rm. A successful run hands it
+// to the caller, who removes it. Every other ending removes the attempt's
+// container here, whatever the attempt left: a run cut off between the
+// daemon's create and its start leaves a container that was created and never
+// started, which --rm would never remove because it fires only when a
+// container exits. Each removal is best effort, on a context of its own, and
+// one the daemon refuses is named in the error, or, when a later attempt
+// succeeds, handed back with the run: that container is what an operator
+// looks for. A daemon still finishing a create the CLI gave up on
+// can make one after the removal; it carries the Orker's identity
+// (probeContainerSpec), which the next boot under that identity reaps.
 func (d *DockerRuntime) runProbeContainer(
 	ctx context.Context, spec ContainerSpec, spoken dialect, budget time.Duration, detached bool,
-) (string, error) {
-	verb := []string{"run", "--rm"}
+) (BootProbeRun, error) {
+	verb := []string{"run"}
 	if detached {
-		verb = []string{"run", "--detach", "--rm"}
+		verb = []string{"run", "--detach"}
 	}
 	// The daemon quotes the paths it was given, and none of them is a word
 	// about the daemon's own deadlines: neither a bind's source nor the probe
@@ -1248,49 +1410,79 @@ func (d *DockerRuntime) runProbeContainer(
 		sources = append(sources, m.Source, filepath.Dir(m.Source), filepath.Dir(filepath.Dir(m.Source)))
 	}
 
-	// The run is the one step of the probe that waits on the daemon to create,
-	// start and tear down a container. An attempt that overruns the budget, or
-	// that the daemon ends with a deadline error of its own, is tried once
-	// more: whether the daemon is slow is a fact about the moment, and whether
-	// the root binds is not. Any other failure within the budget is the
-	// daemon's answer, and it is final.
-	var attempts, leftovers []string
+	// The run is the one step of the probe that waits on the daemon to create
+	// and start a container. An attempt that overruns the budget, or that the
+	// daemon ends with a deadline error of its own, is tried once more:
+	// whether the daemon is slow is a fact about the moment, and whether the
+	// root binds is not. Any other failure within the budget is the daemon's
+	// answer, and it is final.
+	var attempts []string
+	var leftovers []ProbeLeftover
 	for attempt := 1; attempt <= bindProbeAttempts; attempt++ {
 		name := containerName(spec.Labels["ork.task"])
 		flags, _ := dockerContainerFlags(spec, name, spoken)
-		answer, overran, err := d.runWithin(ctx, budget, append(verb, flags...)...)
+		answer, overran, runErr := d.runWithin(ctx, budget, append(verb, flags...)...)
+		if runErr == nil && answer.code == 0 {
+			run := BootProbeRun{Container: ContainerID(name), Leftovers: leftovers}
+			if !detached {
+				run.Stdout = answer.stdout
+			}
+			return run, nil
+		}
+		// Read before the removal, which takes time of its own: a stop that
+		// lands during it does not turn the daemon's answer into one.
+		stopped := ctx.Err()
+		if err := d.Remove(context.WithoutCancel(ctx), ContainerID(name)); err != nil {
+			leftovers = append(leftovers, ProbeLeftover{Container: ContainerID(name), Err: err})
+		}
 		said := truncateString(answer.said(), 2000)
+		var final error
 		switch {
-		case err == nil && answer.code == 0 && detached:
-			return name, nil
-		case err == nil && answer.code == 0:
-			return answer.stdout, nil
-		case ctx.Err() != nil:
+		case stopped != nil:
 			// The Orker is stopping, which is neither a slow daemon nor an
 			// unbindable root; Boot reports it as the interruption it is.
-			return "", fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
+			final = fmt.Errorf("the boot probe was interrupted: %w", stopped)
 		case overran:
 			attempts = append(attempts, fmt.Sprintf("attempt %d: no answer within %s", attempt, budget))
-		case err != nil:
-			return "", fmt.Errorf("%w: run the boot probe's container: %w", ErrPostureRefused, err)
+		case runErr != nil:
+			final = fmt.Errorf("%w: run the boot probe's container: %w", ErrPostureRefused, runErr)
 		case spoken.unbindable(said):
-			return "", fmt.Errorf("%w: docker exited %d: %s", ErrNotBindable, answer.code, said)
+			final = fmt.Errorf("%w: docker exited %d: %s", ErrNotBindable, answer.code, said)
 		case saysDeadline(said, sources...):
 			attempts = append(attempts, fmt.Sprintf("attempt %d: the daemon answered %q", attempt, truncateString(said, 300)))
 		default:
-			return "", fmt.Errorf("%w: the runtime would not run the boot probe's container, which is built as a task's is: "+
+			final = fmt.Errorf("%w: the runtime would not run the boot probe's container, which is built as a task's is: "+
 				"docker exited %d: %s", ErrPostureRefused, answer.code, said)
 		}
-		// The attempt may have left its container half-made, or the daemon may
-		// still be starting it. Removing it is best effort, on a context of
-		// its own, and a removal the daemon refuses is reported with the
-		// refusal: that container is what an operator looks for.
-		if err := d.Remove(context.WithoutCancel(ctx), ContainerID(name)); err != nil {
-			leftovers = append(leftovers, err.Error())
+		if final != nil {
+			return BootProbeRun{}, probeLeftovers(final, leftovers)
 		}
 	}
-	return "", probeTimedOut(fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, bindProbeAttempts),
-		attempts, leftovers)
+	return BootProbeRun{}, probeTimedOut(fmt.Sprintf("start the probe container within %s on each of %d attempts", budget, bindProbeAttempts),
+		attempts, leftoverTexts(leftovers))
+}
+
+// probeLeftovers adds to a refusal of the probe the containers it could not
+// remove.
+func probeLeftovers(err error, leftovers []ProbeLeftover) error {
+	if len(leftovers) == 0 {
+		return err
+	}
+	return fmt.Errorf("%w. A probe container could not be removed and may remain: %s", err,
+		strings.Join(leftoverTexts(leftovers), "; "))
+}
+
+// leftoverTexts is each leftover's removal error, naming its container.
+func leftoverTexts(leftovers []ProbeLeftover) []string {
+	texts := make([]string, 0, len(leftovers))
+	for _, left := range leftovers {
+		text := left.Err.Error()
+		if !strings.Contains(text, string(left.Container)) {
+			text = fmt.Sprintf("%s: %s", left.Container, text)
+		}
+		texts = append(texts, text)
+	}
+	return texts
 }
 
 // probeTimedOut is the refusal of a daemon that was too slow: what it did not

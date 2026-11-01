@@ -816,8 +816,9 @@ func TestRepositoryCIParts_DriveChromiumInTheContainer(t *testing.T) {
 }
 
 // scripts/proof-collect.sh assembles the merged proof's copy of the parts:
-// every part's records; the events and per-job logs only of a part that did
-// not pass (a gate not `pass`, or no part.json); never a part's bin/,
+// every part's records; the events and per-job logs, and the Temporal
+// server's log, only of a part that did not pass (a gate not `pass`, or no
+// part.json); never a part's bin/,
 // layouts/ or artifacts/; and GitHub's job records. With the binaries out, a
 // green run's merged proof was still 921 MB of passing parts' events and
 // logs (run 40388322907), against a five-minute upload limit.
@@ -846,6 +847,7 @@ func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T)
 		"parts/part-integration-1-a1/setup.log:fetch artifact plan-a1: attempt 1 ok in 6s (limit 180s)",
 		"parts/part-integration-1-a1/integration.events.jsonl:{}",
 		"parts/part-integration-1-a1/integration/engine-001.log:big",
+		"parts/part-integration-1-a1/temporal-server.log.gz:quiet",
 		"parts/part-integration-1-a1/bin/ork:binary",
 		"parts/part-integration-1-a1/artifacts/run/a:artifact",
 		// A failing shard: its events and per-job logs come too.
@@ -853,6 +855,7 @@ func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T)
 		"parts/part-integration-2-a1/integration-tests.json:{}",
 		"parts/part-integration-2-a1/integration.events.jsonl:{}",
 		"parts/part-integration-2-a1/integration/engine-002.log:failure output",
+		"parts/part-integration-2-a1/temporal-server.log.gz:branch tokens don't match",
 		"parts/part-integration-2-a1/bin/ork:binary",
 		// A shard whose process died: no part.json, so everything it left.
 		"parts/part-integration-3-a1/integration.events.jsonl:{}",
@@ -923,6 +926,7 @@ func TestRepositoryProofCollect_KeepsRecordsAndFailingPartsDetails(t *testing.T)
 		"parts/part-integration-2-a1/integration.events.jsonl",
 		"parts/part-integration-2-a1/integration/engine-002.log",
 		"parts/part-integration-2-a1/part.json",
+		"parts/part-integration-2-a1/temporal-server.log.gz",
 		"parts/part-integration-3-a1/integration.events.jsonl",
 		"parts/part-fuzz-a1/fuzz-tests.json",
 		"parts/part-fuzz-a1/part.json",

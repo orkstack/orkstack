@@ -57,6 +57,22 @@ func newScanState(tolerateLostSegments bool) *scanState {
 	}
 }
 
+// unpublishedStart reports the numbers below the first event a run's first
+// execution published, when that event is not 1, as a gap. Every run
+// publishes RUN_CREATED at 1 first, so a first execution whose first event
+// comes later holds nothing under the numbers below it: they were consumed
+// without an event (today, only by an ending before start whose RUN_CREATED
+// snapshot could not be written, emitRunCreatedFirst). Only this start of
+// the stream is checked; a number a run consumes later without an event is
+// not. The archive path records the gap; a live event read over it fails
+// with it (scanWith).
+func (st *scanState) unpublishedStart(event *orkstackv1.Event) (EventGap, bool) {
+	if st.carried || st.lastSequence != 0 || len(st.seen) != 0 || event.GetSequence() <= 1 {
+		return EventGap{}, false
+	}
+	return EventGap{First: 1, Last: event.GetSequence() - 1, Reason: UnpublishedEventsReason}, true
+}
+
 // deliver hands one decoded event to the caller — send, or the projection's
 // events for an event read — once per sequence, and reports whether the walk
 // stops here (a stream at the run's terminal event).

@@ -52,6 +52,16 @@ and a live-event socket opened through it. When it prints "OrkStack is up":
 | Temporal UI | http://localhost:8233 |
 | SeaweedFS filer | http://localhost:8888 (S3 API on http://localhost:9000) |
 
+Every port the infrastructure publishes (`deploy/docker-compose.yml`, the
+observability profile's included) is bound to `127.0.0.1`: Temporal's
+frontend, the object store with its development key, the unauthenticated
+registry and Grafana's anonymous admin are reachable from this machine and
+from no other. Nothing in the stack, the suites or the proofs needs more: an
+activity container reaches only a test's own server on the host, by
+`host.docker.internal` ("Linux hosts" below), and the observability
+profile's services reach each other on the compose network.
+`TestDevCompose_PublishesOnlyOnLoopback` holds the rule.
+
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl apply examples/each-fan-out.ork.yaml` and the
 rest of [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) work as written,
@@ -65,11 +75,13 @@ make reset   # wipe every local run, object and build output
 `make down` also stops the infrastructure `make infra-up` started, which
 other checkouts on the same machine may be using. `make reset` returns the
 machine to a vanilla state: it deletes Temporal history, every object-store
-object (artifacts, archived runs, and the Orkflow catalogue), the local
-artifact store and all build output. The repository itself is untouched.
+object (artifacts, archived runs, and the Orkflow catalogue), the
+observability profile's containers and volumes, the local artifact store,
+the Orker's work directory (a workspace an Orker left read-only included) and
+all build output. The repository itself is untouched.
 
-The individual steps are there when you want them: `make tools`,
-`make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
+The individual steps are there when you want them: `make tools` (buf at
+the release `deploy/buf-image.txt` pins), `make proto`, `make infra-up`, `make build`, `make run-ork`, `make run-orker`.
 `make infra-up-observability` adds a local Grafana stack
 ([deploy/observability](./deploy/observability/README.md)).
 To run the UI by hand, `cd ui && bun run dev`: Vite serves it with hot
@@ -204,9 +216,12 @@ scrape a stack you run by hand:
 
 1. Bind each process's admin listener to the gateway: `ORK_ADMIN_ADDR=172.17.0.1:9464`
    for `ork`, `172.17.0.1:9465` for `orker`.
-2. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
+2. Let each answer the name Prometheus scrapes it by:
+   `ORK_ADMIN_ALLOWED_HOSTS=host.docker.internal`. The admin listener refuses
+   any other `Host` with a dot (`docs/DEPLOY.md`, "The API listener's bounds").
+3. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
    see `docs/DEPLOY.md` §1).
-3. Attach Prometheus to the default bridge:
+4. Attach Prometheus to the default bridge:
 
 ```bash
 docker network connect bridge "$(docker ps -q --filter label=com.docker.compose.service=prometheus)"
@@ -253,7 +268,9 @@ run, with its own `ork` and `orker`, and stops them when it ends.
   check. Read the result from the `proof-<run>-a<attempt>` artifact's
   `proof.json` (`result`, `merge_eligible`, `ineligible_reasons`); the job
   summary is written from it. It proves exactly the tree that lands, so a
-  branch that does not contain `main`'s tip is asked to update.
+  branch that does not contain `main`'s tip is asked to update. When a gate
+  of its `fast` part fails, the run is cancelled, so a lint, build or unit
+  failure ends it early.
 
 Once the gate is enforced, a change to the gate's own files (the lists under
 `scripts/proof-*`, `.github/`, `test/tools/proofrun/`, …) needs the
@@ -270,7 +287,9 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 ## The loop
 
 1. Cross-process type change? Edit `proto/`, run `make proto`, commit generated
-   code in the same change.
+   code in the same change. `make proto-breaking` (Docker, and the `v0.1.0`
+   tag in your clone) checks the change keeps the first release's contract,
+   as CI's `proto` job does.
 2. New configuration setting? Add it to `internal/config`'s `Schema`, to
    `docs/DEPLOY.md`'s configuration table, and run `make config-defaults`
    (AGENTS.md §11.1). Changed a DSL or automation key, or a first-party
@@ -312,9 +331,11 @@ its kind (`### Added`, `### Changed`, `### Deprecated`, `### Removed`,
 (AGENTS.md §11.1, step 7). Write it for the people who read the release: at a
 release the `[Unreleased]` section becomes the version's own,
 `## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
-section's text is the GitHub release's notes, word for word. Link to a
-document by its absolute URL: a relative link does not resolve on the release
-page. `make check` refuses a heading or a subsection of any other shape
+section's text is the GitHub release's notes, word for word, above a footer
+the release adds with each image's digest. Link to a document by its absolute
+URL: a relative link does not resolve on the release page. The page, footer
+included, must stay within GitHub's 125,000 characters, or the release is
+refused before anything is built. `make check` refuses a heading or a subsection of any other shape
 (`internal/docscheck`), and `release.yml` refuses a release while entries are
 still under `[Unreleased]`; docs/PROOFS.md §10, "Write the release notes", is
 the release's side of it. 0.1.0, the first release, says only "First

@@ -25,7 +25,7 @@ The list is newest first. Filter on `status` (`PENDING`, `RUNNING`, `SUCCEEDED`,
 
 ## Watch a run in progress
 
-- `orkctl run inspect <run-id> --watch` shows each running task, its state and the state of its last heartbeat. A heartbeat marked `STALE` means the Orker has gone.
+- `orkctl run inspect <run-id> --watch` shows each running task, its state and the state of its last heartbeat. A heartbeat marked `STALE` means the Orker has gone. A task no Orker has started yet says `waiting for an orker`, or `waiting for capacity` when every Orker of its pool is at its declared capacity. The run page says the same.
 - `orkctl run watch <run-id>` streams events until the run ends. It exits `0` on success, `2` on failure and `3` on cancel. If the engine drops the stream, the watch picks up after the last event it printed and says so on stderr.
 - `orkctl run logs <run-id> --task convert -f` follows one task's output live.
 
@@ -71,6 +71,7 @@ orkctl stats flakes --since 168h       # tasks that needed more than one try
 
 - [UI_CLI_PARITY.md, “Task attempts”](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#task-attempts): how each try is recorded and read back
 - [UI_CLI_PARITY.md, “Task timing”](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#task-timing): the wait, run and total rules
+- [DEPLOY.md, “Declaring an Orker's capacity”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#declaring-an-orkers-capacity): when a task waits for capacity, and what that costs to read
 - [RUN_EVIDENCE.md](https://github.com/orkstack/orkstack/blob/main/docs/RUN_EVIDENCE.md): the bundle format and what `verify` checks
 - [STATS.md](https://github.com/orkstack/orkstack/blob/main/docs/STATS.md): where the numbers on stats pages come from
 - Command reference: [orkctl](/docs/reference/cli/)

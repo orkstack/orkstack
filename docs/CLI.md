@@ -155,6 +155,10 @@ accept that config. An image with its own config contract (activity-http,
 activity-file) is refused before any assertion, as "cannot be driven"; test
 it with a fixture that speaks its config (test/fixtures/).
 
+The report also shows the with: interface the image declares in its
+org.orkstack.activity.interface label, read as apply reads it: declared,
+none, or malformed. The label is optional, so it is reported, never asserted.
+
 Requires a working container runtime. Exits non-zero if any assertion fails.
 
 Flags:
@@ -1542,6 +1546,11 @@ that is not there is reported as unavailable with its reason, never as
 zero. A heartbeat older than two ceiling ticks is STALE: the Orker is gone
 or partitioned, and the footer names the instant Temporal will time the
 attempt out.
+
+An attempt no Orker has started is waiting for an orker on its pool. When
+every Orker of that pool is at its declared capacity, the footer says it
+is waiting for capacity instead, with what stands reserved against what
+the pool's Orkers admit within.
 
 With --watch the table is printed again every --interval until the run is
 terminal, and the exit code is the run's (0 succeeded, 2 failed,

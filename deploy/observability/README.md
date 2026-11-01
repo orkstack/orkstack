@@ -28,6 +28,8 @@ telemetry:
   admin_addr:
     ork: ":9464"
     orker: ":9465"
+  admin_allowed_hosts:
+    - host.docker.internal   # the name Prometheus scrapes by (below)
   exporters:
     logs: otlp
     metrics:
@@ -54,9 +56,17 @@ instead.
 
 Metrics reach Prometheus twice: the Collector pushes OTLP metrics to it, and
 it scrapes each binary's `/metrics` on `host.docker.internal:9464`/`9465`
-(`prometheus.yml`). Either path alone is enough.
+(`prometheus.yml`). Either path alone is enough. The admin listeners answer
+only names they know in a request's `Host`, and `host.docker.internal` has a
+dot, so the file above lists it in `admin_allowed_hosts:`, and `make up`
+lists it in the generated file beside `admin_addr:`. Without it, every
+scrape is refused `403`, and the binaries log `request refused: Host not
+allowed` with `listener="admin listener"`.
 
 ## Where things are
+
+Every port is published on `127.0.0.1` only, so Grafana's anonymous admin and
+the rest are reachable from this machine and from no other.
 
 | what | where |
 |---|---|

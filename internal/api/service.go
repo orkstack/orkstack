@@ -40,7 +40,8 @@ type RunStarter = engine.RunStarter
 // fake.
 type RunArchive interface {
 	// Archive writes a finished run and its events, with one gap record per
-	// range of the stream lost before archiving.
+	// range missing from the stream, lost before archiving or never
+	// published.
 	Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...engine.EventGap) error
 	// LoadRun returns an archived run, or an error matching
 	// artifacts.ErrNotFound when the run was never archived.
@@ -429,6 +430,10 @@ type Service struct {
 	// fleet is the Orker inventory and cordon seam. It holds no Orker list:
 	// every answer is read from the cluster and from the Orker itself.
 	fleet engine.OrkerFleet
+	// inventory is the Orker inventory InspectRun's capacity answer reads,
+	// shared by every caller on this replica (capacity_inventory.go); nil
+	// without a fleet.
+	inventory *sharedInventory
 	// releases is the release routing seam (Config.Releases).
 	releases engine.ReleaseCluster
 	// capabilities is the fleet check (Config.Capabilities).
@@ -658,6 +663,9 @@ func NewService(cfg Config) *Service {
 	}
 	svc.usage = newUsageMeter(cfg.Archive, cfg.Attempts, cfg.UsageCacheTTL, svc.now)
 	svc.poolScope = newPoolScopeCache(PoolScopeCacheTTL, svc.now)
+	if svc.fleet != nil {
+		svc.inventory = newSharedInventory(svc.fleet, svc.now)
+	}
 	svc.runReads = newRunReadMemo(taskTerminalMemoTTL)
 	if svc.deliveries != nil {
 		svc.deliveryRecorder = NewDeliveryRecorder(svc.deliveries, svc.logger)
@@ -1741,6 +1749,7 @@ func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
 	limit := engine.DefaultInFlightLimit(s.runMaxInFlight)
 	plan.InFlight = &limit
 	plan.PinCreationTimeoutSeconds = s.pinCreationSeconds
+	plan.RetryMaxIntervalSeconds = int32(engine.DefaultRetryMaxInterval / time.Second)
 }
 
 // pinCreationTimeoutSecondsOf is the pin creation timeout a plan carries, in
@@ -2155,8 +2164,9 @@ func (s *Service) archiveRun(ctx context.Context, runID string) {
 // is the read path for a run this process never executed, and it reports the
 // same Connect errors the live path would: NotFound when nothing was archived
 // under that id, Internal when the archive itself is unreachable. When the
-// requested range overlaps events lost from object storage before the run was
-// archived, it is DataLoss, naming the range.
+// requested range overlaps a gap the archive records — events lost from
+// object storage before the run was archived, or numbers the run never
+// published — it is DataLoss, naming the range.
 func (s *Service) ArchivedEvents(
 	ctx context.Context,
 	runID string,
@@ -2174,7 +2184,8 @@ func (s *Service) ArchivedEvents(
 
 // archivedEventsBeforeLoss is ArchivedEvents' body: the archived events after
 // fromSequence, and — when the requested range overlaps a gap the archive
-// records (events lost from object storage before the run was archived) —
+// records (events lost from object storage before the run was archived, or
+// numbers it never published) —
 // only the events below the first overlapping gap, with a CodeDataLoss error
 // naming every overlapping range. A gap entirely at or below fromSequence is
 // not part of the request and costs nothing.
@@ -2220,18 +2231,145 @@ func (s *Service) archivedEventsBeforeLoss(
 	return after, connect.NewError(connect.CodeDataLoss, archivedLossError(runID, overlapping)), nil
 }
 
-// archivedLossError is the sentence a read over a lost range receives: run
-// vocabulary only.
+// archivedLossError is the error a read over a gap receives, archived or
+// live: a *streamGapError, whose sentence names each range for its cause.
 func archivedLossError(runID string, gaps []engine.EventGap) error {
-	ranges := make([]string, 0, len(gaps))
-	reasons := make([]string, 0, len(gaps))
-	for _, gap := range gaps {
-		ranges = append(ranges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
-		reasons = append(reasons, gap.Reason)
+	return &streamGapError{runID: runID, gaps: gaps}
+}
+
+// streamGapError is a read over gaps in a run's stream: events lost from
+// object storage before the run was archived, or numbers it never published.
+// Its message is the one sentence every such read gives, in run vocabulary
+// only; closeReason is a shortened form of it that fits a WebSocket close
+// frame.
+type streamGapError struct {
+	runID string
+	gaps  []engine.EventGap
+}
+
+// gapClauses names the ranges for their causes, "events … of <subject>".
+func (e *streamGapError) gapClauses(subject string, withReasons bool) []string {
+	var lostRanges, lostReasons, unpublished []string
+	for _, gap := range e.gaps {
+		if gap.Unpublished() {
+			unpublished = append(unpublished, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+			continue
+		}
+		lostRanges = append(lostRanges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+		lostReasons = append(lostReasons, gap.Reason)
 	}
-	return fmt.Errorf("events %s of run %s were lost from object storage before the run was archived (%s); "+
-		"the run's outcome and its other events are intact",
-		strings.Join(ranges, ", "), runID, strings.Join(reasons, "; "))
+	var clauses []string
+	if len(lostRanges) > 0 {
+		clause := fmt.Sprintf("events %s of %s were lost from object storage before the run was archived",
+			strings.Join(lostRanges, ", "), subject)
+		if withReasons {
+			clause += " (" + strings.Join(lostReasons, "; ") + ")"
+		}
+		clauses = append(clauses, clause)
+	}
+	if len(unpublished) > 0 {
+		clause := fmt.Sprintf("events %s of %s were never published", strings.Join(unpublished, ", "), subject)
+		if withReasons {
+			clause += " (" + engine.UnpublishedEventsReason + ")"
+		}
+		clauses = append(clauses, clause)
+	}
+	return clauses
+}
+
+func (e *streamGapError) Error() string {
+	return strings.Join(e.gapClauses("run "+e.runID, true), "; ") + "; the run's outcome and its other events are intact"
+}
+
+// maxCloseReason is the most a WebSocket close frame's reason holds
+// (RFC 6455 §5.5: a 125-byte control payload, 2 of them the status code).
+const maxCloseReason = 123
+
+// closeReason is the sentence for the socket that streams this one run: the
+// run is the socket's own, so it is "this run". It never carries the
+// reasons, which no frame can hold beside a range. When the frame cannot
+// hold every range, the closing clause goes first; then each cause keeps its
+// first range and counts the rest; and last, for ranges too long to name
+// beside both causes, each cause counts its ranges. Every form names each
+// cause, and the last fits the frame for any count a slice can hold. A tier
+// is built only when the one before it does not fit.
+func (e *streamGapError) closeReason() string {
+	if len(e.gaps) == 0 {
+		return "the stream of this run ended at a gap it could not name"
+	}
+	every := strings.Join(e.gapClauses("this run", false), "; ")
+	for _, reason := range []func() string{
+		func() string { return every + "; its outcome and other events are intact" },
+		func() string { return every },
+		e.firstRangesReason,
+	} {
+		if r := reason(); len(r) <= maxCloseReason {
+			return r
+		}
+	}
+	return e.countedReason()
+}
+
+// gapsByCause splits the gaps into those lost from object storage and those
+// never published, each in sequence order.
+func (e *streamGapError) gapsByCause() (lost, unpublished []engine.EventGap) {
+	for _, gap := range e.gaps {
+		if gap.Unpublished() {
+			unpublished = append(unpublished, gap)
+		} else {
+			lost = append(lost, gap)
+		}
+	}
+	return lost, unpublished
+}
+
+// firstRangesReason names each cause with its first range and counts the
+// rest: "events 1201–2400 and 3 more ranges of this run were lost from
+// object storage". With both causes, the one whose first range comes first
+// leads.
+func (e *streamGapError) firstRangesReason() string {
+	lost, unpublished := e.gapsByCause()
+	first := func(gaps []engine.EventGap) string {
+		named := fmt.Sprintf("%d–%d", gaps[0].First, gaps[0].Last)
+		if len(gaps) > 1 {
+			named += " and " + rangeCount(len(gaps)-1, "more ")
+		}
+		return named
+	}
+	switch {
+	case len(unpublished) == 0:
+		return "events " + first(lost) + " of this run were lost from object storage"
+	case len(lost) == 0:
+		return "events " + first(unpublished) + " of this run were never published"
+	case unpublished[0].First < lost[0].First:
+		return "events " + first(unpublished) + " of this run were never published, and " + first(lost) +
+			" were lost from object storage"
+	default:
+		return "events " + first(lost) + " of this run were lost from object storage, and " + first(unpublished) +
+			" were never published"
+	}
+}
+
+// countedReason names each cause with how many ranges it has, and no range.
+func (e *streamGapError) countedReason() string {
+	lost, unpublished := e.gapsByCause()
+	switch {
+	case len(unpublished) == 0:
+		return "events of this run in " + rangeCount(len(lost), "") + " were lost from object storage"
+	case len(lost) == 0:
+		return "events of this run in " + rangeCount(len(unpublished), "") + " were never published"
+	default:
+		return "events of this run in " + rangeCount(len(lost), "") + " were lost from object storage, in " +
+			rangeCount(len(unpublished), "") + " never published"
+	}
+}
+
+// rangeCount is "1 range" or "n ranges", with an adjective between.
+func rangeCount(n int, adjective string) string {
+	if n == 1 {
+		return "1 " + adjective + "range"
+	}
+	return fmt.Sprintf("%d %sranges", n, adjective)
 }
 
 // LookupRun resolves a run through the read model, in the order the system of
@@ -2738,6 +2876,7 @@ func (s *Service) streamCheckedRunEvents(
 	}
 	if binding.Reader != nil {
 		err := binding.Reader.StreamEvents(ctx, runID, fromSequence, send)
+		var unpublished *engine.UnpublishedEventsError
 		switch {
 		case err == nil:
 			return nil
@@ -2745,6 +2884,11 @@ func (s *Service) streamCheckedRunEvents(
 			// The caller went away mid-stream. That is not a failure of the
 			// run, and the old bus path reported it as a clean end too.
 			return nil
+		case errors.As(err, &unpublished):
+			// The range asked for starts below the run's first published
+			// event: DataLoss naming the numbers, as the run's archive
+			// answers the same read (archivedEventsBeforeLoss).
+			return connect.NewError(connect.CodeDataLoss, archivedLossError(runID, unpublished.Gaps))
 		case !errors.Is(err, artifacts.ErrNotFound):
 			return connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("stream run %q: %w", runID, err))
@@ -2792,8 +2936,9 @@ func (s *Service) replayArchivedEvents(
 	if err != nil {
 		return err
 	}
-	// Every event below the first lost range is sent, then the loss is the
-	// stream's error: a reader never mistakes a gapped stream for a whole one.
+	// Every event below the first gap is sent, then the gap — lost or never
+	// published — is the stream's error: a reader never mistakes a gapped
+	// stream for a whole one.
 	for _, event := range archived {
 		if err := send(event); err != nil {
 			return err

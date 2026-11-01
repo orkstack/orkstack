@@ -242,9 +242,10 @@ func (a *EventActivities) PublishEvent(
 	}
 	// Returning the error makes Temporal retry the activity, so a transient
 	// storage failure heals itself instead of silently dropping the run. A
-	// permanent loss cannot heal, so it is archived as an explicit gap: a run
-	// whose earlier events are gone still reaches the archive (AGENTS.md
-	// §15), and every read of the lost range says so.
+	// permanent loss, or numbers the history never published, cannot heal, so
+	// each is archived as an explicit gap: a run with a gap in its events
+	// still reaches the archive (AGENTS.md §15), and every read of the gap
+	// names its cause.
 	return a.archive.Archive(ctx, snapshot, archived, gaps...)
 }
 

@@ -1,8 +1,10 @@
 package dist_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/orkstack/orkstack/internal/dist"
 )
@@ -291,5 +293,147 @@ func TestRepository_TheFirstReleaseSaysFirstRelease(t *testing.T) {
 	got, err := dist.ReleaseNotes(readRepoFile(t, dist.ChangelogFile), mustVersion(t, "v0.1.0"))
 	if err != nil || got != "First release.\n" {
 		t.Fatalf("CHANGELOG.md's 0.1.0 notes are %q (%v), want %q", got, err, "First release.\n")
+	}
+}
+
+// releaseImages is one digest per image a release publishes, each its own.
+func releaseImages() []dist.Image {
+	var images []dist.Image
+	for i, name := range dist.Images() {
+		images = append(images, dist.Image{Name: name, Digest: fmt.Sprintf("sha256:%064x", i+1)})
+	}
+	return images
+}
+
+// TestReleasePage_EndsWithEachImageAndHowToVerifyIt: the release's page is the
+// changelog section and then a footer naming every image by its digest, the
+// tags it is published under, the key that signed it, and the commands that
+// verify each image and the checksums.
+func TestReleasePage_EndsWithEachImageAndHowToVerifyIt(t *testing.T) {
+	t.Parallel()
+	notes := "### Added\n\n- The 1.2.3 feature.\n"
+	images := releaseImages()
+	page, err := dist.ReleasePage(notes, mustVersion(t, "v1.2.3"), images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(page, notes+"\n---\n") {
+		t.Fatalf("the page does not open with the notes and a rule:\n%s", page)
+	}
+	for _, want := range []string{
+		"tagged `1.2.3` and `1.2`",
+		"`deploy/cosign.pub` at the tag `v1.2.3`",
+		"cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true --bundle SHA256SUMS.sigstore.json SHA256SUMS\n",
+		"sha256sum --ignore-missing -c SHA256SUMS\n",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("the page never says %q:\n%s", want, page)
+		}
+	}
+	for _, image := range images {
+		row := "| `ghcr.io/orkstack/" + image.Name + "` | `" + image.Digest + "` |\n"
+		verify := "cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/" + image.Name + "@" + image.Digest + "\n"
+		for _, want := range []string{row, verify} {
+			if strings.Count(page, want) != 1 {
+				t.Errorf("the page says %q %d times, want once:\n%s", want, strings.Count(page, want), page)
+			}
+		}
+	}
+	if strings.Contains(page, "sha256:"+strings.Repeat("0", 64)) {
+		t.Errorf("a page with every digest holds a placeholder:\n%s", page)
+	}
+	if !strings.HasSuffix(page, "```\n") || strings.HasSuffix(page, "\n\n") {
+		t.Errorf("the page does not end with its closed code block and one newline: %q", page[len(page)-20:])
+	}
+}
+
+// TestReleasePage_BeforeTheImagesExistIsAsLongAsAfter: validate checks the
+// page before anything is built, so every digest is a placeholder of a
+// digest's exact length and the page has the size it will have.
+func TestReleasePage_BeforeTheImagesExistIsAsLongAsAfter(t *testing.T) {
+	t.Parallel()
+	before, err := dist.ReleasePage("- x.\n", mustVersion(t, "v1.2.3"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, err := dist.ReleasePage("- x.\n", mustVersion(t, "v1.2.3"), releaseImages())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before) != len(after) || strings.Count(before, "sha256:"+strings.Repeat("0", 64)) != 2*len(dist.Images()) {
+		t.Fatalf("before the images: %d bytes, after: %d; the placeholders do not stand in for every digest:\n%s",
+			len(before), len(after), before)
+	}
+}
+
+// TestReleasePage_RefusesAPageOverGitHubsLimit: GitHub refuses a release body
+// over 125,000 characters, and publish creates the release last, after the
+// tag and the images are out; the page is refused first, naming its size and
+// what it is made of. Characters are counted as UTF-16 code units: never
+// fewer than code points (a character outside the Basic Multilingual Plane
+// counts twice), and never more than a byte count.
+func TestReleasePage_RefusesAPageOverGitHubsLimit(t *testing.T) {
+	t.Parallel()
+	version := mustVersion(t, "v1.2.3")
+	footer, err := dist.ReleasePage("", version, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	units := func(s string) int { return len(utf16.Encode([]rune(s))) }
+	room := dist.MaxReleaseBody - units(footer)
+	fill := func(n int, r string) string { return strings.Repeat(r, n-1) + "\n" }
+	tests := []struct {
+		name  string
+		notes string
+		ok    bool
+	}{
+		{"exactly the limit", fill(room, "a"), true},
+		{"one character over", fill(room+1, "a"), false},
+		{"far over", fill(3*dist.MaxReleaseBody, "a"), false},
+		{"the limit in characters, over it in bytes", fill(room, "é"), true},
+		{"under the limit in code points, over it in UTF-16", strings.Repeat("😀", room/2+1) + "\n", false},
+	}
+	for _, tc := range tests {
+		page, err := dist.ReleasePage(tc.notes, version, releaseImages())
+		if tc.ok {
+			if err != nil || units(page) != dist.MaxReleaseBody {
+				t.Errorf("%s: %d characters, %v; want the page, at exactly the limit", tc.name, units(page), err)
+			}
+			continue
+		}
+		size := units(tc.notes) + units(footer)
+		if err == nil || page != "" {
+			t.Errorf("%s: a page of %d characters was accepted", tc.name, size)
+			continue
+		}
+		for _, want := range []string{fmt.Sprintf("%d characters", size), "125000", "CHANGELOG.md", "[1.2.3]",
+			fmt.Sprintf("%d of them", units(footer))} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("%s: refusal %q does not say %q", tc.name, err, want)
+			}
+		}
+	}
+}
+
+// TestReleasePage_RefusesAnImageListThatIsNotTheRelease: the footer names
+// exactly the images a release publishes, each by a well-formed digest.
+func TestReleasePage_RefusesAnImageListThatIsNotTheRelease(t *testing.T) {
+	t.Parallel()
+	all := releaseImages()
+	tests := []struct {
+		name   string
+		images []dist.Image
+		want   string
+	}{
+		{"one missing", all[1:], all[0].Name},
+		{"one unknown", append(append([]dist.Image{}, all...), dist.Image{Name: "web", Digest: all[0].Digest}), "web"},
+		{"one twice", append(append([]dist.Image{}, all...), all[0]), all[0].Name},
+		{"a malformed digest", append([]dist.Image{{Name: all[0].Name, Digest: "sha256:ABC"}}, all[1:]...), "sha256:ABC"},
+		{"an empty list", []dist.Image{}, "ork"},
+	}
+	for _, tc := range tests {
+		if _, err := dist.ReleasePage("- x.\n", mustVersion(t, "v1.2.3"), tc.images); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want a refusal naming %q", tc.name, err, tc.want)
+		}
 	}
 }

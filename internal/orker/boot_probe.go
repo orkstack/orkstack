@@ -35,17 +35,43 @@ import (
 
 // bootProber is the runtime capability Boot probes with. A runtime without it
 // is not probed.
+//
+// Neither call leaves its container to the runtime's own removal on exit,
+// which never comes for a container that was created and not started.
+// A container a call hands back is the caller's to remove; every other one it
+// made, the call removes before it returns. A removal that fails is named in
+// the call's error, or, when a later attempt succeeded, handed back with the
+// run for the caller to report.
 type bootProber interface {
-	// RunBootProbe runs spec's container once, to its end, and returns its
-	// stdout. Its errors match ErrProbeImageUnavailable, ErrProbeTimedOut,
-	// ErrNotBindable or ErrPostureRefused, or are the context's own.
-	RunBootProbe(ctx context.Context, spec ContainerSpec) (string, error)
-	// StartBootProbe starts spec's container detached, removed by the daemon
-	// when it exits, and returns its name. Its errors are RunBootProbe's.
-	StartBootProbe(ctx context.Context, spec ContainerSpec) (ContainerID, error)
+	// RunBootProbe runs spec's container once, to its end, and hands back
+	// its name and its stdout. Its errors match ErrProbeImageUnavailable,
+	// ErrProbeTimedOut, ErrNotBindable or ErrPostureRefused, or are the
+	// context's own.
+	RunBootProbe(ctx context.Context, spec ContainerSpec) (BootProbeRun, error)
+	// StartBootProbe starts spec's container detached and hands back its
+	// name. Its errors are RunBootProbe's.
+	StartBootProbe(ctx context.Context, spec ContainerSpec) (BootProbeRun, error)
 	// bindProbeTimeout is the probe's budget for each step that waits on the
 	// daemon (ORK_DOCKER_BIND_PROBE_TIMEOUT).
 	bindProbeTimeout() time.Duration
+}
+
+// BootProbeRun is one of the boot probe's containers as a runtime hands it
+// back: its name, which the caller removes, what it printed when it ran to
+// its end (empty for one started detached), and the container of each
+// earlier attempt that the runtime could not remove.
+type BootProbeRun struct {
+	Container ContainerID
+	Stdout    string
+	Leftovers []ProbeLeftover
+}
+
+// ProbeLeftover is an attempt's container that could not be removed, and
+// why. It carries its Orker's identity, so the next boot under that identity
+// reaps it.
+type ProbeLeftover struct {
+	Container ContainerID
+	Err       error
 }
 
 const (
@@ -99,7 +125,8 @@ exit 0
 // ready file is renamed into place, so the Orker never reads half of it. It
 // waits in `wait`, which a trapped signal interrupts at once, and it ends by
 // itself, exit 3, if SIGTERM never comes, so an Orker killed while it probes
-// leaves no container behind: the daemon removes it when it exits.
+// leaves a stopped container, labelled with its identity, for the next boot
+// under that identity to reap.
 const signalProbeScript = `trap 'echo heard > /orkstack/output/` + signalProbeHeardFile + `; exit 0' TERM
 o=/orkstack/output/` + signalProbeReadyFile + `
 { echo '@@label'; cat /proc/$$/attr/current; echo; echo '@@signals'; grep '^Sig' /proc/$$/status; } > "$o.tmp" 2>&1
@@ -195,11 +222,14 @@ func (d *OCIDispatcher) ProbeRuntime(ctx context.Context, root string) error {
 func (d *OCIDispatcher) judgeBootProbe(ctx context.Context, prober bootProber, root string, ws *Workspace,
 	spec ContainerSpec, hostNonce, containerNonce string,
 ) error {
-	stdout, err := prober.RunBootProbe(ctx, spec)
+	run, err := prober.RunBootProbe(ctx, spec)
 	if err != nil {
 		return fmt.Errorf("boot probe under %s: %w", root, err)
 	}
-	facts := parseProbeFacts(stdout)
+	d.warnProbeLeftovers(run.Leftovers)
+	// It has exited; what it printed is all the judgement needs.
+	d.removeProbeContainer(ctx, run.Container)
+	facts := parseProbeFacts(run.Stdout)
 
 	// The bind first: what the container saw is only worth judging once it
 	// is known to be what the Orker gave it.
@@ -253,10 +283,39 @@ func (d *OCIDispatcher) probeContainerSpec(ws *Workspace, taskID string, command
 	if failure != nil {
 		return ContainerSpec{}, fmt.Errorf("%w: the probe's container: %s", ErrPostureRefused, failure.Message)
 	}
-	// Its own label only: no ork.orker, so no reaper and no test counting an
-	// Orker's containers ever meets a probe that is already being removed.
+	// Labelled with the Orker's identity, as a task's container is. One this
+	// Orker could not remove (it was stopped between the daemon's create and
+	// its own removal, or the daemon finished a create the Orker had given
+	// up on) is reaped by the next boot under the same identity, and
+	// `proofrun clean` finds it and the test whose work root its mounts lie
+	// in. The Orker removes every probe container before ProbeRuntime
+	// returns, so its own reap, which runs after the probe, meets only one
+	// whose removal failed, and tries to remove it again.
 	spec.Labels = map[string]string{"ork.task": taskID}
+	if d.OrkerID != "" {
+		spec.Labels["ork.orker"] = d.OrkerID
+	}
 	return spec, nil
+}
+
+// removeProbeContainer removes one of the boot probe's containers, on a
+// context of its own, as a task's container is removed. A removal that fails
+// is reported, not fatal: what the probe found stands, and the container is
+// labelled for the next boot under this Orker's identity to reap.
+func (d *OCIDispatcher) removeProbeContainer(ctx context.Context, id ContainerID) {
+	if err := d.Runtime.Remove(context.WithoutCancel(ctx), id); err != nil {
+		d.warnProbeLeftovers([]ProbeLeftover{{Container: id, Err: err}})
+	}
+}
+
+// warnProbeLeftovers logs each of the probe's containers that could not be
+// removed, by name: the container an operator looks for.
+func (d *OCIDispatcher) warnProbeLeftovers(leftovers []ProbeLeftover) {
+	for _, left := range leftovers {
+		d.logger().Warn("boot probe: a container of the probe could not be removed and may remain "+
+			"until the next boot under this Orker's identity reaps it",
+			"container", left.Container, "error", left.Err)
+	}
 }
 
 // probeSignalDelivery is the boot probe's SIGTERM check: a second container,
@@ -282,24 +341,15 @@ func (d *OCIDispatcher) probeSignalDelivery(ctx context.Context, prober bootProb
 	if err != nil {
 		return err
 	}
-	id, err := prober.StartBootProbe(ctx, spec)
+	run, err := prober.StartBootProbe(ctx, spec)
 	if err != nil {
 		return fmt.Errorf("boot probe's SIGTERM container under %s: %w", root, err)
 	}
-	// The daemon removes the container once it exits. One that may still be
-	// running when the check ends is removed here, on a context of its own,
-	// as a task's container is; a removal that fails is reported, not fatal:
-	// what the check found stands.
-	running := true
-	defer func() {
-		if !running {
-			return
-		}
-		if err := d.Runtime.Remove(context.WithoutCancel(ctx), id); err != nil {
-			d.logger().Warn("boot probe: the SIGTERM probe's container could not be removed and may remain",
-				"container", id, "error", err)
-		}
-	}()
+	d.warnProbeLeftovers(run.Leftovers)
+	id := run.Container
+	// Removed however the check ends: exited after its trap, killed at the
+	// end of the grace, or still running when the Orker was stopped.
+	defer d.removeProbeContainer(ctx, id)
 
 	budget := prober.bindProbeTimeout()
 	readyCtx, cancel := context.WithTimeout(ctx, budget)
@@ -330,16 +380,11 @@ func (d *OCIDispatcher) probeSignalDelivery(ctx context.Context, prober bootProb
 	stopWatching()
 	<-heard
 	if _, err := os.Stat(heardPath); err == nil {
-		// Its trap exits, and the daemon removes the container.
-		running = false
 		return nil
 	}
 	if ctx.Err() != nil {
 		return fmt.Errorf("the boot probe was interrupted: %w", ctx.Err())
 	}
-	// A SIGKILL the runtime took ends the container, which the daemon
-	// then removes.
-	running = signals.failed(SIGKILL) != nil
 	return signalNotHeard(grace, signals.failed(SIGTERM), facts)
 }
 

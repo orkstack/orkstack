@@ -151,6 +151,15 @@ func DisableRefusedRouteGateForTest() (restore func()) {
 	return func() { refusedRouteGateDisabledForTest.Store(false) }
 }
 
+// DisableRunCreatedFirstGateForTest sets the test-only switch that makes an
+// ending before start write its terminal event past a RUN_CREATED it could
+// not write, as the builds before run-created-first did, WITHOUT asking its
+// version, and returns the function that clears it.
+func DisableRunCreatedFirstGateForTest() (restore func()) {
+	runCreatedFirstGateDisabledForTest.Store(true)
+	return func() { runCreatedFirstGateDisabledForTest.Store(false) }
+}
+
 // DisablePinCreationTimeoutGateForTest sets the test-only switch that makes a
 // pin's creation wait the five minutes the builds before pin-creation-timeout
 // did, WITHOUT asking its version, and returns the function that clears it.
@@ -183,4 +192,18 @@ func MaterializeSnapshotForTest(ctx context.Context, store SnapshotStore, uri st
 func DisableFairnessKeysGateForTest() (restore func()) {
 	fairnessKeysGateDisabledForTest.Store(true)
 	return func() { fairnessKeysGateDisabledForTest.Store(false) }
+}
+
+// DisableFairnessPinCreationGateForTest makes a pin's creation request take
+// its DefaultVersion branch without asking the fairness-pin-creation version.
+func DisableFairnessPinCreationGateForTest() (restore func()) {
+	fairnessPinCreationGateDisabledForTest.Store(true)
+	return func() { fairnessPinCreationGateDisabledForTest.Store(false) }
+}
+
+// DisableRetryMaxIntervalGateForTest makes a task's retry policy take its
+// DefaultVersion branch without asking the retry-max-interval version.
+func DisableRetryMaxIntervalGateForTest() (restore func()) {
+	retryMaxIntervalGateDisabledForTest.Store(true)
+	return func() { retryMaxIntervalGateDisabledForTest.Store(false) }
 }

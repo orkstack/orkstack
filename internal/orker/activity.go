@@ -95,6 +95,9 @@ type Options struct {
 	// no capacity, and the Orker admits by MaxConcurrent alone.
 	CapacityCPU    string
 	CapacityMemory string
+	// CapacityObserver, when set, is told what the ledger does, for the
+	// capacity metrics. Nil — metrics off, the default — observes nothing.
+	CapacityObserver CapacityObserver
 	// TaskQueue is the pool channel the task worker polls. A declared
 	// capacity needs it to tell a task polled there, which holds a permit's
 	// reservation, from a pinned member, which does not.
@@ -181,6 +184,9 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	if opts.Policy != nil {
 		policy = *opts.Policy
 	}
+	// Every attempt's workspace is under the work root, so it is this
+	// Orker's own whoever built the policy.
+	policy = policy.WithWorkRoot(workRoot)
 	orkerID := opts.OrkerID
 	if orkerID == "" {
 		orkerID = defaultOrkerID(workRoot)
@@ -194,6 +200,9 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		maxConc = DefaultMaxConcurrent
 	}
 	capacity, capacityErr := newCapacityFor(policy, opts, int(maxConc))
+	if capacity != nil && opts.CapacityObserver != nil {
+		opts.CapacityObserver.Watch(orkerID, capacity.reading)
+	}
 
 	return &Activities{
 		dispatcher: &OCIDispatcher{
@@ -252,7 +261,9 @@ func newCapacityFor(policy SecurityPolicy, opts Options, slots int) (*Capacity, 
 		return nil, fmt.Errorf("a declared capacity needs the task worker's channel (Options.TaskQueue) " +
 			"to tell a polled task from a pinned member")
 	}
-	return newCapacity(limit, ceiling, slots), nil
+	c := newCapacity(limit, ceiling, slots)
+	c.observer = opts.CapacityObserver
+	return c, nil
 }
 
 // Dispatcher exposes the dispatcher for boot-time work — the container reaper
@@ -560,6 +571,49 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 	}
 }
 
+// engineStater is the runtime capability Boot asks where the engine keeps
+// its state. A runtime without it keeps the default paths alone, and Boot
+// says so.
+type engineStater interface {
+	EngineState(ctx context.Context) ([]OwnPath, error)
+}
+
+// ownEngineState adds the directories the engine keeps its state in to the
+// Orker's own paths. Whatever the engine could not say — nothing at all, or
+// something beside what it named — leaves the default paths in force and is
+// no reason to refuse boot: it is said once, with what to check and the
+// floor that bounds what a task may name meanwhile. A floor entry that admits
+// only such directories refuses boot, as one under the defaults does.
+func (a *Activities) ownEngineState(ctx context.Context) error {
+	var paths []OwnPath
+	err := errors.New("this runtime cannot say where its engine keeps its state")
+	if stater, ok := a.dispatcher.Runtime.(engineStater); ok {
+		paths, err = stater.EngineState(ctx)
+	}
+	if err != nil && ctx.Err() != nil {
+		return fmt.Errorf("boot interrupted while asking where the container engine keeps its state: %w (%v)",
+			ctx.Err(), err)
+	}
+	if len(paths) > 0 {
+		policy := a.dispatcher.Policy.WithOwnPaths(paths...)
+		if err := policy.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
+		}
+		a.dispatcher.Policy = policy
+		dirs := make([]string, 0, len(paths))
+		for _, path := range paths {
+			dirs = append(dirs, path.Path)
+		}
+		a.dispatcher.logger().Info("container engine state is this orker's own", "dirs", dirs)
+	}
+	if err != nil {
+		a.dispatcher.logger().Warn("container engine did not say where it keeps its state: a state directory "+
+			"kept off the defaults is not among this orker's own; check what the error names, and set "+
+			SecretAllowVar+" to directories of the tasks' own", "error", err, "setting", SecretAllowVar)
+	}
+	return nil
+}
+
 // Boot performs the checks an Orker must pass before it accepts work.
 //
 // Refusing to start is the only honest response to any of these failures. An
@@ -574,6 +628,14 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// (§9.3, AGENTS.md §6).
 	if err := a.dispatcher.Policy.Validate(); err != nil {
 		return fmt.Errorf("%s: %w", ReasonResourceRefused, err)
+	}
+	// An empty floor is the default, not an error: it admits every source of
+	// an allowed scheme except the Orker's own. On a pool several namespaces
+	// share that is rarely meant, so say it once, naming the setting.
+	if len(a.dispatcher.Policy.SecretAllow) == 0 {
+		a.dispatcher.logger().Warn("secret floor is empty: a task may name any env or file source on this orker "+
+			"except the orker's own; set "+SecretAllowVar+" on every orker of a shared pool",
+			"setting", SecretAllowVar)
 	}
 	// A capacity that cannot be read, or that the per-task cap does not fit
 	// in, would be an Orker that admits nothing or admits blindly; either
@@ -628,6 +690,12 @@ func (a *Activities) Boot(ctx context.Context) error {
 		a.dispatcher.logger().Info("container runtime", "engine", info.Name, "cli", info.CLI,
 			"version", info.Version, "rootless", info.Rootless, "seccomp", info.Seccomp)
 	}
+	// The engine's state, where the engine's own settings put it: one kept
+	// off the defaults still holds every container's writable layer, which a
+	// task writes, so it is this Orker's own as the defaults are.
+	if err := a.ownEngineState(ctx); err != nil {
+		return err
+	}
 	// An escape hatch that does not land as the Orker is a boot refusal only
 	// where every task would use it; elsewhere it fails only the tasks that
 	// ask for it, and says so here first.
@@ -671,6 +739,16 @@ func (a *Activities) Boot(ctx context.Context) error {
 		a.dispatcher.logger().Info("capacity declared",
 			"capacity", limit.String(), "per_task_cap", a.capacity.ceiling.String(),
 			"reserved_by_orphans", reserved.String(), "orphans_pending_removal", a.capacity.pendingRemovals())
+	} else {
+		// Said out loud rather than left to be inferred from an absent line:
+		// max_concurrent counts tasks, not their size, so nothing holds the
+		// requests of the tasks this Orker runs at once to what its host has
+		// (docs/DEPLOY.md, "Declaring an Orker's capacity").
+		// The policy's own Validate, above, parsed these caps, so this
+		// cannot fail.
+		ceiling, _ := a.dispatcher.Policy.ceiling()
+		a.dispatcher.logger().Info("capacity not declared: admission is best effort, bounded only by max_concurrent",
+			"max_concurrent", a.maxConc, "per_task_cap", ceiling.String())
 	}
 	// And its own previous life's pin directories, beside the containers, for
 	// the same reason and with a stronger guarantee: a pin cannot outlive the

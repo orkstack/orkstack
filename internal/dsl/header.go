@@ -72,7 +72,7 @@ var (
 // It reads the root mapping's top-level keys, taking the first occurrence of
 // each; a duplicate is refused later by the struct decode. It runs before
 // the strict struct decode, so a document of another kind gets the kind
-// message rather than "field settings not found".
+// message rather than `unknown key "settings"`.
 func checkHeader(source []byte) error {
 	var root yaml.Node
 	if err := yaml.NewDecoder(bytes.NewReader(source)).Decode(&root); err != nil {

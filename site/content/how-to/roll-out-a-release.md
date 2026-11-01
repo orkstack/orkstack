@@ -48,7 +48,7 @@ An older release cannot run every Orkflow construct. Apply a document that uses 
 
 ## Turning versioning on for a running system
 
-Versioning on a system that already runs unversioned work is a separate procedure. Drain first: hold each namespace, let running runs finish, then promote the first release. The full procedure is in the deployment manual.
+Versioning on a system that already runs unversioned work is a separate procedure. Drain first: hold each namespace, let running runs finish, then promote the first versioned release. The full procedure is in the deployment manual.
 
 ## Limits
 
@@ -60,7 +60,7 @@ Versioning on a system that already runs unversioned work is a separate procedur
 
 - [DEPLOY.md, “3. Rolling a release forward”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#3-rolling-a-release-forward): each step, with its output
 - [DEPLOY.md, “4. Rolling back”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#4-rolling-back): rollback and the runs that stay on the newer release
-- [DEPLOY.md, “3.5 Turning versioning on”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#35-turning-versioning-on-for-a-system-that-is-already-running): the first release on a running system
+- [DEPLOY.md, “3.5 Turning versioning on”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#35-turning-versioning-on-for-a-system-that-is-already-running): the first versioned release on a running system
 - [DEPLOY.md, “The web UI”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-web-ui): the UI during a rollout
 - [UPGRADING.md, “Upgrading the deployment”](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#upgrading-the-deployment): the upgrade rules
 - Command reference: [orkctl](/docs/reference/cli/)

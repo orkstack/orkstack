@@ -17,16 +17,17 @@ import (
 	"time"
 )
 
-// SchemaVersion is the manifest schema every bundle whose run lost nothing
-// is written with.
+// SchemaVersion is the manifest schema every bundle whose run's archive
+// records no gap is written with.
 const SchemaVersion = 1
 
-// SchemaVersionEventGaps is the schema of a bundle whose run lost part of its
-// event stream from object storage before it was archived: the same members,
-// plus event_gaps naming every lost range. It is a new version, not an
-// additive key, so a tool older than it refuses the bundle with its own
-// message instead of verifying it silently. These are the two versions this
-// build reads; a newer bundle is not verified by an older tool.
+// SchemaVersionEventGaps is the schema of a bundle whose run's archive
+// records gaps in its event stream — events lost from object storage before
+// it was archived, or numbers it never published: the same members, plus
+// event_gaps naming every range. It is a new version, not an additive key,
+// so a tool older than it refuses the bundle with its own message instead of
+// verifying it silently. These are the two versions this build reads; a
+// newer bundle is not verified by an older tool.
 const SchemaVersionEventGaps = 2
 
 // ManifestPath is the name of a bundle's first member.
@@ -116,21 +117,31 @@ type Manifest struct {
 	Members          []Member    `json:"members"`
 	Counts           Counts      `json:"counts"`
 	// EventGaps is set, and only set, on a schema_version 2 bundle: every
-	// range of the run's event stream lost from object storage before the
-	// run was archived. The archive body (run.jsonl) records the same ranges
-	// as gap lines.
+	// range of the run's event stream its archive does not hold — lost from
+	// object storage before the run was archived, or never published. The
+	// archive body (run.jsonl) records the same ranges as gap lines.
 	EventGaps []EventGap `json:"event_gaps,omitempty"`
 }
 
-// EventGap is one lost range of a run's event sequence, inclusive.
+// EventGap is one range of a run's event sequence its archive does not hold,
+// inclusive.
 type EventGap struct {
 	First  int64  `json:"first"`
 	Last   int64  `json:"last"`
 	Reason string `json:"reason"`
 }
 
-// Sentence is the notice a reader prints for the gap.
+// UnpublishedEventsReason is the reason of a gap whose numbers the run never
+// published: the engine's engine.UnpublishedEventsReason, word for word
+// (internal/api checks they agree). Every other gap's reason says how its
+// events were lost from object storage.
+const UnpublishedEventsReason = "the run's history holds no event under these numbers"
+
+// Sentence is the notice a reader prints for the gap, named for its cause.
 func (g EventGap) Sentence() string {
+	if g.Reason == UnpublishedEventsReason {
+		return fmt.Sprintf("events %d–%d of this run were never published (%s)", g.First, g.Last, g.Reason)
+	}
 	return fmt.Sprintf("events %d–%d of this run were lost from object storage before it was archived (%s)",
 		g.First, g.Last, g.Reason)
 }

@@ -35,6 +35,8 @@ declare module 'bun:test' {
 		not: {
 			toBe(expected: T): void;
 			toContain(expected: unknown): void;
+			// csp.test.ts: a refusal the spec did not declare is an error.
+			toBeNull(): void;
 		};
 	};
 }
@@ -94,9 +96,14 @@ declare module 'node:crypto' {
 }
 
 // Bun's built-in YAML 1.2 reader: authoredSchemas.test.ts reads the shipped
-// documents the way an editor's YAML language server does.
+// documents the way an editor's YAML language server does. spawnSync:
+// browser-server-owner.test.ts runs e2e/browser-server.ts's start command.
 declare const Bun: {
 	readonly YAML: { parse(text: string): unknown };
+	spawnSync(
+		cmd: string[],
+		options: { cwd: string; env: Record<string, string | undefined> }
+	): { exitCode: number | null; stdout: { toString(): string }; stderr: { toString(): string } };
 };
 
 interface ImportMeta {

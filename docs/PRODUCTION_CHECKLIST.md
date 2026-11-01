@@ -31,6 +31,8 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Give every `ork` replica identical configuration: the Temporal address and namespace, `ORK_DEPLOYMENT_NAME`, `ORK_BUILD_ID`, the pool and the bucket. Set `ORK_HTTP_ADDR` differently only where replicas share a host ([DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas").
 - [ ] Put one address in front of the replicas, with a load balancer, an ingress or DNS round robin. No affinity to one replica is needed, because any replica answers for any run in the namespace the request names ([DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas"). While replicas of two releases share that address during a rollout, affinity keeps a browser's UI page on one release ([DEPLOY.md](./DEPLOY.md), "The web UI").
 - [ ] Route the whole host to `ork`, not only the API's paths: every replica serves the web UI at `/` on its API port. Forward WebSocket upgrades on `/ws/`, keep the browser's `Host` header, and serve the UI at the root of a host ([DEPLOY.md](./DEPLOY.md), "The web UI").
+- [ ] Set `ORK_ALLOWED_HOSTS` on every replica to every name with a dot the engine is reached by: the name the browser uses behind a proxy that keeps it, an FQDN, a Kubernetes name such as `ork.orkstack`, and the name `orkctl` and trigger callers dial. Any other such `Host` is refused `403`, which is what stops a web page reaching the engine by DNS rebinding; list the narrowest names you can, and never `*` on an engine a browser can reach ([DEPLOY.md](./DEPLOY.md), "The web UI").
+- [ ] Set `ORK_ADMIN_ALLOWED_HOSTS` on both binaries when a scraper reaches the admin listener by a name with a dot, such as a Prometheus static target. A scraper that dials pod addresses needs nothing ([DEPLOY.md](./DEPLOY.md), "The API listener's bounds").
 - [ ] Set `ORK_WS_ALLOWED_ORIGINS` on every replica only for a browser page served from another origin, or behind a proxy that rewrites `Host`. The UI the engine serves is on its own origin and needs none; an origin not admitted has its WebSocket upgrade refused with 403 ([DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas").
 - [ ] Set `ORK_ORKER_POOL` to the same value on both binaries. A task that names no pool runs on the engine's default route, which must match the Orkers that serve it ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 - [ ] Give every Orker an `ORK_ORKER_ID` that is unique across the whole deployment. Two Orkers that share one show as a single row, and a cordon can land on either ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
@@ -64,7 +66,8 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 
 ## Secrets
 
-- [ ] Set `ORK_ORKER_SECRET_ALLOW` on every Orker of a shared pool. It is the operator's floor, and it is checked by the Orker at dispatch ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
+- [ ] Set `ORK_ORKER_SECRET_ALLOW` on every Orker of a shared pool. It is the operator's floor, and it is checked by the Orker at dispatch. An Orker with no floor still refuses its own settings, process files and credential files, and logs a warning at boot ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool"; [SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources").
+- [ ] Put the values tasks read under sources of their own, such as a directory the floor names. No floor admits the Orker's own: its `ORK_*` and `OTEL_*` settings, `/proc`, `/run/secrets`, its work root, or its configuration and credential files ([SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources").
 - [ ] Set each namespace's `allowed_secrets` with `orkctl namespace update NAME --allow-secret 'env:SANDBOX_*'`. It is checked at apply and at every submit, and it can only narrow the floor ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
 - [ ] Keep secret values out of definitions. A secret reaches a task as a read-only file, and an `env:` value is stored in the definition, so it is configuration and never a secret ([DSL.md](./DSL.md), "Tasks"; [ORKFLOW_PATTERNS.md](./ORKFLOW_PATTERNS.md), "Environment variables are configuration").
 - [ ] Check `orker.secret_schemes` (default `env,file`) against the sources your tasks name ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
@@ -105,7 +108,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Wait for the old release to drain with `orkctl release wait`, and stop it only after the wait exits 0 ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
 - [ ] Know the rollback path before you need it. `orkctl release rollback` returns new runs to the release that was current before, and runs pinned to the release you left keep finishing there, so its workers must keep running until they drain ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 - [ ] Keep the last replica of a release up until that release reports drained ([DEPLOY.md](./DEPLOY.md), "5. Ops notes").
-- [ ] Before a rollback below a release, check the floors in [UPGRADING.md](./UPGRADING.md), "Rolling back". Never roll back below the first release that reads runs carried into a fresh history.
+- [ ] Before a rollback below a release, check the floors in [UPGRADING.md](./UPGRADING.md), "Rolling back". Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it.
 
 ## Draining and removing Orkers
 

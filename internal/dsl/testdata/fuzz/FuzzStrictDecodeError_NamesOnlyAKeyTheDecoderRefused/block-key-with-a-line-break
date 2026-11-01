@@ -1,0 +1,3 @@
+go test fuzz v1
+[]byte("apiVersion: orkstack/v1\nkind: ActivityInterface\n? |\n  a\n  b\n: 1\n")
+bool(true)

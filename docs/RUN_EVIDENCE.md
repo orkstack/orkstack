@@ -141,14 +141,18 @@ A change a version-1 reader could misread bumps `schema_version` (additive
 keys, like the fan-out `item`, do not); `verify` refuses a version it does not
 know rather than guessing.
 
-### Version 2: a run whose stream lost events
+### Version 2: a run whose stream has a gap
 
 A run that carries on into a fresh history reads the events of its earlier
 histories from immutable event segments in object storage. When one of them
 was missing or altered by the time the run was archived, the archive records
-the lost range as a `gap` line in `run.jsonl` (`docs/STORAGE.md`) rather than
-leaving the run unarchived, and the bundle of such a run is written with
-`schema_version: 2` and one more key:
+the range it lost as a `gap` line in `run.jsonl` (`docs/STORAGE.md`) rather than
+leaving the run unarchived. So it does for a run whose definition could not be
+used and whose `RUN_CREATED` object storage refused: its stream starts at its
+terminal event, at 2, and 1 is recorded as never published, with the reason
+`the run's history holds no event under these numbers` (`docs/DEPLOY.md` §6).
+The bundle of such a run is written with `schema_version: 2` and one more
+key:
 
 ```json
   "event_gaps": [
@@ -156,14 +160,17 @@ leaving the run unarchived, and the bundle of such a run is written with
   ]
 ```
 
+`orkctl` names each gap for its cause: events "lost from object storage before
+it was archived", or "never published".
+
 Every member is exactly what version 1 would list — `run.jsonl` is still the
 archive body verbatim, gap lines included, and still `present` — so the
 bundle is exactly what the archive holds. A version-2 manifest must carry a
 non-empty `event_gaps`, and a version-1 manifest must not carry one. It is a
 new version rather than an additive key on purpose: a tool older than it
 refuses the bundle with its own `schema_version` message, instead of
-verifying it while ignoring the gap. Every bundle of a run that lost nothing
-stays version 1.
+verifying it while ignoring the gap. Every bundle of a run whose archive
+records no gap stays version 1.
 
 ## States
 
@@ -218,6 +225,15 @@ a workload artifact named `commit.json` collides with nothing.
 2. It must be finished (`FailedPrecondition` naming its status otherwise) and
    archived (`FailedPrecondition` "finished but not yet archived; retry
    shortly" in the moment between its terminal event and the archive write).
+   A run that published no terminal event — its ending could not be written
+   to object storage, or it was terminated — is never archived, since only
+   that event archives a run; its export says so (`FailedPrecondition`, "has
+   no archive and will never have one"), and it can be read only until it is
+   retired (`docs/DEPLOY.md` §6). That answer covers only a run that never
+   published its terminal event. A run that published it, but whose archive
+   write then failed on each of its three attempts, has no archive either,
+   and its export keeps answering "retry shortly", though no archive is
+   coming.
 3. Every member is resolved from the **archived** run snapshot, never from a
    coordinate the caller supplied.
 4. The definition is read by the run's name and version and attested by
@@ -269,8 +285,11 @@ command exits 0 and lists them with their reasons. So is each event gap of a
 version-2 bundle, printed as a notice:
 
 ```text
-  events lost     events 1201–2400 of this run were lost from object storage before it was archived (segment object missing)
+  event gaps      events 1201–2400 of this run were lost from object storage before it was archived (segment object missing)
 ```
+
+A gap the run never published reads `events 1–1 of this run were never
+published (the run's history holds no event under these numbers)`.
 
 Any failure exits 1 and is named, one line per member:
 

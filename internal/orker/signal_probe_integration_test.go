@@ -26,8 +26,8 @@ import (
 // SIGTERM on its way to the daemon, as that host's AppArmor profile dropped
 // it on its way from the container's init to the workload, and the real
 // container, still running at the end of its grace, refuses boot as
-// RUNTIME_POSTURE_REFUSED. Either way the daemon removes the probe's
-// container once it has ended.
+// RUNTIME_POSTURE_REFUSED. Either way the Orker has removed the probe's
+// container by the time Boot returns.
 func TestIntegration_BootProbeRefusesARuntimeThatDropsSIGTERM(t *testing.T) {
 	requireDocker(t)
 	realDocker := containerCLI(t)
@@ -97,18 +97,10 @@ func TestIntegration_BootProbeRefusesARuntimeThatDropsSIGTERM(t *testing.T) {
 			if name == "" || terms != 1 {
 				t.Fatalf("the probe created %q and sent %d SIGTERMs; want its container, signalled once:\n%s", name, terms, raw)
 			}
-			// The daemon removes it once it has exited, which may be just
-			// after Boot returns.
-			for deadline := time.Now().Add(time.Minute); ; {
-				out, inspectErr := exec.Command(realDocker, "container", "inspect", "--format", "{{.State.Status}}", name).CombinedOutput()
-				if inspectErr != nil {
-					break
-				}
-				if time.Now().After(deadline) {
-					t.Errorf("the SIGTERM probe's container %s is still there a minute after Boot: %s", name, out)
-					break
-				}
-				time.Sleep(200 * time.Millisecond)
+			// The Orker removes it itself, before Boot returns, and nothing
+			// else does: the daemon was never asked to (no --rm).
+			if out, inspectErr := exec.Command(realDocker, "container", "inspect", "--format", "{{.State.Status}}", name).CombinedOutput(); inspectErr == nil {
+				t.Errorf("the SIGTERM probe's container %s is still there when Boot has returned: %s", name, out)
 			}
 
 			if !tt.drop {

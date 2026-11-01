@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -106,6 +107,10 @@ type config struct {
 	// empty declare none.
 	capacityCPU    string
 	capacityMemory string
+	// configFiles is the configuration file this process was started with
+	// and every {file:} it read (config.Document.Files): the Orker's own,
+	// which its secret floor admits as no task's source (orkerPolicy).
+	configFiles []string
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -270,10 +275,11 @@ func envBool(key string, fallback bool) (bool, error) {
 	return parsed, nil
 }
 
-// applyConfigFile is main()'s entire configuration-file mechanism
-// (docs/DEPLOY.md §1); see cmd/ork's function of the same name for the full
-// rationale (shared design, one package each side of it can Setenv/LookupEnv
-// through fakes in a test rather than the real process environment).
+// applyConfigFile is main()'s entire configuration-file mechanism, which
+// configure runs (docs/DEPLOY.md §1); see cmd/ork's function of the same
+// name for the full rationale (shared design, one package each side of it
+// can Setenv/LookupEnv through fakes in a test rather than the real process
+// environment).
 func applyConfigFile(
 	args []string, binary cfgfile.Binary,
 	lookup func(string) (string, bool), setenv func(string, string) error,
@@ -305,44 +311,25 @@ func applyConfigFile(
 }
 
 func main() {
-	// --defaults needs no config file, no environment, and nothing else
-	// this func does below: print config.RenderDefaults() and stop — see
-	// cmd/ork's main for the full rationale (shared design).
-	requested, argsErr := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv)
-	if argsErr == nil && requested.Defaults {
-		fmt.Print(cfgfile.RenderDefaults())
-		os.Exit(0)
-	}
+	os.Exit(start(os.Args[1:], os.LookupEnv, os.Setenv, os.Stdout, os.Stderr, run))
+}
 
-	// The configuration file, if any, is resolved before loadConfig reads a
-	// single environment variable — see applyConfigFile — so every existing
-	// *FromEnv reader below (loadConfig included) works unchanged whether its
-	// value came from a file or, as always, straight from the environment.
-	cfgDoc, cfgPath, cfgCheck, cfgSet, err := applyConfigFile(
-		os.Args[1:], cfgfile.BinaryOrker, os.LookupEnv, os.Setenv)
-	if err != nil {
-		if cfgDoc == nil && cfgPath == "" {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(2)
-		}
-		fmt.Fprintf(os.Stderr, "orker: %v\n", err)
-		os.Exit(1)
+// start is main's whole body, with what main hands it: the arguments made into
+// a configuration (configure), then telemetry and the process logger, then
+// serve — run, from main — given all three. It returns the status the process
+// exits with. A test hands it a serve of its own, so what it is served is what
+// a real boot of the same arguments serves.
+func start(
+	args []string,
+	lookup func(string) (string, bool),
+	setenv func(string, string) error,
+	stdout, stderr io.Writer,
+	serve func(*slog.Logger, telemetry.Config, *telemetry.Sinks, config) error,
+) int {
+	cfg, cfgPath, cfgSet, exit, stop := configure(args, lookup, setenv, stdout, stderr)
+	if stop {
+		return exit
 	}
-	if cfgCheck {
-		fmt.Print(cfgDoc.Effective(cfgfile.BinaryOrker, os.LookupEnv))
-		os.Exit(0)
-	}
-
-	// --healthcheck asks this process's own running copy, over the admin
-	// listener, whether it is ready (docs/DEPLOY.md, "Health checks"). It comes
-	// after the configuration file is applied, because ORK_ADMIN_ADDR may have
-	// come from the file, and before loadConfig or any boot step: it starts
-	// nothing, and the exit status is the answer.
-	if argsErr == nil && requested.Healthcheck {
-		os.Exit(healthcheck.Run(context.Background(), "orker", os.Getenv, os.Stdout, os.Stderr))
-	}
-
-	cfg := loadConfig()
 	// Telemetry configuration is resolved before the process logger exists,
 	// for the same reason as cmd/ork: the logger's own encoding is itself a
 	// telemetry setting, so building it first would mean rebuilding it the
@@ -351,11 +338,11 @@ func main() {
 		telemetry.ResourceAttrs(version, cfg.deployment.Name, cfg.deployment.BuildID, cfg.temporalNamespace),
 		attribute.String(telemetry.AttrPool, cfg.pool))...)
 	if err != nil {
-		fallback := slog.New(slog.NewTextHandler(os.Stderr, nil))
+		fallback := slog.New(slog.NewTextHandler(stderr, nil))
 		fallback.Error("orker stopped", "error", err)
-		os.Exit(1)
+		return 1
 	}
-	logger := telemetry.NewLogger(tcfg, sinks.Default(), os.Stderr)
+	logger := telemetry.NewLogger(tcfg, sinks.Default(), stderr)
 	// Attached as soon as the logger exists, so a task naming a sink
 	// ORK_TELEMETRY_SINKS never declared logs a Warn from the very first
 	// call, rather than only from whichever caller happens to attach one.
@@ -365,10 +352,11 @@ func main() {
 	if cfgPath != "" {
 		logger.Info("configuration file applied", "path", cfgPath, "applied", len(cfgSet))
 	}
-	if err := run(logger, tcfg, sinks, cfg); err != nil {
+	if err := serve(logger, tcfg, sinks, cfg); err != nil {
 		logger.Error("orker stopped", "error", err)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // workerOptions mirror the engine's expectation: an Orker is activity-only, so
@@ -741,6 +729,86 @@ func awaitStoppedTasks(logger *slog.Logger, activities *orker.Activities) {
 	logger.Info("cancelled tasks stopped", "took", time.Since(started).Round(time.Millisecond))
 }
 
+// configure is start's first step, everything it decides before telemetry
+// boots: the arguments and the environment made into the configuration this
+// process runs with, the file it came from and the keys that file set — or,
+// with stop set, the status the process exits with, having said why on
+// stdout or stderr.
+func configure(
+	args []string, lookup func(string) (string, bool), setenv func(string, string) error, stdout, stderr io.Writer,
+) (cfg config, path string, set []string, exit int, stop bool) {
+	// --defaults needs no config file, no environment, and nothing else
+	// this func does below: print config.RenderDefaults() and stop — see
+	// cmd/ork's main for the full rationale (shared design).
+	requested, argsErr := cfgfile.ParseArgs(args, lookup)
+	if argsErr == nil && requested.Defaults {
+		fmt.Fprint(stdout, cfgfile.RenderDefaults())
+		return config{}, "", nil, 0, true
+	}
+
+	// The configuration file, if any, is resolved before loadConfig reads a
+	// single environment variable — see applyConfigFile — so every existing
+	// *FromEnv reader below (loadConfig included) works unchanged whether its
+	// value came from a file or, as always, straight from the environment.
+	doc, path, check, set, err := applyConfigFile(args, cfgfile.BinaryOrker, lookup, setenv)
+	if err != nil {
+		if doc == nil && path == "" {
+			fmt.Fprintln(stderr, err)
+			return config{}, "", nil, 2, true
+		}
+		fmt.Fprintf(stderr, "orker: %v\n", err)
+		return config{}, "", nil, 1, true
+	}
+	if check {
+		fmt.Fprint(stdout, doc.Effective(cfgfile.BinaryOrker, lookup))
+		return config{}, "", nil, 0, true
+	}
+
+	// --healthcheck asks this process's own running copy, over the admin
+	// listener, whether it is ready (docs/DEPLOY.md, "Health checks"). It comes
+	// after the configuration file is applied, because ORK_ADMIN_ADDR may have
+	// come from the file, and before loadConfig or any boot step: it starts
+	// nothing, and the exit status is the answer.
+	if argsErr == nil && requested.Healthcheck {
+		getenv := func(key string) string {
+			value, _ := lookup(key)
+			return value
+		}
+		return config{}, "", nil, healthcheck.Run(context.Background(), "orker", getenv, stdout, stderr), true
+	}
+	return configFrom(doc), path, set, 0, false
+}
+
+// configFrom is loadConfig, with the files the configuration document doc
+// read (nil when the process was given none) among this Orker's own.
+func configFrom(doc *cfgfile.Document) config {
+	cfg := loadConfig()
+	if doc != nil {
+		cfg.configFiles = doc.Files()
+	}
+	return cfg
+}
+
+// orkerPolicy is the policy this Orker enforces: the environment's, with what
+// its own configuration read — the configuration file, every {file:} in it,
+// every telemetry sink header's file or variable — among the sources its
+// secret floor never admits (docs/SECURITY_MODEL.md, "The Orker's own
+// sources").
+func orkerPolicy(cfg config, tcfg telemetry.Config) orker.SecurityPolicy {
+	var paths []orker.OwnPath
+	for _, path := range cfg.configFiles {
+		paths = append(paths, orker.OwnPath{Path: path, Why: "its configuration"})
+	}
+	for _, path := range tcfg.Sinks.SourceFiles() {
+		paths = append(paths, orker.OwnPath{Path: path, Why: "its telemetry credentials"})
+	}
+	var vars []orker.OwnVar
+	for _, name := range tcfg.Sinks.SourceVars() {
+		vars = append(vars, orker.OwnVar{Name: name, Why: "its telemetry credentials"})
+	}
+	return orker.SecurityPolicyFromEnv().WithOwnPaths(paths...).WithOwnVars(vars...)
+}
+
 // orkerOptions builds the orker.Options this Orker's activities run with,
 // including the three telemetry-derived seams: TaskLogs, Phases and
 // TraceContext. It is a single seam so a test can assert what those three
@@ -795,6 +863,8 @@ func orkerOptions(
 		HeartbeatInterval: cfg.tick(),
 		Logger:            logger,
 	}
+	policy := orkerPolicy(cfg, tcfg)
+	opts.Policy = &policy
 
 	// Task log export: an ADDITIONAL best-effort path from a task's
 	// stdout/stderr to a log provider, beside the durable chunk store above.
@@ -830,6 +900,19 @@ func orkerOptions(
 		opts.Phases = obs
 		if tcfg.TracesEnabled() {
 			opts.TraceContext = obs.TraceContext
+		}
+	}
+
+	// The capacity metrics (ork.orker.capacity.*, ork.orker.admission.*): a
+	// process-level signal, so the default sink's, and only when metrics are
+	// exported at all. An Orker declaring no capacity builds no ledger, and
+	// the observer then records nothing.
+	if tcfg.MetricsEnabled() {
+		capacity, err := telemetry.NewCapacityMetrics(sinks.Default(), logger)
+		if err != nil {
+			logger.Warn("telemetry: the Orker's capacity metrics could not be built; capacity is not exported", "error", err)
+		} else {
+			opts.CapacityObserver = capacity
 		}
 	}
 

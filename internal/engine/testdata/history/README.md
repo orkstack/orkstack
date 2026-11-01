@@ -445,6 +445,44 @@ build before it, and must keep replaying through the `DefaultVersion` branch.
   committed, so the replay tests above fail, never skip, when one is missing;
   only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).
 
+### `run-created-first-v1.json`, `run-created-first-gap-v1.json` and `run-created-first-legacy-v1.json` — an ending before start whose `RUN_CREATED` write failed
+
+Generation 0 of a three-task chain whose definition travels by reference and
+whose stub names another version than the object: the load ends
+`RUN_DEFINITION_CORRUPT` through `endBeforeStart` (`definition_ref.go`), and
+the replica's store refuses `RUN_CREATED`'s write, every attempt of its local
+activity. The gated fixture is recorded by today's code with the first write
+refused: it carries the lazy `run-created-first` marker (`emitRunCreatedFirst`,
+asked where the write first fails), `RUN_CREATED` written again under sequence
+1, and then `RUN_FAILED` at 2. The `gap` fixture is recorded by today's code
+with both writes refused: the marker, two failed writes, then `RUN_FAILED` at
+2, so the reader names 1 as never published, and archives the run with it as a
+gap (`unpublishedStart`).
+The `legacy` fixture is recorded with the gate switched off
+(`DisableRunCreatedFirstGateForTest`), which is the command sequence of every
+build before it: no marker, and `RUN_FAILED` written at 2 right after the
+failed write. It must keep replaying through the `DefaultVersion` branch.
+Beside each, its `.objects/` directory holds that run's definition object
+(`definition.pb.gz`, byte for byte as stored), the definition its stub names.
+
+- command: `TestRunWorkflow_ReplaysCommittedRunCreatedFirstHistories`
+- negative: `TestRunCreatedFirstHistories_CatchTheGateRemoved` (each gated
+  fixture replayed with the gate skipped fails as nondeterministic)
+- reader: `TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap`
+  (what each history serves to a live read from 0 and from 1 and to the
+  archive — the gap and legacy histories fail a read from 0 naming 1 as never
+  published — and the same with the terminal publish, or every publish,
+  removed)
+- behaviour: `TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd`,
+  `TestRunWorkflow_TheRunCreatedFirstGateIsAskedOnlyWhereItsWriteFails`,
+  `TestRunWorkflow_AGateOffEndingBeforeStartKeepsTheLegacyWrites`, and on the
+  cluster `TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding` and
+  `TestIntegration_ARefusedRunCreatedReadsBackTheDefinitionCode`
+- recorder: `TestIntegration_RecordRunCreatedFirstHistories`
+  (`run_created_first_integration_test.go`). It never skips. The fixtures are
+  committed, so the replay tests above fail, never skip, when one is missing;
+  only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).
+
 ### `run-fairness-keys-v1.json` and `run-fairness-keys-legacy-v1.json` — task activities scheduled with the plan's fairness key
 
 `linearDocument` run to completion under a plan that carries a fairness
@@ -510,3 +548,98 @@ the recorded marker.
   are committed, so the replay tests above fail, never skip, when one is
   missing; only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes
   them).
+
+### `run-fairness-pin-creation-v1.json` and `run-fairness-pin-creation-legacy-v1.json` — a pin's creation request scheduled with the plan's fairness key
+
+`twoPinsDocument` run to completion under a plan that carries a fairness
+selection with its pin requests marked
+(`fairness: {key: fixture, weight: 2, pin_requests: true}`). The gated fixture is
+recorded by today's code: it carries the lazy `fairness-pin-creation` marker
+once (`pinCreationPriorityFor`, `fairness.go`, asked where the first pin
+opens), and both pins' creation requests were scheduled with fairness key
+`fixture` and weight 2. The SDK builds that request's options itself, so the
+priority reaches it through the run worker's interceptor
+(`RunWorkerInterceptors`), which the recording's run worker has as `cmd/ork`'s
+does. The `legacy` fixture is recorded from the same plan with the gate
+switched off (`DisableFairnessPinCreationGateForTest`), which is the command
+sequence of every build before the gate: no marker, and no priority on either
+creation request, whatever the plan says. It must keep replaying through the
+`DefaultVersion` branch. In both, every task carries the plan's key, which
+`fairness-keys` decides; its marker is in both.
+
+- command: `TestRunWorkflow_ReplaysCommittedFairnessPinCreationHistories`
+  (the replayer compares no priority, so the test compares the recorded
+  creation priority with what current code sends on replay, through the run
+  worker's interceptor)
+- negatives: `TestFairnessPinCreationHistories_CatchTheGateRemoved` (the gated
+  fixture replayed with the gate skipped sends no priority where it recorded
+  one); `TestFairnessPinCreationHistories_CatchTheInterceptorMissing` (replayed
+  by a worker without the run worker's interceptor, the request is sent
+  unkeyed, which the comparison refuses)
+- behaviour: `TestRunWorkflow_APinsCreationRequestCarriesThePlansFairness`,
+  `TestRunWorkflow_AGateOffPinCreationCarriesNoFairness`,
+  `TestRunWorkflow_APlanWithoutFairnessKeysNoPinCreation`,
+  `TestRunWorkflow_ACarriedGenerationKeepsThePlansFairness`
+- recorder: `TestIntegration_RecordFairnessPinCreationHistories`
+  (`e1_gates_integration_test.go`). It never skips. The fixtures are
+  committed, so the replay tests above fail, never skip, when one is missing;
+  only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes them).
+
+### `run-retry-max-interval-v1.json` and `run-retry-max-interval-legacy-v1.json` — a retry spaced by the plan's maximum interval
+
+`prepare → fetch → report`, where `fetch` retries (`retry: {maximum_attempts:
+3}`) with no maximum interval of its own, run to completion under a plan that
+carries `retry_max_interval_seconds: 60`. The gated fixture is recorded by
+today's code: it carries the lazy `retry-max-interval` marker once
+(`retryPolicyFor`, `retry_spacing.go`, asked where the first task whose
+`retry:` sets no maximum, or whose coefficient is a NaN, is scheduled), and `fetch` was scheduled with a
+60 second maximum interval, the plan's number. The `legacy` fixture is
+recorded from the same plan with the gate switched off
+(`DisableRetryMaxIntervalGateForTest`), which is the command sequence of every
+build before the gate: no marker, and the 100 seconds those builds hardcoded,
+whatever the plan says. It must keep replaying through the `DefaultVersion`
+branch.
+
+- command: `TestRunWorkflow_ReplaysCommittedRetryMaxIntervalHistories` (the
+  replayer compares no retry policy, so the test compares the recorded maximum
+  interval with what current code sends on replay)
+- negative: `TestRetryMaxIntervalHistories_CatchTheGateRemoved` (the gated
+  fixture replayed with the gate skipped is sent 100 seconds where it recorded
+  60)
+- behaviour: `TestRunWorkflow_AnUnsetMaximumIntervalWaitsThePlansNumber`,
+  `TestRunWorkflow_AGateOffRetryKeepsTheLegacy100Seconds`,
+  `TestRunWorkflow_APlanWithoutTheRetryNumberKeeps100Seconds`,
+  `TestRunWorkflow_ACarriedGenerationKeepsTheRetryDecision`
+- recorder: `TestIntegration_RecordRetryMaxIntervalHistories`
+  (`e1_gates_integration_test.go`), as above.
+
+### `run-retry-long-initial-v1.json` and `run-retry-long-initial-legacy-v1.json` — a retry whose first wait is above the maximum it would get
+
+The same chain, where `fetch` retries (`retry: {maximum_attempts: 3,
+initial_interval_seconds: 120}`) with no maximum interval of its own, run to
+completion under a plan that carries `retry_max_interval_seconds: 60`. The
+cluster refuses a maximum below the initial interval by failing the workflow
+task over and over, so `retryPolicyFor` raises an unset maximum to the initial
+interval on both branches (`unsetRetryMaxInterval`). The gated fixture is
+recorded by today's code: the `retry-max-interval` marker once, and `fetch`
+scheduled with a 120 second maximum, not the plan's 60. The `legacy` fixture
+is recorded from the same plan with the gate off: no marker, and 120 seconds,
+not the legacy 100. No build before the raise recorded such a run: it sent the
+refused policy and never got past `prepare`.
+
+- command: `TestRunWorkflow_ReplaysCommittedRetryLongInitialHistories` (it
+  compares the recorded maximum interval with what current code sends on
+  replay, so a change that dropped the raise sends 60 or 100 seconds and
+  fails it)
+- behaviour: `TestRunWorkflow_AnInitialIntervalAboveTheLegacyMaximumIsScheduled`,
+  `TestIntegration_ARetryWithALongInitialIntervalIsScheduled`
+- recorder: `TestIntegration_RecordRetryLongInitialHistories`
+  (`e1_gates_integration_test.go`), as above.
+
+`TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy` is the premise of
+both pairs: `run-pin-creation-timeout-legacy-v1.json`, recorded with no
+priority on any activity, replays clean against code that sends every task and
+creation request with a fairness key and another retry policy, and a renamed
+activity type does not. The SDK matches a scheduled activity by id and type
+only, so a value such as a priority or a retry policy is kept on a recorded
+run by its version gate, never by the replayer.

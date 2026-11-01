@@ -180,11 +180,62 @@ CORS, and the bridge's same-origin default admits the UI with no
   `Vary: Accept-Encoding`), so nothing in front needs to compress the UI. The
   example gallery's YAML files and the fonts are sent as they are.
 - **Headers.** Every UI response carries `X-Content-Type-Options: nosniff`.
-  The page also carries `Content-Security-Policy: frame-ancestors 'none'`,
-  `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`: the UI holds
-  the operator's destructive controls, so no other origin may frame it
+  The page carries a strict `Content-Security-Policy`: the policy the UI's
+  build writes into the page (`ui/svelte.config.js`, `kit.csp`), which names
+  the SHA-256 hash of each inline script the page runs, opened with
+  `frame-ancestors 'none'`. It allows scripts, styles, fonts, images and
+  connections (the Connect calls and the sockets) from the page's own origin,
+  inline styles, `data:` images, and `eval`, for the YAML editor
+  (SECURITY_MODEL.md says why); it allows no other inline script, no plugin
+  and no `<base>`. The page also carries
+  `X-Frame-Options: DENY` and `Referrer-Policy: same-origin`: the UI holds the
+  operator's destructive controls, so no other origin may frame it. Every
+  other UI response carries `default-src 'none'; frame-ancestors 'none'`
   ([SECURITY_MODEL.md](SECURITY_MODEL.md), "Transport, listeners and
-  configuration").
+  configuration"). Nothing in front needs to add a policy, and a proxy that
+  sets its own `Content-Security-Policy` beside the engine's narrows the page
+  to what both allow.
+- **The names it answers to.** The listener answers a request only under a
+  `Host` it knows, and refuses any other `403` before a route sees it: the
+  UI, the API and the sockets alike (`internal/hostpolicy`). That is what
+  stops a web page from reaching the engine by DNS rebinding through a public
+  name. With `ORK_ALLOWED_HOSTS` unset it admits exactly, on any port, in any
+  case:
+  - an IP address, v4 or v6: `127.0.0.1:8080`, `[::1]:8080`, a pod or node
+    address such as a NodePort's;
+  - `localhost` and every name under it (`app.localhost`);
+  - a name with no dot, written without a trailing dot: a compose service
+    (`ork`), a Kubernetes Service from its own namespace, a host's short
+    name. Such a name resolves only on the local network, never through
+    public DNS. A dotless name a browser reads as an IPv4 address
+    (`2130706433`, `0x7f000001`) is not admitted: a browser sends that
+    address dotted, so only another client sends the number;
+  - the host `ORK_HTTP_ADDR` names, when it names one (`ork.internal:8080`
+    admits `ork.internal`);
+  - a request with no `Host`, which no browser sends.
+
+  That covers the quickstart (`localhost:8080`, and `ork:8080` from its
+  `orkctl` service), the Kubernetes bases (a NodePort or a port-forward on an
+  address), `orkctl`, `curl` and trigger callers reaching the engine by
+  address or `localhost`, the development stack's Vite proxy (which
+  keeps the browser's `localhost:5173`), and a proxy that rewrites `Host` to
+  the address or dotless service name it dials (nginx's
+  `proxy_pass http://ork:8080` default). **Any `Host` with a dot needs the
+  setting**: a Kubernetes name such as `ork.orkstack` or
+  `ork.orkstack.svc.cluster.local`, an FQDN, what a proxy that keeps the
+  browser's `Host` forwards, and the name `orkctl`, `curl` or a trigger
+  caller dials. List each in `ORK_ALLOWED_HOSTS`: a name,
+  `*.example.com` for every name under `example.com` (list the narrowest you
+  can: every name under it is admitted. A pattern over a top-level name,
+  `*.com`, is refused at boot, but one over a suffix anyone may register
+  under, such as `*.co.uk` or `*.github.io`, is not, and admits every name
+  a page's author registers there), or `*` for any `Host`, which turns the
+  check off. A refusal answers with the `Host` and the setting — a Connect client
+  reads it as `permission_denied` — under the headers every other error
+  carries, and is logged as `request refused: Host not allowed`, at most
+  once every 10 seconds, with how many refusals since went unlogged. The
+  admin listener applies the same rule under its own setting
+  (§ "The API listener's bounds", last paragraph).
 
 **Settings.** `ORK_UI_ENABLED` (`engine.ui.enabled`, default `true`) set to
 `false` leaves the listener the API alone, and `/` is a 404. `ORK_UI_DIR`
@@ -212,6 +263,9 @@ API, so route the whole host to `ork`, not only the API's paths:
   to the page's origin: the bridge compares the socket's `Origin` with the
   `Host` it receives, so a proxy that rewrites `Host` makes the UI's own
   sockets look cross-origin and refused;
+- list the name the browser uses in `ORK_ALLOWED_HOSTS` when the proxy keeps
+  it (`ORK_ALLOWED_HOSTS=orkstack.example.com`), on every replica: a name
+  with a dot is refused `403` otherwise ("The names it answers to", above);
 - terminate TLS at the proxy as for any other service. The page derives its
   socket's address from its own, so an `https` page opens `wss` to the same
   host, and the engine behind the proxy stays plain HTTP;
@@ -233,6 +287,81 @@ and until every replica runs one release a reload can meet the same miss.
 Session affinity at the load balancer while two releases are behind one
 address avoids it, and nothing is lost either way: the UI keeps no run state
 of its own, so a reload only redraws what the API already holds.
+
+### The API listener's bounds
+
+The API listener (`ORK_HTTP_ADDR`) bounds what a client may make it wait for
+or hold, and never how long an answer takes (`internal/api/server.go`,
+`NewServerWith` and `NewMux`):
+
+| Bound | Value | What happens past it |
+|---|---|---|
+| Request line and headers, time to send | 10 s, fixed, over HTTP/1.1. Go's HTTP/2 server applies no header timeout: over h2c, a first request whose headers never end opens no stream, so the idle bound closes its connection; on a connection that already carries a stream, nothing bounds an unfinished header block until that stream ends | the connection is closed (over h2c, `GOAWAY` at the bound and the connection a second later) |
+| Request line and headers, size | 64 KiB, fixed | `431 Request Header Fields Too Large` |
+| A keep-alive connection with no request in flight | `ORK_HTTP_IDLE_TIMEOUT`, 15 min | the connection is closed |
+| One Connect request message, as sent and decompressed | `ORK_REQUEST_MAX_BYTES`: unset, 1 MiB + 4 KiB × `engine.orkflow_max_tasks`, 17,432,576 bytes at the default 4,000 | `resource_exhausted` (HTTP `429` on the Connect protocol) |
+| One Connect request's body, in all | twice the read cap | the engine stops reading, answers `resource_exhausted`, and closes the connection (HTTP/1.1) or resets the stream (h2c) |
+| How long a request's body takes to arrive, or a client takes to read an answer | none | — |
+| A plain-HTTP route's body (`/v1/…`) | the route's own: 1 MiB for webhooks and trigger invoke, a run's `values_max_bytes` for an await's completion, 4 KiB for its rejection | the route's own refusal |
+
+- **Streams are never cut.** There is no whole-request read deadline and no
+  write deadline: either would end a run's event stream, a task's live log or
+  a WebSocket mid-way, since each stays open as long as its run or task does.
+  A connection with a stream in flight is never idle. The price is the last
+  row of the table: a client that sends a body slowly, or reads an answer
+  slowly, holds its connection as long as it keeps going. Bound that at the
+  proxy or gateway in front, which sees the client (nginx's
+  `client_body_timeout` and `send_timeout`, Envoy's stream idle timeout), and
+  bound how many connections one client may open there too.
+- **A refused request is answered, not dropped.** The engine reads the rest
+  of an oversized Connect body away, without holding it, before it answers,
+  so the client gets a `resource_exhausted` error naming the cap
+  (`message size N is larger than configured max M`), and the connection
+  goes on serving. The cap bounds what the engine holds in memory: a
+  gzip-compressed message stops inflating at the cap, and plain bytes past
+  it are read and dropped only up to twice the cap. No request carries more
+  than one message, so a body past that is never legitimate: the engine
+  stops reading it, answers, and closes the connection (HTTP/1.1) or resets
+  the stream (h2c), so a body that never ends cannot hold either.
+- **The read cap scales with the task ceiling.** It is a bound on a
+  request, never on how large an Orkflow may be, so it follows
+  `engine.orkflow_max_tasks`: 1 MiB, plus 4 KiB a task. The heaviest task
+  measured (a comment, needs, retry, resources, environment and an inline
+  script) adds about 920 bytes to an apply, so an apply at the ceiling
+  whose tasks average four times that fits, in either encoding: at the
+  default 4,000 tasks, 3.8 MB as JSON against a cap of 17.4 MB. The 1 MiB
+  holds a run's input at its own 256 KiB bound, and the plan of an
+  automation document of a thousand schedules and a thousand triggers
+  (0.5 MB) with half again to spare. Raising or lowering the ceiling moves
+  the cap with it. `ORK_REQUEST_MAX_BYTES` set under that need is refused at
+  boot, naming both settings; set it above the need for an automation
+  document of thousands of objects, or for Orkflows whose tasks average more
+  than 4 KiB, up to 1 GiB. A ceiling that needs more than 1 GiB (above about
+  262,000 tasks) gets what it needs, warned at boot, and may be given up to
+  twice that.
+  The engine holds one such message in memory per request.
+- **Behind a proxy.** 64 KiB of headers is above what nginx (32 KiB) and
+  Envoy (60 KiB) forward by default. Set `ORK_HTTP_IDLE_TIMEOUT` above the
+  backend keep-alive timeout of a load balancer in front, so the balancer
+  always closes an idle connection first: 15 minutes is above the common ones
+  (60 s on most, 610 s on Google Cloud's).
+
+The admin listener (`ORK_ADMIN_ADDR`) has the same kinds of bound at its own
+sizes: 5 s for the request line and headers, 64 KiB of them, and 2 minutes
+idle, with no read or write deadline, so a CPU profile taken over
+`/debug/pprof/profile?seconds=N` is never cut (`internal/telemetry/admin.go`).
+It answers the same `Host`s the API listener does by default — an address,
+`localhost` and the names under it, a dotless name, and the host
+`ORK_ADMIN_ADDR` names — and refuses any other `403`, so a page that
+rebinds a public name to it cannot read `/metrics` or a profile. A scraper
+that dials it by a name with a dot needs that name in
+`ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`), on both
+binaries: a Prometheus static target such as `host.docker.internal`, as the
+observability profile's is (`deploy/observability/README.md`), or a
+Service name. A scraper that dials pod addresses, as Kubernetes service
+discovery does, and a probe of `/healthz` or `/readyz` by address need
+nothing. The setting is the admin listener's own, so a name the API is
+reached by is not answered here, and the other way round.
 
 ### Running M Orker pools
 
@@ -466,15 +595,15 @@ then the variable it becomes.
 | `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI; `podman` on `PATH` when `orker.docker.cli` is `podman` |
 | `orker.docker.cli` | `ORK_DOCKER_CLI` | `docker` | `orker` | the grammar that CLI speaks: `docker` (the docker CLI, against Docker or against Podman's Docker-compatible socket) or `podman` (the podman CLI); any other value fails every container command, naming the setting. The engine behind the CLI is asked at boot, logged, and verified by the boot probe ([Running on Podman](#running-on-podman)). `orkctl activity test` and `orkctl task run` read it too |
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
-| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 195 seconds for removing what it gave up on and for that cancellation (17 minutes 15 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
+| `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container, which the Orker then removes. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 230 seconds for removing what it gave up on and the first container, and for that cancellation (17 minutes 50 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
-| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, as before. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
+| `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
 | `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable. An Orker whose boot probe finds that user does not land as the Orker (a rootless or user-namespaced daemon) refuses to start with it set, as `RUN_AS_ORKER_UNAVAILABLE` |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
-| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme. A namespace's `allowed_secrets` can only narrow this, never widen it (§5, "Secrets on a shared pool"). Refused at boot if an entry is malformed or names a scheme not in `orker.secret_schemes` |
+| `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme except the Orker's own, and logs a warning at boot. No entry admits the Orker's own sources: its `ORK_*` and `OTEL_*` settings, its process files, its work root, its configuration and credential files (§5, "Secrets on a shared pool"). With `orker.workdir` unset the work root is the temp directory, so a `file:/tmp/…` source is refused and an entry under `/tmp` stops the Orker at boot: give tasks' secret files a directory of their own. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed, names a scheme not in `orker.secret_schemes`, or can match only the Orker's own sources |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it, and its path must be a plain one: a mount is a comma-separated option list, so an Orker whose work root holds a comma or a control character refuses to start (`WORKDIR_NOT_BINDABLE`, naming `ORK_ORKER_WORKDIR`). The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
@@ -488,6 +617,9 @@ then the variable it becomes.
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
 | `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API, WebSocket bridge, plain-HTTP routes and the web UI at `/` (§ "The web UI") |
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` (space around an entry and empty entries are ignored). Empty admits the engine's own origin only, which is all the UI it serves needs; list a page served from another origin, or the browser's origin behind a proxy that rewrites `Host` |
+| `engine.http_idle_timeout` | `ORK_HTTP_IDLE_TIMEOUT` | `15m` | `ork` | how long a keep-alive connection to the API listener may sit with no request in flight before the engine closes it; at least `1s`, refused at boot otherwise. Set it above the backend keep-alive timeout of a load balancer in front, so the balancer always closes first. A stream in flight is never idle (§ "The API listener's bounds") |
+| `engine.request_max_bytes` | `ORK_REQUEST_MAX_BYTES` | *(derived)* | `ork` | the largest Connect request message the API reads, in bytes, both as sent and once decompressed. Unset derives 1 MiB + 4 KiB × `engine.orkflow_max_tasks` (17,432,576 at the default 4000), so it rises and falls with the task ceiling and an apply at that ceiling always fits. A value under that derivation is refused at boot naming both settings, and so is one over 1 GiB (over twice the derivation, when that is more than 1 GiB, which the boot warns of). A larger request is refused `resource_exhausted`. Raise it for an automation document of thousands of objects, or for Orkflows whose tasks average more than 4 KiB (§ "The API listener's bounds") |
+| `engine.allowed_hosts` | `ORK_ALLOWED_HOSTS` | *(empty)* | `ork` | comma-separated names the API listener answers to in a request's `Host` header, besides the ones it always admits: an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_HTTP_ADDR` names. An entry is a name (`orkstack.example.com`), `*.suffix` for every name under a suffix of two labels or more, or `*` for any `Host`; space around an entry and empty entries are ignored, and an entry with a scheme, a port or a path, or a pattern over a top-level name (`*.com`), is refused at boot. Any other `Host` is refused `403`, which stops DNS rebinding through a public name. List every name with a dot the engine is reached by: a Kubernetes `svc.namespace` name or FQDN, a proxy that keeps the browser's `Host`, the name `orkctl` or a caller dials (§ "The web UI") |
 | `engine.ui.enabled` | `ORK_UI_ENABLED` | `true` | `ork` | serve the web UI at `/` on the API listener, beside the Connect API and the WebSocket bridge; `false` leaves the listener the API alone (§ "The web UI") |
 | `engine.ui.dir` | `ORK_UI_DIR` | *(empty: the build compiled into `ork`)* | `ork` | serve the UI build in this directory (`ui/build`, written by `cd ui && bun run build`) instead of the one compiled into `ork`; refused at boot if it holds no `index.html`, or if `ORK_UI_ENABLED=false` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
@@ -530,6 +662,7 @@ then the variable it becomes.
 | `telemetry.log_format` | `ORK_LOG_FORMAT` | `text` | both | process log encoding: `text` or `json` |
 | `telemetry.log_level` | `ORK_LOG_LEVEL` | `info` | both | minimum process log level: `debug`, `info`, `warn`, `error` |
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | *(empty = no listener)* | both | serves `/healthz`, `/readyz`, `/metrics` (only with the `prometheus` metrics exporter) and `/debug/pprof/` (only with `ORK_PPROF_ENABLED`). Never the API port — see §7 |
+| `telemetry.admin_allowed_hosts` | `ORK_ADMIN_ALLOWED_HOSTS` | *(empty)* | both | comma-separated names the admin listener answers to in a request's `Host` header, besides the ones every OrkStack listener admits: an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_ADMIN_ADDR` names. The grammar is `engine.allowed_hosts`'s, and an entry it refuses stops the boot of either binary. Any other `Host` is refused `403`, so a page that rebinds a public name to the listener cannot read `/metrics` or a profile. List the name a scraper dials when it has a dot: a Prometheus static target such as `host.docker.internal`, or a Service name (§ "The API listener's bounds") |
 | `telemetry.pprof_enabled` | `ORK_PPROF_ENABLED` | `false` | both | mounts `net/http/pprof` on the admin listener. Off by default: an Orker's heap holds resolved secret bytes |
 | `telemetry.high_cardinality` | `ORK_TELEMETRY_HIGH_CARDINALITY` | `false` | both | adds `ork.run_id`/`ork.task_id`/`ork.orkflow.name`/`ork.orkflow.version` labels to `ork_*` metrics — see §7, "High-cardinality labels" |
 | `orker.task_log_export` | `ORK_ORKER_TASK_LOG_EXPORT` | `false` | `orker` | exports every task stdout/stderr line as an OTel log record. Requires `OTEL_LOGS_EXPORTER=otlp` — see §7, "Task logs" |
@@ -600,15 +733,25 @@ for, and give the rare large task a pool of its own whose Orkers set larger
 caps and a smaller ceiling. Set the same caps on every Orker of a pool: a task
 above the cap of the Orker that takes it fails `RESOURCE_REQUEST_REFUSED`, so a
 pool whose Orkers disagree runs a task or fails it depending on which one
-polled first.
+polled first ("Every Orker of a pool has the same settings", below).
 
 ### Declaring an Orker's capacity
 
 `orker.capacity.cpu` and `orker.capacity.memory` (`ORK_ORKER_CAPACITY_CPU`,
 `ORK_ORKER_CAPACITY_MEMORY`) declare what one Orker admits tasks within, in the
-Kubernetes spelling: `"16"` and `"64Gi"`. Unset, the default, the Orker admits
-by `max_concurrent` alone, exactly as before. Either may be set alone; the
-other dimension is then not bounded.
+Kubernetes spelling: `"16"` and `"64Gi"`. Either may be set alone; the other
+dimension is then not bounded.
+
+**Unset, the default, admission is best effort.** The Orker admits by
+`max_concurrent` alone, a count of tasks: nothing holds the sum of their
+requests to what the host has, and the Orker never measures the host to find
+out, because it cannot know what else shares it. A host that runs out of
+memory may kill a container, or the runtime or the Orker itself; a task whose
+container is killed fails as any killed workload does, retried under its own
+policy. Size `max_concurrent` by the caps (above), or
+declare a capacity. Such an Orker says so at boot:
+`capacity not declared: admission is best effort, bounded only by max_concurrent`,
+with its `max_concurrent` and per-task cap.
 
 An Orker that declares a capacity admits no task that would take its
 reservations above it. A Temporal worker reserves a slot before it polls and
@@ -619,7 +762,10 @@ one bound it knows in advance, the per-task cap (`orker.resources.max_cpu`,
 - every poll for a task reserves the cap, and is granted only while that fits
   beside everything already reserved;
 - once the task is in hand, its reservation is trimmed to the task's own
-  resolved request, and an activity that runs no container to nothing;
+  resolved request, and an activity that runs no container to nothing. A
+  request above this Orker's cap resolves to nothing, so it reserves nothing,
+  whether it is refused or, for a result already committed or a memo hit,
+  handed back without a container;
 - the reservation is freed when the attempt's container is **removed**. A
   container whose removal failed keeps its reservation, and the Orker tries to
   remove it again every 30 seconds.
@@ -653,16 +799,182 @@ a task that declares a request above every one of them
 (`RESOURCES_UNSATISFIABLE`), before a run id exists. That read costs a submit
 whose tasks declare `resources:` one describe per live Orker of the deployment,
 together, each bounded at five seconds; a submit that declares none pays
-nothing for it. Capacity may differ per Orker, but every Orker of a pool should
-set the same cap and default.
+nothing for it. Set the same capacity, cap and default on every Orker of a
+pool, with the rest of the settings the next section lists.
 
 **After a crash**, the Orker's restart reaps its previous life's containers.
 One it could not remove still holds its host, so a declared capacity starts
 with that container's cap reserved, and frees it once a later reap removes it.
 
+**Seeing a pool at its capacity.** A task no Orker has started is `RUNNING`,
+waiting in its pool. When every Orker of that pool that takes new tasks
+declares a capacity, runs a task and has no room for another within it, the run
+page captions the task `Waiting for capacity · every orker of pool <pool> is
+full (reserved 4/4 cpu) · 2m 10s`, and `orkctl run inspect` prints
+`<task>: waiting for capacity for 2m10s (scheduled …): every orker of pool
+<pool> is full (reserved 4/4 cpu)`. The figures are summed over those Orkers,
+for each dimension their capacity bounds. Otherwise — an Orker of the pool with
+room but every slot taken, one declaring no capacity, one running nothing (what
+it reserves is then its own polls, which take the next task), a pinned member,
+a retry waiting out its backoff, an attempt waiting less than two seconds —
+they keep `Waiting for an orker`. No room means the
+per-task cap no longer fits beside `RESERVED`, so a pool can read full with
+less than its capacity reserved: an Orker with a 2-cpu cap and 3 of 4 cpus
+reserved takes nothing more.
+
+It is derived on read, never stored as state: `InspectRun` sets
+`capacity_wait` on a waiting attempt from the Orker inventory, the rows
+`orkctl orker list` shows. The inventory is read only when an attempt has
+waited for an Orker for two seconds — one presence read and one describe per
+live Orker, the cost of one `orkctl orker list` — and each engine replica
+shares one reading among every caller: a read in flight is joined by every
+answer that asks meanwhile, and a whole reading, one every live Orker
+answered, answers for five seconds from when its read began, the run page's
+and `orkctl run inspect --watch`'s own poll period. A read ends at two
+seconds whether or not the Orkers have answered, so no answer waits longer.
+However many pages and watches are open, while its reads are whole a replica
+asks the Orkers at most once every five seconds for them, and nothing once no
+task waits; a caption is never older than one poll. While any live Orker does
+not answer within the bound, no pool is called full, because the one that did
+not answer could serve it with room: for the 90 seconds a stopped Orker stays
+listed, every waiting task reads `Waiting for an orker`, as it does when the
+inventory cannot be read at all, and the replica reads again for each answer,
+still one read at a time. A failed read, or one some live Orker did not
+answer, is never kept, and the engine warns of a failed one at most once a
+minute.
+
+**Capacity metrics.** With metrics on (`OTEL_METRICS_EXPORTER`, "Metrics"
+below), an Orker that declares a capacity exports, on the default sink:
+
+| Metric | Labels | What it reads |
+|---|---|---|
+| `ork.orker.capacity.cpu`, `ork.orker.capacity.memory` | `ork.orker_id` | the capacity, one gauge per dimension it bounds; an unbounded dimension has none |
+| `ork.orker.capacity.reserved.cpu`, `ork.orker.capacity.reserved.memory` | `ork.orker_id` | what stands reserved, `RESERVED` in `orkctl orker list` |
+| `ork.orker.admission.wait.duration` | `ork.orker_id`, `ork.admission.bound` | seconds a poll for a task waited for room before it was granted; `ork.admission.bound` is `capacity`, or `slots` when every `max_concurrent` slot was taken |
+| `ork.orker.admission.refusals` | `ork.orker_id` | attempts refused `RESOURCE_ADMISSION_MISMATCH` |
+
+The gauges read the ledger when the meter collects. Under `prometheus` they
+render as `ork_orker_capacity_cpu`, `ork_orker_capacity_reserved_memory_bytes`,
+`ork_orker_admission_wait_duration_seconds` and
+`ork_orker_admission_refusals_total`. A poll waits whenever the Orker has no
+room, whether or not a task is queued — an idle Orker whose capacity holds one
+cap waits with its second poller — so the wait measures how long the Orker had
+no room to ask for another task, not how long a task waited (`orkctl run
+timing` answers that). A wait is recorded when its poll is granted, so a poll
+still waiting is not yet in it; `reserved` at or above `capacity` shows that
+one. Overshoot by pinned members is `reserved` minus `capacity`. Recording never blocks admission, and an Orker with metrics off
+records nothing.
+
 The ledger is held in the process, as a cordon is: never stored, never shared,
 gone with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task.
+
+### Every Orker of a pool has the same settings
+
+Temporal hands a task to whichever Orker of its pool polls for it, and
+OrkStack never chooses a host, so a run can count only on what every Orker of
+the pool offers. Give each Orker of a pool the same:
+
+- per-task caps, `orker.resources.max_cpu` and `max_memory`;
+- default request, `orker.resources.default_cpu` and `default_memory`;
+- capacity, `orker.capacity.cpu` and `memory`, and `orker.max_concurrent`;
+- secret schemes and floor, `ORK_ORKER_SECRET_SCHEMES` and
+  `ORK_ORKER_SECRET_ALLOW`;
+- `env` allow-list, `orker.env_allowlist`, and the values of the variables it
+  names;
+- registry credentials, `orker.registry_auth_file`, with which an Orker reads
+  a signature when a namespace requires one (`require_signed_by`);
+- runtime: `orker.resources.force_user`, and whether a task can run as the
+  Orker's own user. Run a pool on runtimes where it can, or on runtimes where
+  it cannot, not both (a rootless or user-namespaced daemon cannot;
+  [REASONS.md](./REASONS.md), `RUN_AS_ORKER_UNAVAILABLE`);
+- pin hosting, `ORK_ORKER_MAX_PINS` ("Pin hosting is a pool-wide setting",
+  below).
+
+Network modes need no setting: every Orker offers `default` and `none`.
+
+While the settings match, a run never fails because of which Orker took a
+task. When they differ, a task that lands on an Orker that will not run it
+fails there, explicitly, with its own reason: `RESOURCE_REQUEST_REFUSED`,
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED` or
+`RUN_AS_ORKER_UNAVAILABLE`, none of them retried; `RENDER_FAILED`, not
+retried, for an `env` name outside the Orker's allow-list; or
+`IMAGE_SIGNATURE_UNAVAILABLE`, retried under the task's policy, for a
+signature its registry credentials cannot read. A differing default request
+gives a task that declares none different limits on different Orkers, and a
+differing capacity or `max_concurrent` fails nothing, only spreads the work
+unevenly.
+
+What a task that runs no container here is spared depends on why it runs
+none ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#71-the-sequence),
+"§7.1"):
+
+- **A result already committed** is never refused for any of these settings:
+  the commit check comes before everything that refuses for them.
+- **A memo hit** is never refused for the caps, the secret schemes and floor,
+  or the runtime: those are checked only after the memo step misses. But a
+  cached task's image policy is checked before its memo lookup, and its
+  `with:` is rendered before it too, because the memo key hashes the rendered
+  `config.json`. So a differing `env` allow-list refuses it when its `with:`
+  names an `env` variable, and differing registry credentials refuse it when
+  the run's image policy requires a signature, even where the memo would hit.
+
+#### Changing a setting with runs in flight
+
+Change a setting in the order a schema migration uses: widen every Orker
+before any task needs more, and stop needing it before you narrow them. It
+works with an ordinary rolling update, versioned or not.
+
+**To widen** (raise a cap, allow another scheme or source):
+
+1. Roll every Orker of the pool to the wider setting, and let the rollout
+   finish (`orkctl orker list --filter pool=<pool>` lists the pool's live
+   Orkers).
+2. Only then apply and promote the Orkflow version that needs it
+   (`orkctl apply`, `orkctl orkflow promote <name> <version>`).
+
+During the rollout no task asks for more than the old setting allows, so
+Orkers that still differ are harmless.
+
+**To narrow** (lower a cap, allow less):
+
+1. Promote the Orkflow versions that no longer need the wider setting.
+2. Repoint whatever pins an older version. `orkctl orkflow callers <name>
+   --all-versions` lists the schedules, triggers and composing tasks that pin
+   one. Move a schedule with `orkctl schedule update <name> --version <v>` (or
+   `--follow-current`), a trigger with `orkctl trigger update <id> --version
+   <v>` (or `--follow-current`), and a composing task by applying and promoting
+   a version of its Orkflow that names the new version. Do not use
+   `orkctl run again` on a run from before the promotion until the narrowing is
+   done: it resubmits that run's pinned version unless `--version` says
+   otherwise.
+3. Wait until the runs that may still need the wider setting have finished:
+   in every namespace whose runs use the pool,
+   `orkctl run list --filter 'status=PENDING,RUNNING' --filter 'created_at<T'`
+   lists none, with `T` the instant of the last repoint in step 2, an RFC 3339
+   instant with a zone such as `2026-10-30T12:00:00Z`. A schedule or trigger
+   still pinned to an older version can start a run until it is repointed,
+   and so can a submit that names that version with `--version`. A parent run
+   stays running while its child runs do, so this covers composed tasks too. A
+   task that has already committed is adopted, never run again, so only work
+   still to run matters.
+4. Roll the narrower setting out to every Orker of the pool.
+
+With versioning on, a release is already a generation of settings: change the
+setting in a new release and roll it forward ("3. Rolling a release forward",
+below): new runs go to the new release's Orkers, and a run already in flight
+keeps to its own release's Orkers while they drain.
+
+**What it does not cover:**
+
+- an Orker configured wrong by mistake;
+- an Orker that joins late with stale settings, such as one started from an
+  old template;
+- runs that stay open a long time, such as one waiting on an await: they only
+  make step 3 take longer.
+
+Either of the first two fails the run explicitly, with its own reason, as
+above.
 
 ### Pin hosting is a pool-wide setting
 
@@ -1034,8 +1346,9 @@ a **Current Version**, the task queue's current version is nil, and
 > — `api@v1.63.4/workflowservice/v1/request_response.pb.go`,
 > `SetWorkerDeploymentCurrentVersionRequest.BuildId`
 
-which a versioned release does not have. So the first release that sets
-`ORK_BUILD_ID` boots two healthy, polling workers that receive **nothing**:
+which a versioned release does not have. So a deployment's first versioned
+release, the first to set `ORK_BUILD_ID`, boots two healthy, polling workers
+that receive **nothing**:
 submitted runs sit at `HistoryLength 2` (`WorkflowExecutionStarted`,
 `WorkflowTaskScheduled`), no pending activities, indefinitely. Nothing in the
 logs says why, because nothing is wrong with the workers.
@@ -1060,8 +1373,9 @@ or **runs started before versioning still executing** (§3.5) — the refusal
 names each and what to start or wait for. The raw cluster
 command it makes underneath is listed in §4, "Underneath: the cluster commands".
 
-Backlogged runs start within seconds of it. §3 step 0 is the full first-release
-procedure; every release after that inherits a Current Version from its
+Backlogged runs start within seconds of it. §3 step 0, "First versioned
+release only", is the full procedure; every release after that inherits a
+Current Version from its
 predecessor, and takes over with the same call at §3 step 4
 (`TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent`).
 
@@ -1266,7 +1580,7 @@ Steps 1–6 are every release that has a predecessor. **The very first versioned
 release of a deployment has none, so start at step 0** — skip it and the
 release runs nothing at all (§1).
 
-0. **First release only: make it current before you rely on it.**
+0. **First versioned release only: make it current before you rely on it.**
 
    ```bash
    FIRST=2026.08.02-0a1b2c3
@@ -1488,7 +1802,7 @@ pinned when it started. Two ways to handle it:
 Either way, keep the old workers up until their runs are done. That rule is
 not about versioning: an Orker killed mid-task loses that attempt until its
 `timeout_seconds` expires, and the default retry policy is a single attempt
-(`internal/engine/workflow.go`, `retryPolicyFor`), so the task fails.
+(`internal/engine/retry_spacing.go`, `retryPolicyFor`), so the task fails.
 
 ---
 
@@ -1555,9 +1869,10 @@ refuses a saved-state format it does not know. Turn
 `engine.continuation.enabled` off first and let runs that carry on finish
 (the check below lists them).
 
-**Never roll back below the first release that reads runs carried on into a
-fresh history.** That release (the read side of continue-as-new) must ship
-before any release that lets a run carry on, and stays the floor:
+**Never roll back below the build that introduced the read side of
+continue-as-new**, which reads runs carried on into a fresh history. That
+build shipped before any build that lets a run carry on, and it stays the
+floor; every release from 0.1.0 contains it:
 
 - a release older than it that picks up a run's later generation ends that
   generation before any side effect — the run fails, and every reader of this
@@ -1566,14 +1881,14 @@ before any release that lets a run carry on, and stays the floor:
   the engines forward") — but it publishes no terminal event, so the run has
   no archive body and becomes unreadable once the cluster's retention expires
   it;
-- once any run's archive records a lost range of its events (a `gap` line,
+- once any run's archive records a gap in its events (a `gap` line,
   `docs/STORAGE.md`), a rollback below it is forbidden permanently: an older
   release refuses the unknown archive line, so every read of that run fails.
 
 Check before rolling back:
 `temporal workflow list --query 'WorkflowType="RunWorkflow" AND ExecutionStatus="ContinuedAsNew"'`
 lists the closed generations of runs carrying on; while it returns any, do
-not go below that release.
+not go below that build.
 
 **Before rolling back below the release that raised the fan-out maximum to
 10,000 items**, lower `engine.each_max_items` to at most 1,000, then wait
@@ -1851,10 +2166,11 @@ engine boot, no Temporal connection, no store.
   prove the work root can be bound and that the runtime gives a task its
   posture, then cancels a second one as a task is cancelled. On a healthy
   daemon that takes seconds. On a daemon that is overloaded or wedged it can
-  take up to seven times `orker.docker.bind_probe_timeout` plus 195 seconds
-  for removing what it gave up on and for that cancellation (17 minutes 15
-  seconds at the default), and longer by `orker.docker.pull_timeout`
-  when the probe image is not local, before the Orker refuses to start with
+  take up to seven times `orker.docker.bind_probe_timeout` plus 230 seconds
+  for removing what it gave up on and the first container, and for that
+  cancellation (17 minutes 50 seconds at the default), and longer by
+  `orker.docker.pull_timeout` when the probe image is not local, before the
+  Orker refuses to start with
   `BIND_PROBE_TIMED_OUT` ([REASONS.md](REASONS.md)). A supervisor that gives
   up sooner (a Compose check whose `start_period` plus `interval` times
   `retries` is shorter than that, a start-up timeout in an init system)
@@ -2154,7 +2470,8 @@ precedence over its `envFrom`. The floor names the `file` scheme, so
 `ORK_ORKER_SECRET_SCHEMES`, if you set it, must keep `file`, or the Orker
 refuses to boot. A test holds both bases to this floor and checks that it
 admits none of the Orker's own credentials
-(`internal/dist/kubernetes_test.go`).
+(`internal/dist/kubernetes_test.go`), and the cluster check below runs a task
+through it on a live cluster.
 
 **The work root is one path in both containers.** The engine bind-mounts each
 task's workspace from the path the Orker gives it, so the `work` volume must be
@@ -2295,15 +2612,21 @@ checks:
 - that the engine's root is a user-namespace range, or the node's root for
   the fallback;
 - that the Orker reports the capacity its pod declares;
+- that a task reads a key of `orkstack-task-secrets`, which the bases' floor
+  lists, and that the floor refuses what it does not list: the Orker's own
+  `ORK_S3_SECRET_KEY`, and `POD_NAME`, a variable of the Orker's
+  environment. The key's value is the check's own, random, and appears in no
+  log or record;
 - a cancel; a task above the per-task cap, refused at submit by the cap the
   Orker reported, with no run left behind; a task at the cap, with the cap as
   its limit; an out-of-memory task; and a pod deletion.
 
 Then it checks that the Orker refuses a mismatched work root, and that the
 user-namespaced engine does not start without its RuntimeClass. It deletes its
-namespace at the end (`KEEP=1` leaves it) and creates nothing cluster-wide:
-the RuntimeClass must exist already. In OrkStack it leaves four Orkflows
-(`k8s-orker-proof`, `k8s-orker-cancel`, `k8s-orker-limits`,
+namespace at the end (`KEEP=1` leaves it), the `orkstack-task-secrets` Secret
+it makes there with it, and creates nothing cluster-wide: the RuntimeClass
+must exist already. In OrkStack it leaves five Orkflows (`k8s-orker-proof`,
+`k8s-orker-secrets`, `k8s-orker-cancel`, `k8s-orker-limits`,
 `k8s-orker-too-big`) in
 `--ork-namespace` (`default` unless named) and their runs, kept by that
 namespace's retention. Its Orkers serve only the pool `k8s-check`, which that
@@ -2575,6 +2898,15 @@ submit and pinned in the run, so a changed weight moves only the runs
 submitted after it. A namespace name longer than 64 bytes is keyed by a
 readable prefix and a SHA-256 suffix.
 
+The key reaches everything a run hands an Orker: each task, each item of a
+fan-out, each member of a pin, and each pin's request for a pin host, which
+waits for a free pin slot beside other namespaces' requests. A run that
+carries on into a new history keeps its key and weight, and a composed
+task's child run takes its parent's. A pin's request carries the key only
+through the engine's own run worker (`ork` builds it so), and only in a run
+submitted from v0.1.1 on: the submit marks it in the run, and a run submitted
+before opens every pin unkeyed to its end, whatever release carries it on.
+
 It is Temporal's own task-queue fairness, never an OrkStack queue, and it takes
 effect only where the operator enables it on the Temporal cluster:
 `matching.enableFairness=true` in the server's dynamic configuration, for the
@@ -2587,6 +2919,9 @@ What fairness does and does not do:
 - it orders the tasks waiting on one pool's channel, per partition of that
   channel, so the effect is real but moderate, and it never moves a task to
   another pool;
+- a pin's members wait on their pin host's own channel, so their keys order
+  them only among that host's work; across namespaces it is the pin requests
+  that compete for the pool's pin hosts;
 - a weight pinned at submit never reorders a backlog already queued;
 - during a release rollout it holds among the tasks queued for one worker
   version;
@@ -2892,8 +3227,10 @@ places; a source must pass **both**:
   process that reads the value, at dispatch, before the image is pulled; a
   source outside it fails the task `SECRET_NOT_PERMITTED` (a
   `ContractViolation`, never retried). Empty resolves every source of an
-  allowed scheme. A malformed entry, or one
-  naming a scheme outside `orker.secret_schemes`, stops the Orker at boot.
+  allowed scheme except the Orker's own (below), and the Orker logs a warning
+  at boot that says so. A malformed entry, one naming a scheme outside
+  `orker.secret_schemes`, or one that can match only the Orker's own sources
+  stops the Orker at boot.
 - **The tenant's list, per namespace:** `orkctl namespace update NAME
   --allow-secret 'env:SANDBOX_*'` (or Admin → Namespaces). It is enforced by
   the engine at validate and apply, as an issue on
@@ -2906,16 +3243,40 @@ places; a source must pass **both**:
   the Orker: a list handed to the Orker by its caller would be no check on
   the caller, and the engine's submit gate is the one no client bypasses.
 
+**The Orker's own sources are never admitted.** Whatever the floor says, empty
+or `env:*`, an Orker refuses as a task's source what belongs to it: its
+`ORK_*` and `OTEL_*` settings, its proxy settings and the container CLI's
+(registry credential helpers' `AWS_*`, `AZURE_*`, `CLOUDSDK_*` and
+`GOOGLE_APPLICATION_CREDENTIALS` among them), `/proc`, `/dev`, its container's
+credentials under `/run/secrets` and `/var/run/secrets`, its work root, its
+configuration file and each file that reads, its telemetry sinks' header
+sources, the container engine's state (wherever the engine reports keeping it
+at boot), and the credential files its settings name. The work root is the
+temp directory when `orker.workdir` is unset, so there a `file:/tmp/…` source
+is refused and a floor entry under `/tmp` stops the Orker at boot, as one
+under a data root the engine reports does. A `file:` source must also be a
+plain absolute path, with no `..`, `.` or empty segment, of at most 4096
+bytes, under any floor. A task that names one fails `SECRET_NOT_PERMITTED`
+where the floor is checked: after the commit check and a cached task's memo
+step, so a result already committed or a memo hit is still reused, and before
+its image is pulled. A value a task needs goes under a source of the task's
+own, such as a file in a directory the floor names, or a variable the floor
+names. [SECURITY_MODEL.md](SECURITY_MODEL.md), "The Orker's own sources",
+lists each one and why.
+
 A namespace can therefore only ever narrow what its Orkers permit. The grammar
 is deliberately small: a literal scheme, and `*` as the one wildcard, which
 never crosses `/`; `?`, `[…]` and `\` are ordinary characters. A `file:`
 source with a `..`, `.` or empty segment is refused outright rather than
 normalized, so `file:/etc/orkstack/secrets/sandbox/../payments/db` never sits
 inside `file:/etc/orkstack/secrets/sandbox/*`. The policy bounds the NAME a
-tenant may write, not the filesystem behind it: a symlink placed under a
-tenant's directory is a grant the operator made, and the Orker reads the path
-as it always has. Nothing here stores, logs or compares a secret value;
-refusals carry the source string only.
+tenant may write. A symbolic link under a tenant's directory is a grant the
+operator made, and the Orker reads it where it leads, unless it leads to or
+through one of the Orker's own files or directories, which is refused as the
+Orker's own name is — judged against what those are when the task's secret is
+resolved, so a Kubernetes update of the Orker's own mounted configuration is
+seen at once. Nothing here stores, logs or compares a secret value; a refusal
+carries the source string and what refused it, never a value.
 
 During a rolling upgrade the namespace list is enforced only by engine
 replicas that know it; the Orker floor is unaffected by the rollout.
@@ -2956,31 +3317,44 @@ was submitted under: tightening the floor, moving a namespace's signer or
 rotating a key never reaches a run already accepted; stop one with `orkctl
 run cancel`. A committed attempt is adopted without being judged again.
 
-Verification is one fixed scheme — key-based cosign signatures over the
-simple-signing payload; no keyless signing, transparency log, attestation or
-policy language. The Orker verifies the signature itself, never taking a
-caller's word that it was checked, with its own registry client:
-`orker.registry_auth_file` / `ORK_ORKER_REGISTRY_AUTH_FILE` is a docker
-`config.json` used only for the signature manifest and blob GETs (empty is
-anonymous, which public registries allow); the engine uses
-`ORK_REGISTRY_AUTH_FILE` for the same GETs at apply. A registry that cannot
+Verification is one fixed scheme — key-based cosign signatures, ECDSA P-256,
+over the image's digest; no keyless signing, transparency log, attestation or
+policy language. It reads both layouts cosign stores a key-based signature
+in: the legacy one, a manifest tagged `sha256-<hex>.sig` whose layers are
+simple-signing payloads (cosign 2's default, and how OrkStack v0.1.0's images
+are signed), and cosign 3's default, a Sigstore bundle stored as an OCI
+referrer of the image, whose DSSE envelope signs an in-toto statement naming
+the digest. A referrer is found through the registry's referrers API, or,
+on a registry without it (ghcr.io, `registry:3`), under the referrers tag
+`sha256-<hex>`, as cosign looks. A bundle's transparency-log entries, if it
+has any, are not read: the key is the trust root. The Orker verifies the
+signature itself, never taking a caller's word that it was checked, with its
+own registry client: `orker.registry_auth_file` /
+`ORK_ORKER_REGISTRY_AUTH_FILE` is a docker `config.json` used only for the
+signature's manifest, referrers and blob GETs (empty is anonymous, which
+public registries allow); the engine uses `ORK_REGISTRY_AUTH_FILE` for the
+same GETs at apply. A registry that cannot
 be asked is never a pass: `unavailable` at apply and submit, and a retried
 `IMAGE_SIGNATURE_UNAVAILABLE` at the Orker. A missing signature is
 `IMAGE_NOT_SIGNED`, a signature by another key or over another digest
 `IMAGE_SIGNATURE_INVALID`, an image outside the floor `IMAGE_NOT_PERMITTED`
 — all three `ContractViolation`, never retried.
 
-Signing an image with the `cosign` CLI. cosign 2 writes the layout OrkStack
-reads by default. cosign 3 writes a newer bundle format unless told not to,
-and OrkStack would find no signature (`IMAGE_NOT_SIGNED`), so pass it the
-flags below, as OrkStack's own release does; cosign 3.1 warns that they are
-deprecated. `--tlog-upload=false` keeps the signature out of the public
-transparency log, which OrkStack never reads; leave it out to record one.
+Signing an image with the `cosign` CLI. Any cosign signs in a layout OrkStack
+reads: cosign 2 in the legacy one, cosign 3 in the bundle. Both also record
+the signature in Sigstore's public transparency log by default, which
+OrkStack never reads. cosign 3 keeps it out under a signing config that
+names no service, which is how OrkStack's own release signs
+([`deploy/cosign-signing-config.json`](../deploy/cosign-signing-config.json),
+what `cosign signing-config create` writes with no flags); cosign 2 keeps it
+out with `--tlog-upload=false`. Leave either out to record the signature in
+the log. An engine or Orker of OrkStack v0.1.0 reads only the legacy layout
+and finds no signature in a bundle (`IMAGE_NOT_SIGNED`).
 
 ```bash
 cosign generate-key-pair                                  # cosign.key, cosign.pub
-cosign sign --key cosign.key --new-bundle-format=false --use-signing-config=false \
-  --tlog-upload=false ghcr.io/acme/migrate@sha256:<digest>
+cosign signing-config create --out signing-config.json    # names no service
+cosign sign --key cosign.key --signing-config signing-config.json ghcr.io/acme/migrate@sha256:<digest>
 orkctl admin image-policy set --signing-key release=cosign.pub
 orkctl namespace update prod-payments --require-signed-by cosign:release
 ```
@@ -3005,14 +3379,19 @@ or the binaries by hand:
 
 ```bash
 cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
-cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true --signature SHA256SUMS.sig SHA256SUMS
+cosign verify-blob --key cosign.pub --insecure-ignore-tlog=true --bundle SHA256SUMS.sigstore.json SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
 ```
 
-The release records nothing in a public transparency log: the key is the
-trust root, and `--insecure-ignore-tlog=true` tells cosign so (it prints a
-warning). Without cosign, `openssl dgst -sha256 -verify cosign.pub -signature
-<(base64 -d SHA256SUMS.sig) SHA256SUMS` checks the same signature.
+Each release's page ends with these commands for each of its images, by
+digest. The release records nothing in a public transparency log: the key is
+the trust root, and `--insecure-ignore-tlog=true` tells cosign so (it prints a
+warning). `SHA256SUMS.sigstore.json` is cosign's bundle of the checksum
+signature; `SHA256SUMS.sig`, beside it, is the same signature alone, so
+without cosign `openssl dgst -sha256 -verify cosign.pub -signature <(base64 -d
+SHA256SUMS.sig) SHA256SUMS` checks it. v0.1.0 attaches only `SHA256SUMS.sig`:
+verify its checksums with `--signature SHA256SUMS.sig` in place of `--bundle`
+(cosign 3.1 warns that the flag is deprecated) or with openssl.
 
 To rotate a key without a gap, add the new key under a new name, re-sign,
 move each namespace's `--require-signed-by`, then `--remove-signing-key` the
@@ -3406,6 +3785,39 @@ recorded with the gate off) guard it with command, behaviour and negative
 tests (`internal/engine/testdata/history/README.md`); a missing fixture fails
 those tests, it never skips them.
 
+**An ending before start writes `RUN_CREATED` first.** A run whose definition,
+passed by reference, cannot be used ends in its first generation with
+`RUN_CREATED` at sequence 1 and its terminal event at 2. When object storage
+refuses `RUN_CREATED`'s snapshot, it is written again under the same number,
+so a store that is back for that write leaves both events. When that write
+fails too, the number stays unused and the terminal event is still written at
+2, under a key of its own. Its stream then starts at 2, and both reads say so
+alike: a read of the stream from its start fails `DataLoss`, naming 1 as never
+published, with nothing sent, live and from the archive, which records 1 as a
+gap line (`docs/STORAGE.md`), and the run page's socket closes with a
+shortened form of the same sentence; a read from 1 serves the terminal event.
+Before this, the terminal event was written at 2 the same way, and the stream
+silently began there. The reader recognises the gap from the history alone, so
+a run recorded before the gate, which wrote the terminal event after a single
+refused write, is read and archived the same way. Only these first numbers are
+recognised: a number a run consumes later without an event — an event whose
+snapshot is refused mid-run — is not recorded as a gap. When `RUN_CREATED` is
+written and the terminal write fails, the stream holds `RUN_CREATED` and the
+run's close is read as its terminal event, at 2. When the terminal write fails
+as well as both of `RUN_CREATED`'s, the run publishes nothing and its close is
+read as its one event, at 1. In both of those it publishes no terminal event,
+so, like every run that publishes none, it has no archive body and becomes
+unreadable once the cluster's retention expires it. It records the
+`run-created-first` version, asked lazily where `RUN_CREATED`'s write first
+fails: an ending whose writes take records no marker. A history recorded
+before the gate replays its `DefaultVersion` branch, which wrote the terminal
+event next; version 1 is the new path. The fixtures
+`run-created-first-v1.json` (the second write takes),
+`run-created-first-gap-v1.json` (neither does) and
+`run-created-first-legacy-v1.json` (recorded with the gate off) guard it with
+command, behaviour, reader and negative tests
+(`internal/engine/testdata/history/README.md`).
+
 **A pin's creation timeout is a versioned change.** A run's plan carries
 `engine.pin_creation_timeout` in whole seconds, pinned at submit and copied
 into each child run's start, and the engine uses it as the wait of every pin
@@ -3426,6 +3838,59 @@ version it was answered with the recorded marker. The fixtures
 `run-pin-creation-timeout-v1.json` and `run-pin-creation-timeout-legacy-v1.json`
 (the same plan, recorded with the gate on and off) guard it with command and
 negative tests.
+
+**A pin's fairness key is a versioned change.** A run whose plan's fairness
+selection says `pin_requests` (set at submit since v0.1.1) asks the
+`fairness-pin-creation` version once, where its first pin opens, and every pin
+request it then makes carries the plan's key and weight; a run that opens no
+pin, or whose plan carries no such selection — every run submitted before —
+records no marker, and a generation that continues a run answers from what the
+run already decided. A history recorded before the gate replays its
+`DefaultVersion` branch, which keys no pin request. The SDK builds a pin
+request's options itself, so the key reaches it through an interceptor of the
+engine's run worker (`engine.RunWorkerInterceptors`, set by `cmd/ork`); a run
+worker without it opens pins unkeyed and changes nothing else. The fixtures
+`run-fairness-pin-creation-v1.json` and
+`run-fairness-pin-creation-legacy-v1.json` guard it with command and negative
+tests, one of which replays the gated fixture without the interceptor and must
+see the key missing.
+
+**A retry's default maximum interval is a versioned change.** A run's plan
+carries the maximum wait between two attempts of a task whose `retry:` sets no
+`maximum_interval_seconds` (60 seconds, `engine.DefaultRetryMaxInterval`),
+pinned at submit and copied into each child run's start. The run asks the
+`retry-max-interval` version once, where it first schedules such a task. A
+history recorded before the gate replays its `DefaultVersion` branch, the
+100 seconds every earlier build used, whatever its plan says; so does a run
+whose plan carries no number. Either way the maximum is never below the task's
+own initial interval: the cluster refuses that policy by failing the workflow
+task over and over, so no recorded history holds one, and every earlier build
+left such a run stuck. The same holds for an explicit maximum below the
+initial interval and a backoff coefficient between 0 and 1, which a version
+applied before DSL rule 47 may carry: the task is scheduled with the maximum
+raised to the initial interval and the coefficient raised to 1, with no gate,
+because no recorded history holds the refused command
+(`TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled`). A stored
+coefficient that is not a number is different: the cluster accepts it (the
+same test sends one), so a run may already have scheduled it. It reads as the
+default 2.0 only on the gate's new path, in a run whose plan carries the
+number, and the run asks the gate where it first schedules such a task if it
+has not already; a run submitted before v0.1.1, and a history recorded before
+the gate, keep sending the NaN as every earlier build did, so its spacing never
+changes partway through a run. A build that
+predates the field ignores the plan's
+number, so a rollback to one waits 100 seconds again. The fixtures
+`run-retry-max-interval-v1.json` and `run-retry-max-interval-legacy-v1.json`
+guard it with command and negative tests, and
+`run-retry-long-initial-v1.json` and `run-retry-long-initial-legacy-v1.json`
+record the raise to the initial interval on both branches.
+
+The replayer compares neither a priority nor a retry policy: it matches a
+scheduled activity by its id and type alone
+(`TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy`). So a key or a
+spacing added to a recorded command never breaks a replay; a version gate is
+what keeps a recorded run on the values it was recorded with, and these tests
+compare those values themselves.
 
 If any of them fails, current code no longer produces what the recorded build
 did. Either restore it (`workflow.GetVersion` for a deliberate command-stream
@@ -3476,6 +3941,19 @@ that an Orker's heap holds resolved secret bytes. Suggested addresses for a
 single-host deployment: `:9464` for `ork`, `:9465` for `orker`, so one host can
 run both without a collision.
 
+**The admin listener answers only names it knows.** It applies the API
+listener's `Host` rule (§ "The API listener's bounds") under its own setting:
+with nothing set it admits an IP address, `localhost` and every name under
+it, a name without a dot, and the host `ORK_ADMIN_ADDR` names, and refuses
+any other `Host` with `403`, logging `request refused: Host not allowed` with
+`listener="admin listener"`. A scraper that dials a name with a dot — a
+Prometheus static target such as `host.docker.internal`, a Kubernetes Service
+FQDN such as `ork-admin.orkstack.svc.cluster.local` — is refused until that
+name is listed in `ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`)
+on the binary it scrapes. A deployment upgrading from 0.1.0 that scrapes by
+such a name sets it before the upgrade. A scraper that dials an IP address,
+such as Kubernetes pod discovery, needs nothing.
+
 ### Recipes
 
 Point `OTEL_EXPORTER_OTLP_ENDPOINT` (and, where noted, the per-signal
@@ -3524,6 +4002,8 @@ telemetry:
   admin_addr:
     ork: ":9464"
     orker: ":9465"
+  admin_allowed_hosts:
+    - host.docker.internal   # the name the profile's Prometheus scrapes by
   exporters:
     logs: otlp
     metrics:
@@ -3630,7 +4110,9 @@ CLI call. `ork_orker_task_log_records_total{outcome=emitted|truncated}` and
 export path below. The Temporal SDK's own `temporal_*` metrics — activity and
 workflow task latency, poll counts, failures — arrive via
 `client.Options.MetricsHandler`, and Go's runtime and process collectors ride
-along on the same `/metrics`.
+along on the same `/metrics`. An Orker that declares a capacity adds
+`ork.orker.capacity.*` and `ork.orker.admission.*` ("Declaring an Orker's
+capacity", above).
 
 `ork.audit.records{action,outcome}` (engine) counts every control-plane
 audit write, once per audited write RPC: `outcome` is `written`, or `dropped`

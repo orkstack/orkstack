@@ -14,7 +14,7 @@ export OTEL_TRACES_EXPORTER=otlp
 export OTEL_LOGS_EXPORTER=otlp
 ```
 
-To try this on a laptop first, start a local Collector, Loki, Tempo, Prometheus and Grafana with `make infra-up-observability`. Grafana is then at `http://localhost:3000`.
+To try this on a laptop first, start a local Collector, Loki, Tempo, Prometheus and Grafana with `make infra-up-observability`. Grafana is then at `http://localhost:3000`, on this machine only: every port the profile publishes is bound to `127.0.0.1`.
 
 ## What each kind of telemetry gives you
 
@@ -32,6 +32,8 @@ With `OTEL_METRICS_EXPORTER=prometheus`, set `ORK_ADMIN_ADDR` and let Prometheus
 
 `ORK_ADMIN_ADDR` opens a listener for `/healthz`, `/readyz`, `/metrics` and, when `ORK_PPROF_ENABLED=true`, `/debug/pprof/`. It is never the API port. Bind it to a private address. Leave `ORK_PPROF_ENABLED` off unless you are profiling. An Orker's memory holds resolved secret values.
 
+The listener answers only names it knows in a request's `Host`: an IP address, `localhost`, a name without a dot, and the host `ORK_ADMIN_ADDR` names. It refuses any other name with `403`. If Prometheus scrapes by a name with a dot, such as `host.docker.internal` or a Service's full name, list that name in `ORK_ADMIN_ALLOWED_HOSTS` on the binary it scrapes. 0.1.0 had no such check, so set it before you upgrade from it.
+
 ## Metrics to alert on
 
 | Metric | Labels | Counts |
@@ -43,6 +45,8 @@ With `OTEL_METRICS_EXPORTER=prometheus`, set `ORK_ADMIN_ADDR` and let Prometheus
 | `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Each attempt, on the Orker that ran it. |
 | `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | Submissions refused by a hold, a cap or a budget. |
 | `ork.audit.records` | `action`, `outcome` | Control-plane writes. A rising `dropped` rate means the audit store cannot be written. |
+| `ork.orker.capacity.reserved.cpu`, `.memory` | `ork.orker_id` | What stands reserved on an Orker that declares a capacity. `ork.orker.capacity.cpu` and `.memory` are the capacity itself. |
+| `ork.orker.admission.wait.duration` | `ork.orker_id`, `ork.admission.bound` | How long an Orker went without room to ask for another task: `capacity`, or `slots` when every task slot was taken. |
 
 Prometheus shows the dotted names with underscores, and counters with a `_total` suffix. For example, `ork.runs.refused` appears as `ork_runs_refused_total`.
 
@@ -66,5 +70,6 @@ orkctl namespace update payments --telemetry-sink tenant-collector
 
 - [DEPLOY.md, “7. Telemetry”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#7-telemetry): the admin listener, exporters and recipes
 - [DEPLOY.md, “Lifecycle metrics”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics): every run and task metric, with its labels
+- [DEPLOY.md, “Declaring an Orker's capacity”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#declaring-an-orkers-capacity): the capacity metrics
 - [deploy/observability/README.md](https://github.com/orkstack/orkstack/blob/main/deploy/observability/README.md): the local observability stack and its example queries
 - Settings: [Configuration](/docs/reference/configuration/)

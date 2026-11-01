@@ -289,6 +289,8 @@ resolve the activity specification
 check the completion commit
 check the run's image policy
 check a cached task's memo
+check the task against this Orker's own policy, once no commit or memo answers it
+  (the exact order, cached and not: docs/OCI_ACTIVITY_CONTRACT.md §7.1)
 resolve the OCI image and digest
 create an isolated workspace
 materialize input artifacts
@@ -315,6 +317,17 @@ or above capacity, the Orker polls for no new task. The ledger is
 process-local, exactly as a cordon is: never stored, never shared, gone
 with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task, and OrkStack never chooses a host.
+
+Every Orker of a pool has the same settings — caps, default request,
+capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
+registry credentials, runtime, pin hosting — so a run never fails because of
+which Orker took a task. Where they differ, a task fails explicitly with its
+own reason. A committed result is never refused for any of them. A memo hit
+is never refused for the caps, secret schemes, floor or runtime, but a cached
+task is rendered and its image policy checked before its memo lookup, so a
+differing `env` allow-list or registry credentials can refuse it even where the
+memo would hit (`docs/DEPLOY.md`, "Every Orker of a pool has the same
+settings").
 
 Docker- and Podman-specific details live in the runtime files
 (`internal/orker/runtime_docker.go` and `runtime_dialect.go`) and nowhere else:
@@ -365,9 +378,15 @@ no `env:` value grants a credential, privilege or host access. Which
 secret sources a task may name is bounded by its namespace's
 `allowed_secrets` (checked at apply and again at submit) intersected with each
 Orker's `ORK_ORKER_SECRET_ALLOW` floor (checked at dispatch); both bound names
-and never store or compare a value. A bearer credential OrkStack mints for a
-caller (a trigger token, an await callback token) is disclosed once and stored
-only as a salted hash.
+and never store or compare a value. No floor admits the Orker's own sources —
+its `ORK_*` and `OTEL_*` settings, its process and devices, its work root, its
+configuration and the credentials it and its container CLI use, under their
+own names or through a link that leads to or through one of them — and a
+`file:` source is a plain absolute path of at most 4096 bytes: the Orker
+refuses any other at dispatch, empty floor or not, and an operator gives a task
+such a value only under a source of the task's own. A bearer credential
+OrkStack mints for a caller (a trigger token, an await callback token) is
+disclosed once and stored only as a salted hash.
 
 ## 7. Orkflow execution model
 
@@ -707,8 +726,10 @@ history replays unchanged without a version marker — or by a plan field the
 submitting engine sets together with a `workflow.GetVersion` gate asked lazily
 where the path first diverges (`lean-event-path`, `run-history-guard`,
 `continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
-`snapshot-overlay`, `fairness-keys`), so a history recorded before the gate
-replays its `DefaultVersion` branch; each new command path gets its own
+`snapshot-overlay`, `fairness-keys`, `pin-creation-timeout`,
+`fairness-pin-creation`, `retry-max-interval`), so a history recorded
+before the gate replays its `DefaultVersion` branch; each new command path
+gets its own
 recorded history fixture. Every tunable number that decides whether, which,
 how many or where workflow code issues a command — a history ceiling or
 reserve, a continuation budget, a hold line, a chunk or batch size, an
@@ -1490,6 +1511,7 @@ internal/docscheck/    Documentation drift checks (test-only)
 internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
 internal/dist/         Release artifacts: binaries, archives, checksums, release guards; the quickstart's guards
 internal/healthcheck/  The `--healthcheck` probe of ork and orker
+internal/hostpolicy/   The Host allowlist every listener applies (API and admin)
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing
@@ -1562,7 +1584,7 @@ Agent ownership is split as follows:
 - coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, `.github/`,
   the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`,
   `internal/listfilter` and `internal/enumname` (engine and CLI agents share
-  both), `internal/webui` (UI and engine agents share it), and this file.
+  both), `internal/hostpolicy` (the API and admin listeners share it), `internal/webui` (UI and engine agents share it), and this file.
 
 Use Conventional Commits such as `feat(engine): ...`, `fix(orker): ...`,
 `test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. Keep commits scoped and

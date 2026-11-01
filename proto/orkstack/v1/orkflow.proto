@@ -13,7 +13,7 @@ message RetryPolicy {
   int32 maximum_attempts = 1;            // 0 or 1 = no retries
   int32 initial_interval_seconds = 2;    // default 1
   double backoff_coefficient = 3;        // default 2.0
-  int32 maximum_interval_seconds = 4;    // default 100
+  int32 maximum_interval_seconds = 4;    // default 60, or initial_interval_seconds when longer
 }
 
 // Pin is a named group of tasks that execute on ONE Orker process and share

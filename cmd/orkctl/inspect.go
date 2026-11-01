@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +55,10 @@ func newRunInspectCommand(g *globalFlags) *cobra.Command {
 			"zero. A heartbeat older than two ceiling ticks is STALE: the Orker is gone\n" +
 			"or partitioned, and the footer names the instant Temporal will time the\n" +
 			"attempt out.\n\n" +
+			"An attempt no Orker has started is waiting for an orker on its pool. When\n" +
+			"every Orker of that pool is at its declared capacity, the footer says it\n" +
+			"is waiting for capacity instead, with what stands reserved against what\n" +
+			"the pool's Orkers admit within.\n\n" +
 			"With --watch the table is printed again every --interval until the run is\n" +
 			"terminal, and the exit code is the run's (0 succeeded, 2 failed,\n" +
 			"3 canceled). --json prints the raw response; with --watch, one compact\n" +
@@ -378,6 +383,12 @@ func liveFooters(
 				orkctlCommand(namespace, "run", "attempts", runID, "--task", id)))
 			break
 		}
+		if wait := live.GetCapacityWait(); wait != nil {
+			lines = append(lines, fmt.Sprintf("%s: waiting for capacity for %s (scheduled %s): every orker of pool %s is full%s",
+				id, roundedSince(live.GetAttemptScheduledAt(), now), formatTime(live.GetAttemptScheduledAt()),
+				wait.GetPool(), reservedOfCapacity(wait)))
+			break
+		}
 		lines = append(lines, fmt.Sprintf("%s: waiting for an orker on pool %s for %s (scheduled %s)",
 			id, orDash(taskRun.GetPool()), roundedSince(live.GetAttemptScheduledAt(), now),
 			formatTime(live.GetAttemptScheduledAt())))
@@ -390,6 +401,27 @@ func liveFooters(
 			id, phase, seconds(live.GetCancellationGracePeriodSeconds())))
 	}
 	return lines
+}
+
+// reservedOfCapacity is a capacity wait's " (reserved 3.5/4 cpu, 30Gi/32Gi
+// memory)": what stands reserved on the pool's Orkers against what they admit
+// within, in each dimension their capacity bounds, and nothing when it bounds
+// none.
+func reservedOfCapacity(wait *orkstackv1.CapacityWait) string {
+	reserved, capacity := wait.GetReserved(), wait.GetCapacity()
+	var parts []string
+	if capacity.GetCpu() > 0 {
+		parts = append(parts, fmt.Sprintf("%s/%s cpu",
+			strconv.FormatFloat(reserved.GetCpu(), 'f', -1, 64), strconv.FormatFloat(capacity.GetCpu(), 'f', -1, 64)))
+	}
+	if capacity.GetMemoryBytes() > 0 {
+		parts = append(parts, fmt.Sprintf("%s/%s memory",
+			formatMemory(reserved.GetMemoryBytes()), formatMemory(capacity.GetMemoryBytes())))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (reserved " + strings.Join(parts, ", ") + ")"
 }
 
 // timeoutFooter is the STARTED attempt's bounds. The remaining time is a

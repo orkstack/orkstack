@@ -22,6 +22,9 @@ make -C images push    # build the first-party activity images into that registr
 make up                # build ork, orker and orkctl; start them and the UI's dev server
 ```
 
+The stack publishes its ports on `127.0.0.1` only: it is reachable from
+this machine and from no other.
+
 The UI is at http://localhost:5173, served by its dev server with hot reload;
 its API and live-stream calls go to the engine on 8080. Use `./bin/orkctl`
 wherever these docs say `orkctl`. `make down` stops what `make up` started.
@@ -48,7 +51,8 @@ its seeds, and `go test -list '^Fuzz' ./...` lists them all (see "Fuzzing" in
 A change people can see adds its entry under `[Unreleased]` in the
 [changelog](/docs/reference/changelog/), with a breaking one marked
 **BREAKING**. At a release that section becomes the version's own, and its
-text is the release's notes on GitHub, word for word (see "The changelog" in
+text is the release's notes on GitHub, word for word, above a list of the
+release's image digests (see "The changelog" in
 [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).
 
 ## See also

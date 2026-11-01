@@ -59,6 +59,42 @@ const (
 	CapacityMemoryVar = "ORK_ORKER_CAPACITY_MEMORY"
 )
 
+// CapacityObserver is told what the admission ledger does, for the Orker's
+// capacity metrics (internal/telemetry, CapacityMetrics). internal/orker never
+// imports OpenTelemetry (AGENTS.md §11), so the seam is a plain interface, as
+// PhaseObserver is. The ledger calls it outside its own lock, and every
+// method must return at once: telemetry never holds up admission.
+type CapacityObserver interface {
+	// Watch is called once, when an Orker declaring a capacity builds its
+	// ledger, with this Orker's id and a read of the ledger the observer may
+	// call whenever it is collected.
+	Watch(orkerID string, read func() CapacityReading)
+	// PollWaited reports a poll that could not be granted at once and was
+	// granted after waiting; bound is what held it when it began to wait,
+	// AdmissionBoundCapacity or AdmissionBoundSlots.
+	PollWaited(waited time.Duration, bound string)
+	// AdmissionRefused reports an attempt refused
+	// RESOURCE_ADMISSION_MISMATCH.
+	AdmissionRefused()
+}
+
+// CapacityReading is one read of the ledger: what this Orker admits within
+// (a dimension at 0 is unbounded) and what stands reserved against it, cpu in
+// cores and memory in bytes.
+type CapacityReading struct {
+	CapacityCPU    float64
+	CapacityMemory int64
+	ReservedCPU    float64
+	ReservedMemory int64
+}
+
+// What held a poll that waited: its capacity, or every task slot
+// (max_concurrent) taken.
+const (
+	AdmissionBoundCapacity = "capacity"
+	AdmissionBoundSlots    = "slots"
+)
+
 // capacityReapInterval is how often an Orker with a declared capacity tries
 // again to remove the containers it could not remove, releasing each one's
 // reservation once it is gone.
@@ -143,7 +179,8 @@ type Capacity struct {
 	claimed   int
 	unremoved map[ContainerID]amount // containers whose removal has not yet succeeded
 	changed   chan struct{}
-	waiting   int // polls parked in reserve, for a test to know one waits
+	observer  CapacityObserver // nil observes nothing
+	waiting   int              // polls parked in reserve, for a test to know one waits
 }
 
 func newCapacity(limit, ceiling amount, slots int) *Capacity {
@@ -164,6 +201,15 @@ func (c *Capacity) grantable() bool {
 	return c.issued < c.slots && c.reserved.add(c.ceiling).within(c.limit)
 }
 
+// holding is what keeps a poll from being granted now: every slot taken, or
+// else the capacity. Locked.
+func (c *Capacity) holding() string {
+	if c.issued >= c.slots {
+		return AdmissionBoundSlots
+	}
+	return AdmissionBoundCapacity
+}
+
 // capacityPermit is a permit's own state: whether the SDK delivered a task on
 // it.
 type capacityPermit struct{ used bool }
@@ -182,7 +228,12 @@ var errRefusedWhileWaiting = errors.New("the poll was refused while it waited fo
 // reserve blocks until a poll fits, then reserves the ceiling for it. refuse,
 // when set, is asked at the moment a poll would be granted: a poll that waited
 // for capacity must not be granted past a cordon set while it waited.
+//
+// A poll that had to wait is reported to the observer once it is granted,
+// with what held it when it began to wait.
 func (c *Capacity) reserve(ctx context.Context, refuse func() bool) (*worker.SlotPermit, error) {
+	var waitedSince time.Time
+	var bound string
 	for {
 		c.mu.Lock()
 		if c.grantable() {
@@ -192,7 +243,13 @@ func (c *Capacity) reserve(ctx context.Context, refuse func() bool) (*worker.Slo
 			}
 			permit := c.grant()
 			c.mu.Unlock()
+			if c.observer != nil && bound != "" {
+				c.observer.PollWaited(time.Since(waitedSince), bound)
+			}
 			return permit, nil
+		}
+		if bound == "" {
+			waitedSince, bound = time.Now(), c.holding()
 		}
 		changed := c.changed
 		c.waiting++
@@ -260,8 +317,18 @@ func (c *Capacity) release(permit *worker.SlotPermit) {
 // permit's ceiling to trim; anything else (a pinned member, taken from its
 // pin's channel) holds no permit, and its request is added ungated. A trim
 // that would grow the reservation past what is free fails
-// RESOURCE_ADMISSION_MISMATCH, and the attempt never runs.
+// RESOURCE_ADMISSION_MISMATCH, and the attempt never runs; the observer is
+// told, outside the lock.
 func (c *Capacity) admit(polled bool, request amount) (*Admission, error) {
+	admission, err := c.trim(polled, request)
+	if err != nil && c.observer != nil {
+		c.observer.AdmissionRefused()
+	}
+	return admission, err
+}
+
+// trim is admit's decision, under the lock.
+func (c *Capacity) trim(polled bool, request amount) (*Admission, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !polled || c.unclaimed == 0 {
@@ -340,6 +407,18 @@ func (c *Capacity) snapshot() (limit, reserved amount) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.limit, c.reserved
+}
+
+// reading is the snapshot as the capacity metrics observe it
+// (CapacityObserver.Watch).
+func (c *Capacity) reading() CapacityReading {
+	limit, reserved := c.snapshot()
+	return CapacityReading{
+		CapacityCPU:    float64(limit.milli) / 1000,
+		CapacityMemory: limit.bytes,
+		ReservedCPU:    float64(reserved.milli) / 1000,
+		ReservedMemory: reserved.bytes,
+	}
 }
 
 // Admission is one admitted activity's reservation. Its methods are safe on a

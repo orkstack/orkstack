@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -22,6 +23,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
@@ -543,5 +545,67 @@ func TestInspectActivity_TwoReplicasAgree(t *testing.T) {
 	}
 	if a.GetInterface() == nil || !proto.Equal(a.GetInterface(), b.GetInterface()) {
 		t.Fatalf("interfaces differ:\n%v\n%v", a.GetInterface(), b.GetInterface())
+	}
+}
+
+// TestInterfaceManifests_ActivityTestReportsTheLabel: `orkctl activity test`,
+// run as built against this tree's shell image in the real registry, reports
+// the interface the image's label declares — the very declaration apply
+// reads (dsl.Resolver.Inspect) — beside the contract's assertions.
+func TestInterfaceManifests_ActivityTestReportsTheLabel(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	requireLabelledImages(t)
+	if out, err := exec.CommandContext(ctx, localContainerCLI(), "info").CombinedOutput(); err != nil {
+		infraAbsent(t, "no container runtime (%v): %s", err, out)
+	}
+	reference := localcatalog.Reference("shell")
+	inspected, err := dsl.NewResolver("").Inspect(ctx, reference, reference)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", reference, err)
+	}
+	if inspected.Interface == nil || inspected.InterfaceError != "" {
+		t.Fatalf("%s declares no readable interface (%q); this test needs a labelled image", reference, inspected.InterfaceError)
+	}
+	want, err := dsl.PackInterfaceLabel(inspected.Interface)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The suite's workspaces live in this test's own work root.
+	stdout, stderr, code := runBinaryWithEnv(ctx, t, testbin.Path(t, "./cmd/orkctl"), repoRoot(t),
+		[]string{orker.WorkRootVar + "=" + bindableOrkerWorkRoot(t)},
+		"activity", "test", reference, "--json", "--grace-period", "2s")
+	var report struct {
+		OK        bool `json:"ok"`
+		Interface struct {
+			Status  string          `json:"status"`
+			Summary string          `json:"summary"`
+			Label   json.RawMessage `json:"label"`
+			Error   string          `json:"error"`
+		} `json:"interface"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
+		t.Fatalf("activity test exited %d with no JSON report: %v\nstdout:\n%s\nstderr:\n%s", code, err, stdout, stderr)
+	}
+	t.Logf("activity test %s: exit %d, ok %t, interface %q", reference, code, report.OK, report.Interface.Summary)
+	if report.OK != (code == 0) {
+		t.Errorf("activity test exited %d with ok %t: the verdict and the exit status disagree", code, report.OK)
+	}
+	if report.Interface.Status != "declared" || report.Interface.Error != "" {
+		t.Fatalf("interface = %+v, want declared with no error", report.Interface)
+	}
+	if !strings.HasPrefix(report.Interface.Summary, "schema 1 · selected by op: (3 ops, default exec)") {
+		t.Errorf("summary = %q, want the shell image's three ops and its default", report.Interface.Summary)
+	}
+	var got, expected orkstackv1.ActivityInterface
+	if err := protojson.Unmarshal(report.Interface.Label, &got); err != nil {
+		t.Fatalf("the reported label is not an interface: %v (%s)", err, report.Interface.Label)
+	}
+	if err := protojson.Unmarshal([]byte(want), &expected); err != nil {
+		t.Fatal(err)
+	}
+	if !proto.Equal(&got, &expected) {
+		t.Fatalf("activity test reported\n%v\napply reads\n%v", &got, &expected)
 	}
 }

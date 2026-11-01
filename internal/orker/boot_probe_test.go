@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -77,9 +78,12 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	if got, want := posture(signalProbe), posture(task); !slices.Equal(got, want) {
 		t.Fatalf("the SIGTERM probe's container is not a task's:\n probe %q\n  task %q", got, want)
 	}
-	if signalProbe.Image != BindProbeImage || signalProbe.Labels["ork.task"] != signalProbeTaskID || len(signalProbe.Labels) != 1 {
-		t.Errorf("the SIGTERM probe runs %q labelled %v; want %q labelled ork.task=%s alone",
-			signalProbe.Image, signalProbe.Labels, BindProbeImage, signalProbeTaskID)
+	// Its task and its Orker's identity, as a task's container carries its
+	// Orker's, so the Orker's next boot reaps one it could not remove.
+	wantLabels := map[string]string{"ork.task": signalProbeTaskID, "ork.orker": d.OrkerID}
+	if signalProbe.Image != BindProbeImage || !maps.Equal(signalProbe.Labels, wantLabels) {
+		t.Errorf("the SIGTERM probe runs %q labelled %v; want %q labelled %v",
+			signalProbe.Image, signalProbe.Labels, BindProbeImage, wantLabels)
 	}
 	rendered := strings.Join(posture(probe), " ")
 	for _, want := range []string{
@@ -94,8 +98,17 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	if probe.Image != BindProbeImage {
 		t.Errorf("the probe runs %q; want %q", probe.Image, BindProbeImage)
 	}
-	if _, ok := probe.Labels["ork.orker"]; ok {
-		t.Errorf("the probe's container carries ork.orker (%v): a reaper would meet a probe still being removed", probe.Labels)
+	// Labelled with its Orker's identity, as the SIGTERM probe's is above.
+	firstWS, err := NewWorkspace(filepath.Join(t.TempDir(), "bindprobe"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := d.bootProbeSpec(firstWS, "container-nonce")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := map[string]string{"ork.task": bootProbeTaskID, "ork.orker": d.OrkerID}; !maps.Equal(first.Labels, want) {
+		t.Errorf("the probe's container is labelled %v; want %v", first.Labels, want)
 	}
 }
 
@@ -284,6 +297,111 @@ func TestBoot_RunAsOrkerThatDoesNotLandAsTheOrker(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestBoot_TheEnginesStateIsTheOrkersOwnWhereverItKeepsIt: an engine whose
+// settings move its state off the defaults keeps every container's writable
+// layer, which a task writes, under that directory, so the Orker asks the
+// engine at boot and holds each directory it names as its own: dockerd's
+// data root, Podman's graphroot and runroot. A floor entry that admits only
+// such a directory refuses boot, as one under the defaults does. An answer
+// the Orker cannot hold — none, a relative path, the root of the file system
+// — leaves the defaults in force, keeps whatever else the engine named, and
+// is said at boot, naming what to check; so is a runtime that cannot be
+// asked at all.
+func TestBoot_TheEnginesStateIsTheOrkersOwnWhereverItKeepsIt(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "srv", "docker-data")
+	runRoot := filepath.Join(dir, "run", "storage")
+	under := func(root string) string { return "file:" + filepath.Join(root, "overlay2", "abc", "diff", "secret") }
+	const defaults = "file:/var/lib/docker/overlay2/abc/diff/secret"
+	boot := func(t *testing.T, runtime ContainerRuntime, floor []string) (*Activities, string, error) {
+		policy := SecurityPolicyFromEnv()
+		policy.SecretAllow = floor
+		var logs bytes.Buffer
+		activities := NewActivitiesWithOptions(nil, Options{
+			OrkerID:  fmt.Sprintf("orker-state-%d-%s", os.Getpid(), strings.ReplaceAll(t.Name(), "/", "-")),
+			WorkRoot: t.TempDir(),
+			Runtime:  runtime,
+			Policy:   &policy,
+			Logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+		})
+		t.Cleanup(activities.Close)
+		err := activities.Boot(context.Background())
+		return activities, logs.String(), err
+	}
+	warned := func(logs string) bool {
+		for _, line := range strings.Split(logs, "\n") {
+			if strings.Contains(line, "level=WARN") && strings.Contains(line, "where it keeps its state") &&
+				strings.Contains(line, SecretAllowVar) {
+				return true
+			}
+		}
+		return false
+	}
+
+	for _, tc := range []struct {
+		name, cli, answer, flag string
+		own, notOwn             []string
+		// warn is a word the boot warning must hold, "" when there is none.
+		warn string
+	}{
+		{name: "a root the engine names", cli: CLIDocker, answer: root + "\n", own: []string{under(root)}},
+		{name: "podman: its graphroot and its runroot", cli: CLIPodman, answer: root + "\n" + runRoot + "\n",
+			own: []string{under(root), "file:" + filepath.Join(runRoot, "overlay-containers", "abc", "userdata", "secret")}},
+		{name: "an engine that does not answer", cli: CLIDocker, flag: "enginerootfail", warn: "data-root"},
+		{name: "an engine that names no directory", cli: CLIDocker, answer: "<no value>\n", warn: "data-root"},
+		{name: "a relative answer", cli: CLIDocker, answer: "srv/docker-data\n", warn: "srv/docker-data"},
+		{name: "a mixed answer", cli: CLIPodman, answer: root + "\nrun/storage\n", own: []string{under(root)}, warn: "run/storage"},
+		{name: "the root of the file system", cli: CLIDocker, answer: "/\n", notOwn: []string{"file:/etc/orkstack/db"}, warn: "data-root"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fake := newCountingDocker(t)
+			fake.set("present", "")
+			if tc.flag != "" {
+				fake.set(tc.flag, "")
+			}
+			if tc.answer != "" {
+				fake.set("engineroot", tc.answer)
+			}
+			activities, logs, err := boot(t, &DockerRuntime{Bin: fake.bin, CLI: tc.cli}, nil)
+			if err != nil {
+				t.Fatalf("Boot = %v; what the engine says of its state is no reason to refuse", err)
+			}
+			assertOwn(t, activities.dispatcher.Policy, append([]string{defaults}, tc.own...)...)
+			assertNotOwn(t, activities.dispatcher.Policy, tc.notOwn...)
+			switch {
+			case tc.warn == "" && warned(logs):
+				t.Errorf("the boot log warns of the engine's state, which the engine named:\n%s", logs)
+			case tc.warn != "" && (!warned(logs) || !strings.Contains(logs, tc.warn)):
+				t.Errorf("the boot log does not warn naming %s, the engine's state and %q:\n%s", SecretAllowVar, tc.warn, logs)
+			}
+			if len(tc.own) > 0 && !strings.Contains(logs, root) {
+				t.Errorf("the boot log does not name the engine's state directory %s:\n%s", root, logs)
+			}
+		})
+	}
+
+	t.Run("a floor entry that admits only it", func(t *testing.T) {
+		fake := newCountingDocker(t)
+		fake.set("present", "")
+		fake.set("engineroot", root+"\n")
+		if _, _, err := boot(t, &DockerRuntime{Bin: fake.bin}, []string{"file:" + root + "/*"}); err == nil ||
+			!strings.Contains(err.Error(), "admits only this orker's own sources") {
+			t.Fatalf("Boot with a floor of %s/* = %v, want it refused as admitting only the Orker's own", root, err)
+		}
+	})
+
+	t.Run("a runtime that cannot be asked", func(t *testing.T) {
+		activities, logs, err := boot(t, &reapRecorder{labelled: map[string]int{}}, nil)
+		if err != nil {
+			t.Fatalf("Boot = %v", err)
+		}
+		assertOwn(t, activities.dispatcher.Policy, defaults)
+		if !warned(logs) {
+			t.Errorf("the boot log does not warn that only the default state paths are the Orker's own:\n%s", logs)
+		}
+	})
 }
 
 // specRecordingRuntime is a phaseCapturingRuntime that keeps every spec it

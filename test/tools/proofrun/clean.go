@@ -91,13 +91,21 @@ type cleanContainer struct {
 	mounts    []string
 }
 
+// proofContainer is one of a proof's own containers (its Temporal, its
+// Playwright browser server) as the cleanup sees it: its name, the proof id
+// it is labelled with (orkstack.proof) and its owner (orkstack.proof.owner,
+// host:pid:start).
+type proofContainer struct {
+	name, proof, owner string
+}
+
 // cleanDocker is the container runtime as the cleanup sees it.
 type cleanDocker interface {
 	// Containers lists every container labelled ork.orker.
 	Containers(ctx context.Context) ([]cleanContainer, error)
-	// ProofTemporals lists the proofs' own Temporal containers: name and the
-	// orkstack.proof.owner label (host:pid:start).
-	ProofTemporals(ctx context.Context) ([][2]string, error)
+	// ProofContainers lists the proofs' own containers: every one labelled
+	// orkstack.proof.
+	ProofContainers(ctx context.Context) ([]proofContainer, error)
 	Remove(ctx context.Context, id string) error
 	Stop(ctx context.Context, name string) error
 	// RemoveTree empties a work root through a throwaway container.
@@ -118,6 +126,13 @@ type cleaner struct {
 	removeAll func(path string) error // the host's removal of a work root: os.RemoveAll
 
 	protected map[int]bool // pids a running proof recorded
+	// runningProofs are the proof ids a running proof's proof.pid records.
+	runningProofs map[string]bool
+
+	// proofContainersOnly limits the cleanup to the proofs' own containers
+	// (-proof-containers), for scripts/proof.sh's sweep at its Temporal's
+	// start.
+	proofContainersOnly bool
 }
 
 // cleanCounts is what one cleanup removed.
@@ -126,6 +141,7 @@ type cleanCounts struct{ buckets, workRoots, containers int }
 func cmdClean(args []string) int {
 	flags := flag.NewFlagSet("clean", flag.ContinueOnError)
 	remove := flags.Bool("remove", false, "remove what is listed (without it, nothing is removed)")
+	proofContainers := flags.Bool("proof-containers", false, "only the proofs' own containers (a Temporal, a Playwright browser server) whose proof is gone, each one stopped named on a line `stopped <name>`")
 	if err := flags.Parse(args); err != nil {
 		return 2
 	}
@@ -136,7 +152,9 @@ func cmdClean(args []string) int {
 		procStart: processStart,
 		remove:    *remove,
 		out:       os.Stdout,
-		removeAll: os.RemoveAll,
+
+		proofContainersOnly: *proofContainers,
+		removeAll:           os.RemoveAll,
 	}
 	c.host, _ = os.Hostname()
 	if dir := os.Getenv("ORK_ORKER_WORKDIR"); dir != "" {
@@ -159,6 +177,17 @@ func cmdClean(args []string) int {
 func (c *cleaner) run(ctx context.Context) cleanCounts {
 	var n cleanCounts
 	running, dead := c.recordRoots()
+	c.runningProofs = map[string]bool{}
+	for _, root := range running {
+		if id := recordedProofID(filepath.Join(root, "proof.pid")); id != "" {
+			c.runningProofs[id] = true
+		}
+	}
+	if c.proofContainersOnly {
+		fmt.Fprintln(c.out, "== proofs' own containers whose proof is gone")
+		n.containers = c.temporals(ctx)
+		return n
+	}
 	c.protected = map[int]bool{}
 	for _, root := range running {
 		for _, name := range recordedBuckets(root) {
@@ -176,7 +205,7 @@ func (c *cleaner) run(ctx context.Context) cleanCounts {
 	roots := c.workRoots()
 	fmt.Fprintln(c.out, "== activity containers of test processes")
 	n.containers = c.containers(ctx)
-	fmt.Fprintln(c.out, "== proof Temporal containers whose proof is gone")
+	fmt.Fprintln(c.out, "== proofs' own containers whose proof is gone")
 	n.containers += c.temporals(ctx)
 	fmt.Fprintln(c.out, "== per-test work roots")
 	n.workRoots = c.removeWorkRoots(ctx, roots)
@@ -555,20 +584,29 @@ func (c *cleaner) containers(ctx context.Context) int {
 	return removed
 }
 
-// temporals stops the proofs' own Temporal containers whose proof is gone:
-// one labelled with this host, a pid and a start time no process here has.
+// temporals stops the proofs' own containers (a Temporal, a Playwright browser
+// server) whose proof is gone: one labelled with this host, a pid and a start
+// time no process here has. A container labelled with the id of a proof whose
+// proof.pid says it still runs is never stopped, whatever its owner label
+// says: the label is the owner the starter named, and a starter that named
+// itself and exited (a browser server started for a gate) left a live proof's
+// container looking abandoned.
 func (c *cleaner) temporals(ctx context.Context) int {
 	if c.docker == nil {
 		return 0
 	}
-	list, err := c.docker.ProofTemporals(ctx)
+	list, err := c.docker.ProofContainers(ctx)
 	if err != nil {
 		fmt.Fprintf(c.out, "  (containers not listed: %v)\n", err)
 		return 0
 	}
 	stopped := 0
 	for _, ct := range list {
-		name, owner := ct[0], ct[1]
+		name, owner := ct.name, ct.owner
+		if c.runningProofs[ct.proof] {
+			fmt.Fprintf(c.out, "  %s: in use: proof %s is still running (its proof.pid); left alone\n", name, ct.proof)
+			continue
+		}
 		f := strings.SplitN(owner, ":", 3)
 		if len(f) != 3 || f[0] != c.host {
 			continue
@@ -586,9 +624,25 @@ func (c *cleaner) temporals(ctx context.Context) int {
 			fmt.Fprintf(c.out, "    (not stopped: %v)\n", err)
 			continue
 		}
+		if c.proofContainersOnly {
+			fmt.Fprintf(c.out, "stopped %s\n", name)
+		}
 		stopped++
 	}
 	return stopped
+}
+
+// recordedProofID is the proof id a proof.pid (pid, pid, start, proof id)
+// records, or "".
+func recordedProofID(pidFile string) string {
+	b, err := os.ReadFile(pidFile)
+	if err != nil {
+		return ""
+	}
+	if f := strings.Fields(string(b)); len(f) >= 4 {
+		return f[3]
+	}
+	return ""
 }
 
 // repoWorktrees are this repository's worktrees, as git lists them; the
@@ -735,8 +789,17 @@ func (d dockerCLI) Containers(ctx context.Context) ([]cleanContainer, error) {
 	return list, nil
 }
 
-func (d dockerCLI) ProofTemporals(ctx context.Context) ([][2]string, error) {
-	return d.lines(ctx, "ps", "--filter", "label=orkstack.proof", "--format", `{{.Names}}	{{.Label "orkstack.proof.owner"}}`)
+func (d dockerCLI) ProofContainers(ctx context.Context) ([]proofContainer, error) {
+	rows, err := d.lines(ctx, "ps", "--filter", "label=orkstack.proof", "--format", `{{.Names}}	{{.Label "orkstack.proof"}}	{{.Label "orkstack.proof.owner"}}`)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]proofContainer, 0, len(rows))
+	for _, r := range rows {
+		proof, owner, _ := strings.Cut(r[1], "\t")
+		out = append(out, proofContainer{name: r[0], proof: proof, owner: owner})
+	}
+	return out, nil
 }
 
 func (dockerCLI) Remove(ctx context.Context, id string) error {

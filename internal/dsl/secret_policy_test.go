@@ -3,6 +3,7 @@ package dsl
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -137,6 +138,34 @@ func TestSecretSourceRefusal_RendersEachShape(t *testing.T) {
 	}
 }
 
+// TestSecretSourceRefusal_QuotesALongSourceByItsHead: a variable's name has
+// no bound of its own, and a namespace's list is matched without the file
+// path's bound, so a refusal quotes a source in full only up to the longest
+// file source an Orker reads, and a longer one by its first 64 bytes and its
+// length, whatever refused it.
+func TestSecretSourceRefusal_QuotesALongSourceByItsHead(t *testing.T) {
+	patterns := []string{"env:SANDBOX_*", "file:/etc/orkstack/secrets/sandbox/*"}
+	longest := "file:/" + strings.Repeat("a", MaxSecretPathBytes-1)
+	if err := CheckSecretSource(patterns, longest); err == nil || !strings.HasPrefix(err.Error(), strconv.Quote(longest)+" ") {
+		t.Errorf("CheckSecretSource(the longest file source) = %v, want it quoted in full", err)
+	}
+	for _, source := range []string{
+		"env:PROD_" + strings.Repeat("A", 200<<10),
+		"file:/" + strings.Repeat("a/", 100<<10) + "../db",
+		"file:" + strings.Repeat("a", 100<<10),
+		strings.Repeat("x", 100<<10),
+	} {
+		err := CheckSecretSource(patterns, source)
+		head := fmt.Sprintf("%q… (%d bytes) ", source[:64], len(source))
+		if err == nil || !strings.HasPrefix(err.Error(), head) || len(err.Error()) > 512 {
+			t.Errorf("CheckSecretSource(%d bytes) = %d bytes, want a sentence beginning %s", len(source), len(err.Error()), head)
+		}
+	}
+	if got, want := QuoteSecretSource("env:SANDBOX_DB"), `"env:SANDBOX_DB"`; got != want {
+		t.Errorf("QuoteSecretSource(a short source) = %s, want %s", got, want)
+	}
+}
+
 func TestValidSecretPattern_RefusesEveryMalformedShape(t *testing.T) {
 	long := "abcdefghijklmnop:" + strings.Repeat("A", 240) // 16-byte scheme, 257 bytes total
 	if len(long) != 257 {
@@ -236,5 +265,36 @@ func TestSecretPolicyVectors_AreExportedForTheBoundaries(t *testing.T) {
 	}
 	for _, v := range vectors {
 		assertVector(t, v)
+	}
+}
+
+// TestCheckSecretPath_RefusesAPathLongerThanTheKernelOpens: a file source's
+// path is at most MaxSecretPathBytes, the longest name the kernel opens
+// (PATH_MAX), so the bound refuses nothing that could be read, and it bounds
+// what judging the name costs the Orker. The refusal names the length and
+// the bound, and quotes no more of the source than its head.
+func TestCheckSecretPath_RefusesAPathLongerThanTheKernelOpens(t *testing.T) {
+	// An n-byte plain absolute path, n >= 2.
+	path := func(n int) string { return ("/" + strings.Repeat("a/", n))[:n-1] + "b" }
+	for _, n := range []int{2, 3, MaxSecretPathBytes - 1, MaxSecretPathBytes} {
+		if err := CheckSecretPath("file:" + path(n)); err != nil {
+			t.Errorf("a %d-byte path: %v, want permitted", n, err)
+		}
+	}
+	for _, n := range []int{MaxSecretPathBytes + 1, 200 << 10} {
+		source := "file:" + path(n)
+		err := CheckSecretPath(source)
+		var refusal *SecretSourceRefusal
+		if !errors.As(err, &refusal) || refusal.Why != "too long" || refusal.Source != source {
+			t.Fatalf("a %d-byte path: %#v, want a refusal of its length", n, err)
+		}
+		msg := err.Error()
+		if len(msg) > 256 || !strings.Contains(msg, fmt.Sprint(n)) || !strings.Contains(msg, fmt.Sprint(MaxSecretPathBytes)) {
+			t.Fatalf("a %d-byte path: %q (%d bytes), want a short sentence naming %d and %d", n, msg, len(msg), n, MaxSecretPathBytes)
+		}
+	}
+	// Only a file source is a path.
+	if err := CheckSecretPath("env:" + strings.Repeat("A", 200<<10)); err != nil {
+		t.Errorf("a long variable name: %v, want no path rule", err)
 	}
 }

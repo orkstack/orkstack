@@ -735,15 +735,26 @@ never shown as the new attempt's), `UNDECODABLE`. A last beat older than
 computed server-side against the response's `computed_at`, which every age
 both clients print is measured against.
 
+A `SCHEDULED` attempt that has waited two seconds with no retry backoff, whose
+task is not pinned, carries `capacity_wait` when every live Orker answered and
+every one of its pool that takes new tasks declares a capacity, runs a task and
+has no room for another within it: the pool, how many Orkers were counted, and
+what they reserve against what they admit within, summed. It is derived from
+the Orker inventory, read only when such an attempt waits and shared by the
+engine replica's callers, at most once every five seconds
+([DEPLOY.md](DEPLOY.md), "Declaring an Orker's capacity"); both clients then
+say the attempt is waiting for capacity rather than for an Orker.
+
 CLI: `run inspect RUN [--task TASK] [--item N] [--watch] [--interval D]`
 prints `STATE`, `PHASE`, `ORKER`, `CONTAINER`, `LOGGED`, `RUNNING`,
 `HEARTBEAT` and footers (the reason, the stale deadline, the timeout as a
-lower bound, the pool an attempt waits on, the next retry, a requested
-cancellation). `--watch` polls (default 5 s, at least 1 s) until the run is
+lower bound, the pool an attempt waits on or that every Orker of it is full,
+the next retry, a requested cancellation). `--watch` polls (default 5 s, at least 1 s) until the run is
 terminal and exits with the run's code (0 succeeded, 2 failed, 3 canceled);
 under `--watch`, `--json` prints one compact response per line. UI: a running
 card polls the same read every 5 s while the page is visible and shows
-`Running for …`, a live line (`Waiting for an orker · …`, `Phase run · 412.0
+`Running for …`, a live line (`Waiting for an orker · …`, `Waiting for
+capacity · every orker of pool … is full (reserved 1/1 cpu) · …`, `Phase run · 412.0
 MiB logged · heartbeat 3s ago`, `… — STALE`, `Attempt 3 scheduled for …`,
 `Cancelling · phase …`, `Phase unavailable · <reason>`) and the Orker.
 

@@ -1,12 +1,17 @@
 package main
 
 import (
+	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	cfgfile "github.com/orkstack/orkstack/internal/config"
+	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/telemetry"
 )
 
 // writeTempConfig writes content to a temp file under t.TempDir() and
@@ -160,5 +165,62 @@ func TestApplyConfigFile_NoConfigIsTheZeroConfigPath(t *testing.T) {
 		nil, cfgfile.BinaryOrker, func(string) (string, bool) { return "", false }, setenvT(t))
 	if err != nil || doc != nil || path != "" || check || set != nil {
 		t.Errorf("applyConfigFile(nil args) = (doc=%v, path=%q, check=%v, set=%v, err=%v), want the zero-config path", doc, path, check, set, err)
+	}
+}
+
+// TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn: the file this Orker
+// was configured from, every {file:} that file read, and every telemetry
+// sink header's file and variable are the Orker's own, so its secret floor
+// admits none of them as a task's source, whatever ORK_ORKER_SECRET_ALLOW
+// says. The Orker is booted by start, main's whole body, given the arguments
+// main is given, and judged by the options built from what start serves, so
+// the files are the Orker's own on the path a real boot takes; --check stops
+// start before it serves anything.
+func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
+	clearTelemetryEnv(t)
+	unsetenvT(t, "ORK_S3_SECRET_KEY")
+	dir := t.TempDir()
+	secret := filepath.Join(dir, "s3-secret")
+	sinkKey := filepath.Join(dir, "sink-key")
+	sibling := filepath.Join(dir, "task-secret")
+	for _, path := range []string{secret, sinkKey, sibling} {
+		if err := os.WriteFile(path, []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := writeTempConfig(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: {file: "+secret+"}\n")
+	t.Setenv(telemetry.SinksVar, "sinks:\n  vendor:\n    endpoint: http://127.0.0.1:1\n    headers:\n"+
+		"      X-Key: { source: \"file:"+sinkKey+"\" }\n"+
+		"      X-Team: { source: \"env:VENDOR_TEAM_KEY\" }\n")
+	t.Setenv("VENDOR_TEAM_KEY", "x")
+	var opts orker.Options
+	served := 0
+	serve := func(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
+		served++
+		opts = orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
+		return nil
+	}
+	var stderr strings.Builder
+	if exit := start([]string{"--config", path, "--check"}, os.LookupEnv, setenvT(t), io.Discard, &stderr, serve); exit != 0 || served != 0 {
+		t.Fatalf("start(--check) = %d having served %d times, want 0 and nothing served: %s", exit, served, stderr.String())
+	}
+	if exit := start([]string{"--config", path}, os.LookupEnv, setenvT(t), io.Discard, &stderr, serve); exit != 0 || served != 1 {
+		t.Fatalf("start = %d having served %d times, want 0 having served once: %s", exit, served, stderr.String())
+	}
+	if opts.Policy == nil {
+		t.Fatal("orkerOptions.Policy = nil, want the Orker's policy with its own files")
+	}
+	for _, own := range []string{path, secret, sinkKey} {
+		var refusal *orker.OwnSourceRefusal
+		if err := opts.Policy.AllowsSecretSource("file:" + own); !errors.As(err, &refusal) {
+			t.Errorf("AllowsSecretSource(file:%s) = %v, want it refused as the Orker's own", own, err)
+		}
+	}
+	var refusal *orker.OwnSourceRefusal
+	if err := opts.Policy.AllowsSecretSource("env:VENDOR_TEAM_KEY"); !errors.As(err, &refusal) {
+		t.Errorf("AllowsSecretSource(env:VENDOR_TEAM_KEY) = %v, want the sink's header variable refused as the Orker's own", err)
+	}
+	if err := opts.Policy.AllowsSecretSource("file:" + sibling); err != nil {
+		t.Errorf("AllowsSecretSource(file:%s) = %v, want a file beside them permitted", sibling, err)
 	}
 }

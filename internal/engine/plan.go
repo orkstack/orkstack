@@ -205,6 +205,19 @@ type RunPlan struct {
 	// parent's namespace. Nil on every plan built before it, which schedules
 	// with no priority and asks no gate.
 	Fairness *FairnessSelection `json:"fairness,omitempty"`
+
+	// RetryMaxIntervalSeconds is the longest wait between two attempts of a
+	// task whose retry: sets no maximum_interval_seconds (retry_spacing.go):
+	// DefaultRetryMaxInterval, decided at submit, because a code constant may
+	// not decide a retry spacing (AGENTS.md §7.2). A run-tree value, like
+	// PinCreationTimeoutSeconds: set on the top-level plan by
+	// pinRunTreeLimits and copied into each child's start plan by
+	// childStartPlan. Zero means unset, and an unset value is the 100 seconds
+	// every build before the field used, which is also what a run whose
+	// history was recorded before the retry-max-interval gate takes whatever
+	// this says. omitempty, so a plan with none encodes exactly as it did
+	// before the field existed.
+	RetryMaxIntervalSeconds int32 `json:"retry_max_interval_seconds,omitempty"`
 }
 
 // OverlayPolicy is a run's snapshot-overlay thresholds, pinned per run

@@ -112,28 +112,35 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 		rootName string // the work root's directory name; "" is a plain temporary one
 		wantErr  error  // nil: the probe passes
 		wantRuns int
-		// wantRemoved is how many probe containers were force-removed: one
-		// per attempt that overran, so an attempt the daemon is still
-		// starting cannot run beside the retry.
+		// wantRemoved is how many probe containers the runtime
+		// force-removed: one per attempt that did not hand its container
+		// over, so an attempt the daemon is still starting cannot run
+		// beside the retry, and one the daemon refused or cut off is not
+		// left created and never started. A container that ran to its end
+		// is handed to the caller, who removes it.
 		wantRemoved int
+		// wantLeftovers is how many of those removals the daemon refused on
+		// a run that still passed: each is handed back with the run, naming
+		// the attempt's container, for the caller to report.
+		wantLeftovers int
 	}{
 		{name: "the container starts and exits zero", budget: time.Minute, wantRuns: 1},
 		{
 			name: "the container ran and exited non-zero", flags: map[string]string{"runexit": ""},
-			budget: time.Minute, wantErr: ErrPostureRefused, wantRuns: 1,
+			budget: time.Minute, wantErr: ErrPostureRefused, wantRuns: 1, wantRemoved: 1,
 		},
 		{
 			name: "the daemon refuses the bind in its own words", flags: map[string]string{"runfail": ""},
-			budget: time.Minute, wantErr: ErrNotBindable, wantRuns: 1,
+			budget: time.Minute, wantErr: ErrNotBindable, wantRuns: 1, wantRemoved: 1,
 		},
 		{
 			name: "the daemon refuses the run for another reason", flags: map[string]string{"runother": ""},
-			budget: time.Minute, wantErr: ErrPostureRefused, wantRuns: 1,
+			budget: time.Minute, wantErr: ErrPostureRefused, wantRuns: 1, wantRemoved: 1,
 		},
 		{
 			name:  "a refusal that quotes a path with timeout in its name is still the work root's",
 			flags: map[string]string{"runfailsrc": ""}, budget: time.Minute, rootName: "timeout-work-root",
-			wantErr: ErrNotBindable, wantRuns: 1,
+			wantErr: ErrNotBindable, wantRuns: 1, wantRemoved: 1,
 		},
 		{
 			name:  "the daemon answers with its own deadline error once and the retry passes",
@@ -147,6 +154,11 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 		{
 			name: "one overrun and the retry passes", flags: map[string]string{"slowruns": "1"},
 			budget: probeBudget, wantRuns: 2, wantRemoved: 1,
+		},
+		{
+			name:  "one overrun whose container the daemon will not remove, and the retry passes",
+			flags: map[string]string{"slowruns": "1", "rmfailall": ""}, budget: probeBudget,
+			wantRuns: 2, wantRemoved: 1, wantLeftovers: 1,
 		},
 		{
 			name: "two overruns and never a third attempt", flags: map[string]string{"slowruns": "9"},
@@ -176,7 +188,7 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 				}
 			}
 
-			_, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
+			run, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))
 
 			if tt.wantErr == nil && err != nil {
 				t.Fatalf("RunBootProbe = %v; want nil", err)
@@ -198,8 +210,19 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 			}
 			for i, name := range removed {
 				if name != ran[i] {
-					t.Errorf("removal #%d was of %q; want the container the overrun attempt named, %q", i, name, ran[i])
+					t.Errorf("removal #%d was of %q; want the container that attempt named, %q", i, name, ran[i])
 				}
+			}
+			if len(run.Leftovers) != tt.wantLeftovers {
+				t.Errorf("the run handed back leftovers %+v; want %d", run.Leftovers, tt.wantLeftovers)
+			}
+			for i, left := range run.Leftovers {
+				if left.Container != ContainerID(ran[i]) || left.Err == nil {
+					t.Errorf("leftover #%d is %+v; want attempt %d's container %q with the daemon's refusal", i, left, i+1, ran[i])
+				}
+			}
+			if tt.wantErr == nil && (len(ran) == 0 || run.Container != ContainerID(ran[len(ran)-1])) {
+				t.Errorf("the run handed back %q; want the passing attempt's container, the last of %q", run.Container, ran)
 			}
 			if len(ran) == 2 && ran[0] == ran[1] {
 				t.Errorf("both attempts named their container %q; a retry beside a still-starting first attempt would collide", ran[0])

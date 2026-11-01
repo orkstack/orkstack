@@ -319,3 +319,89 @@ func TestDigests_RefuseABrokenDirectory(t *testing.T) {
 		}
 	})
 }
+
+// TestParseImages_ReadsWhatDigestsPrints: the image list `dist digests`
+// prints reads back as the images it lists, sorted as printed.
+func TestParseImages_ReadsWhatDigestsPrints(t *testing.T) {
+	t.Parallel()
+	var images []dist.Image
+	for i, name := range dist.Images() {
+		images = append(images, dist.Image{Name: name, Digest: fmt.Sprintf("sha256:%064x", i)})
+	}
+	got, err := dist.ParseImages([]byte(dist.FormatImages(images)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, images) {
+		t.Fatalf("ParseImages = %v, want %v", got, images)
+	}
+}
+
+// TestParseImages_RefusesAListThatIsNotTheRelease: every line is one image the
+// release publishes and its well-formed digest, each image once, and none is
+// missing.
+func TestParseImages_RefusesAListThatIsNotTheRelease(t *testing.T) {
+	t.Parallel()
+	var lines []string
+	for i, name := range dist.Images() {
+		lines = append(lines, fmt.Sprintf("%s\tsha256:%064x", name, i))
+	}
+	join := func(l []string) []byte { return []byte(strings.Join(l, "\n") + "\n") }
+	tests := []struct {
+		name string
+		list []byte
+		want string
+	}{
+		{"one missing", join(lines[1:]), dist.Images()[0]},
+		{"one twice", join(append(append([]string{}, lines...), lines[0])), dist.Images()[0]},
+		{"an unknown image", join(append(append([]string{}, lines...), "web\tsha256:"+strings.Repeat("a", 64))), "web"},
+		{"a malformed digest", join(append([]string{dist.Images()[0] + "\tsha256:xyz"}, lines[1:]...)), "sha256:xyz"},
+		{"a line without a tab", join(append([]string{dist.Images()[0] + " sha256:" + strings.Repeat("a", 64)}, lines[1:]...)), "line 1"},
+		{"a blank line inside", join(append([]string{lines[0], ""}, lines[1:]...)), "line 2"},
+		{"empty", nil, "no image"},
+	}
+	for _, tc := range tests {
+		if _, err := dist.ParseImages(tc.list); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: %v, want a refusal naming %q", tc.name, err, tc.want)
+		}
+	}
+}
+
+// FuzzParseImages: an image list is read back from the artifacts job's
+// upload. ParseImages never panics, and a list it accepts names each image a
+// release publishes exactly once by a well-formed digest, and formats back to
+// the same images.
+func FuzzParseImages(f *testing.F) {
+	var images []dist.Image
+	for i, name := range dist.Images() {
+		images = append(images, dist.Image{Name: name, Digest: fmt.Sprintf("sha256:%064x", i)})
+	}
+	good := dist.FormatImages(images)
+	for _, seed := range []string{good, strings.TrimSuffix(good, "\n"), strings.ReplaceAll(good, "\n", "\r\n"),
+		good + good, good[strings.Index(good, "\n")+1:], strings.Replace(good, "\t", " ", 1), "", "\n", "x\ty\n"} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, list []byte) {
+		got, err := dist.ParseImages(list)
+		if err != nil {
+			if got != nil {
+				t.Fatalf("ParseImages(%q) refused with images %v", list, got)
+			}
+			return
+		}
+		if len(got) != len(dist.Images()) {
+			t.Fatalf("ParseImages(%q) accepted %d images, want %d", list, len(got), len(dist.Images()))
+		}
+		seen := map[string]bool{}
+		for _, image := range got {
+			if seen[image.Name] || !slices.Contains(dist.Images(), image.Name) || !dsl.ValidDigest(image.Digest) {
+				t.Fatalf("ParseImages(%q) accepted %v", list, image)
+			}
+			seen[image.Name] = true
+		}
+		back, err := dist.ParseImages([]byte(dist.FormatImages(got)))
+		if err != nil || len(back) != len(got) {
+			t.Fatalf("the accepted list %v does not read back: %v", got, err)
+		}
+	})
+}

@@ -533,8 +533,11 @@ func formatResources(q *orkstackv1.ResourceQuantity) string {
 }
 
 // formatMemory is a byte count in the Kubernetes binary spelling when it is a
-// whole number of one, and in bytes otherwise.
+// whole number of one, 0 for none, and in bytes otherwise.
 func formatMemory(bytes int64) string {
+	if bytes == 0 {
+		return "0"
+	}
 	for _, unit := range []struct {
 		suffix string
 		size   int64

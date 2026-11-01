@@ -57,6 +57,7 @@ Every `ork` replica serves the UI on its API port, so the browser's calls and li
 - Route the whole host to `ork`, not only the API's paths. The UI's pages and assets (`/`, `/_app/`) are on the same port.
 - Forward WebSocket upgrades on `/ws/`.
 - Keep the `Host` header the browser sent. A proxy that rewrites it makes the UI's live streams look cross-origin, and the engine refuses them. If it must, list the page's origin in `ORK_WS_ALLOWED_ORIGINS`.
+- List in `ORK_ALLOWED_HOSTS` every name with a dot the engine is reached by, for example `ORK_ALLOWED_HOSTS=orkstack.example.com`: the browser's name behind a proxy that keeps it, an FQDN, and the name `orkctl` dials. On its own the engine answers an IP address, `localhost` and the names under it, a name without a dot, and the host in `ORK_HTTP_ADDR`. It refuses any other `Host` with `403`, which stops a web page from reaching it by DNS rebinding. A Prometheus that scrapes the admin listener by a name with a dot needs that name in `ORK_ADMIN_ALLOWED_HOSTS`.
 - Serve the UI at the root of a host, not under a sub-path.
 - Terminate TLS at the proxy. The engine serves plain HTTP.
 
@@ -83,6 +84,8 @@ A namespace requires one key. To mix your own images with the first-party ones, 
 cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
 ```
 
+Each release's page lists every image's digest and this command for each of them, and the command that checks `SHA256SUMS` against its signature.
+
 On a host, the `orker` mounts the host's Docker socket. Whoever controls that socket controls the host. Activity containers never receive it. On Kubernetes, each Orker pod has an engine of its own instead.
 
 ## On Kubernetes
@@ -101,11 +104,13 @@ Never give an Orker pod the node's container runtime or its Docker socket. [Run 
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | the temp directory | orker. Must be a path the Docker daemon can bind-mount, with no comma or control character in it |
 | `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | orker. Tasks at once on one Orker; size it to the host. To rule out over-commit, keep it at or below the host's cpus ÷ `max_cpu` and its memory ÷ `max_memory` |
 | `orker.resources.max_cpu`, `max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | orker. A task that asks for more is refused |
-| `orker.capacity.cpu`, `memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | empty | orker. What the Orker admits tasks within; each poll then waits for a per-task cap's worth to be free. Empty admits by `max_concurrent` alone |
+| `orker.capacity.cpu`, `memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | empty | orker. What the Orker admits tasks within; each poll then waits for a per-task cap's worth to be free. Empty admits by `max_concurrent` alone, best effort, and the Orker says so at boot |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | orker. Above zero makes the Orker a pin host |
 | `deployment.build_id` | `ORK_BUILD_ID` | empty | both. Empty means versioning is off |
 | `telemetry.admin_addr` | `ORK_ADMIN_ADDR` | empty | both. Empty opens no listener |
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | ork. Off keeps every run; on retires runs by their namespace's retention |
+
+Give every Orker of a pool the same `max_concurrent`, caps and capacity, and the same default request, secret and `env` settings, registry credentials and runtime. A task that lands on an Orker that will not run it fails its run. To change a value with runs in flight, follow [DEPLOY.md, "Every Orker of a pool has the same settings"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings).
 
 On a host, an Orker with no `ORK_ORKER_ID` derives a unique id from its host and work directory. In a container, set it explicitly, one distinct id per Orker.
 
@@ -130,6 +135,7 @@ The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/P
 - [DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#0-topology--what-you-run-and-where-state-lives): the topology, in full
 - [DEPLOY.md, “The web UI”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-web-ui): what the engine serves at `/`, caching, and running it behind a proxy
 - [DEPLOY.md, “1. Configuration”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration): every key and its variable
+- [DEPLOY.md, “Every Orker of a pool has the same settings”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#every-orker-of-a-pool-has-the-same-settings): the settings a pool's Orkers share, and how to change one with runs in flight
 - [DEPLOY.md, “Orkers on Kubernetes”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#orkers-on-kubernetes): both shapes, sizing, the RuntimeClass and the proof
 - [PRODUCTION_CHECKLIST.md](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md): the full list of care items
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack keeps in the bucket, and where

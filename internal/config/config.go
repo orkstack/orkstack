@@ -130,6 +130,16 @@ var Schema = []Var{
 
 	{Path: "engine.http_addr", Env: "ORK_HTTP_ADDR", Binaries: usesOrk, Kind: KindString, Default: api.DefaultHTTPAddr},
 	{Path: "engine.ws_allowed_origins", Env: "ORK_WS_ALLOWED_ORIGINS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault},
+	// The API listener's settings; its fixed bounds are internal/api
+	// constants (ReadHeaderTimeout, MaxHeaderBytes). ORK_REQUEST_MAX_BYTES
+	// falls back to api.RequestMaxBytesFor(engine.orkflow_max_tasks), so it
+	// scales with the task ceiling, and cmd/ork refuses a value under that.
+	{Path: "engine.http_idle_timeout", Env: "ORK_HTTP_IDLE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultIdleTimeout)},
+	{Path: "engine.request_max_bytes", Env: "ORK_REQUEST_MAX_BYTES", Binaries: usesOrk, Kind: KindInt, Default: DerivedDefault,
+		DerivedNote: formatBytes(api.RequestBaseBytes) + " + " + formatBytes(api.RequestBytesPerTask) +
+			" × engine.orkflow_max_tasks, " + formatInt(api.DefaultRequestMaxBytes) + " at the default ceiling; never set under that"},
+	{Path: "engine.allowed_hosts", Env: "ORK_ALLOWED_HOSTS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault,
+		DerivedNote: "an IP address, localhost and *.localhost, a name without a dot, and the host ORK_HTTP_ADDR names are always admitted"},
 	{Path: "engine.ui.enabled", Env: "ORK_UI_ENABLED", Binaries: usesOrk, Kind: KindBool, Default: formatBool(api.DefaultUIEnabled)},
 	{Path: "engine.ui.dir", Env: "ORK_UI_DIR", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "the build compiled into ork"},
 	// ORK_IDEMPOTENCY_TTL's fallback is engine.DefaultClaimTTL, the same
@@ -249,6 +259,8 @@ var Schema = []Var{
 	{Path: "telemetry.log_format", Env: "ORK_LOG_FORMAT", Binaries: usesBoth, Kind: KindString, Default: telemetry.LogFormatText},
 	{Path: "telemetry.log_level", Env: "ORK_LOG_LEVEL", Binaries: usesBoth, Kind: KindString, Default: telemetry.DefaultLogLevel},
 	{Path: "telemetry.admin_addr", Env: "ORK_ADMIN_ADDR", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "no listener when unset"},
+	{Path: "telemetry.admin_allowed_hosts", Env: "ORK_ADMIN_ALLOWED_HOSTS", Binaries: usesBoth, Kind: KindList, Default: EmptyDefault,
+		DerivedNote: "an IP address, localhost and *.localhost, a name without a dot, and the host ORK_ADMIN_ADDR names are always admitted"},
 	{Path: "telemetry.pprof_enabled", Env: "ORK_PPROF_ENABLED", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 	{Path: "telemetry.high_cardinality", Env: "ORK_TELEMETRY_HIGH_CARDINALITY", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 

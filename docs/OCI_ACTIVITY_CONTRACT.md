@@ -91,11 +91,14 @@ Three rules follow and are enforced everywhere below:
 `TaskRun`), and `namespace.proto` reserves `Pool.plugins` the same way, so a
 stale stored document can never be re-read as a pool selection or an image.
 The DSL compiler decodes strictly: a document carrying any key the schema does
-not define is refused. `make proto` runs `buf lint` and `buf generate`, not
-`buf breaking`.
+not define is refused. `make proto` runs `buf lint` and `buf generate`;
+`make proto-breaking`, which `ci.yml` › `proto` runs on every push and pull
+request, runs `buf breaking` against the first release, v0.1.0, under
+`buf.yaml`'s `FILE` rules, so a renumbered, retyped or removed field turns
+that job red. It is not part of the merge gate (`proof`).
 
 **Additive contexts are set only when used.** Every optional context added to
-`ExecuteTaskInput` after the first release — `telemetry = 23`, `pin = 24`,
+`ExecuteTaskInput` after field 22 — `telemetry = 23`, `pin = 24`,
 `image_policy = 25`, `each = 26`, `cache = 27`, `join = 28` — is set ONLY for
 a task that uses the feature, so every other payload stays byte-identical and
 old histories replay unchanged. Submit asks the task's pool what it can run
@@ -376,6 +379,20 @@ the work root. `WORKDIR_NOT_BINDABLE` is kept for a work root whose path holds
 a comma or control character, a bind the daemon refused within its budget in
 its own words, a bind that is not the Orker's directory, and a probe directory
 that cannot be made; none of those is tried again.
+
+The probe's two containers are labelled `ork.task` (`bindprobe`,
+`sigprobe`) and `ork.orker`, the Orker's identity, as a task's are (§5), and
+neither is left to the daemon's `--rm`, which fires only when a container
+exits and never for one created and not started. The Orker removes each
+itself before the probe returns, however it ends: passed, refused, timed out,
+or stopped while a container's `run` was still in flight (one cut off between
+the daemon's create and its start is left created and never started). A
+removal that fails is named in the refusal or logged. One the Orker could not
+remove, because it was killed first or the daemon finished a create the CLI
+had given up on, is reaped by that label at the next boot under the same
+`ORK_ORKER_ID` (or the same work root, for the default identity); until then
+`ps --all --filter label=ork.orker=<id>` lists it, and a test's is listed by
+`proofrun clean` by the work root its mounts lie in.
 
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt
 directory the Orker creates, populates, mounts read-only, and removes on every
@@ -874,7 +891,7 @@ labels, inputs and tasks; on `Task` everything that decides what runs (`uses`,
 the seven resolved fields — are emitted whether or not they are zero. Never
 `source_yaml`, never `created_at`, never the per-execution `ImageRef` fields.
 
-**Every field added after the first release is emitted only when set**:
+**Every field added after the base fields is emitted only when set**:
 `pins` and `outputs` on the Orkflow; `pin`, `join` (when not the default),
 `await`, `orkflow`, `each` and `cache` on a task. Each changes what runs, so
 each is in the digest — but emitting an empty one unconditionally would move
@@ -986,11 +1003,15 @@ supply-chain policy". This is the Orker's half.
 - **What it checks:** the pure rule (`internal/task/image_policy.go`, the one
   place it is stated) against `ImageRef`, then — when a signer is named — the
   signature, verified by the Orker itself with its own registry client and the
-  key the selection carries. The verifier accepts cosign's key-based layout
-  (an OCI manifest at tag `sha256-<hex>.sig` in the same repository) when at
-  least one signature layer verifies over this exact index digest with that
-  key; it checks the digest claim, not the payload's docker-reference, as
-  cosign's own key-based verify does.
+  key the selection carries. The verifier accepts either of cosign's
+  key-based layouts when at least one signature in them verifies over this
+  exact index digest with that key: the legacy one (an OCI manifest at tag
+  `sha256-<hex>.sig` in the same repository, one simple-signing layer per
+  signature), and cosign 3's bundle (an OCI referrer of the image, found
+  through the referrers API or the `sha256-<hex>` referrers tag, whose DSSE
+  envelope signs an in-toto statement naming the digest). It checks the
+  digest claim, not the payload's docker-reference or the referrer's
+  subject, as cosign's own key-based verify does.
 - **Outcomes:** `IMAGE_NOT_PERMITTED` (a tag under `require_digest`, a
   registry outside the list), `IMAGE_NOT_SIGNED` (no signature object),
   `IMAGE_SIGNATURE_INVALID` (signatures exist, none verifies) — all
@@ -1000,7 +1021,11 @@ supply-chain policy". This is the Orker's half.
   is not a verdict, is never a pass and never "unsigned".
 - **Rolling upgrade:** a run submitted through an engine replica of a release
   without the policy carries no selection, and its tasks are not checked by
-  the Orker. The window is the rollout.
+  the Orker. The window is the rollout. An Orker of v0.1.0 reads only the
+  legacy layout: a run whose selection requires a signer, submitted through
+  a later engine, has each bundle-signed image refused by such an Orker
+  still polling, `IMAGE_NOT_SIGNED`, a `ContractViolation` that is never
+  retried ([UPGRADING.md](./UPGRADING.md), "Release artifacts").
 
 ---
 
@@ -1243,8 +1268,11 @@ Orker-side behaviour and changes nothing a container sees: no file,
    error is `COMMIT_WRITE_FAILED`, the only way the memo step can fail an
    attempt. A memo that points at a HIT commit is followed once, so
    `cache.source` always names the run whose container produced the bytes.
-5. **A miss or a bypass** completes staging (phase `stage-artifacts`), runs
-   the container as always, and records the decision on the commit it writes.
+5. **A miss or a bypass** is first held to this Orker's own policy (§7.1,
+   step 5b′), which refuses it, before any secret or artifact is fetched,
+   where this Orker would not run it. Otherwise it completes staging (phase
+   `stage-artifacts`), runs the container as always, and records the decision
+   on the commit it writes.
    After that commit is **created** — never after a conflict's adoption — it
    writes the memo, a plain put that replaces whatever was at the key,
    best-effort on a detached 10 s context: a failure is logged and reported
@@ -1291,7 +1319,8 @@ failure.
 **An Orker crash does not stop its container** (§14.17): `--rm` fires on
 container *exit*, and there is no daemon-side "kill when the client
 disconnects". So every container is labelled `ork.run`, `ork.task`,
-`ork.attempt` and `ork.orker` (plus `ork.pin` / `ork.item` when they apply),
+`ork.attempt` and `ork.orker` (plus `ork.pin` / `ork.item` when they apply;
+the boot probe's own carry `ork.task` and `ork.orker`, §3.1),
 and every Orker at boot claims its stable `ORK_ORKER_ID` and force-removes
 every container labelled with it — its own previous life's. Two live Orkers
 must never share an id, or they would reap each other's work; the Orker holds
@@ -1511,12 +1540,14 @@ heard of.
 | # | Phase | Step |
 |---|---|---|
 | 1 | — | **Open the log sink**, first, always; closed before return |
-| 2 | `start` | **Heartbeat loop start**, until step 15; input validated |
+| 2 | `start` | **Heartbeat loop start**, until step 15; the input checks that are the same on every Orker: a pinned image, a network mode that exists, a well-formed resource request, well-formed secret names |
 | 3 | `commit-check` | **Commit check**: GET `commit_uri` → adopt and jump to 15, or proceed (§5.4) |
+| 3a | — | **This Orker's policy**, a task with no memo step (uncached or pinned): the request against this Orker's caps, its secret schemes and `ORK_ORKER_SECRET_ALLOW` floor, and whether a task that runs as the Orker's user can (§3.1); a refusal ends the attempt here, recorded in phase `commit-check` |
 | 3b | `image-policy` | **Image policy**, only when the input carries one (§4.7) |
 | 4 | `workspace` | **Workspace**: per-attempt dir `0700`; `input/` `0555`, `output/` `1777`, `tmp/` `1777`; a pinned task's shared directory |
 | 5 | `stage-inputs` | **Input stage**: upstream artifacts → `input/artifacts/`, upstream `values.json` → `input/upstream/`, secrets → `input/secrets/` (a cached task: `values.json` only) |
 | 5b | `memo` | **Memo**, a cached task only: render, key, lookup (§5.4.1); a HIT writes this run's commit and jumps to 15 |
+| 5b′ | — | **This Orker's policy**, a cached task after the memo step, unless it hit: step 3a's checks; a refusal ends the attempt here, recorded in phase `memo`, its workspace removed |
 | 5c | `stage-artifacts` | **Deferred staging**, a cached task only: the recorded downloads, then secrets |
 | 6 | `image` | **Image**: `Runtime.Pull(image.pinned)`, or the verified embedded layout (§4.6); record platform digest and delivery |
 | 7 | `render` | **Render**: resources and network resolved against policy; `with:` → `config.json`; `run.json`; `task.json`; input tree sealed |
@@ -1528,6 +1559,30 @@ heard of.
 | 14 | — | **Failure path**: scan `output/artifacts/` under the same §3.5 and readability rules; upload streams and the artifacts that passed; attach refs and any scan note to the error; write NO commit; return the workload's error |
 | 15 | — | **Cleanup**: remove the container (detached context), remove the workdir and secrets, stop the heartbeat, close the log sink |
 | 16 | — | **Attempt record**: one `TaskAttempt`, best-effort (below) |
+
+**This Orker's own policy comes after the commit check and the memo step.** Two
+Orkers of one pool may hold different caps, secret schemes, floors or runtimes.
+A result another Orker committed (step 3) starts no container here, so it is
+handed back whatever this Orker's settings are: nothing that refuses for them
+comes before step 3. A memo that hits (step 5b) is handed back whatever this
+Orker's caps, secret schemes, floor or runtime; holding either to them would
+turn a reusable result into a run failure. A memo hit is not spared what comes
+before the lookup: a cached task's image policy (step 3b, which reads a
+required signature with this Orker's registry credentials) and its render (step
+5b, which holds an `env` name to this Orker's allow-list) run first, because
+the key hashes the rendered `config.json`, so those refuse it here even where
+the memo would hit. A task with neither a commit nor a hit is still refused at
+step 3a or 5b′, with its own reason (`RESOURCE_REQUEST_REFUSED`,
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `RUN_AS_ORKER_UNAVAILABLE`),
+before any secret is resolved, any image pulled or any `config.json` written.
+The checks that read nothing of the Orker, the network mode among them, stay at
+step 2. For a cached task the image policy, the workspace, the upstream values
+the key needs, the render and the memo lookup come first, so a failure among
+them is reported ahead of this Orker's refusal; that is the price of never
+refusing a hit for this Orker's own policy. A request above this Orker's cap
+reserves nothing against a declared capacity, whether it is refused, adopted or
+a hit, and an attempt that starts no container frees its reservation when it
+ends (docs/DEPLOY.md, "Declaring an Orker's capacity").
 
 **IMAGE comes before RENDER, and the order is load-bearing.** `task.json`
 carries `image.platformDigest`, `image.platform` and `image.delivery`, which do
@@ -1677,7 +1732,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `RENDER_FAILED` | ContractViolation | no | template error, missing key, `<no value>`, or an `env` name not allowlisted |
 | `SECRET_UNRESOLVED` | InfrastructureError | yes | a `SecretRef.source` could not be resolved |
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | the Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed |
-| `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor (`docs/DEPLOY.md`, "Secrets on a shared pool") |
+| `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor, or is one of the Orker's own sources, which no floor admits (`docs/DEPLOY.md`, "Secrets on a shared pool"; `docs/SECURITY_MODEL.md`, "The Orker's own sources") |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | the request exceeds the Orker's cap, or is not a positive finite quantity |
 | `RESOURCE_ADMISSION_MISMATCH` | ContractViolation | no | on an Orker declaring a capacity, the resolved request is larger than the reservation it was polled under and free capacity cannot cover it; it cannot happen while every poll reserves the per-task cap |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | the requested mode is not `default` or `none` |
@@ -1720,8 +1775,27 @@ The engine's own codes, independent of any one DSL feature:
 | `RUN_STATE_UNSUPPORTED` | run `Error.code`, ContractViolation, not retryable | the run carried on into a fresh history under a newer release, and this release cannot carry on its saved state (its format is newer, or an older release picked it up and refused it before any side effect). The run stops explicitly and still publishes its terminal event: tasks that finished keep their outcome, the rest are `CANCELED`. Roll the engines forward (`docs/DEPLOY.md` §4). A composed task whose child ends this way fails `CHILD_RUN_FAILED`, ContractViolation |
 | `RUN_STATE_CORRUPT` | run `Error.code`, ContractViolation, not retryable | the run's saved state failed verification (a hash, size, location, structure or row check) and was not used; the run has stopped, with its terminal event. A composed task whose child ends this way fails `CHILD_RUN_FAILED`, ContractViolation |
 | `RUN_STATE_UNAVAILABLE` | run `Error.code`, InfrastructureError, not retryable | the run's saved state could not be read from object storage within its restore timeout; the run has stopped, with its terminal event. A composed task whose child ends this way fails `CHILD_RUN_FAILED`, InfrastructureError |
-| `RUN_DEFINITION_UNAVAILABLE` | run `Error.code`, InfrastructureError, not retryable | the run's definition, too large to travel with its start and passed by reference (`docs/DEPLOY.md` §1, `engine.definition_by_reference`), could not be read from object storage before the restore timeout; the run has stopped, with its terminal event (a run that stops before its first task publishes `RUN_CREATED` and `RUN_FAILED`) |
-| `RUN_DEFINITION_CORRUPT` | run `Error.code`, ContractViolation, not retryable | the run's definition passed by reference failed verification (a hash, size or structure check, or it is not the definition the run started with) and was not used; the run has stopped, with its terminal event |
+| `RUN_DEFINITION_UNAVAILABLE` | run `Error.code`, InfrastructureError, not retryable | the run's definition, too large to travel with its start and passed by reference (`docs/DEPLOY.md` §1, `engine.definition_by_reference`), could not be read from object storage before the restore timeout; the run has stopped (what it publishes: below the table) |
+| `RUN_DEFINITION_CORRUPT` | run `Error.code`, ContractViolation, not retryable | the run's definition passed by reference failed verification (a hash, size or structure check, or it is not the definition the run started with) and was not used; the run has stopped (what it publishes: below the table) |
+
+A run whose definition passed by reference cannot be used — it ends
+`RUN_DEFINITION_UNAVAILABLE` or `RUN_DEFINITION_CORRUPT`, or `RUN_CANCELED`
+when an operator cancels it while the definition is still being read — stops
+with its terminal event. In a later part of a long run, that event follows the
+run's own. When it stops before its first task, it publishes `RUN_CREATED` at
+1 and the terminal event at 2. What object storage refuses changes that:
+
+- `RUN_CREATED` refused (twice; once, for a run an earlier release recorded):
+  the terminal event is published alone, at 2. A read of the run's stream from
+  its start fails `DataLoss`, naming 1 as never published, live and from its
+  archive alike; a read from 1 serves the terminal event.
+- The terminal event refused: the stream holds `RUN_CREATED`, and the run's
+  close is read as its terminal event, at 2, with its code.
+- Both refused: the run publishes nothing, and its close is read as its one
+  event, at 1, with its code.
+
+A run that publishes no terminal event, as in the last two, has no archive,
+so it can no longer be read once it is retired.
 
 Codes that belong to one construct — pins (`PIN_HOST_LOST`,
 `PIN_UNAVAILABLE`, `PIN_TIMEOUT`, …), joins (`CONDITION_FAILED`), awaits,
@@ -1872,7 +1946,9 @@ Orker's environment, `file:/path` from its filesystem;
 `ORK_ORKER_SECRET_SCHEMES`). An unknown scheme is refused rather than ignored,
 and a source outside the Orker's `ORK_ORKER_SECRET_ALLOW` floor or the
 namespace's allowed list is refused (`docs/DEPLOY.md`, "Secrets on a shared
-pool"). Secret bytes never appear in a proto message, Temporal history, the
+pool"), as is one of the Orker's own sources — its settings, its process
+files, its configuration and credential files — whatever the floor says
+(`docs/SECURITY_MODEL.md`, "The Orker's own sources"). Secret bytes never appear in a proto message, Temporal history, the
 run archive, a log chunk, or `task.json` — which carries names and paths only.
 The per-attempt secrets directory is removed on every exit path, including
 panic and cancellation. A cached task resolves no secret on a hit, which is why
@@ -2102,6 +2178,12 @@ assertions, each because a real defect would have passed without it:
 6. **SIGTERM reaches the workload within the grace period, and the workload
    observes it** — both halves, because they fail independently (§14.14).
 
+The report also shows the `with:` interface the image declares in its
+`org.orkstack.activity.interface` label, read by the resolver apply uses
+(declared, none or malformed; `docs/ACTIVITY_IMAGES.md`, "Declaring the
+interface"). It is reported, never asserted: the label is optional, and a label
+apply cannot read is a warning there, not a contract violation.
+
 Fixtures in Bash, Go and Python under `test/fixtures/` run any image against
 the ABI with only docker, `cat`, `jq` and a redirect;
 `test/fixtures/first_party_contract.sh` covers `json`, `git` and `template`.
@@ -2173,7 +2255,10 @@ before the container starts.
 **Secrets.** None is resolved implicitly. Every declared secret must be
 supplied (`--secret NAME=file:PATH` or `NAME=env:VAR`) or explicitly skipped
 (`--omit-secret NAME`); an unaccounted one refuses before any byte is fetched.
-No value is printed, reported, or kept with `--keep`.
+A supplied source is held to the Orker's secret floor, as on an Orker: one of
+this machine's own sources is refused at the flag (`docs/SECURITY_MODEL.md`,
+"The Orker's own sources"). No value is printed, reported, or kept with
+`--keep`.
 
 **What it never does.** It calls only the engine's read and validate RPCs and
 never dials Temporal or object storage. Its dispatcher has no commit, attempt,

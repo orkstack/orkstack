@@ -1,0 +1,1085 @@
+﻿2026-10-30T15:31:19.8550272Z Current runner version: '2.338.0'
+2026-10-30T15:31:19.8566253Z ##[group]Runner Image Provisioner
+2026-10-30T15:31:19.8566826Z Hosted Compute Agent
+2026-10-30T15:31:19.8567190Z Version: 20261021.618
+2026-10-30T15:31:19.8567562Z Commit: 21505ad2541d5be6135ed84fc33697146cf75b8e
+2026-10-30T15:31:19.8568196Z Build Date: 2026-10-21T00:45:21Z
+2026-10-30T15:31:19.8568625Z Worker ID: {4b6aca33-8932-4643-b18a-bf10a6c01630}
+2026-10-30T15:31:19.8569082Z Region: centralus
+2026-10-30T15:31:19.8569429Z Cloud: Azure
+2026-10-30T15:31:19.8569754Z ##[endgroup]
+2026-10-30T15:31:19.8570511Z ##[group]Operating System
+2026-10-30T15:31:19.8570896Z Ubuntu
+2026-10-30T15:31:19.8571199Z 24.04.5
+2026-10-30T15:31:19.8571550Z LTS
+2026-10-30T15:31:19.8571855Z ##[endgroup]
+2026-10-30T15:31:19.8572198Z ##[group]Runner Image
+2026-10-30T15:31:19.8572592Z Image: ubuntu-24.04
+2026-10-30T15:31:19.8572947Z Version: 20261025.353.1
+2026-10-30T15:31:19.8573910Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261025.353/images/ubuntu/Ubuntu2404-Readme.md
+2026-10-30T15:31:19.8574781Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261025.353
+2026-10-30T15:31:19.8575371Z ##[endgroup]
+2026-10-30T15:31:19.8576084Z ##[group]GITHUB_TOKEN Permissions
+2026-10-30T15:31:19.8577412Z Actions: read
+2026-10-30T15:31:19.8577747Z Contents: read
+2026-10-30T15:31:19.8578169Z Metadata: read
+2026-10-30T15:31:19.8578505Z ##[endgroup]
+2026-10-30T15:31:19.8579755Z Secret source: Actions
+2026-10-30T15:31:19.8580310Z Cache mode: write
+2026-10-30T15:31:19.8580728Z Prepare workflow directory
+2026-10-30T15:31:19.8938595Z Prepare all required actions
+2026-10-30T15:31:19.8969101Z Getting action download info
+2026-10-30T15:31:20.1328157Z Download action repository 'actions/checkout@v7.0.1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+2026-10-30T15:31:20.2076981Z Download action repository 'actions/setup-go@v7.0.0' (SHA:b7ad1dad31e06c5925ef5d2fc7ad053ef454303e)
+2026-10-30T15:31:20.6296370Z Download action repository 'actions/upload-artifact@v7.0.2' (SHA:cf430e030ddbb5b0abf93d22962f4752f3646cd9)
+2026-10-30T15:31:20.7756494Z Uses: orkstack/orkstack/.github/workflows/proof.yml@refs/heads/main (0b98f5ab5c0d75fa896e7f38da5a3e6293001a70)
+2026-10-30T15:31:20.7759082Z ##[group] Inputs
+2026-10-30T15:31:20.7759347Z   tier: nightly
+2026-10-30T15:31:20.7759575Z   base: main
+2026-10-30T15:31:20.7760027Z   int_shards: 4
+2026-10-30T15:31:20.7760254Z   ui_shards: 1
+2026-10-30T15:31:20.7760478Z   fuzz_budget: 105m
+2026-10-30T15:31:20.7760720Z ##[endgroup]
+2026-10-30T15:31:20.7760972Z Complete job name: nightly / integration (2)
+2026-10-30T15:31:20.8214924Z ##[group]Run actions/checkout@v7.0.1
+2026-10-30T15:31:20.8215314Z with:
+2026-10-30T15:31:20.8215558Z   ref: 0b98f5ab5c0d75fa896e7f38da5a3e6293001a70
+2026-10-30T15:31:20.8215875Z   persist-credentials: false
+2026-10-30T15:31:20.8216142Z   repository: orkstack/orkstack
+2026-10-30T15:31:20.8218135Z   token: ***
+2026-10-30T15:31:20.8218352Z   ssh-strict: true
+2026-10-30T15:31:20.8218571Z   ssh-user: git
+2026-10-30T15:31:20.8218800Z   clean: true
+2026-10-30T15:31:20.8219025Z   sparse-checkout-cone-mode: true
+2026-10-30T15:31:20.8219293Z   fetch-depth: 1
+2026-10-30T15:31:20.8219513Z   fetch-tags: false
+2026-10-30T15:31:20.8219738Z   show-progress: true
+2026-10-30T15:31:20.8219963Z   lfs: false
+2026-10-30T15:31:20.8220176Z   submodules: false
+2026-10-30T15:31:20.8220406Z   set-safe-directory: true
+2026-10-30T15:31:20.8220663Z   allow-unsafe-pr-checkout: false
+2026-10-30T15:31:20.8220982Z env:
+2026-10-30T15:31:20.8221183Z   TIER: nightly
+2026-10-30T15:31:20.8221399Z   INT_SHARDS: 4
+2026-10-30T15:31:20.8221630Z   UI_SHARDS: 1
+2026-10-30T15:31:20.8221845Z   FUZZ_BUDGET: 105m
+2026-10-30T15:31:20.8222073Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:31:20.8222406Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:31:20.8222667Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:31:20.8222933Z ##[endgroup]
+2026-10-30T15:31:21.0054904Z Syncing repository: orkstack/orkstack
+2026-10-30T15:31:21.0056015Z ##[group]Getting Git version info
+2026-10-30T15:31:21.0056796Z Working directory is '/home/runner/work/orkstack/orkstack'
+2026-10-30T15:31:21.0057514Z [command]/usr/bin/git version
+2026-10-30T15:31:21.0117612Z git version 2.56.0
+2026-10-30T15:31:21.0129470Z ##[endgroup]
+2026-10-30T15:31:21.0137531Z Temporarily overriding HOME='/home/runner/work/_temp/00cf4fb2-781c-43ed-9c23-2d791e909766' before making global git config changes
+2026-10-30T15:31:21.0141502Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-30T15:31:21.0142493Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orkstack/orkstack
+2026-10-30T15:31:21.0191198Z Deleting the contents of '/home/runner/work/orkstack/orkstack'
+2026-10-30T15:31:21.0192269Z ##[group]Determining repository object format
+2026-10-30T15:31:21.0192961Z ##[endgroup]
+2026-10-30T15:31:21.0193657Z ##[group]Initializing the repository
+2026-10-30T15:31:21.0194181Z [command]/usr/bin/git init /home/runner/work/orkstack/orkstack
+2026-10-30T15:31:21.0264357Z hint: Using 'master' as the name for the initial branch. This default branch name
+2026-10-30T15:31:21.0265166Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+2026-10-30T15:31:21.0265888Z hint: to use in all of your new repositories, which will suppress this warning,
+2026-10-30T15:31:21.0266265Z hint: call:
+2026-10-30T15:31:21.0266473Z hint:
+2026-10-30T15:31:21.0266748Z hint: 	git config --global init.defaultBranch <name>
+2026-10-30T15:31:21.0267067Z hint:
+2026-10-30T15:31:21.0267528Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+2026-10-30T15:31:21.0268007Z hint: 'development'. The just-created branch can be renamed via this command:
+2026-10-30T15:31:21.0268479Z hint:
+2026-10-30T15:31:21.0268721Z hint: 	git branch -m <name>
+2026-10-30T15:31:21.0268966Z hint:
+2026-10-30T15:31:21.0269287Z hint: Disable this message with "git config set advice.defaultBranchName false"
+2026-10-30T15:31:21.0271368Z Initialized empty Git repository in /home/runner/work/orkstack/orkstack/.git/
+2026-10-30T15:31:21.0290158Z [command]/usr/bin/git remote add origin https://github.com/orkstack/orkstack
+2026-10-30T15:31:21.0346207Z ##[endgroup]
+2026-10-30T15:31:21.0346823Z ##[group]Disabling automatic garbage collection
+2026-10-30T15:31:21.0349816Z [command]/usr/bin/git config --local gc.auto 0
+2026-10-30T15:31:21.0394550Z ##[endgroup]
+2026-10-30T15:31:21.0395195Z ##[group]Setting up auth
+2026-10-30T15:31:21.0395657Z Removing SSH command configuration
+2026-10-30T15:31:21.0399304Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-30T15:31:21.0432205Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-30T15:31:21.0717045Z Removing HTTP extra header
+2026-10-30T15:31:21.0721895Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-30T15:31:21.0757799Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-30T15:31:21.0938183Z Removing includeIf entries pointing to credentials config files
+2026-10-30T15:31:21.0948968Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-30T15:31:21.0986527Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-30T15:31:21.1166107Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+2026-10-30T15:31:21.1205838Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/orkstack/orkstack/.git.path /home/runner/work/_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config
+2026-10-30T15:31:21.1270940Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/orkstack/orkstack/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config
+2026-10-30T15:31:21.1306739Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config
+2026-10-30T15:31:21.1341309Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config
+2026-10-30T15:31:21.1375386Z ##[endgroup]
+2026-10-30T15:31:21.1375777Z ##[group]Fetching the repository
+2026-10-30T15:31:21.1378889Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin 0b98f5ab5c0d75fa896e7f38da5a3e6293001a70
+2026-10-30T15:31:23.0922303Z From https://github.com/orkstack/orkstack
+2026-10-30T15:31:23.0923550Z  * branch            0b98f5ab5c0d75fa896e7f38da5a3e6293001a70 -> FETCH_HEAD
+2026-10-30T15:31:23.0929831Z [command]/usr/bin/git rev-parse --verify --quiet 0b98f5ab5c0d75fa896e7f38da5a3e6293001a70^{object}
+2026-10-30T15:31:23.0964798Z 0b98f5ab5c0d75fa896e7f38da5a3e6293001a70
+2026-10-30T15:31:23.0968548Z ##[endgroup]
+2026-10-30T15:31:23.0969262Z ##[group]Determining the checkout info
+2026-10-30T15:31:23.0970190Z ##[endgroup]
+2026-10-30T15:31:23.0970984Z [command]/usr/bin/git sparse-checkout disable
+2026-10-30T15:31:23.1023558Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+2026-10-30T15:31:23.1059675Z ##[group]Checking out the ref
+2026-10-30T15:31:23.1061982Z [command]/usr/bin/git checkout --progress --force 0b98f5ab5c0d75fa896e7f38da5a3e6293001a70
+2026-10-30T15:31:23.3100422Z Note: switching to '0b98f5ab5c0d75fa896e7f38da5a3e6293001a70'.
+2026-10-30T15:31:23.3101293Z 
+2026-10-30T15:31:23.3101807Z You are in 'detached HEAD' state. You can look around, make experimental
+2026-10-30T15:31:23.3103090Z changes and commit them, and you can discard any commits you make in this
+2026-10-30T15:31:23.3104682Z state without impacting any branches by switching back to a branch.
+2026-10-30T15:31:23.3105453Z 
+2026-10-30T15:31:23.3122940Z If you want to create a new branch to retain commits you create, you may
+2026-10-30T15:31:23.3124494Z do so (now or later) by using -c with the switch command. Example:
+2026-10-30T15:31:23.3125270Z 
+2026-10-30T15:31:23.3125572Z   git switch -c <new-branch-name>
+2026-10-30T15:31:23.3126125Z 
+2026-10-30T15:31:23.3126484Z Or undo this operation with:
+2026-10-30T15:31:23.3127201Z 
+2026-10-30T15:31:23.3127457Z   git switch -
+2026-10-30T15:31:23.3127783Z 
+2026-10-30T15:31:23.3128369Z Turn off this advice by setting config variable advice.detachedHead to false
+2026-10-30T15:31:23.3129246Z 
+2026-10-30T15:31:23.3129667Z HEAD is now at 0b98f5a Merge the v0.1.0 final train into main
+2026-10-30T15:31:23.3134483Z ##[endgroup]
+2026-10-30T15:31:23.3183820Z [command]/usr/bin/git log -1 --format=%H
+2026-10-30T15:31:23.3218837Z 0b98f5ab5c0d75fa896e7f38da5a3e6293001a70
+2026-10-30T15:31:23.3227080Z ##[group]Removing auth
+2026-10-30T15:31:23.3227700Z Removing SSH command configuration
+2026-10-30T15:31:23.3230775Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-30T15:31:23.3270657Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-30T15:31:23.3459876Z Removing HTTP extra header
+2026-10-30T15:31:23.3461169Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-30T15:31:23.3500303Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-30T15:31:23.3679199Z Removing includeIf entries pointing to credentials config files
+2026-10-30T15:31:23.3681396Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-30T15:31:23.3713013Z includeif.gitdir:/home/runner/work/orkstack/orkstack/.git.path
+2026-10-30T15:31:23.3714909Z includeif.gitdir:/home/runner/work/orkstack/orkstack/.git/worktrees/*.path
+2026-10-30T15:31:23.3716507Z includeif.gitdir:/github/workspace/.git.path
+2026-10-30T15:31:23.3717860Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-30T15:31:23.3720991Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/orkstack/orkstack/.git.path
+2026-10-30T15:31:23.3752926Z /home/runner/work/_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config
+2026-10-30T15:31:23.3760649Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/orkstack/orkstack/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-7c4eb740\-50a6\-44d3\-ba04\-b4a14825f604\.config
+2026-10-30T15:31:23.3799582Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/orkstack/orkstack/.git/worktrees/*.path
+2026-10-30T15:31:23.3830533Z /home/runner/work/_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config
+2026-10-30T15:31:23.3836510Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/orkstack/orkstack/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-7c4eb740\-50a6\-44d3\-ba04\-b4a14825f604\.config
+2026-10-30T15:31:23.3873029Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+2026-10-30T15:31:23.3903851Z /github/runner_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config
+2026-10-30T15:31:23.3908624Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-7c4eb740\-50a6\-44d3\-ba04\-b4a14825f604\.config
+2026-10-30T15:31:23.3947026Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+2026-10-30T15:31:23.3976486Z /github/runner_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config
+2026-10-30T15:31:23.3982392Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-7c4eb740\-50a6\-44d3\-ba04\-b4a14825f604\.config
+2026-10-30T15:31:23.4019428Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-30T15:31:23.4200201Z Removing credentials config '/home/runner/work/_temp/git-credentials-7c4eb740-50a6-44d3-ba04-b4a14825f604.config'
+2026-10-30T15:31:23.4206776Z ##[endgroup]
+2026-10-30T15:31:23.4482783Z ##[group]Run actions/setup-go@v7.0.0
+2026-10-30T15:31:23.4483512Z with:
+2026-10-30T15:31:23.4483987Z   go-version: 1.27.3
+2026-10-30T15:31:23.4484520Z   check-latest: false
+2026-10-30T15:31:23.4489261Z   token: ***
+2026-10-30T15:31:23.4489753Z   cache: true
+2026-10-30T15:31:23.4490233Z env:
+2026-10-30T15:31:23.4490695Z   TIER: nightly
+2026-10-30T15:31:23.4491211Z   INT_SHARDS: 4
+2026-10-30T15:31:23.4491701Z   UI_SHARDS: 1
+2026-10-30T15:31:23.4492200Z   FUZZ_BUDGET: 105m
+2026-10-30T15:31:23.4492724Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:31:23.4493312Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:31:23.4494032Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:31:23.4494641Z ##[endgroup]
+2026-10-30T15:31:23.5264398Z Setup go version spec 1.27.3
+2026-10-30T15:31:23.5274641Z Attempting to download 1.27.3...
+2026-10-30T15:31:24.2606230Z matching 1.27.3...
+2026-10-30T15:31:24.2608699Z Acquiring 1.27.3 from https://github.com/actions/go-versions/releases/download/1.27.3-39437817176/go-1.27.3-linux-x64.tar.gz
+2026-10-30T15:31:24.7916041Z Extracting Go...
+2026-10-30T15:31:24.8010485Z [command]/usr/bin/tar xz --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/8005e386-ddb3-47f2-9309-b16e68254864 -f /home/runner/work/_temp/e9a76724-6206-471e-9aa8-92b442b6c46a
+2026-10-30T15:31:26.0271308Z Successfully extracted go to /home/runner/work/_temp/8005e386-ddb3-47f2-9309-b16e68254864
+2026-10-30T15:31:26.0272013Z Adding to the cache ...
+2026-10-30T15:31:30.8037692Z Successfully cached go to /opt/hostedtoolcache/go/1.27.3/x64
+2026-10-30T15:31:30.8038849Z Added go to the path
+2026-10-30T15:31:30.8040234Z Successfully set up Go version 1.27.3
+2026-10-30T15:31:30.8215416Z [command]/opt/hostedtoolcache/go/1.27.3/x64/bin/go env GOMODCACHE
+2026-10-30T15:31:30.8255194Z [command]/opt/hostedtoolcache/go/1.27.3/x64/bin/go env GOCACHE
+2026-10-30T15:31:30.8294648Z /home/runner/go/pkg/mod
+2026-10-30T15:31:30.8308392Z /home/runner/.cache/go-build
+2026-10-30T15:31:30.9691810Z Cache hit for: setup-go-Linux-x64-ubuntu24-go-1.27.3-488e3fae28abdd1ec09cfd55ed21ed16c8263f499c9efd5f0341dc52d455e6cc
+2026-10-30T15:31:32.0481012Z Received 107040108 of 107040108 (100.0%), 112.4 MBs/sec
+2026-10-30T15:31:32.0482284Z Cache Size: ~102 MB (107040108 B)
+2026-10-30T15:31:32.0564506Z [command]/usr/bin/tar -xf /home/runner/work/_temp/9f727e92-dc07-434e-8632-fc4029403da1/cache.tzst -P -C /home/runner/work/orkstack/orkstack --use-compress-program unzstd
+2026-10-30T15:31:33.1902278Z Cache restored successfully
+2026-10-30T15:31:33.1950201Z Cache restored from key: setup-go-Linux-x64-ubuntu24-go-1.27.3-488e3fae28abdd1ec09cfd55ed21ed16c8263f499c9efd5f0341dc52d455e6cc
+2026-10-30T15:31:33.1968885Z go version go1.27.3 linux/amd64
+2026-10-30T15:31:33.1969018Z 
+2026-10-30T15:31:33.1969212Z ##[group]go env
+2026-10-30T15:31:33.2079960Z AR='ar'
+2026-10-30T15:31:33.2080165Z CC='gcc'
+2026-10-30T15:31:33.2080353Z CGO_CFLAGS='-O2 -g'
+2026-10-30T15:31:33.2080548Z CGO_CPPFLAGS=''
+2026-10-30T15:31:33.2080738Z CGO_CXXFLAGS='-O2 -g'
+2026-10-30T15:31:33.2080906Z CGO_ENABLED='1'
+2026-10-30T15:31:33.2081078Z CGO_FFLAGS='-O2 -g'
+2026-10-30T15:31:33.2081222Z CGO_LDFLAGS='-O2 -g'
+2026-10-30T15:31:33.2081361Z CXX='g++'
+2026-10-30T15:31:33.2081528Z GCCGO='gccgo'
+2026-10-30T15:31:33.2081649Z GO111MODULE=''
+2026-10-30T15:31:33.2081763Z GOAMD64='v1'
+2026-10-30T15:31:33.2081876Z GOARCH='amd64'
+2026-10-30T15:31:33.2081999Z GOAUTH='netrc'
+2026-10-30T15:31:33.2082122Z GOBIN='/home/runner/go/bin'
+2026-10-30T15:31:33.2082279Z GOCACHE='/home/runner/.cache/go-build'
+2026-10-30T15:31:33.2082429Z GOCACHEPROG=''
+2026-10-30T15:31:33.2082541Z GODEBUG=''
+2026-10-30T15:31:33.2082662Z GOENV='/home/runner/.config/go/env'
+2026-10-30T15:31:33.2082804Z GOEXE=''
+2026-10-30T15:31:33.2082910Z GOEXPERIMENT=''
+2026-10-30T15:31:33.2083024Z GOFIPS140='off'
+2026-10-30T15:31:33.2083136Z GOFLAGS=''
+2026-10-30T15:31:33.2083674Z GOGCCFLAGS='-fPIC -m64 -pthread -Wl,--no-gc-sections -fmessage-length=0 -ffile-prefix-map=/tmp/go-build3340848441=/tmp/go-build -gno-record-gcc-switches'
+2026-10-30T15:31:33.2084214Z GOHOSTARCH='amd64'
+2026-10-30T15:31:33.2084335Z GOHOSTOS='linux'
+2026-10-30T15:31:33.2084450Z GOINSECURE=''
+2026-10-30T15:31:33.2084622Z GOMOD='/home/runner/work/orkstack/orkstack/go.mod'
+2026-10-30T15:31:33.2084803Z GOMODCACHE='/home/runner/go/pkg/mod'
+2026-10-30T15:31:33.2084946Z GONOPROXY=''
+2026-10-30T15:31:33.2085054Z GONOSUMDB=''
+2026-10-30T15:31:33.2085168Z GOOS='linux'
+2026-10-30T15:31:33.2085280Z GOPACKAGESDRIVER=''
+2026-10-30T15:31:33.2085410Z GOPATH='/home/runner/go'
+2026-10-30T15:31:33.2085545Z GOPRIVATE=''
+2026-10-30T15:31:33.2085714Z GOPROXY='https://proxy.golang.org,direct'
+2026-10-30T15:31:33.2085900Z GOROOT='/opt/hostedtoolcache/go/1.27.3/x64'
+2026-10-30T15:31:33.2086064Z GOSUMDB='sum.golang.org'
+2026-10-30T15:31:33.2086194Z GOTELEMETRY='local'
+2026-10-30T15:31:33.2086342Z GOTELEMETRYDIR='/home/runner/.config/go/telemetry'
+2026-10-30T15:31:33.2086507Z GOTMPDIR=''
+2026-10-30T15:31:33.2086621Z GOTOOLCHAIN='local'
+2026-10-30T15:31:33.2086799Z GOTOOLDIR='/opt/hostedtoolcache/go/1.27.3/x64/pkg/tool/linux_amd64'
+2026-10-30T15:31:33.2086992Z GOVCS=''
+2026-10-30T15:31:33.2087106Z GOVERSION='go1.27.3'
+2026-10-30T15:31:33.2087225Z GOWORK=''
+2026-10-30T15:31:33.2087340Z PKG_CONFIG='pkg-config'
+2026-10-30T15:31:33.2087426Z 
+2026-10-30T15:31:33.2087601Z ##[endgroup]
+2026-10-30T15:31:33.2349538Z Prepare all required actions
+2026-10-30T15:31:33.2350016Z Getting action download info
+2026-10-30T15:31:33.3424016Z Download action repository 'actions/cache@v6.1.0' (SHA:55cc8345863c7cc4c66a329aec7e433d2d1c52a9)
+2026-10-30T15:31:33.6817339Z ##[group]Run ./.github/actions/proof-host
+2026-10-30T15:31:33.6817593Z with:
+2026-10-30T15:31:33.6817760Z   cosign: true
+2026-10-30T15:31:33.6817936Z   cleanup-disk: true
+2026-10-30T15:31:33.6818130Z   temporal-cli: false
+2026-10-30T15:31:33.6818313Z env:
+2026-10-30T15:31:33.6818474Z   TIER: nightly
+2026-10-30T15:31:33.6818648Z   INT_SHARDS: 4
+2026-10-30T15:31:33.6818815Z   UI_SHARDS: 1
+2026-10-30T15:31:33.6818987Z   FUZZ_BUDGET: 105m
+2026-10-30T15:31:33.6819186Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:31:33.6819402Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:31:33.6819625Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:31:33.6819857Z   GOTOOLCHAIN: local
+2026-10-30T15:31:33.6820042Z ##[endgroup]
+2026-10-30T15:31:33.6866577Z ##[start-action display=Disk;id=__self.__run]
+2026-10-30T15:31:33.6923720Z ##[group]Run if [ "$CLEANUP_DISK" = "true" ]; then
+2026-10-30T15:31:33.6923948Z [36;1mif [ "$CLEANUP_DISK" = "true" ]; then[0m
+2026-10-30T15:31:33.6924250Z [36;1m  sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL || true[0m
+2026-10-30T15:31:33.6924512Z [36;1mfi[0m
+2026-10-30T15:31:33.6924648Z [36;1mdf -h / | tee -a "$GITHUB_STEP_SUMMARY"[0m
+2026-10-30T15:31:33.6944217Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:31:33.6944412Z env:
+2026-10-30T15:31:33.6944523Z   TIER: nightly
+2026-10-30T15:31:33.6944640Z   INT_SHARDS: 4
+2026-10-30T15:31:33.6944746Z   UI_SHARDS: 1
+2026-10-30T15:31:33.6944858Z   FUZZ_BUDGET: 105m
+2026-10-30T15:31:33.6944986Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:31:33.6945128Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:31:33.6945272Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:31:33.6945426Z   GOTOOLCHAIN: local
+2026-10-30T15:31:33.6945552Z   CLEANUP_DISK: true
+2026-10-30T15:31:33.6945669Z ##[endgroup]
+2026-10-30T15:32:36.0692551Z Filesystem      Size  Used Avail Use% Mounted on
+2026-10-30T15:32:36.0692879Z /dev/root       145G   42G  103G  29% /
+2026-10-30T15:32:36.0710615Z ##[end-action id=__self.__run;outcome=success;conclusion=success;duration_ms=62384]
+2026-10-30T15:32:36.0713054Z ##[start-action display=host.docker.internal;id=__self.__run_2]
+2026-10-30T15:32:36.0726872Z ##[group]Run set -euo pipefail
+2026-10-30T15:32:36.0727059Z [36;1mset -euo pipefail[0m
+2026-10-30T15:32:36.0727233Z [36;1mif getent hosts host.docker.internal >/dev/null; then[0m
+2026-10-30T15:32:36.0727462Z [36;1m  echo "host.docker.internal already resolves"; exit 0[0m
+2026-10-30T15:32:36.0727634Z [36;1mfi[0m
+2026-10-30T15:32:36.0727796Z [36;1mecho '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts[0m
+2026-10-30T15:32:36.0728020Z [36;1msudo mkdir -p /etc/systemd/resolved.conf.d[0m
+2026-10-30T15:32:36.0746010Z [36;1mprintf '[Resolve]\nDNSStubListenerExtra=172.17.0.1\n' | sudo tee /etc/systemd/resolved.conf.d/20-docker-dns.conf[0m
+2026-10-30T15:32:36.0746549Z [36;1mecho '{"dns":["172.17.0.1"]}' | sudo tee /etc/docker/daemon.json[0m
+2026-10-30T15:32:36.0746858Z [36;1msudo systemctl restart systemd-resolved[0m
+2026-10-30T15:32:36.0747032Z [36;1msudo systemctl restart docker[0m
+2026-10-30T15:32:36.0747249Z [36;1m# The one container this action runs that is not the stack's: pulled[0m
+2026-10-30T15:32:36.0747495Z [36;1m# from Docker Hub by tag, so it is bounded like a fetch is.[0m
+2026-10-30T15:32:36.0747761Z [36;1mtimeout -k 10 360 docker run --rm alpine:3.20 getent hosts host.docker.internal[0m
+2026-10-30T15:32:36.0764056Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:32:36.0764240Z env:
+2026-10-30T15:32:36.0764350Z   TIER: nightly
+2026-10-30T15:32:36.0764462Z   INT_SHARDS: 4
+2026-10-30T15:32:36.0764570Z   UI_SHARDS: 1
+2026-10-30T15:32:36.0764676Z   FUZZ_BUDGET: 105m
+2026-10-30T15:32:36.0764966Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:32:36.0765108Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:32:36.0765354Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:32:36.0765503Z   GOTOOLCHAIN: local
+2026-10-30T15:32:36.0765624Z ##[endgroup]
+2026-10-30T15:32:36.1068349Z 172.17.0.1 host.docker.internal
+2026-10-30T15:32:36.1170552Z [Resolve]
+2026-10-30T15:32:36.1170697Z DNSStubListenerExtra=172.17.0.1
+2026-10-30T15:32:36.1221105Z {"dns":["172.17.0.1"]}
+2026-10-30T15:32:36.8649196Z Unable to find image 'alpine:3.20' locally
+2026-10-30T15:32:37.4641284Z 3.20: Pulling from library/alpine
+2026-10-30T15:32:37.6324939Z 25f1d6b1951a: Pulling fs layer
+2026-10-30T15:32:37.8737860Z 25f1d6b1951a: Verifying Checksum
+2026-10-30T15:32:37.8738329Z 25f1d6b1951a: Download complete
+2026-10-30T15:32:37.9365031Z 25f1d6b1951a: Pull complete
+2026-10-30T15:32:37.9395259Z Digest: sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+2026-10-30T15:32:37.9405153Z Status: Downloaded newer image for alpine:3.20
+2026-10-30T15:32:38.1436040Z 172.17.0.1        host.docker.internal  host.docker.internal
+2026-10-30T15:32:38.2041857Z ##[end-action id=__self.__run_2;outcome=success;conclusion=success;duration_ms=2132]
+2026-10-30T15:32:38.2044696Z ##[start-action display=Stack image cache;id=__self.__actions_cache]
+2026-10-30T15:32:38.2540069Z ##[group]Run actions/cache@v6.1.0
+2026-10-30T15:32:38.2540225Z with:
+2026-10-30T15:32:38.2540355Z   path: /tmp/orkstack-stack-images.tar
+2026-10-30T15:32:38.2540602Z   key: stack-images-v2-708393b19b00e6bc790503ef3980ac7d712529bef5e24adc65e7e6947044d4bf
+2026-10-30T15:32:38.2540855Z   restore-keys: stack-images-v2-
+2026-10-30T15:32:38.2541004Z   enableCrossOsArchive: false
+2026-10-30T15:32:38.2541147Z   fail-on-cache-miss: false
+2026-10-30T15:32:38.2541280Z   lookup-only: false
+2026-10-30T15:32:38.2541398Z   save-always: false
+2026-10-30T15:32:38.2541510Z env:
+2026-10-30T15:32:38.2541611Z   TIER: nightly
+2026-10-30T15:32:38.2541725Z   INT_SHARDS: 4
+2026-10-30T15:32:38.2541831Z   UI_SHARDS: 1
+2026-10-30T15:32:38.2541951Z   FUZZ_BUDGET: 105m
+2026-10-30T15:32:38.2542084Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:32:38.2542225Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:32:38.2542364Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:32:38.2542505Z   GOTOOLCHAIN: local
+2026-10-30T15:32:38.2542619Z ##[endgroup]
+2026-10-30T15:32:38.4512426Z Cache hit for: stack-images-v2-708393b19b00e6bc790503ef3980ac7d712529bef5e24adc65e7e6947044d4bf
+2026-10-30T15:32:39.6338350Z Received 134217728 of 232822893 (57.6%), 125.2 MBs/sec
+2026-10-30T15:32:40.1193834Z Received 232822893 of 232822893 (100.0%), 147.2 MBs/sec
+2026-10-30T15:32:40.1194808Z Cache Size: ~222 MB (232822893 B)
+2026-10-30T15:32:40.1241887Z [command]/usr/bin/tar -xf /home/runner/work/_temp/0237b74e-540c-4ec4-a715-b1f62567e5cc/cache.tzst -P -C /home/runner/work/orkstack/orkstack --use-compress-program unzstd
+2026-10-30T15:32:40.8757550Z Cache restored successfully
+2026-10-30T15:32:40.8962348Z Cache restored from key: stack-images-v2-708393b19b00e6bc790503ef3980ac7d712529bef5e24adc65e7e6947044d4bf
+2026-10-30T15:32:40.9112355Z ##[end-action id=__self.__actions_cache;outcome=success;conclusion=success;duration_ms=2706]
+2026-10-30T15:32:40.9115424Z ##[start-action display=Load the stack images;id=__self.__run_3]
+2026-10-30T15:32:40.9129935Z ##[group]Run if [ -f /tmp/orkstack-stack-images.tar ]; then
+2026-10-30T15:32:40.9130196Z [36;1mif [ -f /tmp/orkstack-stack-images.tar ]; then[0m
+2026-10-30T15:32:40.9130406Z [36;1m  docker load -i /tmp/orkstack-stack-images.tar[0m
+2026-10-30T15:32:40.9130577Z [36;1mfi[0m
+2026-10-30T15:32:40.9146566Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:32:40.9146763Z env:
+2026-10-30T15:32:40.9146875Z   TIER: nightly
+2026-10-30T15:32:40.9146993Z   INT_SHARDS: 4
+2026-10-30T15:32:40.9147106Z   UI_SHARDS: 1
+2026-10-30T15:32:40.9147219Z   FUZZ_BUDGET: 105m
+2026-10-30T15:32:40.9147349Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:32:40.9147495Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:32:40.9147807Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:32:40.9147959Z   GOTOOLCHAIN: local
+2026-10-30T15:32:40.9148191Z ##[endgroup]
+2026-10-30T15:32:52.2480910Z Loaded image: registry:3
+2026-10-30T15:32:53.3594453Z Loaded image: temporalio/temporal:1.8.2
+2026-10-30T15:32:53.4467304Z ##[end-action id=__self.__run_3;outcome=success;conclusion=success;duration_ms=12535]
+2026-10-30T15:32:53.4469785Z ##[start-action display=Missing stack images;id=__self.missing]
+2026-10-30T15:32:53.4482325Z ##[group]Run set -euo pipefail
+2026-10-30T15:32:53.4482514Z [36;1mset -euo pipefail[0m
+2026-10-30T15:32:53.4482652Z [36;1mmissing=()[0m
+2026-10-30T15:32:53.4482781Z [36;1mwhile read -r image; do[0m
+2026-10-30T15:32:53.4482988Z [36;1m  docker image inspect "$image" >/dev/null 2>&1 || missing+=("$image")[0m
+2026-10-30T15:32:53.4483332Z [36;1mdone < <(docker compose -f deploy/docker-compose.yml config --images temporal seaweedfs registry | sort -u)[0m
+2026-10-30T15:32:53.4483911Z [36;1mecho "images=${missing[*]}" >>"$GITHUB_OUTPUT"[0m
+2026-10-30T15:32:53.4499230Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:32:53.4499421Z env:
+2026-10-30T15:32:53.4499533Z   TIER: nightly
+2026-10-30T15:32:53.4499652Z   INT_SHARDS: 4
+2026-10-30T15:32:53.4499760Z   UI_SHARDS: 1
+2026-10-30T15:32:53.4499876Z   FUZZ_BUDGET: 105m
+2026-10-30T15:32:53.4500005Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:32:53.4500152Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:32:53.4500296Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:32:53.4500443Z   GOTOOLCHAIN: local
+2026-10-30T15:32:53.4500570Z ##[endgroup]
+2026-10-30T15:32:53.6474164Z ##[end-action id=__self.missing;outcome=success;conclusion=success;duration_ms=200]
+2026-10-30T15:32:53.6477378Z ##[start-action display=fetch stack images;id=__self.__self]
+2026-10-30T15:32:53.6514033Z Prepare all required actions
+2026-10-30T15:32:53.6554301Z ##[group]Run ./.github/actions/proof-fetch
+2026-10-30T15:32:53.6554459Z with:
+2026-10-30T15:32:53.6555012Z   image: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3 temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
+2026-10-30T15:32:53.6555609Z   log: /home/runner/work/_temp/ci/setup.log
+2026-10-30T15:32:53.6555759Z env:
+2026-10-30T15:32:53.6555864Z   TIER: nightly
+2026-10-30T15:32:53.6555976Z   INT_SHARDS: 4
+2026-10-30T15:32:53.6556084Z   UI_SHARDS: 1
+2026-10-30T15:32:53.6556195Z   FUZZ_BUDGET: 105m
+2026-10-30T15:32:53.6556316Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:32:53.6556457Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:32:53.6556599Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:32:53.6556740Z   GOTOOLCHAIN: local
+2026-10-30T15:32:53.6556866Z ##[endgroup]
+2026-10-30T15:32:53.6559797Z ##[start-action display=fetch;id=__self.__self.__run]
+2026-10-30T15:32:53.6569803Z ##[group]Run set -uo pipefail
+2026-10-30T15:32:53.6570014Z [36;1mset -uo pipefail[0m
+2026-10-30T15:32:53.6570153Z [36;1mset +e[0m
+2026-10-30T15:32:53.6570314Z [36;1mcase "${ARTIFACT:+a}${PATTERN:+p}${IMAGE:+i}${URL:+u}" in[0m
+2026-10-30T15:32:53.6570514Z [36;1ma) what="artifact $ARTIFACT" ;;[0m
+2026-10-30T15:32:53.6570673Z [36;1mp) what="artifacts $PATTERN" ;;[0m
+2026-10-30T15:32:53.6570817Z [36;1mi)[0m
+2026-10-30T15:32:53.6570924Z [36;1m  set -f[0m
+2026-10-30T15:32:53.6571046Z [36;1m  images=($IMAGE)[0m
+2026-10-30T15:32:53.6571172Z [36;1m  set +f[0m
+2026-10-30T15:32:53.6571293Z [36;1m  for ref in "${images[@]}"; do[0m
+2026-10-30T15:32:53.6571479Z [36;1m    if ! [[ "$ref" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then[0m
+2026-10-30T15:32:53.6571720Z [36;1m      echo "proof-fetch: the image $ref is not pinned by digest" >&2[0m
+2026-10-30T15:32:53.6571921Z [36;1m      exit 2[0m
+2026-10-30T15:32:53.6572039Z [36;1m    fi[0m
+2026-10-30T15:32:53.6572147Z [36;1m  done[0m
+2026-10-30T15:32:53.6572267Z [36;1m  what="image ${images[*]}"[0m
+2026-10-30T15:32:53.6572404Z [36;1m  ;;[0m
+2026-10-30T15:32:53.6572659Z [36;1mu)[0m
+2026-10-30T15:32:53.6572899Z [36;1m  if ! [[ "$URL" =~ ^https://[^[:space:]]+$ ]]; then[0m
+2026-10-30T15:32:53.6573128Z [36;1m    echo "proof-fetch: a url must be an https URL without spaces" >&2[0m
+2026-10-30T15:32:53.6573328Z [36;1m    exit 2[0m
+2026-10-30T15:32:53.6573629Z [36;1m  fi[0m
+2026-10-30T15:32:53.6573775Z [36;1m  if ! [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then[0m
+2026-10-30T15:32:53.6573997Z [36;1m    echo "proof-fetch: a url needs sha256, 64 lowercase hex digits" >&2[0m
+2026-10-30T15:32:53.6574197Z [36;1m    exit 2[0m
+2026-10-30T15:32:53.6574314Z [36;1m  fi[0m
+2026-10-30T15:32:53.6574426Z [36;1m  what="url $URL"[0m
+2026-10-30T15:32:53.6574552Z [36;1m  ;;[0m
+2026-10-30T15:32:53.6574749Z [36;1m*) echo "proof-fetch: exactly one of artifact, pattern, image or url" >&2; exit 2 ;;[0m
+2026-10-30T15:32:53.6574969Z [36;1mesac[0m
+2026-10-30T15:32:53.6575099Z [36;1mif [ -z "$IMAGE" ] && [ -z "$DEST" ]; then[0m
+2026-10-30T15:32:53.6575309Z [36;1m  echo "proof-fetch: an artifact or a url needs path" >&2[0m
+2026-10-30T15:32:53.6575494Z [36;1m  exit 2[0m
+2026-10-30T15:32:53.6575606Z [36;1mfi[0m
+2026-10-30T15:32:53.6575724Z [36;1mmkdir -p "$(dirname "$LOG")"[0m
+2026-10-30T15:32:53.6575864Z [36;1mn=0[0m
+2026-10-30T15:32:53.6575981Z [36;1mfor limit in 180 360; do[0m
+2026-10-30T15:32:53.6576120Z [36;1m  n=$((n + 1))[0m
+2026-10-30T15:32:53.6576247Z [36;1m  started=$SECONDS[0m
+2026-10-30T15:32:53.6576386Z [36;1m  if [ -n "$IMAGE" ]; then[0m
+2026-10-30T15:32:53.6576560Z [36;1m    # The whole list is one attempt under one limit.[0m
+2026-10-30T15:32:53.6576842Z [36;1m    timeout -k 10 "$limit" bash -c 'for ref in "$@"; do docker pull "$ref" || exit; done' _ "${images[@]}"[0m
+2026-10-30T15:32:53.6577087Z [36;1m    code=$?[0m
+2026-10-30T15:32:53.6577217Z [36;1m  elif [ -n "$URL" ]; then[0m
+2026-10-30T15:32:53.6577413Z [36;1m    # Only a file that hashes to the pin is kept, and a half-written[0m
+2026-10-30T15:32:53.6577656Z [36;1m    # one never reads as whole: each attempt starts without it.[0m
+2026-10-30T15:32:53.6577916Z [36;1m    rm -f "$DEST" && mkdir -p "$(dirname "$DEST")" &&[0m
+2026-10-30T15:32:53.6578298Z [36;1m      timeout -k 10 "$limit" curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$DEST" "$URL" &&[0m
+2026-10-30T15:32:53.6578643Z [36;1m      echo "$SHA256  $DEST" | sha256sum --check --status[0m
+2026-10-30T15:32:53.6578818Z [36;1m    code=$?[0m
+2026-10-30T15:32:53.6578957Z [36;1m    [ "$code" -eq 0 ] || rm -f "$DEST"[0m
+2026-10-30T15:32:53.6579120Z [36;1m  elif [ -n "$ARTIFACT" ]; then[0m
+2026-10-30T15:32:53.6579322Z [36;1m    # A half-extracted artifact must never read as a whole one: the[0m
+2026-10-30T15:32:53.6579578Z [36;1m    # directory is the artifact's own, and each attempt starts it empty.[0m
+2026-10-30T15:32:53.6579801Z [36;1m    rm -rf "$DEST" && mkdir -p "$DEST" &&[0m
+2026-10-30T15:32:53.6580100Z [36;1m      timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir "$DEST"[0m
+2026-10-30T15:32:53.6580379Z [36;1m    code=$?[0m
+2026-10-30T15:32:53.6580497Z [36;1m  else[0m
+2026-10-30T15:32:53.6580667Z [36;1m    # Only the subdirectories this pattern produces; `path` may hold[0m
+2026-10-30T15:32:53.6580910Z [36;1m    # another artifact (the proof job's plan beside its parts).[0m
+2026-10-30T15:32:53.6581108Z [36;1m    shopt -s nullglob[0m
+2026-10-30T15:32:53.6581287Z [36;1m    rm -rf "$DEST"/$PATTERN && mkdir -p "$DEST" &&[0m
+2026-10-30T15:32:53.6581596Z [36;1m      timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "$PATTERN" --dir "$DEST"[0m
+2026-10-30T15:32:53.6581881Z [36;1m    code=$?[0m
+2026-10-30T15:32:53.6582226Z [36;1m  fi[0m
+2026-10-30T15:32:53.6582423Z [36;1m  took=$((SECONDS - started))[0m
+2026-10-30T15:32:53.6582711Z [36;1m  case "$code" in[0m
+2026-10-30T15:32:53.6583110Z [36;1m  0) line="fetch $what: attempt $n ok in ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:32:53.6583662Z [36;1m  124 | 137) line="fetch $what: attempt $n timed out after ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:32:53.6584168Z [36;1m  *) line="fetch $what: attempt $n failed, exit $code after ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:32:53.6584460Z [36;1m  esac[0m
+2026-10-30T15:32:53.6584760Z [36;1m  echo "$line" | tee -a "$LOG"[0m
+2026-10-30T15:32:53.6584997Z [36;1m  [ "$code" -eq 0 ] && exit 0[0m
+2026-10-30T15:32:53.6585277Z [36;1mdone[0m
+2026-10-30T15:32:53.6585639Z [36;1mecho "fetch $what: gave up after $n attempts; a setup failure in a fetch step is a setup-failed part (docs/PROOFS.md §8)" | tee -a "$LOG"[0m
+2026-10-30T15:32:53.6586040Z [36;1mexit 1[0m
+2026-10-30T15:32:53.6615667Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:32:53.6615861Z env:
+2026-10-30T15:32:53.6615971Z   TIER: nightly
+2026-10-30T15:32:53.6616086Z   INT_SHARDS: 4
+2026-10-30T15:32:53.6616196Z   UI_SHARDS: 1
+2026-10-30T15:32:53.6616314Z   FUZZ_BUDGET: 105m
+2026-10-30T15:32:53.6616443Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:32:53.6616587Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:32:53.6616732Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:32:53.6616881Z   GOTOOLCHAIN: local
+2026-10-30T15:32:53.6616998Z   ARTIFACT: 
+2026-10-30T15:32:53.6617104Z   PATTERN: 
+2026-10-30T15:32:53.6617645Z   IMAGE: chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3 temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
+2026-10-30T15:32:53.6618201Z   URL: 
+2026-10-30T15:32:53.6618302Z   SHA256: 
+2026-10-30T15:32:53.6618401Z   DEST: 
+2026-10-30T15:32:53.6618520Z   LOG: /home/runner/work/_temp/ci/setup.log
+2026-10-30T15:32:53.6618671Z   GH_TOKEN: 
+2026-10-30T15:32:53.6618778Z ##[endgroup]
+2026-10-30T15:32:54.1340828Z docker.io/chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d: Pulling from chrislusf/seaweedfs
+2026-10-30T15:32:54.2813337Z Digest: sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+2026-10-30T15:32:54.2819728Z Status: Downloaded newer image for chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+2026-10-30T15:32:54.2825315Z docker.io/chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d
+2026-10-30T15:32:54.6799925Z docker.io/library/registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3: Pulling from library/registry
+2026-10-30T15:32:54.8432275Z Digest: sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+2026-10-30T15:32:54.8437462Z Status: Downloaded newer image for registry@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+2026-10-30T15:32:54.8442223Z docker.io/library/registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+2026-10-30T15:32:55.2213262Z docker.io/temporalio/temporal@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e: Pulling from temporalio/temporal
+2026-10-30T15:32:55.3641855Z Digest: sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
+2026-10-30T15:32:55.3647273Z Status: Downloaded newer image for temporalio/temporal@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
+2026-10-30T15:32:55.3652048Z docker.io/temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e
+2026-10-30T15:32:55.3683078Z fetch image chrislusf/seaweedfs@sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3 temporalio/temporal:1.8.2@sha256:cf86707827fac99e4d1c4a47dc11b105382d796199c7bd41fb3213fb0471628e: attempt 1 ok in 2s (limit 180s)
+2026-10-30T15:32:55.3690247Z ##[end-action id=__self.__self.__run;outcome=success;conclusion=success;duration_ms=1712]
+2026-10-30T15:32:55.3698267Z ##[end-action id=__self.__self;outcome=success;conclusion=success;duration_ms=1722]
+2026-10-30T15:32:55.3700366Z ##[start-action display=SeaweedFS and registry;id=__self.__run_4]
+2026-10-30T15:32:55.3713801Z ##[group]Run set -euo pipefail
+2026-10-30T15:32:55.3713986Z [36;1mset -euo pipefail[0m
+2026-10-30T15:32:55.3714228Z [36;1mdocker compose -f deploy/docker-compose.yml up -d --wait --pull never seaweedfs registry[0m
+2026-10-30T15:32:55.3714533Z [36;1m# 403 is a healthy answer from the S3 server to an unsigned request.[0m
+2026-10-30T15:32:55.3714807Z [36;1mcode="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:9000/)"[0m
+2026-10-30T15:32:55.3715026Z [36;1m[ "$code" = 200 ] || [ "$code" = 403 ][0m
+2026-10-30T15:32:55.3715252Z [36;1mcurl -sf -o /dev/null "http://${ORK_LOCAL_REGISTRY:-localhost:5001}/v2/"[0m
+2026-10-30T15:32:55.3730757Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:32:55.3730939Z env:
+2026-10-30T15:32:55.3731054Z   TIER: nightly
+2026-10-30T15:32:55.3731168Z   INT_SHARDS: 4
+2026-10-30T15:32:55.3731281Z   UI_SHARDS: 1
+2026-10-30T15:32:55.3731387Z   FUZZ_BUDGET: 105m
+2026-10-30T15:32:55.3731513Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:32:55.3731651Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:32:55.3731793Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:32:55.3731940Z   GOTOOLCHAIN: local
+2026-10-30T15:32:55.3732061Z ##[endgroup]
+2026-10-30T15:32:55.4325894Z  Network orkstack_default  Creating
+2026-10-30T15:32:55.4589644Z  Network orkstack_default  Created
+2026-10-30T15:32:55.4596364Z  Volume "orkstack_registry-data"  Creating
+2026-10-30T15:32:55.4605034Z  Volume "orkstack_registry-data"  Created
+2026-10-30T15:32:55.4606925Z  Volume "orkstack_seaweedfs-data"  Creating
+2026-10-30T15:32:55.4612143Z  Volume "orkstack_seaweedfs-data"  Created
+2026-10-30T15:32:55.4615312Z  Container orkstack-registry-1  Creating
+2026-10-30T15:32:55.4615605Z  Container orkstack-seaweedfs-1  Creating
+2026-10-30T15:32:55.4868195Z  Container orkstack-seaweedfs-1  Created
+2026-10-30T15:32:55.4870839Z  Container orkstack-registry-1  Created
+2026-10-30T15:32:55.4878010Z  Container orkstack-registry-1  Starting
+2026-10-30T15:32:55.4878331Z  Container orkstack-seaweedfs-1  Starting
+2026-10-30T15:32:55.6114351Z  Container orkstack-registry-1  Started
+2026-10-30T15:32:55.6172642Z  Container orkstack-seaweedfs-1  Started
+2026-10-30T15:32:55.6172992Z  Container orkstack-registry-1  Waiting
+2026-10-30T15:32:55.6173289Z  Container orkstack-seaweedfs-1  Waiting
+2026-10-30T15:33:01.1187108Z  Container orkstack-seaweedfs-1  Healthy
+2026-10-30T15:33:01.1187396Z  Container orkstack-registry-1  Healthy
+2026-10-30T15:33:01.1362568Z ##[end-action id=__self.__run_4;outcome=success;conclusion=success;duration_ms=5766]
+2026-10-30T15:33:01.1364796Z ##[start-action display=Save the stack images;id=__self.__run_5]
+2026-10-30T15:33:01.1379817Z ##[group]Run set -euo pipefail
+2026-10-30T15:33:01.1380009Z [36;1mset -euo pipefail[0m
+2026-10-30T15:33:01.1380192Z [36;1mif [ ! -f /tmp/orkstack-stack-images.tar ]; then[0m
+2026-10-30T15:33:01.1380442Z [36;1m  # Only the services this action starts. The observability profile's[0m
+2026-10-30T15:33:01.1380705Z [36;1m  # images are pulled by the observability job that starts them; a[0m
+2026-10-30T15:33:01.1380957Z [36;1m  # `config --images` list including them made docker save fail on a[0m
+2026-10-30T15:33:01.1381204Z [36;1m  # reference that was never pulled, and `|| true` hid it.[0m
+2026-10-30T15:33:01.1381539Z [36;1m  mapfile -t images < <(docker compose -f deploy/docker-compose.yml config --images temporal seaweedfs registry | sort -u)[0m
+2026-10-30T15:33:01.1381843Z [36;1m  for image in "${images[@]}"; do[0m
+2026-10-30T15:33:01.1382032Z [36;1m    if ! docker image inspect "$image" >/dev/null 2>&1; then[0m
+2026-10-30T15:33:01.1382270Z [36;1m      # The step that pulls it failed and said so; nothing is pulled here.[0m
+2026-10-30T15:33:01.1382519Z [36;1m      echo "not saving the stack images: $image is not present"[0m
+2026-10-30T15:33:01.1382847Z [36;1m      exit 0[0m
+2026-10-30T15:33:01.1383072Z [36;1m    fi[0m
+2026-10-30T15:33:01.1383181Z [36;1m  done[0m
+2026-10-30T15:33:01.1383534Z [36;1m  docker save -o /tmp/orkstack-stack-images.tar "${images[@]}"[0m
+2026-10-30T15:33:01.1383770Z [36;1mfi[0m
+2026-10-30T15:33:01.1398576Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:33:01.1398760Z env:
+2026-10-30T15:33:01.1398867Z   TIER: nightly
+2026-10-30T15:33:01.1398983Z   INT_SHARDS: 4
+2026-10-30T15:33:01.1399092Z   UI_SHARDS: 1
+2026-10-30T15:33:01.1399200Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:01.1399326Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:01.1399467Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:01.1399610Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:01.1399757Z   GOTOOLCHAIN: local
+2026-10-30T15:33:01.1399880Z ##[endgroup]
+2026-10-30T15:33:01.1431750Z ##[end-action id=__self.__run_5;outcome=success;conclusion=success;duration_ms=6]
+2026-10-30T15:33:01.1432862Z ##[start-action display=fetch cosign;id=__self.__self_2]
+2026-10-30T15:33:01.1461550Z Prepare all required actions
+2026-10-30T15:33:01.1497573Z ##[group]Run ./.github/actions/proof-fetch
+2026-10-30T15:33:01.1497728Z with:
+2026-10-30T15:33:01.1497932Z   url: https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign-linux-amd64
+2026-10-30T15:33:01.1498224Z   sha256: c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644
+2026-10-30T15:33:01.1498451Z   path: /home/runner/work/_temp/cosign/cosign
+2026-10-30T15:33:01.1498620Z   log: /home/runner/work/_temp/ci/setup.log
+2026-10-30T15:33:01.1498770Z env:
+2026-10-30T15:33:01.1498876Z   TIER: nightly
+2026-10-30T15:33:01.1498989Z   INT_SHARDS: 4
+2026-10-30T15:33:01.1499097Z   UI_SHARDS: 1
+2026-10-30T15:33:01.1499210Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:01.1499333Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:01.1499475Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:01.1499619Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:01.1499769Z   GOTOOLCHAIN: local
+2026-10-30T15:33:01.1499893Z ##[endgroup]
+2026-10-30T15:33:01.1502502Z ##[start-action display=fetch;id=__self.__self_2.__run]
+2026-10-30T15:33:01.1512477Z ##[group]Run set -uo pipefail
+2026-10-30T15:33:01.1512668Z [36;1mset -uo pipefail[0m
+2026-10-30T15:33:01.1512798Z [36;1mset +e[0m
+2026-10-30T15:33:01.1512960Z [36;1mcase "${ARTIFACT:+a}${PATTERN:+p}${IMAGE:+i}${URL:+u}" in[0m
+2026-10-30T15:33:01.1513160Z [36;1ma) what="artifact $ARTIFACT" ;;[0m
+2026-10-30T15:33:01.1513319Z [36;1mp) what="artifacts $PATTERN" ;;[0m
+2026-10-30T15:33:01.1513647Z [36;1mi)[0m
+2026-10-30T15:33:01.1513756Z [36;1m  set -f[0m
+2026-10-30T15:33:01.1513880Z [36;1m  images=($IMAGE)[0m
+2026-10-30T15:33:01.1514009Z [36;1m  set +f[0m
+2026-10-30T15:33:01.1514130Z [36;1m  for ref in "${images[@]}"; do[0m
+2026-10-30T15:33:01.1514316Z [36;1m    if ! [[ "$ref" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then[0m
+2026-10-30T15:33:01.1514566Z [36;1m      echo "proof-fetch: the image $ref is not pinned by digest" >&2[0m
+2026-10-30T15:33:01.1514767Z [36;1m      exit 2[0m
+2026-10-30T15:33:01.1514892Z [36;1m    fi[0m
+2026-10-30T15:33:01.1515001Z [36;1m  done[0m
+2026-10-30T15:33:01.1515125Z [36;1m  what="image ${images[*]}"[0m
+2026-10-30T15:33:01.1515265Z [36;1m  ;;[0m
+2026-10-30T15:33:01.1515369Z [36;1mu)[0m
+2026-10-30T15:33:01.1515512Z [36;1m  if ! [[ "$URL" =~ ^https://[^[:space:]]+$ ]]; then[0m
+2026-10-30T15:33:01.1515744Z [36;1m    echo "proof-fetch: a url must be an https URL without spaces" >&2[0m
+2026-10-30T15:33:01.1515947Z [36;1m    exit 2[0m
+2026-10-30T15:33:01.1516062Z [36;1m  fi[0m
+2026-10-30T15:33:01.1516191Z [36;1m  if ! [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then[0m
+2026-10-30T15:33:01.1516422Z [36;1m    echo "proof-fetch: a url needs sha256, 64 lowercase hex digits" >&2[0m
+2026-10-30T15:33:01.1516622Z [36;1m    exit 2[0m
+2026-10-30T15:33:01.1516741Z [36;1m  fi[0m
+2026-10-30T15:33:01.1516854Z [36;1m  what="url $URL"[0m
+2026-10-30T15:33:01.1516983Z [36;1m  ;;[0m
+2026-10-30T15:33:01.1517298Z [36;1m*) echo "proof-fetch: exactly one of artifact, pattern, image or url" >&2; exit 2 ;;[0m
+2026-10-30T15:33:01.1517596Z [36;1mesac[0m
+2026-10-30T15:33:01.1517726Z [36;1mif [ -z "$IMAGE" ] && [ -z "$DEST" ]; then[0m
+2026-10-30T15:33:01.1517935Z [36;1m  echo "proof-fetch: an artifact or a url needs path" >&2[0m
+2026-10-30T15:33:01.1518116Z [36;1m  exit 2[0m
+2026-10-30T15:33:01.1518230Z [36;1mfi[0m
+2026-10-30T15:33:01.1518348Z [36;1mmkdir -p "$(dirname "$LOG")"[0m
+2026-10-30T15:33:01.1518489Z [36;1mn=0[0m
+2026-10-30T15:33:01.1518608Z [36;1mfor limit in 180 360; do[0m
+2026-10-30T15:33:01.1518747Z [36;1m  n=$((n + 1))[0m
+2026-10-30T15:33:01.1518876Z [36;1m  started=$SECONDS[0m
+2026-10-30T15:33:01.1519015Z [36;1m  if [ -n "$IMAGE" ]; then[0m
+2026-10-30T15:33:01.1519190Z [36;1m    # The whole list is one attempt under one limit.[0m
+2026-10-30T15:33:01.1519475Z [36;1m    timeout -k 10 "$limit" bash -c 'for ref in "$@"; do docker pull "$ref" || exit; done' _ "${images[@]}"[0m
+2026-10-30T15:33:01.1519726Z [36;1m    code=$?[0m
+2026-10-30T15:33:01.1519860Z [36;1m  elif [ -n "$URL" ]; then[0m
+2026-10-30T15:33:01.1520056Z [36;1m    # Only a file that hashes to the pin is kept, and a half-written[0m
+2026-10-30T15:33:01.1520299Z [36;1m    # one never reads as whole: each attempt starts without it.[0m
+2026-10-30T15:33:01.1520527Z [36;1m    rm -f "$DEST" && mkdir -p "$(dirname "$DEST")" &&[0m
+2026-10-30T15:33:01.1520872Z [36;1m      timeout -k 10 "$limit" curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$DEST" "$URL" &&[0m
+2026-10-30T15:33:01.1521220Z [36;1m      echo "$SHA256  $DEST" | sha256sum --check --status[0m
+2026-10-30T15:33:01.1521396Z [36;1m    code=$?[0m
+2026-10-30T15:33:01.1521533Z [36;1m    [ "$code" -eq 0 ] || rm -f "$DEST"[0m
+2026-10-30T15:33:01.1521701Z [36;1m  elif [ -n "$ARTIFACT" ]; then[0m
+2026-10-30T15:33:01.1521903Z [36;1m    # A half-extracted artifact must never read as a whole one: the[0m
+2026-10-30T15:33:01.1522170Z [36;1m    # directory is the artifact's own, and each attempt starts it empty.[0m
+2026-10-30T15:33:01.1522401Z [36;1m    rm -rf "$DEST" && mkdir -p "$DEST" &&[0m
+2026-10-30T15:33:01.1522703Z [36;1m      timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir "$DEST"[0m
+2026-10-30T15:33:01.1522977Z [36;1m    code=$?[0m
+2026-10-30T15:33:01.1523147Z [36;1m  else[0m
+2026-10-30T15:33:01.1523543Z [36;1m    # Only the subdirectories this pattern produces; `path` may hold[0m
+2026-10-30T15:33:01.1523798Z [36;1m    # another artifact (the proof job's plan beside its parts).[0m
+2026-10-30T15:33:01.1524000Z [36;1m    shopt -s nullglob[0m
+2026-10-30T15:33:01.1524170Z [36;1m    rm -rf "$DEST"/$PATTERN && mkdir -p "$DEST" &&[0m
+2026-10-30T15:33:01.1524474Z [36;1m      timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "$PATTERN" --dir "$DEST"[0m
+2026-10-30T15:33:01.1524754Z [36;1m    code=$?[0m
+2026-10-30T15:33:01.1524872Z [36;1m  fi[0m
+2026-10-30T15:33:01.1524997Z [36;1m  took=$((SECONDS - started))[0m
+2026-10-30T15:33:01.1525145Z [36;1m  case "$code" in[0m
+2026-10-30T15:33:01.1525336Z [36;1m  0) line="fetch $what: attempt $n ok in ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:01.1525621Z [36;1m  124 | 137) line="fetch $what: attempt $n timed out after ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:01.1525926Z [36;1m  *) line="fetch $what: attempt $n failed, exit $code after ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:01.1526150Z [36;1m  esac[0m
+2026-10-30T15:33:01.1526271Z [36;1m  echo "$line" | tee -a "$LOG"[0m
+2026-10-30T15:33:01.1526423Z [36;1m  [ "$code" -eq 0 ] && exit 0[0m
+2026-10-30T15:33:01.1526565Z [36;1mdone[0m
+2026-10-30T15:33:01.1526845Z [36;1mecho "fetch $what: gave up after $n attempts; a setup failure in a fetch step is a setup-failed part (docs/PROOFS.md §8)" | tee -a "$LOG"[0m
+2026-10-30T15:33:01.1527149Z [36;1mexit 1[0m
+2026-10-30T15:33:01.1540171Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:33:01.1540440Z env:
+2026-10-30T15:33:01.1540549Z   TIER: nightly
+2026-10-30T15:33:01.1540660Z   INT_SHARDS: 4
+2026-10-30T15:33:01.1540769Z   UI_SHARDS: 1
+2026-10-30T15:33:01.1540883Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:01.1541007Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:01.1541151Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:01.1541300Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:01.1541445Z   GOTOOLCHAIN: local
+2026-10-30T15:33:01.1541568Z   ARTIFACT: 
+2026-10-30T15:33:01.1541675Z   PATTERN: 
+2026-10-30T15:33:01.1541780Z   IMAGE: 
+2026-10-30T15:33:01.1541973Z   URL: https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign-linux-amd64
+2026-10-30T15:33:01.1542259Z   SHA256: c3b4f5410e608af03a5eb0aaac84a4313d8da131248e08ff1759ac70c79d1644
+2026-10-30T15:33:01.1542483Z   DEST: /home/runner/work/_temp/cosign/cosign
+2026-10-30T15:33:01.1542650Z   LOG: /home/runner/work/_temp/ci/setup.log
+2026-10-30T15:33:01.1542806Z   GH_TOKEN: 
+2026-10-30T15:33:01.1542922Z ##[endgroup]
+2026-10-30T15:33:02.1154458Z fetch url https://github.com/sigstore/cosign/releases/download/v2.6.5/cosign-linux-amd64: attempt 1 ok in 1s (limit 180s)
+2026-10-30T15:33:02.1161778Z ##[end-action id=__self.__self_2.__run;outcome=success;conclusion=success;duration_ms=965]
+2026-10-30T15:33:02.1165232Z ##[end-action id=__self.__self_2;outcome=success;conclusion=success;duration_ms=973]
+2026-10-30T15:33:02.1166932Z ##[start-action display=cosign;id=__self.__run_6]
+2026-10-30T15:33:02.1181355Z ##[group]Run set -euo pipefail
+2026-10-30T15:33:02.1181540Z [36;1mset -euo pipefail[0m
+2026-10-30T15:33:02.1181747Z [36;1msudo install -m 0755 "$RUNNER_TEMP/cosign/cosign" /usr/local/bin/cosign[0m
+2026-10-30T15:33:02.1181963Z [36;1mcosign version[0m
+2026-10-30T15:33:02.1197412Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:33:02.1197595Z env:
+2026-10-30T15:33:02.1197705Z   TIER: nightly
+2026-10-30T15:33:02.1197834Z   INT_SHARDS: 4
+2026-10-30T15:33:02.1197945Z   UI_SHARDS: 1
+2026-10-30T15:33:02.1198066Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:02.1198192Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:02.1198335Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:02.1198486Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:02.1198634Z   GOTOOLCHAIN: local
+2026-10-30T15:33:02.1198759Z ##[endgroup]
+2026-10-30T15:33:02.1802581Z   ______   ______        _______. __    _______ .__   __.
+2026-10-30T15:33:02.1804531Z  /      | /  __  \      /       ||  |  /  _____||  \ |  |
+2026-10-30T15:33:02.1804834Z |  ,----'|  |  |  |    |   (----`|  | |  |  __  |   \|  |
+2026-10-30T15:33:02.1805107Z |  |     |  |  |  |     \   \    |  | |  | |_ | |  . `  |
+2026-10-30T15:33:02.1805373Z |  `----.|  `--'  | .----)   |   |  | |  |__| | |  |\   |
+2026-10-30T15:33:02.1805656Z  \______| \______/  |_______/    |__|  \______| |__| \__|
+2026-10-30T15:33:02.1806043Z cosign: A tool for Container Signing, Verification and Storage in an OCI registry.
+2026-10-30T15:33:02.1806359Z 
+2026-10-30T15:33:02.1806446Z GitVersion:    v2.6.5
+2026-10-30T15:33:02.1806716Z GitCommit:     3e82f50a2839855693aacf7b3d0e7e2f30774cb4
+2026-10-30T15:33:02.1807016Z GitTreeState:  clean
+2026-10-30T15:33:02.1807223Z BuildDate:     2026-08-05T23:44:20Z
+2026-10-30T15:33:02.1807467Z GoVersion:     go1.26.4
+2026-10-30T15:33:02.1807648Z Compiler:      gc
+2026-10-30T15:33:02.1807778Z Platform:      linux/amd64
+2026-10-30T15:33:02.1807863Z 
+2026-10-30T15:33:02.1817441Z ##[end-action id=__self.__run_6;outcome=success;conclusion=success;duration_ms=64]
+2026-10-30T15:33:02.1819280Z ##[start-action display=temporal CLI;id=__self.__run_7]
+2026-10-30T15:33:02.1823604Z ##[end-action id=__self.__run_7;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-30T15:33:02.1900711Z Prepare all required actions
+2026-10-30T15:33:02.1938427Z ##[group]Run ./.github/actions/proof-fetch
+2026-10-30T15:33:02.1938584Z with:
+2026-10-30T15:33:02.1938696Z   artifact: plan-a1
+2026-10-30T15:33:02.1938826Z   path: /home/runner/work/_temp/ci/plan
+2026-10-30T15:33:02.1940508Z   token: ***
+2026-10-30T15:33:02.1940758Z   log: /home/runner/work/_temp/ci/setup.log
+2026-10-30T15:33:02.1940911Z env:
+2026-10-30T15:33:02.1941016Z   TIER: nightly
+2026-10-30T15:33:02.1941129Z   INT_SHARDS: 4
+2026-10-30T15:33:02.1941238Z   UI_SHARDS: 1
+2026-10-30T15:33:02.1941346Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:02.1941471Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:02.1941612Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:02.1941762Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:02.1942013Z   GOTOOLCHAIN: local
+2026-10-30T15:33:02.1942183Z ##[endgroup]
+2026-10-30T15:33:02.1944713Z ##[start-action display=fetch;id=__self_2.__run]
+2026-10-30T15:33:02.1954698Z ##[group]Run set -uo pipefail
+2026-10-30T15:33:02.1954917Z [36;1mset -uo pipefail[0m
+2026-10-30T15:33:02.1955050Z [36;1mset +e[0m
+2026-10-30T15:33:02.1955212Z [36;1mcase "${ARTIFACT:+a}${PATTERN:+p}${IMAGE:+i}${URL:+u}" in[0m
+2026-10-30T15:33:02.1955413Z [36;1ma) what="artifact $ARTIFACT" ;;[0m
+2026-10-30T15:33:02.1955576Z [36;1mp) what="artifacts $PATTERN" ;;[0m
+2026-10-30T15:33:02.1955727Z [36;1mi)[0m
+2026-10-30T15:33:02.1955836Z [36;1m  set -f[0m
+2026-10-30T15:33:02.1955957Z [36;1m  images=($IMAGE)[0m
+2026-10-30T15:33:02.1956090Z [36;1m  set +f[0m
+2026-10-30T15:33:02.1956211Z [36;1m  for ref in "${images[@]}"; do[0m
+2026-10-30T15:33:02.1956395Z [36;1m    if ! [[ "$ref" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then[0m
+2026-10-30T15:33:02.1956639Z [36;1m      echo "proof-fetch: the image $ref is not pinned by digest" >&2[0m
+2026-10-30T15:33:02.1956858Z [36;1m      exit 2[0m
+2026-10-30T15:33:02.1956980Z [36;1m    fi[0m
+2026-10-30T15:33:02.1957088Z [36;1m  done[0m
+2026-10-30T15:33:02.1957207Z [36;1m  what="image ${images[*]}"[0m
+2026-10-30T15:33:02.1957348Z [36;1m  ;;[0m
+2026-10-30T15:33:02.1957454Z [36;1mu)[0m
+2026-10-30T15:33:02.1957594Z [36;1m  if ! [[ "$URL" =~ ^https://[^[:space:]]+$ ]]; then[0m
+2026-10-30T15:33:02.1957825Z [36;1m    echo "proof-fetch: a url must be an https URL without spaces" >&2[0m
+2026-10-30T15:33:02.1958029Z [36;1m    exit 2[0m
+2026-10-30T15:33:02.1958146Z [36;1m  fi[0m
+2026-10-30T15:33:02.1958277Z [36;1m  if ! [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then[0m
+2026-10-30T15:33:02.1958501Z [36;1m    echo "proof-fetch: a url needs sha256, 64 lowercase hex digits" >&2[0m
+2026-10-30T15:33:02.1958702Z [36;1m    exit 2[0m
+2026-10-30T15:33:02.1958818Z [36;1m  fi[0m
+2026-10-30T15:33:02.1958935Z [36;1m  what="url $URL"[0m
+2026-10-30T15:33:02.1959065Z [36;1m  ;;[0m
+2026-10-30T15:33:02.1959260Z [36;1m*) echo "proof-fetch: exactly one of artifact, pattern, image or url" >&2; exit 2 ;;[0m
+2026-10-30T15:33:02.1959487Z [36;1mesac[0m
+2026-10-30T15:33:02.1959620Z [36;1mif [ -z "$IMAGE" ] && [ -z "$DEST" ]; then[0m
+2026-10-30T15:33:02.1959829Z [36;1m  echo "proof-fetch: an artifact or a url needs path" >&2[0m
+2026-10-30T15:33:02.1960012Z [36;1m  exit 2[0m
+2026-10-30T15:33:02.1960121Z [36;1mfi[0m
+2026-10-30T15:33:02.1960243Z [36;1mmkdir -p "$(dirname "$LOG")"[0m
+2026-10-30T15:33:02.1960387Z [36;1mn=0[0m
+2026-10-30T15:33:02.1960507Z [36;1mfor limit in 180 360; do[0m
+2026-10-30T15:33:02.1960647Z [36;1m  n=$((n + 1))[0m
+2026-10-30T15:33:02.1960776Z [36;1m  started=$SECONDS[0m
+2026-10-30T15:33:02.1960918Z [36;1m  if [ -n "$IMAGE" ]; then[0m
+2026-10-30T15:33:02.1961093Z [36;1m    # The whole list is one attempt under one limit.[0m
+2026-10-30T15:33:02.1961372Z [36;1m    timeout -k 10 "$limit" bash -c 'for ref in "$@"; do docker pull "$ref" || exit; done' _ "${images[@]}"[0m
+2026-10-30T15:33:02.1961617Z [36;1m    code=$?[0m
+2026-10-30T15:33:02.1961746Z [36;1m  elif [ -n "$URL" ]; then[0m
+2026-10-30T15:33:02.1962090Z [36;1m    # Only a file that hashes to the pin is kept, and a half-written[0m
+2026-10-30T15:33:02.1962335Z [36;1m    # one never reads as whole: each attempt starts without it.[0m
+2026-10-30T15:33:02.1962559Z [36;1m    rm -f "$DEST" && mkdir -p "$(dirname "$DEST")" &&[0m
+2026-10-30T15:33:02.1962902Z [36;1m      timeout -k 10 "$limit" curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$DEST" "$URL" &&[0m
+2026-10-30T15:33:02.1963334Z [36;1m      echo "$SHA256  $DEST" | sha256sum --check --status[0m
+2026-10-30T15:33:02.1963724Z [36;1m    code=$?[0m
+2026-10-30T15:33:02.1963862Z [36;1m    [ "$code" -eq 0 ] || rm -f "$DEST"[0m
+2026-10-30T15:33:02.1964029Z [36;1m  elif [ -n "$ARTIFACT" ]; then[0m
+2026-10-30T15:33:02.1964232Z [36;1m    # A half-extracted artifact must never read as a whole one: the[0m
+2026-10-30T15:33:02.1964492Z [36;1m    # directory is the artifact's own, and each attempt starts it empty.[0m
+2026-10-30T15:33:02.1964723Z [36;1m    rm -rf "$DEST" && mkdir -p "$DEST" &&[0m
+2026-10-30T15:33:02.1965027Z [36;1m      timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir "$DEST"[0m
+2026-10-30T15:33:02.1965303Z [36;1m    code=$?[0m
+2026-10-30T15:33:02.1965419Z [36;1m  else[0m
+2026-10-30T15:33:02.1965596Z [36;1m    # Only the subdirectories this pattern produces; `path` may hold[0m
+2026-10-30T15:33:02.1965844Z [36;1m    # another artifact (the proof job's plan beside its parts).[0m
+2026-10-30T15:33:02.1966042Z [36;1m    shopt -s nullglob[0m
+2026-10-30T15:33:02.1966213Z [36;1m    rm -rf "$DEST"/$PATTERN && mkdir -p "$DEST" &&[0m
+2026-10-30T15:33:02.1966775Z [36;1m      timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "$PATTERN" --dir "$DEST"[0m
+2026-10-30T15:33:02.1967051Z [36;1m    code=$?[0m
+2026-10-30T15:33:02.1967170Z [36;1m  fi[0m
+2026-10-30T15:33:02.1967293Z [36;1m  took=$((SECONDS - started))[0m
+2026-10-30T15:33:02.1967442Z [36;1m  case "$code" in[0m
+2026-10-30T15:33:02.1967635Z [36;1m  0) line="fetch $what: attempt $n ok in ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:02.1967916Z [36;1m  124 | 137) line="fetch $what: attempt $n timed out after ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:02.1968220Z [36;1m  *) line="fetch $what: attempt $n failed, exit $code after ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:02.1968442Z [36;1m  esac[0m
+2026-10-30T15:33:02.1968567Z [36;1m  echo "$line" | tee -a "$LOG"[0m
+2026-10-30T15:33:02.1968719Z [36;1m  [ "$code" -eq 0 ] && exit 0[0m
+2026-10-30T15:33:02.1968860Z [36;1mdone[0m
+2026-10-30T15:33:02.1969138Z [36;1mecho "fetch $what: gave up after $n attempts; a setup failure in a fetch step is a setup-failed part (docs/PROOFS.md §8)" | tee -a "$LOG"[0m
+2026-10-30T15:33:02.1969437Z [36;1mexit 1[0m
+2026-10-30T15:33:02.1985034Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:33:02.1985281Z env:
+2026-10-30T15:33:02.1985403Z   TIER: nightly
+2026-10-30T15:33:02.1985525Z   INT_SHARDS: 4
+2026-10-30T15:33:02.1985641Z   UI_SHARDS: 1
+2026-10-30T15:33:02.1985752Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:02.1985880Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:02.1986022Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:02.1986168Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:02.1986316Z   GOTOOLCHAIN: local
+2026-10-30T15:33:02.1986443Z   ARTIFACT: plan-a1
+2026-10-30T15:33:02.1986560Z   PATTERN: 
+2026-10-30T15:33:02.1986671Z   IMAGE: 
+2026-10-30T15:33:02.1986775Z   URL: 
+2026-10-30T15:33:02.1986877Z   SHA256: 
+2026-10-30T15:33:02.1986990Z   DEST: /home/runner/work/_temp/ci/plan
+2026-10-30T15:33:02.1987149Z   LOG: /home/runner/work/_temp/ci/setup.log
+2026-10-30T15:33:02.1988562Z   GH_TOKEN: ***
+2026-10-30T15:33:02.1988676Z ##[endgroup]
+2026-10-30T15:33:07.5678746Z fetch artifact plan-a1: attempt 1 ok in 5s (limit 180s)
+2026-10-30T15:33:07.5686372Z ##[end-action id=__self_2.__run;outcome=success;conclusion=success;duration_ms=5374]
+2026-10-30T15:33:07.5721165Z Prepare all required actions
+2026-10-30T15:33:07.5759408Z ##[group]Run ./.github/actions/proof-fetch
+2026-10-30T15:33:07.5759565Z with:
+2026-10-30T15:33:07.5759684Z   artifact: part-build-a1
+2026-10-30T15:33:07.5759826Z   path: /home/runner/work/_temp/ci/build
+2026-10-30T15:33:07.5761313Z   token: ***
+2026-10-30T15:33:07.5761441Z   log: /home/runner/work/_temp/ci/setup.log
+2026-10-30T15:33:07.5761747Z env:
+2026-10-30T15:33:07.5761852Z   TIER: nightly
+2026-10-30T15:33:07.5761966Z   INT_SHARDS: 4
+2026-10-30T15:33:07.5762077Z   UI_SHARDS: 1
+2026-10-30T15:33:07.5762186Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:07.5762312Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:07.5762451Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:07.5762592Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:07.5762739Z   GOTOOLCHAIN: local
+2026-10-30T15:33:07.5762859Z ##[endgroup]
+2026-10-30T15:33:07.5765453Z ##[start-action display=fetch;id=__self_3.__run]
+2026-10-30T15:33:07.5775518Z ##[group]Run set -uo pipefail
+2026-10-30T15:33:07.5775743Z [36;1mset -uo pipefail[0m
+2026-10-30T15:33:07.5775873Z [36;1mset +e[0m
+2026-10-30T15:33:07.5776032Z [36;1mcase "${ARTIFACT:+a}${PATTERN:+p}${IMAGE:+i}${URL:+u}" in[0m
+2026-10-30T15:33:07.5776230Z [36;1ma) what="artifact $ARTIFACT" ;;[0m
+2026-10-30T15:33:07.5776389Z [36;1mp) what="artifacts $PATTERN" ;;[0m
+2026-10-30T15:33:07.5776539Z [36;1mi)[0m
+2026-10-30T15:33:07.5776645Z [36;1m  set -f[0m
+2026-10-30T15:33:07.5776765Z [36;1m  images=($IMAGE)[0m
+2026-10-30T15:33:07.5776894Z [36;1m  set +f[0m
+2026-10-30T15:33:07.5777016Z [36;1m  for ref in "${images[@]}"; do[0m
+2026-10-30T15:33:07.5777202Z [36;1m    if ! [[ "$ref" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then[0m
+2026-10-30T15:33:07.5777448Z [36;1m      echo "proof-fetch: the image $ref is not pinned by digest" >&2[0m
+2026-10-30T15:33:07.5777644Z [36;1m      exit 2[0m
+2026-10-30T15:33:07.5777767Z [36;1m    fi[0m
+2026-10-30T15:33:07.5777876Z [36;1m  done[0m
+2026-10-30T15:33:07.5777997Z [36;1m  what="image ${images[*]}"[0m
+2026-10-30T15:33:07.5778138Z [36;1m  ;;[0m
+2026-10-30T15:33:07.5778244Z [36;1mu)[0m
+2026-10-30T15:33:07.5778385Z [36;1m  if ! [[ "$URL" =~ ^https://[^[:space:]]+$ ]]; then[0m
+2026-10-30T15:33:07.5778614Z [36;1m    echo "proof-fetch: a url must be an https URL without spaces" >&2[0m
+2026-10-30T15:33:07.5778811Z [36;1m    exit 2[0m
+2026-10-30T15:33:07.5778931Z [36;1m  fi[0m
+2026-10-30T15:33:07.5779060Z [36;1m  if ! [[ "$SHA256" =~ ^[0-9a-f]{64}$ ]]; then[0m
+2026-10-30T15:33:07.5779280Z [36;1m    echo "proof-fetch: a url needs sha256, 64 lowercase hex digits" >&2[0m
+2026-10-30T15:33:07.5779477Z [36;1m    exit 2[0m
+2026-10-30T15:33:07.5779589Z [36;1m  fi[0m
+2026-10-30T15:33:07.5779706Z [36;1m  what="url $URL"[0m
+2026-10-30T15:33:07.5779831Z [36;1m  ;;[0m
+2026-10-30T15:33:07.5780022Z [36;1m*) echo "proof-fetch: exactly one of artifact, pattern, image or url" >&2; exit 2 ;;[0m
+2026-10-30T15:33:07.5780245Z [36;1mesac[0m
+2026-10-30T15:33:07.5780375Z [36;1mif [ -z "$IMAGE" ] && [ -z "$DEST" ]; then[0m
+2026-10-30T15:33:07.5780581Z [36;1m  echo "proof-fetch: an artifact or a url needs path" >&2[0m
+2026-10-30T15:33:07.5780758Z [36;1m  exit 2[0m
+2026-10-30T15:33:07.5780866Z [36;1mfi[0m
+2026-10-30T15:33:07.5780984Z [36;1mmkdir -p "$(dirname "$LOG")"[0m
+2026-10-30T15:33:07.5781124Z [36;1mn=0[0m
+2026-10-30T15:33:07.5781246Z [36;1mfor limit in 180 360; do[0m
+2026-10-30T15:33:07.5781386Z [36;1m  n=$((n + 1))[0m
+2026-10-30T15:33:07.5781513Z [36;1m  started=$SECONDS[0m
+2026-10-30T15:33:07.5781655Z [36;1m  if [ -n "$IMAGE" ]; then[0m
+2026-10-30T15:33:07.5781829Z [36;1m    # The whole list is one attempt under one limit.[0m
+2026-10-30T15:33:07.5782108Z [36;1m    timeout -k 10 "$limit" bash -c 'for ref in "$@"; do docker pull "$ref" || exit; done' _ "${images[@]}"[0m
+2026-10-30T15:33:07.5782351Z [36;1m    code=$?[0m
+2026-10-30T15:33:07.5782479Z [36;1m  elif [ -n "$URL" ]; then[0m
+2026-10-30T15:33:07.5782799Z [36;1m    # Only a file that hashes to the pin is kept, and a half-written[0m
+2026-10-30T15:33:07.5783040Z [36;1m    # one never reads as whole: each attempt starts without it.[0m
+2026-10-30T15:33:07.5783264Z [36;1m    rm -f "$DEST" && mkdir -p "$(dirname "$DEST")" &&[0m
+2026-10-30T15:33:07.5783723Z [36;1m      timeout -k 10 "$limit" curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output "$DEST" "$URL" &&[0m
+2026-10-30T15:33:07.5784155Z [36;1m      echo "$SHA256  $DEST" | sha256sum --check --status[0m
+2026-10-30T15:33:07.5784329Z [36;1m    code=$?[0m
+2026-10-30T15:33:07.5784465Z [36;1m    [ "$code" -eq 0 ] || rm -f "$DEST"[0m
+2026-10-30T15:33:07.5784632Z [36;1m  elif [ -n "$ARTIFACT" ]; then[0m
+2026-10-30T15:33:07.5784834Z [36;1m    # A half-extracted artifact must never read as a whole one: the[0m
+2026-10-30T15:33:07.5785094Z [36;1m    # directory is the artifact's own, and each attempt starts it empty.[0m
+2026-10-30T15:33:07.5785324Z [36;1m    rm -rf "$DEST" && mkdir -p "$DEST" &&[0m
+2026-10-30T15:33:07.5785614Z [36;1m      timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$ARTIFACT" --dir "$DEST"[0m
+2026-10-30T15:33:07.5785887Z [36;1m    code=$?[0m
+2026-10-30T15:33:07.5786004Z [36;1m  else[0m
+2026-10-30T15:33:07.5786176Z [36;1m    # Only the subdirectories this pattern produces; `path` may hold[0m
+2026-10-30T15:33:07.5786421Z [36;1m    # another artifact (the proof job's plan beside its parts).[0m
+2026-10-30T15:33:07.5786618Z [36;1m    shopt -s nullglob[0m
+2026-10-30T15:33:07.5786787Z [36;1m    rm -rf "$DEST"/$PATTERN && mkdir -p "$DEST" &&[0m
+2026-10-30T15:33:07.5787089Z [36;1m      timeout -k 10 "$limit" gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "$PATTERN" --dir "$DEST"[0m
+2026-10-30T15:33:07.5787365Z [36;1m    code=$?[0m
+2026-10-30T15:33:07.5787483Z [36;1m  fi[0m
+2026-10-30T15:33:07.5787605Z [36;1m  took=$((SECONDS - started))[0m
+2026-10-30T15:33:07.5787756Z [36;1m  case "$code" in[0m
+2026-10-30T15:33:07.5787945Z [36;1m  0) line="fetch $what: attempt $n ok in ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:07.5788226Z [36;1m  124 | 137) line="fetch $what: attempt $n timed out after ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:07.5788529Z [36;1m  *) line="fetch $what: attempt $n failed, exit $code after ${took}s (limit ${limit}s)" ;;[0m
+2026-10-30T15:33:07.5788756Z [36;1m  esac[0m
+2026-10-30T15:33:07.5788880Z [36;1m  echo "$line" | tee -a "$LOG"[0m
+2026-10-30T15:33:07.5789031Z [36;1m  [ "$code" -eq 0 ] && exit 0[0m
+2026-10-30T15:33:07.5789171Z [36;1mdone[0m
+2026-10-30T15:33:07.5789450Z [36;1mecho "fetch $what: gave up after $n attempts; a setup failure in a fetch step is a setup-failed part (docs/PROOFS.md §8)" | tee -a "$LOG"[0m
+2026-10-30T15:33:07.5789751Z [36;1mexit 1[0m
+2026-10-30T15:33:07.5805120Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:33:07.5805298Z env:
+2026-10-30T15:33:07.5805406Z   TIER: nightly
+2026-10-30T15:33:07.5805523Z   INT_SHARDS: 4
+2026-10-30T15:33:07.5805634Z   UI_SHARDS: 1
+2026-10-30T15:33:07.5805758Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:07.5805886Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:07.5806027Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:07.5806172Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:07.5806317Z   GOTOOLCHAIN: local
+2026-10-30T15:33:07.5806447Z   ARTIFACT: part-build-a1
+2026-10-30T15:33:07.5806577Z   PATTERN: 
+2026-10-30T15:33:07.5806683Z   IMAGE: 
+2026-10-30T15:33:07.5806787Z   URL: 
+2026-10-30T15:33:07.5806889Z   SHA256: 
+2026-10-30T15:33:07.5807003Z   DEST: /home/runner/work/_temp/ci/build
+2026-10-30T15:33:07.5807163Z   LOG: /home/runner/work/_temp/ci/setup.log
+2026-10-30T15:33:07.5808579Z   GH_TOKEN: ***
+2026-10-30T15:33:07.5808697Z ##[endgroup]
+2026-10-30T15:33:09.3535179Z fetch artifact part-build-a1: attempt 1 ok in 2s (limit 180s)
+2026-10-30T15:33:09.3542090Z ##[end-action id=__self_3.__run;outcome=success;conclusion=success;duration_ms=1777]
+2026-10-30T15:33:09.3566113Z ##[group]Run scripts/proof.sh --part "integration:2" --tier "$TIER" --proof-id "$PROOF_ID" \
+2026-10-30T15:33:09.3566473Z [36;1mscripts/proof.sh --part "integration:2" --tier "$TIER" --proof-id "$PROOF_ID" \[0m
+2026-10-30T15:33:09.3566720Z [36;1m  --attempt "$GITHUB_RUN_ATTEMPT" \[0m
+2026-10-30T15:33:09.3566927Z [36;1m  --plan "$RUNNER_TEMP/ci/plan/integration-plan.json" \[0m
+2026-10-30T15:33:09.3567274Z [36;1m  --layouts "$RUNNER_TEMP/ci/build/layouts" \[0m
+2026-10-30T15:33:09.3567463Z [36;1m  --setup-log "$RUNNER_TEMP/ci/setup.log" \[0m
+2026-10-30T15:33:09.3567703Z [36;1m  --base-commit "0b98f5ab5c0d75fa896e7f38da5a3e6293001a70" "$PROOF_NAME"[0m
+2026-10-30T15:33:09.3583188Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+2026-10-30T15:33:09.3583479Z env:
+2026-10-30T15:33:09.3583652Z   TIER: nightly
+2026-10-30T15:33:09.3583767Z   INT_SHARDS: 4
+2026-10-30T15:33:09.3583874Z   UI_SHARDS: 1
+2026-10-30T15:33:09.3583985Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:09.3584134Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:09.3584275Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:09.3584419Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:09.3584567Z   GOTOOLCHAIN: local
+2026-10-30T15:33:09.3584685Z   PROOF_JOBS: 3
+2026-10-30T15:33:09.3584797Z ##[endgroup]
+2026-10-30T15:33:29.5056709Z proof: part integration:2 attempt 1 of nightly -> /home/runner/work/orkstack/orkstack/proof/pr-ci-41080705584-part-integration-2-a1 (id pr-ci-41080705584, tree 8b0b2cddca41d03faf88055f9a585dae8710f62c)
+2026-10-30T15:33:29.5074893Z == runner-health: class github-hosted/ubuntu24/4cpu against scripts/proof-runner-floors.tsv
+2026-10-30T15:33:40.4146921Z    runner-health: class github-hosted/ubuntu24/4cpu, 4 CPUs, 15983 MB, measured 10.9s in /home/runner/work/orkstack/orkstack/proof/pr-ci-41080705584-part-integration-2-a1
+2026-10-30T15:33:40.4147652Z    runner-health: disk_write_mb_s 211.2 MB/s (floor 20)
+2026-10-30T15:33:40.4148125Z    runner-health: disk_write_mb_s readings 211.2 MB/s at +0s (judged), 212.1 at +7.039s
+2026-10-30T15:33:40.4148570Z    runner-health: disk_read_mb_s 519.9 MB/s (floor 75)
+2026-10-30T15:33:40.4149086Z    runner-health: disk_read_mb_s readings 519.9 MB/s at +2.508s (judged), 588.7 at +8.054s, 585.7 at +10.423s
+2026-10-30T15:33:40.4149599Z    runner-health: fsync_p95_ms 99.43 ms BELOW the floor 30
+2026-10-30T15:33:40.4149944Z    runner-health: fsync_p95_ms readings 99.43 ms at +3.529s (judged), 0.23 at +10.792s
+2026-10-30T15:33:40.4150232Z    runner-health: cpu_single_mb_s 2191.1 MB/s (floor 450)
+2026-10-30T15:33:40.4150455Z    runner-health: cpu_all_mb_s 6692.3 MB/s (floor 1200)
+2026-10-30T15:33:40.4150674Z    runner-health: mem_available_mib 14514 MiB (floor 4096)
+2026-10-30T15:33:40.4150878Z    runner-health: verdict below-floor
+2026-10-30T15:33:40.4151251Z    runner-health: this runner is BELOW the floor; the part stops before any gate and is not a proof of the tree (re-run this job alone)
+2026-10-30T15:33:40.4168024Z ##[error]proof: runner below the floor, no gate ran
+2026-10-30T15:33:40.5587650Z /home/runner/work/orkstack/orkstack/scripts/proof-part.sh: line 251: OBSERVABILITY_REQUIRED: unbound variable
+2026-10-30T15:33:40.5588486Z /home/runner/work/orkstack/orkstack/scripts/proof-part.sh: line 306: PART_IMAGES: unbound variable
+2026-10-30T15:33:40.5599005Z ##[error]Process completed with exit code 1.
+2026-10-30T15:33:40.5658973Z ##[group]Run actions/upload-artifact@v7.0.2
+2026-10-30T15:33:40.5659156Z with:
+2026-10-30T15:33:40.5659279Z   name: part-integration-2-a1
+2026-10-30T15:33:40.5659553Z   path: proof/pr-ci-41080705584-part-integration-2-a1/
+!proof/pr-ci-41080705584-part-integration-2-a1/bin/**
+
+2026-10-30T15:33:40.5659826Z   retention-days: 14
+2026-10-30T15:33:40.5659952Z   if-no-files-found: warn
+2026-10-30T15:33:40.5660086Z   compression-level: 6
+2026-10-30T15:33:40.5660210Z   overwrite: false
+2026-10-30T15:33:40.5660332Z   include-hidden-files: false
+2026-10-30T15:33:40.5660465Z   archive: true
+2026-10-30T15:33:40.5660574Z env:
+2026-10-30T15:33:40.5660679Z   TIER: nightly
+2026-10-30T15:33:40.5660791Z   INT_SHARDS: 4
+2026-10-30T15:33:40.5660896Z   UI_SHARDS: 1
+2026-10-30T15:33:40.5661006Z   FUZZ_BUDGET: 105m
+2026-10-30T15:33:40.5661127Z   PROOF_ID: pr-ci-41080705584
+2026-10-30T15:33:40.5661263Z   PROOF_NAME: pr-ci-41080705584
+2026-10-30T15:33:40.5661409Z   ORK_LOCAL_REGISTRY: localhost:5001
+2026-10-30T15:33:40.5661572Z   GOTOOLCHAIN: local
+2026-10-30T15:33:40.5661832Z ##[endgroup]
+2026-10-30T15:33:40.6616616Z With the provided path, there will be 6 files uploaded
+2026-10-30T15:33:40.6620510Z Artifact name is valid!
+2026-10-30T15:33:40.6620771Z Root directory input is valid!
+2026-10-30T15:33:40.9561417Z Uploading artifact: part-integration-2-a1.zip
+2026-10-30T15:33:40.9585941Z Beginning upload of artifact content to blob storage
+2026-10-30T15:33:41.1643550Z Uploaded bytes 2148
+2026-10-30T15:33:41.2081608Z Finished uploading artifact content to blob storage!
+2026-10-30T15:33:41.2082155Z SHA256 digest of uploaded artifact is c9a5abde11dc27f4a2e316f23b14fc6e7ec143abe18a9e474a00ccc21498b31a
+2026-10-30T15:33:41.2082594Z Finalizing artifact upload
+2026-10-30T15:33:41.7574594Z Artifact part-integration-2-a1 successfully finalized. Artifact ID 12990525834
+2026-10-30T15:33:41.7575186Z Artifact part-integration-2-a1 has been successfully uploaded! Final size is 2148 bytes. Artifact ID is 12990525834
+2026-10-30T15:33:41.7577162Z Artifact download URL: https://github.com/orkstack/orkstack/actions/runs/41080705584/artifacts/12990525834
+2026-10-30T15:33:41.7750842Z Post job cleanup.
+2026-10-30T15:33:41.7753204Z ##[start-action display=Stack image cache;id=__e2612432-d7db-4973-a71a-43850a5da471.__actions_cache]
+2026-10-30T15:33:41.7754586Z ##[end-action id=__e2612432-d7db-4973-a71a-43850a5da471.__actions_cache;outcome=skipped;conclusion=skipped;duration_ms=0]
+2026-10-30T15:33:41.7790435Z Post job cleanup.
+2026-10-30T15:33:41.8342301Z [command]/usr/bin/git version
+2026-10-30T15:33:41.8381269Z git version 2.56.0
+2026-10-30T15:33:41.8404196Z Temporarily overriding HOME='/home/runner/work/_temp/15f90354-cc9a-44d1-9ec9-cd613f8530e3' before making global git config changes
+2026-10-30T15:33:41.8404859Z Adding repository directory to the temporary git global config as a safe directory
+2026-10-30T15:33:41.8407325Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orkstack/orkstack
+2026-10-30T15:33:41.8434533Z Removing SSH command configuration
+2026-10-30T15:33:41.8438563Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+2026-10-30T15:33:41.8466737Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+2026-10-30T15:33:41.8660120Z Removing HTTP extra header
+2026-10-30T15:33:41.8664715Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+2026-10-30T15:33:41.8699764Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+2026-10-30T15:33:41.8896971Z Removing includeIf entries pointing to credentials config files
+2026-10-30T15:33:41.8902690Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+2026-10-30T15:33:41.8940359Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+2026-10-30T15:33:41.9254330Z Cleaning up orphan processes

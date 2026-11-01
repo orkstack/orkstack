@@ -145,7 +145,7 @@ Defined in `proto/orkstack/v1/run_service.proto`.
 | `GetRun` | [`GetRunRequest`](#getrunrequest) | [`GetRunResponse`](#getrunresponse) |  |
 | `ListRuns` | [`ListRunsRequest`](#listrunsrequest) | [`ListRunsResponse`](#listrunsresponse) |  |
 | `CancelRun` | [`CancelRunRequest`](#cancelrunrequest) | [`CancelRunResponse`](#cancelrunresponse) |  |
-| `StreamEvents` | [`StreamEventsRequest`](#streameventsrequest) | stream [`Event`](#event) | StreamEvents server-streams realtime events for a run. from_sequence allows resuming after a disconnect (0 = from start): the stream continues after that event, so a client that passes the last sequence it received sees nothing repeated and nothing skipped, from any replica. A stream that ends Unavailable is resumed that way; `orkctl run watch` and the UI's run page do it, a bounded number of times in a row. |
+| `StreamEvents` | [`StreamEventsRequest`](#streameventsrequest) | stream [`Event`](#event) | StreamEvents server-streams realtime events for a run. from_sequence allows resuming after a disconnect (0 = from start): the stream continues after that event, so a client that passes the last sequence it received sees nothing repeated and nothing skipped, from any replica. A stream that ends Unavailable is resumed that way; `orkctl run watch` and the UI's run page do it, a bounded number of times in a row. A stream that reaches a gap in the run's events ends DataLoss, after the events before it, naming the range and its cause: numbers the run never published (a run whose definition could not be used, its RUN_CREATED refused by object storage), read live or from the archive; or events lost from object storage before the run was archived, read from the archive, since a live read that meets lost events ends Unavailable. Resuming past a DataLoss gap's last number serves what follows it. |
 | `StreamTaskLogs` | [`StreamTaskLogsRequest`](#streamtasklogsrequest) | stream [`TaskLogChunk`](#tasklogchunk) | StreamTaskLogs server-streams one task attempt's output: every chunk already written, in order, then each new one as it lands.<br><br>Logs are a SEPARATE stream from Event on purpose. Task output is bytes, and bytes never enter a Temporal payload or the event stream (a run's history is replayed forever, and a chatty task would bloat it forever too). The Orker writes numbered chunks to the artifact store while the task runs; this RPC reads them back from there. EventType gains nothing: EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no task output in it.<br><br>Any replica answers for any run, on the same terms as StreamEvents: the chunks are in the shared store and the task's state comes from the shared cluster, so a replica that started nothing serves a run to completion. |
 | `ListRunArtifacts` | [`ListRunArtifactsRequest`](#listrunartifactsrequest) | [`ListRunArtifactsResponse`](#listrunartifactsresponse) |  |
 | `ReadArtifact` | [`ReadArtifactRequest`](#readartifactrequest) | stream [`ArtifactChunk`](#artifactchunk) |  |
@@ -592,6 +592,22 @@ runs: every TaskRun (and fan-out item) whose cache.outcome is set.
 |---|---|---|
 | `run` | [`Run`](#run) |  |
 
+### CapacityWait
+
+CapacityWait says why a SCHEDULED attempt has not started: every Orker of
+its pool is at its declared capacity. An Orker has room for another task
+only while its per-task cap (DescribeOrkerResult.max_request) still fits
+beside what stands reserved, because it reserves that cap before it asks
+for a task (docs/DEPLOY.md, "Declaring an Orker's capacity"). It is a
+reading of the inventory at most five seconds old, never a record.
+
+| Field | Type | Description |
+|---|---|---|
+| `pool` | `string` | pool is the pool the attempt waits on, as TaskRun.pool spells it. |
+| `orkers` | `int32` | orkers is how many Orkers of the pool were counted: each answered when asked, is not cordoned, and is full. A cordoned Orker takes nothing new and is not counted. |
+| `reserved` | [`ResourceQuantity`](#resourcequantity) | reserved sums what stands reserved on those Orkers (DescribeOrkerResult.reserved): each outstanding poll at the per-task cap, each task's request and each container not yet removed. |
+| `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity sums what those Orkers admit tasks within (DescribeOrkerResult.capacity). A dimension is 0 when any of them leaves it unbounded; a client then reports that dimension of neither capacity nor reserved. |
+
 ### CommitRef
 
 CommitRef points at a written ActivityCommit object.
@@ -806,7 +822,7 @@ is alive by answering DescribeOrker (§6.5).
 | `orker_id` | `string` |  |
 | `build_id` | `string` |  |
 | `pool` | `string` |  |
-| `runtime_name` | `string` | "docker" |
+| `runtime_name` | `string` | the engine the Orker drives: "docker" or "podman" |
 | `runtime_version` | `string` |  |
 | `security_profile` | `string` | the profile id the Orker enforces (§9.2) |
 | `max_concurrent` | `int32` | max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs at once, the size of its task worker's activity slots. |
@@ -1732,6 +1748,7 @@ answer is the TaskAttempt record the Orker writes.
 | `bytes_logged` | `int64` | bytes_logged is every byte the workload has written to stdout AND stderr, counted before the per-stream retention cap drops any — so it keeps growing after retention stops. Zero with heartbeat_available true means the workload has written nothing. |
 | `orker_id` | `string` | orker_id is the Orker that sent the heartbeat, as it names itself (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id carry. Empty when the beat came from an Orker built before the detail carried it. |
 | `item` | optional `int32` | item is set when the pending activity is one item of a fan-out (read off the scheduled ExecuteTaskInput.each.index). |
+| `capacity_wait` | [`CapacityWait`](#capacitywait) | capacity_wait is set when this attempt is waiting for capacity: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, and every Orker of its pool that takes new tasks declares a capacity, runs a task, and has no room for another task within it. Derived on read from the Orker inventory ListOrkers reports, in a reading at most five seconds old that one engine replica shares among every caller. Unset otherwise — including when the inventory could not be read in time, when any live Orker did not answer (it could serve this pool, with room), when one of the pool's Orkers declares no capacity, runs nothing (what it reserves is then its own polls, which take the next task), or has room but every task slot (max_concurrent) taken. The attempt is then waiting for an Orker, as it always was. |
 
 ### Namespace
 
@@ -2307,7 +2324,7 @@ RetryPolicy mirrors Temporal retry semantics for a task.
 | `maximum_attempts` | `int32` | 0 or 1 = no retries |
 | `initial_interval_seconds` | `int32` | default 1 |
 | `backoff_coefficient` | `double` | default 2.0 |
-| `maximum_interval_seconds` | `int32` | default 100 |
+| `maximum_interval_seconds` | `int32` | default 60, or initial_interval_seconds when longer |
 
 ### Run
 

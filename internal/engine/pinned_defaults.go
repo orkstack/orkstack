@@ -114,6 +114,13 @@ const (
 // changes this default moves only new runs.
 const DefaultPinCreationTimeout = 5 * time.Minute
 
+// DefaultRetryMaxInterval is the longest wait between two attempts of a task
+// whose retry: sets no maximum_interval_seconds: one minute, AGENTS.md §4's
+// suggested maximum interval. Every build before it hardcoded 100 seconds; a
+// run pins the number in its plan (RunPlan.RetryMaxIntervalSeconds), so a
+// release that changes this default moves only new runs.
+const DefaultRetryMaxInterval = time.Minute
+
 // DefaultItemInputFloorBytes is the per-item input floor a run pins with its
 // continuation budget (ContinuationBudget.ItemInputFloorBytes): a fan-out of
 // up to dsl.MaxEachItems items still gives each item 16 KiB of activity

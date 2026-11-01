@@ -51,12 +51,12 @@ func TestMerge_ATimedOutAttemptIsAResult(t *testing.T) {
 	}
 }
 
-func TestMerge_ACancelledAttemptBeforeAnyTestStartedIsNotRerunEligible(t *testing.T) {
+func TestMerge_ACancelledAttemptWhoseLogNamesNoRunningTestIsNotRerunEligible(t *testing.T) {
 	r, code, _ := rerunShard2(t, &githubJob{Conclusion: "cancelled", Log: "2026-10-21T10:00:00Z Pulling images\n"})
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
 	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "which GitHub did not record as a lost runner, whose runner-health did not measure below the floor and which did not fail in a fetch or install step before its proof step (it was cancelled before any test started): only a lost, degraded or setup-failed attempt may run again; this run cannot become merge-eligible: start a new run") {
+	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "which GitHub did not record as a lost runner, whose runner-health did not measure below the floor and which did not fail in a fetch or install step before its proof step (it was cancelled, and its job log names no test that was running): only a lost, degraded or setup-failed attempt may run again; this run cannot become merge-eligible: start a new run") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 }

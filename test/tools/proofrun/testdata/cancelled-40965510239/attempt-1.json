@@ -1,0 +1,3196 @@
+{
+  "attempt": 1,
+  "jobs": [
+    {
+      "name": "gate / base",
+      "conclusion": "success",
+      "id": 123769296622,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:24:35Z",
+      "completed_at": "2026-10-29T22:24:43Z",
+      "runner_name": "GitHub Actions 1000000724",
+      "check_run_id": 123769296622,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:36Z",
+          "completed_at": "2026-10-29T22:24:36Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:36Z",
+          "completed_at": "2026-10-29T22:24:41Z"
+        },
+        {
+          "name": "base",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:41Z",
+          "completed_at": "2026-10-29T22:24:41Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:41Z",
+          "completed_at": "2026-10-29T22:24:41Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:41Z",
+          "completed_at": "2026-10-29T22:24:41Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / race",
+      "conclusion": "failure",
+      "id": 123769369517,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:24:45Z",
+      "completed_at": "2026-10-29T22:30:27Z",
+      "runner_name": "GitHub Actions 1000000726",
+      "check_run_id": 123769369517,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:46Z",
+          "completed_at": "2026-10-29T22:24:47Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:47Z",
+          "completed_at": "2026-10-29T22:24:49Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:49Z",
+          "completed_at": "2026-10-29T22:24:58Z"
+        },
+        {
+          "name": "race",
+          "number": 4,
+          "conclusion": "failure",
+          "started_at": "2026-10-29T22:24:58Z",
+          "completed_at": "2026-10-29T22:30:20Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:30:20Z",
+          "completed_at": "2026-10-29T22:30:25Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 9,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:30:25Z",
+          "completed_at": "2026-10-29T22:30:25Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 10,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:30:25Z",
+          "completed_at": "2026-10-29T22:30:25Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 11,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:30:25Z",
+          "completed_at": "2026-10-29T22:30:25Z"
+        }
+      ],
+      "failed_step": "race"
+    },
+    {
+      "name": "gate / fast",
+      "conclusion": "failure",
+      "id": 123769369523,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:24:46Z",
+      "completed_at": "2026-10-29T22:40:02Z",
+      "runner_name": "GitHub Actions 1000000727",
+      "check_run_id": 123769369523,
+      "annotations": [
+        "Process completed with exit code 1."
+      ],
+      "log": "[proofrun job-log: 332 lines left out]\n2026-10-29T22:25:09.6430590Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:25:09.6430935Z   GOTOOLCHAIN: local\n2026-10-29T22:25:09.6431166Z ##[endgroup]\n2026-10-29T22:25:09.6548903Z bun install v1.4.3 (c6da4a4d3)\n2026-10-29T22:25:11.6130616Z \n2026-10-29T22:25:11.6131780Z + @axe-core/playwright@4.13.0\n2026-10-29T22:25:11.6152279Z + @bufbuild/buf@1.72.0\n2026-10-29T22:25:11.6152683Z + @bufbuild/protoc-gen-es@2.14.0\n2026-10-29T22:25:11.6153027Z + @playwright/test@1.62.1\n2026-10-29T22:25:11.6153581Z + @sveltejs/adapter-node@5.5.7\n2026-10-29T22:25:11.6153889Z + @sveltejs/kit@2.70.2\n2026-10-29T22:25:11.6154212Z + @sveltejs/vite-plugin-svelte@5.1.1\n2026-10-29T22:25:11.6154528Z + @tailwindcss/vite@4.3.3\n2026-10-29T22:25:11.6154792Z + svelte@5.56.9\n2026-10-29T22:25:11.6155041Z + svelte-check@4.7.6\n2026-10-29T22:25:11.6155293Z + tailwindcss@4.3.3\n2026-10-29T22:25:11.6155555Z + typescript@5.9.3\n2026-10-29T22:25:11.6155783Z + vite@6.4.3\n2026-10-29T22:25:11.6156045Z + @bufbuild/protobuf@2.14.0\n2026-10-29T22:25:11.6156369Z + @codemirror/autocomplete@6.20.4\n2026-10-29T22:25:11.6156696Z + @codemirror/commands@6.11.1\n2026-10-29T22:25:11.6156993Z + @codemirror/lang-yaml@6.1.3\n2026-10-29T22:25:11.6157301Z + @codemirror/language@6.13.1\n2026-10-29T22:25:11.6157578Z + @codemirror/lint@6.9.7\n2026-10-29T22:25:11.6157991Z + @codemirror/state@6.7.6\n2026-10-29T22:25:11.6158285Z + @codemirror/view@6.43.15\n2026-10-29T22:25:11.6158562Z + @connectrpc/connect@2.1.2\n2026-10-29T22:25:11.6158890Z + @connectrpc/connect-web@2.1.2\n2026-10-29T22:25:11.6159249Z + @fontsource-variable/archivo-narrow@5.3.0\n2026-10-29T22:25:11.6159657Z + @fontsource-variable/spline-sans-mono@5.3.0\n2026-10-29T22:25:11.6159995Z + @lezer/common@1.5.4\n2026-10-29T22:25:11.6160268Z + @lezer/highlight@1.2.5\n2026-10-29T22:25:11.6160529Z + @lezer/yaml@1.0.4\n2026-10-29T22:25:11.6160778Z + ajv@8.20.0\n2026-10-29T22:25:11.6161421Z + ajv-formats@3.0.1\n2026-10-29T22:25:11.6161670Z + yaml@2.9.1\n2026-10-29T22:25:11.6161798Z \n2026-10-29T22:25:11.6161970Z 128 packages installed [1.96s]\n2026-10-29T22:25:11.6226898Z ##[group]Run bun install --frozen-lockfile\n2026-10-29T22:25:11.6227276Z bun install --frozen-lockfile\n2026-10-29T22:25:11.6249956Z shell: /usr/bin/bash -e {0}\n2026-10-29T22:25:11.6250223Z env:\n2026-10-29T22:25:11.6250437Z   TIER: release\n2026-10-29T22:25:11.6250656Z   INT_SHARDS: 14\n2026-10-29T22:25:11.6250885Z   UI_SHARDS: 5\n2026-10-29T22:25:11.6251096Z   FUZZ_BUDGET: 105m\n2026-10-29T22:25:11.6251570Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:25:11.6251851Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:25:11.6252122Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:25:11.6252401Z   GOTOOLCHAIN: local\n2026-10-29T22:25:11.6252641Z ##[endgroup]\n2026-10-29T22:25:11.6328458Z bun install v1.4.3 (c6da4a4d3)\n2026-10-29T22:25:12.6480651Z \n2026-10-29T22:25:12.6481700Z + @astrojs/check@0.9.12\n2026-10-29T22:25:12.6482087Z + @playwright/test@1.62.1\n2026-10-29T22:25:12.6482392Z + typescript@6.0.3\n2026-10-29T22:25:12.6482674Z + @astrojs/starlight@0.42.7\n2026-10-29T22:25:12.6483170Z + @fontsource-variable/archivo-narrow@5.3.0\n2026-10-29T22:25:12.6483591Z + @fontsource-variable/spline-sans-mono@5.3.0\n2026-10-29T22:25:12.6483926Z + astro@7.4.2\n2026-10-29T22:25:12.6484190Z + github-slugger@2.0.0\n2026-10-29T22:25:12.6484439Z + sharp@0.35.5\n2026-10-29T22:25:12.6484725Z + starlight-links-validator@0.27.0\n2026-10-29T22:25:12.6485010Z + yaml@2.9.1\n2026-10-29T22:25:12.6485139Z \n2026-10-29T22:25:12.6485305Z 371 packages installed [1014.00ms]\n2026-10-29T22:25:12.6564779Z ##[group]Run scripts/proof.sh --part fast --tier \"$TIER\" --proof-id \"$PROOF_ID\" \\\n2026-10-29T22:25:12.6565431Z scripts/proof.sh --part fast --tier \"$TIER\" --proof-id \"$PROOF_ID\" \\\n2026-10-29T22:25:12.6565924Z   --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n2026-10-29T22:25:12.6566383Z   --base-commit \"906036278462df6a0dc4b742c95de6a328ef9d84\" \"$PROOF_NAME\"\n2026-10-29T22:25:12.6591848Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:25:12.6592208Z env:\n2026-10-29T22:25:12.6592423Z   TIER: release\n2026-10-29T22:25:12.6592646Z   INT_SHARDS: 14\n2026-10-29T22:25:12.6592859Z   UI_SHARDS: 5\n2026-10-29T22:25:12.6593075Z   FUZZ_BUDGET: 105m\n2026-10-29T22:25:12.6593513Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:25:12.6593797Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:25:12.6594074Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:25:12.6594361Z   GOTOOLCHAIN: local\n2026-10-29T22:25:12.6594599Z   PROOF_JOBS: 3\n2026-10-29T22:25:12.6594877Z ##[endgroup]\n2026-10-29T22:25:44.9429798Z proof: part fast attempt 1 of release -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1 (id pr-ci-40965510239, tree 6bca80a560f574acfc83d519147468d30e4942c7)\n2026-10-29T22:25:44.9456629Z == runner-health: class github-hosted/ubuntu24/4cpu against scripts/proof-runner-floors.tsv\n2026-10-29T22:25:57.0117037Z    runner-health: class github-hosted/ubuntu24/4cpu, 4 CPUs, 15983 MB, measured 12.0s in /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1\n2026-10-29T22:25:57.0118225Z    runner-health: disk_write_mb_s 373.8 MB/s (floor 20)\n2026-10-29T22:25:57.0119195Z    runner-health: disk_write_mb_s readings 373.8 MB/s at +0s (judged), 517.8 at +6.815s\n2026-10-29T22:25:57.0120080Z    runner-health: disk_read_mb_s 258.8 MB/s (floor 75)\n2026-10-29T22:25:57.0121126Z    runner-health: disk_read_mb_s readings 258.8 MB/s at +2.613s (judged), 415.2 at +7.861s, 545.1 at +10.921s\n2026-10-29T22:25:57.0122213Z    runner-health: fsync_p95_ms 0.24 ms (floor 30)\n2026-10-29T22:25:57.0123086Z    runner-health: fsync_p95_ms readings 0.24 ms at +4.663s (judged), 0.23 at +11.913s\n2026-10-29T22:25:57.0123937Z    runner-health: cpu_single_mb_s 1405 MB/s (floor 450)\n2026-10-29T22:25:57.0124630Z    runner-health: cpu_all_mb_s 5400.8 MB/s (floor 1200)\n2026-10-29T22:25:57.0125347Z    runner-health: mem_available_mib 14804 MiB (floor 4096)\n2026-10-29T22:25:57.0125979Z    runner-health: verdict above-floor\n2026-10-29T22:25:57.0126452Z == lint: make lint\n2026-10-29T22:27:58.1144232Z    lint: pass (121s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1/lint.log\n2026-10-29T22:27:58.1145412Z == build: go build ./...\n2026-10-29T22:28:09.5845746Z    build: pass (11s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1/build.log\n2026-10-29T22:28:09.5875488Z == unit: env ORK_PROOF_DIR=/home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1/artifacts /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1/bin/proofrun unit -out /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1 -quarantine scripts/proof-quarantine.txt -quarantine-base /home/runner/work/orkstack/orkstac…\n2026-10-29T22:39:09.7553958Z    unit: FAIL exit 1 (660s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1/unit.log\n2026-10-29T22:39:09.7572022Z       === RUN   FuzzDecodeDefinitionObject/seed#1\n2026-10-29T22:39:09.7572915Z       --- PASS: FuzzDecodeDefinitionObject/seed#1 (0.00s)\n2026-10-29T22:39:09.7573662Z       === RUN   FuzzDecodeDefinitionObject/seed#2\n2026-10-29T22:39:09.7574402Z       --- PASS: FuzzDecodeDefinitionObject/seed#2 (0.00s)\n2026-10-29T22:39:09.7575186Z       === RUN   FuzzDecodeDefinitionObject/seed#3\n2026-10-29T22:39:09.7576006Z       --- PASS: FuzzDecodeDefinitionObject/seed#3 (0.00s)\n2026-10-29T22:39:09.7577006Z       === RUN   FuzzDecodeDefinitionObject/seed#4\n2026-10-29T22:39:09.7577910Z       --- PASS: FuzzDecodeDefinitionObject/seed#4 (0.00s)\n2026-10-29T22:39:09.7578426Z       --- PASS: FuzzDecodeDefinitionObject (0.00s)\n2026-10-29T22:39:09.7578852Z       === RUN   FuzzApplyInputDefaults\n2026-10-29T22:39:09.7579273Z       === RUN   FuzzApplyInputDefaults/seed#0\n2026-10-29T22:39:09.7579738Z       --- PASS: FuzzApplyInputDefaults/seed#0 (0.00s)\n2026-10-29T22:39:09.7580177Z       === RUN   FuzzApplyInputDefaults/seed#1\n2026-10-29T22:39:09.7580606Z       --- PASS: FuzzApplyInputDefaults/seed#1 (0.00s)\n2026-10-29T22:39:09.7581023Z       === RUN   FuzzApplyInputDefaults/seed#2\n2026-10-29T22:39:09.7581702Z       --- PASS: FuzzApplyInputDefaults/seed#2 (0.00s)\n2026-10-29T22:39:09.7582143Z       === RUN   FuzzApplyInputDefaults/seed#3\n2026-10-29T22:39:09.7582753Z       --- PASS: FuzzApplyInputDefaults/seed#3 (0.00s)\n2026-10-29T22:39:09.7583164Z       === RUN   FuzzApplyInputDefaults/seed#4\n2026-10-29T22:39:09.7583604Z       --- PASS: FuzzApplyInputDefaults/seed#4 (0.00s)\n2026-10-29T22:39:09.7584031Z       === RUN   FuzzApplyInputDefaults/seed#5\n2026-10-29T22:39:09.7584467Z       --- PASS: FuzzApplyInputDefaults/seed#5 (0.00s)\n2026-10-29T22:39:09.7584872Z       === RUN   FuzzApplyInputDefaults/seed#6\n2026-10-29T22:39:09.7585297Z       --- PASS: FuzzApplyInputDefaults/seed#6 (0.00s)\n2026-10-29T22:39:09.7585698Z       === RUN   FuzzApplyInputDefaults/seed#7\n2026-10-29T22:39:09.7586125Z       --- PASS: FuzzApplyInputDefaults/seed#7 (0.00s)\n2026-10-29T22:39:09.7586524Z       === RUN   FuzzApplyInputDefaults/seed#8\n2026-10-29T22:39:09.7586943Z       --- PASS: FuzzApplyInputDefaults/seed#8 (0.00s)\n2026-10-29T22:39:09.7587344Z       === RUN   FuzzApplyInputDefaults/seed#9\n2026-10-29T22:39:09.7587768Z       --- PASS: FuzzApplyInputDefaults/seed#9 (0.00s)\n2026-10-29T22:39:09.7588188Z       === RUN   FuzzApplyInputDefaults/seed#10\n2026-10-29T22:39:09.7588637Z       --- PASS: FuzzApplyInputDefaults/seed#10 (0.00s)\n2026-10-29T22:39:09.7589181Z       === RUN   FuzzApplyInputDefaults/seed#11\n2026-10-29T22:39:09.7589942Z       --- PASS: FuzzApplyInputDefaults/seed#11 (0.00s)\n2026-10-29T22:39:09.7590647Z       --- PASS: FuzzApplyInputDefaults (0.00s)\n2026-10-29T22:39:09.7591152Z       PASS\n2026-10-29T22:39:09.7591992Z       ok  \tgithub.com/orkstack/orkstack/internal/engine\t576.615s\n2026-10-29T22:39:09.7593627Z       unit ledger: 4451 expected, 4449 pass, 1 fail, 1 allowed skip, 0 skip, 0 without outcome, 0 subtest skips\n2026-10-29T22:39:09.7594895Z         - github.com/orkstack/orkstack/internal/orker.TestScannedArtifact_OpenNeverFollowsWhatTookTheNameAfterTheScan failed (job unit)\n2026-10-29T22:39:09.7595629Z         - go test exited: exit status 1\n2026-10-29T22:39:09.7596031Z == vet-integration: go vet -tags=integration ./...\n2026-10-29T22:39:24.4499575Z    vet-integration: pass (15s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1/vet-integration.log\n2026-10-29T22:39:49.1555476Z part fast attempt 1 -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1/part.json\n2026-10-29T22:39:49.1593564Z proof: part fast -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-fast-a1/part.json (gates: 7)\n2026-10-29T22:39:49.1620394Z ##[error]Process completed with exit code 1.\n2026-10-29T22:39:49.1710024Z ##[group]Run actions/upload-artifact@v7.0.2\n2026-10-29T22:39:49.1710346Z with:\n2026-10-29T22:39:49.1710567Z   name: part-fast-a1\n2026-10-29T22:39:49.1711010Z   path: proof/pr-ci-40965510239-part-fast-a1/\n!proof/pr-ci-40965510239-part-fast-a1/bin/**\n\n2026-10-29T22:39:49.1711635Z   retention-days: 7\n2026-10-29T22:39:49.1711881Z   if-no-files-found: warn\n2026-10-29T22:39:49.1712136Z   compression-level: 6\n2026-10-29T22:39:49.1712368Z   overwrite: false\n2026-10-29T22:39:49.1712611Z   include-hidden-files: false\n2026-10-29T22:39:49.1712882Z   archive: true\n2026-10-29T22:39:49.1713092Z env:\n2026-10-29T22:39:49.1713296Z   TIER: release\n2026-10-29T22:39:49.1713497Z   INT_SHARDS: 14\n2026-10-29T22:39:49.1713709Z   UI_SHARDS: 5\n2026-10-29T22:39:49.1713918Z   FUZZ_BUDGET: 105m\n2026-10-29T22:39:49.1714148Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:39:49.1714405Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:39:49.1714675Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:39:49.1714990Z   GOTOOLCHAIN: local\n2026-10-29T22:39:49.1715216Z ##[endgroup]\n2026-10-29T22:39:49.3265255Z With the provided path, there will be 26 files uploaded\n2026-10-29T22:39:49.3270458Z Artifact name is valid!\n2026-10-29T22:39:49.3271439Z Root directory input is valid!\n2026-10-29T22:39:49.7202048Z Uploading artifact: part-fast-a1.zip\n2026-10-29T22:39:49.7240871Z Beginning upload of artifact content to blob storage\n2026-10-29T22:39:52.8453642Z Uploaded bytes 8388608\n2026-10-29T22:39:54.4263683Z Uploaded bytes 16777216\n2026-10-29T22:39:56.1591776Z Uploaded bytes 25165824\n2026-10-29T22:39:57.1956135Z Uploaded bytes 33554432\n2026-10-29T22:39:58.6160190Z Uploaded bytes 41885891\n2026-10-29T22:39:58.6917050Z Finished uploading artifact content to blob storage!\n2026-10-29T22:39:58.6920400Z SHA256 digest of uploaded artifact is b4a6edeb9b723df9b8d74a4c3d36383528cab814f721bfe07d1e3d22ea3eedc1\n2026-10-29T22:39:58.6922192Z Finalizing artifact upload\n2026-10-29T22:39:59.3254258Z Artifact part-fast-a1 successfully finalized. Artifact ID 12938433562\n2026-10-29T22:39:59.3255242Z Artifact part-fast-a1 has been successfully uploaded! Final size is 41885891 bytes. Artifact ID is 12938433562\n2026-10-29T22:39:59.3259500Z Artifact download URL: https://github.com/orkstack/orkstack/actions/runs/40965510239/artifacts/12938433562\n2026-10-29T22:39:59.3527688Z Post job cleanup.\n2026-10-29T22:39:59.4419610Z [command]/usr/bin/git version\n2026-10-29T22:39:59.4467966Z git version 2.56.0\n2026-10-29T22:39:59.4505400Z Temporarily overriding HOME='/home/runner/work/_temp/29b384e0-3029-4674-b8a0-90cce47a9ae0' before making global git config changes\n2026-10-29T22:39:59.4506944Z Adding repository directory to the temporary git global config as a safe directory\n2026-10-29T22:39:59.4513017Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orkstack/orkstack\n2026-10-29T22:39:59.4554270Z Removing SSH command configuration\n2026-10-29T22:39:59.4560784Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-10-29T22:39:59.4606154Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-10-29T22:39:59.4898939Z Removing HTTP extra header\n2026-10-29T22:39:59.4905920Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-10-29T22:39:59.4954581Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-10-29T22:39:59.5234723Z Removing includeIf entries pointing to credentials config files\n2026-10-29T22:39:59.5240317Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-10-29T22:39:59.5311732Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-10-29T22:39:59.5759388Z Cleaning up orphan processes\n",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:47Z",
+          "completed_at": "2026-10-29T22:24:48Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:48Z",
+          "completed_at": "2026-10-29T22:24:51Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:51Z",
+          "completed_at": "2026-10-29T22:25:02Z"
+        },
+        {
+          "name": "Run oven-sh/setup-bun@v2.2.0",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:25:02Z",
+          "completed_at": "2026-10-29T22:25:04Z"
+        },
+        {
+          "name": "Run actions/setup-node@v7.1.0",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:25:04Z",
+          "completed_at": "2026-10-29T22:25:09Z"
+        },
+        {
+          "name": "bun install",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:25:09Z",
+          "completed_at": "2026-10-29T22:25:11Z"
+        },
+        {
+          "name": "bun install (site)",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:25:11Z",
+          "completed_at": "2026-10-29T22:25:12Z"
+        },
+        {
+          "name": "fast",
+          "number": 8,
+          "conclusion": "failure",
+          "started_at": "2026-10-29T22:25:12Z",
+          "completed_at": "2026-10-29T22:39:49Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 9,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:49Z",
+          "completed_at": "2026-10-29T22:39:59Z"
+        },
+        {
+          "name": "Post Run actions/setup-node@v7.1.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:39:59Z",
+          "completed_at": "2026-10-29T22:39:59Z"
+        },
+        {
+          "name": "Post Run oven-sh/setup-bun@v2.2.0",
+          "number": 16,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:39:59Z",
+          "completed_at": "2026-10-29T22:39:59Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 17,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:39:59Z",
+          "completed_at": "2026-10-29T22:39:59Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 18,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:59Z",
+          "completed_at": "2026-10-29T22:39:59Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 19,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:59Z",
+          "completed_at": "2026-10-29T22:39:59Z"
+        }
+      ],
+      "failed_step": "fast"
+    },
+    {
+      "name": "gate / plan",
+      "conclusion": "success",
+      "id": 123769369537,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:24:46Z",
+      "completed_at": "2026-10-29T22:28:41Z",
+      "runner_name": "GitHub Actions 1000000725",
+      "check_run_id": 123769369537,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:47Z",
+          "completed_at": "2026-10-29T22:24:48Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:48Z",
+          "completed_at": "2026-10-29T22:24:53Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:24:53Z",
+          "completed_at": "2026-10-29T22:25:04Z"
+        },
+        {
+          "name": "Run oven-sh/setup-bun@v2.2.0",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:25:04Z",
+          "completed_at": "2026-10-29T22:25:11Z"
+        },
+        {
+          "name": "bun install",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:25:11Z",
+          "completed_at": "2026-10-29T22:25:12Z"
+        },
+        {
+          "name": "plan",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:25:12Z",
+          "completed_at": "2026-10-29T22:28:21Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:28:21Z",
+          "completed_at": "2026-10-29T22:28:37Z"
+        },
+        {
+          "name": "Post Run oven-sh/setup-bun@v2.2.0",
+          "number": 12,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:28:37Z",
+          "completed_at": "2026-10-29T22:28:37Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 13,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:28:37Z",
+          "completed_at": "2026-10-29T22:28:37Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:28:37Z",
+          "completed_at": "2026-10-29T22:28:37Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:28:37Z",
+          "completed_at": "2026-10-29T22:28:37Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / race-repeat",
+      "conclusion": "skipped",
+      "id": 123769371138,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:24:44Z",
+      "completed_at": "2026-10-29T22:24:43Z",
+      "runner_name": "",
+      "check_run_id": 123769371138,
+      "annotations": [],
+      "log": "",
+      "steps": [],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / fuzz",
+      "conclusion": "skipped",
+      "id": 123769371694,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:24:44Z",
+      "completed_at": "2026-10-29T22:24:43Z",
+      "runner_name": "",
+      "check_run_id": 123769371694,
+      "annotations": [],
+      "log": "",
+      "steps": [],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / build",
+      "conclusion": "success",
+      "id": 123771082491,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:38:06Z",
+      "completed_at": "2026-10-29T22:39:31Z",
+      "runner_name": "GitHub Actions 1000000754",
+      "check_run_id": 123771082491,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:38:06Z",
+          "completed_at": "2026-10-29T22:38:08Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:38:08Z",
+          "completed_at": "2026-10-29T22:38:10Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:38:10Z",
+          "completed_at": "2026-10-29T22:38:20Z"
+        },
+        {
+          "name": "Run docker/setup-buildx-action@v4.4.1",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:38:20Z",
+          "completed_at": "2026-10-29T22:38:27Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:38:27Z",
+          "completed_at": "2026-10-29T22:38:33Z"
+        },
+        {
+          "name": "build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:38:33Z",
+          "completed_at": "2026-10-29T22:39:24Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:24Z",
+          "completed_at": "2026-10-29T22:39:27Z"
+        },
+        {
+          "name": "Post Run docker/setup-buildx-action@v4.4.1",
+          "number": 12,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:27Z",
+          "completed_at": "2026-10-29T22:39:28Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 13,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:28Z",
+          "completed_at": "2026-10-29T22:39:28Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:28Z",
+          "completed_at": "2026-10-29T22:39:28Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:28Z",
+          "completed_at": "2026-10-29T22:39:28Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / observability",
+      "conclusion": "success",
+      "id": 123775696636,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:33Z",
+      "completed_at": "2026-10-29T22:43:19Z",
+      "runner_name": "GitHub Actions 1000000756",
+      "check_run_id": 123775696636,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:36Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:36Z",
+          "completed_at": "2026-10-29T22:39:40Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:40Z",
+          "completed_at": "2026-10-29T22:39:54Z"
+        },
+        {
+          "name": "observability stack",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:54Z",
+          "completed_at": "2026-10-29T22:41:02Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:02Z",
+          "completed_at": "2026-10-29T22:41:17Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:17Z",
+          "completed_at": "2026-10-29T22:41:23Z"
+        },
+        {
+          "name": "observability",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:23Z",
+          "completed_at": "2026-10-29T22:43:13Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:13Z",
+          "completed_at": "2026-10-29T22:43:15Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:15Z",
+          "completed_at": "2026-10-29T22:43:15Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:15Z",
+          "completed_at": "2026-10-29T22:43:15Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:15Z",
+          "completed_at": "2026-10-29T22:43:15Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / activity-fixture (template)",
+      "conclusion": "success",
+      "id": 123775696681,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:33Z",
+      "completed_at": "2026-10-29T22:43:09Z",
+      "runner_name": "GitHub Actions 1000000755",
+      "check_run_id": 123775696681,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:34Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:37Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:37Z",
+          "completed_at": "2026-10-29T22:39:47Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:47Z",
+          "completed_at": "2026-10-29T22:41:58Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:58Z",
+          "completed_at": "2026-10-29T22:42:03Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:03Z",
+          "completed_at": "2026-10-29T22:42:05Z"
+        },
+        {
+          "name": "activity fixture",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:05Z",
+          "completed_at": "2026-10-29T22:43:05Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:05Z",
+          "completed_at": "2026-10-29T22:43:06Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:06Z",
+          "completed_at": "2026-10-29T22:43:06Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:06Z",
+          "completed_at": "2026-10-29T22:43:06Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:06Z",
+          "completed_at": "2026-10-29T22:43:07Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:07Z",
+          "completed_at": "2026-10-29T22:43:07Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / ui-e2e (1)",
+      "conclusion": "cancelled",
+      "id": 123775696696,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:33Z",
+      "completed_at": "2026-10-29T22:54:22Z",
+      "runner_name": "GitHub Actions 1000000759",
+      "check_run_id": 123775696696,
+      "annotations": [
+        "The run was canceled by @ork-stack.",
+        "The operation was canceled."
+      ],
+      "log": "[proofrun job-log: 1096 lines left out]\n2026-10-29T22:40:45.7285834Z 782c0a3f363f: Pull complete\n2026-10-29T22:40:45.7320623Z Digest: sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e\n2026-10-29T22:40:45.7326419Z Status: Downloaded newer image for mcr.microsoft.com/playwright@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e\n2026-10-29T22:40:45.7333549Z mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e\n2026-10-29T22:40:45.7394258Z fetch image mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e: attempt 1 ok in 27s (limit 180s)\n2026-10-29T22:40:45.7404816Z ##[end-action id=__self_4.__run;outcome=success;conclusion=success;duration_ms=26819]\n2026-10-29T22:40:45.7434540Z ##[group]Run set -euo pipefail\n2026-10-29T22:40:45.7435103Z set -euo pipefail\n2026-10-29T22:40:45.7435390Z needed=false\n2026-10-29T22:40:45.7436113Z if jq -e --argjson k \"$SHARD\" '[.shards[] | select(.index == $k) | .files[] | select(test(\"(network-change|run-page-ceiling|run-page-reduced-ceiling)\\\\.spec\\\\.ts$\"))] | length > 0' \\\n2026-10-29T22:40:45.7436972Z   \"$RUNNER_TEMP/ci/plan/ui-plan.json\" >/dev/null; then\n2026-10-29T22:40:45.7437336Z   needed=true\n2026-10-29T22:40:45.7437568Z fi\n2026-10-29T22:40:45.7437841Z echo \"needed=$needed\" | tee -a \"$GITHUB_OUTPUT\"\n2026-10-29T22:40:45.7458154Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:40:45.7458519Z env:\n2026-10-29T22:40:45.7458728Z   TIER: release\n2026-10-29T22:40:45.7458943Z   INT_SHARDS: 14\n2026-10-29T22:40:45.7459155Z   UI_SHARDS: 5\n2026-10-29T22:40:45.7459367Z   FUZZ_BUDGET: 105m\n2026-10-29T22:40:45.7459637Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:40:45.7459923Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:40:45.7460197Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:40:45.7460486Z   GOTOOLCHAIN: local\n2026-10-29T22:40:45.7460704Z   SHARD: 1\n2026-10-29T22:40:45.7460907Z ##[endgroup]\n2026-10-29T22:40:45.7860278Z needed=true\n2026-10-29T22:40:45.7912910Z ##[group]Run set -uo pipefail\n2026-10-29T22:40:45.7913523Z set -uo pipefail\n2026-10-29T22:40:45.7914996Z probe() { node -e \"require('playwright-core').chromium.launch({ headless: true }).then(b => b.close())\"; }\n2026-10-29T22:40:45.7916079Z attempt() { # <what> <command...>\n2026-10-29T22:40:45.7916625Z   local what=\"$1\" limit\n2026-10-29T22:40:45.7917095Z   shift\n2026-10-29T22:40:45.7917498Z   for limit in 180 360; do\n2026-10-29T22:40:45.7918090Z     if timeout -k 10 \"$limit\" \"$@\"; then return 0; fi\n2026-10-29T22:40:45.7918867Z     echo \"$what: the attempt under ${limit}s did not finish\"\n2026-10-29T22:40:45.7919510Z   done\n2026-10-29T22:40:45.7920225Z   return 1\n2026-10-29T22:40:45.7920612Z }\n2026-10-29T22:40:45.7921289Z attempt \"playwright install chromium\" npx playwright install chromium || true\n2026-10-29T22:40:45.7922108Z if probe; then\n2026-10-29T22:40:45.7922903Z   echo \"host chromium launches; its system libraries were already on the image\"\n2026-10-29T22:40:45.7923725Z   exit 0\n2026-10-29T22:40:45.7924473Z fi\n2026-10-29T22:40:45.7925116Z echo \"host chromium does not launch; falling back to --with-deps\"\n2026-10-29T22:40:45.7926352Z attempt \"playwright install --with-deps chromium\" npx playwright install --with-deps chromium || true\n2026-10-29T22:40:45.7927349Z probe\n2026-10-29T22:40:45.7957524Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:40:45.7958258Z env:\n2026-10-29T22:40:45.7958629Z   TIER: release\n2026-10-29T22:40:45.7959037Z   INT_SHARDS: 14\n2026-10-29T22:40:45.7959434Z   UI_SHARDS: 5\n2026-10-29T22:40:45.7959809Z   FUZZ_BUDGET: 105m\n2026-10-29T22:40:45.7960227Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:40:45.7960722Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:40:45.7961216Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:40:45.7961731Z   GOTOOLCHAIN: local\n2026-10-29T22:40:45.7962125Z ##[endgroup]\n2026-10-29T22:40:47.0653943Z Downloading Chrome for Testing 151.0.7922.34 (playwright chromium v1234) from https://cdn.playwright.dev/builds/cft/151.0.7922.34/linux64/chrome-linux64.zip\n2026-10-29T22:40:48.1125775Z |                                                                                |   0% of 184.3 MiB\n2026-10-29T22:40:48.2651587Z |■■■■■■■■                                                                        |  10% of 184.3 MiB\n2026-10-29T22:40:48.3580168Z |■■■■■■■■■■■■■■■■                                                                |  20% of 184.3 MiB\n2026-10-29T22:40:48.4286667Z |■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  30% of 184.3 MiB\n2026-10-29T22:40:48.4918137Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  40% of 184.3 MiB\n2026-10-29T22:40:48.5558545Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 184.3 MiB\n2026-10-29T22:40:48.6242533Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 184.3 MiB\n2026-10-29T22:40:48.7021472Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 184.3 MiB\n2026-10-29T22:40:48.7679800Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 184.3 MiB\n2026-10-29T22:40:48.8286350Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 184.3 MiB\n2026-10-29T22:40:48.8861134Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 184.3 MiB\n2026-10-29T22:40:51.8242243Z Chrome for Testing 151.0.7922.34 (playwright chromium v1234) downloaded to /home/runner/.cache/ms-playwright/chromium-1234\n2026-10-29T22:40:51.8246284Z Downloading FFmpeg (playwright ffmpeg v1011) from https://cdn.playwright.dev/dbazure/download/playwright/builds/ffmpeg/1011/ffmpeg-linux.zip\n2026-10-29T22:40:52.7985581Z |                                                                                |   0% of 2.3 MiB\n2026-10-29T22:40:52.8042999Z |■■■■■■■■                                                                        |  10% of 2.3 MiB\n2026-10-29T22:40:52.8072474Z |■■■■■■■■■■■■■■■■                                                                |  20% of 2.3 MiB\n2026-10-29T22:40:52.8089841Z |■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  30% of 2.3 MiB\n2026-10-29T22:40:52.8105963Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  40% of 2.3 MiB\n2026-10-29T22:40:52.8115918Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 2.3 MiB\n2026-10-29T22:40:52.8129955Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 2.3 MiB\n2026-10-29T22:40:52.8143107Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 2.3 MiB\n2026-10-29T22:40:52.8159887Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 2.3 MiB\n2026-10-29T22:40:52.8170005Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 2.3 MiB\n2026-10-29T22:40:52.8182069Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 2.3 MiB\n2026-10-29T22:40:52.8891698Z FFmpeg (playwright ffmpeg v1011) downloaded to /home/runner/.cache/ms-playwright/ffmpeg-1011\n2026-10-29T22:40:52.8896037Z Downloading Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell v1234) from https://cdn.playwright.dev/builds/cft/151.0.7922.34/linux64/chrome-headless-shell-linux64.zip\n2026-10-29T22:40:53.8847670Z |                                                                                |   0% of 114.7 MiB\n2026-10-29T22:40:54.0270498Z |■■■■■■■■                                                                        |  10% of 114.7 MiB\n2026-10-29T22:40:54.1043724Z |■■■■■■■■■■■■■■■■                                                                |  20% of 114.7 MiB\n2026-10-29T22:40:54.1711289Z |■■■■■■■■■■■■■■■■■■■■■■■■                                                        |  30% of 114.7 MiB\n2026-10-29T22:40:54.2150035Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                                |  40% of 114.7 MiB\n2026-10-29T22:40:54.2602804Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                        |  50% of 114.7 MiB\n2026-10-29T22:40:54.3099425Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                                |  60% of 114.7 MiB\n2026-10-29T22:40:54.3575765Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                        |  70% of 114.7 MiB\n2026-10-29T22:40:54.4076032Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■                |  80% of 114.7 MiB\n2026-10-29T22:40:54.4561813Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■        |  90% of 114.7 MiB\n2026-10-29T22:40:54.5035732Z |■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■■| 100% of 114.7 MiB\n2026-10-29T22:40:56.5607781Z Chrome Headless Shell 151.0.7922.34 (playwright chromium-headless-shell v1234) downloaded to /home/runner/.cache/ms-playwright/chromium_headless_shell-1234\n2026-10-29T22:40:57.2170252Z host chromium launches; its system libraries were already on the image\n2026-10-29T22:40:57.2207464Z ##[group]Run scripts/proof.sh --part \"ui-e2e:1\" --tier \"$TIER\" --proof-id \"$PROOF_ID\" \\\n2026-10-29T22:40:57.2208151Z scripts/proof.sh --part \"ui-e2e:1\" --tier \"$TIER\" --proof-id \"$PROOF_ID\" \\\n2026-10-29T22:40:57.2208628Z   --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n2026-10-29T22:40:57.2209015Z   --plan \"$RUNNER_TEMP/ci/plan/integration-plan.json\" \\\n2026-10-29T22:40:57.2209472Z   --ui-plan \"$RUNNER_TEMP/ci/plan/ui-plan.json\" \\\n2026-10-29T22:40:57.2210030Z   --layouts \"$RUNNER_TEMP/ci/build/layouts\" \\\n2026-10-29T22:40:57.2210400Z   --setup-log \"$RUNNER_TEMP/ci/setup.log\" \\\n2026-10-29T22:40:57.2210951Z   --base-commit \"906036278462df6a0dc4b742c95de6a328ef9d84\" \"$PROOF_NAME\"\n2026-10-29T22:40:57.2231600Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:40:57.2231965Z env:\n2026-10-29T22:40:57.2232170Z   TIER: release\n2026-10-29T22:40:57.2232386Z   INT_SHARDS: 14\n2026-10-29T22:40:57.2232632Z   UI_SHARDS: 5\n2026-10-29T22:40:57.2232844Z   FUZZ_BUDGET: 105m\n2026-10-29T22:40:57.2233081Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:40:57.2233353Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:40:57.2233634Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:40:57.2233918Z   GOTOOLCHAIN: local\n2026-10-29T22:40:57.2234478Z   PROOF_JOBS: 3\n2026-10-29T22:40:57.2234704Z ##[endgroup]\n2026-10-29T22:41:32.1380776Z proof: part ui-e2e:1 attempt 1 of release -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-ui-e2e-1-a1 (id pr-ci-40965510239, tree 6bca80a560f574acfc83d519147468d30e4942c7)\n2026-10-29T22:41:32.1409867Z == runner-health: class github-hosted/ubuntu24/4cpu against scripts/proof-runner-floors.tsv\n2026-10-29T22:41:44.1725615Z    runner-health: class github-hosted/ubuntu24/4cpu, 4 CPUs, 15983 MB, measured 12.0s in /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-ui-e2e-1-a1\n2026-10-29T22:41:44.1727099Z    runner-health: disk_write_mb_s 457.4 MB/s (floor 20)\n2026-10-29T22:41:44.1728109Z    runner-health: disk_write_mb_s readings 457.4 MB/s at +0s (judged), 509.2 at +6.716s\n2026-10-29T22:41:44.1729141Z    runner-health: disk_read_mb_s 415.5 MB/s (floor 75)\n2026-10-29T22:41:44.1730319Z    runner-health: disk_read_mb_s readings 415.5 MB/s at +2.53s (judged), 419.4 at +7.779s, 543.5 at +10.828s\n2026-10-29T22:41:44.1730890Z    runner-health: fsync_p95_ms 0.47 ms (floor 30)\n2026-10-29T22:41:44.1731424Z    runner-health: fsync_p95_ms readings 0.47 ms at +4.567s (judged), 0.43 at +11.822s\n2026-10-29T22:41:44.1731947Z    runner-health: cpu_single_mb_s 1579.6 MB/s (floor 450)\n2026-10-29T22:41:44.1732364Z    runner-health: cpu_all_mb_s 5902 MB/s (floor 1200)\n2026-10-29T22:41:44.1732786Z    runner-health: mem_available_mib 14602 MiB (floor 4096)\n2026-10-29T22:41:44.1733173Z    runner-health: verdict above-floor\n2026-10-29T22:41:44.1941707Z == temporal: part_start_temporal\n2026-10-29T22:41:45.1662613Z    temporal: pass (1s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-ui-e2e-1-a1/temporal.log\n2026-10-29T22:41:45.1663541Z == binaries: part_binaries\n2026-10-29T22:42:09.4952033Z    binaries: pass (24s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-ui-e2e-1-a1/binaries.log\n2026-10-29T22:42:09.4952749Z == images: part_push_images\n2026-10-29T22:42:12.5305726Z    images: pass (3s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-ui-e2e-1-a1/images.log\n2026-10-29T22:54:18.1412219Z ##[error]The operation was canceled.\n2026-10-29T22:54:18.1495286Z ##[group]Run actions/upload-artifact@v7.0.2\n2026-10-29T22:54:18.1495647Z with:\n2026-10-29T22:54:18.1495872Z   name: part-ui-e2e-1-a1\n2026-10-29T22:54:18.1496351Z   path: proof/pr-ci-40965510239-part-ui-e2e-1-a1/\n!proof/pr-ci-40965510239-part-ui-e2e-1-a1/bin/**\n\n2026-10-29T22:54:18.1496850Z   retention-days: 14\n2026-10-29T22:54:18.1497110Z   if-no-files-found: warn\n2026-10-29T22:54:18.1497369Z   compression-level: 6\n2026-10-29T22:54:18.1497612Z   overwrite: false\n2026-10-29T22:54:18.1497854Z   include-hidden-files: false\n2026-10-29T22:54:18.1498117Z   archive: true\n2026-10-29T22:54:18.1498332Z env:\n2026-10-29T22:54:18.1498531Z   TIER: release\n2026-10-29T22:54:18.1498736Z   INT_SHARDS: 14\n2026-10-29T22:54:18.1498949Z   UI_SHARDS: 5\n2026-10-29T22:54:18.1499156Z   FUZZ_BUDGET: 105m\n2026-10-29T22:54:18.1499397Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:54:18.1499661Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:54:18.1499958Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:54:18.1500270Z   GOTOOLCHAIN: local\n2026-10-29T22:54:18.1500500Z ##[endgroup]\n2026-10-29T22:54:18.3766510Z With the provided path, there will be 153 files uploaded\n2026-10-29T22:54:18.3767366Z Artifact name is valid!\n2026-10-29T22:54:18.3767793Z Root directory input is valid!\n2026-10-29T22:54:18.5964813Z Uploading artifact: part-ui-e2e-1-a1.zip\n2026-10-29T22:54:18.6030684Z Beginning upload of artifact content to blob storage\n2026-10-29T22:54:19.2544659Z Uploaded bytes 8388608\n2026-10-29T22:54:19.4073708Z Uploaded bytes 9001537\n2026-10-29T22:54:19.4099674Z Finished uploading artifact content to blob storage!\n2026-10-29T22:54:19.4101875Z SHA256 digest of uploaded artifact is 1569719436a3c0c6b3e517fe187f6db4a9a45bd51b333ee55389dc62a2679d29\n2026-10-29T22:54:19.4103199Z Finalizing artifact upload\n2026-10-29T22:54:20.4827161Z Artifact part-ui-e2e-1-a1 successfully finalized. Artifact ID 12940060926\n2026-10-29T22:54:20.4828776Z Artifact part-ui-e2e-1-a1 has been successfully uploaded! Final size is 9001537 bytes. Artifact ID is 12940060926\n2026-10-29T22:54:20.4830456Z Artifact download URL: https://github.com/orkstack/orkstack/actions/runs/40965510239/artifacts/12940060926\n2026-10-29T22:54:20.5230227Z Post job cleanup.\n2026-10-29T22:54:20.5237621Z ##[start-action display=Stack image cache;id=__f119b963-9f5b-46cd-87bc-88e212bcea16.__actions_cache]\n2026-10-29T22:54:20.5241433Z ##[end-action id=__f119b963-9f5b-46cd-87bc-88e212bcea16.__actions_cache;outcome=skipped;conclusion=skipped;duration_ms=0]\n2026-10-29T22:54:20.5385215Z Post job cleanup.\n2026-10-29T22:54:20.6964373Z [command]/usr/bin/git version\n2026-10-29T22:54:20.7179674Z git version 2.56.0\n2026-10-29T22:54:20.7385056Z Temporarily overriding HOME='/home/runner/work/_temp/e9986726-1ab4-4f6c-b35d-28af080e79b3' before making global git config changes\n2026-10-29T22:54:20.7456246Z Adding repository directory to the temporary git global config as a safe directory\n2026-10-29T22:54:20.7457811Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orkstack/orkstack\n2026-10-29T22:54:20.7459640Z Removing SSH command configuration\n2026-10-29T22:54:20.7462618Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-10-29T22:54:20.7690241Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-10-29T22:54:20.8359158Z Removing HTTP extra header\n2026-10-29T22:54:20.8371095Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-10-29T22:54:20.8464790Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-10-29T22:54:20.9095034Z Removing includeIf entries pointing to credentials config files\n2026-10-29T22:54:20.9096909Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-10-29T22:54:20.9195468Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-10-29T22:54:21.0092842Z Cleaning up orphan processes\n2026-10-29T22:54:21.0737034Z Terminate orphan process: pid (4134) (bash)\n2026-10-29T22:54:21.0779548Z Terminate orphan process: pid (4136) (bash)\n2026-10-29T22:54:21.0879973Z Terminate orphan process: pid (19548) (node)\n2026-10-29T22:54:21.1068709Z Terminate orphan process: pid (19699) (node)\n2026-10-29T22:54:21.1103965Z Terminate orphan process: pid (19723) (ork)\n2026-10-29T22:54:21.1132781Z Terminate orphan process: pid (19729) (orker)\n2026-10-29T22:54:21.1163562Z Terminate orphan process: pid (19876) (node)\n2026-10-29T22:54:21.1206610Z Terminate orphan process: pid (20033) (chrome-headless-shell)\n",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:35Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:35Z",
+          "completed_at": "2026-10-29T22:39:37Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:37Z",
+          "completed_at": "2026-10-29T22:39:48Z"
+        },
+        {
+          "name": "Run oven-sh/setup-bun@v2.2.0",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:48Z",
+          "completed_at": "2026-10-29T22:39:49Z"
+        },
+        {
+          "name": "bun install",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:49Z",
+          "completed_at": "2026-10-29T22:39:50Z"
+        },
+        {
+          "name": "proof host",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:50Z",
+          "completed_at": "2026-10-29T22:40:12Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:12Z",
+          "completed_at": "2026-10-29T22:40:17Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:17Z",
+          "completed_at": "2026-10-29T22:40:18Z"
+        },
+        {
+          "name": "browser image",
+          "number": 9,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:18Z",
+          "completed_at": "2026-10-29T22:40:18Z"
+        },
+        {
+          "name": "fetch browser image",
+          "number": 10,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:18Z",
+          "completed_at": "2026-10-29T22:40:45Z"
+        },
+        {
+          "name": "host chromium shard",
+          "number": 11,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:45Z",
+          "completed_at": "2026-10-29T22:40:45Z"
+        },
+        {
+          "name": "Chromium (host)",
+          "number": 12,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:45Z",
+          "completed_at": "2026-10-29T22:40:57Z"
+        },
+        {
+          "name": "UI shard",
+          "number": 13,
+          "conclusion": "cancelled",
+          "started_at": "2026-10-29T22:40:57Z",
+          "completed_at": "2026-10-29T22:54:18Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:18Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 25,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post Run oven-sh/setup-bun@v2.2.0",
+          "number": 26,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 27,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 28,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 29,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:21Z",
+          "completed_at": "2026-10-29T22:54:21Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / activity-fixture (json)",
+      "conclusion": "success",
+      "id": 123775696707,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:33Z",
+      "completed_at": "2026-10-29T22:42:09Z",
+      "runner_name": "GitHub Actions 1000000757",
+      "check_run_id": 123775696707,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:35Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:35Z",
+          "completed_at": "2026-10-29T22:39:37Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:37Z",
+          "completed_at": "2026-10-29T22:39:48Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:48Z",
+          "completed_at": "2026-10-29T22:40:57Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:57Z",
+          "completed_at": "2026-10-29T22:41:04Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:04Z",
+          "completed_at": "2026-10-29T22:41:05Z"
+        },
+        {
+          "name": "activity fixture",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:05Z",
+          "completed_at": "2026-10-29T22:42:05Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:05Z",
+          "completed_at": "2026-10-29T22:42:06Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:06Z",
+          "completed_at": "2026-10-29T22:42:06Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:06Z",
+          "completed_at": "2026-10-29T22:42:06Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:06Z",
+          "completed_at": "2026-10-29T22:42:06Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:06Z",
+          "completed_at": "2026-10-29T22:42:07Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / ui-e2e (2)",
+      "conclusion": "success",
+      "id": 123775696742,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:33Z",
+      "completed_at": "2026-10-29T22:44:43Z",
+      "runner_name": "GitHub Actions 1000000758",
+      "check_run_id": 123775696742,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:35Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:35Z",
+          "completed_at": "2026-10-29T22:39:37Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:37Z",
+          "completed_at": "2026-10-29T22:39:48Z"
+        },
+        {
+          "name": "Run oven-sh/setup-bun@v2.2.0",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:48Z",
+          "completed_at": "2026-10-29T22:39:48Z"
+        },
+        {
+          "name": "bun install",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:48Z",
+          "completed_at": "2026-10-29T22:39:49Z"
+        },
+        {
+          "name": "proof host",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:49Z",
+          "completed_at": "2026-10-29T22:40:12Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:12Z",
+          "completed_at": "2026-10-29T22:40:17Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:17Z",
+          "completed_at": "2026-10-29T22:40:19Z"
+        },
+        {
+          "name": "browser image",
+          "number": 9,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:19Z",
+          "completed_at": "2026-10-29T22:40:19Z"
+        },
+        {
+          "name": "fetch browser image",
+          "number": 10,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:19Z",
+          "completed_at": "2026-10-29T22:40:44Z"
+        },
+        {
+          "name": "host chromium shard",
+          "number": 11,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:44Z",
+          "completed_at": "2026-10-29T22:40:44Z"
+        },
+        {
+          "name": "Chromium (host)",
+          "number": 12,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:40:44Z",
+          "completed_at": "2026-10-29T22:40:44Z"
+        },
+        {
+          "name": "UI shard",
+          "number": 13,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:44Z",
+          "completed_at": "2026-10-29T22:44:38Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:38Z",
+          "completed_at": "2026-10-29T22:44:40Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 25,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:40Z",
+          "completed_at": "2026-10-29T22:44:40Z"
+        },
+        {
+          "name": "Post Run oven-sh/setup-bun@v2.2.0",
+          "number": 26,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:40Z",
+          "completed_at": "2026-10-29T22:44:40Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 27,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:40Z",
+          "completed_at": "2026-10-29T22:44:40Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 28,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:40Z",
+          "completed_at": "2026-10-29T22:44:41Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 29,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:41Z",
+          "completed_at": "2026-10-29T22:44:41Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / activity-fixture (shell)",
+      "conclusion": "success",
+      "id": 123775696793,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:33Z",
+      "completed_at": "2026-10-29T22:42:12Z",
+      "runner_name": "GitHub Actions 1000000762",
+      "check_run_id": 123775696793,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:35Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:35Z",
+          "completed_at": "2026-10-29T22:39:38Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:38Z",
+          "completed_at": "2026-10-29T22:39:48Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:48Z",
+          "completed_at": "2026-10-29T22:40:59Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:59Z",
+          "completed_at": "2026-10-29T22:41:08Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:08Z",
+          "completed_at": "2026-10-29T22:41:10Z"
+        },
+        {
+          "name": "activity fixture",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:10Z",
+          "completed_at": "2026-10-29T22:42:08Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:08Z",
+          "completed_at": "2026-10-29T22:42:09Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:09Z",
+          "completed_at": "2026-10-29T22:42:09Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:09Z",
+          "completed_at": "2026-10-29T22:42:10Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:10Z",
+          "completed_at": "2026-10-29T22:42:10Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:10Z",
+          "completed_at": "2026-10-29T22:42:10Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / ui-e2e (3)",
+      "conclusion": "success",
+      "id": 123775696805,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:41:08Z",
+      "completed_at": "2026-10-29T22:47:40Z",
+      "runner_name": "GitHub Actions 1000000768",
+      "check_run_id": 123775696805,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:09Z",
+          "completed_at": "2026-10-29T22:41:10Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:10Z",
+          "completed_at": "2026-10-29T22:41:12Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:12Z",
+          "completed_at": "2026-10-29T22:41:21Z"
+        },
+        {
+          "name": "Run oven-sh/setup-bun@v2.2.0",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:21Z",
+          "completed_at": "2026-10-29T22:41:23Z"
+        },
+        {
+          "name": "bun install",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:23Z",
+          "completed_at": "2026-10-29T22:41:23Z"
+        },
+        {
+          "name": "proof host",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:23Z",
+          "completed_at": "2026-10-29T22:41:59Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:59Z",
+          "completed_at": "2026-10-29T22:42:07Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:07Z",
+          "completed_at": "2026-10-29T22:42:09Z"
+        },
+        {
+          "name": "browser image",
+          "number": 9,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:09Z",
+          "completed_at": "2026-10-29T22:42:09Z"
+        },
+        {
+          "name": "fetch browser image",
+          "number": 10,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:09Z",
+          "completed_at": "2026-10-29T22:42:40Z"
+        },
+        {
+          "name": "host chromium shard",
+          "number": 11,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:40Z",
+          "completed_at": "2026-10-29T22:42:40Z"
+        },
+        {
+          "name": "Chromium (host)",
+          "number": 12,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:42:40Z",
+          "completed_at": "2026-10-29T22:42:40Z"
+        },
+        {
+          "name": "UI shard",
+          "number": 13,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:40Z",
+          "completed_at": "2026-10-29T22:47:35Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:35Z",
+          "completed_at": "2026-10-29T22:47:36Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 25,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:36Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Post Run oven-sh/setup-bun@v2.2.0",
+          "number": 26,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 27,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 28,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 29,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / activity-fixture (git)",
+      "conclusion": "success",
+      "id": 123775696808,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:39Z",
+      "completed_at": "2026-10-29T22:43:14Z",
+      "runner_name": "GitHub Actions 1000000763",
+      "check_run_id": 123775696808,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:40Z",
+          "completed_at": "2026-10-29T22:39:41Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:41Z",
+          "completed_at": "2026-10-29T22:39:43Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:43Z",
+          "completed_at": "2026-10-29T22:39:56Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:56Z",
+          "completed_at": "2026-10-29T22:41:59Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:59Z",
+          "completed_at": "2026-10-29T22:42:06Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:06Z",
+          "completed_at": "2026-10-29T22:42:08Z"
+        },
+        {
+          "name": "activity fixture",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:08Z",
+          "completed_at": "2026-10-29T22:43:10Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:10Z",
+          "completed_at": "2026-10-29T22:43:11Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:11Z",
+          "completed_at": "2026-10-29T22:43:11Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:11Z",
+          "completed_at": "2026-10-29T22:43:11Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:11Z",
+          "completed_at": "2026-10-29T22:43:12Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:12Z",
+          "completed_at": "2026-10-29T22:43:12Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / ui-e2e (4)",
+      "conclusion": "success",
+      "id": 123775696861,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:41:05Z",
+      "completed_at": "2026-10-29T22:47:42Z",
+      "runner_name": "GitHub Actions 1000000766",
+      "check_run_id": 123775696861,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:05Z",
+          "completed_at": "2026-10-29T22:41:07Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:07Z",
+          "completed_at": "2026-10-29T22:41:10Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:10Z",
+          "completed_at": "2026-10-29T22:41:21Z"
+        },
+        {
+          "name": "Run oven-sh/setup-bun@v2.2.0",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:21Z",
+          "completed_at": "2026-10-29T22:41:22Z"
+        },
+        {
+          "name": "bun install",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:22Z",
+          "completed_at": "2026-10-29T22:41:23Z"
+        },
+        {
+          "name": "proof host",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:23Z",
+          "completed_at": "2026-10-29T22:42:00Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:00Z",
+          "completed_at": "2026-10-29T22:42:13Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:13Z",
+          "completed_at": "2026-10-29T22:42:16Z"
+        },
+        {
+          "name": "browser image",
+          "number": 9,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:16Z",
+          "completed_at": "2026-10-29T22:42:16Z"
+        },
+        {
+          "name": "fetch browser image",
+          "number": 10,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:16Z",
+          "completed_at": "2026-10-29T22:42:49Z"
+        },
+        {
+          "name": "host chromium shard",
+          "number": 11,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:49Z",
+          "completed_at": "2026-10-29T22:42:49Z"
+        },
+        {
+          "name": "Chromium (host)",
+          "number": 12,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:42:49Z",
+          "completed_at": "2026-10-29T22:42:49Z"
+        },
+        {
+          "name": "UI shard",
+          "number": 13,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:49Z",
+          "completed_at": "2026-10-29T22:47:34Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:34Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 25,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Post Run oven-sh/setup-bun@v2.2.0",
+          "number": 26,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 27,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 28,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 29,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:37Z",
+          "completed_at": "2026-10-29T22:47:37Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / ui-e2e (5)",
+      "conclusion": "success",
+      "id": 123775696913,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:41:06Z",
+      "completed_at": "2026-10-29T22:50:24Z",
+      "runner_name": "GitHub Actions 1000000767",
+      "check_run_id": 123775696913,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:07Z",
+          "completed_at": "2026-10-29T22:41:08Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:08Z",
+          "completed_at": "2026-10-29T22:41:12Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:12Z",
+          "completed_at": "2026-10-29T22:41:24Z"
+        },
+        {
+          "name": "Run oven-sh/setup-bun@v2.2.0",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:24Z",
+          "completed_at": "2026-10-29T22:41:26Z"
+        },
+        {
+          "name": "bun install",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:26Z",
+          "completed_at": "2026-10-29T22:41:27Z"
+        },
+        {
+          "name": "proof host",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:27Z",
+          "completed_at": "2026-10-29T22:41:54Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:54Z",
+          "completed_at": "2026-10-29T22:42:13Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:13Z",
+          "completed_at": "2026-10-29T22:42:17Z"
+        },
+        {
+          "name": "browser image",
+          "number": 9,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:17Z",
+          "completed_at": "2026-10-29T22:42:17Z"
+        },
+        {
+          "name": "fetch browser image",
+          "number": 10,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:17Z",
+          "completed_at": "2026-10-29T22:42:42Z"
+        },
+        {
+          "name": "host chromium shard",
+          "number": 11,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:42Z",
+          "completed_at": "2026-10-29T22:42:42Z"
+        },
+        {
+          "name": "Chromium (host)",
+          "number": 12,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:42Z",
+          "completed_at": "2026-10-29T22:42:54Z"
+        },
+        {
+          "name": "UI shard",
+          "number": 13,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:54Z",
+          "completed_at": "2026-10-29T22:50:16Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:16Z",
+          "completed_at": "2026-10-29T22:50:20Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 25,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:20Z",
+          "completed_at": "2026-10-29T22:50:20Z"
+        },
+        {
+          "name": "Post Run oven-sh/setup-bun@v2.2.0",
+          "number": 26,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:20Z",
+          "completed_at": "2026-10-29T22:50:20Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 27,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:20Z",
+          "completed_at": "2026-10-29T22:50:20Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 28,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:20Z",
+          "completed_at": "2026-10-29T22:50:21Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 29,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:21Z",
+          "completed_at": "2026-10-29T22:50:21Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (6)",
+      "conclusion": "failure",
+      "id": 123775696944,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:33Z",
+      "completed_at": "2026-10-29T22:47:32Z",
+      "runner_name": "GitHub Actions 1000000760",
+      "check_run_id": 123775696944,
+      "annotations": [
+        "Process completed with exit code 1."
+      ],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:34Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:37Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:37Z",
+          "completed_at": "2026-10-29T22:39:47Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:47Z",
+          "completed_at": "2026-10-29T22:41:26Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:26Z",
+          "completed_at": "2026-10-29T22:41:31Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:31Z",
+          "completed_at": "2026-10-29T22:41:32Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "failure",
+          "started_at": "2026-10-29T22:41:32Z",
+          "completed_at": "2026-10-29T22:47:29Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:29Z",
+          "completed_at": "2026-10-29T22:47:30Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:30Z",
+          "completed_at": "2026-10-29T22:47:30Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:47:30Z",
+          "completed_at": "2026-10-29T22:47:30Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:30Z",
+          "completed_at": "2026-10-29T22:47:30Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:30Z",
+          "completed_at": "2026-10-29T22:47:30Z"
+        }
+      ],
+      "failed_step": "integration shard"
+    },
+    {
+      "name": "gate / integration (5)",
+      "conclusion": "success",
+      "id": 123775697010,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:42:11Z",
+      "completed_at": "2026-10-29T22:50:04Z",
+      "runner_name": "GitHub Actions 1000000771",
+      "check_run_id": 123775697010,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:12Z",
+          "completed_at": "2026-10-29T22:42:13Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:13Z",
+          "completed_at": "2026-10-29T22:42:16Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:16Z",
+          "completed_at": "2026-10-29T22:42:28Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:28Z",
+          "completed_at": "2026-10-29T22:44:33Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:33Z",
+          "completed_at": "2026-10-29T22:44:49Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:49Z",
+          "completed_at": "2026-10-29T22:44:54Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:54Z",
+          "completed_at": "2026-10-29T22:49:58Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:49:58Z",
+          "completed_at": "2026-10-29T22:50:00Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:00Z",
+          "completed_at": "2026-10-29T22:50:00Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:00Z",
+          "completed_at": "2026-10-29T22:50:00Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:00Z",
+          "completed_at": "2026-10-29T22:50:00Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:00Z",
+          "completed_at": "2026-10-29T22:50:00Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (4)",
+      "conclusion": "success",
+      "id": 123775697177,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:40:16Z",
+      "completed_at": "2026-10-29T22:49:24Z",
+      "runner_name": "GitHub Actions 1000000765",
+      "check_run_id": 123775697177,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:16Z",
+          "completed_at": "2026-10-29T22:40:17Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:17Z",
+          "completed_at": "2026-10-29T22:40:19Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:19Z",
+          "completed_at": "2026-10-29T22:40:29Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:29Z",
+          "completed_at": "2026-10-29T22:42:25Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:25Z",
+          "completed_at": "2026-10-29T22:42:31Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:31Z",
+          "completed_at": "2026-10-29T22:42:32Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:32Z",
+          "completed_at": "2026-10-29T22:49:21Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:49:21Z",
+          "completed_at": "2026-10-29T22:49:22Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:49:22Z",
+          "completed_at": "2026-10-29T22:49:22Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:49:22Z",
+          "completed_at": "2026-10-29T22:49:22Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:49:22Z",
+          "completed_at": "2026-10-29T22:49:22Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:49:22Z",
+          "completed_at": "2026-10-29T22:49:22Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (1)",
+      "conclusion": "cancelled",
+      "id": 123775697196,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:39:33Z",
+      "completed_at": "2026-10-29T22:54:21Z",
+      "runner_name": "GitHub Actions 1000000761",
+      "check_run_id": 123775697196,
+      "annotations": [
+        "The run was canceled by @ork-stack.",
+        "The operation was canceled."
+      ],
+      "log": "[proofrun job-log: 899 lines left out]\n2026-10-29T22:41:09.7943915Z set -uo pipefail\n2026-10-29T22:41:09.7944154Z set +e\n2026-10-29T22:41:09.7944454Z case \"${ARTIFACT:+a}${PATTERN:+p}${IMAGE:+i}${URL:+u}\" in\n2026-10-29T22:41:09.7944821Z a) what=\"artifact $ARTIFACT\" ;;\n2026-10-29T22:41:09.7945107Z p) what=\"artifacts $PATTERN\" ;;\n2026-10-29T22:41:09.7945384Z i)\n2026-10-29T22:41:09.7945574Z   set -f\n2026-10-29T22:41:09.7945791Z   images=($IMAGE)\n2026-10-29T22:41:09.7946027Z   set +f\n2026-10-29T22:41:09.7946657Z   for ref in \"${images[@]}\"; do\n2026-10-29T22:41:09.7947019Z     if ! [[ \"$ref\" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then\n2026-10-29T22:41:09.7947478Z       echo \"proof-fetch: the image $ref is not pinned by digest\" >&2\n2026-10-29T22:41:09.7947864Z       exit 2\n2026-10-29T22:41:09.7948075Z     fi\n2026-10-29T22:41:09.7948270Z   done\n2026-10-29T22:41:09.7948496Z   what=\"image ${images[*]}\"\n2026-10-29T22:41:09.7948753Z   ;;\n2026-10-29T22:41:09.7948958Z u)\n2026-10-29T22:41:09.7949215Z   if ! [[ \"$URL\" =~ ^https://[^[:space:]]+$ ]]; then\n2026-10-29T22:41:09.7949650Z     echo \"proof-fetch: a url must be an https URL without spaces\" >&2\n2026-10-29T22:41:09.7950039Z     exit 2\n2026-10-29T22:41:09.7950248Z   fi\n2026-10-29T22:41:09.7950476Z   if ! [[ \"$SHA256\" =~ ^[0-9a-f]{64}$ ]]; then\n2026-10-29T22:41:09.7950882Z     echo \"proof-fetch: a url needs sha256, 64 lowercase hex digits\" >&2\n2026-10-29T22:41:09.7951258Z     exit 2\n2026-10-29T22:41:09.7951460Z   fi\n2026-10-29T22:41:09.7951658Z   what=\"url $URL\"\n2026-10-29T22:41:09.7951884Z   ;;\n2026-10-29T22:41:09.7952242Z *) echo \"proof-fetch: exactly one of artifact, pattern, image or url\" >&2; exit 2 ;;\n2026-10-29T22:41:09.7952661Z esac\n2026-10-29T22:41:09.7952892Z if [ -z \"$IMAGE\" ] && [ -z \"$DEST\" ]; then\n2026-10-29T22:41:09.7953273Z   echo \"proof-fetch: an artifact or a url needs path\" >&2\n2026-10-29T22:41:09.7953610Z   exit 2\n2026-10-29T22:41:09.7953813Z fi\n2026-10-29T22:41:09.7954027Z mkdir -p \"$(dirname \"$LOG\")\"\n2026-10-29T22:41:09.7954288Z n=0\n2026-10-29T22:41:09.7954497Z for limit in 180 360; do\n2026-10-29T22:41:09.7954748Z   n=$((n + 1))\n2026-10-29T22:41:09.7954980Z   started=$SECONDS\n2026-10-29T22:41:09.7955234Z   if [ -n \"$IMAGE\" ]; then\n2026-10-29T22:41:09.7955550Z     # The whole list is one attempt under one limit.\n2026-10-29T22:41:09.7956309Z     timeout -k 10 \"$limit\" bash -c 'for ref in \"$@\"; do docker pull \"$ref\" || exit; done' _ \"${images[@]}\"\n2026-10-29T22:41:09.7956780Z     code=$?\n2026-10-29T22:41:09.7957011Z   elif [ -n \"$URL\" ]; then\n2026-10-29T22:41:09.7957577Z     # Only a file that hashes to the pin is kept, and a half-written\n2026-10-29T22:41:09.7958047Z     # one never reads as whole: each attempt starts without it.\n2026-10-29T22:41:09.7958470Z     rm -f \"$DEST\" && mkdir -p \"$(dirname \"$DEST\")\" &&\n2026-10-29T22:41:09.7959117Z       timeout -k 10 \"$limit\" curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output \"$DEST\" \"$URL\" &&\n2026-10-29T22:41:09.7959931Z       echo \"$SHA256  $DEST\" | sha256sum --check --status\n2026-10-29T22:41:09.7960254Z     code=$?\n2026-10-29T22:41:09.7960495Z     [ \"$code\" -eq 0 ] || rm -f \"$DEST\"\n2026-10-29T22:41:09.7960804Z   elif [ -n \"$ARTIFACT\" ]; then\n2026-10-29T22:41:09.7961207Z     # A half-extracted artifact must never read as a whole one: the\n2026-10-29T22:41:09.7961706Z     # directory is the artifact's own, and each attempt starts it empty.\n2026-10-29T22:41:09.7962132Z     rm -rf \"$DEST\" && mkdir -p \"$DEST\" &&\n2026-10-29T22:41:09.7962706Z       timeout -k 10 \"$limit\" gh run download \"$GITHUB_RUN_ID\" --repo \"$GITHUB_REPOSITORY\" --name \"$ARTIFACT\" --dir \"$DEST\"\n2026-10-29T22:41:09.7963246Z     code=$?\n2026-10-29T22:41:09.7963457Z   else\n2026-10-29T22:41:09.7963780Z     # Only the subdirectories this pattern produces; `path` may hold\n2026-10-29T22:41:09.7964252Z     # another artifact (the proof job's plan beside its parts).\n2026-10-29T22:41:09.7964629Z     shopt -s nullglob\n2026-10-29T22:41:09.7964937Z     rm -rf \"$DEST\"/$PATTERN && mkdir -p \"$DEST\" &&\n2026-10-29T22:41:09.7965521Z       timeout -k 10 \"$limit\" gh run download \"$GITHUB_RUN_ID\" --repo \"$GITHUB_REPOSITORY\" --pattern \"$PATTERN\" --dir \"$DEST\"\n2026-10-29T22:41:09.7966299Z     code=$?\n2026-10-29T22:41:09.7966528Z   fi\n2026-10-29T22:41:09.7966745Z   took=$((SECONDS - started))\n2026-10-29T22:41:09.7967018Z   case \"$code\" in\n2026-10-29T22:41:09.7967367Z   0) line=\"fetch $what: attempt $n ok in ${took}s (limit ${limit}s)\" ;;\n2026-10-29T22:41:09.7967901Z   124 | 137) line=\"fetch $what: attempt $n timed out after ${took}s (limit ${limit}s)\" ;;\n2026-10-29T22:41:09.7968507Z   *) line=\"fetch $what: attempt $n failed, exit $code after ${took}s (limit ${limit}s)\" ;;\n2026-10-29T22:41:09.7968943Z   esac\n2026-10-29T22:41:09.7969162Z   echo \"$line\" | tee -a \"$LOG\"\n2026-10-29T22:41:09.7969435Z   [ \"$code\" -eq 0 ] && exit 0\n2026-10-29T22:41:09.7969719Z done\n2026-10-29T22:41:09.7970271Z echo \"fetch $what: gave up after $n attempts; a setup failure in a fetch step is a setup-failed part (docs/PROOFS.md §8)\" | tee -a \"$LOG\"\n2026-10-29T22:41:09.7970873Z exit 1\n2026-10-29T22:41:09.7990973Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:41:09.7991502Z env:\n2026-10-29T22:41:09.7991845Z   TIER: release\n2026-10-29T22:41:09.7992227Z   INT_SHARDS: 14\n2026-10-29T22:41:09.7992578Z   UI_SHARDS: 5\n2026-10-29T22:41:09.7992918Z   FUZZ_BUDGET: 105m\n2026-10-29T22:41:09.7993273Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:41:09.7993675Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:41:09.7994096Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:41:09.7994566Z   GOTOOLCHAIN: local\n2026-10-29T22:41:09.7994918Z   ARTIFACT: part-build-a1\n2026-10-29T22:41:09.7995287Z   PATTERN: \n2026-10-29T22:41:09.7995587Z   IMAGE: \n2026-10-29T22:41:09.7995890Z   URL: \n2026-10-29T22:41:09.7996496Z   SHA256: \n2026-10-29T22:41:09.7996832Z   DEST: /home/runner/work/_temp/ci/build\n2026-10-29T22:41:09.7997301Z   LOG: /home/runner/work/_temp/ci/setup.log\n2026-10-29T22:41:09.8001336Z   GH_TOKEN: ***\n2026-10-29T22:41:09.8001719Z ##[endgroup]\n2026-10-29T22:41:10.8379395Z fetch artifact part-build-a1: attempt 1 ok in 1s (limit 180s)\n2026-10-29T22:41:10.8389619Z ##[end-action id=__self_3.__run;outcome=success;conclusion=success;duration_ms=1046]\n2026-10-29T22:41:10.8426929Z ##[group]Run scripts/proof.sh --part \"integration:1\" --tier \"$TIER\" --proof-id \"$PROOF_ID\" \\\n2026-10-29T22:41:10.8427676Z scripts/proof.sh --part \"integration:1\" --tier \"$TIER\" --proof-id \"$PROOF_ID\" \\\n2026-10-29T22:41:10.8428165Z   --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n2026-10-29T22:41:10.8428569Z   --plan \"$RUNNER_TEMP/ci/plan/integration-plan.json\" \\\n2026-10-29T22:41:10.8429184Z   --layouts \"$RUNNER_TEMP/ci/build/layouts\" \\\n2026-10-29T22:41:10.8429560Z   --setup-log \"$RUNNER_TEMP/ci/setup.log\" \\\n2026-10-29T22:41:10.8430009Z   --base-commit \"906036278462df6a0dc4b742c95de6a328ef9d84\" \"$PROOF_NAME\"\n2026-10-29T22:41:10.8450443Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:41:10.8450793Z env:\n2026-10-29T22:41:10.8450988Z   TIER: release\n2026-10-29T22:41:10.8451203Z   INT_SHARDS: 14\n2026-10-29T22:41:10.8451411Z   UI_SHARDS: 5\n2026-10-29T22:41:10.8451617Z   FUZZ_BUDGET: 105m\n2026-10-29T22:41:10.8451900Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:41:10.8452161Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:41:10.8452424Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:41:10.8452694Z   GOTOOLCHAIN: local\n2026-10-29T22:41:10.8452909Z   PROOF_JOBS: 3\n2026-10-29T22:41:10.8453114Z ##[endgroup]\n2026-10-29T22:41:45.3699668Z proof: part integration:1 attempt 1 of release -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-1-a1 (id pr-ci-40965510239, tree 6bca80a560f574acfc83d519147468d30e4942c7)\n2026-10-29T22:41:45.3725517Z == runner-health: class github-hosted/ubuntu24/4cpu against scripts/proof-runner-floors.tsv\n2026-10-29T22:41:57.3116352Z    runner-health: class github-hosted/ubuntu24/4cpu, 4 CPUs, 15983 MB, measured 11.9s in /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-1-a1\n2026-10-29T22:41:57.3117950Z    runner-health: disk_write_mb_s 452.9 MB/s (floor 20)\n2026-10-29T22:41:57.3119012Z    runner-health: disk_write_mb_s readings 452.9 MB/s at +0s (judged), 527 at +6.725s\n2026-10-29T22:41:57.3120003Z    runner-health: disk_read_mb_s 413.1 MB/s (floor 75)\n2026-10-29T22:41:57.3121089Z    runner-health: disk_read_mb_s readings 413.1 MB/s at +2.555s (judged), 420.2 at +7.753s, 523.9 at +10.799s\n2026-10-29T22:41:57.3122055Z    runner-health: fsync_p95_ms 0.3 ms (floor 30)\n2026-10-29T22:41:57.3123239Z    runner-health: fsync_p95_ms readings 0.3 ms at +4.604s (judged), 0.28 at +11.806s\n2026-10-29T22:41:57.3124450Z    runner-health: cpu_single_mb_s 1584.2 MB/s (floor 450)\n2026-10-29T22:41:57.3125108Z    runner-health: cpu_all_mb_s 5854.8 MB/s (floor 1200)\n2026-10-29T22:41:57.3125621Z    runner-health: mem_available_mib 14499 MiB (floor 4096)\n2026-10-29T22:41:57.3126359Z    runner-health: verdict above-floor\n2026-10-29T22:41:57.3126753Z == temporal: part_start_temporal\n2026-10-29T22:41:58.2551771Z    temporal: pass (1s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-1-a1/temporal.log\n2026-10-29T22:41:58.2552472Z == binaries: part_binaries\n2026-10-29T22:42:22.9468326Z    binaries: pass (24s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-1-a1/binaries.log\n2026-10-29T22:42:22.9469557Z == images: part_push_images\n2026-10-29T22:42:25.8849970Z    images: pass (3s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-1-a1/images.log\n2026-10-29T22:42:25.8880749Z == integration: env ORK_PROOF_ID=pr-ci-40965510239 ORK_PROOF_DIR=/home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-1-a1/artifacts ORK_TEST_BIN_DIR=/home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-1-a1/bin ORK_TEST_IMAGE_TAG=pr-ci-40965510239 ORK_TEST_REGISTRY=localhost:5001 ORK_TEMPORAL_ADDRESS=127.0.0.1:32768 ORK_…\n2026-10-29T22:54:18.0971477Z ##[error]The operation was canceled.\n2026-10-29T22:54:18.1157244Z ##[group]Run actions/upload-artifact@v7.0.2\n2026-10-29T22:54:18.1158410Z with:\n2026-10-29T22:54:18.1158643Z   name: part-integration-1-a1\n2026-10-29T22:54:18.1159397Z   path: proof/pr-ci-40965510239-part-integration-1-a1/\n!proof/pr-ci-40965510239-part-integration-1-a1/bin/**\n\n2026-10-29T22:54:18.1160337Z   retention-days: 14\n2026-10-29T22:54:18.1160766Z   if-no-files-found: warn\n2026-10-29T22:54:18.1161168Z   compression-level: 6\n2026-10-29T22:54:18.1161565Z   overwrite: false\n2026-10-29T22:54:18.1161970Z   include-hidden-files: false\n2026-10-29T22:54:18.1162401Z   archive: true\n2026-10-29T22:54:18.1162756Z env:\n2026-10-29T22:54:18.1163095Z   TIER: release\n2026-10-29T22:54:18.1163464Z   INT_SHARDS: 14\n2026-10-29T22:54:18.1163830Z   UI_SHARDS: 5\n2026-10-29T22:54:18.1164161Z   FUZZ_BUDGET: 105m\n2026-10-29T22:54:18.1164566Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:54:18.1165036Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:54:18.1165487Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:54:18.1166037Z   GOTOOLCHAIN: local\n2026-10-29T22:54:18.1166733Z ##[endgroup]\n2026-10-29T22:54:18.4055328Z With the provided path, there will be 14 files uploaded\n2026-10-29T22:54:18.4069701Z Artifact name is valid!\n2026-10-29T22:54:18.4070399Z Root directory input is valid!\n2026-10-29T22:54:18.6703543Z Uploading artifact: part-integration-1-a1.zip\n2026-10-29T22:54:18.6707483Z Beginning upload of artifact content to blob storage\n2026-10-29T22:54:18.8659422Z Uploaded bytes 5954\n2026-10-29T22:54:18.8753650Z Finished uploading artifact content to blob storage!\n2026-10-29T22:54:18.8767818Z SHA256 digest of uploaded artifact is ce1156640fb91c039287737edce4aaa6d7022cb0fa10259c34814264e40c0541\n2026-10-29T22:54:18.8789262Z Finalizing artifact upload\n2026-10-29T22:54:19.3576998Z Artifact part-integration-1-a1 successfully finalized. Artifact ID 12939351844\n2026-10-29T22:54:19.3600973Z Artifact part-integration-1-a1 has been successfully uploaded! Final size is 5954 bytes. Artifact ID is 12939351844\n2026-10-29T22:54:19.3627005Z Artifact download URL: https://github.com/orkstack/orkstack/actions/runs/40965510239/artifacts/12939351844\n2026-10-29T22:54:19.4096626Z Post job cleanup.\n2026-10-29T22:54:19.4103143Z ##[start-action display=Stack image cache;id=__9772eaea-d766-4ac1-a548-73c650b8d435.__actions_cache]\n2026-10-29T22:54:19.4107011Z ##[end-action id=__9772eaea-d766-4ac1-a548-73c650b8d435.__actions_cache;outcome=skipped;conclusion=skipped;duration_ms=0]\n2026-10-29T22:54:19.4310503Z Post job cleanup.\n2026-10-29T22:54:19.6190876Z [command]/usr/bin/git version\n2026-10-29T22:54:19.6477379Z git version 2.56.0\n2026-10-29T22:54:19.6482557Z Temporarily overriding HOME='/home/runner/work/_temp/9b230d52-1c0f-4651-9c42-7ed77d9ee21c' before making global git config changes\n2026-10-29T22:54:19.6494157Z Adding repository directory to the temporary git global config as a safe directory\n2026-10-29T22:54:19.6517565Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orkstack/orkstack\n2026-10-29T22:54:19.6591876Z Removing SSH command configuration\n2026-10-29T22:54:19.6592932Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-10-29T22:54:19.6595393Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-10-29T22:54:19.7426875Z Removing HTTP extra header\n2026-10-29T22:54:19.7428434Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-10-29T22:54:19.7431737Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-10-29T22:54:19.7835661Z Removing includeIf entries pointing to credentials config files\n2026-10-29T22:54:19.7837647Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-10-29T22:54:19.8031455Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-10-29T22:54:19.8848157Z Cleaning up orphan processes\n2026-10-29T22:54:19.9509933Z Terminate orphan process: pid (3534) (bash)\n2026-10-29T22:54:19.9751066Z Terminate orphan process: pid (3536) (bash)\n2026-10-29T22:54:19.9894698Z Terminate orphan process: pid (7432) (proofrun)\n2026-10-29T22:54:19.9973342Z Terminate orphan process: pid (11348) (go)\n2026-10-29T22:54:20.0023777Z Terminate orphan process: pid (11349) (internal_engine.test)\n2026-10-29T22:54:20.0054073Z Terminate orphan process: pid (11421) (test2json)\n2026-10-29T22:54:20.0122945Z Terminate orphan process: pid (75953) (docker)\n2026-10-29T22:54:20.0176976Z Terminate orphan process: pid (76028) (docker)\n2026-10-29T22:54:20.0215742Z Terminate orphan process: pid (76081) (docker)\n2026-10-29T22:54:20.0284828Z Terminate orphan process: pid (76155) (docker)\n",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:34Z",
+          "completed_at": "2026-10-29T22:39:35Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:35Z",
+          "completed_at": "2026-10-29T22:39:37Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:37Z",
+          "completed_at": "2026-10-29T22:39:47Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:39:47Z",
+          "completed_at": "2026-10-29T22:41:04Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:04Z",
+          "completed_at": "2026-10-29T22:41:09Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:09Z",
+          "completed_at": "2026-10-29T22:41:10Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "cancelled",
+          "started_at": "2026-10-29T22:41:10Z",
+          "completed_at": "2026-10-29T22:54:18Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:18Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (10)",
+      "conclusion": "success",
+      "id": 123775697201,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:40:04Z",
+      "completed_at": "2026-10-29T22:50:50Z",
+      "runner_name": "GitHub Actions 1000000764",
+      "check_run_id": 123775697201,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:04Z",
+          "completed_at": "2026-10-29T22:40:05Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:05Z",
+          "completed_at": "2026-10-29T22:40:07Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:07Z",
+          "completed_at": "2026-10-29T22:40:17Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:40:17Z",
+          "completed_at": "2026-10-29T22:42:11Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:11Z",
+          "completed_at": "2026-10-29T22:42:16Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:16Z",
+          "completed_at": "2026-10-29T22:42:17Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:17Z",
+          "completed_at": "2026-10-29T22:50:45Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:45Z",
+          "completed_at": "2026-10-29T22:50:47Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:47Z",
+          "completed_at": "2026-10-29T22:50:48Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:48Z",
+          "completed_at": "2026-10-29T22:50:48Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:48Z",
+          "completed_at": "2026-10-29T22:50:48Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:48Z",
+          "completed_at": "2026-10-29T22:50:48Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (9)",
+      "conclusion": "cancelled",
+      "id": 123775697217,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:43:21Z",
+      "completed_at": "2026-10-29T22:54:24Z",
+      "runner_name": "GitHub Actions 1000000775",
+      "check_run_id": 123775697217,
+      "annotations": [
+        "The run was canceled by @ork-stack.",
+        "The operation was canceled."
+      ],
+      "log": "[proofrun job-log: 907 lines left out]\n2026-10-29T22:45:56.7168871Z   set -f\n2026-10-29T22:45:56.7169092Z   images=($IMAGE)\n2026-10-29T22:45:56.7169335Z   set +f\n2026-10-29T22:45:56.7169559Z   for ref in \"${images[@]}\"; do\n2026-10-29T22:45:56.7169904Z     if ! [[ \"$ref\" =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]]; then\n2026-10-29T22:45:56.7170623Z       echo \"proof-fetch: the image $ref is not pinned by digest\" >&2\n2026-10-29T22:45:56.7171014Z       exit 2\n2026-10-29T22:45:56.7171236Z     fi\n2026-10-29T22:45:56.7171435Z   done\n2026-10-29T22:45:56.7171655Z   what=\"image ${images[*]}\"\n2026-10-29T22:45:56.7171920Z   ;;\n2026-10-29T22:45:56.7172116Z u)\n2026-10-29T22:45:56.7172379Z   if ! [[ \"$URL\" =~ ^https://[^[:space:]]+$ ]]; then\n2026-10-29T22:45:56.7172823Z     echo \"proof-fetch: a url must be an https URL without spaces\" >&2\n2026-10-29T22:45:56.7173211Z     exit 2\n2026-10-29T22:45:56.7173429Z   fi\n2026-10-29T22:45:56.7173665Z   if ! [[ \"$SHA256\" =~ ^[0-9a-f]{64}$ ]]; then\n2026-10-29T22:45:56.7174092Z     echo \"proof-fetch: a url needs sha256, 64 lowercase hex digits\" >&2\n2026-10-29T22:45:56.7174477Z     exit 2\n2026-10-29T22:45:56.7174686Z   fi\n2026-10-29T22:45:56.7174901Z   what=\"url $URL\"\n2026-10-29T22:45:56.7175133Z   ;;\n2026-10-29T22:45:56.7175500Z *) echo \"proof-fetch: exactly one of artifact, pattern, image or url\" >&2; exit 2 ;;\n2026-10-29T22:45:56.7175944Z esac\n2026-10-29T22:45:56.7176191Z if [ -z \"$IMAGE\" ] && [ -z \"$DEST\" ]; then\n2026-10-29T22:45:56.7176583Z   echo \"proof-fetch: an artifact or a url needs path\" >&2\n2026-10-29T22:45:56.7176933Z   exit 2\n2026-10-29T22:45:56.7177136Z fi\n2026-10-29T22:45:56.7177352Z mkdir -p \"$(dirname \"$LOG\")\"\n2026-10-29T22:45:56.7177614Z n=0\n2026-10-29T22:45:56.7177823Z for limit in 180 360; do\n2026-10-29T22:45:56.7178074Z   n=$((n + 1))\n2026-10-29T22:45:56.7178306Z   started=$SECONDS\n2026-10-29T22:45:56.7178562Z   if [ -n \"$IMAGE\" ]; then\n2026-10-29T22:45:56.7178881Z     # The whole list is one attempt under one limit.\n2026-10-29T22:45:56.7179415Z     timeout -k 10 \"$limit\" bash -c 'for ref in \"$@\"; do docker pull \"$ref\" || exit; done' _ \"${images[@]}\"\n2026-10-29T22:45:56.7179888Z     code=$?\n2026-10-29T22:45:56.7180124Z   elif [ -n \"$URL\" ]; then\n2026-10-29T22:45:56.7180879Z     # Only a file that hashes to the pin is kept, and a half-written\n2026-10-29T22:45:56.7181359Z     # one never reads as whole: each attempt starts without it.\n2026-10-29T22:45:56.7181922Z     rm -f \"$DEST\" && mkdir -p \"$(dirname \"$DEST\")\" &&\n2026-10-29T22:45:56.7182583Z       timeout -k 10 \"$limit\" curl --fail --silent --show-error --location --proto '=https' --proto-redir '=https' --output \"$DEST\" \"$URL\" &&\n2026-10-29T22:45:56.7183278Z       echo \"$SHA256  $DEST\" | sha256sum --check --status\n2026-10-29T22:45:56.7183625Z     code=$?\n2026-10-29T22:45:56.7183879Z     [ \"$code\" -eq 0 ] || rm -f \"$DEST\"\n2026-10-29T22:45:56.7184185Z   elif [ -n \"$ARTIFACT\" ]; then\n2026-10-29T22:45:56.7184580Z     # A half-extracted artifact must never read as a whole one: the\n2026-10-29T22:45:56.7185080Z     # directory is the artifact's own, and each attempt starts it empty.\n2026-10-29T22:45:56.7185524Z     rm -rf \"$DEST\" && mkdir -p \"$DEST\" &&\n2026-10-29T22:45:56.7186099Z       timeout -k 10 \"$limit\" gh run download \"$GITHUB_RUN_ID\" --repo \"$GITHUB_REPOSITORY\" --name \"$ARTIFACT\" --dir \"$DEST\"\n2026-10-29T22:45:56.7186649Z     code=$?\n2026-10-29T22:45:56.7186871Z   else\n2026-10-29T22:45:56.7187199Z     # Only the subdirectories this pattern produces; `path` may hold\n2026-10-29T22:45:56.7187684Z     # another artifact (the proof job's plan beside its parts).\n2026-10-29T22:45:56.7188063Z     shopt -s nullglob\n2026-10-29T22:45:56.7188379Z     rm -rf \"$DEST\"/$PATTERN && mkdir -p \"$DEST\" &&\n2026-10-29T22:45:56.7188977Z       timeout -k 10 \"$limit\" gh run download \"$GITHUB_RUN_ID\" --repo \"$GITHUB_REPOSITORY\" --pattern \"$PATTERN\" --dir \"$DEST\"\n2026-10-29T22:45:56.7189513Z     code=$?\n2026-10-29T22:45:56.7189739Z   fi\n2026-10-29T22:45:56.7189960Z   took=$((SECONDS - started))\n2026-10-29T22:45:56.7190413Z   case \"$code\" in\n2026-10-29T22:45:56.7190772Z   0) line=\"fetch $what: attempt $n ok in ${took}s (limit ${limit}s)\" ;;\n2026-10-29T22:45:56.7191309Z   124 | 137) line=\"fetch $what: attempt $n timed out after ${took}s (limit ${limit}s)\" ;;\n2026-10-29T22:45:56.7191907Z   *) line=\"fetch $what: attempt $n failed, exit $code after ${took}s (limit ${limit}s)\" ;;\n2026-10-29T22:45:56.7192331Z   esac\n2026-10-29T22:45:56.7192561Z   echo \"$line\" | tee -a \"$LOG\"\n2026-10-29T22:45:56.7192844Z   [ \"$code\" -eq 0 ] && exit 0\n2026-10-29T22:45:56.7193101Z done\n2026-10-29T22:45:56.7193648Z echo \"fetch $what: gave up after $n attempts; a setup failure in a fetch step is a setup-failed part (docs/PROOFS.md §8)\" | tee -a \"$LOG\"\n2026-10-29T22:45:56.7194340Z exit 1\n2026-10-29T22:45:56.7232483Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:45:56.7232842Z env:\n2026-10-29T22:45:56.7233038Z   TIER: release\n2026-10-29T22:45:56.7233265Z   INT_SHARDS: 14\n2026-10-29T22:45:56.7233480Z   UI_SHARDS: 5\n2026-10-29T22:45:56.7233684Z   FUZZ_BUDGET: 105m\n2026-10-29T22:45:56.7233912Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:45:56.7234187Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:45:56.7234463Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:45:56.7234740Z   GOTOOLCHAIN: local\n2026-10-29T22:45:56.7234972Z   ARTIFACT: part-build-a1\n2026-10-29T22:45:56.7235206Z   PATTERN: \n2026-10-29T22:45:56.7235401Z   IMAGE: \n2026-10-29T22:45:56.7235586Z   URL: \n2026-10-29T22:45:56.7235768Z   SHA256: \n2026-10-29T22:45:56.7235982Z   DEST: /home/runner/work/_temp/ci/build\n2026-10-29T22:45:56.7236284Z   LOG: /home/runner/work/_temp/ci/setup.log\n2026-10-29T22:45:56.7238656Z   GH_TOKEN: ***\n2026-10-29T22:45:56.7238883Z ##[endgroup]\n2026-10-29T22:46:00.5416757Z fetch artifact part-build-a1: attempt 1 ok in 4s (limit 180s)\n2026-10-29T22:46:00.5425936Z ##[end-action id=__self_3.__run;outcome=success;conclusion=success;duration_ms=3827]\n2026-10-29T22:46:00.5463065Z ##[group]Run scripts/proof.sh --part \"integration:9\" --tier \"$TIER\" --proof-id \"$PROOF_ID\" \\\n2026-10-29T22:46:00.5463787Z scripts/proof.sh --part \"integration:9\" --tier \"$TIER\" --proof-id \"$PROOF_ID\" \\\n2026-10-29T22:46:00.5464459Z   --attempt \"$GITHUB_RUN_ATTEMPT\" \\\n2026-10-29T22:46:00.5464857Z   --plan \"$RUNNER_TEMP/ci/plan/integration-plan.json\" \\\n2026-10-29T22:46:00.5465263Z   --layouts \"$RUNNER_TEMP/ci/build/layouts\" \\\n2026-10-29T22:46:00.5465617Z   --setup-log \"$RUNNER_TEMP/ci/setup.log\" \\\n2026-10-29T22:46:00.5466060Z   --base-commit \"906036278462df6a0dc4b742c95de6a328ef9d84\" \"$PROOF_NAME\"\n2026-10-29T22:46:00.5486085Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:46:00.5486455Z env:\n2026-10-29T22:46:00.5486656Z   TIER: release\n2026-10-29T22:46:00.5486872Z   INT_SHARDS: 14\n2026-10-29T22:46:00.5487079Z   UI_SHARDS: 5\n2026-10-29T22:46:00.5487283Z   FUZZ_BUDGET: 105m\n2026-10-29T22:46:00.5487570Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:46:00.5487834Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:46:00.5488112Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:46:00.5488398Z   GOTOOLCHAIN: local\n2026-10-29T22:46:00.5488620Z   PROOF_JOBS: 3\n2026-10-29T22:46:00.5488841Z ##[endgroup]\n2026-10-29T22:46:34.7711942Z proof: part integration:9 attempt 1 of release -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-9-a1 (id pr-ci-40965510239, tree 6bca80a560f574acfc83d519147468d30e4942c7)\n2026-10-29T22:46:34.7869270Z == runner-health: class github-hosted/ubuntu24/4cpu against scripts/proof-runner-floors.tsv\n2026-10-29T22:46:46.7962536Z    runner-health: class github-hosted/ubuntu24/4cpu, 4 CPUs, 15983 MB, measured 12.0s in /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-9-a1\n2026-10-29T22:46:46.7963623Z    runner-health: disk_write_mb_s 418.1 MB/s (floor 20)\n2026-10-29T22:46:46.7964365Z    runner-health: disk_write_mb_s readings 418.1 MB/s at +0s (judged), 520.3 at +6.694s\n2026-10-29T22:46:46.7965343Z    runner-health: disk_read_mb_s 419.3 MB/s (floor 75)\n2026-10-29T22:46:46.7966211Z    runner-health: disk_read_mb_s readings 419.3 MB/s at +2.527s (judged), 421.1 at +7.735s, 478.4 at +10.779s\n2026-10-29T22:46:46.7966903Z    runner-health: fsync_p95_ms 0.32 ms (floor 30)\n2026-10-29T22:46:46.7967518Z    runner-health: fsync_p95_ms readings 0.32 ms at +4.536s (judged), 0.4 at +11.837s\n2026-10-29T22:46:46.7968144Z    runner-health: cpu_single_mb_s 1582.1 MB/s (floor 450)\n2026-10-29T22:46:46.7968647Z    runner-health: cpu_all_mb_s 5835.6 MB/s (floor 1200)\n2026-10-29T22:46:46.7969158Z    runner-health: mem_available_mib 14486 MiB (floor 4096)\n2026-10-29T22:46:46.7969609Z    runner-health: verdict above-floor\n2026-10-29T22:46:46.7970195Z == temporal: part_start_temporal\n2026-10-29T22:46:47.4602000Z    temporal: pass (1s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-9-a1/temporal.log\n2026-10-29T22:46:47.4603081Z == binaries: part_binaries\n2026-10-29T22:47:11.8837030Z    binaries: pass (24s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-9-a1/binaries.log\n2026-10-29T22:47:11.8838800Z == images: part_push_images\n2026-10-29T22:47:14.8346919Z    images: pass (3s) -> /home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-9-a1/images.log\n2026-10-29T22:47:14.8377068Z == integration: env ORK_PROOF_ID=pr-ci-40965510239 ORK_PROOF_DIR=/home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-9-a1/artifacts ORK_TEST_BIN_DIR=/home/runner/work/orkstack/orkstack/proof/pr-ci-40965510239-part-integration-9-a1/bin ORK_TEST_IMAGE_TAG=pr-ci-40965510239 ORK_TEST_REGISTRY=localhost:5001 ORK_TEMPORAL_ADDRESS=127.0.0.1:32768 ORK_…\n2026-10-29T22:54:18.4274418Z ##[error]The operation was canceled.\n2026-10-29T22:54:18.4368325Z ##[group]Run actions/upload-artifact@v7.0.2\n2026-10-29T22:54:18.4368715Z with:\n2026-10-29T22:54:18.4368954Z   name: part-integration-9-a1\n2026-10-29T22:54:18.4369677Z   path: proof/pr-ci-40965510239-part-integration-9-a1/\n!proof/pr-ci-40965510239-part-integration-9-a1/bin/**\n\n2026-10-29T22:54:18.4370579Z   retention-days: 14\n2026-10-29T22:54:18.4370910Z   if-no-files-found: warn\n2026-10-29T22:54:18.4371171Z   compression-level: 6\n2026-10-29T22:54:18.4371397Z   overwrite: false\n2026-10-29T22:54:18.4371721Z   include-hidden-files: false\n2026-10-29T22:54:18.4372192Z   archive: true\n2026-10-29T22:54:18.4372574Z env:\n2026-10-29T22:54:18.4372904Z   TIER: release\n2026-10-29T22:54:18.4373286Z   INT_SHARDS: 14\n2026-10-29T22:54:18.4373652Z   UI_SHARDS: 5\n2026-10-29T22:54:18.4374034Z   FUZZ_BUDGET: 105m\n2026-10-29T22:54:18.4374443Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:54:18.4374923Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:54:18.4375375Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:54:18.4375867Z   GOTOOLCHAIN: local\n2026-10-29T22:54:18.4376228Z ##[endgroup]\n2026-10-29T22:54:18.6400846Z With the provided path, there will be 66 files uploaded\n2026-10-29T22:54:18.6406875Z Artifact name is valid!\n2026-10-29T22:54:18.6407420Z Root directory input is valid!\n2026-10-29T22:54:19.0190502Z Uploading artifact: part-integration-9-a1.zip\n2026-10-29T22:54:19.0230912Z Beginning upload of artifact content to blob storage\n2026-10-29T22:54:19.6587757Z Uploaded bytes 136009\n2026-10-29T22:54:19.7405749Z Finished uploading artifact content to blob storage!\n2026-10-29T22:54:19.7407579Z SHA256 digest of uploaded artifact is 57aee49c2dd3c1ed4b44d0a88b6cb40a0e707ca330899bc005518c29850880cc\n2026-10-29T22:54:19.7409334Z Finalizing artifact upload\n2026-10-29T22:54:20.3642410Z Artifact part-integration-9-a1 successfully finalized. Artifact ID 12939452540\n2026-10-29T22:54:20.3643709Z Artifact part-integration-9-a1 has been successfully uploaded! Final size is 136009 bytes. Artifact ID is 12939452540\n2026-10-29T22:54:20.3645890Z Artifact download URL: https://github.com/orkstack/orkstack/actions/runs/40965510239/artifacts/12939452540\n2026-10-29T22:54:20.4036828Z Post job cleanup.\n2026-10-29T22:54:20.4042332Z ##[start-action display=Stack image cache;id=__4a0f4d02-9337-449a-a85b-cccd40277c86.__actions_cache]\n2026-10-29T22:54:20.4044833Z ##[end-action id=__4a0f4d02-9337-449a-a85b-cccd40277c86.__actions_cache;outcome=skipped;conclusion=skipped;duration_ms=0]\n2026-10-29T22:54:20.4141650Z Post job cleanup.\n2026-10-29T22:54:20.5359017Z [command]/usr/bin/git version\n2026-10-29T22:54:20.5428475Z git version 2.56.0\n2026-10-29T22:54:20.5474486Z Temporarily overriding HOME='/home/runner/work/_temp/0519d325-dc90-46b3-91ed-8861c9d50128' before making global git config changes\n2026-10-29T22:54:20.5475938Z Adding repository directory to the temporary git global config as a safe directory\n2026-10-29T22:54:20.5480866Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orkstack/orkstack\n2026-10-29T22:54:20.5560862Z Removing SSH command configuration\n2026-10-29T22:54:20.5561833Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-10-29T22:54:20.5658213Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-10-29T22:54:20.6098819Z Removing HTTP extra header\n2026-10-29T22:54:20.6101263Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-10-29T22:54:20.6221411Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-10-29T22:54:20.6546428Z Removing includeIf entries pointing to credentials config files\n2026-10-29T22:54:20.6558296Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-10-29T22:54:20.6632024Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-10-29T22:54:20.7106777Z Cleaning up orphan processes\n2026-10-29T22:54:20.7579113Z Terminate orphan process: pid (3605) (bash)\n2026-10-29T22:54:20.7642011Z Terminate orphan process: pid (3607) (bash)\n2026-10-29T22:54:20.7696936Z Terminate orphan process: pid (7466) (proofrun)\n2026-10-29T22:54:20.7764244Z Terminate orphan process: pid (92733) (go)\n2026-10-29T22:54:20.7802036Z Terminate orphan process: pid (92734) (internal_engine.test)\n2026-10-29T22:54:20.7842826Z Terminate orphan process: pid (92764) (test2json)\n2026-10-29T22:54:20.7891767Z Terminate orphan process: pid (97277) (go)\n2026-10-29T22:54:20.7916995Z Terminate orphan process: pid (97278) (internal_engine.test)\n2026-10-29T22:54:20.7946262Z Terminate orphan process: pid (97326) (test2json)\n2026-10-29T22:54:20.8003625Z Terminate orphan process: pid (99117) (docker)\n2026-10-29T22:54:20.8067687Z Terminate orphan process: pid (99189) (docker)\n2026-10-29T22:54:20.8102383Z Terminate orphan process: pid (99335) (go)\n2026-10-29T22:54:20.8128062Z Terminate orphan process: pid (99336) (cmd_orkctl.test)\n2026-10-29T22:54:20.8164583Z Terminate orphan process: pid (99367) (test2json)\n2026-10-29T22:54:20.8195113Z Terminate orphan process: pid (99374) (ork)\n2026-10-29T22:54:20.8223915Z Terminate orphan process: pid (99384) (orker)\n",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:22Z",
+          "completed_at": "2026-10-29T22:43:23Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:23Z",
+          "completed_at": "2026-10-29T22:43:26Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:26Z",
+          "completed_at": "2026-10-29T22:43:38Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:38Z",
+          "completed_at": "2026-10-29T22:45:45Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:45:45Z",
+          "completed_at": "2026-10-29T22:45:56Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:45:56Z",
+          "completed_at": "2026-10-29T22:46:00Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "cancelled",
+          "started_at": "2026-10-29T22:46:00Z",
+          "completed_at": "2026-10-29T22:54:18Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:18Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (11)",
+      "conclusion": "success",
+      "id": 123775697218,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:41:10Z",
+      "completed_at": "2026-10-29T22:50:07Z",
+      "runner_name": "GitHub Actions 1000000769",
+      "check_run_id": 123775697218,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:10Z",
+          "completed_at": "2026-10-29T22:41:11Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:11Z",
+          "completed_at": "2026-10-29T22:41:14Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:14Z",
+          "completed_at": "2026-10-29T22:41:23Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:23Z",
+          "completed_at": "2026-10-29T22:43:00Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:00Z",
+          "completed_at": "2026-10-29T22:43:07Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:07Z",
+          "completed_at": "2026-10-29T22:43:09Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:09Z",
+          "completed_at": "2026-10-29T22:49:59Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:49:59Z",
+          "completed_at": "2026-10-29T22:50:05Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:05Z",
+          "completed_at": "2026-10-29T22:50:05Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:05Z",
+          "completed_at": "2026-10-29T22:50:05Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:05Z",
+          "completed_at": "2026-10-29T22:50:05Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:05Z",
+          "completed_at": "2026-10-29T22:50:05Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (12)",
+      "conclusion": "success",
+      "id": 123775697230,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:42:14Z",
+      "completed_at": "2026-10-29T22:52:11Z",
+      "runner_name": "GitHub Actions 1000000772",
+      "check_run_id": 123775697230,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:14Z",
+          "completed_at": "2026-10-29T22:42:15Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:15Z",
+          "completed_at": "2026-10-29T22:42:18Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:18Z",
+          "completed_at": "2026-10-29T22:42:28Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:42:28Z",
+          "completed_at": "2026-10-29T22:43:36Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:36Z",
+          "completed_at": "2026-10-29T22:43:41Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:41Z",
+          "completed_at": "2026-10-29T22:43:42Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:42Z",
+          "completed_at": "2026-10-29T22:52:07Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:52:07Z",
+          "completed_at": "2026-10-29T22:52:08Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:52:08Z",
+          "completed_at": "2026-10-29T22:52:08Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:52:08Z",
+          "completed_at": "2026-10-29T22:52:09Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:52:09Z",
+          "completed_at": "2026-10-29T22:52:09Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:52:09Z",
+          "completed_at": "2026-10-29T22:52:09Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (2)",
+      "conclusion": "cancelled",
+      "id": 123775697236,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:43:11Z",
+      "completed_at": "2026-10-29T22:54:21Z",
+      "runner_name": "GitHub Actions 1000000773",
+      "check_run_id": 123775697236,
+      "annotations": [
+        "The run was canceled by @ork-stack.",
+        "The operation was canceled."
+      ],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:11Z",
+          "completed_at": "2026-10-29T22:43:12Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:12Z",
+          "completed_at": "2026-10-29T22:43:15Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:15Z",
+          "completed_at": "2026-10-29T22:43:24Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:24Z",
+          "completed_at": "2026-10-29T22:44:23Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:23Z",
+          "completed_at": "2026-10-29T22:44:28Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:28Z",
+          "completed_at": "2026-10-29T22:44:29Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "cancelled",
+          "started_at": "2026-10-29T22:44:29Z",
+          "completed_at": "2026-10-29T22:54:18Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:18Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (13)",
+      "conclusion": "success",
+      "id": 123775697247,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:41:12Z",
+      "completed_at": "2026-10-29T22:51:38Z",
+      "runner_name": "GitHub Actions 1000000770",
+      "check_run_id": 123775697247,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:13Z",
+          "completed_at": "2026-10-29T22:41:14Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:14Z",
+          "completed_at": "2026-10-29T22:41:17Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:17Z",
+          "completed_at": "2026-10-29T22:41:26Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:41:26Z",
+          "completed_at": "2026-10-29T22:43:00Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:00Z",
+          "completed_at": "2026-10-29T22:43:09Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:09Z",
+          "completed_at": "2026-10-29T22:43:14Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:14Z",
+          "completed_at": "2026-10-29T22:51:32Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:51:32Z",
+          "completed_at": "2026-10-29T22:51:34Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:51:34Z",
+          "completed_at": "2026-10-29T22:51:34Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:51:34Z",
+          "completed_at": "2026-10-29T22:51:35Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:51:35Z",
+          "completed_at": "2026-10-29T22:51:35Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:51:35Z",
+          "completed_at": "2026-10-29T22:51:35Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (14)",
+      "conclusion": "failure",
+      "id": 123775697250,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:43:17Z",
+      "completed_at": "2026-10-29T22:53:19Z",
+      "runner_name": "GitHub Actions 1000000774",
+      "check_run_id": 123775697250,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:18Z",
+          "completed_at": "2026-10-29T22:43:19Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:19Z",
+          "completed_at": "2026-10-29T22:43:22Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:22Z",
+          "completed_at": "2026-10-29T22:43:34Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:43:34Z",
+          "completed_at": "2026-10-29T22:45:04Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:45:04Z",
+          "completed_at": "2026-10-29T22:45:15Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:45:15Z",
+          "completed_at": "2026-10-29T22:45:18Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "failure",
+          "started_at": "2026-10-29T22:45:18Z",
+          "completed_at": "2026-10-29T22:53:11Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:53:11Z",
+          "completed_at": "2026-10-29T22:53:15Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:53:15Z",
+          "completed_at": "2026-10-29T22:53:15Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:53:15Z",
+          "completed_at": "2026-10-29T22:53:15Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:53:15Z",
+          "completed_at": "2026-10-29T22:53:15Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:53:15Z",
+          "completed_at": "2026-10-29T22:53:15Z"
+        }
+      ],
+      "failed_step": "integration shard"
+    },
+    {
+      "name": "gate / integration (8)",
+      "conclusion": "cancelled",
+      "id": 123775697263,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:47:34Z",
+      "completed_at": "2026-10-29T22:54:23Z",
+      "runner_name": "GitHub Actions 1000000778",
+      "check_run_id": 123775697263,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:35Z",
+          "completed_at": "2026-10-29T22:47:36Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:36Z",
+          "completed_at": "2026-10-29T22:47:39Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:39Z",
+          "completed_at": "2026-10-29T22:47:50Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:50Z",
+          "completed_at": "2026-10-29T22:50:20Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:20Z",
+          "completed_at": "2026-10-29T22:50:35Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:50:35Z",
+          "completed_at": "2026-10-29T22:50:40Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "cancelled",
+          "started_at": "2026-10-29T22:50:40Z",
+          "completed_at": "2026-10-29T22:54:18Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:18Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (3)",
+      "conclusion": "cancelled",
+      "id": 123775697282,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:44:44Z",
+      "completed_at": "2026-10-29T22:54:21Z",
+      "runner_name": "GitHub Actions 1000000776",
+      "check_run_id": 123775697282,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:45Z",
+          "completed_at": "2026-10-29T22:44:46Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:46Z",
+          "completed_at": "2026-10-29T22:44:49Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:49Z",
+          "completed_at": "2026-10-29T22:44:59Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:44:59Z",
+          "completed_at": "2026-10-29T22:47:12Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:12Z",
+          "completed_at": "2026-10-29T22:47:18Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:47:18Z",
+          "completed_at": "2026-10-29T22:47:19Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "cancelled",
+          "started_at": "2026-10-29T22:47:19Z",
+          "completed_at": "2026-10-29T22:54:18Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:18Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:19Z",
+          "completed_at": "2026-10-29T22:54:19Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / integration (7)",
+      "conclusion": "cancelled",
+      "id": 123775697300,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:45:17Z",
+      "completed_at": "2026-10-29T22:54:23Z",
+      "runner_name": "GitHub Actions 1000000777",
+      "check_run_id": 123775697300,
+      "annotations": [],
+      "log": "",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:45:18Z",
+          "completed_at": "2026-10-29T22:45:20Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 2,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:45:20Z",
+          "completed_at": "2026-10-29T22:45:23Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:45:23Z",
+          "completed_at": "2026-10-29T22:45:34Z"
+        },
+        {
+          "name": "proof host",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:45:34Z",
+          "completed_at": "2026-10-29T22:48:12Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:48:12Z",
+          "completed_at": "2026-10-29T22:48:27Z"
+        },
+        {
+          "name": "fetch build",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:48:27Z",
+          "completed_at": "2026-10-29T22:48:31Z"
+        },
+        {
+          "name": "integration shard",
+          "number": 7,
+          "conclusion": "cancelled",
+          "started_at": "2026-10-29T22:48:31Z",
+          "completed_at": "2026-10-29T22:54:18Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 8,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:18Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post proof host",
+          "number": 14,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 15,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 16,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 17,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:20Z",
+          "completed_at": "2026-10-29T22:54:20Z"
+        }
+      ],
+      "failed_step": ""
+    },
+    {
+      "name": "gate / proof",
+      "conclusion": "failure",
+      "id": 123781862267,
+      "run_attempt": 1,
+      "started_at": "2026-10-29T22:54:26Z",
+      "completed_at": "2026-10-29T22:55:57Z",
+      "runner_name": "GitHub Actions 1000000781",
+      "check_run_id": 123781862267,
+      "annotations": [
+        "Process completed with exit code 1."
+      ],
+      "log": "[proofrun job-log: 539 lines left out]\n2026-10-29T22:55:04.7141672Z         err=\"no check run\"\n2026-10-29T22:55:04.7141959Z       elif ! gh api --paginate \"$repo/check-runs/$check/annotations\" --jq '.[].message | tojson' >\"$work/ann-lines\" ||\n2026-10-29T22:55:04.7142278Z         ! jq -s . \"$work/ann-lines\" >\"$work/ann\"; then\n2026-10-29T22:55:04.7142516Z         # One JSON string per message, so a multi-line message stays whole.\n2026-10-29T22:55:04.7142748Z         err=\"annotations: the API call failed\"\n2026-10-29T22:55:04.7142921Z         echo '[]' >\"$work/ann\"\n2026-10-29T22:55:04.7143063Z       fi\n2026-10-29T22:55:04.7143243Z       # Best effort: GitHub keeps no log for a job whose runner it lost,\n2026-10-29T22:55:04.7143505Z       # and that job is classified from its annotations, not its log.\n2026-10-29T22:55:04.7143712Z       case \"$conclusion\" in\n2026-10-29T22:55:04.7143869Z       success | skipped) ;;\n2026-10-29T22:55:04.7144226Z       *) gh api \"$repo/actions/jobs/$id/logs\" >\"$work/log\" 2>/dev/null || : >\"$work/log\" ;;\n2026-10-29T22:55:04.7144455Z       esac\n2026-10-29T22:55:04.7144571Z     fi\n2026-10-29T22:55:04.7144884Z     jq -c --rawfile log \"$work/log\" --slurpfile ann \"$work/ann\" --arg err \"$err\" '\n2026-10-29T22:55:04.7145131Z       {name, conclusion: (.conclusion // \"\"),\n2026-10-29T22:55:04.7145329Z        id: (.id // 0), run_attempt: (.run_attempt // 0),\n2026-10-29T22:55:04.7145565Z        started_at: (.started_at // \"\"), completed_at: (.completed_at // \"\"),\n2026-10-29T22:55:04.7145796Z        runner_name: (.runner_name // \"\"),\n2026-10-29T22:55:04.7146025Z        check_run_id: ((.check_run_url // \"\") | split(\"/\") | last | tonumber? // 0),\n2026-10-29T22:55:04.7146253Z        annotations: $ann[0], log: $log,\n2026-10-29T22:55:04.7146491Z        steps: [.steps[]? | {name, number: (.number // 0), conclusion: (.conclusion // \"\"),\n2026-10-29T22:55:04.7146799Z                             started_at: (.started_at // \"\"), completed_at: (.completed_at // \"\")}],\n2026-10-29T22:55:04.7147100Z        failed_step: ([.steps[]? | select(.conclusion == \"failure\") | .name][0] // \"\")}\n2026-10-29T22:55:04.7147398Z       + (if $err == \"\" then {} else {read_error: $err} end)' <<<\"$job\" >>\"$work/jobs-$n\" ||\n2026-10-29T22:55:04.7147734Z       echo \"{\\\"name\\\":$(jq '.name' <<<\"$job\"),\\\"read_error\\\":\\\"the record could not be assembled\\\"}\" >>\"$work/jobs-$n\"\n2026-10-29T22:55:04.7147998Z   done <\"$work/raw-$n\"\n2026-10-29T22:55:04.7148225Z   jq -s --argjson n \"$n\" '{attempt: $n, jobs: .}' \"$work/jobs-$n\" >\"$dir/attempt-$n.json\" ||\n2026-10-29T22:55:04.7148525Z     echo \"unreadable: assembling attempt $n failed\" >\"$dir/attempt-$n.json\"\n2026-10-29T22:55:04.7148739Z done\n2026-10-29T22:55:04.7165392Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:55:04.7165585Z env:\n2026-10-29T22:55:04.7165697Z   TIER: release\n2026-10-29T22:55:04.7165812Z   INT_SHARDS: 14\n2026-10-29T22:55:04.7165926Z   UI_SHARDS: 5\n2026-10-29T22:55:04.7166038Z   FUZZ_BUDGET: 105m\n2026-10-29T22:55:04.7166175Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:55:04.7166319Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:55:04.7166466Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:55:04.7166615Z   GOTOOLCHAIN: local\n2026-10-29T22:55:04.7168047Z   GH_TOKEN: ***\n2026-10-29T22:55:04.7168166Z ##[endgroup]\n2026-10-29T22:55:19.0631647Z ##[group]Run set -euo pipefail\n2026-10-29T22:55:19.0631947Z set -euo pipefail\n2026-10-29T22:55:19.0632260Z args=(-plan \"$RUNNER_TEMP/ci/parts/plan-a1/integration-plan.json\"\n2026-10-29T22:55:19.0632669Z       -parts \"$RUNNER_TEMP/ci/parts\" -jobs \"$RUNNER_TEMP/ci/jobs\"\n2026-10-29T22:55:19.0633030Z       -out \"$RUNNER_TEMP/ci/proof\" -name \"$PROOF_NAME\"\n2026-10-29T22:55:19.0633492Z       -ci-run-id \"$CI_RUN_ID\" -ci-attempt \"$CI_ATTEMPT\" -ci-event \"$CI_EVENT\" -ci-url \"$CI_URL\")\n2026-10-29T22:55:19.0633958Z if [ -f \"$RUNNER_TEMP/ci/parts/plan-a1/ui-plan.json\" ]; then\n2026-10-29T22:55:19.0634341Z   args+=(-ui-plan \"$RUNNER_TEMP/ci/parts/plan-a1/ui-plan.json\")\n2026-10-29T22:55:19.0634644Z fi\n2026-10-29T22:55:19.0634816Z status=0\n2026-10-29T22:55:19.0635077Z go run ./test/tools/proofrun merge \"${args[@]}\" || status=$?\n2026-10-29T22:55:19.0635499Z # The merged proof keeps every part's records, the events and logs\n2026-10-29T22:55:19.0635913Z # only of parts that did not pass, and GitHub's job records — never\n2026-10-29T22:55:19.0636287Z # a part's binaries, image layouts or test artifacts\n2026-10-29T22:55:19.0636669Z # (scripts/proof-collect.sh, docs/PROOFS.md §7). Copied in whole,\n2026-10-29T22:55:19.0637072Z # the parts were 4.6 GB and the upload below timed out; with the\n2026-10-29T22:55:19.0637778Z # binaries out, a green run's events and logs were still 900 MB.\n2026-10-29T22:55:19.0638160Z # The copy is not the verdict: proof.json is already written, and\n2026-10-29T22:55:19.0638556Z # the merger read the parts, not this copy. It is made whatever the\n2026-10-29T22:55:19.0638983Z # merge decided — a failing proof is exactly the one whose parts'\n2026-10-29T22:55:19.0639305Z # events and logs a reader needs (docs/PROOFS.md §8); under set -e\n2026-10-29T22:55:19.0639872Z # a failing merge used to end the step before it (run 40411125174\n2026-10-29T22:55:19.0640112Z # uploaded five files) — and the step then ends as the merge did.\n2026-10-29T22:55:19.0640422Z scripts/proof-collect.sh \"$RUNNER_TEMP/ci/parts\" \"$RUNNER_TEMP/ci/jobs\" \"$RUNNER_TEMP/ci/proof\" || true\n2026-10-29T22:55:19.0640685Z exit \"$status\"\n2026-10-29T22:55:19.0656742Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:55:19.0656931Z env:\n2026-10-29T22:55:19.0657037Z   TIER: release\n2026-10-29T22:55:19.0657150Z   INT_SHARDS: 14\n2026-10-29T22:55:19.0657256Z   UI_SHARDS: 5\n2026-10-29T22:55:19.0657366Z   FUZZ_BUDGET: 105m\n2026-10-29T22:55:19.0657489Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:55:19.0657629Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:55:19.0657769Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:55:19.0657909Z   GOTOOLCHAIN: local\n2026-10-29T22:55:19.0658025Z   CI_RUN_ID: 40965510239\n2026-10-29T22:55:19.0658142Z   CI_ATTEMPT: 1\n2026-10-29T22:55:19.0658263Z   CI_EVENT: workflow_dispatch\n2026-10-29T22:55:19.0658463Z   CI_URL: https://github.com/orkstack/orkstack/actions/runs/40965510239\n2026-10-29T22:55:19.0658656Z ##[endgroup]\n2026-10-29T22:55:41.5575734Z exit status 1\n2026-10-29T22:55:41.6537465Z collect part-activity-fixture-git-a1: passed; records only\n2026-10-29T22:55:41.7045087Z collect part-activity-fixture-json-a1: passed; records only\n2026-10-29T22:55:41.7530986Z collect part-activity-fixture-shell-a1: passed; records only\n2026-10-29T22:55:41.8014665Z collect part-activity-fixture-template-a1: passed; records only\n2026-10-29T22:55:41.8498647Z collect part-build-a1: passed; records only\n2026-10-29T22:55:41.8984741Z collect part-fast-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.1637698Z collect part-integration-1-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.2124029Z collect part-integration-10-a1: passed; records only\n2026-10-29T22:55:42.2607918Z collect part-integration-11-a1: passed; records only\n2026-10-29T22:55:42.3096183Z collect part-integration-12-a1: passed; records only\n2026-10-29T22:55:42.3581231Z collect part-integration-13-a1: passed; records only\n2026-10-29T22:55:42.4067761Z collect part-integration-14-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.6143530Z collect part-integration-2-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.6604000Z collect part-integration-3-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.7085018Z collect part-integration-4-a1: passed; records only\n2026-10-29T22:55:42.7566906Z collect part-integration-5-a1: passed; records only\n2026-10-29T22:55:42.8051718Z collect part-integration-6-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.8519271Z collect part-integration-7-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.8982538Z collect part-integration-8-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.9454546Z collect part-integration-9-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:42.9953101Z collect part-observability-a1: passed; records only\n2026-10-29T22:55:43.0433668Z collect part-race-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:43.1365535Z collect part-ui-e2e-1-a1: did not pass, or left no part.json; records, events and logs\n2026-10-29T22:55:43.1848011Z collect part-ui-e2e-2-a1: passed; records only\n2026-10-29T22:55:43.2329739Z collect part-ui-e2e-3-a1: passed; records only\n2026-10-29T22:55:43.2812378Z collect part-ui-e2e-4-a1: passed; records only\n2026-10-29T22:55:43.3294310Z collect part-ui-e2e-5-a1: passed; records only\n2026-10-29T22:55:43.3777125Z collect plan-a1: passed; records only\n2026-10-29T22:55:43.4692010Z ##[error]Process completed with exit code 1.\n2026-10-29T22:55:43.4742258Z ##[group]Run {\n2026-10-29T22:55:43.4742428Z {\n2026-10-29T22:55:43.4742545Z   echo \"## Proof\"\n2026-10-29T22:55:43.4742674Z   echo\n2026-10-29T22:55:43.4742908Z   jq -r '.lists_changed[]? | \"- gate file: `\\(.file)`\"' \"$RUNNER_TEMP/ci/proof/proof.json\" 2>/dev/null || true\n2026-10-29T22:55:43.4743156Z   echo\n2026-10-29T22:55:43.4743362Z   jq -r '\"result: **\\(.result)**  merge-eligible: **\\(.merge_eligible)**\\ntree: `\\(.tree)`\"' \\\n2026-10-29T22:55:43.4743700Z     \"$RUNNER_TEMP/ci/proof/proof.json\" 2>/dev/null || echo \"no proof.json was written\"\n2026-10-29T22:55:43.4743922Z   echo\n2026-10-29T22:55:43.4744125Z   jq -r '.ineligible_reasons[]? | \"- \" + .' \"$RUNNER_TEMP/ci/proof/proof.json\" 2>/dev/null || true\n2026-10-29T22:55:43.4744467Z   jq -r '.quarantine_warnings[]? | \"- WARNING: \" + .' \"$RUNNER_TEMP/ci/proof/proof.json\" 2>/dev/null || true\n2026-10-29T22:55:43.4744866Z   jq -r '.reruns[]? | \"- rerun: \\(.part) attempt \\(.attempt), \\(.reason)\"' \"$RUNNER_TEMP/ci/proof/proof.json\" 2>/dev/null || true\n2026-10-29T22:55:43.4745390Z   jq -r '.degraded_runners[]? | \"- degraded runner: \\(.part) attempt \\(.attempt): \\(.metric) \\(.value) \\(.unit), floor \\(.floor) (re-run that job alone)\"' \"$RUNNER_TEMP/ci/proof/proof.json\" 2>/dev/null || true\n2026-10-29T22:55:43.4746070Z   jq -r '.setup_failures[]? | \"- setup failure: \\(.part) attempt \\(.attempt): the step \\\"\\(.step)\\\" ended \\(.conclusion) before the proof step started (re-run that job alone)\"' \"$RUNNER_TEMP/ci/proof/proof.json\" 2>/dev/null || true\n2026-10-29T22:55:43.4746508Z   echo\n2026-10-29T22:55:43.4746653Z   du -sh \"$RUNNER_TEMP/ci/proof\" 2>/dev/null || true\n2026-10-29T22:55:43.4746836Z } >>\"$GITHUB_STEP_SUMMARY\"\n2026-10-29T22:55:43.4763388Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}\n2026-10-29T22:55:43.4763654Z env:\n2026-10-29T22:55:43.4763796Z   TIER: release\n2026-10-29T22:55:43.4763911Z   INT_SHARDS: 14\n2026-10-29T22:55:43.4764024Z   UI_SHARDS: 5\n2026-10-29T22:55:43.4764134Z   FUZZ_BUDGET: 105m\n2026-10-29T22:55:43.4764256Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:55:43.4764394Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:55:43.4764542Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:55:43.4764684Z   GOTOOLCHAIN: local\n2026-10-29T22:55:43.4764806Z ##[endgroup]\n2026-10-29T22:55:43.5337897Z ##[group]Run actions/upload-artifact@v7.0.2\n2026-10-29T22:55:43.5338076Z with:\n2026-10-29T22:55:43.5338198Z   name: proof-40965510239-a1\n2026-10-29T22:55:43.5338348Z   path: /home/runner/work/_temp/ci/proof\n2026-10-29T22:55:43.5338498Z   retention-days: 90\n2026-10-29T22:55:43.5338626Z   if-no-files-found: warn\n2026-10-29T22:55:43.5338757Z   compression-level: 6\n2026-10-29T22:55:43.5338880Z   overwrite: false\n2026-10-29T22:55:43.5339005Z   include-hidden-files: false\n2026-10-29T22:55:43.5339139Z   archive: true\n2026-10-29T22:55:43.5339249Z env:\n2026-10-29T22:55:43.5339353Z   TIER: release\n2026-10-29T22:55:43.5339667Z   INT_SHARDS: 14\n2026-10-29T22:55:43.5339776Z   UI_SHARDS: 5\n2026-10-29T22:55:43.5339886Z   FUZZ_BUDGET: 105m\n2026-10-29T22:55:43.5340009Z   PROOF_ID: pr-ci-40965510239\n2026-10-29T22:55:43.5340152Z   PROOF_NAME: pr-ci-40965510239\n2026-10-29T22:55:43.5340298Z   ORK_LOCAL_REGISTRY: localhost:5001\n2026-10-29T22:55:43.5340443Z   GOTOOLCHAIN: local\n2026-10-29T22:55:43.5340592Z ##[endgroup]\n2026-10-29T22:55:43.6855117Z With the provided path, there will be 509 files uploaded\n2026-10-29T22:55:43.6859912Z Artifact name is valid!\n2026-10-29T22:55:43.6860188Z Root directory input is valid!\n2026-10-29T22:55:43.9581201Z Uploading artifact: proof-40965510239-a1.zip\n2026-10-29T22:55:43.9604524Z Beginning upload of artifact content to blob storage\n2026-10-29T22:55:45.6880800Z Uploaded bytes 8388608\n2026-10-29T22:55:46.6862352Z Uploaded bytes 16777216\n2026-10-29T22:55:47.7267115Z Uploaded bytes 25165824\n2026-10-29T22:55:48.4114545Z Uploaded bytes 33554432\n2026-10-29T22:55:49.3285298Z Uploaded bytes 41943040\n2026-10-29T22:55:50.1856366Z Uploaded bytes 50331648\n2026-10-29T22:55:51.5368064Z Uploaded bytes 58720256\n2026-10-29T22:55:52.7393852Z Uploaded bytes 67108864\n2026-10-29T22:55:53.6108102Z Uploaded bytes 75497472\n2026-10-29T22:55:54.3416991Z Uploaded bytes 83886080\n2026-10-29T22:55:54.4085388Z Uploaded bytes 85199721\n2026-10-29T22:55:54.4472892Z Finished uploading artifact content to blob storage!\n2026-10-29T22:55:54.4474635Z SHA256 digest of uploaded artifact is 4fbf7dcb5ac72edc619da0f775836f5a1b35c918241fc803197ff4b4e5ee62b3\n2026-10-29T22:55:54.4476543Z Finalizing artifact upload\n2026-10-29T22:55:54.9471641Z Artifact proof-40965510239-a1 successfully finalized. Artifact ID 12940350504\n2026-10-29T22:55:54.9472195Z Artifact proof-40965510239-a1 has been successfully uploaded! Final size is 85199721 bytes. Artifact ID is 12940350504\n2026-10-29T22:55:54.9476804Z Artifact download URL: https://github.com/orkstack/orkstack/actions/runs/40965510239/artifacts/12940350504\n2026-10-29T22:55:54.9706632Z Post job cleanup.\n2026-10-29T22:55:55.0367743Z [command]/usr/bin/git version\n2026-10-29T22:55:55.0417545Z git version 2.56.0\n2026-10-29T22:55:55.0444294Z Temporarily overriding HOME='/home/runner/work/_temp/8448a689-ef6a-4c5f-ba75-9a43492a97bb' before making global git config changes\n2026-10-29T22:55:55.0445054Z Adding repository directory to the temporary git global config as a safe directory\n2026-10-29T22:55:55.0448549Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/orkstack/orkstack\n2026-10-29T22:55:55.0483211Z Removing SSH command configuration\n2026-10-29T22:55:55.0489813Z [command]/usr/bin/git config --local --name-only --get-regexp core\\.sshCommand\n2026-10-29T22:55:55.0535455Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'core\\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :\"\n2026-10-29T22:55:55.0747611Z Removing HTTP extra header\n2026-10-29T22:55:55.0753327Z [command]/usr/bin/git config --local --name-only --get-regexp http\\.https\\:\\/\\/github\\.com\\/\\.extraheader\n2026-10-29T22:55:55.0791786Z [command]/usr/bin/git submodule foreach --recursive sh -c \"git config --local --name-only --get-regexp 'http\\.https\\:\\/\\/github\\.com\\/\\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :\"\n2026-10-29T22:55:55.1032324Z Removing includeIf entries pointing to credentials config files\n2026-10-29T22:55:55.1038288Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\\.gitdir:\n2026-10-29T22:55:55.1094520Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url\n2026-10-29T22:55:55.1437686Z Evaluate and set job outputs\n2026-10-29T22:55:55.1442611Z Set output 'proof_artifact'\n2026-10-29T22:55:55.1443841Z Cleaning up orphan processes\n",
+      "steps": [
+        {
+          "name": "Set up job",
+          "number": 1,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:27Z",
+          "completed_at": "2026-10-29T22:54:28Z"
+        },
+        {
+          "name": "draft and private-repository guard",
+          "number": 2,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:54:28Z",
+          "completed_at": "2026-10-29T22:54:28Z"
+        },
+        {
+          "name": "Run actions/checkout@v7.0.1",
+          "number": 3,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:28Z",
+          "completed_at": "2026-10-29T22:54:30Z"
+        },
+        {
+          "name": "Run actions/setup-go@v7.0.0",
+          "number": 4,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:30Z",
+          "completed_at": "2026-10-29T22:54:43Z"
+        },
+        {
+          "name": "fetch plan",
+          "number": 5,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:43Z",
+          "completed_at": "2026-10-29T22:54:49Z"
+        },
+        {
+          "name": "fetch parts",
+          "number": 6,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:54:49Z",
+          "completed_at": "2026-10-29T22:55:04Z"
+        },
+        {
+          "name": "job records",
+          "number": 7,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:55:04Z",
+          "completed_at": "2026-10-29T22:55:19Z"
+        },
+        {
+          "name": "merge",
+          "number": 8,
+          "conclusion": "failure",
+          "started_at": "2026-10-29T22:55:19Z",
+          "completed_at": "2026-10-29T22:55:43Z"
+        },
+        {
+          "name": "summary",
+          "number": 9,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:55:43Z",
+          "completed_at": "2026-10-29T22:55:43Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v7.0.2",
+          "number": 10,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:55:43Z",
+          "completed_at": "2026-10-29T22:55:54Z"
+        },
+        {
+          "name": "verdict",
+          "number": 11,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:55:54Z",
+          "completed_at": "2026-10-29T22:55:54Z"
+        },
+        {
+          "name": "Post Run actions/setup-go@v7.0.0",
+          "number": 21,
+          "conclusion": "skipped",
+          "started_at": "2026-10-29T22:55:54Z",
+          "completed_at": "2026-10-29T22:55:54Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v7.0.1",
+          "number": 22,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:55:54Z",
+          "completed_at": "2026-10-29T22:55:55Z"
+        },
+        {
+          "name": "Complete job",
+          "number": 23,
+          "conclusion": "success",
+          "started_at": "2026-10-29T22:55:55Z",
+          "completed_at": "2026-10-29T22:55:55Z"
+        }
+      ],
+      "failed_step": "merge"
+    }
+  ]
+}

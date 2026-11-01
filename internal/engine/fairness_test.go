@@ -40,8 +40,8 @@ func TestPoolResolver_PinsTheNamespacesFairnessInThePlan(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	if plan.Fairness == nil || plan.Fairness.Key != "payments" || plan.Fairness.Weight != 3 {
-		t.Fatalf("plan.Fairness = %+v, want payments at weight 3", plan.Fairness)
+	if plan.Fairness == nil || plan.Fairness.Key != "payments" || plan.Fairness.Weight != 3 || !plan.Fairness.PinRequests {
+		t.Fatalf("plan.Fairness = %+v, want payments at weight 3, its pin requests keyed too", plan.Fairness)
 	}
 }
 

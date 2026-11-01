@@ -108,7 +108,19 @@ make a worker-deployment version report `Drained` in seconds rather than in
 the cluster's default minutes, so the integration tests that wait for a
 release to drain (`orkctl release wait`, the continuation chain's rollout) wait
 seconds (docs/DEPLOY.md §4, "Underneath"). They are development and proof
-settings, not a deployment's.
+settings, not a deployment's. The container runs with `--rm`, so stopping it
+would remove its log: before the stop, `proofrun temporal-log -container NAME
+-out FILE` keeps the server's log, both of its streams, gzip-compressed as
+`temporal-server.log.gz` in the proof's directory (a local proof, unless
+`PROOF_TEMPORAL=shared`) or the part's (each CI part that starts one:
+`integration`, `ui-e2e`, `observability`). A log longer than 16 MiB keeps its
+last 16 MiB (`-max-bytes`), after a line saying how much of its start was left
+out; at the `warn` level the compose file sets, a part's log is far below
+that. A history-read error a test saw (a stream ended on "branch tokens don't
+match", say) is traced there. Keeping it is best effort: a log docker cannot
+give within 20 s (`-timeout`) is reported and fails nothing, and the stop
+follows, so a cancel waits on it at most about 22 s (the timeout, and 2 s for
+a child of docker that still holds its pipes).
 
 The **site gate** runs `bun run check && bun run build` in `site/`, logged to
 `site.log`: the docs sync, the design-token drift check and `astro check`, then
@@ -200,7 +212,12 @@ part.
 The UI the specs drive is the static build in `ui/build`, served by each
 spec's own engine from `ORK_UI_DIR` on the engine's API port, so a spec runs
 no UI server of its own and its page is on the engine's origin. The gate
-starts one browser server for both invocations, and the second reuses the
+starts one browser server for both invocations, through a `bun
+e2e/browser-server.ts start` that exits once the server listens, so the
+container is labelled with the proof's own shell as its owner
+(`ORK_PROOF_OWNER`, the owner its Temporal carries), never the starter, which
+a sweep would read as gone; the command refuses to start one without it.
+The second invocation reuses the
 first's UI build when the hash of the build's inputs
 (`ui/e2e/build-hash.ts`, written beside `ui/build`) is unchanged. A proof that
 runs both integration and Playwright makes that build earlier, while its
@@ -259,8 +276,9 @@ writes the failing `proof.json` and README from the `local` part alone.
 `PROOF_FAIL_FAST=0` runs every gate to its end, in the same order. It changes
 no eligibility rule: a proof whose gates all pass is identical either way.
 Unit tests are not part of this: the unit suite runs to its end whatever fails
-in it. CI parts (`scripts/proof-part.sh`) are unchanged, each part being one
-job.
+in it. A CI part (`scripts/proof-part.sh`) is one job and runs its gates to
+their end; between parts, a failing gate of the `fast` part cancels the run
+(§5).
 
 ### 2.3 The race gate and the nightly lanes
 
@@ -392,9 +410,9 @@ phase, and is one CI part (§5):
   unit test reads the budgets the repository sets, not the one a dispatch
   supplies: a dispatched `fuzz_budget` above 120 minutes ends in the step's
   timeout, with no ledger.
-  The CI budget is 105 minutes for the 82 targets (`go test -list '^Fuzz'
-  ./...`) of this tree: a turn of about 77 seconds, of which the first
-  targets fuzz 31 beside the assumed 45 seconds of overhead, and later ones
+  The CI budget is 105 minutes for the 93 targets (`go test -list '^Fuzz'
+  ./...`) of this tree: a turn of about 68 seconds, of which the first
+  targets fuzz 22 beside the assumed 45 seconds of overhead, and later ones
   more, since a measured overhead is usually well under the assumed one. The
   fuzz step is limited to 135 minutes and its job to 155. Its ledger,
   `fuzz-tests.json`, has one entry per target with the `seconds` it took and
@@ -598,9 +616,10 @@ ready_for_review — never `labeled`), `merge_group`, a push to
 ```mermaid
 flowchart LR
   base --> plan & build & fast & race & race_repeat["race-repeat"] & fuzz
+  fast --> cancel
   plan --> integration & ui_e2e["ui-e2e"] & observability
   build --> integration & ui_e2e & activity_fixture["activity-fixture"] & observability
-  base & plan & build & fast & race & race_repeat & fuzz & integration & ui_e2e & activity_fixture & observability --> proof
+  base & plan & build & fast & cancel & race & race_repeat & fuzz & integration & ui_e2e & activity_fixture & observability --> proof
   nightly["nightly.yml › nightly"] -. calls .-> callee["proof.yml"]
   gate["release.yml › gate"] -. calls .-> callee
   validate["release.yml › validate"] --> gate --> verify["release.yml › verify"]
@@ -616,12 +635,40 @@ checks the tree anyway. Every job but `proof` carries the same guard: on a
 pull request it runs only when the pull request is not a draft and, while the
 repository is private, carries the `ci:proof` label.
 
+**A failing `fast` gate cancels the run.** Every part starts as soon as what
+it needs is there, so a green run waits for nothing. When one of the `fast`
+part's own gates fails, `fast`'s last step says so as a job output, read from
+the part's `gates.tsv` after its upload, and `proof.yml` › `cancel` cancels the
+run (`gh run cancel`), as `release.yml` › `artifacts` does on a failure a rerun
+would repeat: a red `fast` gate is never a passing proof, because its unit
+gate exits 0 when every failure is a quarantined one and the merger fails the
+proof on any other red gate of it. `cancel` is a job of its own because
+`fast` runs the candidate's code, which could change what a later step of
+`fast` runs (`$GITHUB_PATH`, `$GITHUB_ENV`): `cancel` checks out nothing, runs
+nothing of the repository and alone holds `actions: write`; a forged output
+could only cancel the run that forged it. A `fast` that failed in a setup
+step, so that its part never ran, or that stopped before any gate (a
+prerequisite absent), says no gate failed and cancels nothing: that one job
+may run again (§7.1), and its shards keep their results. The `proof` job
+still runs, on `always()`, and fails on the failing gate; each shard the
+cancel stopped is a part with no result that no rule lets run again (cancelled
+with no running test named in its job log, or a test running when it
+stopped), never a lost or a
+degraded runner, and the run concludes `cancelled`, which `proof-rerun.yml`
+does not answer. Both callers grant `actions: write`, because a called
+workflow's job never gets more than its caller grants; the nightly tier has
+no `fast`. On a pull request from a fork or from Dependabot the token is
+read-only whatever the workflow asks, so `cancel` fails and the shards run to
+their end, as before. A green run's wall clock is unchanged; what a cancel
+saves is the runner time the shards had left when `fast` ended (§11.5).
+
 | Job | Runs | Uploads |
 |---|---|---|
 | `proof.yml` › `base` | decides the base: a pull request's first parent, which must be an ancestor of its head ("update this branch") unless `MERGE_GATE_MODE` is `queue`; a merge group's base; a validate push's first parent; a dispatch's input | nothing; job outputs |
 | `proof.yml` › `plan` | compiles and lists the packages; writes both plans; decides observability | the plans, the listing, the base lists |
 | `proof.yml` › `build` | builds every activity image once as an OCI layout and records its digests | the layouts and `images.tsv` |
-| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build | one part |
+| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build; its last step says whether one of its gates failed (`failed_gate`) | one part |
+| `proof.yml` › `cancel` | only when a `fast` gate failed: cancels the run, from a job that checks out and runs nothing of the repository and alone holds `actions: write` | nothing |
 | `proof.yml` › `race` | the race gate (§2.3), on a runner of its own; the full and release tiers | one part |
 | `proof.yml` › `race-repeat` | the nightly race repeat (§2.3); the nightly tier alone | one part |
 | `proof.yml` › `fuzz` | the nightly fuzz lane (§2.3), `FUZZ_BUDGET` shared by its targets; the nightly tier alone | one part, with the crashers it found |
@@ -651,6 +698,7 @@ skipped required job reports success, which is why
 |---|---|
 | `ci.yml` › `check` | `make check` on every push and every pull request: no Docker, no Temporal |
 | `ci.yml` › `vuln` | `make vuln` (the pinned `govulncheck`) on every push and every pull request. It reads the vulnerability database over the network, so it is a job of its own and in no proof gate: a network failure cannot fail a proof |
+| `ci.yml` › `proto` | `make proto-breaking` on every push and every pull request: `buf breaking` of the proto contract against the first release, v0.1.0, under `buf.yaml`'s rules, by the buf `deploy/buf-image.txt` pins. It checks out every tag, and is in no proof gate |
 | `ci.yml` › `feature` | the optional feature tier: on a pull request only with the `ci:feature` label, on a push to `validate/feature/**`, and by dispatch; it gates nothing |
 
 `site.yml` is not part of the proof and holds no required check; it builds and
@@ -666,12 +714,12 @@ build is stopped before it merges; the workflow publishes only a build that
 passed.
 
 `proof-rerun.yml` is not part of the proof and holds no required check; it
-asks GitHub for a new attempt of a failed candidate proof, when nothing in it
-recorded a result (§10):
+asks GitHub for a new attempt of a failed candidate proof, or of a failed
+nightly of `main`, when nothing in it recorded a result (§10):
 
 | Job | Runs |
 |---|---|
-| `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run was a push to `validate/full/**` of this repository, and its run attempt is below 3 (so at most two automatic reruns). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
+| `proof-rerun.yml` › `rerun` | on the completion of a failed `proof` or `nightly` run, only when the repository variable `PROOF_AUTO_RERUN` is `true`, the run is of this repository, its run attempt is below 3 (so at most two automatic reruns), and it is either a `proof.yml` run of a push to `validate/full/**` or a `nightly.yml` run, scheduled or dispatched, on the default branch (the nightly calls `proof.yml` as a reusable workflow, which raises no `proof` completion of its own). `proofrun rerun-plan` reads that attempt's jobs, annotations and logs through `gh api`, a log with `--allow-escape-sequences` (gh 2.103 refuses to print a body that carries terminal escapes without it, and a job log does) and kept bounded as the proof job's job records keep it (§7; a log that bound refuses, or a JSON body over 32 MiB, is a failed read), and reads the caller's `nightly / ` prefix off a job's name as the merger does. A log read GitHub answers 404 or 410 for is no log; any other failed read makes that job a result, so it is not run again; the job runs `gh run rerun --failed` only when every failed job is the `proof` job or a part the merger's own classification calls lost, setup-failed or degraded. It holds `actions: write` and `contents: read`, and `checks: read`, because the evidence is a check-run annotation (the `proof` job takes the same permission); it checks out the default branch, never the candidate, and runs none of the candidate's code |
 
 `podman.yml` is not part of the proof and holds no required check; it runs the
 runtime-facing suites on Podman, OrkStack's second engine
@@ -748,9 +796,11 @@ image list (each named by `steps.<id>.outcome`), which a rerun on the same
 commit would only repeat. A failure in its checkout, its Go, QEMU or buildx
 setup, or its upload, which a lost or flaky runner explains, cancels nothing:
 the gate runs on, and "Re-run failed jobs" once the run completes re-runs
-`artifacts` and the jobs that need it, never the gate. The gate never cancels
-the run: its colour is not its verdict (an excused runner-size miss leaves it
-red while its merged proof passes, §12), and a rerun-eligible part (a lost or
+`artifacts` and the jobs that need it, never the gate. The gate cancels the
+run only from its own `cancel` job, on a failing `fast` gate no proof excuses
+(above):
+its colour is not its verdict (an excused runner-size miss leaves it red while
+its merged proof passes, §12), and a rerun-eligible part (a lost or
 degraded runner, a setup step, §11.2 of `AGENTS.md`) is answered by re-running
 that part alone. "Re-run failed jobs" on a run `artifacts` cancelled re-runs
 the failed job and every cancelled one, the gate included.
@@ -780,28 +830,38 @@ it checks that the gate's proof is a passing release proof of this commit,
 that the assets are exactly what the artifact's `SHA256SUMS` sums and match
 it, that the image list names each of the nine images once, that each layout's
 index names that digest, and that its bytes hash to it and list linux/amd64
-and linux/arm64; it signs `SHA256SUMS` with the release key and verifies that
-signature with the committed `deploy/cosign.pub`, so a missing key, a wrong
-password or a key that is not that file's pair stops it before the tag or any
-image is out. It then creates the annotated tag through the API (`gh api`, the
+and linux/arm64, that the release page names each image by that digest, and
+that the signing config is `deploy/cosign-signing-config.json`'s, which names
+no service; it signs `SHA256SUMS` with the release key, with no network, into
+cosign's bundle `SHA256SUMS.sigstore.json`, verifies that bundle with the
+committed `deploy/cosign.pub`, and writes its signature alone to
+`SHA256SUMS.sig`, which openssl verifies, so a missing key, a wrong password or
+a key that is not that file's pair stops it before the tag or any image is
+out. It then creates the annotated tag through the API (`gh api`, the
 ref created, never moved: a tag this run made on this commit is kept on a
 re-run, and any other is refused), pushes each layout to
 `ghcr.io/orkstack/<image>` byte for byte
 (`skopeo copy --all --preserve-digests`, from the image
-`deploy/skopeo-image.txt` pins) under `X.Y.Z` and `X.Y`, checks each digest
-after the push, refuses to move an `X.Y.Z` that holds another digest, signs
-each image by its digest (cosign, from the image `deploy/cosign-image.txt`
-pins, with `--new-bundle-format=false --use-signing-config=false
---tlog-upload=false`, so it writes the `sha256-<hex>.sig` layout OrkStack's
-verifier reads and nothing in a public transparency log), verifies each
-signature by digest with `deploy/cosign.pub` and reads the `.sig` manifest
-back, and only then creates the GitHub release (`gh release create
---verify-tag`, marked the latest when `validate` said so, never a draft or a
-pre-release, so `releases/latest/download/` names the newest release), with
-`SHA256SUMS.sig` and `cosign.pub` beside the archives. `validate` refuses a
-dispatch whose `deploy/cosign.pub` is not committed, and the `--release`
-smoke signs every image with a throwaway key by the same image and flags and
-runs an Orkflow in a namespace that requires that key. `verify` and `publish`
+`deploy/skopeo-image.txt` pins) under `X.Y.Z`, checks each digest after the
+push, refuses to move an `X.Y.Z` that holds another digest, signs each image
+by its digest (cosign, from the image `deploy/cosign-image.txt` pins, under
+that signing config and with no deprecated flag, so it writes cosign 3's
+bundle, which OrkStack's verifier reads, and nothing in a public
+transparency log), verifies each signature by digest with
+`deploy/cosign.pub`, reads back every signature the registry holds for each
+digest (`cosign download signature`) and refuses one that is not a bundle or
+that records a transparency-log entry, moves `X.Y` to each image only once
+every one is signed and verified (so a deployment that follows `X.Y`, as the
+built-in catalog does, never meets this release's images unsigned), and only
+then creates the GitHub release (`gh release
+create --verify-tag`, marked the latest when `validate` said so, never a draft
+or a pre-release, so `releases/latest/download/` names the newest release),
+with `SHA256SUMS.sig`, `SHA256SUMS.sigstore.json` and `cosign.pub` beside the
+archives. `validate` refuses a dispatch whose `deploy/cosign.pub` is not
+committed, and the `--release` smoke signs every image with a throwaway key by
+the same image, command and signing config, reads its bundles back the same
+way, and runs an Orkflow in a namespace
+that requires that key. `verify` and `publish`
 download what `gate` and `artifacts` uploaded by the names those jobs output,
 so a re-run of either finds the first attempt's artifact; `artifacts` keeps
 its upload 7 days, so the approval must come within them.
@@ -809,13 +869,13 @@ its upload 7 days, so the approval must come within them.
 `packages: write` and the only `contents: write`, and its environment alone
 holds the signing key. `verify`'s checkout keeps no credential, and no step
 that runs repository code holds a token; in `publish` only the steps that
-tag, push, sign images and release are given the token, and only the two
-signing steps the key, which cosign reads from the environment
-(`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a concurrency group named
-from the validated version, so two dispatches of one version run one after the
-other. A dispatch off `main` builds, smokes, proves and verifies, and
-publishes nothing; one on `main` whose approval is rejected publishes nothing
-either.
+tag, push, sign images, move `X.Y` and release are given the token, and only
+the two signing steps the key, which cosign reads from the environment
+(`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a
+concurrency group named from the validated version, so two dispatches of one
+version run one after the other. A dispatch off `main` builds, smokes, proves
+and verifies, and publishes nothing; one on `main` whose approval is rejected
+publishes nothing either.
 
 No `run:` step splices a workflow input or an event field into its shell; each
 reaches the step through `env:`. Every action is pinned to an exact release of
@@ -830,7 +890,9 @@ stack images the cache did not load are pulled through it (the compose file
 pins each by digest, and the stack then starts with `--pull never`, so a
 missing image is an explicit failure and never a stall), cosign v2.6.5 is
 downloaded through it as the release's linux/amd64 binary and kept only if it
-hashes to the SHA-256 the release's `cosign_checksums.txt` lists, and the one
+hashes to the SHA-256 the release's `cosign_checksums.txt` lists, the cosign
+image `deploy/cosign-image.txt` pins (which the bundle interop test runs with
+`--pull never`) is pulled through it when the daemon lacks it, and the one
 container the action runs from Docker Hub by tag is bounded with `timeout`.
 Its fetches run inside the caller's `proof host` step, which has a limit of
 10 minutes of its own.
@@ -1021,9 +1083,9 @@ Retention is chosen from `github.event.repository.private`:
 | `part-race-a<n>` | `race-tests.json`, `part.json`; the log and events only when the race gate failed (removed from a part whose gate passed, as the fast part's are) | 1 d / 7 d |
 | `part-race-repeat-a<n>` | `race-repeat-tests.json`, `part.json`; the log and events only when the lane failed | 1 d / 14 d |
 | `part-fuzz-a<n>` | `fuzz-tests.json`, `part.json`, each target's log under `fuzz/`, and `crashers/`: the input of every target the lane broke | 1 d / 14 d |
-| `part-integration-<k>-a<n>` | the shard's ledger, `part.json`, gates, `integration/*.log`, events, its `artifacts/` | 1 d / 14 d |
-| `part-ui-e2e-<k>-a<n>` | ledger, logs, screenshots, the traces of failed tests | 1 d / 14 d |
-| `part-activity-fixture-<A>-a<n>`, `part-observability-a<n>` | logs, `part.json` | 1 d / 14 d |
+| `part-integration-<k>-a<n>` | the shard's ledger, `part.json`, gates, `integration/*.log`, events, its `artifacts/`, its Temporal's `temporal-server.log.gz` (§2.1) | 1 d / 14 d |
+| `part-ui-e2e-<k>-a<n>` | ledger, logs, screenshots, the traces of failed tests, its Temporal's `temporal-server.log.gz` | 1 d / 14 d |
+| `part-activity-fixture-<A>-a<n>`, `part-observability-a<n>` | logs, `part.json`; the observability part's Temporal's `temporal-server.log.gz` | 1 d / 14 d |
 | `proof-<run_id>-a<n>` | the merged proof (below) | 30 d / 90 d |
 | `feature-proof-<run_id>-a<n>` (`ci.yml` › `feature`) | the feature proof directory | 14 d |
 | `flakes-<run_id>-a<n>` (`nightly.yml` › `flakes`) | `flakes.tsv`, `flakes.md` | 30 d |
@@ -1044,11 +1106,32 @@ The merged artifact `proof-<run_id>-a<n>` carries `proof.json`, the merged
 `race-tests.json` of a full or release proof or the `race-repeat-tests.json`
 and `fuzz-tests.json` of a nightly one, both plans, every part's records under `parts/` — its `part.json`, gates, ledgers,
 setup log and gate logs — and GitHub's record of every attempt's jobs under
-`jobs/`, with the logs of failed jobs. A part that did not pass (a gate
+`jobs/` (`attempt-N.json`), with a bounded log of each job that did not
+succeed. The proof job's "job records" step reads that log with
+`--allow-escape-sequences` and keeps, through `proofrun job-log` (built from
+the candidate's tree, so neither it nor its build is given the step's token,
+which only `gh`'s reads take), every line
+the merger and the rerun planner read anything from (a `proofrun: start` or
+`proofrun: outcome` line, or a test event in JSON, §7.1) wherever it is, byte
+for byte, and the log's last 200 lines, each cut at 400 bytes, terminal escapes
+removed, a run of lines left out marked with how many; a line its cleanup
+would turn into one the merger reads is left out too. `FuzzBoundJobLog` holds
+that the merger reads the same from the bounded log as from the whole. The integration
+gate prints its `proofrun: start` and `proofrun: outcome` lines to the job's log
+as they happen as well as to `integration.log` (`PART_STREAM` in
+`scripts/proof-part.sh`): before, the job's log held none of them, so a shard
+GitHub cancelled or lost before its artifact was uploaded read as if no test
+had started, however long it had run (run 40965510239's `integration (1)`,
+twelve minutes into `TestIntegration_SoakTasks`). A log
+GitHub answers 404 or 410 for (a lost runner keeps none) is left empty, as
+before. Every other way the step cannot keep a log fails that job's record
+closed, with a `read_error` naming why: a read that failed for another reason,
+a log whose merger lines together, or any one line, pass 1 MiB (refused, never
+cut), and a `proofrun` that did not build. A part that did not pass (a gate
 recorded as anything but `pass`, or no `part.json` because its process died)
 also has its events and per-job logs there (`*.events.jsonl`, `integration/`,
-`unit.log`, `race.log`, `race-repeat.log`, `fuzz/`), the files §8 reads a
-failure from; a passing part's are left out, and no part's `bin/`, `layouts/` or `artifacts/` is copied: all of it
+`unit.log`, `race.log`, `race-repeat.log`, `fuzz/`, and its own Temporal's
+`temporal-server.log.gz`), the files §8 reads a failure from; a passing part's are left out, and no part's `bin/`, `layouts/` or `artifacts/` is copied: all of it
 stays in the part's own artifact. A failing fuzz part's `crashers/` is none of
 those: it is copied with the part's other details. `scripts/proof-collect.sh`
 makes the copy, after the merger has read the parts and written `proof.json`,
@@ -1223,7 +1306,10 @@ git cannot read refuses it; with none given, nothing of the nightly is read.
    its shard; that shard's `part.json` names its artifact.
 3. For a failed test, the shard's `integration/<job>.log` and
    `integration.events.jsonl` hold the test's own output; the ledger row's
-   `job` names the log.
+   `job` names the log. An error the test read from Temporal (a history read,
+   a stream that ended) is traced in the part's `temporal-server.log.gz`
+   (§2.1), in the part's own artifact and, for a part that did not pass, in
+   the merged proof.
 4. For a part with no result, `ineligible_reasons` says whether GitHub lost the
    runner (that one job may be re-run), the part ran on a degraded runner
    (`degraded_runners` names the metric, its value and the floor; that one
@@ -1432,15 +1518,17 @@ failure in any other step before the proof step (a checkout, a toolchain's
 setup), and any failure of the plan or the build, is not rerun-eligible: start
 a new run, below.
 
-**Run failed candidates again automatically.** `proof-rerun.yml` does what the
+**Run failed candidates and nightlies again automatically.** `proof-rerun.yml` does what the
 three recoveries above do by hand, and only that: when a `proof` run for a push
-to `validate/full/**` of this repository fails, and the run attempt is below 3,
+to `validate/full/**` of this repository, or a scheduled or dispatched
+`nightly` run on the default branch, fails, and the run attempt is below 3,
 `proofrun rerun-plan` classifies every failed job with the merger's own
 `classify` from GitHub's record of the attempt (its jobs, its check-run
 annotations, the logs of failed jobs), and `gh run rerun --failed` runs only if
 every failed job is the `proof` job or a part that is lost, setup-failed or
 degraded. A part with a result, a cancel, a failed `base`, `plan` or `build`,
-a job it cannot read and a job whose name is not a part of the workflow all
+a job it cannot read and a job whose name is not a part of the workflow (a
+nightly's `vuln`, `quickstart` or `flakes` among them) all
 mean no rerun, so a run that can never become merge-eligible is not rerun. The
 planner reads only the failed jobs of the attempt that just completed: a job
 "Re-run failed jobs" carried forward (§7.1) succeeded, so it never decides a
@@ -1533,7 +1621,9 @@ git rev-parse main
   failure ends with the last 80 lines of the stack's `activities`, `ork` and
   `orker` logs. `make quickstart-smoke` on that commit reproduces it.
 - Only `runner-degraded` parts failed: a runner failure, not a regression
-  (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree.
+  (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree:
+  `proof-rerun.yml` asks for it where `PROOF_AUTO_RERUN` is on, and "Re-run
+  failed jobs" does it by hand.
 
 After any merge that moves `main`, once it is pushed, a dispatched run has its
 verdict sooner than the schedule's.
@@ -1559,18 +1649,32 @@ edits the entries into what the release page should say, under Keep a
 Changelog's `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
 `### Fixed` and `### Security`, each breaking change marked **BREAKING**.
 Nothing writes the date at tag time: the tag names a commit a proof passed
-on, so the heading is already in that commit. `dist notes -version vX.Y.Z`
-prints exactly what the page will show: the section without its heading,
-because the release has its own title, `OrkStack vX.Y.Z`. `release.yml` ›
-`artifacts` writes that to `meta/notes.md`, and `release.yml` › `publish`
-hands it, and nothing else, to `gh release create --notes-file`; the
-checksums, `SHA256SUMS.sig` and `cosign.pub` are the release's assets, and
-[UPGRADING.md](./UPGRADING.md), "Release artifacts", says how to verify
-them. `release.yml` › `validate` refuses a version with no section or an
-empty one, and one whose `## [Unreleased]` still holds entries, because they
-would ship in the release without being in its notes: an entry merged after
-the cut moves into the section before the dispatch. The first release, 0.1.0,
-says only "First release.": everything built before it is that release.
+on, so the heading is already in that commit. `dist notes -version vX.Y.Z
+-images FILE` prints exactly what the page will show: the section without its
+heading, because the release has its own title, `OrkStack vX.Y.Z`, and then a
+footer that names each image by the digest the image list FILE gives
+(`dist digests`), the tags and key it is published and signed with, and the
+`cosign verify` and `sha256sum` commands that check each image and the
+checksums. `release.yml` › `artifacts` writes that to `meta/notes.md`, and
+`release.yml` › `publish` refuses a page that does not name each image it
+pushes by its digest and hands it, and nothing else, to `gh release create
+--notes-file`; the checksums, `SHA256SUMS.sig`, `SHA256SUMS.sigstore.json` and
+`cosign.pub` are the release's assets, and [UPGRADING.md](./UPGRADING.md),
+"Release artifacts", says how to verify them. `release.yml` › `validate`
+refuses a version with no section or an empty one, and one whose
+`## [Unreleased]` still holds entries, because they would ship in the release
+without being in its notes: an entry merged after the cut moves into the
+section before the dispatch. It also refuses a page over GitHub's limit for a
+release body, 125,000 characters (counted as UTF-16 code units, never fewer
+than code points), footer included:
+`dist notes` without `-images` writes each digest as a placeholder of a
+digest's length, so the page it measures is exactly as long as the page
+`publish` creates, and a section too long for it fails the dispatch before
+anything is built or tagged, naming the page's size, rather than at `gh
+release create`, the last step, once the tag and the images are out. An
+`-images` given but empty is refused, never read as placeholders: only
+leaving the flag out asks for them. The first release, 0.1.0, says only
+"First release.": everything built before it is that release.
 
 **Run the release gate.** Dispatch `release.yml` with `version` set from
 any branch but `main` for a dry run: `validate`, `gate`, `artifacts` and
@@ -1626,7 +1730,7 @@ secrets, deploys from `main` only and has required reviewers): a release signs
 what it publishes, so `validate` refuses every dispatch until
 `deploy/cosign.pub` is committed, and `publish` pushes nothing until the
 `release` environment holds the private half. A repository administrator runs,
-on their own machine, with `cosign` (2.6 or later) and a signed-in `gh`:
+on their own machine, with `cosign` (2.6 or later), `jq` and a signed-in `gh`:
 
 ```bash
 scripts/release-signing-setup.sh --dry-run    # every action, nothing run
@@ -1637,10 +1741,11 @@ It refuses a key directory (`--dir`, default `~/orkstack-release-key`) inside
 any git work tree, an existing key file, and an environment that already holds
 `COSIGN_PRIVATE_KEY` or a committed `deploy/cosign.pub` unless `--rotate`, all
 before it writes anything. It then generates the pair with `cosign
-generate-key-pair`, proves it by signing and verifying a file with
-`release.yml`'s flags, creates or updates the `release` environment
-(deployments from `main` only, the caller a required reviewer unless
-`--no-reviewer`, so `publish` waits for an approval), sets
+generate-key-pair`, proves it by signing and verifying a file under
+`release.yml`'s signing config (refusing a bundle that records a
+transparency-log entry, as `release.yml` does), creates or updates the
+`release` environment (deployments from `main` only, the caller a required
+reviewer unless `--no-reviewer`, so `publish` waits for an approval), sets
 `COSIGN_PRIVATE_KEY` (the whole `.key` file) and `COSIGN_PASSWORD`, and
 copies the public key to `deploy/cosign.pub`. The password reaches cosign
 through its environment and `gh` on stdin, never an argument or a file.
@@ -1667,7 +1772,10 @@ again. A run that stopped before its tag step can be dispatched again with
 the same version; once a run has made the tag, only a re-run of that run can
 finish it, and after the 7 days a new patch version is dispatched instead.
 A `nightly` job that refused because the nightly was still running, or had not
-been dispatched, is re-run the same way once that nightly passes. "Re-run
+been dispatched, is re-run the same way once that nightly passes. A run its gate cancelled, on a failing `fast` gate, cannot
+be released by any rerun: a second attempt of a part after a result makes the
+proof ineligible, so `verify` refuses it. Fix the failure, merge the fix, and
+dispatch a new release. "Re-run
 failed jobs" on a run `artifacts` cancelled re-runs the failed job and every
 cancelled one, the gate included; one whose `artifacts` failed in a setup
 step, and so cancelled nothing, re-runs `artifacts` and what needs it.
@@ -1734,7 +1842,14 @@ every worktree of this repository, and removes:
   `ORK_ORKER_WORKDIR`, read from the container's own mounts. A Playwright
   spec's Orkers work in such roots too, `e2e-<name>-p<pid>-<suffix>`
   (`orkerEnv` in `ui/e2e/harness.ts`);
-- a proof Temporal container whose proof process is gone;
+- a proof's own container (its Temporal, its Playwright browser server),
+  labelled `orkstack.proof`, whose owner (`orkstack.proof.owner`) is gone,
+  and never one labelled with the id of a proof whose `proof.pid` says it
+  still runs, whatever its owner label says. A proof's start sweeps these
+  alone again, by the same rule, before it starts its own Temporal
+  (`proofrun clean -remove -proof-containers`); on 2026-10-30 a live proof's
+  browser server, labelled with a starter that had exited, was stopped that
+  way 89 specs into its gate;
 
 each only when the process its name records is gone, and never one whose pid
 a still-running proof or `integration.sh` run recorded. A work root or a
@@ -1752,6 +1867,7 @@ listing with no bucket at all.
 |---|---|
 | `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept, except for `GIT_STATE_PACKAGES` (the packages whose unit tests run git, whose reads the cache cannot see), run with `-count=1`; no Docker |
 | `make vuln` | `go tool govulncheck ./...`: the known vulnerabilities whose vulnerable code the module reaches. It needs the network, so it is in no proof gate; `ci.yml` and `nightly.yml` run it (§5) |
+| `make proto-breaking` | `buf breaking` of `proto/` against the tree of the tag `PROTO_BASE` (default `v0.1.0`, which the clone must hold), under `buf.yaml`'s rules, by the buf image `deploy/buf-image.txt` pins, run with no network; `ci.yml` › `proto` runs it (§5) |
 | `make proof` | the full proof, the merge gate |
 | `make proof-ui` | the same; the full proof already runs the UI suites |
 | `make test-race` | the race gate's `go test`, without its ledger: `-race -short` over `RACE_PACKAGES` (default `./...`), `RACE_COUNT` times (default 1) |
@@ -1804,6 +1920,7 @@ listing with no bucket at all.
 | `flakes` | `-from GLOB`, `-repo DIR`, `-window N`, `-out FILE`, `-md FILE`, `-min-runs N` |
 | `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S`; or, for `release.yml`'s nightly check, `-commit SHA` with `-nightly DIR` and `-nightly-jobs FILE` |
 | `temporal-args` | `-compose FILE` |
+| `temporal-log` | `-container NAME`, `-out FILE`, `-max-bytes N`, `-timeout D` |
 | `costs` | `-from DIR`, `-costs-out FILE`, `-slow-out FILE`, `-ui-costs-out FILE`, `-threshold SECONDS` |
 | `overhead` | `-from DIR`, `-out FILE`, `-config FILE` |
 | `push-layout` | `-layouts DIR`, `-registry HOST`, `-namespace S`, `-tag TAG`, `-out FILE` |
@@ -1812,9 +1929,10 @@ listing with no bucket at all.
 | `free-port` | none |
 | `touches` | `-base REF`, `-action NAME`, `-gate-files`, `-scope FILE` |
 | `gates` | `-select FILE` |
-| `clean` | `-remove` |
+| `clean` | `-remove`, `-proof-containers` |
 | `runner-health` | `-out FILE`, `-class NAME`, `-floors FILE`, `-dir DIR`, `-seconds N` |
 | `rerun-plan` | `-repo OWNER/NAME`, `-run ID`, `-attempt N`, `-max-attempts N` |
+| `job-log` | none: the job log on standard input, the bounded log on standard output (§7) |
 
 ### 11.4 The scripts
 
@@ -1834,6 +1952,11 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   tier), and 78.0 minutes as one local part on the 16-core host (2026-10-28,
   race gate included). That gap is why a CI proof is the default merge path
   (§10).
+- `fast`'s cancel (§5) adds nothing to a green run. On a failing gate it
+  cancels when `fast` ends, which was 12.3 and 16.2 minutes after the run
+  began in runs 40797687107 and 41001701958, while their shards ended 13 to 22
+  minutes in: it saves the runner time the shards had left then, which no run
+  with the cancel has measured yet.
 - `make check` (lint, `go vet -tags=integration ./...`, `go test -short ./...`),
   measured 2026-10-21 on a quiet 16-core host: with a warm build and test
   cache, 11 s at 16 CPUs and 7 s at 2 CPUs (`taskset -c 0-1`), since unchanged
@@ -2058,34 +2181,36 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   rather than the gate's colour (2026-10-28), so a red gate cancels nothing,
   and a nightly is read by its `proof.json` (§10). Excusing the miss in the shard, as the UI ledger does,
   would make the colours agree; it is not done.
-- **The observability gate has not run on GitHub.** The first release run,
-  which always runs it, is its calibration.
-- **`release.yml` has not passed on GitHub yet.**
-  `nightly.yml` has four jobs, `nightly`, `vuln`, `quickstart` and `flakes`;
-  `nightly` and `flakes` have run, and so has `proof.yml` as a reusable
-  workflow through them (`workflow_call`; the flakes job passed in run
-  40555387388). `quickstart` has not run on GitHub yet, and neither has the
-  same smoke in `release.yml`: the first scheduled or dispatched nightly after
-  it lands is the smoke's first run on a hosted runner, and its time there,
-  for which the job allows 40 minutes, is not measured (5 minutes cold on the
-  16-CPU reference host). Its first
-  dispatch (run 40979860354, a dry run on `main` under the old `tag` input)
-  failed in `artifacts`, at the release smoke: the script handed docker the
-  relative `dist/layouts`, which docker reads as a volume name; the script now
-  resolves it (`TestReleaseSmoke_MountsTheLayoutsByAnAbsolutePath`). The
-  one-approval job graph, `artifacts`' cancel step, the `nightly` job and its
-  wait, and the tag made through the API have not run on GitHub; `actionlint` 1.7.7 reports
-  only the `A && B || fail` idiom (SC2015) the workflow uses throughout, the
-  workflow rules in `test/tools/proofrun` hold their shape, and `make
-  release-smoke` and `make quickstart-smoke` run their build and both smokes
-  on a developer's host. The next dispatch is their first run there. Its
-  `gate` excuses a runner-size miss as the merge gate does (§10, "Run the
-  release gate"), so the hosted runners' size alone no longer fails it.
-- **The proof's `race` part has not run on GitHub.** The `race` part of the
-  full and release tiers is on the same footing as the observability gate:
-  it is proven on a developer's host and by the workflow rules in
-  `test/tools/proofrun`, not on a hosted runner, so the first CI full proof
-  that carries it is its calibration. The other lanes have run there: the
+- **The observability gate first ran on GitHub in a release dispatch.**
+  The release gate always runs it; its first run on a hosted runner was the
+  dry run 40979860354 on 2026-10-30, and it passed there and in every release
+  run since, v0.1.0's included.
+- **`release.yml` passed on GitHub for v0.1.0, on its third attempt.**
+  Release run 41080710050 (2026-10-30) published v0.1.0: its first attempt
+  stopped in the `nightly` job, whose bounded wait for the nightly it checks
+  ran out; its second failed in `publish`, after the tag had been made through
+  the API, when the registry refused (`permission_denied: write_package`) the
+  first push to an image package that did not exist yet; the third,
+  re-running the failed jobs, kept that tag and published everything. The
+  one-approval job graph, `artifacts` and its release smoke, the `nightly`
+  job and its wait, and the tag made through the API have therefore all run
+  there. `nightly.yml` has four jobs, `nightly`, `vuln`, `quickstart` and
+  `flakes`, and all four have run, as has `proof.yml` as a reusable workflow
+  through them (`workflow_call`; the flakes job passed in run 40555387388);
+  `quickstart` passed in nightly 41080705584 in 2 min 11 s, under the 40
+  minutes its job allows (5 minutes cold on the 16-CPU reference host). The
+  first release dispatch (run 40979860354, a dry run on `main` under the old
+  `tag` input) failed in `artifacts`, at the release smoke: the script handed
+  docker the relative `dist/layouts`, which docker reads as a volume name; the
+  script now resolves it (`TestReleaseSmoke_MountsTheLayoutsByAnAbsolutePath`).
+  The release `gate` excuses a runner-size miss as the merge gate does (§10,
+  "Run the release gate"), so the hosted runners' size alone does not fail
+  it.
+- **The proof's `race` part has run on GitHub.** The `race` part of the
+  full and release tiers passed on hosted runners in the release dry run
+  40979860354 on 2026-10-30, in the CI full proof 41001701958 of
+  `validate/full/v0.1.0-4`, and in every attempt of release run 41080710050,
+  v0.1.0's. The other lanes have run there too: the
   `vuln` jobs of `ci.yml` (run 40706033375) and `nightly.yml`, and the
   nightly's `race-repeat` part, passed in their first runs on 2026-10-28, and
   its `fuzz` part ran its whole 105-minute budget in nightly 40706217000 and
@@ -2106,15 +2231,35 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   rootless measurement, after lifting the runner's AppArmor restriction, have
   not run there. The check has run against kind clusters only; a cluster of
   another make is checked by its operator.
-- **`proof-rerun.yml` has not run on GitHub yet, and is off.** The
-  `PROOF_AUTO_RERUN` variable is unset, so nothing has exercised it; its
-  planner is proven against fakes of `gh api`, and its workflow shape by the
-  rules in `test/tools/proofrun`. Two things only a run can show: that the
-  `proof` workflow's completion fires `workflow_run` for an attempt that this
-  workflow's own `GITHUB_TOKEN` asked for (if it does not, one automatic rerun
-  follows a run, and a person's rerun arms the next), and that a failed
-  job's log, annotations and `check_run_url` read as the planner expects. Both
-  fail toward fewer reruns, never toward a false pass.
+- **`fast`'s cancel has not run on GitHub.** Its step is held by the
+  workflow rules in `test/tools/proofrun` and run there against a gh that
+  records it, and the merger and the rerun planner are proven over run
+  40965510239, a release dry run whose `fast` failed on a product failure and
+  which was then cancelled by hand while seven shards ran: its `proof` job
+  still ran on `always()` and failed, and its cancelled shards read as parts
+  no rule lets run again. Only a run can show that a cancel asked for from
+  inside the run behaves the same, what conclusion GitHub gives `fast`'s own
+  job, whose cancel step is running when the cancel arrives, and what the
+  cancel saves (§11.5).
+- **`proof-rerun.yml` has not rerun anything on GitHub yet.** The
+  `PROOF_AUTO_RERUN` variable has been `true` since 2026-10-30, and the
+  workflow has planned twice (runs 41000144125 and 41003620185, about a
+  minute each) and rerun nothing: its log read could not work, because gh
+  2.103 refuses to print a job log that carries terminal escapes unless it is
+  given `--allow-escape-sequences`, so the planner read no log and answered
+  `not-eligible` for a degraded part (candidate proof 41001701958), and the
+  proof job's job records kept every log empty. Its planner is now proven
+  against fakes of `gh api` and against GitHub's recorded answers for nightly
+  41080705584 (whose `integration (2)` measured an fsync p95 of 99.43 ms
+  against its 30 ms floor), and its workflow shape by the rules in
+  `test/tools/proofrun`. Three things only a run can show: that the `proof` and `nightly` workflows'
+  completions fire `workflow_run` for an attempt that this workflow's own
+  `GITHUB_TOKEN` asked for (if they do not, one automatic rerun follows a
+  run, and a person's rerun arms the next), that a scheduled nightly's
+  `workflow_run` carries the `path`, `event` and `head_branch` the guard
+  reads, and that a failed job's log, annotations and `check_run_url` read on
+  the runner as the planner expects. All fail toward fewer reruns, never
+  toward a false pass.
 - **The nightly soaks' thresholds were measured on a 16-core host.** A
   threshold missed on a 4-vCPU public runner is reported as a calibration
   result, never silently changed. The soaks themselves carry no row of

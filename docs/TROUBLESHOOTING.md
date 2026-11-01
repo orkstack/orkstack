@@ -132,7 +132,7 @@ A task waiting for a free slot on a busy pool is not one of them: the engine has
 
 **Cause.** One of four things is usually true:
 
-- Every Orker of the pool is busy. Each runs at most `ORK_ORKER_MAX_CONCURRENT` tasks at once (16 by default), and, when it declares a capacity, polls only while a whole per-task cap is free beside what it has reserved; a task beyond that waits in the pool. `orkctl orker list` shows each Orker's `TASKS`, `CAPACITY` and `RESERVED`. The task is `RUNNING` from the moment it is dispatched: `orkctl run inspect` says `waiting for an orker on pool <pool> for <time>`, and the run page says `Waiting for an orker` (`internal/engine/workflow.go`; `internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling").
+- Every Orker of the pool is busy. Each runs at most `ORK_ORKER_MAX_CONCURRENT` tasks at once (16 by default), and, when it declares a capacity, polls only while a whole per-task cap is free beside what it has reserved; a task beyond that waits in the pool. `orkctl orker list` shows each Orker's `TASKS`, `CAPACITY` and `RESERVED`. The task is `RUNNING` from the moment it is dispatched: `orkctl run inspect` says `waiting for an orker on pool <pool> for <time>`, and the run page says `Waiting for an orker` (`internal/engine/workflow.go`; `internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling"). When every Orker of the pool is at its declared capacity, they say so instead: `orkctl run inspect` prints `waiting for capacity for <time> (scheduled …): every orker of pool <pool> is full (reserved 4/4 cpu)`, and the run page `Waiting for capacity` (`internal/engine/capacity_wait.go`; [DEPLOY.md](./DEPLOY.md), "Declaring an Orker's capacity").
 - No Orker serves the pool, or the ones that do are cordoned. A cordoned Orker takes no new task and opens no new pin, and a restart clears the cordon ([CLI.md](./CLI.md), "`orkctl orker cordon`").
 - An Orker died while it held an attempt. Its heartbeat stops, `orkctl run inspect` reports the heartbeat as `STALE`, and the attempt times out as `ORKER_HEARTBEAT_TIMEOUT` (`internal/engine/workflow.go`). A heartbeat timeout is retryable under the task's `retry:` policy ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.1 The five categories").
 - A pinned task's host was lost. See `PIN_HOST_LOST` below.
@@ -145,7 +145,7 @@ orkctl run inspect <run-id>
 orkctl run attempts <run-id>     # an attempt its Orker never filed shows as UNREPORTED
 ```
 
-**Fix.** If the pool is busy, the task starts when a slot frees. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load. Restart a dead Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
+**Fix.** If the pool is busy, the task starts when a slot frees. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load. If it waits for capacity, the task starts once a running task's container is removed: add Orkers, raise `orker.capacity` where the host has room, or lower the per-task cap (`orker.resources.max_cpu`, `max_memory`), which every poll reserves. Restart a dead Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
 
 ### I stopped an Orker and its tasks failed
 
@@ -269,11 +269,11 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 ### A task failed with `SECRET_UNRESOLVED`, `SECRET_NOT_PERMITTED` or `SECRET_SCHEME_FORBIDDEN`
 
-**Cause.** `SECRET_UNRESOLVED`: the Orker could not read the source. For `env:NAME`, the variable is not set on that Orker. For `file:PATH`, the file cannot be read. It is an `InfrastructureError` and is retried under the task's policy. `SECRET_NOT_PERMITTED`: the source is outside the Orker's `ORK_ORKER_SECRET_ALLOW` floor. It is refused before the image is pulled and is never retried. `SECRET_SCHEME_FORBIDDEN`: the Orker does not resolve that scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed (`internal/orker/oci_dispatcher.go`; [DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
+**Cause.** `SECRET_UNRESOLVED`: the Orker could not read the source. For `env:NAME`, the variable is not set on that Orker. For `file:PATH`, the file cannot be read. It is an `InfrastructureError` and is retried under the task's policy. `SECRET_NOT_PERMITTED`: the source is outside the Orker's `ORK_ORKER_SECRET_ALLOW` floor, or is one of the Orker's own sources, such as an `ORK_*` or `OTEL_*` setting, a file under `/proc` or `/run/secrets`, or its configuration file, which no floor admits ([SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources"). It is refused before the image is pulled and is never retried. `SECRET_SCHEME_FORBIDDEN`: the Orker does not resolve that scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed (`internal/orker/oci_dispatcher.go`; [DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
 
 **Confirm.** The message names the secret and the variable or path. It never contains the value.
 
-**Fix.** For `SECRET_UNRESOLVED`, set the variable, or make the file readable, on the Orker host that ran the attempt. For `SECRET_NOT_PERMITTED`, ask the operator to add the source to `ORK_ORKER_SECRET_ALLOW`, or use an allowed source.
+**Fix.** For `SECRET_UNRESOLVED`, set the variable, or make the file readable, on the Orker host that ran the attempt. For `SECRET_NOT_PERMITTED`, ask the operator to add the source to `ORK_ORKER_SECRET_ALLOW`, or use an allowed source. A source of the Orker's own cannot be added: ask the operator to supply the value under a source of the task's own.
 
 ### A task failed with `INPUT_ARTIFACT_UNAVAILABLE` or `INPUT_ARTIFACT_CORRUPT`
 
@@ -487,7 +487,7 @@ These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](.
 - `RUNTIME_POSTURE_REFUSED`: the probe ran one container built exactly as a task's is, and the runtime did not give it a task's posture. The message names each weaker fact: privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable the runtime added (by name only), or cgroup v2 limits other than it asked for. It also covers a runtime that refused the container for a reason that is not a bind or a deadline, and one whose workload, cancelled as a task is, never heard SIGTERM ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "3.1 Layout").
 - `RUN_AS_ORKER_UNAVAILABLE`, only when `ORK_ORKER_FORCE_USER` is set: running a container as the Orker's own user does not land as the Orker on this host, as on a rootless or user-namespaced daemon. Without `ORK_ORKER_FORCE_USER` the Orker starts, logs `running a task as the Orker's user does not work on this host`, and fails only the tasks that set `run_as_orker_user: true`, with the same code.
 - `BIND_PROBE_IMAGE_UNAVAILABLE`: the probe image (`orker.BindProbeImage`, alpine 3.20 by digest) is not present, and it could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`. The message names the image, not the work root ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
-- `BIND_PROBE_TIMED_OUT`: the container daemon was too slow for the probe. It did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` (two minutes) whether the probe image is local, or on each of two attempts it did not start one of the probe's two containers within that time or ended it with a deadline error of its own, or the second container's workload did not say it was ready within it. The daemon is overloaded or unresponsive. The work root is not the finding, so do not change `ORK_ORKER_WORKDIR`. The probe can take up to seventeen minutes and fifteen seconds to give up, longer than the 60 seconds `make up` waits for the Orker, so the refusal may appear in `.run/orker.log` after `make up` has stopped with a timeout ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+- `BIND_PROBE_TIMED_OUT`: the container daemon was too slow for the probe. It did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` (two minutes) whether the probe image is local, or on each of two attempts it did not start one of the probe's two containers within that time or ended it with a deadline error of its own, or the second container's workload did not say it was ready within it. The daemon is overloaded or unresponsive. The work root is not the finding, so do not change `ORK_ORKER_WORKDIR`. The probe can take up to seventeen minutes and fifty seconds to give up, longer than the 60 seconds `make up` waits for the Orker, so the refusal may appear in `.run/orker.log` after `make up` has stopped with a timeout ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 - `RESOURCE_REQUEST_REFUSED`: a resource cap that cannot be read, such as an invalid `ORK_ORKER_MAX_CPU` or `ORK_ORKER_MAX_MEMORY`.
 
 **Confirm.** `.run/orker.log` contains `orker boot checks failed:` followed by the code.
@@ -541,6 +541,20 @@ A `404` means the origin is accepted, because the probe run does not exist. A `4
 
 **Fix.** Have the proxy keep the `Host` header the browser sent ([DEPLOY.md](./DEPLOY.md), "The web UI"), or add the page's origin to `ORK_WS_ALLOWED_ORIGINS`, as a comma-separated list of `host:port` or `scheme://host:port` values, and restart the engine, which keeps the setting it started with (`make down && make up` under `make up`). A deployment sets `engine.ws_allowed_origins` on every replica ([DEPLOY.md](./DEPLOY.md), "Running N `ork` replicas").
 
+### A request is refused `403`: "this engine does not answer to Host …"
+
+**Cause.** The engine answers a request only under a `Host` it knows, and refuses any other `403` before a route sees it: the UI, the API and the sockets alike, so a web page cannot reach it by DNS rebinding through a public name. With `ORK_ALLOWED_HOSTS` unset it admits an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_HTTP_ADDR` names. A name with a dot is refused until it is listed: a Kubernetes name such as `ork.orkstack` or `ork.orkstack.svc.cluster.local`, an FQDN, the browser's name behind a proxy that keeps it, and the name `orkctl`, `curl` or a trigger caller dials. The admin listener applies the same rule under its own setting, `ORK_ADMIN_ALLOWED_HOSTS`, so a Prometheus that scrapes `/metrics` by a name with a dot, such as `host.docker.internal`, is refused there and shows its target down ("this admin listener does not answer to Host …"). A refusal is logged as `request refused: Host not allowed`, naming the listener and the `Host`, at most once every 10 seconds (`internal/hostpolicy`, `Guard`; [DEPLOY.md](./DEPLOY.md), "The web UI"). `orkctl` reports it as `permission_denied` with the same message.
+
+**Confirm.** The engine's log has `request refused: Host not allowed`. To ask the engine directly, send it a request under the `Host` the caller uses:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 5 -H 'Host: orkstack.example.com' http://127.0.0.1:8080/
+```
+
+A `200` means the name is admitted. A `403` means it is refused.
+
+**Fix.** List the name in `ORK_ALLOWED_HOSTS` (`engine.allowed_hosts`) on every replica, without a scheme, a port or a path: `ORK_ALLOWED_HOSTS=orkstack.example.com`, or `*.example.com` for every name under a suffix of two labels or more. For the admin listener, list the scraper's name in `ORK_ADMIN_ALLOWED_HOSTS` (`telemetry.admin_allowed_hosts`) on both binaries. Restart the engine, which keeps the settings it started with ([DEPLOY.md](./DEPLOY.md), "1. Configuration"; [DEPLOY.md](./DEPLOY.md), "The API listener's bounds").
+
 ### `host.docker.internal` does not resolve inside a container (Linux)
 
 **Cause.** On Linux the name `host.docker.internal` does not resolve inside containers by default. Some integration and browser test suites, and the observability stack, rely on it. The Orker never adds a host mapping to an activity container, by design ([README.md](../README.md), "Linux hosts"; [AGENTS.md](../AGENTS.md), "11.1 Development workflow").
@@ -563,7 +577,7 @@ docker run --rm alpine:3.20 getent hosts host.docker.internal
 
 ### What `make down` and `make reset` keep
 
-**Cause.** `make down` stops what `make up` started, and keeps the data ([stack.sh](../scripts/stack.sh), `cmd_down`). `make reset` wipes Temporal history, object-store data and build output ([Makefile](../Makefile), "reset"). `make reset-force` skips the confirmation prompt.
+**Cause.** `make down` stops what `make up` started, and keeps the data ([stack.sh](../scripts/stack.sh), `cmd_down`). `make reset` wipes Temporal history, object-store data, the observability profile's containers and volumes, the Orker's work directory and build output, and makes a workspace an Orker left read-only writable first ([reset.sh](../scripts/reset.sh)). `make reset-force` skips the confirmation prompt.
 
 **Fix.** Use `make down` to stop the stack and keep its data. Use `make reset` only when every run, artifact and build output may go, because the wipe cannot be undone. The script's comment on the artifact backend explains one trap: `ork` and `orker` must share one `ORK_ARTIFACT_BACKEND`. If only one of them is set differently, archived runs and artifacts split between stores, and a reset then leaves runs that the engine still lists ([stack.sh](../scripts/stack.sh), `cmd_up`).
 

@@ -30,7 +30,7 @@ A task that requests no resources gets 1 CPU and 1 GiB of memory by default. The
 
 A task names each secret and its source in `secrets:`. The source is `env:NAME`, a variable in the Orker's environment, or `file:/path`, a file the Orker reads. The Orker reads the value when it dispatches the attempt, and writes it to a read-only file under `/orkstack/input/secrets/`.
 
-A secret value does not appear in the Orkflow, the logs, the archive or `task.json`. Two lists must both allow a source: the Orker's floor, set by `ORK_ORKER_SECRET_ALLOW`, and the namespace's `--allow-secret` list.
+A secret value does not appear in the Orkflow, the logs, the archive or `task.json`. Two lists must both allow a source: the Orker's floor, set by `ORK_ORKER_SECRET_ALLOW`, and the namespace's `--allow-secret` list. Neither can allow the Orker's own sources: its settings, its process files, and its configuration and credential files.
 
 An `env:` value in a task is configuration. It is stored in the Orkflow, so put credentials in `secrets:`, never in `env:`.
 
@@ -42,11 +42,15 @@ Trigger tokens and await callback tokens are shown once. OrkStack stores only a 
 
 ## The web UI
 
-The engine serves the web UI on its own API port, so the UI's calls and live streams are same-origin. The engine admits a live stream from its own origin only, unless `ORK_WS_ALLOWED_ORIGINS` lists another, and the UI needs no entry. The UI's page refuses to be framed by another site. Serving the UI adds no login: a browser reaches it through the same gateway as any other caller.
+The engine serves the web UI on its own API port, so the UI's calls and live streams are same-origin. The engine admits a live stream from its own origin only, unless `ORK_WS_ALLOWED_ORIGINS` lists another, and the UI needs no entry. Serving the UI adds no login: a browser reaches it through the same gateway as any other caller.
+
+The page runs under a strict content security policy. It runs only scripts from its own origin, plus the two inline scripts its build names by hash. It refuses to be framed by another site.
+
+The engine answers only the names it knows: an IP address, `localhost` and the names under it, a name without a dot, the host in `ORK_HTTP_ADDR`, and any name listed in `ORK_ALLOWED_HOSTS`. A name without a dot resolves only on the local network. The engine refuses a request under any other `Host` header. A web page that reaches the engine by DNS rebinding through a public name sends such a `Host`, so it is refused. The admin listener, which serves `/metrics`, answers the same names, plus any listed in `ORK_ADMIN_ALLOWED_HOSTS`.
 
 ## What this does not cover
 
-- Who may reach the API, and what they may do. That is your gateway's job. Listening on loopback, as the quickstart does, is not a login: any program on the machine, or a web page using DNS rebinding, can reach it.
+- Who may reach the API, and what they may do. That is your gateway's job. Listening on loopback, as the quickstart does, is not a login: any program on the machine can reach it.
 - Encryption. The engine serves plain HTTP. Encrypt the connections to Temporal and object storage yourself.
 - Network policy. Egress from the `default` network is not filtered.
 - What a workload does with a secret it was given.

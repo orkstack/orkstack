@@ -29,9 +29,11 @@ written on a clone of its commit, and a maintainer approved the publication
     `orker-linux-amd64.tar.gz`, `orker-linux-arm64.tar.gz`;
   - `SHA256SUMS`, over every file above: `sha256sum --ignore-missing -c
     SHA256SUMS` checks the ones you downloaded;
-  - `SHA256SUMS.sig`, the release key's cosign signature over `SHA256SUMS`,
-    and `cosign.pub`, that key's public half: the same file as
-    `deploy/cosign.pub` at the release's tag.
+  - `SHA256SUMS.sigstore.json`, the release key's cosign signature over
+    `SHA256SUMS` as cosign's bundle, `SHA256SUMS.sig`, the same signature
+    alone (for openssl; v0.1.0 attaches only this one), and `cosign.pub`,
+    that key's public half: the same file as `deploy/cosign.pub` at the
+    release's tag.
 - **On `ghcr.io/orkstack`**, for linux/amd64 and linux/arm64: `ork`, `orker`,
   `orkctl`, and the six first-party activity images `activity-shell`,
   `activity-http`, `activity-file`, `activity-json`, `activity-git` and
@@ -39,18 +41,33 @@ written on a clone of its commit, and a maintainer approved the publication
   tagged `X.Y.Z`, which never moves, and `X.Y`, which moves to each patch
   release of that line. Deploy by digest, or by `X.Y.Z`.
 
-Each image is signed by its digest with the release key, in the layout
+Each image is signed by its digest with the release key, in a layout
 OrkStack's image policy verifies, so a namespace can require that key
-(`--require-signed-by`). [DEPLOY.md](./DEPLOY.md), "Image supply-chain
-policy", says how to trust it, and how to verify an image or `SHA256SUMS` by
-hand.
+(`--require-signed-by`). v0.1.0's images are signed in cosign's legacy
+`.sig` layout; later releases sign in cosign 3's bundle, which an engine or
+Orker of v0.1.0 does not read: it refuses such an image `IMAGE_NOT_SIGNED`.
+v0.1.0's built-in catalog names the activity images by their `0.1` tag, which
+moves to each patch release's images when it is published, so a v0.1.0
+deployment whose namespace requires `cosign:orkstack` refuses `uses: shell`
+and the other first-party activities at its next apply or submit once a
+later 0.1 release is out. Upgrade every engine and Orker to that release, or
+until then name the v0.1.0 images by digest in `ORK_ACTIVITY_CATALOG`.
+Upgrade the Orkers with the engines: once an engine is upgraded it accepts a
+bundle-signed image at apply and submit, and where the run's namespace
+requires a signer, a v0.1.0 Orker still polling refuses that run's task at
+dispatch with `IMAGE_NOT_SIGNED`, a contract violation, which is never
+retried, so the run fails. A namespace that requires no signer is not
+affected.
+[DEPLOY.md](./DEPLOY.md), "Image supply-chain policy", says how to trust the
+key, and how to verify an image or `SHA256SUMS` by hand.
 
 The built-in activity catalog names the activity images by their `X.Y` tag,
 so a release's `ork` resolves `uses: shell` to that release line's image at
 apply time and pins its digest; `release.yml` refuses a version whose `X.Y`
 the catalog does not name. The notes on the GitHub release page are the
 version's `## [X.Y.Z]` section of [CHANGELOG.md](../CHANGELOG.md), word for
-word, without its heading.
+word, without its heading, followed by each image's digest and the commands
+that verify it.
 
 Running the published images is set out in [DEPLOY.md](./DEPLOY.md),
 "Running the published images". A deployment that turns versioning on sets
@@ -99,7 +116,7 @@ orkctl release status                              # current, ramping and candid
 
 Steps 0, 2, 3, 4 and 5 are `orkctl release` commands, and any `ork` replica answers them. Steps 1 and 6 start and stop processes. The cluster's routing is the only record of which release takes new runs, so nothing needs to be stored between steps ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
 
-0. **First versioned release only.** Until a release is current, it runs nothing. Make the first release current before you rely on it:
+0. **First versioned release only.** Until a release is current, it runs nothing. Make the first versioned release current before you rely on it:
 
    ```bash
    orkctl release promote "$FIRST"
@@ -163,6 +180,10 @@ What an older release does with each construct, from the same reference:
 | `cache:` | Runs every task uncached. Memos left behind are inert |
 | schedules | Cannot fire. Pause or delete every schedule first with `orkctl schedule pause` or `orkctl schedule delete` |
 
+From v0.1.1, a `retry:` with a negative interval, a `maximum_interval_seconds` below its `initial_interval_seconds`, or a `backoff_coefficient` below 1 or not finite ([DSL.md](./DSL.md), rule 47) is refused whatever its `maximum_attempts`: validate reports an error at the field, and apply and plan refuse the document. A version stored before keeps starting, its retry raised to the nearest policy the cluster accepts, so fix the document before you next apply it.
+
+A run that v0.1.0 already left stuck on such a retry, or on a `retry:` whose `initial_interval_seconds` is above 100 and that sets no maximum, stays `RUNNING` with that task never starting: the cluster refuses its policy each time the run schedules it. On a deployment with versioning ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward"), the run stays on v0.1.0, never reaches the new release's raise, and keeps `orkctl release wait` on v0.1.0 from exiting 0. Before you wait for v0.1.0 to drain, find such runs — `orkctl run list --filter status=RUNNING` in each namespace lists the candidates, and `orkctl run get` shows the retrying task still `PENDING` long after its needs ended — and cancel each with `orkctl run cancel`. If one is still `RUNNING` afterwards, terminate it with `temporal workflow terminate --workflow-id <run id> --reason "stuck on a refused retry" --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"`, which ends it `RUN_TERMINATED`. Submit the work again on the new release if it is still needed. On a deployment without versioning, the new release's engine takes the stuck run's next attempt and schedules the raised policy.
+
 Some runs need a newer engine than the one that could otherwise decide them. A submit that needs such a run is refused while an older `ork` process is polling, and the refusal names the count of processes. A fan-out above 1,000 items, and a definition passed by reference, are the two refusals of this kind. A snapshot overlay is never refused: a run whose engines cannot all be sure of overlays writes full snapshots instead ([DEPLOY.md](./DEPLOY.md), "Engine capabilities and the fleet check"). Submit refuses a run whose fan-out, cached task or failure handler would reach a pool whose Orkers predate that feature, so run every Orker of one pool on one release ([DEPLOY.md](./DEPLOY.md), "Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them").
 
 ### Rolling back
@@ -183,17 +204,17 @@ Rolling back past a release that added Orkflow constructs needs the preparation 
 | Definitions passed by reference | Set `engine.definition_by_reference` to `false` on every replica, then wait until every run started with its definition by reference has finished. An older release cannot read such a run's definition ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Snapshot overlays | Set `engine.snapshot_overlays` to `false` on every replica, then wait until every run started while it was on has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 
-Two floors do not move. Never roll back below the first release that reads runs carried into a fresh history. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a lost range of its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
+Two floors do not move. Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a gap in its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
 ### Turning versioning on for a running system
 
-A run that started before versioning has nothing pinning it. When the first release becomes current, such a run upgrades onto that release at its next workflow task. A partial history therefore meets a different build, and pinning cannot protect it ([DEPLOY.md](./DEPLOY.md), "3.5 Turning versioning on for a system that is already running").
+A run that started before versioning has nothing pinning it. When the first versioned release becomes current, such a run upgrades onto that release at its next workflow task. A partial history therefore meets a different build, and pinning cannot protect it ([DEPLOY.md](./DEPLOY.md), "3.5 Turning versioning on for a system that is already running").
 
 The safe path is to drain first:
 
 1. Hold each namespace that takes runs: `orkctl namespace update NS --hold "versioning rollout"`.
 2. Let the running runs finish.
-3. Make the first release current, as in step 0 above.
+3. Make the first versioned release current, as in step 0 above.
 
 `orkctl release promote` refuses while a run started before any release was current is still executing. The live switch, without draining, is a raw cluster procedure. It is safe only when the versioned release is the same binary as the unversioned one already serving, and OrkStack cannot verify that for you ([DEPLOY.md](./DEPLOY.md), "3.5 Turning versioning on for a system that is already running").
 
@@ -203,11 +224,12 @@ A run keeps the build that started it, so a pinned run finishes on old code. The
 
 ### Defaults that moved
 
-Some defaults changed after their first release. Read the setting in the generated [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) on the release you run, and set the key yourself if you need the older behaviour.
+Some defaults changed after the setting was introduced. Read the setting in the generated [deploy/orkstack.defaults.yaml](../deploy/orkstack.defaults.yaml) on the release you run, and set the key yourself if you need the older behaviour.
 
 | Setting | What changed | What to do |
 |---|---|---|
 | `orker.max_concurrent` (`ORK_ORKER_MAX_CONCURRENT`) | The default is 16 tasks at once. Before 2026-10 it was the Temporal SDK's own 1000, so an Orker that relied on it now takes at most 16 tasks, and the rest wait in the pool | Set the key to the size your host supports ([DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling") |
 | `engine.continuation.enabled` (`ORK_CONTINUATION_ENABLED`) | On by default since the release after the one that first carried runs on | To turn it off, wait for the runs that carry on to finish before a rollback below that release ([DEPLOY.md](./DEPLOY.md), "1. Configuration") |
 | `engine.definition_by_reference` (`ORK_DEFINITION_BY_REFERENCE`) | On by default from the release after the one that first had it | Before a rollback below that release, set it `false` on every replica and wait for the runs started with it ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
+| A task's `retry:` with no `maximum_interval_seconds` | From v0.1.1 the longest wait between two attempts is 60 seconds, or the initial interval when that is longer. It was 100 seconds. A run keeps the number it was submitted with, so runs in flight across the upgrade keep 100 seconds | To keep 100 seconds for new runs, set `maximum_interval_seconds: 100` in the task's `retry:` ([DSL.md](./DSL.md), "Tasks") |
 | `engine.snapshot_overlays` (`ORK_SNAPSHOT_OVERLAYS`) | On by default from the release after the one that first had it | Before a rollback below that release, set it `false` on every replica and wait for the runs started while it was on ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |

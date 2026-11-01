@@ -423,11 +423,12 @@ func renderVerifyReport(r *evidence.Report) string {
 		row("rejected", fmt.Sprintf("%s: %s", pluralForms(len(r.Rejected), "member", "members"), strings.Join(paths, ", ")), "")
 	}
 	// A gap is a notice, not a failure: the bundle is exactly what the
-	// archive holds, and the archive says what it lost.
+	// archive holds, and the archive says what it does not hold and why —
+	// lost from object storage, or never published — in each row's sentence.
 	for i, gap := range r.EventGaps {
 		label := ""
 		if i == 0 {
-			label = "events lost"
+			label = "event gaps"
 		}
 		row(label, gap.Sentence(), "")
 	}

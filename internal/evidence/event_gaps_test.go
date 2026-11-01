@@ -68,3 +68,26 @@ func TestVerify_ReportsEventGapsAsANotice(t *testing.T) {
 		t.Fatalf("report gaps = %+v", report.EventGaps)
 	}
 }
+
+// TestEventGapSentence_NamesTheCause: a gap's notice names its cause — never
+// published for the engine's unpublished reason, lost from object storage
+// for every other — so a gap the run never published is never said to be
+// lost.
+func TestEventGapSentence_NamesTheCause(t *testing.T) {
+	for _, tc := range []struct {
+		gap  EventGap
+		want string
+	}{
+		{EventGap{First: 1, Last: 1, Reason: UnpublishedEventsReason},
+			"events 1–1 of this run were never published (the run's history holds no event under these numbers)"},
+		{EventGap{First: 1201, Last: 2400, Reason: "segment object missing"},
+			"events 1201–2400 of this run were lost from object storage before it was archived (segment object missing)"},
+		{EventGap{First: 3, Last: 4, Reason: "the run's history holds no event under these numbers, and more"},
+			"events 3–4 of this run were lost from object storage before it was archived " +
+				"(the run's history holds no event under these numbers, and more)"},
+	} {
+		if got := tc.gap.Sentence(); got != tc.want {
+			t.Errorf("Sentence(%+v) = %q, want %q", tc.gap, got, tc.want)
+		}
+	}
+}

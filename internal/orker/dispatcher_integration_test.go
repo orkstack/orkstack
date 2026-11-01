@@ -370,19 +370,30 @@ func TestIntegration_BurstOutputBeforeExitIsNotTruncated(t *testing.T) {
 }
 
 // TestIntegration_AdoptsAnExistingCommitWithoutRunningTheContainer is the
-// §5.4 step-0 guarantee, and the one that makes "Orker died after commit.json,
-// before Temporal completion" a container that ran ONCE.
+// guarantee of §5.4's retry-start check (step 0 there; STEP 3 of the
+// dispatcher's Execute, phase commit-check), and the one that makes "Orker
+// died after commit.json, before Temporal completion" a container that ran
+// ONCE.
+//
+// The CommitAdopted flag alone cannot say the container did not run: a retry
+// that skipped the retry-start check would run the container, lose the commit's
+// create-if-absent, and adopt the winner at the conflict branch — flagged
+// adopted, with the committed values. So the runtime is the witness: it is
+// asked for exactly one container across both attempts. And the workload
+// writes a fresh random token into values.json each time it runs, so the
+// adopted values matching the first run's show they are the committed ones,
+// never a re-run's.
 func TestIntegration_AdoptsAnExistingCommitWithoutRunningTheContainer(t *testing.T) {
 	requireDocker(t)
 	dispatcher, _ := newDispatcher(t)
+	counting := &countingRuntime{ContainerRuntime: dispatcher.Runtime}
+	dispatcher.Runtime = counting
 
-	// A marker file proves whether the container ran: the second attempt must
-	// not append to it.
-	marker := filepath.Join(t.TempDir(), "runs")
 	in := baseInput(t, "adopt", "/bin/sh", "-c",
-		`printf '{"ran":true}' > /orkstack/output/values.json; printf 'x' > /orkstack/output/artifacts/ran`)
+		`set -e; token=$(cat /proc/sys/kernel/random/uuid); `+
+			`printf '{"ran":"%s"}' "$token" > /orkstack/output/values.json; `+
+			`printf '%s' "$token" > /orkstack/output/artifacts/ran`)
 	in.CommitUri = "mem://commits/" + in.RunId + "/adopt/commit.json"
-	_ = marker
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
@@ -394,6 +405,15 @@ func TestIntegration_AdoptsAnExistingCommitWithoutRunningTheContainer(t *testing
 	if first.GetCommitAdopted() {
 		t.Fatal("the first attempt adopted a commit that did not exist")
 	}
+	if _, creates := counting.counts(); creates != 1 {
+		t.Fatalf("the first attempt asked the runtime for %d containers, want 1", creates)
+	}
+	var ran struct {
+		Ran string `json:"ran"`
+	}
+	if err := json.Unmarshal(first.GetValuesJson(), &ran); err != nil || ran.Ran == "" {
+		t.Fatalf("the first attempt's values carry no token (%s): %v", first.GetValuesJson(), err)
+	}
 
 	second, err := dispatcher.Execute(ctx, in)
 	if err != nil {
@@ -401,6 +421,10 @@ func TestIntegration_AdoptsAnExistingCommitWithoutRunningTheContainer(t *testing
 	}
 	if !second.GetCommitAdopted() {
 		t.Fatal("the second attempt re-ran the container instead of adopting the durable commit")
+	}
+	if _, creates := counting.counts(); creates != 1 {
+		t.Fatalf("the runtime was asked for %d containers across both attempts, want 1: "+
+			"the retry ran the container instead of adopting the commit before it", creates)
 	}
 
 	// Adoption reconstructs the FULL result, including the inline copy —
@@ -815,6 +839,41 @@ func TestIntegration_ContractViolationsAreRefusedWithTheirReasonCode(t *testing.
 	// outside the pinned registries, and a signer whose image carries no
 	// signature in a real registry, both refused before any pull or create.
 	imagePolicyContractRows(t)
+}
+
+// TestIntegration_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAPull: with
+// no floor set, a task naming the Orker's own setting or its process files is
+// refused SECRET_NOT_PERMITTED before the real runtime is asked anything, and
+// the refusal carries no value.
+func TestIntegration_TheDefaultFloorRefusesTheOrkersOwnSourcesBeforeAPull(t *testing.T) {
+	requireDocker(t)
+	t.Setenv("ORK_S3_SECRET_KEY", "never-staged")
+	for _, source := range []string{"env:ORK_S3_SECRET_KEY", "file:/proc/self/environ"} {
+		t.Run(source, func(t *testing.T) {
+			dispatcher, _ := newDispatcher(t)
+			if len(dispatcher.Policy.SecretAllow) != 0 {
+				t.Fatalf("floor = %q, want the default, empty floor", dispatcher.Policy.SecretAllow)
+			}
+			counting := &countingRuntime{ContainerRuntime: dispatcher.Runtime}
+			dispatcher.Runtime = counting
+			in := baseInput(t, "own-secret", "/bin/sh", "-c", `cat /orkstack/input/secrets/s3`)
+			in.Secrets = []*orkstackv1.SecretRef{{Name: "s3", Source: source}}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+			defer cancel()
+			_, err := dispatcher.Execute(ctx, in)
+			if err == nil || !strings.Contains(err.Error(), orker.ReasonSecretNotPermitted) ||
+				!strings.Contains(err.Error(), "this orker's own") {
+				t.Fatalf("error = %v, want %s naming the orker's own source", err, orker.ReasonSecretNotPermitted)
+			}
+			if strings.Contains(err.Error(), "never-staged") {
+				t.Fatalf("the refusal carries the value: %v", err)
+			}
+			if pulls, creates := counting.counts(); pulls != 0 || creates != 0 {
+				t.Fatalf("runtime asked %d pulls and %d creates; want none", pulls, creates)
+			}
+		})
+	}
 }
 
 // countingRuntime passes every call to the real runtime and counts the two
