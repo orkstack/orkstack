@@ -59,6 +59,9 @@ type Policy struct {
 	any      bool
 	names    map[string]bool
 	suffixes []string
+	// clock is the time Guard's refusal log is throttled by; nil is
+	// time.Now. Only a test sets it.
+	clock func() time.Time
 }
 
 // New builds the policy of the listener l on listenAddr with the further
@@ -269,6 +272,10 @@ func (p Policy) Guard(next http.Handler, logger *slog.Logger) http.Handler {
 		logger = slog.Default()
 	}
 	l := p.listener
+	now := time.Now
+	if p.clock != nil {
+		now = p.clock
+	}
 	var (
 		mu         sync.Mutex
 		lastLogged time.Time
@@ -287,10 +294,10 @@ func (p Policy) Guard(next http.Handler, logger *slog.Logger) http.Handler {
 			"%s (%s); without it, it answers an IP address, localhost and *.localhost, a name without a dot, "+
 			"and the host %s names", l.Name, host, l.AllowedVar, l.AllowedKey, l.AddrVar)
 		mu.Lock()
-		now := time.Now()
-		logIt, skipped := now.Sub(lastLogged) >= refusalLogInterval, unlogged
+		at := now()
+		logIt, skipped := at.Sub(lastLogged) >= refusalLogInterval, unlogged
 		if logIt {
-			lastLogged, unlogged = now, 0
+			lastLogged, unlogged = at, 0
 		} else {
 			unlogged++
 		}
