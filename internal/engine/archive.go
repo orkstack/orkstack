@@ -33,10 +33,11 @@ import (
 // history. Each line is canonical protojson compacted to a single line, so the
 // body round-trips exactly and stays greppable.
 //
-// A run whose stream lost part of itself before it was archived — an earlier
-// generation's event segment missing from object storage, or altered — has
-// one gap line per lost range, in sequence order among the events, so the
-// archive records the loss explicitly rather than dropping the run:
+// A run whose stream has a gap when it is archived — an earlier generation's
+// event segment missing from object storage, or altered, or numbers its
+// history never published (UnpublishedEventsReason) — has one gap line per
+// range, in sequence order among the events, so the archive records the gap
+// explicitly rather than dropping the run:
 //
 //	{"kind":"gap","gap":{"first":1201,"last":2400,"reason":"segment object missing"}}
 const (
@@ -44,7 +45,8 @@ const (
 	ArchiveKindRun = "run"
 	// ArchiveKindEvent marks an event line.
 	ArchiveKindEvent = "event"
-	// ArchiveKindGap marks a line recording events lost before archiving.
+	// ArchiveKindGap marks a line recording a gap in the run's events: a range
+	// lost before archiving, or one never published.
 	ArchiveKindGap = "gap"
 	// DefaultArchivePageSize bounds an unlimited archive query, so a list never
 	// fetches an unbounded number of bodies.
@@ -142,7 +144,8 @@ func (e *UnpublishedEventsError) Error() string {
 func (e *UnpublishedEventsError) Unwrap() error { return ErrEventsUnpublished }
 
 // MarshalRunArchive renders a run and its events as the archive body, with
-// one gap line per lost range, placed after the events that precede it.
+// one gap line per gap in the events, placed after the events that precede
+// it.
 func MarshalRunArchive(run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...EventGap) ([]byte, error) {
 	if run.GetId() == "" {
 		return nil, fmt.Errorf("engine: archive run: run id is required")
@@ -371,8 +374,9 @@ func NewRunArchiver(archive artifacts.RunArchive) *RunArchiver {
 // The index time comes from the run itself (created, else started, else
 // finished), never from the clock, so repeated calls address the same keys.
 //
-// gaps are the ranges of the stream lost before archiving (EventsForArchive);
-// each becomes a gap line, so the archive says what it is missing.
+// gaps are the ranges missing from the stream when it is archived, lost or
+// never published (EventsForArchive); each becomes a gap line, so the archive
+// says what it is missing.
 func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...EventGap) error {
 	if a == nil {
 		return nil

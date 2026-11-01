@@ -183,7 +183,7 @@ Rolling back past a release that added Orkflow constructs needs the preparation 
 | Definitions passed by reference | Set `engine.definition_by_reference` to `false` on every replica, then wait until every run started with its definition by reference has finished. An older release cannot read such a run's definition ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Snapshot overlays | Set `engine.snapshot_overlays` to `false` on every replica, then wait until every run started while it was on has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 
-Two floors do not move. Never roll back below the first release that reads runs carried into a fresh history. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a lost range of its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
+Two floors do not move. Never roll back below the first release that reads runs carried into a fresh history. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a gap in its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
 ### Turning versioning on for a running system
 

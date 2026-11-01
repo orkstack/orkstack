@@ -229,7 +229,11 @@ a workload artifact named `commit.json` collides with nothing.
    to object storage, or it was terminated — is never archived, since only
    that event archives a run; its export says so (`FailedPrecondition`, "has
    no archive and will never have one"), and it can be read only until it is
-   retired (`docs/DEPLOY.md` §6).
+   retired (`docs/DEPLOY.md` §6). That answer covers only a run that never
+   published its terminal event. A run that published it, but whose archive
+   write then failed on each of its three attempts, has no archive either,
+   and its export keeps answering "retry shortly", though no archive is
+   coming.
 3. Every member is resolved from the **archived** run snapshot, never from a
    coordinate the caller supplied.
 4. The definition is read by the run's name and version and attested by

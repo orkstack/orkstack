@@ -23,9 +23,10 @@ func (s runJSONLSource) Open(context.Context, evidence.Member) (io.ReadCloser, e
 	return io.NopCloser(bytes.NewReader(s)), nil
 }
 
-// TestEvidenceVerifyCommand_PrintsTheGap: a bundle of a run that lost
-// events before it was archived verifies (exit 0), and the gap is printed as
-// a notice; --json carries it.
+// TestEvidenceVerifyCommand_PrintsTheGap: a bundle of a run whose event
+// segment was lost from object storage before it was archived verifies (exit
+// 0), and the gap is printed as a notice naming that cause; --json carries
+// it.
 func TestEvidenceVerifyCommand_PrintsTheGap(t *testing.T) {
 	body := []byte(`{"kind":"run","run":{"id":"ork-gap"}}` + "\n" +
 		`{"kind":"gap","gap":{"first":1201,"last":2400,"reason":"segment object missing"}}` + "\n")

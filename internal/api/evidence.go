@@ -128,13 +128,18 @@ type terminalEventReader interface {
 	PublishedTerminalEvent(ctx context.Context, runID string) (bool, error)
 }
 
+var _ terminalEventReader = (*engine.TemporalRunReader)(nil)
+
 // neverArchived reports, for a finished run with no archive body, that the
 // run's history shows it published no terminal event: only that publish
 // archives a run, so no archive is coming and "retry shortly" would be
-// false. Anything it cannot read answers false, and the export says retry.
+// false. Anything it cannot read is logged and answers false, and the export
+// says retry.
 func (e *evidenceExport) neverArchived(ctx context.Context, runID string) bool {
 	binding, err := e.s.locate(ctx, runID)
 	if err != nil {
+		e.s.logger.WarnContext(ctx, "evidence export could not locate a run with no archive; answering retry",
+			"run_id", runID, "error", err)
 		return false
 	}
 	reader, ok := binding.Reader.(terminalEventReader)
@@ -142,7 +147,12 @@ func (e *evidenceExport) neverArchived(ctx context.Context, runID string) bool {
 		return false
 	}
 	published, err := reader.PublishedTerminalEvent(ctx, runID)
-	return err == nil && !published
+	if err != nil {
+		e.s.logger.WarnContext(ctx, "evidence export could not read whether a run with no archive published "+
+			"its terminal event; answering retry", "run_id", runID, "error", err)
+		return false
+	}
+	return !published
 }
 
 // build is steps 6 to 9: every member, from the archived snapshot.
@@ -174,9 +184,10 @@ func (e *evidenceExport) build(
 		return nil, connect.NewError(connect.CodeDataLoss,
 			fmt.Errorf("archive body of run %q does not decode as that run", run.GetId()))
 	}
-	// A run that lost part of its event stream before it was archived says
-	// so in the manifest too, not only in run.jsonl's gap lines: a verifier
-	// that reads only the manifest still sees every lost range.
+	// A run whose event stream has a gap — lost before it was archived, or
+	// never published — says so in the manifest too, not only in run.jsonl's
+	// gap lines: a verifier that reads only the manifest still sees every
+	// gap.
 	gaps, err := engine.UnmarshalRunArchiveGaps(body)
 	if err != nil {
 		return nil, connect.NewError(connect.CodeDataLoss,

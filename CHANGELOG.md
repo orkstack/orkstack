@@ -35,6 +35,9 @@ word for word.
 - `ExportRunEvidence` of a finished run that published no terminal event
   (its ending could not be written to object storage, or it was terminated)
   now says the run has no archive and never will, instead of asking to retry.
+  It does not cover every run left without an archive: one that published its
+  terminal event, but whose archive write then failed on every attempt, still
+  gets "retry shortly" (`docs/RUN_EVIDENCE.md`, "The export, step by step").
 
 ## [0.1.0] - 2026-10-30
 

@@ -3415,8 +3415,8 @@ fails too, the number stays unused and the terminal event is still written at
 2, under a key of its own. Its stream then starts at 2, and both reads say so
 alike: a read of the stream from its start fails `DataLoss`, naming 1 as never
 published, with nothing sent, live and from the archive, which records 1 as a
-gap line (`docs/STORAGE.md`), and the run page's socket closes with the same
-sentence; a read from 1 serves the terminal event.
+gap line (`docs/STORAGE.md`), and the run page's socket closes with a
+shortened form of the same sentence; a read from 1 serves the terminal event.
 Before this, the terminal event was written at 2 the same way, and the stream
 silently began there. The reader recognises the gap from the history alone, so
 a run recorded before the gate, which wrote the terminal event after a single

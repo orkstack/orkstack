@@ -1,9 +1,11 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -235,28 +237,62 @@ func TestWebSocketBridge_ClosesWithTheGapItReached(t *testing.T) {
 	}
 }
 
-// noTerminalReader is the system of record for a run that published no
-// terminal event (engine.TemporalRunReader.PublishedTerminalEvent).
-type noTerminalReader struct{ *fakeReader }
+// terminalReader is the system of record answering whether a run published
+// its terminal event (engine.TemporalRunReader.PublishedTerminalEvent).
+type terminalReader struct {
+	*fakeReader
+	published bool
+	err       error
+}
 
-func (noTerminalReader) PublishedTerminalEvent(context.Context, string) (bool, error) {
-	return false, nil
+func (r terminalReader) PublishedTerminalEvent(context.Context, string) (bool, error) {
+	return r.published, r.err
 }
 
 // TestEvidenceExport_ARunNeverArchivedSaysSo: a finished run with no archive
 // body is "not yet archived; retry shortly" only while an archive can still
 // come. A run whose history shows it published no terminal event — its
 // ending's snapshot refused, or terminated — never gets one, and the export
-// says that instead of asking for a retry that cannot help.
+// says that instead of asking for a retry that cannot help. A run that did
+// publish it, and a history that cannot be read, still answer retry; the
+// unreadable history is logged at warn with the run and the error.
 func TestEvidenceExport_ARunNeverArchivedSaysSo(t *testing.T) {
-	f := newEvidenceFixture(t, withConfig(func(cfg *api.Config) {
-		cfg.Reader = noTerminalReader{cfg.Reader.(*fakeReader)}
-	}))
-	f.reader.setRun(&orkstackv1.Run{Id: "ork-never", OrkflowName: "evidence", Status: orkstackv1.Status_STATUS_FAILED})
-	r := f.collectEvidence(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-never"})
-	if connect.CodeOf(r.err) != connect.CodeFailedPrecondition ||
-		!strings.Contains(r.err.Error(), `run "ork-never" has no archive and will never have one: it published no terminal event`) ||
-		strings.Contains(r.err.Error(), "retry") {
-		t.Fatalf("export = %v, want FailedPrecondition saying the run is never archived, with no retry", r.err)
+	const never = `run "ork-never" has no archive and will never have one: it published no terminal event`
+	const retry = `run "ork-never" is finished but not yet archived; retry shortly`
+	for _, tc := range []struct {
+		name      string
+		published bool
+		err       error
+		want      string
+		// logged is what the warn log must say, or "" for no warn.
+		logged string
+	}{
+		{"it published no terminal event", false, nil, never, ""},
+		{"it published its terminal event", true, nil, retry, ""},
+		{"its history cannot be read", false, errors.New("history unavailable"), retry,
+			"could not read whether a run with no archive published its terminal event"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			f := newEvidenceFixture(t, withConfig(func(cfg *api.Config) {
+				cfg.Reader = terminalReader{cfg.Reader.(*fakeReader), tc.published, tc.err}
+				cfg.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+			}))
+			f.reader.setRun(&orkstackv1.Run{Id: "ork-never", OrkflowName: "evidence", Status: orkstackv1.Status_STATUS_FAILED})
+			r := f.collectEvidence(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-never"})
+			if connect.CodeOf(r.err) != connect.CodeFailedPrecondition || !strings.Contains(r.err.Error(), tc.want) {
+				t.Fatalf("export = %v, want FailedPrecondition saying %q", r.err, tc.want)
+			}
+			if tc.want == never && strings.Contains(r.err.Error(), "retry") {
+				t.Fatalf("export = %v, want no retry for a run that is never archived", r.err)
+			}
+			switch logged := logs.String(); {
+			case tc.logged == "" && logged != "":
+				t.Fatalf("export logged %s, want nothing at warn", logged)
+			case tc.logged != "" && (!strings.Contains(logged, tc.logged) || !strings.Contains(logged, `"run_id":"ork-never"`) ||
+				!strings.Contains(logged, `"error":"history unavailable"`)):
+				t.Fatalf("export logged %q, want a warn saying %q with the run id and the error", logged, tc.logged)
+			}
+		})
 	}
 }

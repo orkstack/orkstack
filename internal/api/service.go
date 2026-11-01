@@ -40,7 +40,8 @@ type RunStarter = engine.RunStarter
 // fake.
 type RunArchive interface {
 	// Archive writes a finished run and its events, with one gap record per
-	// range of the stream lost before archiving.
+	// range missing from the stream, lost before archiving or never
+	// published.
 	Archive(ctx context.Context, run *orkstackv1.Run, events []*orkstackv1.Event, gaps ...engine.EventGap) error
 	// LoadRun returns an archived run, or an error matching
 	// artifacts.ErrNotFound when the run was never archived.
@@ -2231,7 +2232,8 @@ func archivedLossError(runID string, gaps []engine.EventGap) error {
 // streamGapError is a read over gaps in a run's stream: events lost from
 // object storage before the run was archived, or numbers it never published.
 // Its message is the one sentence every such read gives, in run vocabulary
-// only; closeReason is the same within a WebSocket close frame.
+// only; closeReason is a shortened form of it that fits a WebSocket close
+// frame.
 type streamGapError struct {
 	runID string
 	gaps  []engine.EventGap
@@ -2276,19 +2278,86 @@ func (e *streamGapError) Error() string {
 const maxCloseReason = 123
 
 // closeReason is the sentence for the socket that streams this one run: the
-// run is the socket's own, so it is "this run", and the reasons and then the
-// closing clause go first when the frame cannot hold them.
+// run is the socket's own, so it is "this run". It never carries the
+// reasons, which no frame can hold beside a range. When the frame cannot
+// hold every range, the closing clause goes first; then each cause keeps its
+// first range and counts the rest; and last, for ranges too long to name
+// beside both causes, each cause counts its ranges. Every form names each
+// cause, and the last fits the frame for any count a slice can hold.
 func (e *streamGapError) closeReason() string {
+	every := strings.Join(e.gapClauses("this run", false), "; ")
 	for _, reason := range []string{
-		strings.Join(e.gapClauses("this run", true), "; ") + "; its outcome and other events are intact",
-		strings.Join(e.gapClauses("this run", false), "; ") + "; its outcome and other events are intact",
-		strings.Join(e.gapClauses("this run", false), "; "),
+		every + "; its outcome and other events are intact",
+		every,
+		e.firstRangesReason(),
 	} {
 		if len(reason) <= maxCloseReason {
 			return reason
 		}
 	}
-	return "events of this run are missing from its stream; its outcome and other events are intact"
+	return e.countedReason()
+}
+
+// gapsByCause splits the gaps into those lost from object storage and those
+// never published, each in sequence order.
+func (e *streamGapError) gapsByCause() (lost, unpublished []engine.EventGap) {
+	for _, gap := range e.gaps {
+		if gap.Unpublished() {
+			unpublished = append(unpublished, gap)
+		} else {
+			lost = append(lost, gap)
+		}
+	}
+	return lost, unpublished
+}
+
+// firstRangesReason names each cause with its first range and counts the
+// rest: "events 1201–2400 and 3 more ranges of this run were lost from
+// object storage". With both causes, the one whose first range comes first
+// leads.
+func (e *streamGapError) firstRangesReason() string {
+	lost, unpublished := e.gapsByCause()
+	first := func(gaps []engine.EventGap) string {
+		named := fmt.Sprintf("%d–%d", gaps[0].First, gaps[0].Last)
+		if len(gaps) > 1 {
+			named += " and " + rangeCount(len(gaps)-1, "more ")
+		}
+		return named
+	}
+	switch {
+	case len(unpublished) == 0:
+		return "events " + first(lost) + " of this run were lost from object storage"
+	case len(lost) == 0:
+		return "events " + first(unpublished) + " of this run were never published"
+	case unpublished[0].First < lost[0].First:
+		return "events " + first(unpublished) + " of this run were never published, and " + first(lost) +
+			" were lost from object storage"
+	default:
+		return "events " + first(lost) + " of this run were lost from object storage, and " + first(unpublished) +
+			" were never published"
+	}
+}
+
+// countedReason names each cause with how many ranges it has, and no range.
+func (e *streamGapError) countedReason() string {
+	lost, unpublished := e.gapsByCause()
+	switch {
+	case len(unpublished) == 0:
+		return "events of this run in " + rangeCount(len(lost), "") + " were lost from object storage"
+	case len(lost) == 0:
+		return "events of this run in " + rangeCount(len(unpublished), "") + " were never published"
+	default:
+		return "events of this run in " + rangeCount(len(lost), "") + " were lost from object storage, in " +
+			rangeCount(len(unpublished), "") + " never published"
+	}
+}
+
+// rangeCount is "1 range" or "n ranges", with an adjective between.
+func rangeCount(n int, adjective string) string {
+	if n == 1 {
+		return "1 " + adjective + "range"
+	}
+	return fmt.Sprintf("%d %sranges", n, adjective)
 }
 
 // LookupRun resolves a run through the read model, in the order the system of
