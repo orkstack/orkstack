@@ -57,22 +57,20 @@ func newScanState(tolerateLostSegments bool) *scanState {
 	}
 }
 
-// unwrittenStartReason is the reason an archive gives for the first events
-// of a run that were never published: an ending before start whose
-// RUN_CREATED snapshot object storage refused (emitRunCreatedFirst).
-const unwrittenStartReason = "never written: object storage refused their snapshot, so the run published nothing under these numbers"
-
-// recordUnwrittenStart records, on the archive path, the numbers below the
-// first event a run's first execution published as an explicit gap. Every
-// run publishes RUN_CREATED at 1 first; the one that publishes later
-// numbers without it is an ending before start whose RUN_CREATED could not
-// be written, which goes on to its terminal event at 2. Read live, the
-// stream is what was published; the archive says what is missing.
-func (st *scanState) recordUnwrittenStart(event *orkstackv1.Event) {
-	if !st.tolerateLostSegments || st.carried || st.lastSequence != 0 || len(st.seen) != 0 || event.GetSequence() <= 1 {
-		return
+// unpublishedStart reports the numbers below the first event a run's first
+// execution published, when that event is not 1, as a gap. Every run
+// publishes RUN_CREATED at 1 first, so a first execution whose first event
+// comes later holds nothing under the numbers below it: they were consumed
+// without an event (today, only by an ending before start whose RUN_CREATED
+// snapshot could not be written, emitRunCreatedFirst). Only this start of
+// the stream is checked; a number a run consumes later without an event is
+// not. The archive path records the gap; a live event read over it fails
+// with it (scanWith).
+func (st *scanState) unpublishedStart(event *orkstackv1.Event) (EventGap, bool) {
+	if st.carried || st.lastSequence != 0 || len(st.seen) != 0 || event.GetSequence() <= 1 {
+		return EventGap{}, false
 	}
-	st.gaps = append(st.gaps, EventGap{First: 1, Last: event.GetSequence() - 1, Reason: unwrittenStartReason})
+	return EventGap{First: 1, Last: event.GetSequence() - 1, Reason: UnpublishedEventsReason}, true
 }
 
 // deliver hands one decoded event to the caller — send, or the projection's

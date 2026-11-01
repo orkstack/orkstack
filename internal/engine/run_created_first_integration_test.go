@@ -235,10 +235,7 @@ func TestIntegration_ARefusedRunCreatedReadsBackTheDefinitionCode(t *testing.T) 
 					"terminal event attempted", n, others)
 			}
 			a := s.serveAPI(api.Config{})
-			served := apiEvents(t, ctx, a, runID)
-			if got := fmt.Sprint(definitionEventTypes(served)); got != tc.want {
-				t.Fatalf("StreamRunEvents served %s, want %s", got, tc.want)
-			}
+			served := s.requireStreamed(t, a, runID, tc.want, tc.terminal)
 			last := served[len(served)-1]
 			if !strings.Contains(last.GetMessage(), "not the definition") && !strings.Contains(last.GetMessage(), "another orkflow") {
 				t.Fatalf("the served terminal event says %q, want the definition's failure", last.GetMessage())

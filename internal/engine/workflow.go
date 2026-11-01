@@ -2697,8 +2697,9 @@ func (s *runState) snapshot() *orkstackv1.Run {
 // with a gap that crosses a run boundary. The one exception is
 // emitRunCreatedFirst, which writes an ending before start's RUN_CREATED again
 // under its own number, because nothing about the run moved in between; a
-// number 1 it still cannot write is recorded as a gap in the run's archive
-// (recordUnwrittenStart).
+// number 1 it still cannot write is named as never published, by every read
+// of the stream and in the run's archive (unpublishedStart). No later burned
+// number is named: the reader checks the start of the stream only.
 func (s *runState) emit(
 	ctx workflow.Context,
 	eventType orkstackv1.EventType,

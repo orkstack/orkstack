@@ -452,10 +452,7 @@ func TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding(t *testing.T) {
 					"and the terminal event attempted", n, others, tc.writes)
 			}
 			a := s.serveAPI(api.Config{})
-			served := apiEvents(t, ctx, a, runID)
-			if got := fmt.Sprint(definitionEventTypes(served)); got != tc.want {
-				t.Fatalf("StreamRunEvents served %s, want %s", got, tc.want)
-			}
+			served := s.requireStreamed(t, a, runID, tc.want, tc.gap)
 			run, err := s.reader.GetRun(ctx, runID)
 			if err != nil || run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != "RUN_CANCELED" {
 				t.Fatalf("GetRun = %v (%v), want CANCELED with RUN_CANCELED", run, err)
@@ -476,6 +473,41 @@ func TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding(t *testing.T) {
 				"in %d attempts; archive gap at 1: %v", tc.name, tc.want, latency, n, tries, tc.gap)
 		})
 	}
+}
+
+// requireStreamed reads the run's stream through the API's StreamRunEvents
+// and returns what it served. When gap is set the run never published 1: a
+// read from 0 is DataLoss naming 1 as never published, with nothing sent —
+// as its archive answers — and want is what a read from 1 serves; otherwise
+// want is what a read from 0 serves.
+func (s *chaosStack) requireStreamed(t *testing.T, a *chaosAPI, runID, want string, gap bool) []*orkstackv1.Event {
+	t.Helper()
+	stream := func(from int64) ([]*orkstackv1.Event, error) {
+		var events []*orkstackv1.Event
+		err := a.svc.StreamRunEvents(s.ctx, runID, "", from, func(e *orkstackv1.Event) error {
+			events = append(events, e)
+			return nil
+		})
+		return events, err
+	}
+	from := int64(0)
+	if gap {
+		sent, err := stream(0)
+		if connect.CodeOf(err) != connect.CodeDataLoss || !strings.Contains(err.Error(), "events 1–1 of run "+runID+" were never published") ||
+			len(sent) != 0 {
+			t.Fatalf("StreamRunEvents from 0 = %v (%v), want DataLoss naming 1–1 as never published, with nothing sent",
+				definitionEventTypes(sent), err)
+		}
+		from = 1
+	}
+	served, err := stream(from)
+	if err != nil {
+		t.Fatalf("StreamRunEvents from %d: %v", from, err)
+	}
+	if got := fmt.Sprint(definitionEventTypes(served)); got != want {
+		t.Fatalf("StreamRunEvents from %d served %s, want %s", from, got, want)
+	}
+	return served
 }
 
 // requireArchivedWith: the run's archive body holds the events served and
@@ -513,8 +545,9 @@ func (s *chaosStack) requireArchivedWith(t *testing.T, a *chaosAPI, runID string
 	if !gap {
 		return
 	}
-	if _, err := a.svc.ArchivedEvents(s.ctx, runID, 0); connect.CodeOf(err) != connect.CodeDataLoss || !strings.Contains(err.Error(), "1–1") {
-		t.Fatalf("ArchivedEvents from 0 = %v, want DataLoss naming 1–1", err)
+	if _, err := a.svc.ArchivedEvents(s.ctx, runID, 0); connect.CodeOf(err) != connect.CodeDataLoss ||
+		!strings.Contains(err.Error(), "events 1–1 of run "+runID+" were never published") {
+		t.Fatalf("ArchivedEvents from 0 = %v, want DataLoss naming 1–1 as never published", err)
 	}
 	if past, err := a.svc.ArchivedEvents(s.ctx, runID, 1); err != nil || fmt.Sprint(definitionEventTypes(past)) != fmt.Sprint(definitionEventTypes(served)) {
 		t.Fatalf("ArchivedEvents from 1 = %v (%v), want %v", definitionEventTypes(past), err, definitionEventTypes(served))

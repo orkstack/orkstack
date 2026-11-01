@@ -62,36 +62,84 @@ type archiveLine struct {
 	Gap   *EventGap       `json:"gap,omitempty"`
 }
 
-// EventGap is a range of a run's event sequence that was lost from object
-// storage before the run was archived: an earlier generation's event segment
-// that was missing or failed verification. First and Last are inclusive.
+// EventGap is a range of a run's event sequence its stream does not hold,
+// for one of two causes: lost from object storage before the run was
+// archived (an earlier generation's event segment that was missing or failed
+// verification), or never published (numbers below the run's first event,
+// Unpublished). First and Last are inclusive.
 type EventGap struct {
 	First  int64  `json:"first"`
 	Last   int64  `json:"last"`
 	Reason string `json:"reason"`
 }
 
-// ErrArchivedEventsLost reports an archived run whose stream records a gap.
-// The run's outcome and its other events are intact.
-var ErrArchivedEventsLost = errors.New("events of the run were lost from object storage before it was archived")
+// UnpublishedEventsReason is the reason of a gap whose numbers the run never
+// published (unpublishedStart), and what tells it from a loss: every other
+// gap's reason says how its events were lost. internal/evidence carries the
+// same text, for the bundle's notice.
+const UnpublishedEventsReason = "the run's history holds no event under these numbers"
 
-// ArchivedEventsLostError names every range an archived run lost. It wraps
-// ErrArchivedEventsLost.
+// Unpublished reports whether the gap's numbers were never published, rather
+// than their events lost from object storage.
+func (g EventGap) Unpublished() bool { return g.Reason == UnpublishedEventsReason }
+
+// ErrArchivedEventsLost reports an archived run whose stream records a gap:
+// events lost from object storage before it was archived, or numbers it never
+// published. The run's outcome and its other events are intact.
+var ErrArchivedEventsLost = errors.New("events of the run are missing from its archive")
+
+// ArchivedEventsLostError names every range an archived run's stream does not
+// hold. It wraps ErrArchivedEventsLost.
 type ArchivedEventsLostError struct {
 	RunID string
 	Gaps  []EventGap
 }
 
 func (e *ArchivedEventsLostError) Error() string {
-	ranges := make([]string, 0, len(e.Gaps))
+	var lost, unpublished []string
 	for _, gap := range e.Gaps {
-		ranges = append(ranges, fmt.Sprintf("%d–%d (%s)", gap.First, gap.Last, gap.Reason))
+		if gap.Unpublished() {
+			unpublished = append(unpublished, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+			continue
+		}
+		lost = append(lost, fmt.Sprintf("%d–%d (%s)", gap.First, gap.Last, gap.Reason))
 	}
-	return fmt.Sprintf("events %s of run %s were lost from object storage before the run was archived",
-		strings.Join(ranges, ", "), e.RunID)
+	var clauses []string
+	if len(lost) > 0 {
+		clauses = append(clauses, fmt.Sprintf("events %s of run %s were lost from object storage before the run was archived",
+			strings.Join(lost, ", "), e.RunID))
+	}
+	if len(unpublished) > 0 {
+		clauses = append(clauses, fmt.Sprintf("events %s of run %s were never published (%s)",
+			strings.Join(unpublished, ", "), e.RunID, UnpublishedEventsReason))
+	}
+	return strings.Join(clauses, "; ")
 }
 
 func (e *ArchivedEventsLostError) Unwrap() error { return ErrArchivedEventsLost }
+
+// ErrEventsUnpublished reports a live read of a run's stream over numbers the
+// run never published.
+var ErrEventsUnpublished = errors.New("events of the run were never published")
+
+// UnpublishedEventsError names the numbers below a run's first published
+// event that a live read of its stream asked for: the gap its archive records
+// (unpublishedStart). It wraps ErrEventsUnpublished.
+type UnpublishedEventsError struct {
+	RunID string
+	Gaps  []EventGap
+}
+
+func (e *UnpublishedEventsError) Error() string {
+	ranges := make([]string, 0, len(e.Gaps))
+	for _, gap := range e.Gaps {
+		ranges = append(ranges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+	}
+	return fmt.Sprintf("events %s of run %s were never published (%s)", strings.Join(ranges, ", "), e.RunID,
+		UnpublishedEventsReason)
+}
+
+func (e *UnpublishedEventsError) Unwrap() error { return ErrEventsUnpublished }
 
 // MarshalRunArchive renders a run and its events as the archive body, with
 // one gap line per lost range, placed after the events that precede it.

@@ -497,7 +497,10 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 // The stream is answered from history and segments alone: no snapshot object
 // is fetched, so an event read succeeds even when a snapshot is unreadable or
 // no snapshot store is wired at all. A segment that cannot be read is an error
-// wrapping ErrEventSegmentUnavailable — never NotFound: the run exists.
+// wrapping ErrEventSegmentUnavailable — never NotFound: the run exists. A read
+// whose range starts below the run's first published event, when that is not
+// 1, fails with an *UnpublishedEventsError naming the numbers, the gap its
+// archive records.
 func (r *TemporalRunReader) Events(
 	ctx context.Context,
 	runID string,
@@ -512,9 +515,10 @@ func (r *TemporalRunReader) Events(
 
 // EventsForArchive is Events(runID, 0) for the archive write: an earlier
 // generation's event segment that is permanently lost — missing, or failing
-// verification — is returned as an EventGap and the read continues, so the
-// run is archived with the loss recorded explicitly. A transient failure is
-// still an error.
+// verification — and numbers below the run's first published event, never
+// published (unpublishedStart), are returned as EventGaps and the read
+// continues, so the run is archived with what is missing recorded
+// explicitly. A transient failure is still an error.
 func (r *TemporalRunReader) EventsForArchive(
 	ctx context.Context,
 	runID string,
@@ -1209,7 +1213,17 @@ func (r *TemporalRunReader) scanExecution(
 			if event == nil {
 				continue
 			}
-			st.recordUnwrittenStart(event)
+			if gap, ok := st.unpublishedStart(event); ok {
+				switch {
+				case st.tolerateLostSegments:
+					st.gaps = append(st.gaps, gap)
+				case (send != nil || !wantRun) && gap.Last > fromSequence:
+					// An event read over numbers the run never published
+					// fails, naming them, as its archive will: the stream
+					// is never served as if it began later.
+					return "", &UnpublishedEventsError{RunID: runID, Gaps: []EventGap{gap}}
+				}
+			}
 			if isTerminalRunEvent(event) {
 				projection.sawTerminal = true
 			}

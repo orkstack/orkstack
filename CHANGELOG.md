@@ -14,14 +14,20 @@ word for word.
 ### Fixed
 
 - A run whose definition, passed by reference, could not be used no longer
-  loses its `RUN_CREATED` without a word when object storage refuses it:
-  before, its terminal event was published at sequence 2 with nothing at 1,
-  and the stream and the archive kept it that way. `RUN_CREATED` is now
-  written again under the same number, so a store that is back for that
-  write leaves both events, from 1. When that write is refused too, the
-  terminal event is still published at 2, and the run's archive records 1 as
-  a gap that a read of the archive names (`docs/DEPLOY.md` §6, "An ending
-  before start writes `RUN_CREATED` first").
+  serves a stream that silently begins at sequence 2 when object storage
+  refused its `RUN_CREATED`. `RUN_CREATED` is now written again under the same
+  number, so a store that is back for that write leaves both events, from 1.
+  When it is refused again, the terminal event is still published at 2, and
+  the missing 1 is said, not skipped: a read of the run's stream from its
+  start now fails `DataLoss`, naming 1 as never published, live and from its
+  archive, which records it as a gap line; a read from 1 serves the terminal
+  event; and the run's evidence bundle is `schema_version` 2, with the gap in
+  `event_gaps`, as every bundle of a gapped archive already was. A run a
+  release before this left the same way, after one refused write, is read the
+  same way (`docs/DEPLOY.md` §6, "An ending before start writes `RUN_CREATED`
+  first").
+- The notice of an archive gap names its cause: events "lost from object
+  storage before the run was archived", or "never published".
 
 ## [0.1.0] - 2026-10-30
 

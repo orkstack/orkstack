@@ -1728,12 +1728,19 @@ A run whose definition passed by reference cannot be used — it ends
 when an operator cancels it while the definition is still being read — stops
 with its terminal event. In a later part of a long run, that event follows the
 run's own. When it stops before its first task, it publishes `RUN_CREATED` at
-1 and the terminal event at 2. When object storage refuses `RUN_CREATED`
-twice, the terminal event is published alone, at 2, and the run's archive
-records 1 as a gap, which a read of the archive over it names. When object
-storage refuses the terminal event as well, the run publishes nothing: its
-close reads as its one event, at 1, with its code, and it has no archive, so
-it can no longer be read once it is retired.
+1 and the terminal event at 2. What object storage refuses changes that:
+
+- `RUN_CREATED` refused (twice; once, for a run an earlier release recorded):
+  the terminal event is published alone, at 2. A read of the run's stream from
+  its start fails `DataLoss`, naming 1 as never published, live and from its
+  archive alike; a read from 1 serves the terminal event.
+- The terminal event refused: the stream holds `RUN_CREATED`, and the run's
+  close is read as its terminal event, at 2, with its code.
+- Both refused: the run publishes nothing, and its close is read as its one
+  event, at 1, with its code.
+
+A run that publishes no terminal event, as in the last two, has no archive,
+so it can no longer be read once it is retired.
 
 Codes that belong to one construct — pins (`PIN_HOST_LOST`,
 `PIN_UNAVAILABLE`, `PIN_TIMEOUT`, …), joins (`CONDITION_FAILED`), awaits,

@@ -148,16 +148,20 @@ histories from immutable event segments in object storage. When one of them
 was missing or altered by the time the run was archived, the archive records
 the lost range as a `gap` line in `run.jsonl` (`docs/STORAGE.md`) rather than
 leaving the run unarchived. So it does for a run whose definition could not be
-used and whose `RUN_CREATED` object storage refused twice: its stream starts at
-its terminal event, at 2, and 1 is recorded as never written
-(`docs/DEPLOY.md` §6). The bundle of such a run is written with
-`schema_version: 2` and one more key:
+used and whose `RUN_CREATED` object storage refused: its stream starts at its
+terminal event, at 2, and 1 is recorded as never published, with the reason
+`the run's history holds no event under these numbers` (`docs/DEPLOY.md` §6).
+The bundle of such a run is written with `schema_version: 2` and one more
+key:
 
 ```json
   "event_gaps": [
     {"first": 1201, "last": 2400, "reason": "segment object missing"}
   ]
 ```
+
+`orkctl` names each gap for its cause: events "lost from object storage before
+it was archived", or "never published".
 
 Every member is exactly what version 1 would list — `run.jsonl` is still the
 archive body verbatim, gap lines included, and still `present` — so the

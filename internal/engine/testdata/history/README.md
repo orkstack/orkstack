@@ -468,8 +468,10 @@ Beside each, its `.objects/` directory holds that run's definition object
 - negative: `TestRunCreatedFirstHistories_CatchTheGateRemoved` (each gated
   fixture replayed with the gate skipped fails as nondeterministic)
 - reader: `TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap`
-  (what each history serves live and to the archive, and the same with every
-  publish removed)
+  (what each history serves to a live read from 0 and from 1 and to the
+  archive — the gap and legacy histories fail a read from 0 naming 1 as never
+  published — and the same with the terminal publish, or every publish,
+  removed)
 - behaviour: `TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd`,
   `TestRunWorkflow_TheRunCreatedFirstGateIsAskedOnlyWhereItsWriteFails`,
   `TestRunWorkflow_AGateOffEndingBeforeStartKeepsTheLegacyWrites`, and on the

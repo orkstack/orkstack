@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -35,16 +36,28 @@ func runCreatedFirstHistory(t *testing.T, name string) (string, []*historypb.His
 	return runID, recorded.GetEvents()
 }
 
-// withoutPublishes is a history with every PublishEvent scheduling removed:
-// the same ending with every one of its snapshot writes refused, so it
-// published nothing.
-func withoutPublishes(events []*historypb.HistoryEvent) []*historypb.HistoryEvent {
-	var out []*historypb.HistoryEvent
-	for _, e := range events {
+// withoutPublishes is a history with its last n PublishEvent schedulings
+// removed (every one when n is negative): the same ending with those
+// events' snapshot writes refused, so it published none of them.
+func withoutPublishes(events []*historypb.HistoryEvent, n int) []*historypb.HistoryEvent {
+	var publishes []int
+	for i, e := range events {
 		if attrs := e.GetActivityTaskScheduledEventAttributes(); attrs != nil && attrs.GetActivityType().GetName() == ActivityPublishEvent {
-			continue
+			publishes = append(publishes, i)
 		}
-		out = append(out, e)
+	}
+	if n >= 0 && n < len(publishes) {
+		publishes = publishes[len(publishes)-n:]
+	}
+	drop := map[int]bool{}
+	for _, i := range publishes {
+		drop[i] = true
+	}
+	var out []*historypb.HistoryEvent
+	for i, e := range events {
+		if !drop[i] {
+			out = append(out, e)
+		}
 	}
 	return out
 }
@@ -59,61 +72,96 @@ func eventTypesOf(events []*orkstackv1.Event) string {
 
 // TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap is
 // what the reader serves for an ending before start (emitRunCreatedFirst),
-// from the recorded histories, live (StreamEvents) and to the archive
-// (EventsForArchive):
+// from the recorded histories, to a live event read (StreamEvents and
+// Events) and to the archive (EventsForArchive):
 //
 //   - RUN_CREATED's second write took: both events, from 1, and no gap;
-//   - neither RUN_CREATED write took, the terminal event's did: the terminal
-//     event alone, at 2, and the archive records 1 as an explicit gap;
-//   - a build before the gate (legacy) left the same stream, and its archive
-//     records the same gap;
+//   - neither RUN_CREATED write took, the terminal event's did: the archive
+//     holds the terminal event at 2 and records 1 as a gap; a live read from
+//     0 fails naming the same gap, and one from 1 serves the event;
+//   - a build before the gate (legacy) left the same stream, read the same;
+//   - RUN_CREATED took and the terminal write did not: RUN_CREATED, then the
+//     execution's close read as the terminal event at 2;
 //   - nothing took: the execution's close, at 1, read as the run's one
-//     event — a run that publishes no terminal event is never archived, so
-//     there is no archive for a gap to belong to.
+//     event.
+//
+// In the last two the run published no terminal event, so in a deployment
+// nothing archives it; EventsForArchive still says what the archive would
+// hold.
 func TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap(t *testing.T) {
 	for _, tc := range []struct {
 		name, fixture string
-		strip         bool
-		served        string
-		gaps          string
+		// strip is how many of the history's last publishes to remove (-1
+		// every one).
+		strip int
+		// served is what an event read from 0 serves, or "" when it fails
+		// naming gap; then fromOne is what one from 1 serves.
+		served, fromOne string
+		archived, gaps  string
 	}{
-		{"its second write took", "run-created-first-v1.json", false, "[1:RUN_CREATED 2:RUN_FAILED]", "[]"},
-		{"neither RUN_CREATED write took", "run-created-first-gap-v1.json", false, "[2:RUN_FAILED]", "[1–1]"},
-		{"a build before the gate", "run-created-first-legacy-v1.json", false, "[2:RUN_FAILED]", "[1–1]"},
-		{"nothing took", "run-created-first-gap-v1.json", true, "[1:RUN_FAILED]", "[]"},
+		{"its second write took", "run-created-first-v1.json", 0,
+			"[1:RUN_CREATED 2:RUN_FAILED]", "[2:RUN_FAILED]", "[1:RUN_CREATED 2:RUN_FAILED]", "[]"},
+		{"neither RUN_CREATED write took", "run-created-first-gap-v1.json", 0,
+			"", "[2:RUN_FAILED]", "[2:RUN_FAILED]", "[1–1]"},
+		{"a build before the gate", "run-created-first-legacy-v1.json", 0,
+			"", "[2:RUN_FAILED]", "[2:RUN_FAILED]", "[1–1]"},
+		{"RUN_CREATED took and the terminal did not", "run-created-first-v1.json", 1,
+			"[1:RUN_CREATED 2:RUN_FAILED]", "[2:RUN_FAILED]", "[1:RUN_CREATED 2:RUN_FAILED]", "[]"},
+		{"nothing took", "run-created-first-gap-v1.json", -1,
+			"[1:RUN_FAILED]", "[]", "[1:RUN_FAILED]", "[]"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runID, events := runCreatedFirstHistory(t, tc.fixture)
-			if tc.strip {
-				events = withoutPublishes(events)
+			if tc.strip != 0 {
+				events = withoutPublishes(events, tc.strip)
 			}
 			reader := &TemporalRunReader{
 				client:    &fakeReadClient{history: map[string]*fakeHistory{runID: {events: events}}},
 				converter: converter.GetDefaultDataConverter(),
 			}
-			var streamed []*orkstackv1.Event
-			if err := reader.StreamEvents(context.Background(), runID, 0, func(e *orkstackv1.Event) error {
-				streamed = append(streamed, e)
-				return nil
-			}); err != nil {
-				t.Fatalf("StreamEvents: %v", err)
+			stream := func(from int64) ([]*orkstackv1.Event, error) {
+				var streamed []*orkstackv1.Event
+				err := reader.StreamEvents(context.Background(), runID, from, func(e *orkstackv1.Event) error {
+					streamed = append(streamed, e)
+					return nil
+				})
+				return streamed, err
 			}
-			if got := eventTypesOf(streamed); got != tc.served {
-				t.Fatalf("StreamEvents served %s, want %s", got, tc.served)
+			for name, read := range map[string]func(from int64) ([]*orkstackv1.Event, error){
+				"StreamEvents": stream,
+				"Events": func(from int64) ([]*orkstackv1.Event, error) {
+					return reader.Events(context.Background(), runID, from)
+				},
+			} {
+				got, err := read(0)
+				var unpublished *UnpublishedEventsError
+				switch {
+				case tc.served == "" && (!errors.As(err, &unpublished) || !errors.Is(err, ErrEventsUnpublished) ||
+					len(unpublished.Gaps) != 1 || unpublished.Gaps[0].First != 1 || unpublished.Gaps[0].Last != 1 ||
+					!unpublished.Gaps[0].Unpublished()):
+					t.Fatalf("%s from 0 = %s (%v), want it to fail naming 1–1 as never published", name, eventTypesOf(got), err)
+				case tc.served == "" && len(got) != 0:
+					t.Fatalf("%s from 0 served %s before failing, want nothing: the gap is the start", name, eventTypesOf(got))
+				case tc.served != "" && (err != nil || eventTypesOf(got) != tc.served):
+					t.Fatalf("%s from 0 = %s (%v), want %s", name, eventTypesOf(got), err, tc.served)
+				}
+				got, err = read(1)
+				if err != nil || eventTypesOf(got) != tc.fromOne {
+					t.Fatalf("%s from 1 = %s (%v), want %s", name, eventTypesOf(got), err, tc.fromOne)
+				}
 			}
 			archived, gaps, err := reader.EventsForArchive(context.Background(), runID)
 			if err != nil {
 				t.Fatalf("EventsForArchive: %v", err)
 			}
-			if got := eventTypesOf(archived); got != tc.served {
-				t.Fatalf("EventsForArchive gave %s, want %s", got, tc.served)
+			if got := eventTypesOf(archived); got != tc.archived {
+				t.Fatalf("EventsForArchive gave %s, want %s", got, tc.archived)
 			}
 			ranges := make([]string, 0, len(gaps))
 			for _, gap := range gaps {
 				ranges = append(ranges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
-				if !strings.Contains(gap.Reason, "never written") {
-					t.Errorf("gap %d–%d gives the reason %q, want it to say the events were never written",
-						gap.First, gap.Last, gap.Reason)
+				if !gap.Unpublished() {
+					t.Errorf("gap %d–%d gives the reason %q, want the unpublished one", gap.First, gap.Last, gap.Reason)
 				}
 			}
 			if got := "[" + strings.Join(ranges, " ") + "]"; got != tc.gaps {

@@ -373,9 +373,9 @@ func (s *runState) loadDefinition(ctx workflow.Context, stub *orkstackv1.Orkflow
 // its own (recordFailedStart) — and then RUN_FAILED (or RUN_CANCELED) at
 // sequence 2, each with its snapshot, so the run has a stream and an archive
 // body; a RUN_CREATED it cannot write is written once more, and when that
-// fails too the terminal event still goes at 2 and the archive records 1 as
-// a gap (emitRunCreatedFirst). It returns the ApplicationError, or the
-// cancel.
+// fails too the terminal event still goes at 2, and the reader names 1 as
+// never published (emitRunCreatedFirst). It returns the ApplicationError, or
+// the cancel.
 func (s *runState) endBeforeStart(ctx workflow.Context, code, message string) (*orkstackv1.Run, error) {
 	canceled := ctx.Err() != nil || code == restoreCanceled
 	ectx, cancel := workflow.NewDisconnectedContext(ctx)
@@ -432,11 +432,12 @@ var runCreatedFirstGateDisabledForTest atomic.Bool
 // (or on the DefaultVersion branch, which never wrote it again), the number
 // stays burned and endBeforeStart goes on to its terminal event at 2, under
 // a key of its own: never at 1, where a late write of a failed RUN_CREATED
-// attempt could replace it with a run that never ended. The run is then
-// archived with its stream starting at 2 and an explicit gap at 1
-// (recordUnwrittenStart); were the terminal write refused as well, the
-// reader numbers the execution's close from 1 and nothing archives it, as
-// for any run that publishes no terminal event. ectx is endBeforeStart's
+// attempt could replace it with a run that never ended. Its stream then
+// starts at 2, and the reader says so (unpublishedStart): a read from 0
+// fails naming 1 as never published, live and from the archive, which
+// records 1 as a gap. Were the terminal write refused as well, the reader
+// numbers the execution's close from 1 and nothing archives it, as for any
+// run that publishes no terminal event. ectx is endBeforeStart's
 // disconnected context.
 func (s *runState) emitRunCreatedFirst(ectx workflow.Context, code, message string) {
 	created := fmt.Sprintf("run created for orkflow %s@%s", s.wf.GetName(), s.wf.GetVersion())

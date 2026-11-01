@@ -2155,8 +2155,9 @@ func (s *Service) archiveRun(ctx context.Context, runID string) {
 // is the read path for a run this process never executed, and it reports the
 // same Connect errors the live path would: NotFound when nothing was archived
 // under that id, Internal when the archive itself is unreachable. When the
-// requested range overlaps events lost from object storage before the run was
-// archived, it is DataLoss, naming the range.
+// requested range overlaps a gap the archive records — events lost from
+// object storage before the run was archived, or numbers the run never
+// published — it is DataLoss, naming the range.
 func (s *Service) ArchivedEvents(
 	ctx context.Context,
 	runID string,
@@ -2174,7 +2175,8 @@ func (s *Service) ArchivedEvents(
 
 // archivedEventsBeforeLoss is ArchivedEvents' body: the archived events after
 // fromSequence, and — when the requested range overlaps a gap the archive
-// records (events lost from object storage before the run was archived) —
+// records (events lost from object storage before the run was archived, or
+// numbers it never published) —
 // only the events below the first overlapping gap, with a CodeDataLoss error
 // naming every overlapping range. A gap entirely at or below fromSequence is
 // not part of the request and costs nothing.
@@ -2220,18 +2222,29 @@ func (s *Service) archivedEventsBeforeLoss(
 	return after, connect.NewError(connect.CodeDataLoss, archivedLossError(runID, overlapping)), nil
 }
 
-// archivedLossError is the sentence a read over a lost range receives: run
-// vocabulary only.
+// archivedLossError is the sentence a read over a gap receives, archived or
+// live, each range named for its cause — lost from object storage, or never
+// published: run vocabulary only.
 func archivedLossError(runID string, gaps []engine.EventGap) error {
-	ranges := make([]string, 0, len(gaps))
-	reasons := make([]string, 0, len(gaps))
+	var lostRanges, lostReasons, unpublished []string
 	for _, gap := range gaps {
-		ranges = append(ranges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
-		reasons = append(reasons, gap.Reason)
+		if gap.Unpublished() {
+			unpublished = append(unpublished, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+			continue
+		}
+		lostRanges = append(lostRanges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+		lostReasons = append(lostReasons, gap.Reason)
 	}
-	return fmt.Errorf("events %s of run %s were lost from object storage before the run was archived (%s); "+
-		"the run's outcome and its other events are intact",
-		strings.Join(ranges, ", "), runID, strings.Join(reasons, "; "))
+	var clauses []string
+	if len(lostRanges) > 0 {
+		clauses = append(clauses, fmt.Sprintf("events %s of run %s were lost from object storage before the run was archived (%s)",
+			strings.Join(lostRanges, ", "), runID, strings.Join(lostReasons, "; ")))
+	}
+	if len(unpublished) > 0 {
+		clauses = append(clauses, fmt.Sprintf("events %s of run %s were never published (%s)",
+			strings.Join(unpublished, ", "), runID, engine.UnpublishedEventsReason))
+	}
+	return fmt.Errorf("%s; the run's outcome and its other events are intact", strings.Join(clauses, "; "))
 }
 
 // LookupRun resolves a run through the read model, in the order the system of
@@ -2738,6 +2751,7 @@ func (s *Service) streamCheckedRunEvents(
 	}
 	if binding.Reader != nil {
 		err := binding.Reader.StreamEvents(ctx, runID, fromSequence, send)
+		var unpublished *engine.UnpublishedEventsError
 		switch {
 		case err == nil:
 			return nil
@@ -2745,6 +2759,11 @@ func (s *Service) streamCheckedRunEvents(
 			// The caller went away mid-stream. That is not a failure of the
 			// run, and the old bus path reported it as a clean end too.
 			return nil
+		case errors.As(err, &unpublished):
+			// The range asked for starts below the run's first published
+			// event: DataLoss naming the numbers, as the run's archive
+			// answers the same read (archivedEventsBeforeLoss).
+			return connect.NewError(connect.CodeDataLoss, archivedLossError(runID, unpublished.Gaps))
 		case !errors.Is(err, artifacts.ErrNotFound):
 			return connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("stream run %q: %w", runID, err))

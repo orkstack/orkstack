@@ -3412,22 +3412,30 @@ passed by reference, cannot be used ends in its first generation with
 refuses `RUN_CREATED`'s snapshot, it is written again under the same number,
 so a store that is back for that write leaves both events. When that write
 fails too, the number stays unused and the terminal event is still written at
-2, under a key of its own: the stream starts there, and when the run is
-archived the reader records 1 as an explicit gap (`docs/STORAGE.md`), which a
-read of the archive over it names. Before this, the terminal event was written
-at 2 the same way, with no gap recorded. When the terminal write fails as
-well, the run publishes nothing, its close reads as its one event, at 1, and,
-like every run that publishes no terminal event, it has no archive body and
-becomes unreadable once the cluster's retention expires it. It records the
+2, under a key of its own. Its stream then starts at 2, and both reads say so
+alike: a read of the stream from its start fails `DataLoss`, naming 1 as never
+published, with nothing sent, live and from the archive, which records 1 as a
+gap line (`docs/STORAGE.md`); a read from 1 serves the terminal event.
+Before this, the terminal event was written at 2 the same way, and the stream
+silently began there. The reader recognises the gap from the history alone, so
+a run recorded before the gate, which wrote the terminal event after a single
+refused write, is read and archived the same way. Only these first numbers are
+recognised: a number a run consumes later without an event — an event whose
+snapshot is refused mid-run — is not recorded as a gap. When `RUN_CREATED` is
+written and the terminal write fails, the stream holds `RUN_CREATED` and the
+run's close is read as its terminal event, at 2. When the terminal write fails
+as well as both of `RUN_CREATED`'s, the run publishes nothing and its close is
+read as its one event, at 1. In both of those it publishes no terminal event,
+so, like every run that publishes none, it has no archive body and becomes
+unreadable once the cluster's retention expires it. It records the
 `run-created-first` version, asked lazily where `RUN_CREATED`'s write first
 fails: an ending whose writes take records no marker. A history recorded
 before the gate replays its `DefaultVersion` branch, which wrote the terminal
-event next; version 1 is the new path. The gap is the reader's, so a run
-recorded before the gate is archived with it too. The fixtures
+event next; version 1 is the new path. The fixtures
 `run-created-first-v1.json` (the second write takes),
 `run-created-first-gap-v1.json` (neither does) and
 `run-created-first-legacy-v1.json` (recorded with the gate off) guard it with
-command, behaviour and negative tests
+command, behaviour, reader and negative tests
 (`internal/engine/testdata/history/README.md`).
 
 **A pin's creation timeout is a versioned change.** A run's plan carries
