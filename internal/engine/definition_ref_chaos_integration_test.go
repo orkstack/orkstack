@@ -324,7 +324,7 @@ func (s *chaosStack) cancelDuringTheLoad(t *testing.T, name string, proxy *fault
 	}
 	s.transcript.step("the definition read failed and was retried under the cut (%+v)", proxy.Stats())
 	canceledAt := time.Now()
-	if err := s.starter.CancelRun(s.ctx, runID, ""); err != nil {
+	if err := s.starter.CancelRun(s.ctx, runID, engine.CancelRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	return runID, canceledAt

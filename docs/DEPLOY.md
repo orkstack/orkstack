@@ -3066,6 +3066,27 @@ OrkStack records it and does not authenticate it.
   environment, every request it sends carries `Ork-Principal:
   $ORK_PRINCIPAL`. It is an assertion like any other: useful on a `make up`
   deployment with no gateway, never proof of who typed the command.
+- **A canceled run records the same assertion** as `Run.canceled_by`, which
+  `orkctl run get`, `orkctl run list` and the API render as asserted. The
+  engine carries it in the cancellation it asks Temporal for: the request's
+  reason is `{"format":1,"principal":"…"}` (`RunCancelRequest`, as
+  protojson, whose spacing may vary), which the cluster keeps as the `cause`
+  of the run's `WorkflowExecutionCancelRequested` event, and the reader takes
+  the name from there and from the archived run, never from the audit trail.
+  Only the first request, recorded before the run published its end, counts,
+  and only on a run that ended `RUN_CANCELED`. A cancel with no header, a
+  run canceled with its parent, one canceled from the cluster directly (any
+  other reason text) and a terminated run name nobody. On SDK 1.47 that
+  request is sent to the frontend directly, so the engine asks again itself
+  on `Unavailable`, `ResourceExhausted` and `Aborted`, as the SDK does:
+  200 ms apart, doubling to 1 s, for at most 10 s (shorter than the SDK's
+  60 s; a `CancelRun` refused so answers `UNAVAILABLE` or
+  `RESOURCE_EXHAUSTED`, and may be asked again)
+  (`TemporalStarter.CancelRun`); a cancel with no principal goes through the
+  SDK as before. During a rollout, a run canceled through an engine of an
+  earlier release names nobody, and one whose end an earlier release's
+  projection worker archived names its canceller until it is retired, then
+  nobody: the archived run is written once.
 - **`source_address` is the TCP peer the engine accepted the request from.**
   Behind a gateway that is the gateway's address; no `X-Forwarded-For` or
   other proxy header is consulted. The client's address is in the gateway's

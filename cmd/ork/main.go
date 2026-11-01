@@ -1320,7 +1320,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker).
 		WithNamespaceIndex(namespaceIndexed).
-		WithOriginIndex(originIndexed)
+		WithOriginIndex(originIndexed).
+		// What the client was dialed with: a cancellation that records who
+		// asked names them on the cluster itself (TemporalStarter.CancelRun).
+		WithClusterIdentity(cfg.temporalNamespace, temporalOptions.Identity)
 
 	// Pool routing: the cluster answers whether a pool has Orkers, so a submit
 	// onto a pool nothing serves fails at submit rather than leaving a run in

@@ -68,6 +68,13 @@ word for word.
   dependencies (`make vuln-js`, `bun audit`) and scans the images a release
   publishes (`make vuln-images`, a pinned Grype) for known vulnerabilities; a
   release is not tagged while either is red.
+- A canceled run shows who canceled it: the name your gateway asserted in
+  `Ork-Principal` on the cancel request (`ORK_PRINCIPAL` for `orkctl`),
+  marked as asserted and never authenticated. The API returns it as the
+  run's `canceled_by`, `orkctl run get` prints `Canceled by:` and
+  `orkctl run list` shows `CANCELED by … (asserted)`. It stays after the run
+  is retired. A cancel without the header, and runs canceled before this
+  release, show no name.
 
 ### Changed
 
@@ -232,6 +239,10 @@ word for word.
 - **BREAKING** The Orker's boot probe runs `docker.io/library/alpine:3.24` by digest (was alpine 3.20). An Orker that cannot pull it refuses to start with `BIND_PROBE_IMAGE_UNAVAILABLE`: on an air-gapped or rate-limited host, mirror or load it before you upgrade (UPGRADING.md, "Upgrading the deployment").
 - The development stack and the quickstart run Temporal's development server 1.9.1 (Temporal Server 1.32.0) and SeaweedFS 4.51.
 - The development stack's observability profile runs OpenTelemetry Collector 0.164.0, Loki 3.7.9, Tempo 3.1.1, Prometheus 3.15.1 and Grafana 13.3.0.
+- `CancelRun` answers `UNAVAILABLE` (or `RESOURCE_EXHAUSTED`) when the
+  cluster could not take the cancellation, and `CANCELED` or
+  `DEADLINE_EXCEEDED` when the caller gave up first, instead of `INTERNAL`.
+  A client may retry the first two.
 
 ### Fixed
 

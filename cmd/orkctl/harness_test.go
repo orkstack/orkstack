@@ -89,11 +89,11 @@ func (s *stubStarter) SignalAwait(_ context.Context, runID string, sig *orkstack
 	return nil
 }
 
-func (s *stubStarter) CancelRun(_ context.Context, runID, reason string) error {
+func (s *stubStarter) CancelRun(_ context.Context, runID string, request engine.CancelRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.canceled = append(s.canceled, runID)
-	s.reasons = append(s.reasons, reason)
+	s.reasons = append(s.reasons, request.Reason)
 	return s.cancelErr
 }
 

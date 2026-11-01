@@ -159,7 +159,7 @@ func TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes(t *testing.
 	}
 
 	// The accepted run was never stranded: once the holds end, it runs.
-	if err := d.starter.CancelRun(ctx, holdID, ""); err != nil {
+	if err := d.starter.CancelRun(ctx, holdID, engine.CancelRequest{}); err != nil {
 		t.Fatalf("cancel the hold run: %v", err)
 	}
 	if got := d.await(holdID).GetStatus(); got != orkstackv1.Status_STATUS_CANCELED {

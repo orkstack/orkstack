@@ -3,8 +3,10 @@ package engine
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 
+	"go.temporal.io/sdk/activity"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -45,7 +47,19 @@ type RunEventSource interface {
 	// permanently gone (missing, or failing verification) becomes an
 	// EventGap instead of an error; a transient failure is still an error,
 	// so the activity retries exactly as today.
-	EventsForArchive(ctx context.Context, runID string) ([]*orkstackv1.Event, []EventGap, error)
+	EventsForArchive(ctx context.Context, runID string) (ArchiveRead, error)
+}
+
+// ArchiveRead is what the archive write reads from the system of record: the
+// run's whole event stream, the ranges of it permanently lost, and who
+// canceled the run, when its cancellation recorded a principal.
+type ArchiveRead struct {
+	Events []*orkstackv1.Event
+	Gaps   []EventGap
+	// CanceledBy is the principal the run's cancellation request recorded
+	// (cancelPrincipal), or empty; applyCanceledBy decides whether the run
+	// shows it.
+	CanceledBy string
 }
 
 // EventActivities projects workflow-produced state into the in-process read
@@ -209,6 +223,33 @@ func (a *EventActivities) PublishEvent(
 			return err
 		}
 		run = read
+	}
+	// A canceled run's end names who canceled it, which only the run's own
+	// record holds (applyCanceledBy). The walk the archive write makes anyway
+	// is made here instead, BEFORE anything is applied or published, so the
+	// store, the notifier, the observer and the archived body all carry the
+	// same run. A walk that fails is retried with nothing announced while the
+	// activity has attempts left; on its last attempt the end is announced
+	// without the name rather than not at all, and the archive write below
+	// walks again. Every other event keeps its order and its one read.
+	var archived *ArchiveRead
+	// Only where the archive write would walk anyway; cmd/ork always wires
+	// an archive.
+	if run != nil && a.archive != nil && a.events != nil &&
+		event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
+		read, err := a.archivedEvents(ctx, event.GetRunId())
+		switch {
+		case err == nil:
+			applyCanceledBy(run, read.CanceledBy)
+			archived = &read
+		case !lastPublishAttempt(ctx):
+			return err
+		default:
+			slog.Warn("publishing a canceled run's end without who canceled it: its record could not be read on the last attempt",
+				"run_id", event.GetRunId(), "error", err)
+		}
+	}
+	if run != nil {
 		a.store.Apply(run)
 	}
 	firstPublication := false
@@ -236,9 +277,17 @@ func (a *EventActivities) PublishEvent(
 	if snapshot == nil {
 		return nil
 	}
-	archived, gaps, err := a.archivedEvents(ctx, event.GetRunId())
-	if err != nil {
-		return err
+	if archived == nil {
+		read, err := a.archivedEvents(ctx, event.GetRunId())
+		if err != nil {
+			return err
+		}
+		archived = &read
+		// The walk above failed and this one did not: the archived run still
+		// says who canceled it. On a copy — the notifier and the observer
+		// were handed this run already, and what they were told stands.
+		snapshot = proto.Clone(snapshot).(*orkstackv1.Run)
+		applyCanceledBy(snapshot, read.CanceledBy)
 	}
 	// Returning the error makes Temporal retry the activity, so a transient
 	// storage failure heals itself instead of silently dropping the run. A
@@ -246,7 +295,19 @@ func (a *EventActivities) PublishEvent(
 	// each is archived as an explicit gap: a run with a gap in its events
 	// still reaches the archive (AGENTS.md §15), and every read of the gap
 	// names its cause.
-	return a.archive.Archive(ctx, snapshot, archived, gaps...)
+	return a.archive.Archive(ctx, snapshot, archived.Events, archived.Gaps...)
+}
+
+// publishAttempts is how many attempts RunWorkflow gives the projection
+// activity (eventActivityOptions; TestPublishAttempts_MatchTheRetryPolicy
+// holds the two together).
+const publishAttempts = 3
+
+// lastPublishAttempt reports whether this PublishEvent is the last attempt the
+// run will make, so nothing it holds back is held back for good. A call made
+// outside an activity has no retry behind it, so it is its own last attempt.
+func lastPublishAttempt(ctx context.Context) bool {
+	return !activity.IsActivity(ctx) || activity.GetInfo(ctx).Attempt >= publishAttempts
 }
 
 func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orkstackv1.Run, error) {
@@ -279,15 +340,15 @@ func (a *EventActivities) readSnapshot(ctx context.Context, uri string) (*orksta
 func (a *EventActivities) archivedEvents(
 	ctx context.Context,
 	runID string,
-) ([]*orkstackv1.Event, []EventGap, error) {
+) (ArchiveRead, error) {
 	if a.events == nil {
-		return a.bus.Events(runID, 0), nil, nil
+		return ArchiveRead{Events: a.bus.Events(runID, 0)}, nil
 	}
-	events, gaps, err := a.events.EventsForArchive(ctx, runID)
+	read, err := a.events.EventsForArchive(ctx, runID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("read events of run %s for the archive: %w", runID, err)
+		return ArchiveRead{}, fmt.Errorf("read events of run %s for the archive: %w", runID, err)
 	}
-	return events, gaps, nil
+	return read, nil
 }
 
 // mergedSnapshot prefers the store's copy of a run: it still carries the

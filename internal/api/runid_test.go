@@ -51,7 +51,7 @@ func (s *takenIDStarter) StartRun(
 	return nil
 }
 
-func (s *takenIDStarter) CancelRun(context.Context, string, string) error { return nil }
+func (s *takenIDStarter) CancelRun(context.Context, string, engine.CancelRequest) error { return nil }
 func (s *takenIDStarter) SignalAwait(context.Context, string, *orkstackv1.AwaitSignal) error {
 	return nil
 }

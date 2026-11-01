@@ -111,8 +111,8 @@ func (s *gapSource) Events(context.Context, string, int64) ([]*orkstackv1.Event,
 	return s.events, s.err
 }
 
-func (s *gapSource) EventsForArchive(context.Context, string) ([]*orkstackv1.Event, []engine.EventGap, error) {
-	return s.events, s.gaps, s.err
+func (s *gapSource) EventsForArchive(context.Context, string) (engine.ArchiveRead, error) {
+	return engine.ArchiveRead{Events: s.events, Gaps: s.gaps}, s.err
 }
 
 func publishTerminal(t *testing.T, source *gapSource) (*artifacts.LocalRunArchive, *engine.RunArchiver, error) {

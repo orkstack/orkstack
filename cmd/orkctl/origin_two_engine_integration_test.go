@@ -35,6 +35,12 @@ type originStack struct {
 	namespace   string
 	orkflow     string
 	transcript  strings.Builder
+	// partition is the stack's private Temporal namespace, for a step that
+	// acts on the cluster directly (retiring a run).
+	partition string
+	// principal is the ORK_PRINCIPAL every cli call asserts; empty asserts
+	// none.
+	principal string
 }
 
 func newOriginStack(ctx context.Context, t *testing.T, label string) *originStack {
@@ -67,6 +73,7 @@ func newOriginStack(ctx context.Context, t *testing.T, label string) *originStac
 		bLog:        bLog,
 		namespace:   fmt.Sprintf("origin-%s-%d-%d", label, os.Getpid(), stamp),
 		orkflow:     "deploy-service",
+		partition:   partition,
 	}
 	fmt.Fprintf(&s.transcript, "# run origin, two engine replicas (%s)\n", time.Now().UTC().Format(time.RFC3339))
 	fmt.Fprintf(&s.transcript, "temporal namespace  %s\nnamespace           %s\nreplica A           %s\nreplica B           %s\n\n",
@@ -86,7 +93,7 @@ func (s *originStack) cli(t *testing.T, replica *engineReplica, want int, args .
 	t.Helper()
 	t.Setenv(serverEnvVar, "")
 	t.Setenv(namespaceEnvVar, "")
-	t.Setenv(principalEnvVar, "")
+	t.Setenv(principalEnvVar, s.principal)
 	t.Setenv(configEnvVar, filepath.Join(t.TempDir(), "config.json"))
 	full := append([]string{"-n", s.namespace}, args...)
 	var stdout, stderr bytes.Buffer

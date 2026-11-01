@@ -451,6 +451,46 @@ message Run {
   // least a kind. It is present on every snapshot the run writes, on the
   // archived run, and therefore in every webhook payload's embedded run.
   RunOrigin origin = 15;
+
+  // canceled_by is what the deployment's gateway asserted in the
+  // Ork-Principal request header on the CancelRun request that canceled this
+  // run — recorded verbatim, bounded to 256 bytes by truncation with invalid
+  // UTF-8 replaced, as RunOrigin.principal is, and NEVER authenticated: the
+  // same assertion as RunOrigin.principal and AuditRecord.principal. Every
+  // rendering says it was asserted.
+  //
+  // It is set only on a run whose status is CANCELED with error code
+  // RUN_CANCELED, when a CancelRun carrying the header was accepted before
+  // the run recorded its own end. That is the request that canceled it, or —
+  // if the run was already ending canceled for another cause, such as a
+  // composed task's child run canceled from outside — the request that
+  // arrived while it ended, which is named too. It is empty for every other
+  // run: a CancelRun with no header; a run canceled with its parent run, or
+  // by any other cause; a run that succeeded, failed or was terminated
+  // (RUN_TERMINATED); a run canceled before this field existed. A client
+  // then shows nothing rather than a blank that could be mistaken for a
+  // name.
+  //
+  // It is on GetRun, on the archived run, on ListRuns rows answered from the
+  // archive and in the embedded run of a RUN_CANCELED webhook delivery.
+  string canceled_by = 16;
+}
+
+// RunCancelRequest is ENGINE-INTERNAL: the record CancelRun writes as the
+// reason of the cancellation it asks the cluster for — Temporal's
+// RequestCancelWorkflowExecutionRequest.reason, which the cluster keeps as
+// the `cause` of the run's WORKFLOW_EXECUTION_CANCEL_REQUESTED history event.
+// The run reader decodes it back into Run.canceled_by; nothing else reads it,
+// and nothing decides anything with it. It is written as protojson, so an
+// operator's view of the cluster shows it as it is.
+message RunCancelRequest {
+  // format is 1. A cause that does not decode as this message with format 1
+  // records nobody: an operator's own reason text, a parent run's request, a
+  // cancellation an earlier release requested with no reason at all.
+  int32 format = 1;
+  // principal is the Ork-Principal assertion on the CancelRun request,
+  // bounded as Run.canceled_by is. Empty when the request carried none.
+  string principal = 2;
 }
 
 // RunOriginKind is WHAT started a run. It is decided by the process that

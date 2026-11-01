@@ -439,6 +439,11 @@ present it as a verified identity, and every rendering says it was asserted
   `oneLine`).
 - In a run's origin it is bounded to 256 bytes, and invalid UTF-8 is replaced
   (`internal/api/origin.go`, `boundOriginAssertion`).
+- On a canceled run (`Run.canceled_by`) it is bounded the same way, and the
+  reader takes it only from the record `CancelRun` wrote on the cancellation
+  that ended the run: a longer or malformed record names nobody
+  (`internal/engine/canceled_by.go`). `orkctl` prints it with control
+  characters replaced by spaces.
 - A gateway that authenticates callers must overwrite `Ork-Principal` with the
   identity it established. It must never pass through a client's value, because
   otherwise any caller can claim any name ([DEPLOY.md](DEPLOY.md), "Attributing

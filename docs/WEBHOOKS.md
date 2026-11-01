@@ -182,7 +182,10 @@ The body is one JSON object, in this field order:
   it. It is never invented.
 - `status` is the status the event carries.
 - `run` is the run in the JSON dialect of [JSON.md](JSON.md), with its input,
-  its output and its origin. Fan-out items are removed (`engine.WithoutItems`).
+  its output and its origin, and on a `RUN_CANCELED` delivery who canceled it
+  (`canceledBy`, the asserted `Ork-Principal`, never authenticated) when the
+  engine could read it; a delivery whose read failed goes out without it.
+  Fan-out items are removed (`engine.WithoutItems`).
   It is the run as the engine's projection held it when the transition was
   published. A redelivery carries the run as it reads now.
 

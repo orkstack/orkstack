@@ -159,7 +159,7 @@ orkctl run attempts <run-id>     # an attempt its Orker never filed shows as UNR
 
 **Cause.** A run that was canceled ends with a run-level code. `RUN_CANCELED` means the run was canceled, for example with `orkctl run cancel <run-id>`. `RUN_TERMINATED` means the run was terminated from outside the engine: its status is `CANCELED` and its message is the termination reason. The engine reads both from the event that closed the run (`internal/engine/reader.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.3 Engine side").
 
-**Confirm.** `orkctl run get <run-id>` shows the run's error code and message. Control-plane writes, including run cancels, are recorded in the audit trail. `orkctl admin audit` lists them. The principal in an audit record is the one a gateway asserted. It is not a verified identity ([AGENTS.md](../AGENTS.md), "7. Orkflow execution model", "Principal"; [DEPLOY.md](./DEPLOY.md), "Attributing control-plane writes").
+**Confirm.** `orkctl run get <run-id>` shows the run's error code and message. When the `orkctl run cancel` (or any `CancelRun`) that canceled it carried an `Ork-Principal`, it also shows `Canceled by:` with that name, marked asserted and not authenticated. Control-plane writes, including run cancels, are recorded in the audit trail. `orkctl admin audit` lists them. The principal in an audit record is the one a gateway asserted. It is not a verified identity ([AGENTS.md](../AGENTS.md), "7. Orkflow execution model", "Principal"; [DEPLOY.md](./DEPLOY.md), "Attributing control-plane writes").
 
 ### A task ran again
 
