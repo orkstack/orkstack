@@ -10,7 +10,7 @@
 	// destructive one starts on Cancel, so the Enter that opened it cannot
 	// also confirm it; any other starts on its first control.
 	import type { Snippet } from 'svelte';
-	import { focusTrap } from '$lib/focusTrap';
+	import { focusTrap } from '#lib/focusTrap.ts';
 
 	interface Props {
 		title: string;

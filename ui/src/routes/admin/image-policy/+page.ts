@@ -1,6 +1,6 @@
-import { errorMessage } from '$lib/client';
-import { systemClient } from '$lib/clients/system';
-import type { ImagePolicy } from '$lib/gen/orkstack/v1/image_policy_pb';
+import { errorMessage } from '#lib/client.ts';
+import { systemClient } from '#lib/clients/system.ts';
+import type { ImagePolicy } from '#lib/gen/orkstack/v1/image_policy_pb.ts';
 import type { PageLoad } from './$types';
 
 // GetImagePolicy reads the deployment's image supply-chain floor

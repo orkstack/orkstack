@@ -11,21 +11,21 @@
 	import { page } from '$app/state';
 	import { invalidateAll } from '$app/navigation';
 	import { Code, ConnectError } from '@connectrpc/connect';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import YamlCode from '$lib/yaml/YamlCode.svelte';
-	import YamlField from '$lib/yaml/YamlField.svelte';
-	import YamlProblems from '$lib/yaml/YamlProblems.svelte';
-	import { YamlSession } from '$lib/yaml/session.svelte';
-	import { errorMessage } from '$lib/client';
-	import { automationClient } from '$lib/clients/automation';
-	import { namespaceClient } from '$lib/clients/namespaces';
-	import { scheduleClient } from '$lib/clients/schedules';
-	import { triggerClient } from '$lib/clients/triggers';
-	import { webhookClient } from '$lib/clients/webhooks';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import YamlCode from '#lib/yaml/YamlCode.svelte';
+	import YamlField from '#lib/yaml/YamlField.svelte';
+	import YamlProblems from '#lib/yaml/YamlProblems.svelte';
+	import { YamlSession } from '#lib/yaml/session.svelte.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { automationClient } from '#lib/clients/automation.ts';
+	import { namespaceClient } from '#lib/clients/namespaces.ts';
+	import { scheduleClient } from '#lib/clients/schedules.ts';
+	import { triggerClient } from '#lib/clients/triggers.ts';
+	import { webhookClient } from '#lib/clients/webhooks.ts';
 	import {
 		automationActionSymbol,
 		automationActionWord,
@@ -40,18 +40,18 @@
 		planCounts,
 		planHasErrors,
 		type AutomationWriters
-	} from '$lib/automation';
+	} from '#lib/automation.ts';
 	import {
 		AutomationAction,
 		AutomationObjectKind,
 		type AutomationStep,
 		type ExportAutomationResponse,
 		type PlanAutomationResponse
-	} from '$lib/gen/orkstack/v1/automation_pb';
-	import { ValidationSeverity } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-	import { namespaceLabel } from '$lib/namespace';
-	import { automationPlaceholder } from '$lib/placeholders';
-	import { shellQuote } from '$lib/runDetail';
+	} from '#lib/gen/orkstack/v1/automation_pb.ts';
+	import { ValidationSeverity } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import { automationPlaceholder } from '#lib/placeholders.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

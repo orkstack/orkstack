@@ -11,7 +11,7 @@
 // check per keystroke would be a registry request per keystroke.
 import { ConnectError } from '@connectrpc/connect';
 import { ValidationSeverity } from '../gen/orkstack/v1/orkflow_service_pb';
-import type { EngineIssue } from './server';
+import type { EngineIssue } from './engine';
 import { editorStatus, type EditorStatus, type EngineState } from './status';
 import type { Diagnostic } from './types';
 

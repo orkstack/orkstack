@@ -11,16 +11,16 @@
 	// on screen, then follows the child's socket while it is not terminal,
 	// applying each TASK_* event to its row; the child's terminal event
 	// triggers one re-read and the socket closes itself. Scrolling the card
-	// away closes the socket, and unmounting closes it ($lib/childFollower):
+	// away closes the socket, and unmounting closes it (#lib/childFollower.ts):
 	// a run of twenty composed tasks opens sockets only for the cards a reader
 	// can see. At most one socket per card.
 	import { onDestroy } from 'svelte';
-	import { childFollower } from '$lib/childFollower';
+	import { childFollower } from '#lib/childFollower.ts';
 	import ErrorPanel from './ErrorPanel.svelte';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import StatusPill from './StatusPill.svelte';
-	import { errorMessage } from '$lib/client';
-	import { runClient } from '$lib/clients/runs';
+	import { errorMessage } from '#lib/client.ts';
+	import { runClient } from '#lib/clients/runs.ts';
 	import {
 		applyChildEvent,
 		childLabel,
@@ -29,12 +29,12 @@
 		childRunHref,
 		rollupSummary,
 		type ChildRollup
-	} from '$lib/compose';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import type { TaskChild } from '$lib/gen/orkstack/v1/run_pb';
-	import { runCommand } from '$lib/runDetail';
-	import { watchRunEvents } from '$lib/runEvents';
-	import { isTerminal, isTerminalEventType } from '$lib/status';
+	} from '#lib/compose.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import type { TaskChild } from '#lib/gen/orkstack/v1/run_pb.ts';
+	import { runCommand } from '#lib/runDetail.ts';
+	import { watchRunEvents } from '#lib/runEvents.ts';
+	import { isTerminal, isTerminalEventType } from '#lib/status.ts';
 
 	interface Props {
 		/** The parent run. */

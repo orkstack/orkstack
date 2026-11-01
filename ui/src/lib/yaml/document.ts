@@ -6,7 +6,7 @@
 // engine decodes with yaml.v3 and then applies the strict YAML-to-JSON
 // mapping (docs/JSON.md), so `yes` here is a string that the engine refuses
 // in a data position. The editor never decides that; the engine's answer
-// does (./server.ts).
+// does (./engine.ts).
 import { isMap, isScalar, isSeq, parseDocument, type Document, type Node } from 'yaml';
 import type { Diagnostic, PathSegment } from './types';
 

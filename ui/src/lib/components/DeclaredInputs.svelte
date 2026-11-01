@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { JsonObject, JsonValue } from '@bufbuild/protobuf';
-	import { inputSpecs, setInput } from '$lib/authoring';
+	import { inputSpecs, setInput } from '#lib/authoring.ts';
 
 	interface Props {
 		inputs?: JsonObject;

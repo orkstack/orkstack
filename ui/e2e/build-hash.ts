@@ -30,7 +30,6 @@ export const BUILD_INPUTS = [
 	'src',
 	'static',
 	'../examples',
-	'svelte.config.js',
 	'vite.config.ts',
 	'tsconfig.json',
 	'package.json',

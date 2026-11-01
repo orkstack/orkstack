@@ -10,14 +10,14 @@
 	// window the page asked about, so its runs are the page's finished runs.
 	//
 	// It renders exactly what `orkctl stats flakes` renders from the same
-	// response (cmd/orkctl/stats_flakes.go): the helpers in $lib/flakes are
+	// response (cmd/orkctl/stats_flakes.go): the helpers in #lib/flakes.ts are
 	// shared spellings, not a second opinion.
 	import { durationFromMs, timestampFromDate, type Timestamp } from '@bufbuild/protobuf/wkt';
-	import { errorMessage } from '$lib/client';
-	import { statsClient } from '$lib/clients/stats';
-	import { listHref, runWindowFilters } from '$lib/browsing';
-	import { namespaceLabel } from '$lib/namespace';
-	import { groupBySpelling, timestampMs } from '$lib/stats';
+	import { errorMessage } from '#lib/client.ts';
+	import { statsClient } from '#lib/clients/stats.ts';
+	import { listHref, runWindowFilters } from '#lib/browsing.ts';
+	import { namespaceLabel } from '#lib/namespace.ts';
+	import { groupBySpelling, timestampMs } from '#lib/stats.ts';
 	import {
 		DEFAULT_FLAKE_DIMENSIONS,
 		FLAKE_DIMENSIONS,
@@ -28,8 +28,8 @@
 		flakesCli,
 		fmtAttemptsPerRun,
 		fmtRetryRate
-	} from '$lib/flakes';
-	import { FailureGroupBy, type GetFlakeIndexResponse } from '$lib/gen/orkstack/v1/stats_pb';
+	} from '#lib/flakes.ts';
+	import { FailureGroupBy, type GetFlakeIndexResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 

@@ -14,7 +14,7 @@
 // editor contradicting the authority. Even then the sentence never promises
 // an apply: validation reads no edit token and no stored version.
 import { ValidationSeverity } from '../gen/orkstack/v1/orkflow_service_pb';
-import type { EngineIssue } from './server';
+import type { EngineIssue } from './engine';
 import type { Diagnostic } from './types';
 
 export type EngineState =

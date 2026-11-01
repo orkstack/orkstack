@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { EventType, type Event } from '$lib/gen/orkstack/v1/run_pb';
+	import { EventType, type Event } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import {
 		EVENT_FILTERS,
 		EVENT_WINDOW,
@@ -8,8 +8,8 @@
 		isFailureEvent,
 		matchesFilter,
 		type EventFilter
-	} from '$lib/eventBuffer';
-	import { eventTypeLabel, fmtTime } from '$lib/status';
+	} from '#lib/eventBuffer.ts';
+	import { eventTypeLabel, fmtTime } from '#lib/status.ts';
 
 	// The run's event stream, read on request.
 	//
@@ -42,7 +42,7 @@
 
 	let filter = $state<EventFilter>('all');
 	const shown = $derived(events.filter((event) => matchesFilter(event, filter)));
-	// Only the newest rows are drawn ($lib/eventBuffer eventWindow): the
+	// Only the newest rows are drawn (#lib/eventBuffer.ts eventWindow): the
 	// buffer may hold two thousand events, and two thousand grid rows is what
 	// made an open inspector slow. "Show earlier" draws more on request.
 	let windowSize = $state(EVENT_WINDOW);

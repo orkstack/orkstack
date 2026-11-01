@@ -1,9 +1,9 @@
-import { errorMessage } from '$lib/client';
-import { cacheClient } from '$lib/clients/cache';
-import { orkflowClient } from '$lib/clients/orkflows';
-import { cacheWindowFrom } from '$lib/cache';
-import type { GetCacheStatsResponse } from '$lib/gen/orkstack/v1/cache_pb';
-import { namespaceFrom } from '$lib/namespace';
+import { errorMessage } from '#lib/client.ts';
+import { cacheClient } from '#lib/clients/cache.ts';
+import { orkflowClient } from '#lib/clients/orkflows.ts';
+import { cacheWindowFrom } from '#lib/cache.ts';
+import type { GetCacheStatsResponse } from '#lib/gen/orkstack/v1/cache_pb.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
 import { durationFromMs, timestampFromDate } from '@bufbuild/protobuf/wkt';
 import type { PageLoad } from './$types';
 

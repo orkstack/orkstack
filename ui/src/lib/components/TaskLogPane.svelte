@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onDestroy, untrack } from 'svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import type { Status } from '$lib/gen/orkstack/v1/common_pb';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import type { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { Timestamp } from '@bufbuild/protobuf/wkt';
-	import { taskDispatched } from '$lib/status';
-	import { followTaskLogs, type LogLine, type LogSocketState } from '$lib/taskLogs';
+	import { taskDispatched } from '#lib/status.ts';
+	import { followTaskLogs, type LogLine, type LogSocketState } from '#lib/taskLogs.ts';
 
 	// One task's output, followed live.
 	//

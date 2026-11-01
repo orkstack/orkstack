@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { rememberTheme, rememberedTheme, resolveTheme, watchSystemTheme, type Theme } from '../src/lib/theme';
 
 // The appearance is decided twice: by app.html's inline boot script before the
-// first paint, and by $lib/theme.ts after hydration. They must agree, or the
+// first paint, and by #lib/theme.ts after hydration. They must agree, or the
 // page flashes from one to the other. The boot script is read out of
 // app.html and executed here against fake storage and a fake matchMedia.
 const html = readFileSync(`${import.meta.dir}/../src/app.html`, 'utf8');

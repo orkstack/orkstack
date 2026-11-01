@@ -1,13 +1,13 @@
-import { errorMessage } from '$lib/client';
-import { orkflowClient } from '$lib/clients/orkflows';
-import { scheduleClient } from '$lib/clients/schedules';
-import { triggerClient } from '$lib/clients/triggers';
-import { FilterOperator, filterOf } from '$lib/listFilter';
-import type { Orkflow } from '$lib/gen/orkstack/v1/orkflow_pb';
-import type { OrkflowVersion } from '$lib/gen/orkstack/v1/orkflow_service_pb';
-import type { Trigger } from '$lib/gen/orkstack/v1/trigger_service_pb';
-import type { Schedule } from '$lib/gen/orkstack/v1/schedule_pb';
-import { namespaceFrom } from '$lib/namespace';
+import { errorMessage } from '#lib/client.ts';
+import { orkflowClient } from '#lib/clients/orkflows.ts';
+import { scheduleClient } from '#lib/clients/schedules.ts';
+import { triggerClient } from '#lib/clients/triggers.ts';
+import { FilterOperator, filterOf } from '#lib/listFilter.ts';
+import type { Orkflow } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
+import type { OrkflowVersion } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
+import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
+import type { Schedule } from '#lib/gen/orkstack/v1/schedule_pb.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
 import type { PageLoad } from './$types';
 
 // The five views of one orkflow live under one route and one loader: what it

@@ -465,7 +465,7 @@ func TestDir_FollowsARebuild(t *testing.T) {
 // sveltePolicy is the policy sveltePage names, unescaped.
 const sveltePolicy = "default-src 'self'; script-src 'self' 'sha256-AAAA' 'sha256-BBBB'; style-src 'self' 'unsafe-inline'"
 
-// sveltePage is index.html as SvelteKit writes it with kit.csp in hash mode:
+// sveltePage is index.html as SvelteKit writes it with csp in hash mode:
 // app.html's inline script, then the policy as a <meta http-equiv> naming the
 // hash of each inline script, then SvelteKit's own boot script.
 const sveltePage = `<!doctype html><html><head><script>theme()</script>` +
@@ -494,7 +494,7 @@ func TestHandler_SendsThePolicyTheBuildWroteIntoThePage(t *testing.T) {
 }
 
 // A page that names no policy of its own — the placeholder, a build made
-// without kit.csp — runs no inline script: it gets the strict default.
+// without csp — runs no inline script: it gets the strict default.
 func TestHandler_APageWithoutAPolicyRunsNoInlineScript(t *testing.T) {
 	for name, page := range map[string]string{
 		"no meta":             index,

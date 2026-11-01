@@ -16,8 +16,8 @@
 	// pages and not others is one more thing to notice, where a sentence in
 	// the page is read once and settles it.
 	import { navigating, page } from '$app/state';
-	import { withNamespace } from '$lib/namespace';
-	import { OPERATE_PAGES } from '$lib/navigation';
+	import { withNamespace } from '#lib/namespace.ts';
+	import { OPERATE_PAGES } from '#lib/navigation.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();

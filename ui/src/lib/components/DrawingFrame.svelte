@@ -25,11 +25,11 @@
 	// and on first drawing it brings the selected task — else the failed one,
 	// whose failure handlers follow it — into view.
 	import { tick, type Snippet } from 'svelte';
-	import type { Task } from '$lib/gen/orkstack/v1/orkflow_pb';
+	import type { Task } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
 	import DagGraph from './DagGraph.svelte';
 	import Icon from './Icon.svelte';
-	import { DAG_LEGIBLE_LIMIT, chooseDagDirection, dagBound, neighbourhood, type DagDirection, type NodeState } from '$lib/dag';
-	import { mapGeometry } from '$lib/taskMap';
+	import { DAG_LEGIBLE_LIMIT, chooseDagDirection, dagBound, neighbourhood, type DagDirection, type NodeState } from '#lib/dag.ts';
+	import { mapGeometry } from '#lib/taskMap.ts';
 
 	interface Props {
 		testid: string;
@@ -68,7 +68,7 @@
 		/**
 		 * Which way the DAG reads: left to right (the default), top to
 		 * bottom, or `auto` — whichever leaves less of it to scroll in this
-		 * frame ($lib/dag chooseDagDirection).
+		 * frame (#lib/dag.ts chooseDagDirection).
 		 */
 		direction?: DagDirection | 'auto';
 	}

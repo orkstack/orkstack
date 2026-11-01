@@ -487,6 +487,7 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 	if projection.run == nil {
 		return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
 	}
+	applyCanceledBy(projection.run, projection.canceledBy)
 	return projection.run, nil
 }
 
@@ -518,17 +519,18 @@ func (r *TemporalRunReader) Events(
 // verification — and numbers below the run's first published event, never
 // published (unpublishedStart), are returned as EventGaps and the read
 // continues, so the run is archived with what is missing recorded
-// explicitly. A transient failure is still an error.
+// explicitly. A transient failure is still an error. The same walk reads who
+// canceled the run, so the archived run says it without a second read.
 func (r *TemporalRunReader) EventsForArchive(
 	ctx context.Context,
 	runID string,
-) ([]*orkstackv1.Event, []EventGap, error) {
+) (ArchiveRead, error) {
 	st := newScanState(true)
 	projection, err := r.scanWith(ctx, runID, false, 0, false, nil, st)
 	if err != nil {
-		return nil, nil, err
+		return ArchiveRead{}, err
 	}
-	return projection.events, st.gaps, nil
+	return ArchiveRead{Events: projection.events, Gaps: st.gaps, CanceledBy: projection.canceledBy}, nil
 }
 
 // PublishedTerminalEvent reports whether a run published its terminal event,
@@ -549,8 +551,8 @@ func (r *TemporalRunReader) PublishedTerminalEvent(ctx context.Context, runID st
 // the run's terminal event.
 //
 // A live run blocks in the iterator rather than polling: GetWorkflowHistory
-// with isLongPoll=true does not finish until the workflow does (SDK v1.47.0
-// internal/client.go:186-188), so the iterator *is* the stream.
+// with isLongPoll=true does not finish until the workflow does (SDK v1.50.0
+// internal/client.go:198-200), so the iterator *is* the stream.
 func (r *TemporalRunReader) StreamEvents(
 	ctx context.Context,
 	runID string,
@@ -976,6 +978,16 @@ type runProjection struct {
 	// verified against it (readSnapshotAt), never read as a plain snapshot.
 	checkpoint     *orkstackv1.ContinuationObject
 	switchSnapshot *orkstackv1.ContinuationObject
+	// canceledBy is the principal the cancellation request of the execution
+	// being read recorded (cancelPrincipal) before the run published its own
+	// end, or empty. An execution records at most one such request — the
+	// cluster ignores a second on an execution whose cancellation is already
+	// requested — and only the execution that ends the run counts, so it is
+	// cleared when an execution starts or continues as new. applyCanceledBy
+	// decides whether the run shows it. cancelSeen records that the
+	// execution's first request was read, so no later one replaces it.
+	canceledBy string
+	cancelSeen bool
 }
 
 // scan walks a run's history once and decodes it: every generation of it.
@@ -1188,6 +1200,10 @@ func (r *TemporalRunReader) scanExecution(
 		read++
 
 		if attrs := historyEvent.GetWorkflowExecutionStartedEventAttributes(); attrs != nil {
+			// A request belongs to the execution that recorded it, and a
+			// restarted read may land on a successor without passing the
+			// switch that clears it.
+			projection.canceledBy, projection.cancelSeen = "", false
 			carry, err := r.decodeCarry(attrs)
 			if err != nil {
 				return "", fmt.Errorf("engine: run %s: %w", runID, err)
@@ -1204,11 +1220,30 @@ func (r *TemporalRunReader) scanExecution(
 			projection.run = mergeRunSnapshot(projection.run, r.startedRun(runID, historyEvent, attrs, carry))
 			continue
 		}
+		if attrs := historyEvent.GetWorkflowExecutionCancelRequestedEventAttributes(); attrs != nil {
+			// Who asked, when CancelRun asked: the request carries its own
+			// record (TemporalStarter.CancelRun). Only a request recorded
+			// before the run published its own end counts: one after it did
+			// not end the run, and the archive write — which reads at that
+			// publish — could never see it, so GetRun and the archived run
+			// would disagree.
+			if !projection.sawTerminal && !projection.cancelSeen {
+				projection.canceledBy = cancelPrincipal(attrs.GetCause())
+			}
+			// The first request is the one that took effect: the cluster
+			// records no second, and were one recorded it would not have
+			// canceled anything.
+			projection.cancelSeen = true
+			continue
+		}
 		if attrs := historyEvent.GetWorkflowExecutionContinuedAsNewEventAttributes(); attrs != nil {
 			// This execution continued as new: its successor holds the run
 			// from here, in follow mode and in a plain read alike, because a
 			// plain read whose current execution switched during pagination
-			// must still read the successor to be complete.
+			// must still read the successor to be complete. A run does not
+			// switch while its cancellation is requested (continueAsNew), so
+			// no request of this execution is the successor's.
+			projection.canceledBy, projection.cancelSeen = "", false
 			return attrs.GetNewExecutionRunId(), nil
 		}
 		if r.isPublishEvent(historyEvent) {

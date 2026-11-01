@@ -8,10 +8,10 @@
 	// wants a fresh answer, not the one from before it. The panel renders the
 	// same fields in the same words as `orkctl run artifact provenance`, and a
 	// failed read is an error, never an empty list.
-	import { errorMessage } from '$lib/client';
-	import { runClient } from '$lib/clients/runs';
-	import { ArtifactKind, type GetArtifactProvenanceResponse } from '$lib/gen/orkstack/v1/run_service_pb';
-	import { withNamespace } from '$lib/namespace';
+	import { errorMessage } from '#lib/client.ts';
+	import { runClient } from '#lib/clients/runs.ts';
+	import { ArtifactKind, type GetArtifactProvenanceResponse } from '#lib/gen/orkstack/v1/run_service_pb.ts';
+	import { withNamespace } from '#lib/namespace.ts';
 	import {
 		BYTES_MISSING,
 		BYTES_PRESENT,
@@ -20,7 +20,7 @@
 		referenceStateText,
 		rfc3339,
 		unreadableText
-	} from '$lib/provenance';
+	} from '#lib/provenance.ts';
 	import CliEquivalent from './CliEquivalent.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 	import StatusPill from './StatusPill.svelte';

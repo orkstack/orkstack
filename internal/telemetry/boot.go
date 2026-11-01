@@ -35,16 +35,28 @@ func Boot(service string, attrs ...attribute.KeyValue) (Config, *Sinks, error) {
 // With telemetry off, p is the zero-config Providers SetupSinks (via Boot)
 // returns for it, TemporalMetricsHandler and TemporalInterceptors both answer
 // nil, and the returned options are byte-identical to
-// client.Options{HostPort: hostPort, Namespace: namespace, Logger: logger} —
-// exactly what both binaries dialed with before either had a MetricsHandler
-// or an Interceptors slice to set (TestClientOptionsZeroConfigIsByteIdentical
-// holds this).
+// client.Options{HostPort: hostPort, Namespace: namespace, Logger: logger,
+// DisableWorkerEnvironmentInfo: true}
+// (TestClientOptionsZeroConfigIsByteIdentical holds this).
+//
+// DisableWorkerEnvironmentInfo is set whatever telemetry says. From SDK 1.49
+// a worker's first heartbeat otherwise also reports its environment to the
+// Temporal server: the Go version, the hosting environment the SDK detects (a
+// container, Kubernetes, a cloud platform) and the OS platform. Nothing in
+// OrkStack reads it and no setting asks for it (AGENTS.md §11: off by
+// default). The option suppresses that report and nothing else: every
+// heartbeat still carries what the SDK sends for its own worker accounting,
+// among it the host name, the process id, the host's CPU and memory use, the
+// SDK's name and version, the task queue and the deployment version.
+// cmd/ork and cmd/orker dial only with these options
+// (TestClientOptions_IsHowOrkAndOrkerDialTemporal holds that).
 func ClientOptions(hostPort, namespace string, p *Providers, logger *slog.Logger) (client.Options, error) {
 	opts := client.Options{
-		HostPort:       hostPort,
-		Namespace:      namespace,
-		Logger:         logger,
-		MetricsHandler: TemporalMetricsHandler(p, logger),
+		HostPort:                     hostPort,
+		Namespace:                    namespace,
+		Logger:                       logger,
+		MetricsHandler:               TemporalMetricsHandler(p, logger),
+		DisableWorkerEnvironmentInfo: true,
 	}
 	interceptors, err := TemporalInterceptors(p)
 	if err != nil {

@@ -432,7 +432,7 @@ function line(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number,
 
 /**
  * Draws one cell's mark — the canvas rendering of the same table the CSS
- * stamps draw from ($lib/statusMarks): filled square, live dot, waiting ring,
+ * stamps draw from (#lib/statusMarks.ts): filled square, live dot, waiting ring,
  * crossed, struck, hatched, hollow, dotted.
  */
 function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: number, colors: MapColors): void {
@@ -512,7 +512,7 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
  * Paints cells onto a context already scaled to CSS pixels: every cell, or
  * only `only` (a live batch's dirty cells). No computed style is read here —
  * the colours are handed in. `runningAlpha` is how strongly a RUNNING cell's
- * mark is drawn over its paper (the map's pulse, $lib/taskMap runningPulse);
+ * mark is drawn over its paper (the map's pulse, #lib/taskMap.ts runningPulse);
  * every other mark, and every ground, is drawn whole.
  */
 export function paintCells(

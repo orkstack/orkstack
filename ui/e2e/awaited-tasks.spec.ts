@@ -222,10 +222,11 @@ test('a callback posted over HTTP resolves the await', async ({ page, request })
 });
 
 // A link clicked in the instant the run's await resolves still navigates. The
-// run page re-reads itself on TASK_RESOLVED and again on the terminal event;
-// SvelteKit gives the router to whichever started last, so a re-read begun
-// while the reader's navigation was loading used to discard that navigation
-// and leave the reader on the run page ($lib/settle). Holding the destination's
+// run page re-reads itself on TASK_RESOLVED and again on the terminal event,
+// and a re-read begun while the reader's navigation was loading once
+// discarded that navigation and left the reader on the run page
+// (#lib/settle.ts; SvelteKit 3 keeps the navigation by itself, and this pins
+// that it still does). Holding the destination's
 // load open makes the overlap certain instead of a matter of milliseconds: the
 // await is resolved, and the run finishes, while the click is still loading.
 test('a link clicked as the run resolves still navigates', async ({ page, request }) => {

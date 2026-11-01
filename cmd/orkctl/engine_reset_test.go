@@ -1,0 +1,260 @@
+package main
+
+import (
+	"net"
+	"net/http"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/engine"
+)
+
+// A connection the engine resets under a call reaches orkctl as CANCELED from
+// connect-go v1.21.1 on when orkctl's read is the first to meet the reset, and
+// as the connection's end when its own write is (engineInterrupted). These
+// tests reset real TCP connections, over the h2c orkctl dials, and hold that
+// `run watch` and `run inspect --watch` ride the reset out — and that
+// orkctl's own cancel, a Ctrl-C, still ends them with no resume.
+
+// resetListener remembers every connection it accepted, so a test can reset
+// them all at once: SO_LINGER 0 and a close send the peer a TCP RST, what a
+// client sees when the engine replica serving it dies.
+type resetListener struct {
+	net.Listener
+	mu    sync.Mutex
+	conns []net.Conn
+}
+
+func (l *resetListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		l.mu.Lock()
+		l.conns = append(l.conns, conn)
+		l.mu.Unlock()
+	}
+	return conn, err
+}
+
+func (l *resetListener) reset() {
+	l.mu.Lock()
+	conns := l.conns
+	l.conns = nil
+	l.mu.Unlock()
+	for _, conn := range conns {
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.SetLinger(0)
+		}
+		_ = conn.Close()
+	}
+}
+
+// closeWrite ends every connection's server side with a FIN, leaving it open
+// for the client to close.
+func (l *resetListener) closeWrite() {
+	l.mu.Lock()
+	conns := l.conns
+	l.mu.Unlock()
+	for _, conn := range conns {
+		if tcp, ok := conn.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
+		}
+	}
+}
+
+func TestRunWatch_ResumesAStreamWhoseConnectionWasReset(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		script []scriptedStream
+		// resetOn is the printed text that resets the connection; empty,
+		// the stream resets it as the call arrives.
+		resetOn string
+		froms   []int64
+		// ways are how the reset can reach orkctl. Linux hands an RST to the
+		// first syscall that meets it, as ECONNRESET, and a read after that
+		// sees the connection end. A read that meets it is CANCELED
+		// (connect-go's isClientDisconnected). A write meets it first only
+		// when it is one whose error Go's HTTP/2 client drops — the SETTINGS
+		// acknowledgement (processSettings), or a flow-control update once a
+		// response is being read — and the read loop then sees the end,
+		// io.ErrUnexpectedEOF, which before any response is UNAVAILABLE
+		// (connect-go's makeRequest).
+		ways []resetWay
+	}{
+		{
+			name:   "before any event",
+			script: []scriptedStream{{reset: true}, {send: []int64{1, 2, 3, 4, 5}}},
+			froms:  []int64{0, 0},
+			// The server resets once it has read the request, and the
+			// client's read loop may not yet have read the server's
+			// SETTINGS: on a loaded host it reads them after the reset,
+			// and the acknowledgement's write meets the reset first.
+			ways: []resetWay{resetRead, resetAfterDroppedWrite},
+		},
+		{
+			name:    "mid-stream",
+			script:  []scriptedStream{{send: []int64{1, 2}, stall: true}, {send: []int64{3, 4, 5}}},
+			resetOn: "event 2",
+			froms:   []int64{0, 2},
+			// Event 2 printed, so the client had read every frame before
+			// it, the server's SETTINGS first, and it writes nothing after
+			// it: the events are far below the 4 KiB a flow-control update
+			// waits for, and orkctl sends no pings. Its read meets the reset.
+			ways: []resetWay{resetRead},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			handler := &resumingRuns{script: tc.script}
+			out := &liveWriter{triggers: map[string]func(){}}
+			if tc.resetOn != "" {
+				out.triggers[tc.resetOn] = func() { handler.reset() }
+			}
+			outcome := watchAgainstTo(t, handler, out)
+			outcome.requireExit(t, exitOK)
+			requireSequences(t, printedSequences(t, out.buf.String()), 1, 2, 3, 4, 5)
+			if got := handler.calls(); len(got) != len(tc.froms) || got[0] != tc.froms[0] || got[1] != tc.froms[1] {
+				t.Fatalf("from_sequence per stream = %v, want %v: a reset stream is resumed after the last event printed",
+					got, tc.froms)
+			}
+			lines := resumeLines(outcome.stderr)
+			if len(lines) != 1 || !slices.ContainsFunc(tc.ways, func(way resetWay) bool { return way.saidBy(lines[0]) }) {
+				t.Fatalf("stderr = %q, want one resume line saying one of %v", outcome.stderr, tc.ways)
+			}
+		})
+	}
+}
+
+// resetWay is one way a reset reaches orkctl: the code its resume line names
+// and the cause that code carries.
+type resetWay struct{ code, cause string }
+
+var (
+	resetRead              = resetWay{code: "canceled", cause: "connection reset by peer"}
+	resetAfterDroppedWrite = resetWay{code: "unavailable", cause: "unexpected EOF"}
+)
+
+func (w resetWay) saidBy(line string) bool {
+	said, ok := strings.CutPrefix(line, "watch run: the event stream was interrupted ("+w.code+": ")
+	return ok && strings.Contains(said, w.cause)
+}
+
+// TestRunWatch_EndsWhenTheConnectionEndsMidStream holds what DEPLOY.md and the
+// changelog say of a connection that ends partway through a stream: an engine
+// that closes its side (a FIN, what a replica that exits sends, or what a
+// client whose write met a reset first then reads) is the connection's end,
+// INTERNAL between messages (connect-go's envelopeReader.Read), and the watch
+// reports it without a resume. CloseWrite sends the FIN whatever the server
+// left unread, where a Close could send an RST instead.
+func TestRunWatch_EndsWhenTheConnectionEndsMidStream(t *testing.T) {
+	handler := &resumingRuns{script: []scriptedStream{
+		{send: []int64{1, 2}, stall: true},
+		{send: []int64{3, 4, 5}},
+	}}
+	out := &liveWriter{triggers: map[string]func(){"event 2": func() { handler.closeWrite() }}}
+	outcome := watchAgainstTo(t, handler, out)
+	outcome.requireExit(t, exitError)
+	if want := "Error: watch run: internal: protocol error: incomplete envelope: unexpected EOF"; !strings.Contains(outcome.stderr, want) {
+		t.Fatalf("stderr = %q, want %q", outcome.stderr, want)
+	}
+	requireSequences(t, printedSequences(t, out.buf.String()), 1, 2)
+	if got := handler.calls(); len(got) != 1 {
+		t.Fatalf("streams opened = %d, want 1: a connection that ends mid-stream is not resumed", len(got))
+	}
+	if lines := resumeLines(outcome.stderr); len(lines) != 0 {
+		t.Fatalf("resume lines = %v, want none", lines)
+	}
+}
+
+func TestRunWatch_InterruptEndsTheWatchWithoutAResume(t *testing.T) {
+	keepAliveOnInterrupt(t)
+	handler := &resumingRuns{script: []scriptedStream{
+		{send: []int64{1}, stall: true},
+		{send: []int64{2, 3, 4, 5}},
+	}}
+	out := &liveWriter{triggers: map[string]func(){"event 1": func() { interruptSelf(t) }}}
+	outcome := watchAgainstTo(t, handler, out)
+	outcome.requireExit(t, exitInterrupted)
+	if got := handler.calls(); len(got) != 1 {
+		t.Fatalf("streams opened = %d, want 1: orkctl's own cancel is never resumed", len(got))
+	}
+	if lines := resumeLines(outcome.stderr); len(lines) != 0 {
+		t.Fatalf("resume lines = %v, want none after a Ctrl-C", lines)
+	}
+}
+
+// inspectWatchFrames is a run polled once running, then failed.
+func inspectWatchFrames() []inspectFrame {
+	running := trainRun(orkstackv1.Status_STATUS_RUNNING)
+	failed := trainRun(orkstackv1.Status_STATUS_FAILED)
+	failed.TaskRuns[0].Status = orkstackv1.Status_STATUS_FAILED
+	return []inspectFrame{
+		{run: running, live: engine.LiveRun{Attempts: []*orkstackv1.LiveAttempt{fitStarted()}}},
+		{run: failed},
+	}
+}
+
+// inspectWatch runs `run inspect --watch` against f, failing the test when it
+// has not ended within 30 s.
+func inspectWatch(t *testing.T, f *fixture) result {
+	t.Helper()
+	done := make(chan result, 1)
+	go func() { done <- f.run("run", "inspect", "ork-train-1", "--watch", "--interval", "1s") }()
+	select {
+	case res := <-done:
+		return res
+	case <-time.After(30 * time.Second):
+		t.Fatalf("run inspect --watch did not end within 30 s")
+		return result{}
+	}
+}
+
+func TestRunInspect_WatchRidesOutAResetConnection(t *testing.T) {
+	f := newInspectFixture(t, inspectAt, inspectWatchFrames()...)
+	var first sync.Once
+	f.interceptWith(func(_ http.ResponseWriter, r *http.Request) bool {
+		if !strings.HasSuffix(r.URL.Path, "/InspectRun") {
+			return false
+		}
+		reset := false
+		first.Do(func() { reset = true })
+		if !reset {
+			return false
+		}
+		f.resetConnections()
+		<-r.Context().Done()
+		return true
+	})
+	res := inspectWatch(t, f)
+	if res.code != exitRunFailed {
+		t.Fatalf("exit = %d, want %d (failed): the reset poll is ridden out; stderr %s", res.code, exitRunFailed, res.stderr)
+	}
+	if got := strings.Count(res.stderr, "inspect unavailable: "); got != 1 {
+		t.Fatalf("stderr = %q, want one inspect unavailable line for the reset poll", res.stderr)
+	}
+	if !strings.Contains(res.stdout, "run FAILED; nothing is live") {
+		t.Fatalf("the watch did not poll on to the run's end:\n%s", res.stdout)
+	}
+}
+
+func TestRunInspect_InterruptEndsTheWatchWithoutAResume(t *testing.T) {
+	keepAliveOnInterrupt(t)
+	f := newInspectFixture(t, inspectAt, inspectWatchFrames()...)
+	f.interceptWith(func(_ http.ResponseWriter, r *http.Request) bool {
+		if !strings.HasSuffix(r.URL.Path, "/InspectRun") {
+			return false
+		}
+		interruptSelf(t)
+		<-r.Context().Done()
+		return true
+	})
+	res := inspectWatch(t, f)
+	if res.code != exitInterrupted {
+		t.Fatalf("exit = %d, want %d; stderr %s", res.code, exitInterrupted, res.stderr)
+	}
+	if strings.Contains(res.stderr, "inspect unavailable") {
+		t.Fatalf("stderr = %q, want no inspect unavailable line after a Ctrl-C", res.stderr)
+	}
+}

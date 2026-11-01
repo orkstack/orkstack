@@ -22,9 +22,9 @@ list, deciding a route — is a task. This one.
 `network: none` costs nothing here and is worth writing: jq reads files and
 writes files, and nothing in jq reads the network.
 
-The computing tool is jq 1.7 (Alpine's `jq~1.7`, patch releases only); the
+The computing tool is jq 1.8 (Alpine's `jq~1.8`, patch releases only); the
 first line of every task's stdout names the exact version, e.g.
-`activity-json: jq-1.7.1`.
+`activity-json: jq-1.8.2`.
 
 ## Paths
 
@@ -154,7 +154,7 @@ filter over the same files would fail the same way.
 - **Numbers** are IEEE doubles under arithmetic: an integer beyond 2^53 loses
   precision when computed with (`12345678901234567890 + 0` →
   `12345678901234567000`), and there is no decimal type — money belongs in your
-  own image. jq 1.7 preserves a number's literal text when it passes through
+  own image. jq 1.8 preserves a number's literal text when it passes through
   **unchanged**, so reshaping a **file** never corrupts an id:
   `{"n":12345678901234567890}` filtered by `.n` reports
   `12345678901234567890`.
@@ -256,8 +256,8 @@ Writing `cache:` is **your assertion** that reusing an earlier result for the
 same memo key is as good as running the filter again; OrkStack cannot verify
 it (`docs/ACTIVITY_IMAGES.md`, "Network and caching"). This section tells you
 when that assertion is false for this image. The inventory covers every jq
-1.7 builtin and must be re-derived from jq's own builtin list whenever the
-`jq~1.7` constraint moves. (A task that mounts a secret is never cached; this
+1.8 builtin and must be re-derived from jq's own builtin list whenever the
+`jq~1.8` constraint moves. (A task that mounts a secret is never cached; this
 image refuses one at all.)
 
 **Unsafe to cache when** the filter
@@ -271,8 +271,10 @@ image refuses one at all.)
 - reads **run coordinates** from `task.json` — `run.id`, `idempotencyKey`,
   `task.attempt` — which the key does not cover (`each.item`, `each.index` and
   `each.count` are covered);
-- **randomness** and the **network** do not apply: jq has no random source and
-  nothing in jq reads the network.
+- **randomness** and the **network** do not apply: jq has no random source a
+  filter can read (jq 1.8 seeds its internal hash table at random, and an
+  object still keeps its keys in insertion order) and nothing in jq reads the
+  network.
 
 Everything else is a function of what the key covers: `input`, `inputs`,
 `input_filename` and `input_line_number` read or name the staged input files;

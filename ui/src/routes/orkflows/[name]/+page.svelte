@@ -1,26 +1,26 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
-	import { dagDirectionParam } from '$lib/dag';
-	import { rememberRecent } from '$lib/palette/recent';
-	import DrawingFrame from '$lib/components/DrawingFrame.svelte';
-	import Dialog from '$lib/components/Dialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import OrkflowEditor from '$lib/components/OrkflowEditor.svelte';
-	import OrkflowSchedules from '$lib/components/OrkflowSchedules.svelte';
-	import OrkflowTriggers from '$lib/components/OrkflowTriggers.svelte';
-	import OrkflowVersions from '$lib/components/OrkflowVersions.svelte';
-	import OrkflowCallers from '$lib/components/OrkflowCallers.svelte';
-	import RunSubmitPanel from '$lib/components/RunSubmitPanel.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { registerProvider } from '$lib/palette/context';
-	import { orkflowPageCommands } from '$lib/palette/orkflowPage';
-	import { setTitleBlock } from '$lib/sheet.svelte';
-	import { listHref, runWindowFilters } from '$lib/browsing';
-	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '$lib/namespace';
-	import { fmtTimestamp } from '$lib/status';
-	import { activityLabel, shortDigest } from '$lib/activity';
-	import { cacheSpecLabel } from '$lib/cache';
+	import { dagDirectionParam } from '#lib/dag.ts';
+	import { rememberRecent } from '#lib/palette/recent.ts';
+	import DrawingFrame from '#lib/components/DrawingFrame.svelte';
+	import Dialog from '#lib/components/Dialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import OrkflowEditor from '#lib/components/OrkflowEditor.svelte';
+	import OrkflowSchedules from '#lib/components/OrkflowSchedules.svelte';
+	import OrkflowTriggers from '#lib/components/OrkflowTriggers.svelte';
+	import OrkflowVersions from '#lib/components/OrkflowVersions.svelte';
+	import OrkflowCallers from '#lib/components/OrkflowCallers.svelte';
+	import RunSubmitPanel from '#lib/components/RunSubmitPanel.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { registerProvider } from '#lib/palette/context.ts';
+	import { orkflowPageCommands } from '#lib/palette/orkflowPage.ts';
+	import { setTitleBlock } from '#lib/sheet.svelte.ts';
+	import { listHref, runWindowFilters } from '#lib/browsing.ts';
+	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
+	import { activityLabel, shortDigest } from '#lib/activity.ts';
+	import { cacheSpecLabel } from '#lib/cache.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -119,7 +119,7 @@
 
 	// What this page adds to the palette while it is open: Submit a run…
 	// opens this page's own dialog; the other tabs; a task id jumps to its
-	// row in the task register. Registering builds nothing ($lib/palette).
+	// row in the task register. Registering builds nothing (#lib/palette).
 	$effect(() =>
 		registerProvider({
 			id: 'orkflow-page',

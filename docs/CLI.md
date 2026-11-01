@@ -1395,6 +1395,11 @@ and holding an id is not authority over somebody else's tenant.
 A failing run's failure handlers are stopped too; the run still ends
 FAILED with its original reason.
 
+A run this request cancels records who asked: the Ork-Principal your
+gateway asserts, or $ORK_PRINCIPAL when this CLI talks to the engine
+directly. It is an assertion, never authenticated; `run get` and
+`run list` show it as asserted.
+
 Flags:
 
 - `--reason STRING` — human readable cancellation reason
@@ -1801,10 +1806,13 @@ watch consumes RunService.StreamEvents and prints each event as it arrives,
 exiting when the run reaches a terminal state. The exit code reflects the
 final status: 0 succeeded, 2 failed, 3 canceled.
 
-A stream the engine ends as unavailable is opened again after the last
-event printed, so no event is printed twice or skipped; each resume is
-said on stderr. After 6 resumes in a row that deliver no event, watch
-gives up with the engine's error.
+A stream that ends as unavailable, or as canceled when watch did not
+cancel it (a reset connection to the engine), is opened again after the
+last event printed, so no event is printed twice or skipped; each resume
+is said on stderr. A connection that ends partway through the stream
+ends the watch with that error. After
+6 resumes in a row that deliver no event, watch gives up with the
+engine's error.
 
 The run is addressed inside the namespace this command acts in; a run of
 another namespace is not found here.

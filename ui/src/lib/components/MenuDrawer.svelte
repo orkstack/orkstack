@@ -6,7 +6,7 @@
 	// second copy of the top bar's.
 	import type { Snippet } from 'svelte';
 	import Icon from './Icon.svelte';
-	import { BUILD_PAGES, OPERATE_PAGES } from '$lib/navigation';
+	import { BUILD_PAGES, OPERATE_PAGES } from '#lib/navigation.ts';
 
 	interface Props {
 		pathname: string;

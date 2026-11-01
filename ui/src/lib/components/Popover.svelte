@@ -6,7 +6,7 @@
 	// lets one caller open a popover from a button, another from a menu row,
 	// and a third close it as a side effect of the action it was showing.
 	import { untrack, type Snippet } from 'svelte';
-	import { dismissOnOutsideOrEscape } from '$lib/dismiss';
+	import { dismissOnOutsideOrEscape } from '#lib/dismiss.ts';
 
 	interface Props {
 		open: boolean;

@@ -28,20 +28,20 @@ import (
 // versioned deployment", AGENTS.md §7.2). The combination is unsupported
 // upstream, so this file — not the SDK's doc comment — is the contract.
 //
-// What the SDK v1.47.0 source actually says, read rather than paraphrased:
+// What the SDK v1.50.0 source actually says, read rather than paraphrased:
 //
 //   - `worker.DeploymentOptions.UseVersioning`'s doc comment: "NOTE: Cannot be
 //     enabled at the same time as [WorkerOptions.EnableSessionWorker]"
-//     (internal/worker.go:80).
+//     (internal/worker.go:85).
 //   - The only enforced panic covers the DEPRECATED flag:
 //     `if options.EnableSessionWorker && options.UseBuildIDForVersioning`
-//     (internal/internal_worker.go:2312-2316, citing
+//     (internal/internal_worker.go:2413-2417, citing
 //     https://github.com/temporalio/sdk-go/issues/1227). The combination
 //     OrkStack actually produces — `DeploymentOptions.UseVersioning` plus
 //     `EnableSessionWorker` — is not covered by it. See
 //     TestWorkerOptions_APinHostOnAVersionedDeploymentIsAcceptedByTheSDK in
 //     cmd/orker for the construction-level half of that finding.
-//   - `newSessionWorker` (internal/internal_worker.go:521-564) deliberately
+//   - `newSessionWorker` (internal/internal_worker.go:570-615) deliberately
 //     STRIPS versioning from the session ACTIVITY worker
 //     ("Disable versioning for activity worker within session, but still send
 //     deployment name for debug purpose") and restores it for the session
@@ -76,7 +76,7 @@ const (
 	pinVersionReport  = "report"
 
 	// The SDK's own internal session activities, by the names it registers them
-	// under (sdk@v1.47.0/internal/session.go:113-114). They appear in the run's
+	// under (sdk@v1.50.0/internal/session.go:113-114). They appear in the run's
 	// history, which is how this test reads the routing of the pin's creation
 	// half without instrumenting the SDK.
 	pinVersionCreationActivity   = "internalSessionCreationActivity"
@@ -329,7 +329,7 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 	runQueue := "ork-pinver-run-" + suffix
 	orkerQueue := "ork-pinver-tasks-" + suffix
 	// The queue CreateSession derives from the pool's queue
-	// (sdk@v1.47.0/internal/session.go:390). A versioned pin host polls it as a
+	// (sdk@v1.50.0/internal/session.go:390). A versioned pin host polls it as a
 	// versioned worker; naming it here lets the test assert that.
 	creationQueue := orkerQueue + "__internal_session_creation"
 	v1 := task.Deployment{Name: deploymentName, BuildID: "v1"}
@@ -448,7 +448,7 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 // assertPinCompletionReachedTheHost checks the SDK's own session completion
 // activity — the call that frees the host's session slot. CompleteSession
 // overrides its task queue with the session's own
-// (sdk@v1.47.0/internal/session.go:232-241), so it is one more activity that
+// (sdk@v1.50.0/internal/session.go:232-241), so it is one more activity that
 // has to reach the pin host over an unversioned per-host queue.
 func assertPinCompletionReachedTheHost(
 	t *testing.T,
@@ -616,7 +616,7 @@ func assertPinCreationIsVersioned(
 	if !creation.versioned {
 		t.Errorf("run %s opened its pin on a worker that is NOT using versioning; the SDK is "+
 			"expected to KEEP versioning on the session creation worker "+
-			"(newSessionWorker, internal_worker.go:551-553)", runID)
+			"(newSessionWorker, internal_worker.go:603-604)", runID)
 	}
 	transcript.result(fmt.Sprintf("run %s: pin creation on %s dispatched to build=%s versioned=%v",
 		runID, creation.queue, creation.build, creation.versioned))

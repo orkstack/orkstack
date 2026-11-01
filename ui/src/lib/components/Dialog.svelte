@@ -11,8 +11,8 @@
 	// inside `{#if}` and owns the state that decides. A component that hid
 	// itself would need the caller to keep a second copy of the same fact.
 	import type { Snippet } from 'svelte';
-	import { dismissOnOutsideOrEscape } from '$lib/dismiss';
-	import { focusTrap } from '$lib/focusTrap';
+	import { dismissOnOutsideOrEscape } from '#lib/dismiss.ts';
+	import { focusTrap } from '#lib/focusTrap.ts';
 	import Icon from './Icon.svelte';
 
 	interface Props {

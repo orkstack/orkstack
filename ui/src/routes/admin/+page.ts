@@ -1,6 +1,6 @@
-import { errorMessage } from '$lib/client';
-import { systemClient } from '$lib/clients/system';
-import type { GetSystemInfoResponse } from '$lib/gen/orkstack/v1/system_service_pb';
+import { errorMessage } from '#lib/client.ts';
+import { systemClient } from '#lib/clients/system.ts';
+import type { GetSystemInfoResponse } from '#lib/gen/orkstack/v1/system_service_pb.ts';
 import type { PageLoad } from './$types';
 
 // GetSystemInfo describes THE REPLICA THAT ANSWERED

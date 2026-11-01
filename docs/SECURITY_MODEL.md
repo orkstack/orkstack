@@ -439,6 +439,11 @@ present it as a verified identity, and every rendering says it was asserted
   `oneLine`).
 - In a run's origin it is bounded to 256 bytes, and invalid UTF-8 is replaced
   (`internal/api/origin.go`, `boundOriginAssertion`).
+- On a canceled run (`Run.canceled_by`) it is bounded the same way, and the
+  reader takes it only from the record `CancelRun` wrote on the cancellation
+  that ended the run: a longer or malformed record names nobody
+  (`internal/engine/canceled_by.go`). `orkctl` prints it with control
+  characters replaced by spaces.
 - A gateway that authenticates callers must overwrite `Ork-Principal` with the
   identity it established. It must never pass through a client's value, because
   otherwise any caller can claim any name ([DEPLOY.md](DEPLOY.md), "Attributing
@@ -540,9 +545,9 @@ its own writes (`internal/api/audit.go`). A record is written once to
   needs; the setting is only for a page served from another origin. Every UI
   response carries `X-Content-Type-Options: nosniff`.
 - **The page runs only the scripts its build names.** The page is sent under a
-  content security policy the UI's build writes into it (`ui/svelte.config.js`,
-  `kit.csp`) and the engine sends as a header (`internal/webui`,
-  `pagePolicy`): scripts, styles, fonts and connections from the page's own
+  content security policy the UI's build writes into it (`ui/vite.config.ts`,
+  the `sveltekit` plugin's `csp`) and the engine sends as a header
+  (`internal/webui`, `pagePolicy`): scripts, styles, fonts and connections from the page's own
   origin only, and an inline script only when the policy names its SHA-256
   hash: app.html's theme script and SvelteKit's boot script, and nothing a
   page could have injected. There is no `'unsafe-inline'` for scripts, no
@@ -561,7 +566,7 @@ its own writes (`internal/api/audit.go`). A record is written once to
   destructive controls. A page that names no policy, such as the placeholder,
   is sent the build's policy with no hash and no `'unsafe-eval'`, so it
   runs no inline script and no eval (`webui.DefaultPagePolicy`, which a test
-  holds to `ui/svelte.config.js`); every
+  holds to `ui/vite.config.ts`); every
   other UI response is sent `default-src 'none'; frame-ancestors 'none'`, so a
   file of the build opened as a document runs nothing.
 - **The UI serves only its own build.** The build holds no credential, and the

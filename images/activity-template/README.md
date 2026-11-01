@@ -4,10 +4,10 @@ Renders one template file into one **text artifact** — a config file, a
 manifest — against a merged root context plus any number of named JSON or
 YAML datasources. One operation, `render`.
 
-The renderer is [gomplate](https://github.com/hairyhenderson/gomplate) 4.3.3,
+The renderer is [gomplate](https://github.com/hairyhenderson/gomplate) 5.3.1,
 installed as the project's **published release binary**, verified against the
 release's SHA-256 when the image is built. The first line of every task's
-stdout is `activity-template: gomplate version 4.3.3`.
+stdout is `activity-template: gomplate version 5.3.1`.
 
 ```yaml
 - id: config
@@ -114,8 +114,8 @@ key**, because the key error fires before `default` is called:
 {{ if has . "protocol" }}…{{ end }}         {{/* explicit guard                */}}
 ```
 
-(A configuration file of your own can override this rule — see
-*Environment*.)
+A configuration file of your own cannot relax this rule: the image's flag
+beats its `missingKey` (*Environment*).
 
 The render is written to `/orkstack/tmp` and moved into the artifacts only
 after gomplate exited 0 **and** left a file: gomplate streams its output, so a
@@ -126,18 +126,37 @@ unreadable to the Orker).
 
 ## Functions
 
-gomplate v4 ships its own namespaced library and **no Sprig**: Helm-flavoured
+gomplate v5 ships its own namespaced library and **no Sprig**: Helm-flavoured
 bare names like `upper`, `b64enc` or `trunc` are not defined. The equivalents
 live in gomplate's namespaces — `strings`, `coll`, `conv`, `math`, `data`,
 `base64`, `crypto`, `regexp`, `time`, `semver`, `uuid`, `random`, `path`,
 `filepath`, `net`, `test`, `tmpl` — and a curated set is available
 unqualified: `default`, `quote`, `squote`, `indent`, `toUpper`, `toLower`,
-`trim`, `contains`, `split`, `join`, `has`, `keys`, `values`, `dict`, `slice`,
-`merge`, `ternary`, `required`, `jq`, `toJSON`, `toYAML`, `getenv`, … Go's own
-`text/template` builtins (`range`, `if`, `with`, `index`, `printf`, `len`,
-`eq`, `and`, `define`, variables and `{{-`/`-}}` trims) are all present.
-`coll.Dict`, `coll.Has` and `coll.Slice` are the current names; the old
-`conv.Dict`, `conv.Has` and `conv.Slice` are not registered.
+`join`, `has`, `keys`, `values`, `dict`, `merge`, `ternary`, `required`, `jq`,
+`toJSON`, `toYAML`, `getenv`, … Go's own `text/template` builtins (`range`,
+`if`, `with`, `index`, `slice`, `printf`, `len`, `eq`, `and`, `define`,
+variables and `{{-`/`-}}` trims) are all present.
+
+gomplate 5 removed most of the names gomplate 4 still answered with a
+deprecation warning. A template that calls a removed bare name fails to
+render, `function "…" not defined`, and one that calls a removed namespaced
+name fails `can't evaluate field …`. Bare `slice` does not fail: it is now
+Go's own builtin, which slices, so `{{ slice (coll.Slice 1 2 3) 1 }}` renders
+`[2 3]` where gomplate 4 rendered `[[1 2 3] 1]`. Use these instead:
+
+| Removed | Use |
+|---|---|
+| `contains`, `hasPrefix`, `hasSuffix`, `split`, `splitN`, `trim` | `strings.Contains`, `strings.HasPrefix`, `strings.HasSuffix`, `strings.Split`, `strings.SplitN`, `strings.Trim`, whose arguments come the other way round, the input last: `{{ contains .s "x" }}` is `{{ strings.Contains "x" .s }}`, or `{{ .s \| strings.Contains "x" }}` |
+| `slice`, to build a list | `coll.Slice` |
+| `bool`, `conv.Bool` | `conv.ToBool` |
+| `strings.Sort` | `coll.Sort` |
+| `net.ParseIP`, `net.ParseIPPrefix`, `net.ParseIPRange` | `net.ParseAddr`, `net.ParsePrefix`, `net.ParseRange` |
+
+`crypto.EncryptAES`, `crypto.DecryptAES` and `crypto.DecryptAESBytes` still
+work, with a deprecation warning, as aliases of `crypto.AESEncrypt`,
+`crypto.AESDecrypt` and `crypto.AESDecryptBytes`. `coll.Dict`, `coll.Has` and
+`coll.Slice` are the current names of `conv.Dict`, `conv.Has` and
+`conv.Slice`, which gomplate 4 did not register either.
 
 `jq` is the same filter language `activity-json` runs, usable inline:
 `{{ (ds "services") | jq "[.[].tier] | unique | join(\",\")" }}`.
@@ -166,7 +185,7 @@ which functions make that assertion false.
 A task that mounts a secret is never cached; this image refuses such a task
 at all.
 
-This inventory is for gomplate 4.3.3, the version the Dockerfile pins. When
+This inventory is for gomplate 5.3.1, the version the Dockerfile pins. When
 `GOMPLATE_VERSION` moves it must be re-derived from gomplate's function
 reference at the release's tag, cross-checked against the functions the
 binary registers, with every function that could read ambient state run on
@@ -177,8 +196,8 @@ the release binary.
 | Kind | Functions | Why a cached result would be wrong |
 |---|---|---|
 | the clock | `time.Now`, `time.Since`, `time.Until`; jq's `now` inside `coll.JQ` (alias `jq`) | each reads the wall clock; a cached "age" or "days until expiry" stays stale until the memo expires |
-| randomness | `random.ASCII`, `random.Alpha`, `random.AlphaNum`, `random.String`, `random.Item`, `random.Number`, `random.Float`; `uuid.V4`; `uuid.V1` (the clock and a node id); `crypto.Bcrypt` (a random salt); and, only when your `env:` sets `GOMPLATE_EXPERIMENTAL`, the key generators and encryptors listed below | different on every call |
-| the environment | `getenv`, `env.Getenv`, `env.ExpandEnv` reading a variable the container runtime sets per container — `HOSTNAME`, each container's own id; and their `<NAME>_FILE` indirection (an unset `X` is read from the file `X_FILE` names) when that file is not a declared input | `HOSTNAME` is in no memo key, and neither is a file outside the workspace |
+| randomness | `random.ASCII`, `random.Alpha`, `random.AlphaNum`, `random.String`, `random.Item`, `random.Number`, `random.Float`; `uuid.V4`; `uuid.V1` (the clock and a node id); `uuid.V7` (the clock and random bits); `net.GenerateMAC` without a seed; `crypto.Bcrypt` (a random salt); the key generators `crypto.RSAGenerateKey`, `crypto.ECDSAGenerateKey` and `crypto.Ed25519GenerateKey`; the encryptors `crypto.AESEncrypt` and its alias `crypto.EncryptAES` (a random IV) and `crypto.RSAEncrypt` (random padding); and, only when your `env:` sets `GOMPLATE_EXPERIMENTAL`, `crypto.YescryptMCF` without a salt | different on every call |
+| the environment | `getenv`, `env.Getenv`, `env.ExpandEnv`, `env.Env` and `env.HasEnv` reading a variable the container runtime sets per container — `HOSTNAME`, each container's own id —, which `env.Env` printed or ranged over whole always does; and the `<NAME>_FILE` indirection of the first three (an unset `X` is read from the file `X_FILE` names) when that file is not a declared input | `HOSTNAME` is in no memo key, and neither is a file outside the workspace |
 | the network | `net.LookupIP`, `net.LookupIPs`, `net.LookupCNAME`, `net.LookupSRV`, `net.LookupSRVs`, `net.LookupTXT`; every `aws` function — `aws.EC2Meta`, `aws.EC2Dynamic`, `aws.EC2Region`, `aws.EC2Tag`, `aws.EC2Tags`, `aws.KMSEncrypt`, `aws.KMSDecrypt`, `aws.Account`, `aws.ARN`, `aws.UserID`, and the aliases `ec2meta`, `ec2dynamic`, `ec2region`, `ec2tag`, `ec2tags`; `gcp.Meta`; `datasourceReachable` of a remote datasource | it reaches other hosts |
 | host interfaces | `sockaddr.GetAllInterfaces`, `sockaddr.GetDefaultInterfaces`, `sockaddr.GetPrivateInterfaces`, `sockaddr.GetPublicInterfaces`, `sockaddr.GetPrivateIP`, `sockaddr.GetPrivateIPs`, `sockaddr.GetPublicIP`, `sockaddr.GetPublicIPs`, `sockaddr.GetInterfaceIP`, `sockaddr.GetInterfaceIPs` (every other `sockaddr` function transforms what these return) | it reflects the container's network, which no key covers |
 | undeclared datasources | `defineDatasource`; `datasource` / `ds` / `include` given a **URL** instead of a declared name (`ds "file:///etc/hostname"` reads the file; a bare path is refused) | it reads a file or URL that `with:` does not list, so the memo key does not cover it |
@@ -187,8 +206,8 @@ the release binary.
 
 **Covered by the memo key although they read the environment:**
 
-- `getenv`, `env.Getenv` and `env.ExpandEnv` of a variable your task's `env:`
-  sets, or of an image default (`HOME`, `TZ`): your `env:` is part of the key
+- `getenv`, `env.Getenv`, `env.ExpandEnv`, `env.HasEnv` and `(env.Env).NAME`
+  of a variable your task's `env:` sets, or of an image default (`HOME`, `TZ`): your `env:` is part of the key
   and the image digest fixes the defaults;
 - `time.ZoneName`, `time.ZoneOffset`, `time.ParseLocal`, `time.ParseInLocation`
   and the `.Local` of any time value follow `TZ` — `UTC` by default, or the
@@ -200,29 +219,31 @@ the release binary.
 - `tmpl.Path` and `tmpl.PathDir` — the template's own path, which `src` fixes;
 - `data.CUE` — it evaluates CUE without running any `tool/*` task.
 
-**Experimental functions** — `crypto.DecryptAES`, `crypto.DecryptAESBytes`,
-`crypto.EncryptAES`, `crypto.ECDSAGenerateKey`, `crypto.ECDSADerivePublicKey`,
-`crypto.Ed25519GenerateKey`, `crypto.Ed25519GenerateKeyFromSeed`,
-`crypto.Ed25519DerivePublicKey`, `crypto.RSADecrypt`, `crypto.RSADecryptBytes`,
-`crypto.RSAEncrypt`, `crypto.RSAGenerateKey`, `crypto.RSADerivePublicKey`,
-`net.CIDRHost`, `net.CIDRNetmask`, `net.CIDRSubnets`, `net.CIDRSubnetSizes` —
-fail "experimental mode not enabled" by default; the image never enables
-them. gomplate's own `GOMPLATE_EXPERIMENTAL`, set in your `env:`, does, and
-the image honours it. Under it, `crypto.RSAGenerateKey`,
-`crypto.ECDSAGenerateKey`, `crypto.Ed25519GenerateKey`, `crypto.EncryptAES` (a
-random IV) and `crypto.RSAEncrypt` (random padding) are unsafe to cache; the
-decryptors, `crypto.Ed25519GenerateKeyFromSeed`, the `…DerivePublicKey`
-functions and `net.CIDR*` are functions of their arguments.
+**Experimental functions** — `crypto.PBKDF2MCF`, `crypto.Yescrypt`,
+`crypto.YescryptMCF`, `net.CIDRHost`, `net.CIDRNetmask`, `net.CIDRSubnets`,
+`net.CIDRSubnetSizes` and `test.JSONSchema` — fail "experimental mode not
+enabled" by default; the image never enables them. gomplate's own
+`GOMPLATE_EXPERIMENTAL`, set in your `env:`, does, and the image honours it.
+Under it, `crypto.YescryptMCF` without a salt is unsafe to cache (it draws a
+random one); the others are functions of their arguments (`test.JSONSchema`
+loads no `$ref` to another file or URL). gomplate 5 made the key generators,
+the RSA and AES encryptors and decryptors and the `…DerivePublicKey`
+functions ordinary functions, available with no variable set; the generators
+and encryptors are listed under randomness above.
 
 Everything else is a function of its arguments, the declared datasources and
 the image: `base64`; `coll` (but for jq's `now`); `conv`; `crypto.PBKDF2`,
-`crypto.WPAPSK` and the hashes; the `data` parse and format functions;
+`crypto.WPAPSK` and the hashes; `crypto.AESDecrypt`, `crypto.AESDecryptBytes`
+and their aliases `crypto.DecryptAES` and `crypto.DecryptAESBytes`,
+`crypto.RSADecrypt`, `crypto.RSADecryptBytes`,
+`crypto.Ed25519GenerateKeyFromSeed`, `crypto.DerivePublicKey` and the
+`…DerivePublicKey` functions; the `data` parse and format functions;
 `filepath` and `path` (lexical — they never touch the filesystem); `math`;
-`net.ParseAddr`, `net.ParseIP`, `net.ParsePrefix`, `net.ParseIPPrefix`,
-`net.ParseRange`, `net.ParseIPRange`; `regexp`; `semver`; `strings`; `test`;
-`time.Parse`, `time.ParseDuration`, `time.Unix` and the duration and layout
-constants; `tmpl.Exec`, `tmpl.Inline`/`tpl`; `uuid.Nil`, `uuid.IsValid`,
-`uuid.Parse`; `datasource`/`ds`/`include`, `datasourceExists` and
+`net.ParseAddr`, `net.ParsePrefix`, `net.ParseRange`, and `net.GenerateMAC`
+given a seed; `regexp`; `semver`; `strings`; `test`; `time.Parse`,
+`time.ParseDuration`, `time.Unix` and the duration and layout constants;
+`tmpl.Exec`, `tmpl.Inline`/`tpl`; `uuid.Nil`, `uuid.IsValid`, `uuid.Parse`;
+`datasource`/`ds`/`include`, `datasourceExists` and
 `listDatasources` of a declared name; and Go's `text/template` builtins.
 
 **Recommended practice**
@@ -250,10 +271,12 @@ runtime adds (under Docker, `HOSTNAME`).
 | `HOME=/orkstack/tmp` | a writable, empty, per-attempt home instead of the runtime's read-only `/` |
 | `TZ=UTC` | local time is UTC unless your task says otherwise; the image ships zone data, so `TZ: Europe/Berlin` under `env:` really means Berlin |
 
-Every variable is readable through `getenv`, `env.Getenv` and
-`env.ExpandEnv` — honoured, with the caching consequence above (a variable
+Every variable is readable through `getenv`, `env.Getenv`, `env.ExpandEnv`,
+`env.Env` and `env.HasEnv` — honoured, with the caching consequence above (a variable
 your `env:` sets is in the memo key; `HOSTNAME` is not). `AWS_*` and the cloud
-SDKs' variables reach the `aws` and `gcp` functions. The image refuses no
+SDKs' variables reach the `aws` and `gcp` functions; gomplate 5's `aws`
+functions run on AWS SDK v2 and read `AWS_EC2_METADATA_SERVICE_ENDPOINT`, no
+longer `AWS_META_ENDPOINT`. The image refuses no
 variable.
 
 gomplate's own variables are gomplate's to honour, and `with:` beats the
@@ -269,23 +292,25 @@ variable:
   typed;
 - `GOMPLATE_LOG_FORMAT` and `GOMPLATE_PLUGIN_TIMEOUT` are gomplate's;
 - `GOMPLATE_CONFIG` names a **configuration file**, which gomplate merges under
-  the flags this image passes, by gomplate's own rules (4.3.3):
+  the flags this image passes, by gomplate's own rules (5.3.1):
   - the image's flags **win** for the input (the template), the output (the
     artifact — a file's `outputFiles`, `outputDir` or `outputMap` is never
-    written), the mode (`0644` over a file's `chmod`), the delimiters when
-    `with:` sets them, and a datasource or context alias both name;
+    written), the mode (`0644` over a file's `chmod`), `--missing-key error`
+    over a file's `missingKey` (a missing key fails the render, `map has no
+    entry for key`), the delimiters when `with:` sets them, and a datasource
+    or context alias both name;
   - the file's `leftDelim`/`rightDelim` beat the delimiter variables when
     `with:` sets none; its other datasources, contexts, `templates` and
     `plugins` are added; its `experimental: true` enables the experimental
     functions;
-  - gomplate 4.3.3 does **not** let a flag override the file's `missingKey`
-    (under `missingKey: zero` a missing key renders `<no value>` despite
-    `--missing-key error`), its `postExec` (it runs after the render) or its
-    `execPipe` (the output goes to the `postExec` command and no file is
-    written — the image then fails the task: `gomplate exited 0 but wrote no
-    output file`);
+  - gomplate 5.3.1 does **not** let a flag override the file's `postExec` (it
+    runs after the render) or its `execPipe` (the output goes to the
+    `postExec` command and no file is written — the image then fails the
+    task: `gomplate exited 0 but wrote no output file`);
   - a file that cannot be opened or parsed fails the render with gomplate's own
-    message (`config file requested, but couldn't be opened`).
+    message (`config file requested, but couldn't be opened`); gomplate 5
+    reads `templates` only as a map, so a file written for gomplate 4 with a
+    list of `templates` fails to parse (`cannot unmarshal !!seq`).
 
   What the file declares is yours: its plugins and `postExec` run inside the
   same container, with the same limits, files and network as the template.
@@ -360,7 +385,7 @@ make -C images image-template
 ```
 
 The build downloads the gomplate release asset
-(`gomplate_linux-<arch>` of the `v4.3.3` release) from `github.com` and checks
+(`gomplate_linux-<arch>` of the `v5.3.1` release) from `github.com` and checks
 it against the SHA-256 pinned in the Dockerfile, so it needs that host (or a
 mirror) at build time, and it needs BuildKit (Docker 23+, or
 `DOCKER_BUILDKIT=1`), which supplies the target architecture; amd64 and arm64
@@ -372,6 +397,10 @@ make -C images images DOCKER_BUILD_FLAGS='--build-arg GOMPLATE_BASE_URL=https://
 ```
 
 — the checksum verifies the bytes whatever served them, so a mirror can neither
-substitute nor corrupt the binary silently. The binary is ~87 MB, so the image
+substitute nor corrupt the binary silently. The binary is ~116 MB, so the image
 is correspondingly larger, and its first pull shows up in a task's timing
 breakdown.
+
+Known advisories: gomplate 5.3.1 bundles go-jose 4.1.4 (GHSA-mgcc-cww5-fp2q,
+high, fixed in 4.1.6), which the nightly image scan waives with a review date;
+the waiver lifts when a gomplate release carries go-jose 4.1.6.

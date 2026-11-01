@@ -18,14 +18,14 @@
 	// parameters): what may be filtered is the ListDeliveriesRequest allowlist.
 	// Redeliver is one POST, now, behind a confirmation that says exactly that.
 	import { goto, invalidateAll } from '$app/navigation';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import Pagination from '$lib/components/Pagination.svelte';
-	import { readPageStack, writePageStack } from '$lib/browsing';
-	import { errorMessage } from '$lib/client';
-	import { webhookClient } from '$lib/clients/webhooks';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import Pagination from '#lib/components/Pagination.svelte';
+	import { readPageStack, writePageStack } from '#lib/browsing.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import { webhookClient } from '#lib/clients/webhooks.ts';
 	import {
 		DELIVERIES_CAPTION,
 		deliveriesCliCommand,
@@ -40,13 +40,13 @@
 		redeliverySentence,
 		runDeliveriesFilters,
 		type DeliveryCoordinates
-	} from '$lib/deliveries';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { EventType } from '$lib/gen/orkstack/v1/run_pb';
-	import { ListDeliveriesRequestSchema, type Delivery, type ListDeliveriesResponse, type Webhook } from '$lib/gen/orkstack/v1/webhook_service_pb';
-	import type { FieldFilter } from '$lib/listFilter';
-	import { fmtTimestamp } from '$lib/status';
-	import { stampClass } from '$lib/statusMarks';
+	} from '#lib/deliveries.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { EventType } from '#lib/gen/orkstack/v1/run_pb.ts';
+	import { ListDeliveriesRequestSchema, type Delivery, type ListDeliveriesResponse, type Webhook } from '#lib/gen/orkstack/v1/webhook_service_pb.ts';
+	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
+	import { stampClass } from '#lib/statusMarks.ts';
 	import ScopeNote from './ScopeNote.svelte';
 
 	interface Props {
@@ -65,7 +65,7 @@
 	// Any filter change drops the cursor and the page: a token is bound to the
 	// filter set it was issued for.
 	function applyFilters(filters: FieldFilter[]) {
-		void goto(deliveriesHref(c, { filters, cursor: '', page: 1 }, 'deliveries'), { noScroll: true, keepFocus: true });
+		void goto(deliveriesHref(c, { filters, cursor: '', page: 1 }, 'deliveries'), { reset: false });
 	}
 	const clearHref = $derived(deliveriesHref(c, { filters: [], cursor: '', page: 1 }, 'deliveries'));
 

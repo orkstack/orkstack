@@ -123,7 +123,7 @@ Reads a repository over HTTPS. `clone` writes one commit as a tarball or as a wo
 
 ## template
 
-Renders one template file into one text artifact, with gomplate 4.3.3.
+Renders one template file into one text artifact, with gomplate 5.3.1.
 
 | Key | Ops | Type | Default | Meaning |
 |---|---|---|---|---|

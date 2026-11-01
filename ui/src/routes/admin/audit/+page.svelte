@@ -20,10 +20,10 @@
 	// filtered is the ListAuditRecordsRequest allowlist. No write exists on
 	// this page, so there is nothing to confirm.
 	import { goto, invalidateAll } from '$app/navigation';
-	import CliEquivalent from '$lib/components/CliEquivalent.svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ListFilter from '$lib/components/ListFilter.svelte';
-	import Pagination from '$lib/components/Pagination.svelte';
+	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ListFilter from '#lib/components/ListFilter.svelte';
+	import Pagination from '#lib/components/Pagination.svelte';
 	import {
 		AUDIT_CAPTION,
 		auditCliCommand,
@@ -32,15 +32,15 @@
 		auditResultLabel,
 		auditScopeSentence,
 		auditStackKey
-	} from '$lib/audit';
-	import { readPageStack, writePageStack } from '$lib/browsing';
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { ListAuditRecordsRequestSchema } from '$lib/gen/orkstack/v1/audit_pb';
-	import type { FieldFilter } from '$lib/listFilter';
-	import { fmtTimestamp } from '$lib/status';
-	import { stampClass } from '$lib/statusMarks';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
+	} from '#lib/audit.ts';
+	import { readPageStack, writePageStack } from '#lib/browsing.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { ListAuditRecordsRequestSchema } from '#lib/gen/orkstack/v1/audit_pb.ts';
+	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
+	import { stampClass } from '#lib/statusMarks.ts';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
 	import { timestampDate } from '@bufbuild/protobuf/wkt';
 	import type { Timestamp } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';

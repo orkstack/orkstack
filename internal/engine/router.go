@@ -54,7 +54,9 @@ type RunStarter interface {
 		input *orkstackv1.Payload,
 		plan RunPlan,
 	) error
-	CancelRun(ctx context.Context, runID, reason string) error
+	// CancelRun requests a run's cancellation; request.Principal, when set,
+	// is recorded on the run (TemporalStarter.CancelRun).
+	CancelRun(ctx context.Context, runID string, request CancelRequest) error
 	// SignalAwait delivers one resolution to a running run
 	// (TemporalStarter.SignalAwait).
 	SignalAwait(ctx context.Context, runID string, signal *orkstackv1.AwaitSignal) error

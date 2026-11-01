@@ -44,15 +44,17 @@ runs:
         echo '{"dns":["172.17.0.1"]}' | sudo tee /etc/docker/daemon.json
         sudo systemctl restart systemd-resolved
         sudo systemctl restart docker
-        # The one container this action runs that is not the stack's: pulled
-        # from Docker Hub by tag, so it is bounded like a fetch is.
-        timeout -k 10 360 docker run --rm alpine:3.20 getent hosts host.docker.internal
+        # The one container this action runs that is not the stack's: the
+        # first-party images' alpine, pinned by its index digest (which
+        # TestBindProbeImage_IsTheFirstPartyImagesBase holds to theirs),
+        # pulled from Docker Hub and so bounded like a fetch is.
+        timeout -k 10 360 docker run --rm alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a getent hosts host.docker.internal
 
     # About 20 jobs a run each need the stack's images; Docker Hub allows 100
     # anonymous pulls an hour per address. One job saves them, every job loads
     # them (plan §3.3). A miss pulls normally.
     - name: Stack image cache
-      uses: actions/cache@v6.1.0
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: /tmp/orkstack-stack-images.tar
         key: stack-images-v2-${{ hashFiles('deploy/docker-compose.yml', 'images/*/Dockerfile') }}

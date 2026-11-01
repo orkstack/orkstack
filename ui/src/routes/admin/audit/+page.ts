@@ -1,10 +1,10 @@
-import { errorMessage } from '$lib/client';
-import { auditClient } from '$lib/clients/audit';
-import { DEFAULT_AUDIT_LIMIT, auditLimit, type AuditCoordinates } from '$lib/audit';
-import type { ListAuditRecordsResponse } from '$lib/gen/orkstack/v1/audit_pb';
-import { pageNumber } from '$lib/browsing';
-import { filtersFromUrl } from '$lib/listFilter';
-import { namespaceFrom, namespaceLabel } from '$lib/namespace';
+import { errorMessage } from '#lib/client.ts';
+import { auditClient } from '#lib/clients/audit.ts';
+import { DEFAULT_AUDIT_LIMIT, auditLimit, type AuditCoordinates } from '#lib/audit.ts';
+import type { ListAuditRecordsResponse } from '#lib/gen/orkstack/v1/audit_pb.ts';
+import { pageNumber } from '#lib/browsing.ts';
+import { filtersFromUrl } from '#lib/listFilter.ts';
+import { namespaceFrom, namespaceLabel } from '#lib/namespace.ts';
 import type { PageLoad } from './$types';
 
 // ListAuditRecords reads the control-plane audit trail: a deployment-wide

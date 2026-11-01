@@ -166,6 +166,17 @@ the fixed version: bump the module to exactly that version, then run
 `make check`. A vulnerability the code cannot reach is shown only with
 `go tool govulncheck -show verbose ./...`.
 
+`make vuln-js` and `make vuln-images` are the scan's other two lanes, and need
+the network too, so the nightly workflow runs them and no proof does.
+`make vuln-js` runs `bun audit` over `ui/` and `site/`, development
+dependencies included, and fails on a high or critical advisory;
+`bun audit fix --dry-run` names the fixed versions. `make vuln-images` builds
+the images a release publishes, for linux/amd64, and scans each with the
+pinned Grype (`deploy/grype-image.txt`, policy `deploy/grype.yaml`): a fixed
+vulnerability of high or critical severity in an OS package or a bundled
+third-party binary fails it. OrkStack's own Go code is `make vuln`'s. Grype's
+database takes about 3 GB under `.data/vuln-images`.
+
 When a test is listed in `scripts/proof-quarantine.txt`, its failure is that
 known flake: tell its owner if it is new to you. Never re-run a failing test until it
 passes; a second run is the flip the list exists to count, not a remedy.
@@ -202,7 +213,7 @@ echo '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts
 sudo ufw allow in on docker0 from 172.17.0.0/16 proto tcp
 
 # verify
-docker run --rm alpine:3.20 getent hosts host.docker.internal
+docker run --rm alpine:3.24 getent hosts host.docker.internal
 ```
 
 `172.17.0.1` is the gateway of Docker's default bridge; a host with a
@@ -248,8 +259,9 @@ run, with its own `ork` and `orker`, and stops them when it ends.
 - **`check`** — `make check`, on every push and every pull request, with
   `DOCKER_HOST` pointing at nothing to prove the fast path needs no Docker.
 - **`vuln`** — `make vuln`, on every push and every pull request. It needs the
-  network and is in no proof; the nightly workflow runs it too, and a
-  vulnerability it reports makes that night's run red.
+  network and is in no proof; the nightly workflow runs it too, with
+  `make vuln-js` and `make vuln-images`, and a vulnerability any of them
+  reports makes that night's run red.
 - **`feature`** — optional: the feature tier, run only with the `ci:feature`
   label, on a push to `validate/feature/**`, or by dispatch. It runs the fast
   gates, the tests and specs that prove your change, and its regression set,
@@ -302,9 +314,9 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
-6. Update the docs the change makes false, and add the CHANGELOG.md
-   `[Unreleased]` entry a user-visible change needs (AGENTS.md §11.1; "The
-   changelog", below). The
+6. Update the docs the change makes false, and, when the change may affect
+   the people who run or use OrkStack, add its CHANGELOG.md `[Unreleased]`
+   entry (AGENTS.md §11.1, step 7; "The changelog", below). The
    site's pages (`site/content/`) are short pages written for readers that
    cite the repository docs they summarise: update the page that describes a
    behaviour you change, and give a new doc under `docs/` a site page that
@@ -324,10 +336,20 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 
 ## The changelog
 
-CHANGELOG.md follows Keep a Changelog 1.1.0. A user-visible change adds its
-entry under `## [Unreleased]` in the same pull request, in the subsection of
-its kind (`### Added`, `### Changed`, `### Deprecated`, `### Removed`,
-`### Fixed` or `### Security`), and marks a breaking change **BREAKING**
+CHANGELOG.md follows Keep a Changelog 1.1.0 and is written for the people
+who run or use OrkStack. A change that cannot affect them gets no entry,
+however large: documentation edits; CI, workflows and the proof harness,
+unless the change alters what a release publishes; tests; refactors; internal
+tooling, such as the development stack (`make up`); and a dependency bump
+that cannot affect them. A change that may affect them (behaviour, the DSL,
+the CLI, the API and its error reasons, configuration, the activity contract,
+storage layout, what a release publishes and any security fix to it, a
+vulnerable dependency's bump among them even when they see nothing change, a
+dependency bump that changes what they see, a deprecation, a breaking change)
+adds an entry under `## [Unreleased]` in the same pull request, in the
+subsection of its kind (`### Added`, `### Changed`, `### Deprecated`,
+`### Removed`, `### Fixed` or `### Security`); the entry says what they must
+do about it, if anything, and a breaking change's entry is marked **BREAKING**
 (AGENTS.md §11.1, step 7). Write it for the people who read the release: at a
 release the `[Unreleased]` section becomes the version's own,
 `## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
@@ -370,14 +392,15 @@ A change is done when it is on `main` and a full proof passed on the exact
 tree `main` then points at — the `proof` check of the pull request (or merge
 group) that landed it, or a local `make proof` — and when every reference doc
 that describes what changed says the new thing, with a CHANGELOG.md
-`[Unreleased]` entry for a user-visible change. Done is judged by the merge
-gate: the few scale tests listed in `scripts/proof-nightly-tests.txt`, and
-the specs listed in `scripts/proof-nightly-specs.txt`, run nightly and before
-a release. A failure there is a regression on `main`: fixing it, or reverting
-what broke it, is the next work, but it holds no other merge, and no release
-is tagged until the pre-release proof, which runs them all, passes;
-`release.yml` also refuses a commit whose own nightly did not pass. A feature
-proof means "ready for the merge proof", never "done". No proof, not done.
+`[Unreleased]` entry for a change that may affect the people who run or use
+OrkStack. Done is judged by the merge gate: the few scale tests listed in
+`scripts/proof-nightly-tests.txt`, and the specs listed in
+`scripts/proof-nightly-specs.txt`, run nightly and before a release. A
+failure there is a regression on `main`: fixing it, or reverting what broke
+it, is the next work, but it holds no other merge, and no release is tagged
+until the pre-release proof, which runs them all, passes; `release.yml` also
+refuses a commit whose own nightly did not pass. A feature proof means "ready
+for the merge proof", never "done". No proof, not done.
 
 ## Style
 

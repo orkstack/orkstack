@@ -13,11 +13,11 @@
 	// the engine's own sentence, shown verbatim.
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import ScopeNote from '$lib/components/ScopeNote.svelte';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { errorMessage } from '$lib/client';
-	import { systemClient } from '$lib/clients/system';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import ScopeNote from '#lib/components/ScopeNote.svelte';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { errorMessage } from '#lib/client.ts';
+	import { systemClient } from '#lib/clients/system.ts';
 	import {
 		fingerprint,
 		parseRegistryLines,
@@ -25,8 +25,8 @@
 		signingKeyNameError,
 		signingKeyPemError,
 		MAX_SIGNING_KEYS
-	} from '$lib/imagePolicyForm';
-	import { fmtTimestamp } from '$lib/status';
+	} from '#lib/imagePolicyForm.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

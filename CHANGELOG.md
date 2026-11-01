@@ -1,13 +1,15 @@
 # Changelog
 
-All notable changes to OrkStack are recorded here. The format follows
+Every change that may affect the people who run or use OrkStack is recorded
+here. The format follows
 [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/), and versions
 follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html). Each
 breaking change is marked **BREAKING**.
 
-A change lands with its entry under `[Unreleased]`. At a release that section
-becomes the version's own, and its text is the release's notes on GitHub,
-word for word.
+Such a change lands with its entry under `[Unreleased]`, saying what they must
+do about it, if anything; a change that cannot affect them, such as a
+documentation or test change, has none. At a release that section becomes the
+version's own, and its text is the release's notes on GitHub, word for word.
 
 ## [Unreleased]
 
@@ -64,6 +66,17 @@ word for word.
   and `.memory`, `ork.orker.admission.wait.duration` and
   `ork.orker.admission.refusals` (docs/DEPLOY.md, "Declaring an Orker's
   capacity").
+- The nightly workflow also audits the UI's and the site's JavaScript
+  dependencies (`make vuln-js`, `bun audit`) and scans the images a release
+  publishes (`make vuln-images`, a pinned Grype) for known vulnerabilities; a
+  release is not tagged while either is red.
+- A canceled run shows who canceled it: the name your gateway asserted in
+  `Ork-Principal` on the cancel request (`ORK_PRINCIPAL` for `orkctl`),
+  marked as asserted and never authenticated. The API returns it as the
+  run's `canceled_by`, `orkctl run get` prints `Canceled by:` and
+  `orkctl run list` shows `CANCELED by … (asserted)`. It stays after the run
+  is retired. A cancel without the header, and runs canceled before this
+  release, show no name.
 
 ### Changed
 
@@ -165,6 +178,79 @@ word for word.
   applies to runs submitted from this release on. Fan-out items,
   pinned tasks, runs that carry on and composed child runs already carried
   the key; this is now stated and tested.
+- Every Go dependency is on its latest release: the Temporal Go SDK 1.50.0
+  (API 1.64.0), Connect 1.21.1, gRPC 1.85.0, OpenTelemetry Go 1.47.0 (its logs
+  API and SDK are now stable, 1.47.0) with otelhttp 0.72.0, the AWS SDK for Go
+  v2 1.47.5 (S3 1.114.6) and the Prometheus client 1.25.0. The Temporal SDK's
+  `temporal_activity_execution_failed` and
+  `temporal_local_activity_execution_failed` metrics now carry a
+  `failure_reason` attribute, `ActivityError`, or `PayloadsTooLarge` for an
+  activity whose result was over the payload limit, and
+  `temporal_sticky_cache_total_forced_eviction` no longer counts a worker's
+  shutdown, so a dashboard built on them may need adjusting.
+- Code generation is pinned exactly: buf 1.75.0, protobuf-es and
+  protoc-gen-es 2.16.0, and connect-es 2.3.0 in `ui/package.json`. The Go
+  protoc plugins are `go.mod` tool directives, so each generates with the
+  version of the runtime it links against, and `make tools` installs only buf,
+  at the release `deploy/buf-image.txt` pins, and refuses a `ui/package.json`
+  that pins another.
+- **BREAKING** for a rollback and for an unversioned fleet that mixes
+  releases: the Temporal Go SDK 1.50 records a marker in a run's history the
+  first time one cancellation reaches more than one of the run's open scopes
+  (an operator's cancel of a run that declares a failure handler, or a run
+  that fails or is canceled while two or more awaits or pins are open). An
+  engine of 0.1.0 cannot replay such a run: it fails the run's workflow task
+  on every attempt (`unknown SDK flag: 9`), and the run stays `RUNNING` until
+  an engine of this release picks it up. With versioning on, roll back as
+  before; with versioning off, roll back below this release only when no run
+  is open, and replace every engine replica together when rolling forward
+  (`docs/DEPLOY.md` §4, `docs/UPGRADING.md`).
+- Connect 1.21 codes four failures differently. A connection reset under a
+  call reaches a Go client as `canceled` when the client's read is the first
+  to meet it; before, it was `unavailable` when the reset came before any
+  response, `invalid_argument` when it cut a stream between messages, and
+  `unknown` when it cut one inside a message. A connection that ends between
+  messages of a stream is `internal` (it was `invalid_argument`); that is
+  what the engine closing it gives, and what a reset gives when the client's
+  own write meets it first (an HTTP/2 acknowledgement or flow-control
+  update). Such an end is still `unavailable` before any response and
+  `unknown` inside a message. A stream that ends cleanly partway through a
+  message is `internal` (it was `invalid_argument`). And an engine's write to
+  a client that has gone away is `canceled` (it was `unknown`).
+  `orkctl run watch` and `orkctl run inspect --watch` resume on a `canceled`
+  they did not cause as on `unavailable`, so a watch whose stream is reset
+  partway through now resumes where it used to stop when the reset reaches
+  it as `canceled`. A Ctrl-C still ends them, and so does a connection that
+  ends partway through a stream (`internal` or `unknown`). Other `orkctl`
+  commands print the new code for the same failure, with the same exit
+  status. None of the four reaches an audit record, which is written after a
+  request is read and before its response is; no OrkStack metric carries a
+  Connect code; and the Temporal SDK's `failure_reason` attribute names only
+  its own failure kinds, so none of them changes.
+- `ork` and `orker` turn off the environment report in the Temporal SDK's
+  worker heartbeats. From SDK 1.49 a worker's first heartbeat would otherwise
+  also send the Temporal server the Go version, the hosting environment the
+  SDK detects (a container, Kubernetes, a cloud platform) and the OS
+  platform, which nothing in OrkStack asks for. The heartbeats are otherwise
+  unchanged: they still carry what the SDK sends for its own worker
+  accounting, among it the host name, the process id, the host's CPU and
+  memory use, the SDK version, the task queue and the deployment version.
+- The web UI is built with SvelteKit 3, Vite 8 and Svelte 5.57. An open UI
+  tab now also asks the engine for the UI's build version
+  (`/_app/version.json`) every hour and when the tab regains focus, as
+  SvelteKit 3 does by default.
+- The web UI and the site are type-checked with TypeScript 6.0.3. TypeScript
+  7 waits until SvelteKit, svelte-check and `@astrojs/check`, which all
+  accept only TypeScript 6, support it.
+- **BREAKING** Every first-party activity image ships jq 1.8 (was 1.7) and BusyBox 1.37 (was 1.36), the `git` image git 2.54 (was 2.45), and the `http` image curl 8.23 (was 8.14). jq 1.8 changes what some filters compute, both a `json` task's filter and any `jq` a `shell` task's command runs: `indices`, `index` and `rindex` count code points rather than bytes; `tonumber` refuses leading or trailing white space; `ltrimstr` and `rtrimstr` fail on a non-string input or argument; `last(empty)` yields nothing; `limit` fails on a negative count; `pow10` is gone (use `exp10`); an `as` binding takes the whole expression before it, operators included (`[-1 as $x | 1, $x]` gives `[1,-1]`, was `[-1,-1]`); and a `#` comment that ends in a backslash continues on the next line. Check those filters and commands against jq 1.8 before you upgrade. A `template` task's `jq` is gomplate's own (gojq 0.12.19, was 0.12.17), where such a binding, a parse error before, now binds the whole expression too.
+- **BREAKING** The `template` activity image renders with gomplate 5.3.1 (was 4.3.3). gomplate 5 removed most of the names gomplate 4 still served with a deprecation warning, so a template that calls one fails to render: use `strings.Contains`, `strings.HasPrefix`, `strings.HasSuffix`, `strings.Split`, `strings.SplitN` and `strings.Trim` for the bare `contains`, `hasPrefix`, `hasSuffix`, `split`, `splitN` and `trim`, with the input last (`{{ contains .s "x" }}` becomes `{{ strings.Contains "x" .s }}`); `conv.ToBool` for `bool` and `conv.Bool`; `coll.Sort` for `strings.Sort`; and `net.ParseAddr`, `net.ParsePrefix` and `net.ParseRange` for `net.ParseIP`, `net.ParseIPPrefix` and `net.ParseIPRange`. Bare `slice` does not fail but now slices (Go's builtin): build a list with `coll.Slice`. A `GOMPLATE_CONFIG` file that lists `templates` as a sequence no longer parses (gomplate 5 reads a map), and the image's `--missing-key error` now beats the file's `missingKey`. The `aws` functions run on AWS SDK v2 and no longer read `AWS_META_ENDPOINT`: set `AWS_EC2_METADATA_SERVICE_ENDPOINT` instead. The key generators and the RSA and AES functions no longer need `GOMPLATE_EXPERIMENTAL`, and the image's README lists which of them make a cached render wrong.
+- **BREAKING** The Orker's boot probe runs `docker.io/library/alpine:3.24` by digest (was alpine 3.20). An Orker that cannot pull it refuses to start with `BIND_PROBE_IMAGE_UNAVAILABLE`: on an air-gapped or rate-limited host, mirror or load it before you upgrade (UPGRADING.md, "Upgrading the deployment").
+- The development stack and the quickstart run Temporal's development server 1.9.1 (Temporal Server 1.32.0) and SeaweedFS 4.51.
+- The development stack's observability profile runs OpenTelemetry Collector 0.164.0, Loki 3.7.9, Tempo 3.1.1, Prometheus 3.15.1 and Grafana 13.3.0.
+- `CancelRun` answers `UNAVAILABLE` (or `RESOURCE_EXHAUSTED`) when the
+  cluster could not take the cancellation, and `CANCELED` or
+  `DEADLINE_EXCEEDED` when the caller gave up first, instead of `INTERNAL`.
+  A client may retry the first two.
 
 ### Fixed
 
@@ -266,6 +352,14 @@ word for word.
   next `make infra-up` on a running stack recreates its containers to apply
   this: the object store and the registry keep their volumes, and Temporal's
   development server, which keeps its history in memory, starts empty.
+- The first-party activity images move to Alpine 3.24; Alpine 3.20, their base until now, is past its support window.
+- Every workflow and composite action pins every action by commit SHA, and
+  Dependabot now also bumps the composite actions.
+- The nightly image scan waives GHSA-mgcc-cww5-fp2q (go-jose/v4 v4.1.4, high,
+  fixed in v4.1.6) in the template activity's gomplate alone: gomplate's
+  latest release, v5.3.1, still carries v4.1.4, and gomplate's `main` already
+  requires v4.1.6. The waiver is reviewed by 2026-11-30 and is removed when
+  gomplate releases with go-jose v4.1.6 or later.
 
 ## [0.1.0] - 2026-10-30
 

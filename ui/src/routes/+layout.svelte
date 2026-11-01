@@ -2,18 +2,18 @@
 	import '../app.css';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import { onMount, type Component } from 'svelte';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import MenuDrawer from '$lib/components/MenuDrawer.svelte';
-	import Select from '$lib/components/Select.svelte';
-	import ThemeSwitch from '$lib/components/ThemeSwitch.svelte';
-	import TitleBlock from '$lib/components/TitleBlock.svelte';
-	import TopBar from '$lib/components/TopBar.svelte';
-	import { operatePageOf, operateScope, pageOf } from '$lib/navigation';
-	import { OVERLAY_SELECTOR, currentPlatform, isApplePlatform, paletteKey, shortcutAria, shortcutHint } from '$lib/palette/keys';
-	import { provideTitleBlock } from '$lib/sheet.svelte';
-	import type { TitleField } from '$lib/sheet';
-	import { appearance } from '$lib/theme.svelte';
+	import { onMount, untrack, type Component } from 'svelte';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import MenuDrawer from '#lib/components/MenuDrawer.svelte';
+	import Select from '#lib/components/Select.svelte';
+	import ThemeSwitch from '#lib/components/ThemeSwitch.svelte';
+	import TitleBlock from '#lib/components/TitleBlock.svelte';
+	import TopBar from '#lib/components/TopBar.svelte';
+	import { operatePageOf, operateScope, pageOf } from '#lib/navigation.ts';
+	import { OVERLAY_SELECTOR, currentPlatform, isApplePlatform, paletteKey, shortcutAria, shortcutHint } from '#lib/palette/keys.ts';
+	import { provideTitleBlock } from '#lib/sheet.svelte.ts';
+	import type { TitleField } from '#lib/sheet.ts';
+	import { appearance } from '#lib/theme.svelte.ts';
 	import {
 		DEFAULT_NAMESPACE,
 		hasNamespaceParam,
@@ -21,8 +21,8 @@
 		rememberNamespace,
 		rememberedNamespace,
 		withNamespace
-	} from '$lib/namespace';
-	import { watchSystemTheme } from '$lib/theme';
+	} from '#lib/namespace.ts';
+	import { watchSystemTheme } from '#lib/theme.ts';
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
@@ -71,7 +71,7 @@
 	//
 	//   - this browser HAS chosen a namespace: that choice is restored, which
 	//     is a real change of what the page shows, so it is a navigation.
-	//     goto(..., { replaceState: true }) rather than the shallow
+	//     goto(..., { replace: true }) rather than the shallow
 	//     replaceState helper, because the URL is the loaders' input: rewriting
 	//     it without re-running them would leave the address bar saying
 	//     `payments` over `default`'s data, the same lie with better manners.
@@ -91,20 +91,20 @@
 		}
 		const remembered = rememberedNamespace();
 		if (remembered === null) {
-			try {
-				replaceState(withNamespace(url.pathname + url.search, DEFAULT_NAMESPACE), page.state);
-			} catch {
-				// replaceState throws before the router is initialised. The URL
+			// page.state is read untracked: replaceState gives the page a new
+			// state object, and a shallow write leaves page.url bare, so an
+			// effect that tracked it would write again, endlessly.
+			replaceState(withNamespace(url.pathname + url.search, DEFAULT_NAMESPACE), untrack(() => page.state)).catch(() => {
+				// replaceState rejects before the router is initialised. The URL
 				// then stays bare, which still reads `default`; the next
 				// navigation writes it.
-			}
+			});
 			return;
 		}
 		void goto(withNamespace(url.pathname + url.search, remembered), {
-			replaceState: true,
+			replace: true,
 			invalidateAll: true,
-			noScroll: true,
-			keepFocus: true
+			reset: false
 		});
 	});
 
@@ -145,7 +145,7 @@
 	}> | null>(null);
 
 	async function openPalette(): Promise<void> {
-		if (!Palette) Palette = (await import('$lib/components/CommandPalette.svelte')).default;
+		if (!Palette) Palette = (await import('#lib/components/CommandPalette.svelte')).default;
 		drawerOpen = false;
 		paletteOpen = true;
 	}

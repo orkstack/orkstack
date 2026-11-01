@@ -7,11 +7,11 @@
 	//
 	// It never shows a run id: a run's id is its page's heading, and a second
 	// copy of it on a list page would make the id ambiguous to find.
-	import { Status } from '$lib/gen/orkstack/v1/common_pb';
-	import { statusLabel } from '$lib/status';
-	import { statusMark } from '$lib/statusMarks';
-	import { titleCellTestid, type TitleField } from '$lib/sheet';
-	import { copyText } from '$lib/clipboard';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { statusLabel } from '#lib/status.ts';
+	import { statusMark } from '#lib/statusMarks.ts';
+	import { titleCellTestid, type TitleField } from '#lib/sheet.ts';
+	import { copyText } from '#lib/clipboard.ts';
 	import Icon from './Icon.svelte';
 
 	let { fields, lifted = false }: { fields: TitleField[]; lifted?: boolean } = $props();

@@ -1,8 +1,8 @@
 # OrkStack — developer entrypoints. Single Go module; UI is a Bun project.
 SHELL := /bin/bash
-# Where `make tools` installs the codegen binaries, and therefore what
-# `make proto` and `make tsgen` have to find on PATH. `go install` writes to
-# GOBIN when it is set and to GOPATH/bin otherwise — and those are different
+# Where `make tools` installs buf, and therefore where `make proto` has to
+# find it on PATH. `go install` writes to GOBIN when it is set and to
+# GOPATH/bin otherwise — and those are different
 # directories the moment a toolchain manager is involved, because mise and
 # friends export GOBIN to a version-specific path while GOPATH still points at
 # $HOME/go. Assuming GOPATH/bin put the tools on PATH only by accident: it held
@@ -63,11 +63,17 @@ tsgen: ## Install UI codegen deps and regenerate Go+TS clients from proto
 	go run ./internal/apidocs/cmd/genapidocs
 
 .PHONY: tools
-tools: ## Install codegen + lint tooling
+# buf is installed at the release deploy/buf-image.txt pins (BUF_VERSION), the
+# buf `make proto-breaking` checks with, and ui/package.json must pin that same
+# release for @bufbuild/buf, the buf `make tsgen` runs: the recipe refuses the
+# two apart. buf is not a go.mod tool directive because its module graph would
+# join this module's. The Go protoc plugins and the linters are tool
+# directives and need no install.
+tools: ## Install buf, the codegen driver `make proto` runs
 	@test -n "$(BUF_VERSION)" || { echo "tools: deploy/buf-image.txt names no buf release" >&2; exit 2; }
+	@v="$$(sed -n 's/^[[:space:]]*"@bufbuild\/buf": "\([0-9][0-9.]*\)",*$$/\1/p' ui/package.json)"; \
+	test "$$v" = "$(BUF_VERSION)" || { echo "tools: ui/package.json pins @bufbuild/buf '$$v', deploy/buf-image.txt pins buf $(BUF_VERSION)" >&2; exit 2; }
 	go install github.com/bufbuild/buf/cmd/buf@v$(BUF_VERSION)
-	go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
-	go install connectrpc.com/connect/cmd/protoc-gen-connect-go@latest
 
 ## ---- build ----
 #
@@ -226,6 +232,54 @@ lint: ## Run go vet, the gofmt check and staticcheck (pinned in go.mod; default 
 .PHONY: vuln
 vuln: ## Scan for reachable known vulnerabilities with the pinned govulncheck (needs the network; in no lint or proof gate)
 	go tool govulncheck ./...
+
+# vuln-js and vuln-images read advisory databases over the network too, so like
+# vuln they are in no lint or proof gate; nightly.yml runs both. vuln-js audits
+# the UI's and the site's lockfiles with bun audit, which installs nothing: it
+# lists every advisory and fails on one of high or critical severity,
+# development dependencies included, because svelte and SvelteKit compile into
+# the UI's bundle.
+.PHONY: vuln-js
+vuln-js: ## Audit the UI's and the site's JavaScript dependencies with bun audit, failing on a high or critical advisory (needs the network; in no lint or proof gate)
+	@failed=; for d in ui site; do \
+	  echo "bun audit ($$d): every advisory"; \
+	  (cd $$d && bun audit) || true; \
+	  echo "bun audit ($$d): high or critical, which fail the audit"; \
+	  (cd $$d && bun audit --audit-level=high) || failed="$$failed $$d"; \
+	done; \
+	if [ -n "$$failed" ]; then echo "make vuln-js: a high or critical advisory, or an audit that could not run, in:$$failed (bun audit fix --dry-run names the fixed versions)" >&2; exit 1; fi
+
+# vuln-images builds what a release of this commit publishes (VULN_IMAGES: the
+# release images and every activity images/Makefile builds, as its
+# print-activities names them) for linux/amd64 as OCI layouts, as release.yml
+# builds them, and scans each with the Grype image
+# deploy/grype-image.txt pins, by the policy deploy/grype.yaml states, with no
+# capability, no new privilege and a read-only root.
+# LAYOUTS=<dir> scans the layouts already built there instead. Grype's
+# database, about 3 GB unpacked, is downloaded into VULN_IMAGES_DIR (on disk,
+# never a tmpfs /tmp) and kept for the next scan.
+VULN_ACTIVITIES = $(shell MAKEFLAGS= $(MAKE) -s --no-print-directory -C images print-activities)
+VULN_IMAGES = $(RELEASE_IMAGES) $(addprefix activity-,$(VULN_ACTIVITIES))
+VULN_IMAGES_DIR ?= $(CURDIR)/.data/vuln-images
+.PHONY: vuln-images
+vuln-images: ## Build the release images for linux/amd64 (or take LAYOUTS=<dir>) and scan each with the pinned Grype, failing on a fixed high or critical vulnerability (needs the network; in no lint or proof gate)
+	@set -eu; layouts='$(if $(strip $(LAYOUTS)),$(abspath $(LAYOUTS)),$(VULN_IMAGES_DIR)/layouts)'; \
+	if [ -z '$(strip $(LAYOUTS))' ]; then \
+	  $(MAKE) dist VERSION=v0.0.0; \
+	  $(MAKE) release-images VERSION=v0.0.0 OUT="$$layouts" PLATFORMS=linux/amd64; \
+	fi; \
+	grype="$$(grep -v '^#' deploy/grype-image.txt | head -1)"; \
+	mkdir -p '$(VULN_IMAGES_DIR)/db' '$(VULN_IMAGES_DIR)/tmp'; failed=; \
+	[ -n '$(strip $(VULN_ACTIVITIES))' ] || { echo "make vuln-images: images/Makefile names no activity to scan" >&2; exit 1; }; \
+	for t in $(VULN_IMAGES); do \
+	  echo "grype: $$t"; \
+	  docker run --rm --user "$$(id -u):$$(id -g)" --cap-drop=ALL --security-opt no-new-privileges --read-only \
+	    -e GRYPE_DB_CACHE_DIR=/db -e TMPDIR=/scratch \
+	    -v '$(VULN_IMAGES_DIR)/db:/db' -v '$(VULN_IMAGES_DIR)/tmp:/scratch' \
+	    -v "$$layouts:/layouts:ro" -v '$(CURDIR)/deploy/grype.yaml:/grype.yaml:ro' \
+	    "$$grype" -c /grype.yaml --platform linux/amd64 "oci-dir:/layouts/$$t" || failed="$$failed $$t"; \
+	done; \
+	if [ -n "$$failed" ]; then echo "make vuln-images: a fixed high or critical vulnerability, or a scan that could not run, in:$$failed" >&2; exit 1; fi
 
 .PHONY: fmt
 fmt: ## Format Go code

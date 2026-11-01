@@ -153,10 +153,11 @@ func TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap(t *t
 					t.Fatalf("%s from 1 = %s (%v), want %s", name, eventTypesOf(got), err, tc.fromOne)
 				}
 			}
-			archived, gaps, err := reader.EventsForArchive(context.Background(), runID)
+			read, err := reader.EventsForArchive(context.Background(), runID)
 			if err != nil {
 				t.Fatalf("EventsForArchive: %v", err)
 			}
+			archived, gaps := read.Events, read.Gaps
 			if got := eventTypesOf(archived); got != tc.archived {
 				t.Fatalf("EventsForArchive gave %s, want %s", got, tc.archived)
 			}

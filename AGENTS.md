@@ -982,10 +982,14 @@ GitHub, was retired on 2026-10-27, once three consecutive nightlies of `main`
 had passed on it. A release tag has its own gate, the pre-release proof above.
 A merge is not held for a nightly of its own: a run speaks only for the commit
 it measured (its `headSha`), never for `main`'s tip, so the nightly of a later
-commit is a later run. The same workflow runs the vulnerability scan
-(`make vuln`) as a job of its own, because it needs the network and so is in
-no proof: a vulnerability whose vulnerable code the module reaches fails that
-run like any other nightly failure, and the fix is to bump the module to the
+commit is a later run. The same workflow runs the vulnerability scan as jobs
+of its own, because they need the network and so are in no proof: `make vuln`
+over the Go module, `make vuln-js` (`bun audit`) over the UI's and the site's
+JavaScript dependencies, and `make vuln-images` (a pinned Grype) over the
+images a release of the commit publishes. A vulnerability whose vulnerable
+code the module reaches, a high or critical JavaScript advisory, or a fixed
+high or critical vulnerability in an image fails that run like any other
+nightly failure; the fix is to bump the module, package or base image to the
 version the report names. It runs the README's Quickstart on a clone of the
 commit (`scripts/quickstart-smoke.sh`) as a job of its own too, because no
 proof runs the getting-started path: a stack that no longer builds or starts
@@ -1003,10 +1007,12 @@ of the fix or of a commit after it, passes. What it holds is the release: a
 release tag requires a passing pre-release proof, which runs every deferred
 test, so no tag is made while one fails, and a failing pre-release proof holds
 its release the same way. The pre-release proof runs neither the nightly's own
-lanes nor its vulnerability scan, so a release is not tagged while either is
-red, and `release.yml` checks it: before it asks for the approval, it refuses
-a commit whose latest completed nightly on `main` did not pass, or that no
-nightly measured, waiting a bounded time for one still running. (`make
+lanes nor its vulnerability scan (`vuln`, `vuln-js` and `vuln-images`), so a
+release is not tagged while either is red, and `release.yml` checks it: before
+it asks for the approval, it refuses a commit whose latest completed nightly on
+`main` did not pass (its proof, each of the scan's three jobs and
+`quickstart`), or that no nightly measured, waiting a bounded time for one
+still running. (`make
 release-tag`, which publishes nothing, leaves it a rule.) A nightly's verdict
 is its `proof.json`,
 not the run's colour (docs/PROOFS.md §10, §12). A nightly part whose runner measured below the
@@ -1055,7 +1061,9 @@ Every code change follows this order:
    and a false positive carries a line-level `//lint:ignore` that says why.
    `make vuln`, the pinned `govulncheck`, reads the vulnerability database
    over the network, so it is in no lint and no proof, where a network failure
-   must never fail one; `ci.yml` and `nightly.yml` run it.
+   must never fail one; `ci.yml` and `nightly.yml` run it. `make vuln-js` and
+   `make vuln-images`, the scan's other two lanes, need the network too;
+   `nightly.yml` alone runs them.
 1. For a process-boundary change, edit `proto/` first and run `make proto`.
 2. For a new configuration setting: add it to `internal/config`'s `Schema`
    (its default bound to the code constant, `internal/config/config.go`),
@@ -1070,7 +1078,9 @@ Every code change follows this order:
 3. Dependencies are pinned: an exact module version, or an image digest,
    never a floating tag at runtime; a toolchain version is an exact line in
    `go.mod` or the workflow; a tool the build runs (staticcheck,
-   govulncheck) is a `tool` directive there, pinned like a module. Update by
+   govulncheck) is a `tool` directive there, pinned like a module; a
+   third-party action is pinned by its full commit SHA, with its release as a
+   comment on the same line (`@<sha> # vX.Y.Z`). Update by
    pull request that proves the change —
    `.github/dependabot.yml` opens them, and an update never merges on a green
    unit run alone. A new dependency follows the same rule as any other change.
@@ -1081,15 +1091,30 @@ Every code change follows this order:
    affected integration tests against `make infra-up`
    (`scripts/integration.sh ./internal/engine -run '^TestIntegration_X$'`, or
    `make test-integration` for all of them).
-7. Documentation is part of the change. A change that alters behaviour users
-   or operators see — DSL keys and rules, CLI commands and flags, API fields,
-   error reasons, configuration, the activity contract, storage layout, proof
-   and CI behaviour — updates the reference doc that describes it, and
-   deletes the text it makes false, in the same change. A user-visible change
-   adds its entry under CHANGELOG.md's `[Unreleased]` section (Keep a
-   Changelog 1.1.0), a breaking change marked **BREAKING**. Specs and design
-   documents still never go in the repository. A change is not done while a
-   doc describes the old behaviour.
+7. Documentation is part of the change. A change that alters behaviour users,
+   operators or contributors see — DSL keys and rules, CLI commands and
+   flags, API fields, error reasons, configuration, the activity contract,
+   storage layout, proof and CI behaviour — updates the reference doc that
+   describes it, and deletes the text it makes false, in the same change.
+   Specs and design documents still never go in the repository. A change is
+   not done while a doc describes the old behaviour.
+
+   CHANGELOG.md is for the people who run or use OrkStack, and its entries
+   name only changes that may affect them: behaviour, the DSL, the CLI, the
+   API and its error reasons, configuration, the activity contract, storage
+   layout, what a release publishes and any security fix to it, a
+   deprecation, a breaking change. Such a change adds an entry under
+   CHANGELOG.md's `[Unreleased]` section (Keep a Changelog 1.1.0) that says
+   what they must do about it, if anything; a breaking change's entry is
+   marked **BREAKING**. A change that cannot affect them gets no entry,
+   however large: documentation edits; CI, workflows and the proof harness,
+   unless the change alters what a release publishes; tests; refactors;
+   internal tooling, such as the development stack (`make up`); and a
+   dependency bump that cannot affect them. A bump that changes what they
+   see, such as an activity image's tools, gets one, and so does every
+   security fix to what a release publishes, a vulnerable dependency's bump
+   among them, even when they see nothing change. A change with no entry
+   still updates the reference doc that describes it.
 8. Optionally, check the change's evidence with
    `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'` (§11.2). It is a
    scoped check on the branch and gates nothing (decided 2026-10-28): the
@@ -1229,10 +1254,10 @@ full proof passed on the exact tree `main` then points at (§11.3) — the
 `make proof`, or a CI full proof of that exact tree downloaded and passed to
 `make merge-check PROOF=` (§11.3(b)) — and when every reference doc that
 describes what changed says the new thing, with a CHANGELOG.md `[Unreleased]`
-entry for a user-visible change. Done is judged by the merge gate; a deferred
-test's regression is a regression on `main`, found by the nightly or the
-pre-release proof (§11). A feature proof means "ready for the merge proof",
-never "done".
+entry for a change that may affect the people who run or use OrkStack
+(§11.1, step 7). Done is judged by the merge gate; a deferred test's
+regression is a regression on `main`, found by the nightly or the pre-release
+proof (§11). A feature proof means "ready for the merge proof", never "done".
 
 **The four tiers.** A **full proof** is the merge gate. A **feature proof**
 is an optional, scoped check of a change on its branch and never merge

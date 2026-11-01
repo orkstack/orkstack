@@ -98,12 +98,15 @@ needs `ORK_S3_*` either way.
   workflow assigns it — so resuming against a *different* replica yields the
   same stream with nothing repeated and nothing skipped. A stream that ends
   `unavailable` is resumed that way by `orkctl run watch` and the UI's run
-  page, each up to six times in a row without an event. The engine itself
-  restarts a history read the cluster says changed under it
-  (`CurrentBranchChanged`, which can answer a long poll of a run that has
-  just completed), up to three times in a row without a new event, so that
-  answer reaches a client only when it persists (`internal/engine/reader.go`,
-  `historyBranchChanged`).
+  page, each up to six times in a row without an event; `orkctl run watch`
+  resumes too when a reset of its connection to the engine reaches it as
+  `canceled`. A connection that ends partway through a stream — the engine
+  closed it, or orkctl's own write met the reset first — ends the watch as
+  `internal` or `unknown`. The engine itself restarts a history read the
+  cluster says changed under it (`CurrentBranchChanged`, which can answer a
+  long poll of a run that has just completed), up to three times in a row
+  without a new event, so that answer reaches a client only when it persists
+  (`internal/engine/reader.go`, `historyBranchChanged`).
 - **Task logs are the same claim, over the bucket.** `StreamTaskLogs` and
   `/ws/runs/{id}/tasks/{task}/logs` read the chunks an Orker wrote and the
   task's state from the cluster, so any replica follows any task — one whose
@@ -170,7 +173,9 @@ CORS, and the bridge's same-origin default admits the UI with no
   else — `index.html`, `/_app/version.json`, the example gallery — is sent
   `Cache-Control: no-cache` with a strong `ETag`, so a browser revalidates it
   on every use (a `304` when it is unchanged) and picks up a new release at
-  its next page load. An error from the UI (a `404`, a `405`) is sent
+  its next page load. An open tab also reads `/_app/version.json` every hour
+  and whenever it regains focus; it reloads only as a rollout's failed
+  navigation does (below). An error from the UI (a `404`, a `405`) is sent
   `Cache-Control: no-store`, so no cache keeps the 404 of an asset asked for
   during a rollout. Content types come from a fixed table, never the host's
   MIME database.
@@ -181,9 +186,9 @@ CORS, and the bridge's same-origin default admits the UI with no
   example gallery's YAML files and the fonts are sent as they are.
 - **Headers.** Every UI response carries `X-Content-Type-Options: nosniff`.
   The page carries a strict `Content-Security-Policy`: the policy the UI's
-  build writes into the page (`ui/svelte.config.js`, `kit.csp`), which names
-  the SHA-256 hash of each inline script the page runs, opened with
-  `frame-ancestors 'none'`. It allows scripts, styles, fonts, images and
+  build writes into the page (`ui/vite.config.ts`, the `sveltekit` plugin's
+  `csp`), which names the SHA-256 hash of each inline script the page runs,
+  opened with `frame-ancestors 'none'`. It allows scripts, styles, fonts, images and
   connections (the Connect calls and the sockets) from the page's own origin,
   inline styles, `data:` images, and `eval`, for the YAML editor
   (SECURITY_MODEL.md says why); it allows no other inline script, no plugin
@@ -1343,7 +1348,7 @@ a **Current Version**, the task queue's current version is nil, and
 
 > A nil Current Version represents all the unversioned workers
 >
-> — `api@v1.63.4/workflowservice/v1/request_response.pb.go`,
+> — `api@v1.64.0/workflowservice/v1/request_response.pb.go`,
 > `SetWorkerDeploymentCurrentVersionRequest.BuildId`
 
 which a versioned release does not have. So a deployment's first versioned
@@ -1394,7 +1399,7 @@ Deployment Version — with one exception:
 > workflow's Deployment Version, in which case the activity will be sent to the
 > **Current Deployment Version of its own task queue**.
 >
-> — `api@v1.63.4/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_PINNED`
+> — `api@v1.64.0/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_PINNED`
 
 So if the Orker polling `ORK_ORKER_QUEUE` does not carry the engine's exact
 `(ORK_DEPLOYMENT_NAME, ORK_BUILD_ID)`, the exception fires and an in-flight
@@ -1760,7 +1765,7 @@ started unversioned has **nothing pinning it**.
 > Workflow execution does not have a Versioning Behavior and is called
 > Unversioned. This is the legacy behavior.
 >
-> — `api@v1.63.4/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_UNSPECIFIED`
+> — `api@v1.64.0/enums/v1/workflow.pb.go`, `VERSIONING_BEHAVIOR_UNSPECIFIED`
 
 So when the first version becomes Current, an unversioned run in flight
 **upgrades onto it** at its next workflow task, and is pinned there from then
@@ -1859,6 +1864,40 @@ otherwise abandon, not as a routine tool.
 composition, `outputs:`, join policies, caching, schedules) needs the
 preparation in §3, "Releases that add Orkflow constructs" — for join policies
 it is a hold, because the silent outcome is destructive.
+
+**Rolling back below 0.1.1, the release that moved to the Temporal Go SDK
+1.50**, is one-way for the runs it executed. From 0.1.1 the engine records a
+marker in a run's history (the SDK's flag 9, ordered child cancellation) the
+first time one cancellation reaches more than one of the run's open scopes,
+so that they are canceled in the order they were opened. That happens on an
+operator's cancel of a run that declares a failure handler, and on a run that
+fails or is canceled while two or more of its awaits or pins are open. An
+older engine does not know the marker. Handed such a history, it fails the
+run's workflow task on every attempt (`unknown SDK flag: 9` in its log), and
+the run stays `RUNNING`, making no progress, until an engine of 0.1.1 or
+later picks it up again. Nothing is lost, but nothing moves. On an unversioned
+fleet any engine may execute a run's next workflow task, so a run that started
+on the older release can record the marker too. So:
+
+- with versioning on, roll back as above: a run stays on the build that
+  started it, so 0.1.1's runs finish on 0.1.1, whose processes keep running
+  until `orkctl release wait` reports it drained;
+- with versioning off, roll back below 0.1.1 only when no run is open. Any
+  run that was open while a 0.1.1 engine ran may carry the marker, whenever
+  it was created, so the check counts every open run, not only those created
+  since 0.1.1. For each namespace that takes runs:
+  1. hold it: `orkctl namespace update NS --hold "rolling back"`;
+  2. wait until
+     `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run.
+     A run waiting on an await stays open until the await is resolved or its
+     deadline passes, which may be hours: resolve it
+     (`orkctl run resolve`) or cancel it (`orkctl run cancel`) rather than
+     wait;
+  3. once every namespace is empty, replace the engines, then release each
+     hold: `orkctl namespace update NS --release-hold`;
+- an unversioned fleet that mixes older and 0.1.1 engines meets the same
+  failure whenever an older engine picks up such a run, so replace every
+  engine replica together when rolling forward to 0.1.1.
 
 **A release that lets runs carry on into a fresh history** ships after the
 release that reads them (below), and the default turns on only in a release
@@ -2005,7 +2044,7 @@ a delay set by two dynamic-config values. Both default to three minutes:
 count, which gives a workflow that started on the version a moment before it
 stopped being current time to reach visibility, and
 `matching.wv.VersionDrainageStatusRefreshInterval` between the counts that
-follow (Temporal server 1.31, which the development image pins). The
+follow (Temporal server 1.32, which the development image pins). The
 `temporal` service of `deploy/docker-compose.yml` passes
 `--dynamic-config-value` for both, `10s` and `3s`, so every test that waits for
 a release to drain waits seconds rather than minutes. The proofs read the same
@@ -2290,7 +2329,7 @@ missing:
 - **A subordinate uid and gid range of at least 65536** for the Orker's user
   (`/etc/subuid`, `/etc/subgid`), for rootless Podman.
 - **Qualified image references.** Podman's enforcing short-name mode refuses
-  `alpine:3.20` where more than one search registry is configured; the boot
+  `alpine:3.24` where more than one search registry is configured; the boot
   probe's image is fully qualified and pinned, and an activity's reference
   is resolved before it reaches the runtime.
 - **`insecure = true` for a plain-HTTP registry** in `registries.conf`, the
@@ -3029,6 +3068,27 @@ OrkStack records it and does not authenticate it.
   environment, every request it sends carries `Ork-Principal:
   $ORK_PRINCIPAL`. It is an assertion like any other: useful on a `make up`
   deployment with no gateway, never proof of who typed the command.
+- **A canceled run records the same assertion** as `Run.canceled_by`, which
+  `orkctl run get`, `orkctl run list` and the API render as asserted. The
+  engine carries it in the cancellation it asks Temporal for: the request's
+  reason is `{"format":1,"principal":"…"}` (`RunCancelRequest`, as
+  protojson, whose spacing may vary), which the cluster keeps as the `cause`
+  of the run's `WorkflowExecutionCancelRequested` event, and the reader takes
+  the name from there and from the archived run, never from the audit trail.
+  Only the first request, recorded before the run published its end, counts,
+  and only on a run that ended `RUN_CANCELED`. A cancel with no header, a
+  run canceled with its parent, one canceled from the cluster directly (any
+  other reason text) and a terminated run name nobody. On SDK 1.47 that
+  request is sent to the frontend directly, so the engine asks again itself
+  on `Unavailable`, `ResourceExhausted` and `Aborted`, as the SDK does:
+  200 ms apart, doubling to 1 s, for at most 10 s (shorter than the SDK's
+  60 s; a `CancelRun` refused so answers `UNAVAILABLE` or
+  `RESOURCE_EXHAUSTED`, and may be asked again)
+  (`TemporalStarter.CancelRun`); a cancel with no principal goes through the
+  SDK as before. During a rollout, a run canceled through an engine of an
+  earlier release names nobody, and one whose end an earlier release's
+  projection worker archived names its canceller until it is retired, then
+  nobody: the archived run is written once.
 - **`source_address` is the TCP peer the engine accepted the request from.**
   Behind a gateway that is the gateway's address; no `X-Forwarded-For` or
   other proxy header is consulted. The client's address is in the gateway's

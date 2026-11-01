@@ -3,7 +3,7 @@
 	"private": true,
 	"type": "module",
 	"engines": {
-		"node": ">=22.18.0"
+		"node": ">=22.23.4"
 	},
 	"scripts": {
 		"sync": "node scripts/sync-docs.mjs",
@@ -16,10 +16,10 @@
 		"test": "node --test 'test/**/*.test.mjs'"
 	},
 	"dependencies": {
-		"@astrojs/starlight": "0.42.7",
+		"@astrojs/starlight": "0.42.8",
 		"@fontsource-variable/archivo-narrow": "5.3.0",
 		"@fontsource-variable/spline-sans-mono": "5.3.0",
-		"astro": "7.4.2",
+		"astro": "7.4.4",
 		"github-slugger": "2.0.0",
 		"sharp": "0.35.5",
 		"starlight-links-validator": "0.27.0",
@@ -27,7 +27,7 @@
 	},
 	"devDependencies": {
 		"@astrojs/check": "0.9.12",
-		"@playwright/test": "1.62.1",
+		"@playwright/test": "1.64.1",
 		"typescript": "6.0.3"
 	}
 }

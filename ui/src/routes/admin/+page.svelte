@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import ErrorPanel from '$lib/components/ErrorPanel.svelte';
-	import { withNamespace } from '$lib/namespace';
-	import SheetHeader from '$lib/components/SheetHeader.svelte';
-	import { OPERATE_PAGES, operateScope } from '$lib/navigation';
-	import { fmtTimestamp } from '$lib/status';
+	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import { withNamespace } from '#lib/namespace.ts';
+	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import { OPERATE_PAGES, operateScope } from '#lib/navigation.ts';
+	import { fmtTimestamp } from '#lib/status.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

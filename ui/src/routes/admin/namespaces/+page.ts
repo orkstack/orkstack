@@ -1,10 +1,10 @@
-import { errorMessage } from '$lib/client';
-import { namespaceClient } from '$lib/clients/namespaces';
-import { systemClient } from '$lib/clients/system';
-import type { Namespace } from '$lib/gen/orkstack/v1/namespace_pb';
-import { pageNumber, pageSize } from '$lib/browsing';
-import { namespaceFrom } from '$lib/namespace';
-import { filtersFromUrl, type FieldFilter } from '$lib/listFilter';
+import { errorMessage } from '#lib/client.ts';
+import { namespaceClient } from '#lib/clients/namespaces.ts';
+import { systemClient } from '#lib/clients/system.ts';
+import type { Namespace } from '#lib/gen/orkstack/v1/namespace_pb.ts';
+import { pageNumber, pageSize } from '#lib/browsing.ts';
+import { namespaceFrom } from '#lib/namespace.ts';
+import { filtersFromUrl, type FieldFilter } from '#lib/listFilter.ts';
 import type { PageLoad } from './$types';
 
 // This is the GLOBAL view: every namespace this deployment has,

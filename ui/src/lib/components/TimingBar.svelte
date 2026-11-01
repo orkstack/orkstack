@@ -4,16 +4,16 @@
 	// The task on its run's timeline, the one every row of the run shares: a
 	// 4 px mark from when it was scheduled to when it finished, placed at its
 	// offset in the run and as wide as its share of the run's elapsed time
-	// ($lib/timing timelinePlacement), so the rows read together as when each
+	// (#lib/timing.ts timelinePlacement), so the rows read together as when each
 	// task ran. The WAIT for an Orker is the paler head of the mark, the RUN
-	// on one its solid body. The numbers beside it come from $lib/timing, the
+	// on one its solid body. The numbers beside it come from #lib/timing.ts, the
 	// browser's copy of the derivation `orkctl run timing` prints, so the
 	// card and the CLI say the same thing about the same run.
 	//
 	// A segment that cannot be known is drawn HATCHED with the word
 	// `unavailable` and its reason on hover — never as a zero-width sliver,
 	// which would read as "no time at all".
-	import { formatQuantity, type TaskTiming, type TimelineSegment } from '$lib/timing';
+	import { formatQuantity, type TaskTiming, type TimelineSegment } from '#lib/timing.ts';
 
 	interface Props {
 		taskId: string;

@@ -4,7 +4,7 @@ This guide is the procedure for moving OrkStack forward and back. It starts with
 
 ## Breaking changes
 
-- Every breaking change is listed in [CHANGELOG.md](../CHANGELOG.md), in the **Changed** or **Removed** section, and marked **BREAKING**. The changelog follows the Keep a Changelog 1.1.0 format named in its header.
+- Every breaking change is listed in [CHANGELOG.md](../CHANGELOG.md), in the section of its kind (most often **Changed** or **Removed**), and marked **BREAKING**. The changelog follows the Keep a Changelog 1.1.0 format named in its header.
 - OrkStack makes no promise of deprecation windows beyond that listing.
 - Releases follow Semantic Versioning from the first, 0.1.0 ([CHANGELOG.md](../CHANGELOG.md), header). Its section says only "First release.": there is no earlier release to upgrade from, so it lists no breaking change. Every release is on the [releases page](https://github.com/orkstack/orkstack/releases).
 
@@ -112,6 +112,8 @@ orkctl release status                              # current, ramping and candid
 
 `--check` exits 0 or 1, naming the first error. An unknown key is refused at boot, naming its full path, and an environment variable overrides the file ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 
+Every Orker runs its boot probe's image before it takes a task, and refuses to start, `BIND_PROBE_IMAGE_UNAVAILABLE`, when it is not local and cannot be pulled ([REASONS.md](./REASONS.md)). A release that moves that image says so in its CHANGELOG section, marked **BREAKING**. On an air-gapped or rate-limited host, mirror or load the new image before the release's Orkers start: from the release that carries this CHANGELOG entry, the boot probe's move to Alpine 3.24, it is `docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a`.
+
 ### Rolling forward
 
 Steps 0, 2, 3, 4 and 5 are `orkctl release` commands, and any `ork` replica answers them. Steps 1 and 6 start and stop processes. The cluster's routing is the only record of which release takes new runs, so nothing needs to be stored between steps ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
@@ -195,7 +197,7 @@ orkctl release wait "$NEW" --timeout 2h
 
 `rollback` makes a release that was current before the current one current again, and runs the same check as `promote`. New runs go back to the old release at once. Runs already pinned to the new release keep finishing there, so keep the new release's workers running until they drain ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
-Rolling back past a release that added Orkflow constructs needs the preparation in the table above. Four cases need more than a rollback:
+Rolling back past a release that added Orkflow constructs needs the preparation in the table above. Five cases need more than a rollback:
 
 | The release being rolled back past added | Before you roll back |
 |---|---|
@@ -203,6 +205,7 @@ Rolling back past a release that added Orkflow constructs needs the preparation 
 | A fan-out maximum above 1,000 items | Lower `engine.each_max_items` to at most 1,000, then wait until every run created before the change has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Definitions passed by reference | Set `engine.definition_by_reference` to `false` on every replica, then wait until every run started with its definition by reference has finished. An older release cannot read such a run's definition ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Snapshot overlays | Set `engine.snapshot_overlays` to `false` on every replica, then wait until every run started while it was on has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
+| The Temporal Go SDK 1.50 (0.1.1) | With versioning on, nothing more: a run 0.1.1 started finishes on 0.1.1. With versioning off, hold each namespace that takes runs, wait until `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run in any of them, roll back, then release each hold: `orkctl namespace update NS --release-hold`. Count every open run, however old: any run open while 0.1.1 ran may carry the marker. A run waiting on an await stays open until the await is resolved or its deadline passes, so resolve or cancel it rather than wait. An older engine cannot replay a run in which 0.1.1 recorded an ordered cancellation, and the run stays `RUNNING` until a 0.1.1 engine picks it up. For the same reason, replace every engine replica of an unversioned fleet together when rolling forward to 0.1.1 ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 
 Two floors do not move. Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a gap in its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
