@@ -295,7 +295,7 @@ func docsWarning(paths []pathScope) []string {
 		out = append(out, "user-facing source files changed with no documentation change: update the reference doc that describes each, or say why it needs none (AGENTS.md §11.1): "+strings.Join(userFacing, ", "))
 	}
 	if len(userFacing) > 0 && !changelogChanged {
-		out = append(out, "no CHANGELOG.md [Unreleased] entry: a user-visible change adds one (AGENTS.md §11.1)")
+		out = append(out, "no CHANGELOG.md [Unreleased] entry: add one if this change may affect the people who run or use OrkStack; a refactor needs none (AGENTS.md §11.1, step 7)")
 	}
 	return out
 }

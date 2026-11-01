@@ -24,12 +24,19 @@ Proof-specs:
 - Which reference doc describes this change, and was it updated?
   (DSL keys and rules, CLI commands and flags, API fields, error reasons,
   configuration, the activity contract, storage layout, proof/CI behaviour.)
-- Did you add the CHANGELOG.md `[Unreleased]` entry a user-visible change
-  needs? A breaking change is marked **BREAKING**.
+- Can this change affect the people who run or use OrkStack (behaviour, the
+  DSL, the CLI, the API and its error reasons, configuration, the activity
+  contract, storage layout, what a release publishes and any security fix to
+  it, including a vulnerable dependency's bump, a deprecation)? Then add its
+  CHANGELOG.md `[Unreleased]` entry, saying what they must do, if anything; a
+  breaking change is marked **BREAKING**. A change that cannot affect them
+  gets none: documentation, tests, refactors, internal tooling, a dependency
+  bump that cannot affect them, and CI or proof changes that leave what a
+  release publishes as it was.
 
 ## Checklist
 
 - [ ] `make check` passes (no Docker, under two minutes).
 - [ ] The evidence above runs and passes.
-- [ ] Docs and CHANGELOG are current.
+- [ ] Docs are current; CHANGELOG.md has an entry if the change needs one.
 - [ ] The branch contains `main`'s tip.

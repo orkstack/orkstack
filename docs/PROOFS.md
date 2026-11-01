@@ -448,8 +448,10 @@ The scope table's actions: `go`, `proto`, `ui`, `spec`, `ui-unit`,
 `full`. A row may name several: `docs/**` is `none,site`, `ui/src/tokens.css`
 is `ui,site`. The `temporal` flag marks a package whose evidence must include an
 integration test. A `docs` flag marks a row whose change should come with a
-documentation change; the proof prints a WARNING for a missing one and never
-fails on it.
+documentation change; the proof prints a WARNING for a missing one. The
+proof also prints a WARNING whenever such a change has no CHANGELOG.md entry,
+and its text asks for one only if the change may affect the people who run or
+use OrkStack. Neither WARNING fails the proof.
 
 The selection is:
 
@@ -1705,13 +1707,16 @@ make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
 ```
 
 **Write the release notes.** A release's notes on its GitHub release page
-are its CHANGELOG.md section, word for word. Each user-visible change lands
-with its entry under `## [Unreleased]` (AGENTS.md §11.1, step 7; CONTRIBUTING.md,
-"The changelog"). Before a release is dispatched, a change to `main`, proved
-and merged like any other, cuts the version's section: it renames
-`## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`, the version without its `v`
-and the day the section is cut, puts an empty `## [Unreleased]` above it, and
-edits the entries into what the release page should say, under Keep a
+are its CHANGELOG.md section, word for word. Each change that may affect the
+people who run or use OrkStack lands with its entry under `## [Unreleased]`
+(AGENTS.md §11.1, step 7; CONTRIBUTING.md, "The changelog"), and no other
+change has one; the cut drops any that slipped in. Before a release is
+dispatched, a change to `main`, proved and merged like any other, cuts the
+version's section: it renames `## [Unreleased]` to `## [X.Y.Z] - YYYY-MM-DD`,
+the version without its `v` and the day the section is cut, puts an empty
+`## [Unreleased]` above it, drops any entry for a change that cannot affect
+those people (a security fix to what a release publishes always can), and
+edits the rest into what the release page should say, under Keep a
 Changelog's `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
 `### Fixed` and `### Security`, each breaking change marked **BREAKING**.
 Nothing writes the date at tag time: the tag names a commit a proof passed
