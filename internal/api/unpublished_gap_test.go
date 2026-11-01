@@ -4,10 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	"github.com/coder/websocket"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -171,5 +174,89 @@ func TestEvidenceExport_AnUnpublishedStartIsSchemaTwo(t *testing.T) {
 	}
 	if report := verifyBundle(t, r.data); len(report.EventGaps) != 1 || report.EventGaps[0] != want {
 		t.Fatalf("Verify reported gaps %+v, want %+v", report.EventGaps, want)
+	}
+}
+
+// TestWebSocketBridge_ClosesWithTheGapItReached: the bridge ends a socket
+// whose stream reached a gap with a close that says which events and why,
+// within a close frame's 123 bytes, never a bare "event stream failed": a
+// run that never published 1, read live from the start, and a run that lost
+// 1201–2400 from object storage, read from its archive.
+func TestWebSocketBridge_ClosesWithTheGapItReached(t *testing.T) {
+	store, err := artifacts.NewLocalRunArchive(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	run := &orkstackv1.Run{Id: unpublishedRunID, Namespace: "default", OrkflowName: "broken",
+		Status: orkstackv1.Status_STATUS_FAILED, CreatedAt: timestamppb.Now(), FinishedAt: timestamppb.Now()}
+	live := api.NewService(api.Config{Reader: unpublishedReader{&fakeReader{
+		runs:   map[string]*orkstackv1.Run{unpublishedRunID: run},
+		events: map[string][]*orkstackv1.Event{unpublishedRunID: unpublishedRunEvents()},
+	}}, Archive: engine.NewRunArchiver(store)})
+	archived := api.NewService(api.Config{Archive: gappedArchive(t)})
+	for _, tc := range []struct {
+		name   string
+		svc    *api.Service
+		path   string
+		frames int
+		reason string
+	}{
+		{"never published, live", live, "/ws/runs/" + unpublishedRunID + "?from_sequence=0", 0,
+			"events 1–1 of this run were never published; its outcome and other events are intact"},
+		{"lost, from the archive", archived, "/ws/runs/ork-gap?from_sequence=1000", 200,
+			"events 1201–2400 of this run were lost from object storage before the run was archived"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(api.NewMux(tc.svc, api.MuxOptions{}))
+			t.Cleanup(server.Close)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+tc.path, nil)
+			if err != nil {
+				t.Fatalf("dial: %v", err)
+			}
+			defer conn.CloseNow()
+			frames := 0
+			for {
+				if _, _, err = conn.Read(ctx); err != nil {
+					break
+				}
+				frames++
+			}
+			var closed websocket.CloseError
+			if !errors.As(err, &closed) || closed.Code != websocket.StatusInternalError || closed.Reason != tc.reason {
+				t.Fatalf("the socket ended %v, want a close %d %q", err, websocket.StatusInternalError, tc.reason)
+			}
+			if len(closed.Reason) > 123 || frames != tc.frames {
+				t.Fatalf("close reason of %d bytes after %d frames, want at most 123 after %d", len(closed.Reason), frames, tc.frames)
+			}
+		})
+	}
+}
+
+// noTerminalReader is the system of record for a run that published no
+// terminal event (engine.TemporalRunReader.PublishedTerminalEvent).
+type noTerminalReader struct{ *fakeReader }
+
+func (noTerminalReader) PublishedTerminalEvent(context.Context, string) (bool, error) {
+	return false, nil
+}
+
+// TestEvidenceExport_ARunNeverArchivedSaysSo: a finished run with no archive
+// body is "not yet archived; retry shortly" only while an archive can still
+// come. A run whose history shows it published no terminal event — its
+// ending's snapshot refused, or terminated — never gets one, and the export
+// says that instead of asking for a retry that cannot help.
+func TestEvidenceExport_ARunNeverArchivedSaysSo(t *testing.T) {
+	f := newEvidenceFixture(t, withConfig(func(cfg *api.Config) {
+		cfg.Reader = noTerminalReader{cfg.Reader.(*fakeReader)}
+	}))
+	f.reader.setRun(&orkstackv1.Run{Id: "ork-never", OrkflowName: "evidence", Status: orkstackv1.Status_STATUS_FAILED})
+	r := f.collectEvidence(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-never"})
+	if connect.CodeOf(r.err) != connect.CodeFailedPrecondition ||
+		!strings.Contains(r.err.Error(), `run "ork-never" has no archive and will never have one: it published no terminal event`) ||
+		strings.Contains(r.err.Error(), "retry") {
+		t.Fatalf("export = %v, want FailedPrecondition saying the run is never archived, with no retry", r.err)
 	}
 }

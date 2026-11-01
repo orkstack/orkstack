@@ -121,6 +121,30 @@ type evidenceExport struct {
 	small map[string][]byte
 }
 
+// terminalEventReader is a reader that can say whether a run published its
+// terminal event (engine.TemporalRunReader); a reader without it is never
+// asked.
+type terminalEventReader interface {
+	PublishedTerminalEvent(ctx context.Context, runID string) (bool, error)
+}
+
+// neverArchived reports, for a finished run with no archive body, that the
+// run's history shows it published no terminal event: only that publish
+// archives a run, so no archive is coming and "retry shortly" would be
+// false. Anything it cannot read answers false, and the export says retry.
+func (e *evidenceExport) neverArchived(ctx context.Context, runID string) bool {
+	binding, err := e.s.locate(ctx, runID)
+	if err != nil {
+		return false
+	}
+	reader, ok := binding.Reader.(terminalEventReader)
+	if !ok {
+		return false
+	}
+	published, err := reader.PublishedTerminalEvent(ctx, runID)
+	return err == nil && !published
+}
+
 // build is steps 6 to 9: every member, from the archived snapshot.
 func (e *evidenceExport) build(
 	ctx context.Context,
@@ -134,6 +158,11 @@ func (e *evidenceExport) build(
 	// is the run the body attests.
 	body, err := bodies.LoadRunBody(ctx, run.GetId())
 	switch {
+	case errors.Is(err, artifacts.ErrNotFound) && e.neverArchived(ctx, run.GetId()):
+		return nil, connect.NewError(connect.CodeFailedPrecondition,
+			fmt.Errorf("run %q has no archive and will never have one: it published no terminal event — its "+
+				"ending could not be written to object storage, or it was terminated — and only that event "+
+				"archives a run, so it can be read only until it is retired (docs/DEPLOY.md §6)", run.GetId()))
 	case errors.Is(err, artifacts.ErrNotFound):
 		return nil, connect.NewError(connect.CodeFailedPrecondition,
 			fmt.Errorf("run %q is finished but not yet archived; retry shortly", run.GetId()))

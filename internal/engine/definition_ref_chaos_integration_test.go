@@ -513,19 +513,12 @@ func (s *chaosStack) requireStreamed(t *testing.T, a *chaosAPI, runID, want stri
 // requireArchivedWith: the run's archive body holds the events served and
 // the run's code, and records 1 as a gap exactly when gap is set — which a
 // read of the archive from the start names, DataLoss, with what lies past it
-// still readable from 1.
+// still readable from 1. It is read once, after the run closed: the archive
+// is written by the terminal event's publish, which the run waits for before
+// it closes (emitWithSnapshot), so a missing body is a failure, not a delay.
 func (s *chaosStack) requireArchivedWith(t *testing.T, a *chaosAPI, runID string, served []*orkstackv1.Event, code string, gap bool) {
 	t.Helper()
-	deadline := time.Now().Add(time.Minute)
-	var archived []*orkstackv1.Event
-	var err error
-	for {
-		archived, err = s.archive.LoadRunEvents(s.ctx, runID)
-		if !errors.Is(err, artifacts.ErrNotFound) || time.Now().After(deadline) {
-			break
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
+	archived, err := s.archive.LoadRunEvents(s.ctx, runID)
 	var lost *engine.ArchivedEventsLostError
 	switch {
 	case gap && !errors.As(err, &lost):

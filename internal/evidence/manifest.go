@@ -17,16 +17,17 @@ import (
 	"time"
 )
 
-// SchemaVersion is the manifest schema every bundle whose run lost nothing
-// is written with.
+// SchemaVersion is the manifest schema every bundle whose run's archive
+// records no gap is written with.
 const SchemaVersion = 1
 
-// SchemaVersionEventGaps is the schema of a bundle whose run lost part of its
-// event stream from object storage before it was archived: the same members,
-// plus event_gaps naming every lost range. It is a new version, not an
-// additive key, so a tool older than it refuses the bundle with its own
-// message instead of verifying it silently. These are the two versions this
-// build reads; a newer bundle is not verified by an older tool.
+// SchemaVersionEventGaps is the schema of a bundle whose run's archive
+// records gaps in its event stream — events lost from object storage before
+// it was archived, or numbers it never published: the same members, plus
+// event_gaps naming every range. It is a new version, not an additive key,
+// so a tool older than it refuses the bundle with its own message instead of
+// verifying it silently. These are the two versions this build reads; a
+// newer bundle is not verified by an older tool.
 const SchemaVersionEventGaps = 2
 
 // ManifestPath is the name of a bundle's first member.

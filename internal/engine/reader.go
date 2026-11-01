@@ -531,6 +531,20 @@ func (r *TemporalRunReader) EventsForArchive(
 	return projection.events, st.gaps, nil
 }
 
+// PublishedTerminalEvent reports whether a run published its terminal event,
+// rather than ending with a close the reader reads as one (closeRun): a run
+// that did not — its ending's snapshot refused, or terminated from outside —
+// is never archived, since only that publish archives a run. Gaps and lost
+// segments are tolerated, as on the archive path.
+func (r *TemporalRunReader) PublishedTerminalEvent(ctx context.Context, runID string) (bool, error) {
+	st := newScanState(true)
+	projection, err := r.scanWith(ctx, runID, false, 0, false, nil, st)
+	if err != nil {
+		return false, err
+	}
+	return projection.sawTerminal, nil
+}
+
 // StreamEvents delivers a run's events after fromSequence to send, and ends at
 // the run's terminal event.
 //

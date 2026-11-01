@@ -456,7 +456,8 @@ refused: it carries the lazy `run-created-first` marker (`emitRunCreatedFirst`,
 asked where the write first fails), `RUN_CREATED` written again under sequence
 1, and then `RUN_FAILED` at 2. The `gap` fixture is recorded by today's code
 with both writes refused: the marker, two failed writes, then `RUN_FAILED` at
-2, so the reader archives the run with 1 as a gap (`recordUnwrittenStart`).
+2, so the reader names 1 as never published, and archives the run with it as a
+gap (`unpublishedStart`).
 The `legacy` fixture is recorded with the gate switched off
 (`DisableRunCreatedFirstGateForTest`), which is the command sequence of every
 build before it: no marker, and `RUN_FAILED` written at 2 right after the

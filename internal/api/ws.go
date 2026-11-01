@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"path"
@@ -120,7 +121,13 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 				}
 				return nil
 			})
+		var gap *streamGapError
 		switch {
+		case errors.As(streamErr, &gap):
+			// The stream reached a gap in the run's events — DataLoss on the
+			// Connect stream — and the socket says which, and why, as the
+			// Connect stream's error does, in a close frame's bytes.
+			_ = conn.Close(websocket.StatusInternalError, gap.closeReason())
 		case streamErr != nil:
 			// The stream failed, or the peer went away mid-write. Either way
 			// the socket cannot carry a normal close reason for it.

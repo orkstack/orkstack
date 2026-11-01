@@ -26,8 +26,15 @@ word for word.
   release before this left the same way, after one refused write, is read the
   same way (`docs/DEPLOY.md` §6, "An ending before start writes `RUN_CREATED`
   first").
-- The notice of an archive gap names its cause: events "lost from object
-  storage before the run was archived", or "never published".
+- A gap in a run's events is named for its cause wherever it is reported —
+  the `DataLoss` error, the evidence bundle's notice, and `orkctl run evidence
+  verify`, whose rows are now labelled `event gaps` rather than `events lost`:
+  events "lost from object storage before the run was archived", or "never
+  published". The run page's socket (`/ws/runs/{id}`) now closes with that
+  sentence, shortened to fit a close frame, instead of "event stream failed".
+- `ExportRunEvidence` of a finished run that published no terminal event
+  (its ending could not be written to object storage, or it was terminated)
+  now says the run has no archive and never will, instead of asking to retry.
 
 ## [0.1.0] - 2026-10-30
 

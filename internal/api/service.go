@@ -2222,12 +2222,25 @@ func (s *Service) archivedEventsBeforeLoss(
 	return after, connect.NewError(connect.CodeDataLoss, archivedLossError(runID, overlapping)), nil
 }
 
-// archivedLossError is the sentence a read over a gap receives, archived or
-// live, each range named for its cause — lost from object storage, or never
-// published: run vocabulary only.
+// archivedLossError is the error a read over a gap receives, archived or
+// live: a *streamGapError, whose sentence names each range for its cause.
 func archivedLossError(runID string, gaps []engine.EventGap) error {
+	return &streamGapError{runID: runID, gaps: gaps}
+}
+
+// streamGapError is a read over gaps in a run's stream: events lost from
+// object storage before the run was archived, or numbers it never published.
+// Its message is the one sentence every such read gives, in run vocabulary
+// only; closeReason is the same within a WebSocket close frame.
+type streamGapError struct {
+	runID string
+	gaps  []engine.EventGap
+}
+
+// gapClauses names the ranges for their causes, "events … of <subject>".
+func (e *streamGapError) gapClauses(subject string, withReasons bool) []string {
 	var lostRanges, lostReasons, unpublished []string
-	for _, gap := range gaps {
+	for _, gap := range e.gaps {
 		if gap.Unpublished() {
 			unpublished = append(unpublished, fmt.Sprintf("%d–%d", gap.First, gap.Last))
 			continue
@@ -2237,14 +2250,45 @@ func archivedLossError(runID string, gaps []engine.EventGap) error {
 	}
 	var clauses []string
 	if len(lostRanges) > 0 {
-		clauses = append(clauses, fmt.Sprintf("events %s of run %s were lost from object storage before the run was archived (%s)",
-			strings.Join(lostRanges, ", "), runID, strings.Join(lostReasons, "; ")))
+		clause := fmt.Sprintf("events %s of %s were lost from object storage before the run was archived",
+			strings.Join(lostRanges, ", "), subject)
+		if withReasons {
+			clause += " (" + strings.Join(lostReasons, "; ") + ")"
+		}
+		clauses = append(clauses, clause)
 	}
 	if len(unpublished) > 0 {
-		clauses = append(clauses, fmt.Sprintf("events %s of run %s were never published (%s)",
-			strings.Join(unpublished, ", "), runID, engine.UnpublishedEventsReason))
+		clause := fmt.Sprintf("events %s of %s were never published", strings.Join(unpublished, ", "), subject)
+		if withReasons {
+			clause += " (" + engine.UnpublishedEventsReason + ")"
+		}
+		clauses = append(clauses, clause)
 	}
-	return fmt.Errorf("%s; the run's outcome and its other events are intact", strings.Join(clauses, "; "))
+	return clauses
+}
+
+func (e *streamGapError) Error() string {
+	return strings.Join(e.gapClauses("run "+e.runID, true), "; ") + "; the run's outcome and its other events are intact"
+}
+
+// maxCloseReason is the most a WebSocket close frame's reason holds
+// (RFC 6455 §5.5: a 125-byte control payload, 2 of them the status code).
+const maxCloseReason = 123
+
+// closeReason is the sentence for the socket that streams this one run: the
+// run is the socket's own, so it is "this run", and the reasons and then the
+// closing clause go first when the frame cannot hold them.
+func (e *streamGapError) closeReason() string {
+	for _, reason := range []string{
+		strings.Join(e.gapClauses("this run", true), "; ") + "; its outcome and other events are intact",
+		strings.Join(e.gapClauses("this run", false), "; ") + "; its outcome and other events are intact",
+		strings.Join(e.gapClauses("this run", false), "; "),
+	} {
+		if len(reason) <= maxCloseReason {
+			return reason
+		}
+	}
+	return "events of this run are missing from its stream; its outcome and other events are intact"
 }
 
 // LookupRun resolves a run through the read model, in the order the system of

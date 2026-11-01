@@ -56,7 +56,7 @@ func (a *snapshotAttempts) of(sequence int64) int {
 // before the terminal event, so a store back for that second write leaves
 // both, from 1. When that fails too, the terminal event still goes at 2,
 // under a key of its own, and the archive records 1 as a gap
-// (recordUnwrittenStart, TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap).
+// (unpublishedStart, TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap).
 // When the terminal write fails as well, nothing is published and the reader
 // numbers the execution's close from 1.
 func TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd(t *testing.T) {

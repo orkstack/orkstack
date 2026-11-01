@@ -74,3 +74,45 @@ func TestEvidenceVerifyCommand_PrintsTheGap(t *testing.T) {
 		t.Fatalf("--json event_gaps = %+v", report.EventGaps)
 	}
 }
+
+// TestEvidenceVerifyCommand_NamesANeverPublishedGap: a bundle of a run that
+// never published its first number (an ending before start whose
+// RUN_CREATED object storage refused) verifies, and its gap row says never
+// published — under a label that names no cause, never "lost".
+func TestEvidenceVerifyCommand_NamesANeverPublishedGap(t *testing.T) {
+	gap := evidence.EventGap{First: 1, Last: 1, Reason: evidence.UnpublishedEventsReason}
+	body := []byte(`{"kind":"run","run":{"id":"ork-unpublished"}}` + "\n" +
+		`{"kind":"gap","gap":{"first":1,"last":1,"reason":"` + gap.Reason + `"}}` + "\n" +
+		`{"kind":"event","event":{"runId":"ork-unpublished","sequence":"2","type":"EVENT_TYPE_RUN_FAILED"}}` + "\n")
+	sum := sha256.Sum256(body)
+	at := time.Date(2026, 10, 31, 12, 0, 0, 0, time.UTC)
+	manifest := &evidence.Manifest{
+		SchemaVersion: evidence.SchemaVersionEventGaps, RunID: "ork-unpublished", Namespace: "default",
+		OrkflowName: "deploy", OrkflowVersion: "1.0.0", RunStatus: "FAILED",
+		RunCreatedAt: at, RunFinishedAt: at, ExportedAt: at, EngineVersion: "v0.9.3",
+		Definition: evidence.Definition{State: evidence.StateReclaimed, Reason: evidence.ReasonDefinitionDeleted},
+		Tasks:      []evidence.TaskEntry{},
+		Members: []evidence.Member{{Path: "run.jsonl", Kind: evidence.KindRun, Origin: "metadata/runs/ork-unpublished.jsonl",
+			SizeBytes: int64(len(body)), SHA256: hex.EncodeToString(sum[:]), State: evidence.StatePresent}},
+		EventGaps: []evidence.EventGap{gap},
+	}
+	manifest.Counts = evidence.CountMembers(manifest.Members)
+	var bundle bytes.Buffer
+	if err := evidence.Write(context.Background(), &bundle, manifest, runJSONLSource(body)); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "unpublished.tar.gz")
+	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := newFixture(t).run("run", "evidence", "verify", path)
+	if res.code != exitOK {
+		t.Fatalf("exit %d: %s%s", res.code, res.stdout, res.stderr)
+	}
+	want := "events 1–1 of this run were never published (the run's history holds no event under these numbers)"
+	if !strings.Contains(res.stdout, want) || !strings.Contains(res.stdout, "event gaps") ||
+		strings.Contains(res.stdout, "lost") {
+		t.Fatalf("verify output does not name the gap as never published, under a causeless label:\n%s", res.stdout)
+	}
+	t.Logf("verify:\n%s", res.stdout)
+}

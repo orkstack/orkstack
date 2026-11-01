@@ -86,8 +86,8 @@ func eventTypesOf(events []*orkstackv1.Event) string {
 //     event.
 //
 // In the last two the run published no terminal event, so in a deployment
-// nothing archives it; EventsForArchive still says what the archive would
-// hold.
+// nothing archives it (PublishedTerminalEvent is false); EventsForArchive
+// still says what the archive would hold.
 func TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap(t *testing.T) {
 	for _, tc := range []struct {
 		name, fixture string
@@ -98,17 +98,20 @@ func TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap(t *t
 		// naming gap; then fromOne is what one from 1 serves.
 		served, fromOne string
 		archived, gaps  string
+		// published is whether the run published its terminal event, which
+		// is what archives a run (PublishedTerminalEvent).
+		published bool
 	}{
 		{"its second write took", "run-created-first-v1.json", 0,
-			"[1:RUN_CREATED 2:RUN_FAILED]", "[2:RUN_FAILED]", "[1:RUN_CREATED 2:RUN_FAILED]", "[]"},
+			"[1:RUN_CREATED 2:RUN_FAILED]", "[2:RUN_FAILED]", "[1:RUN_CREATED 2:RUN_FAILED]", "[]", true},
 		{"neither RUN_CREATED write took", "run-created-first-gap-v1.json", 0,
-			"", "[2:RUN_FAILED]", "[2:RUN_FAILED]", "[1–1]"},
+			"", "[2:RUN_FAILED]", "[2:RUN_FAILED]", "[1–1]", true},
 		{"a build before the gate", "run-created-first-legacy-v1.json", 0,
-			"", "[2:RUN_FAILED]", "[2:RUN_FAILED]", "[1–1]"},
+			"", "[2:RUN_FAILED]", "[2:RUN_FAILED]", "[1–1]", true},
 		{"RUN_CREATED took and the terminal did not", "run-created-first-v1.json", 1,
-			"[1:RUN_CREATED 2:RUN_FAILED]", "[2:RUN_FAILED]", "[1:RUN_CREATED 2:RUN_FAILED]", "[]"},
+			"[1:RUN_CREATED 2:RUN_FAILED]", "[2:RUN_FAILED]", "[1:RUN_CREATED 2:RUN_FAILED]", "[]", false},
 		{"nothing took", "run-created-first-gap-v1.json", -1,
-			"[1:RUN_FAILED]", "[]", "[1:RUN_FAILED]", "[]"},
+			"[1:RUN_FAILED]", "[]", "[1:RUN_FAILED]", "[]", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runID, events := runCreatedFirstHistory(t, tc.fixture)
@@ -166,6 +169,9 @@ func TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap(t *t
 			}
 			if got := "[" + strings.Join(ranges, " ") + "]"; got != tc.gaps {
 				t.Fatalf("EventsForArchive recorded gaps %s, want %s", got, tc.gaps)
+			}
+			if published, err := reader.PublishedTerminalEvent(context.Background(), runID); err != nil || published != tc.published {
+				t.Fatalf("PublishedTerminalEvent = %v (%v), want %v", published, err, tc.published)
 			}
 		})
 	}
