@@ -430,8 +430,10 @@ The scope table's actions: `go`, `proto`, `ui`, `spec`, `ui-unit`,
 `full`. A row may name several: `docs/**` is `none,site`, `ui/src/tokens.css`
 is `ui,site`. The `temporal` flag marks a package whose evidence must include an
 integration test. A `docs` flag marks a row whose change should come with a
-documentation change; the proof prints a WARNING for a missing one and never
-fails on it.
+documentation change; the proof prints a WARNING for a missing one. The
+proof also prints a WARNING whenever such a change has no CHANGELOG.md entry,
+and its text asks for one only if the change may affect the people who run or
+use OrkStack. Neither WARNING fails the proof.
 
 The selection is:
 
