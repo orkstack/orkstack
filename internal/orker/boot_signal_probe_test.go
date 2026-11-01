@@ -166,22 +166,35 @@ func TestBoot_SIGTERMReachesTheProbeAsACancelledTasksDoes(t *testing.T) {
 	if err := activities.Boot(context.Background()); err != nil {
 		t.Fatalf("Boot = %v", err)
 	}
+	// What the probe's container was sent, in order, up to its removal, and
+	// whether the call just before the removal was a SIGKILL.
 	var signals []string
+	var previous string
+	removed, killedByRemoval := false, false
 	for _, call := range fake.calls() {
-		if strings.HasPrefix(call, "rm ") && strings.Contains(call, "ork-"+signalProbeTaskID+"-") {
+		if !strings.Contains(call, "ork-"+signalProbeTaskID+"-") {
+			continue
+		}
+		if strings.HasPrefix(call, "rm ") {
+			removed, killedByRemoval = true, strings.HasPrefix(previous, "kill --signal KILL ")
 			break
 		}
-		if strings.HasPrefix(call, "kill ") && strings.Contains(call, "ork-"+signalProbeTaskID+"-") {
-			signals = append(signals, call)
+		if fields := strings.Fields(call); len(fields) >= 3 && fields[0] == "kill" && fields[1] == "--signal" {
+			signals = append(signals, fields[2])
 		}
+		previous = call
 	}
-	// Remove kills before it removes (removeKillTimeout): that one is the
-	// removal's, not the cancellation's.
-	if n := len(signals); n > 0 && strings.HasPrefix(signals[n-1], "kill --signal KILL ") {
-		signals = signals[:n-1]
+	if !removed {
+		t.Fatal("the probe's container was never removed, so nothing orders the signals before its removal")
 	}
-	if len(signals) != 1 || !strings.HasPrefix(signals[0], "kill --signal TERM ork-"+signalProbeTaskID+"-") {
-		t.Fatalf("signals = %q; want one SIGTERM to the probe's container, as a cancelled task's container gets it", signals)
+	// Remove kills before it removes (removeKillTimeout): the SIGKILL right
+	// before the removal is the removal's, not the cancellation's.
+	if killedByRemoval {
+		signals = signals[:len(signals)-1]
+	}
+	if len(signals) != 1 || signals[0] != "TERM" {
+		t.Fatalf("signals before the removal = %q; want the cancellation's to be one SIGTERM and no SIGKILL, "+
+			"as a cancelled task's container gets it when it hears it", signals)
 	}
 }
 
