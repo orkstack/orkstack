@@ -15,6 +15,14 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- Runs created per day or per hour, on the viewer's own calendar. `GetStats`
+  takes `bucket_width` (`HOUR` or `DAY`), an IANA `timezone` and
+  `bucket_count`, and adds `buckets` to the window it already answers: each
+  bucket counts the runs created in it, by status, from the same read as the
+  window's totals, so the finished counts add up to the window's exactly.
+  `orkctl stats --by day` prints the last 7 days in this machine's zone, today
+  included (`--by hour` the last 24 hours, `--buckets N`, `--timezone`); a day
+  is 23 or 25 hours when the zone's clocks change in it.
 - An Orker that declares no capacity says at boot that its admission is best
   effort, bounded only by `max_concurrent`
   (`capacity not declared: admission is best effort, bounded only by max_concurrent`).
@@ -254,6 +262,10 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- `GetStats` and `orkctl stats` no longer count a run twice — once as
+  finished, once as running — in the moment after it ends, before the
+  cluster's index of executions catches up with its close. A run the archive
+  holds is counted as finished only.
 - An Orker's own policy checks — its cpu and memory caps, secret schemes and
   `ORK_ORKER_SECRET_ALLOW` floor — now run after commit adoption and the memo
   step. A retry whose result another Orker of the pool already committed, or a

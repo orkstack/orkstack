@@ -2073,9 +2073,19 @@ Every number is derived when it is asked for, from the same records
 `orkctl run list` and `orkctl namespace get` read, so any engine replica
 gives the same answer. Nothing here is a stored counter.
 
+--by day or --by hour adds a series: the same window cut into days or
+hours on the wall clock of --timezone (default: this machine's zone), each
+bucket counting the runs it created. With --by and no --since the window
+is the last 7 days (day) or 24 hours (hour), the current one included;
+--buckets N asks for the last N instead. The server draws every boundary,
+so a day is 23 or 25 hours long when the zone's clocks change in it.
+
 Flags:
 
-- `--since STRING` — how far back to look: a duration such as 6h, or an RFC3339 instant (default: the last 24 hours)
+- `--buckets INT` — with --by: the last N days or hours, the current one included (default 7 days or 24 hours)
+- `--by STRING` — add a series of the window by day or by hour
+- `--since STRING` — how far back to look: a duration such as 6h, or an RFC3339 instant (default: the last 24 hours; with --by, the last 7 days or 24 hours)
+- `--timezone STRING` — with --by: the IANA time zone whose days or hours the series counts (default: this machine's zone, else UTC)
 
 Inherited flags:
 

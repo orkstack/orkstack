@@ -26,7 +26,9 @@ option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1"
 // drift, and the cost is bounded by a short-lived cache whose age every answer
 // carries (computed_at).
 service StatsService {
-  // GetStats reports one namespace's runs over one time window.
+  // GetStats reports one namespace's runs over one time window and, when the
+  // request names a bucket_width, the same window as a series of hours or
+  // days — from the same scan, so the series and the totals cannot disagree.
   rpc GetStats(GetStatsRequest) returns (GetStatsResponse);
   // GetFailureBreakdown groups one namespace's FAILED runs over one window by
   // the dimensions the caller names. It is the read that makes the §4
@@ -87,6 +89,74 @@ message GetStatsRequest {
   // window is compared against are the server's either way, so the arithmetic
   // belongs there.
   google.protobuf.Duration lookback = 4;
+  // bucket_width asks for a series as well as the window's totals: the
+  // window cut into consecutive buckets of this width (see StatsBucket).
+  // UNSPECIFIED, the default, asks for none, and the answer is then exactly
+  // what it is without this field.
+  StatsBucketWidth bucket_width = 5;
+  // timezone is the IANA zone whose wall clock draws the bucket boundaries,
+  // such as "America/Los_Angeles", read from the engine's time zone
+  // database. Empty is UTC. "Local" is refused: it names the zone of
+  // whichever machine reads it. Set without bucket_width, it is refused.
+  //
+  // A zone and not an offset: a fixed offset is wrong on every day on the
+  // far side of a daylight-saving change inside the window, and a zone keeps
+  // ONE clock — the request states a zone and a unit, never an instant the
+  // client computed, and the server derives every boundary from them.
+  string timezone = 6;
+  // bucket_count states the window as "the last N whole buckets, ending with
+  // the one that holds the window's last instant": how a client asks for the
+  // last seven days, today included, without computing a local midnight on
+  // its own clock. until still ends the window (empty is now), so the last
+  // bucket is cut short there. 0 means the window comes from since and
+  // lookback, as without a series; 1 to 1000 is accepted. Set together with
+  // since or lookback, set without bucket_width, negative, or above 1000, it
+  // is refused.
+  int32 bucket_count = 7;
+}
+
+// StatsBucketWidth is the calendar unit one bucket of a series spans, read
+// on the wall clock of the request's timezone.
+//
+// A bucket is one stretch of time whose wall-clock label — the local date
+// for DAY, the local date and hour for HOUR — does not change. So a day is
+// 23 or 25 hours long when the zone's clocks change inside it, an hour that
+// a fall-back repeats is ONE two-hour bucket, and a date or an hour the
+// zone's clocks skip has no bucket at all. There is no width below an hour:
+// a curve finer than that is what the telemetry pipeline's counters are for.
+enum StatsBucketWidth {
+  STATS_BUCKET_WIDTH_UNSPECIFIED = 0;   // no series
+  STATS_BUCKET_WIDTH_HOUR = 1;
+  STATS_BUCKET_WIDTH_DAY = 2;
+}
+
+// StatsBucket is one bucket of a series: the runs the namespace CREATED in
+// [since, until), counted exactly as GetStatsResponse.runs_by_status counts
+// the window's. One window, one population holds per bucket: a run is in the
+// bucket it was submitted in, whenever it ends.
+message StatsBucket {
+  google.protobuf.Timestamp since = 1;   // inclusive
+  google.protobuf.Timestamp until = 2;   // exclusive
+  // runs_by_status has the window's four keys, always present. succeeded,
+  // failed and canceled count the bucket's runs that have finished; running
+  // counts the bucket's runs not finished when the answer was computed. The
+  // four sum to how many runs the bucket created, up to one skew: a run
+  // still going is placed by the cluster's record of its start, a finished
+  // one by the archive's stamp of its creation, and the two differ by the
+  // milliseconds a submission takes, so a run submitted that close to a
+  // boundary can change buckets when it finishes.
+  //
+  // Across the series, succeeded, failed and canceled sum EXACTLY to the
+  // window's runs_by_status: both come from one scan of the archive index.
+  // running sums to at most the window's running, and the difference is the
+  // runs still going that were created before window_since. The window's
+  // running is a fact about now and counts them; no bucket can, because none
+  // of them was created in one.
+  map<string, int64> runs_by_status = 3;
+  // partial is true when the window cut this bucket short, so it spans less
+  // than its whole hour or day: the first bucket of a window that starts
+  // mid-day, and the last bucket of one that ends now ("today, so far").
+  bool partial = 4;
 }
 
 // OrkflowFailures is one orkflow's failure record inside the window: how many
@@ -191,6 +261,17 @@ message GetStatsResponse {
   string namespace = 14;
   google.protobuf.Timestamp window_since = 12;
   google.protobuf.Timestamp window_until = 13;
+  // buckets is the series the request asked for, oldest first. It tiles
+  // [window_since, window_until) exactly: the first bucket starts at
+  // window_since, each ends where the next starts, and the last ends at
+  // window_until. With bucket_count, window_since is the start of the first
+  // whole bucket, so every number above describes exactly the span the
+  // buckets tile. Empty when the request asked for no series.
+  repeated StatsBucket buckets = 15;
+  // bucket_width and timezone are the series actually drawn, resolved: an
+  // empty timezone answers "UTC". Unset when no series was asked for.
+  StatsBucketWidth bucket_width = 16;
+  string timezone = 17;
 }
 
 // FailureGroupBy names one dimension of a fingerprint. The order of the
