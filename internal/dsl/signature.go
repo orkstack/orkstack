@@ -373,7 +373,7 @@ func (c *signatureCheck) readLegacy(ctx context.Context) (signatureRead, error) 
 			manifest.MediaType != MediaTypeOCIManifest && manifest.MediaType != MediaTypeDockerManifest) {
 		read.invalid = &SignatureError{Image: c.pinned, Signer: c.signer, Code: task.ReasonImageSignatureInvalid,
 			Detail: fmt.Sprintf("has a signature object %s that is not an image manifest (%s)",
-				ref.Original, contentType), Err: jsonErr}
+				ref.Original, SafeReason(contentType)), Err: jsonErr}
 		return read, nil
 	}
 	read.count = len(manifest.Layers)
@@ -480,7 +480,7 @@ func (c *signatureCheck) readIndex(body []byte, contentType, what string) ([]byt
 	}
 	if int64(len(body)) > maxManifestBytes || jsonErr != nil || mediaType != MediaTypeOCIIndex {
 		return nil, &SignatureError{Image: c.pinned, Signer: c.signer, Code: task.ReasonImageSignatureInvalid,
-			Detail: fmt.Sprintf("has %s that is not an image index within %d bytes (%s)", what, maxManifestBytes, contentType),
+			Detail: fmt.Sprintf("has %s that is not an image index within %d bytes (%s)", what, maxManifestBytes, SafeReason(contentType)),
 			Err:    jsonErr}, nil
 	}
 	return body, nil, nil
@@ -627,7 +627,9 @@ func (v *SignatureVerifier) transportSentence(ref Reference, err error) string {
 				"config.json with credentials for %s", ref.APIHost(), resolve.Detail, v.authFileVar(), ref.Registry)
 		case ReasonImageResolveUnavailable:
 			if resolve.Err != nil {
-				return fmt.Sprintf("registry %s could not be reached: %v", ref.APIHost(), resolve.Err)
+				// A network error can quote a host the registry named (a
+				// token realm): escaped and cut, as ResolveError.Error does.
+				return fmt.Sprintf("registry %s could not be reached: %s", ref.APIHost(), SafeReason(resolve.Err.Error()))
 			}
 			return resolve.Detail
 		default:

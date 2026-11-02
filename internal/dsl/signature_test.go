@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
@@ -112,6 +113,59 @@ func TestSignatureVerifier_MissingTagIsNotSigned(t *testing.T) {
 	if sig.Error() != want {
 		t.Fatalf("sentence =\n%s\nwant\n%s", sig.Error(), want)
 	}
+}
+
+// requireNoTerminalControl fails when a refusal holds a character a
+// terminal could obey, or does not show want, the escaped form of what the
+// registry sent.
+func requireNoTerminalControl(t *testing.T, err error, want string) {
+	t.Helper()
+	if err == nil {
+		t.Fatal("Verify = nil, want a refusal")
+	}
+	message := err.Error()
+	for _, r := range message {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Fatalf("the refusal holds %U raw:\n%q", r, message)
+		}
+	}
+	if !strings.Contains(message, want) {
+		t.Fatalf("the refusal shows no %s:\n%s", want, message)
+	}
+}
+
+// TestSignatureVerifier_ARegistrysOwnWordsReachNoTerminal: text a registry
+// sends that a refusal quotes — the Content-Type of a signature object or of
+// a referrers index, a host its token challenge names — reaches the
+// sentence escaped, shown rather than dropped. (A header cannot carry a C0
+// control over HTTP/1.x; a C1 control and a bidirectional override it can.)
+func TestSignatureVerifier_ARegistrysOwnWordsReachNoTerminal(t *testing.T) {
+	const hostile = "text/plain \u009b31m\u202eevil"
+	const shown = `text/plain \u009b31m\u202eevil`
+	t.Run("a signature object's content type", func(t *testing.T) {
+		f := newSigFixture(t)
+		f.double.PutManifest(sigRepo, cosigntest.SignatureTag(f.image.GetIndexDigest()), hostile, []byte("{}"))
+		requireNoTerminalControl(t, f.verify(), shown)
+	})
+	t.Run("a referrers index's content type", func(t *testing.T) {
+		f := newSigFixture(t)
+		f.double.PutManifest(sigRepo, cosigntest.ReferrersTag(f.image.GetIndexDigest()), hostile, []byte("{}"))
+		requireNoTerminalControl(t, f.verify(), shown)
+	})
+	t.Run("a token realm's host", func(t *testing.T) {
+		// The realm's host is no DNS name, so the lookup fails at once and
+		// never leaves the process.
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Www-Authenticate", "Bearer realm=\"http://ev\u009bil\u202e.test/token\",service=\"x\"")
+			w.WriteHeader(http.StatusUnauthorized)
+		}))
+		t.Cleanup(server.Close)
+		f := newSigFixture(t)
+		host := strings.TrimPrefix(server.URL, "http://")
+		f.image.Registry, f.image.Reference = host, host+"/"+sigRepo+":v3"
+		f.image.Pinned = host + "/" + sigRepo + "@" + f.image.GetIndexDigest()
+		requireNoTerminalControl(t, f.verify(), `ev\u009bil\u202e.test`)
+	})
 }
 
 // ---- cosign 3's bundle layout --------------------------------------------------

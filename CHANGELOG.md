@@ -275,6 +275,21 @@ version's own, and its text is the release's notes on GitHub, word for word.
   `orkctl activity inspect` and the API) now shows every control or format
   character it quotes as an escape, such as `\u001b`, and is cut at 512
   bytes, so an image cannot write to an operator's terminal through it.
+- A registry's own text in a resolution error or a signature check's
+  refusal — the body of a manifest or config read it refused, a
+  `Docker-Content-Digest` that does not match, the `Content-Type` of a
+  signature object or referrers index, or a host it named that a request
+  then failed to reach — is escaped and cut at 512 bytes the same way, in
+  the API's error and in every `orkctl` command that prints it.
+- `orkctl --json` of the commands that print an API answer through its
+  shared encoder (`run get`, `run list`, `activity inspect` and `activity
+  list` among them) writes DEL, every C1 control and every format character
+  (bidirectional controls, zero-width and tag characters) as a `\u` escape,
+  as it already did the other controls. The output decodes to the same
+  values; a platform or media type a registry sent can no longer drive the
+  terminal it is printed to. The `--json` of `run logs -f`, `run inspect
+  --watch`, `activity test`, `webhook`, `run timing`, `config`, `version`
+  and evidence output is written by other encoders and is not rewritten.
 
 ### Fixed
 
