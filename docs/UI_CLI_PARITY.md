@@ -51,16 +51,17 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   [JSON.md](JSON.md), unless a command says otherwise. Two responses cannot
   share one document, so a flag that would append a second read to `--json`
   output is refused and names the command that prints it.
-- **Every action has its CLI equivalent.** The UI shows a shell-escaped,
-  runnable `orkctl` (or `curl`) command beside each action, carrying the
-  namespace, version, task, attempt and item where they apply; a quote in a
-  value cannot become shell syntax. A word is quoted only when a shell would
-  read it as syntax (a space, a quote, `$`, `*`, `~`, a leading `=`), so the
-  command reads the way a person types it. Copy works on a plain-HTTP origin too
-  (where the browser offers no Clipboard API, it falls back to the legacy
-  copy command); when the browser refuses both, the command is selected on
-  screen and the page says to copy it by hand. A copy never silently does
-  nothing.
+- **Every action has its CLI equivalent.** Behind the terminal icon of each
+  page (and of a run's task row) the UI lists that page's shell-escaped,
+  runnable `orkctl` (or `curl`) commands, each with Copy, carrying the
+  namespace, version, task, attempt and item where they apply; the commands
+  are never printed on the page itself. A quote in a value cannot become
+  shell syntax. A word is quoted only when a shell would read it as syntax (a
+  space, a quote, `$`, `*`, `~`, a leading `=`), so the command reads the way
+  a person types it. Copy works on a plain-HTTP origin too (where the browser
+  offers no Clipboard API, it falls back to the legacy copy command); when the
+  browser refuses both, the command is selected on screen and the page says to
+  copy it by hand. A copy never silently does nothing.
 - **Deep links and copies keep their coordinates.** A URL or download retains
   the namespace, pinned version, task, attempt, item and inspector tab, and a
   reload restores the selection. Run inputs may contain secrets and never
@@ -108,17 +109,18 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   language server reads); whether it validates is the engine's answer,
   `orkctl orkflow validate`'s own.
 
-### Navigation and the command palette
+### Navigation and Jump
 
-The UI is arranged in two modes. **Build** is the dashboard, Runs, Orkflows
-and Apply — the surfaces an author reads every day; **Operate** is every
-page under Admin. Runs, Orkflows and Apply stay one click away from any
-Operate page, and every link carries the namespace in the picker.
+A sidebar holds the namespace switch, then Runs (with how many runs are going
+now), Orkflows and Apply — the surfaces an author reads every day — then
+**Operate**, every page under Admin. Below 900 px it is a drawer the Menu
+button opens. Every link carries the namespace in the switch, and the top
+bar's breadcrumb says where you are.
 
 **Ctrl+K** (**⌘K** on macOS and iOS, and only that there: Ctrl+K stays a
-text-editing key) opens the command palette from anywhere, a text field
+text-editing key) opens Jump, a search dialog, from anywhere, a text field
 included, except while another dialog, menu or list is open, which keeps the
-keystroke and its own state. The palette jumps to any page of either mode, to
+keystroke and its own state. Jump goes to any page of either mode, to
 an Orkflow or a run found by name, to a run by its id (it navigates and lets
 the run page say whether the run exists; it never looks a run up itself), to
 the runs and Orkflows recently opened in this browser (ids and names only,
@@ -131,10 +133,10 @@ button, with its confirmation and its CLI equivalent. It is the browser's
 presentation of navigation, so it has no `orkctl` twin; every action it
 reaches keeps the one it already has.
 
-Each page states what it is in a row along the bottom edge — its name (or an
-Orkflow, a version, a digest and a status), the namespace, and on Operate
-pages what its figures cover. It never shows a run id: a run's id is its
-page's heading.
+A run page, Runs, a comparison and an Orkflow page state their facts in one
+strip under the heading (who started a run, when, for how long, its progress;
+an Orkflow's current version, definition digest and when it was applied). A
+principal is always marked asserted.
 
 ## Filtering lists
 
@@ -641,7 +643,7 @@ person sees its own marks. A browser that refuses storage marks nothing.
   that failed after the last visit is marked as "failed while you were
   away".
 - Opening a run's page counts as seeing it, and so does watching its status
-  change there. **Mark all seen** (on the page, and in the command palette,
+  change there. **Mark all seen** (on the page, and in Jump,
   which also lists the changed runs) clears every mark.
 - While the page is visible it re-reads the same listing every 15 s and
   updates the status of the rows already shown in place; it never reorders
