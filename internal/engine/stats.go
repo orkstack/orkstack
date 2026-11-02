@@ -481,6 +481,12 @@ type RunTally struct {
 	ByStatus map[string]int64
 	// ByOrkflow counts each orkflow's finished and failed runs.
 	ByOrkflow map[string]OrkflowTally
+	// FinishedIDs is the id of every run the tally counted. A run the archive
+	// holds has ended, and a run id names one run, so a reader of live runs
+	// drops these: the cluster's index of executions reports a close a moment
+	// after the archive holds the run, and for that moment the run would
+	// otherwise be counted twice, finished and running.
+	FinishedIDs map[string]struct{}
 	// ByBucket counts the same runs by status again, one map per bucket of a
 	// series, in the order of the edges the tally was asked for. It is nil
 	// for a tally asked for no series (TallyRuns), and every map is empty for
@@ -515,8 +521,9 @@ func (t RunTally) Succeeded() int64 { return t.ByStatus[StatusKeySucceeded] }
 // so the aggregation is testable without a store of any kind.
 func TallyRunIndex(entries []artifacts.RunIndexEntry) RunTally {
 	tally := RunTally{
-		ByStatus:  map[string]int64{},
-		ByOrkflow: map[string]OrkflowTally{},
+		ByStatus:    map[string]int64{},
+		ByOrkflow:   map[string]OrkflowTally{},
+		FinishedIDs: map[string]struct{}{},
 	}
 	for _, entry := range entries {
 		tally.add(entry)
@@ -529,6 +536,7 @@ func TallyRunIndex(entries []artifacts.RunIndexEntry) RunTally {
 func (t *RunTally) add(entry artifacts.RunIndexEntry) string {
 	status := artifacts.NormalizeRunStatus(entry.Status)
 	t.ByStatus[status]++
+	t.FinishedIDs[entry.RunID] = struct{}{}
 	per := t.ByOrkflow[entry.Orkflow]
 	per.Total++
 	if status == StatusKeyFailed {

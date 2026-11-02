@@ -262,6 +262,10 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- `GetStats` and `orkctl stats` no longer count a run twice — once as
+  finished, once as running — in the moment after it ends, before the
+  cluster's index of executions catches up with its close. A run the archive
+  holds is counted as finished only.
 - An Orker's own policy checks — its cpu and memory caps, secret schemes and
   `ORK_ORKER_SECRET_ALLOW` floor — now run after commit adoption and the memo
   step. A retry whose result another Orker of the pool already committed, or a

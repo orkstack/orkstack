@@ -210,6 +210,13 @@ reading that run's history, one read per run, which is the cost this whole
 service exists to avoid. `running` means "accepted and not finished", and the
 `running` list is the same set.
 
+A run is never counted twice. The cluster's index of executions reports a
+run's close a moment after the archive holds the run, so for that moment one
+run is finished in one record and live in the other. The archive's word is
+final — a run it holds has ended — so the run is counted as finished only, and
+is in neither `running` nor any bucket's running count
+(`TestGetStats_ARunTheArchiveHoldsIsNotAlsoRunning`).
+
 `success_rate` counts canceled runs as finished. A deployment that cancels half
 its runs has not succeeded at them, and excluding them would make the rate rise
 when things go wrong.

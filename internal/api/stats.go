@@ -345,6 +345,7 @@ func (h *StatsHandler) compute(
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("read the execution index for namespace %q: %w", window.Namespace, err))
 	}
+	running := stillRunning(executions.Running, tally)
 	pools, err := h.pools(ctx, ns, binding)
 	if err != nil {
 		return nil, err
@@ -352,9 +353,9 @@ func (h *StatsHandler) compute(
 
 	now := h.now()
 	response := &orkstackv1.GetStatsResponse{
-		RunsByStatus: statusCounts(tally, len(executions.Running)),
+		RunsByStatus: statusCounts(tally, len(running)),
 		MostFailing:  mostFailing(tally),
-		Running:      executions.Running,
+		Running:      running,
 		Pools:        pools,
 		ComputedAt:   timestamppb.New(now),
 		Namespace:    window.Namespace,
@@ -375,7 +376,7 @@ func (h *StatsHandler) compute(
 			engine.PercentileDuration(executions.Durations, 95))
 	}
 	if series != nil {
-		buckets, err := seriesBuckets(series, tally, executions.Running)
+		buckets, err := seriesBuckets(series, tally, running)
 		if err != nil {
 			return nil, err
 		}
@@ -468,6 +469,25 @@ func (h *StatsHandler) pools(
 			fmt.Errorf("report pool health for namespace %q: %w", ns.GetName(), err))
 	}
 	return pools, nil
+}
+
+// stillRunning is the live runs the archive does not already hold as
+// finished, in the order the cluster listed them.
+//
+// The two records are read one after the other, and the cluster's index of
+// executions reports a run's close a moment after the archive holds the run:
+// for that moment one run is a finished run in the archive and a live one in
+// the index. The archive's word is final — a run it holds has ended, and a
+// run id names one run — so the run is counted once, as finished, in the
+// window and in its bucket.
+func stillRunning(running []*orkstackv1.Run, tally engine.RunTally) []*orkstackv1.Run {
+	out := make([]*orkstackv1.Run, 0, len(running))
+	for _, run := range running {
+		if _, finished := tally.FinishedIDs[run.GetId()]; !finished {
+			out = append(out, run)
+		}
+	}
+	return out
 }
 
 // statusCounts merges the archive's finished counts with the cluster's live
