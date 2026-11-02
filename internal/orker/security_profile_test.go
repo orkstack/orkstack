@@ -1090,10 +1090,11 @@ func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T)
 	// microseconds for the payload; the busiest runs, under the race detector
 	// on a host shared with other proofs, took up to 13 ms for the deep path.
 	// A walk that looked at the prefixes of 2,000 names again and again costs
-	// seconds, so the bound is three times the busiest run and ten times the
-	// quiet ones: a slower runner still passes, and a regression is two orders
-	// above it. The looks, counted below, are what pin the walk exactly.
-	const bound = 40 * time.Millisecond
+	// seconds, so the bound is ten times the quiet runs, and under the race
+	// detector raceSlowdown times that, thirty times its busiest run: a slower
+	// runner still passes, and a regression is two orders above it. The
+	// looks, counted below, are what pin the walk exactly.
+	const bound = 40 * time.Millisecond * raceSlowdown
 	// walked is the most names one walk of the case can come to: the
 	// directories above the first link, then the links it follows before it
 	// gives up (maxLinks); one name, where the first does not exist; the 64
