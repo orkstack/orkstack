@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { buildInputsHash } from '../e2e/build-hash';
+import { BUILD_INPUTS, buildInputsHash } from '../e2e/build-hash';
 
 // e2e/global-setup.ts reuses ui/build when the hash of its inputs matches the
 // marker the last build left. The hash must change for any changed byte of
@@ -28,7 +28,7 @@ test('the order the inputs are named in does not matter, their set does', () => 
 	expect(forward === fewer).toBe(false);
 });
 
-// Every input the build reads, as a file under a ui/ beside an examples/.
+// A file for every input the build reads, under a ui/ beside an examples/.
 const defaultInputFiles = [
 	'src/app.txt',
 	'src/lib/gen/client.ts',
@@ -39,6 +39,13 @@ const defaultInputFiles = [
 	'bun.lock',
 	'../examples/hello.ork.yaml'
 ];
+
+test('every default input has a file among the edited ones', () => {
+	const uncovered = BUILD_INPUTS.filter(
+		(input) => !defaultInputFiles.some((file) => file === input || file.startsWith(`${input}/`))
+	);
+	expect(uncovered).toEqual([]);
+});
 
 for (const edited of defaultInputFiles) {
 	test(`with the default inputs an edit to ${edited} changes the hash`, () => {

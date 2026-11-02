@@ -333,37 +333,48 @@ test('a same-page link loading as the run ends still shows its final values', as
 		await route.fulfill({ response });
 	});
 	armed = true;
+	// A failed assertion below must not leave the page's reads pending.
+	const releaseAll = () => {
+		landed = true;
+		armed = false;
+		for (const release of held) release();
+	};
+	try {
+		// The first approval's TASK_RESOLVED starts a re-read; its read is held.
+		await rpc('RunService/ResolveAwait', {
+			runId, namespace: NS, taskId: 'first', valuesJson: '{"approver": "first-operator"}'
+		});
+		await expect.poll(() => held.length, { timeout: 60_000 }).toBeGreaterThan(0);
+		const beforeClick = held.length;
+		// That re-read is still loading, so the click's navigation re-runs the
+		// page's load, and its read of the run is held too: the second approval
+		// is still waiting when it is made.
+		await page.getByTestId('events-toggle').click();
+		await expect.poll(() => held.length, { timeout: 30_000 }).toBeGreaterThan(beforeClick);
+		const navigationReads = held.length;
 
-	// The first approval's TASK_RESOLVED starts a re-read; its read is held.
-	await rpc('RunService/ResolveAwait', {
-		runId, namespace: NS, taskId: 'first', valuesJson: '{"approver": "first-operator"}'
-	});
-	await expect.poll(() => held.length, { timeout: 60_000 }).toBeGreaterThan(0);
-	const beforeClick = held.length;
-	// That re-read is still loading, so the click's navigation re-runs the
-	// page's load, and its read of the run is held too: the second approval
-	// is still waiting when it is made.
-	await page.getByTestId('events-toggle').click();
-	await expect.poll(() => held.length, { timeout: 30_000 }).toBeGreaterThan(beforeClick);
-	const navigationReads = held.length;
+		// The run ends while the navigation is loading. The second approval's
+		// status comes from the event stream, which nothing holds.
+		await expect(page.getByTestId('task-second-status')).toHaveText('AWAITING', { timeout: 60_000 });
+		await rpc('RunService/ResolveAwait', {
+			runId, namespace: NS, taskId: 'second', valuesJson: '{"approver": "ci-bot"}'
+		});
+		await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
 
-	// The run ends while the navigation is loading.
-	await rpc('RunService/ResolveAwait', {
-		runId, namespace: NS, taskId: 'second', valuesJson: '{"approver": "ci-bot"}'
-	});
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+		// The navigation lands on the snapshot it read before the run ended.
+		for (const release of held.slice(0, navigationReads)) release();
+		await expect(page).toHaveURL(/[?&]events=1/);
+		// Every read from here on is answered as it is made; a re-read the router
+		// would drop was begun while the navigation loaded, and is held until now.
+		landed = true;
+		armed = false;
+		for (const release of held.slice(navigationReads)) release();
 
-	// The navigation lands on the snapshot it read before the run ended.
-	for (const release of held.slice(0, navigationReads)) release();
-	await expect(page).toHaveURL(/[?&]events=1/);
-	// Every read from here on is answered as it is made; a re-read the router
-	// would drop was begun while the navigation loaded, and is held until now.
-	landed = true;
-	armed = false;
-	for (const release of held.slice(navigationReads)) release();
-
-	await expect(page.getByTestId('task-second-status')).toHaveText('SUCCEEDED');
-	await expect(page.getByTestId('task-values-second')).toContainText('ci-bot', { timeout: 60_000 });
-	note(`same-page link while ${runId} ended: ${navigationReads} reads held until the navigation landed, final values shown`);
-	await shot(page, 'screenshot-same-page-link-as-run-ends.png');
+		await expect(page.getByTestId('task-second-status')).toHaveText('SUCCEEDED');
+		await expect(page.getByTestId('task-values-second')).toContainText('ci-bot', { timeout: 60_000 });
+		note(`same-page link while ${runId} ended: ${navigationReads} reads held until the navigation landed, final values shown`);
+		await shot(page, 'screenshot-same-page-link-as-run-ends.png');
+	} finally {
+		releaseAll();
+	}
 });

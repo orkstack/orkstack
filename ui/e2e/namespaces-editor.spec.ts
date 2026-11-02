@@ -282,9 +282,11 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	// copied out of it carries the sender's namespace rather than leaving the
 	// reader's browser to answer for them.
 	//
-	// The address is written once and then left alone. The write is shallow,
-	// so the page's own URL stays bare; a layout that answered its own write
-	// would write again for as long as the tab is open, and hang it.
+	// The address is written when the page loads and then left alone. The
+	// write is shallow, so the page's own URL stays bare; a layout that
+	// answered its own write would write again for as long as the tab is
+	// open, and hang it. How many writes the load takes is the router's
+	// business; that none follows it is the page's.
 	await page.addInitScript(() => {
 		const w = window as unknown as { __addressWrites: number };
 		w.__addressWrites = 0;

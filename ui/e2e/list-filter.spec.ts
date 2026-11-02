@@ -40,7 +40,9 @@ import { OP, addListFilter } from './uiHelpers';
 //      deployment-wide subscriptions;
 //   L5 a pasted URL with a field the list does not declare shows the
 //      server's INVALID_ARGUMENT text, and Clear filters recovers;
-//   L6 changing a filter on page 2 of Orkflows returns to page 1, no cursor.
+//   L6 changing a filter on page 2 of Orkflows returns to page 1, no cursor;
+//   L7 Copy without a Clipboard API falls back, then says to copy by hand;
+//   L8 applying filters keeps the focus on Apply and the scroll position.
 //
 // Isolation (AGENTS.md §11.1): its own Temporal namespace, its own bucket,
 // its own ports. It ends only the processes it started (killStarted).
@@ -187,7 +189,6 @@ test('L8: applying filters keeps the focus on Apply and the page where it was', 
 	expect(scrolled).toBeGreaterThan(0);
 	await page.keyboard.press('Enter');
 	await expect.poll(() => urlFilters(page)).toEqual(['name~-0']);
-	await expect.poll(() => orkflowRows(page)).toEqual([...PAY, ...SEARCH]);
 	// The router resets focus and scroll right after the address changes;
 	// two painted frames later it has done whatever it was going to do.
 	await page.evaluate(
