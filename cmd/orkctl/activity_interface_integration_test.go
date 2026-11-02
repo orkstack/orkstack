@@ -18,10 +18,12 @@ import (
 	"testing"
 	"time"
 
+	"connectrpc.com/connect"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
@@ -198,24 +200,51 @@ func TestInterfaceManifests_FirstPartyImagesDeclareTheirInterfaces(t *testing.T)
 	}
 
 	// Each label the registry serves is exactly what the image's
-	// interface.ork.yaml declares: genschemas generated the LABEL line the
-	// image was built with, and the engine reads it back unchanged.
+	// interface.ork.yaml declares: genschemas generated the three LABEL lines
+	// the image was built with — the descriptions' quotes and apostrophes
+	// through a single-quoted Dockerfile LABEL included — and the engine
+	// reads each back unchanged.
 	root := repoRoot(t)
 	for _, name := range dsl.BuiltinActivityCatalog().Names() {
 		source, err := os.ReadFile(filepath.Join(root, "images", "activity-"+name, "interface.ork.yaml"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, err := dsl.ParseInterfaceDocument(source)
+		want, err := dsl.ParseActivityDocument(source)
 		if err != nil {
 			t.Fatalf("images/activity-%s/interface.ork.yaml: %v", name, err)
 		}
-		if got := byName[name].GetInterface(); !proto.Equal(got, want) {
-			t.Fatalf("%s: the registry's label declares\n%v\nits interface.ork.yaml\n%v", name, got, want)
+		got := byName[name]
+		if got.GetInterfaceError() != "" || got.GetIconError() != "" || got.GetDocsError() != "" {
+			t.Fatalf("%s: a label is unreadable: %q / %q / %q", name, got.GetInterfaceError(), got.GetIconError(), got.GetDocsError())
+		}
+		if !proto.Equal(got.GetInterface(), want.Interface) {
+			t.Fatalf("%s: the registry's label declares\n%v\nits interface.ork.yaml\n%v", name, got.GetInterface(), want.Interface)
+		}
+		if !proto.Equal(got.GetIcon(), want.Icon) || !proto.Equal(got.GetDocs(), want.Docs) {
+			t.Fatalf("%s: the registry's icon and docs\n%v\n%v\nits interface.ork.yaml\n%v\n%v",
+				name, got.GetIcon(), got.GetDocs(), want.Icon, want.Docs)
 		}
 	}
 
-	requireCLI(t, stack.cli, "inspect file", "activity", "inspect", "file")
+	inspectedText := requireCLI(t, stack.cli, "inspect file", "activity", "inspect", "file")
+	fileSource, err := os.ReadFile(filepath.Join(root, "images", "activity-file", "interface.ork.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fileDecl, err := dsl.ParseActivityDocument(fileSource)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Description " + strings.Join(strings.Fields(fileDecl.Docs.GetDescription()), " "),
+		"Icon        declared · 2 elements", // the file image's page: two paths
+		"DESCRIPTION",
+	} {
+		if !strings.Contains(inspectedText, want) {
+			t.Fatalf("activity inspect file lacks %q:\n%s", want, inspectedText)
+		}
+	}
 	inspected := decodeActivityInfo(t, requireCLI(t, stack.cli, "inspect file as JSON", "activity", "inspect", "file", "--json"), false)[0]
 	if !proto.Equal(inspected.GetInterface(), file) {
 		t.Fatalf("inspect's interface differs from list's:\n%v\n%v", inspected.GetInterface(), file)
@@ -473,14 +502,15 @@ func TestInterfaceManifests_ActivityBuildPacksTheInterface(t *testing.T) {
 		}
 	}
 	document := "apiVersion: orkstack/v1\nkind: ActivityInterface\n" +
-		"fields:\n  greeting:\n    type: string\n    default: \"it's here\"\n" +
+		"description: It's \"built\".\nicon: '<svg viewBox=\"0 0 16 16\"><path d=\"M4 7h8\" stroke=\"currentColor\"/></svg>'\n" +
+		"fields:\n  greeting:\n    type: string\n    default: \"it's here\"\n    description: What it's \"saying\".\n" +
 		"ops:\n  hello:\n    fields:\n      name:\n        type: string\n        required: true\n  bye: {}\n" +
 		"defaultOp: hello\nvalues:\n  said:\n    type: string\n"
 	documentPath := filepath.Join(t.TempDir(), "interface.ork.yaml")
 	if err := os.WriteFile(documentPath, []byte(document), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	want, err := dsl.ParseInterfaceDocument([]byte(document))
+	want, err := dsl.ParseActivityDocument([]byte(document))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -488,16 +518,21 @@ func TestInterfaceManifests_ActivityBuildPacksTheInterface(t *testing.T) {
 	tag := fmt.Sprintf("%s/orkstack-test/interface-built:%s", testRegistry(), exampleImageTag())
 	built := requireCLI(t, stack.cli, "activity build --interface",
 		"activity", "build", buildContext, "--tag", tag, "--interface", documentPath)
-	if !strings.Contains(built, "Declaring the interface of "+documentPath) {
-		t.Fatalf("activity build did not say it packed the interface:\n%s", built)
+	if !strings.Contains(built, "Declaring the interface, icon and descriptions of "+documentPath) {
+		t.Fatalf("activity build did not say it packed the labels:\n%s", built)
 	}
 	inspected := decodeActivityInfo(t, requireCLI(t, stack.cli, "inspect the built image",
 		"activity", "inspect", tag, "--json"), false)[0]
-	if inspected.GetInterfaceError() != "" {
-		t.Fatalf("the built image's label is unreadable: %s", inspected.GetInterfaceError())
+	if inspected.GetInterfaceError() != "" || inspected.GetIconError() != "" || inspected.GetDocsError() != "" {
+		t.Fatalf("a label of the built image is unreadable: %q / %q / %q",
+			inspected.GetInterfaceError(), inspected.GetIconError(), inspected.GetDocsError())
 	}
-	if !proto.Equal(inspected.GetInterface(), want) {
-		t.Fatalf("the built image declares\n%v\nthe document\n%v", inspected.GetInterface(), want)
+	if !proto.Equal(inspected.GetInterface(), want.Interface) {
+		t.Fatalf("the built image declares\n%v\nthe document\n%v", inspected.GetInterface(), want.Interface)
+	}
+	if !proto.Equal(inspected.GetIcon(), want.Icon) || !proto.Equal(inspected.GetDocs(), want.Docs) {
+		t.Fatalf("the built image draws and describes\n%v\n%v\nthe document\n%v\n%v",
+			inspected.GetIcon(), inspected.GetDocs(), want.Icon, want.Docs)
 	}
 }
 
@@ -545,6 +580,34 @@ func TestInspectActivity_TwoReplicasAgree(t *testing.T) {
 	}
 	if a.GetInterface() == nil || !proto.Equal(a.GetInterface(), b.GetInterface()) {
 		t.Fatalf("interfaces differ:\n%v\n%v", a.GetInterface(), b.GetInterface())
+	}
+
+	// A run page's question: the image a task ran, by its pinned reference,
+	// with allow_cached. Each replica reads the registry for it once and
+	// then answers from memory; every answer, fresh or cached, on either
+	// replica, says the same thing about the digest.
+	pinned := pinnedReference(a)
+	var fresh *orkstackv1.ActivityInfo
+	for _, server := range stack.engines {
+		client := orkstackv1connect.NewActivityServiceClient(h2cClient(t), server)
+		for _, allowCached := range []bool{false, true, true} {
+			resp, err := client.InspectActivity(ctx, connect.NewRequest(
+				&orkstackv1.InspectActivityRequest{Reference: pinned, AllowCached: allowCached}))
+			if err != nil {
+				t.Fatalf("inspect %s on %s (allow_cached %v): %v", pinned, server, allowCached, err)
+			}
+			got := resp.Msg.GetActivity()
+			if got.GetIcon() == nil || got.GetDocs() == nil {
+				t.Fatalf("inspect %s on %s: no icon or docs: %v", pinned, server, got)
+			}
+			got.ResolvedAt = nil
+			if fresh == nil {
+				fresh = got
+			}
+			if !proto.Equal(got, fresh) {
+				t.Fatalf("inspect %s on %s (allow_cached %v):\n%v\nwant\n%v", pinned, server, allowCached, got, fresh)
+			}
+		}
 	}
 }
 

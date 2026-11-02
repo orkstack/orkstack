@@ -100,8 +100,8 @@ type activityInterfaceFile struct{ path string }
 
 func (e *activityInterfaceFile) Error() string {
 	return fmt.Sprintf("%s: kind: %s is an activity interface, not a document to apply: pack it into an image's "+
-		"%s label with orkctl activity interface pack, or build the image with orkctl activity build --interface",
-		e.path, dsl.KindActivityInterface, dsl.InterfaceLabel)
+		"%s, %s and %s labels with orkctl activity interface pack, or build the image with orkctl activity build --interface",
+		e.path, dsl.KindActivityInterface, dsl.InterfaceLabel, dsl.IconLabel, dsl.DocsLabel)
 }
 
 // expandApplyArgs reads every argument: a file as is, a directory as its

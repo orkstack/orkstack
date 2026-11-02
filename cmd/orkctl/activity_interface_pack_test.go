@@ -43,6 +43,48 @@ func TestActivityInterfacePack_PrintsTheLabel(t *testing.T) {
 	}
 }
 
+const describedPackDocument = packDocument + `description: It's small.
+icon: |
+  <svg viewBox="0 0 16 16">
+    <path d="M4 7h8" stroke="currentColor"/>
+  </svg>
+`
+
+// TestActivityInterfacePack_PrintsTheLabelItIsAskedFor: --label picks one of
+// the three labels; an undeclared icon or docs prints the empty value, and
+// the interface label is the same bytes whatever else the document declares.
+func TestActivityInterfacePack_PrintsTheLabelItIsAskedFor(t *testing.T) {
+	described := writeActivityInterface(t, describedPackDocument)
+	bare := writeActivityInterface(t, packDocument)
+	for _, tc := range []struct {
+		name, path string
+		args       []string
+		want       string
+	}{
+		{"the interface of a described document", described, nil, packLabel},
+		{"the interface, named", described, []string{"--label", "interface"}, packLabel},
+		{"the icon", described, []string{"--label", "icon"}, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 7h8" stroke="currentColor"/></svg>`},
+		{"the docs", described, []string{"--label", "docs"}, `{"schemaVersion":1,"description":"It` + `\` + `u0027s small."}`},
+		{"no icon", bare, []string{"--label", "icon"}, ""},
+		{"no docs", bare, []string{"--label", "docs"}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append(append([]string{"activity", "interface", "pack"}, tc.args...), tc.path)
+			out, err := executeAs(t, "linux", args...)
+			if err != nil {
+				t.Fatalf("pack: %v\n%s", err, out)
+			}
+			if out != tc.want+"\n" {
+				t.Fatalf("pack printed\n%q\nwant\n%q", out, tc.want+"\n")
+			}
+		})
+	}
+	if _, err := executeAs(t, "linux", "activity", "interface", "pack", "--label", "colour", described); err == nil ||
+		!strings.Contains(err.Error(), "interface, icon or docs") {
+		t.Fatalf("pack --label colour = %v, want a refusal naming the three labels", err)
+	}
+}
+
 // TestActivityInterfacePack_NamesTheFileItRefuses: a document pack cannot
 // read is refused with its path and the parser's reason, and prints nothing
 // a shell substitution could mistake for a label.
@@ -50,6 +92,8 @@ func TestActivityInterfacePack_NamesTheFileItRefuses(t *testing.T) {
 	for _, tc := range []struct{ name, content, want string }{
 		{"an Orkflow", "apiVersion: orkstack/v1\nkind: Orkflow\nname: x\n", "kind: Orkflow is an Orkflow, not an activity interface"},
 		{"a bad type", "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields:\n  a:\n    type: text\n", `fields.a: type "text" is not one of`},
+		{"a bad icon", "apiVersion: orkstack/v1\nkind: ActivityInterface\nicon: '<svg viewBox=\"0 0 16 16\"><script/></svg>'\n",
+			`icon: holds the element "script"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeActivityInterface(t, tc.content)
