@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"net/http"
+	"time"
 )
 
 // SpecDifferenceForTest exposes specDifference to the external test package,
@@ -26,4 +27,20 @@ var EachMaxItemsOfForTest = eachMaxItemsOf
 // MountReservedForTest mounts pattern the way NewMux mounts every API route.
 func MountReservedForTest(mux *http.ServeMux, pattern string) {
 	reservedMux{serveMux: mux}.Handle(pattern, http.NotFoundHandler())
+}
+
+// CapacityInventoryTTLForTest and CapacityWaitAfterForTest are the two
+// durations InspectRun's capacity answer is bounded by, so a test can stand
+// on either side of one without restating its value.
+const (
+	CapacityInventoryTTLForTest = capacityInventoryTTL
+	CapacityWaitAfterForTest    = capacityWaitAfter
+)
+
+// SetInventoryTimerForTest replaces the timer that ends one read of the
+// Orker inventory at its bound with one the test fires itself, so a read the
+// fleet never finishes can be ended without waiting out the real bound. Call
+// it before the first InspectRun.
+func (s *Service) SetInventoryTimerForTest(afterFunc func(d time.Duration, f func()) (stop func() bool)) {
+	s.inventory.afterFunc = afterFunc
 }

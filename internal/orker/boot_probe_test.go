@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // TestBootProbe_ItsContainerIsATasks is G16: the boot probe's container is
@@ -497,6 +498,60 @@ func mustCreateArgs(t *testing.T, spec ContainerSpec) []string {
 		t.Fatalf("dockerCreateArgs: %v", err)
 	}
 	return args
+}
+
+// TestBoot_AnOrkerStoppedWhileItAsksWhereTheEngineKeepsItsStateSaysSo: an
+// Orker told to stop while the engine has not yet answered where it keeps its
+// state stops at once and says it was interrupted. A question the stop cut
+// short is no answer to carry on from: Boot does not warn that the engine
+// "did not say", and does not go on to claim the identity, reap containers or
+// take work with the engine's directories unknown.
+func TestBoot_AnOrkerStoppedWhileItAsksWhereTheEngineKeepsItsStateSaysSo(t *testing.T) {
+	fake := newCountingDocker(t)
+	fake.set("present", "")
+	fake.set("engineroothang", "")
+	policy := DefaultSecurityPolicy()
+	policy.SecretAllow = []string{"env:SANDBOX_*"}
+	var logs lockedBuffer
+	activities := NewActivitiesWithOptions(nil, Options{
+		OrkerID:  fmt.Sprintf("orker-state-stop-%d", os.Getpid()),
+		WorkRoot: t.TempDir(),
+		Runtime:  &DockerRuntime{Bin: fake.bin},
+		Policy:   &policy,
+		Logger:   jsonLogTo(&logs),
+	})
+	t.Cleanup(activities.Close)
+
+	calls := fake.watch()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- activities.Boot(ctx) }()
+	calls.waitFor(t, "info", "DockerRootDir")
+	cancel()
+
+	var err error
+	select {
+	case err = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("Boot did not return within 30 s of its context being canceled")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("Boot = %v; want the context's own error", err)
+	}
+	if strings.Contains(err.Error(), ReasonRuntimePostureRefused) || strings.Contains(err.Error(), ReasonResourceRefused) {
+		t.Errorf("Boot = %v; a stop is no refusal", err)
+	}
+	for _, record := range logRecords(t, &logs) {
+		if record.level() == "WARN" && record.mentions(SecretAllowVar) {
+			t.Errorf("Boot warned that the engine did not say where it keeps its state, though the stop cut the question short: %v", record)
+		}
+	}
+	for _, call := range fake.calls() {
+		if strings.HasPrefix(call, "ps ") {
+			t.Errorf("Boot went on to reap containers after it was stopped: %q", call)
+		}
+	}
 }
 
 // TestExecute_ReportsAnAttemptDirectoryItCouldNotRemove is G11: an attempt

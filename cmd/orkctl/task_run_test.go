@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"unicode/utf8"
 
@@ -478,16 +479,15 @@ func countRequests(paths []string, method string) int {
 // TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed: a --secret file that
 // cannot be looked at is refused with the reason the file system gave, kept
 // as the error's cause, so a file the user may not read is not reported as
-// one that does not exist.
+// one that does not exist. Root reads through any mode, so for root the
+// locked file is a file it may use.
 func TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed(t *testing.T) {
-	_, _, err := parseTaskSecretFlag("tok=file:/nonexistent/tok", orker.DefaultSecurityPolicy())
-	if !errors.Is(err, fs.ErrNotExist) || !strings.Contains(err.Error(), "--secret tok: /nonexistent/tok: no such file") {
-		t.Errorf("parseTaskSecretFlag(a missing file) = %v, want it to say no such file, with fs.ErrNotExist its cause", err)
+	dir := t.TempDir()
+	regular := filepath.Join(dir, "regular")
+	if err := os.WriteFile(regular, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	if os.Geteuid() == 0 {
-		return // root reads through any mode
-	}
-	locked := filepath.Join(t.TempDir(), "locked")
+	locked := filepath.Join(dir, "locked")
 	if err := os.Mkdir(locked, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -498,9 +498,61 @@ func TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
-	_, _, err = parseTaskSecretFlag("tok=file:"+filepath.Join(locked, "tok"), orker.DefaultSecurityPolicy())
-	if !errors.Is(err, fs.ErrPermission) || strings.Contains(err.Error(), "no such file") {
-		t.Errorf("parseTaskSecretFlag(a file it may not look at) = %v, want fs.ErrPermission its cause", err)
+	lockedCause := error(fs.ErrPermission)
+	if os.Geteuid() == 0 {
+		lockedCause = nil
+	}
+
+	cases := []struct {
+		name  string
+		path  string
+		cause error // nil: the flag is accepted
+		says  string
+	}{
+		{"a missing file", "/nonexistent/tok", fs.ErrNotExist, "--secret tok: /nonexistent/tok: no such file"},
+		{"a path beneath a file", filepath.Join(regular, "tok"), syscall.ENOTDIR, "not a directory"},
+		{"a file it may not look at", filepath.Join(locked, "tok"), lockedCause, "permission denied"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			name, source, err := parseTaskSecretFlag("tok=file:"+tc.path, orker.DefaultSecurityPolicy())
+			if tc.cause == nil {
+				if err != nil || name != "tok" || source != "file:"+tc.path {
+					t.Fatalf("parseTaskSecretFlag = %q, %q, %v; want the file accepted", name, source, err)
+				}
+				return
+			}
+			if !errors.Is(err, tc.cause) || !strings.Contains(err.Error(), tc.says) {
+				t.Fatalf("parseTaskSecretFlag = %v, want %q with %v its cause", err, tc.says, tc.cause)
+			}
+			if tc.cause != fs.ErrNotExist && strings.Contains(err.Error(), "no such file") {
+				t.Fatalf("parseTaskSecretFlag = %v: a file that exists is reported as missing", err)
+			}
+		})
+	}
+}
+
+// TestParseTaskSecretFlag_JudgesAnOwnSourceBeforeLookingAtIt: a source that
+// is one of the machine's own is refused as its own before the flag looks at
+// the file system or the environment for it, so a refusal never tells
+// whether one of its own files or variables exists.
+func TestParseTaskSecretFlag_JudgesAnOwnSourceBeforeLookingAtIt(t *testing.T) {
+	own := t.TempDir()
+	policy := orker.DefaultSecurityPolicy().WithOwnPaths(orker.OwnPath{Path: own, Why: "a test's own directory"})
+	t.Setenv("ORK_TEST_TASK_RUN_UNSET_OWN", "")
+	_ = os.Unsetenv("ORK_TEST_TASK_RUN_UNSET_OWN")
+	for _, value := range []string{
+		"tok=file:" + filepath.Join(own, "missing"),
+		"tok=env:ORK_TEST_TASK_RUN_UNSET_OWN",
+	} {
+		_, _, err := parseTaskSecretFlag(value, policy)
+		var refusal *orker.OwnSourceRefusal
+		if !errors.As(err, &refusal) {
+			t.Errorf("parseTaskSecretFlag(%q) = %v, want the refusal of one of its own sources", value, err)
+		}
+		if errors.Is(err, fs.ErrNotExist) || strings.Contains(fmt.Sprint(err), "is not set") {
+			t.Errorf("parseTaskSecretFlag(%q) = %v: the refusal says whether the source exists", value, err)
+		}
 	}
 }
 

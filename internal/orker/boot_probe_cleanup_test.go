@@ -14,30 +14,6 @@ import (
 	"time"
 )
 
-// waitForCall returns once the stand-in has been invoked with an argv holding
-// every one of words, without forgetting any call, and fails the test at a
-// deadline.
-func waitForCall(t *testing.T, fake *countingDocker, words ...string) {
-	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
-	for {
-		raw, _ := os.ReadFile(filepath.Join(fake.dir, "calls"))
-		for _, line := range strings.Split(string(raw), "\n") {
-			found := line != ""
-			for _, word := range words {
-				found = found && strings.Contains(line, word)
-			}
-			if found {
-				return
-			}
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("no call holding %q within 30 s:\n%s", words, raw)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-}
-
 // TestBoot_ProbeContainersCarryTheOrkersIdentity: both of the boot probe's
 // containers are labelled with the Orker's identity, as a task's are, so one
 // an Orker stopped mid-probe leaves behind is its next boot's to reap
@@ -140,12 +116,16 @@ func TestBoot_EveryWayTheProbeEndsRemovesItsContainer(t *testing.T) {
 			t.Cleanup(activities.Close)
 			activities.dispatcher.signalProbeGrace = 300 * time.Millisecond
 
+			var calls *callWatch
+			if tt.stopAt != nil {
+				calls = fake.watch()
+			}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			done := make(chan error, 1)
 			go func() { done <- activities.Boot(ctx) }()
 			if tt.stopAt != nil {
-				waitForCall(t, fake, tt.stopAt...)
+				calls.waitFor(t, tt.stopAt...)
 				cancel()
 			}
 			var err error
@@ -163,10 +143,10 @@ func TestBoot_EveryWayTheProbeEndsRemovesItsContainer(t *testing.T) {
 			case tt.stopAt != nil && !errors.Is(err, context.Canceled):
 				t.Fatalf("Boot = %v; want the context's own error", err)
 			}
-			calls := fake.calls()
-			ran, removed := probeContainerNames(t, calls)
+			made := fake.calls()
+			ran, removed := probeContainerNames(t, made)
 			if len(ran) == 0 {
-				t.Fatalf("no probe container was run: %q", calls)
+				t.Fatalf("no probe container was run: %q", made)
 			}
 			for _, name := range ran {
 				if !slices.Contains(removed, name) {

@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -19,12 +20,18 @@ import (
 )
 
 // canceledSource is a RunEventSource whose archive read names who canceled
-// the run, after failing the first failures reads.
+// the run, after failing the first failures reads. With changing set, every
+// read that succeeds names somebody different (canceledBy and the read's
+// number), as a record that moved between two reads would: a surface that
+// shows another name than the others read the record again, and answered is
+// the names given, in order, so a test can tell which read each surface used.
 type canceledSource struct {
 	events     []*orkstackv1.Event
 	canceledBy string
+	changing   bool
 	failures   int
 	reads      int
+	answered   []string
 }
 
 func (s *canceledSource) Events(context.Context, string, int64) ([]*orkstackv1.Event, error) {
@@ -36,7 +43,12 @@ func (s *canceledSource) EventsForArchive(context.Context, string) (engine.Archi
 	if s.reads <= s.failures {
 		return engine.ArchiveRead{}, errors.New("history is unreachable")
 	}
-	return engine.ArchiveRead{Events: s.events, CanceledBy: s.canceledBy}, nil
+	name := s.canceledBy
+	if s.changing {
+		name = fmt.Sprintf("%s (read %d)", s.canceledBy, s.reads)
+	}
+	s.answered = append(s.answered, name)
+	return engine.ArchiveRead{Events: s.events, CanceledBy: name}, nil
 }
 
 // publishCanceled publishes a canceled run's RUN_CANCELED through the
@@ -67,30 +79,33 @@ func canceledEvent(t *testing.T) *orkstackv1.Event {
 
 // A canceled run's end names who canceled it on every surface the
 // projection writes: the run store, the webhook delivery and the archive,
-// from ONE read of the run's record.
+// from ONE read of the run's record. The record answers differently on every
+// read, so a surface that read it for itself would carry a later name; all
+// three carry the first.
 func TestPublishEvent_ACanceledRunNamesWhoCanceledIt(t *testing.T) {
 	source := &canceledSource{events: []*orkstackv1.Event{{RunId: "ork-canceled", Sequence: 3,
-		Type: orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED}}, canceledBy: "dana@acme"}
+		Type: orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED}}, canceledBy: "dana@acme", changing: true}
 	activities, uri, store, notifier, runs := publishCanceled(t, source)
 	if err := activities.PublishEvent(context.Background(), canceledEvent(t), uri, "ork-canceled#3"); err != nil {
 		t.Fatalf("PublishEvent: %v", err)
 	}
-	if source.reads != 1 {
-		t.Fatalf("the run's record was read %d times, want once", source.reads)
+	if len(source.answered) == 0 {
+		t.Fatal("the run's record was never read, so no name could be known")
 	}
-	if stored, _ := runs.Get("ork-canceled"); stored.GetCanceledBy() != "dana@acme" {
-		t.Fatalf("stored run canceled_by = %q, want dana@acme", stored.GetCanceledBy())
+	first := source.answered[0]
+	if stored, _ := runs.Get("ork-canceled"); stored.GetCanceledBy() != first {
+		t.Fatalf("stored run canceled_by = %q, want the first read's %q", stored.GetCanceledBy(), first)
 	}
-	if len(notifier.runs) != 1 || notifier.runs[0].GetCanceledBy() != "dana@acme" {
-		t.Fatalf("webhook runs = %v, want one naming dana@acme", notifier.runs)
+	if len(notifier.runs) != 1 || notifier.runs[0].GetCanceledBy() != first {
+		t.Fatalf("webhook runs = %v, want one naming the first read's %q", notifier.runs, first)
 	}
 	body, err := store.GetRun(context.Background(), "ork-canceled")
 	if err != nil {
 		t.Fatalf("the run was not archived: %v", err)
 	}
 	archived, _, err := engine.UnmarshalRunArchive(body)
-	if err != nil || archived.GetCanceledBy() != "dana@acme" {
-		t.Fatalf("archived canceled_by = %q, %v; want dana@acme", archived.GetCanceledBy(), err)
+	if err != nil || archived.GetCanceledBy() != first {
+		t.Fatalf("archived canceled_by = %q, %v; want the first read's %q", archived.GetCanceledBy(), err, first)
 	}
 }
 
@@ -129,7 +144,11 @@ func TestPublishEvent_AnUnreadableRecordStillAnnouncesTheEnd(t *testing.T) {
 	}
 }
 
-// Every other terminal event keeps today's one read, after publishing.
+// Every other terminal event keeps today's order, publishing and then
+// reading the record for the archive alone. A read that fails therefore
+// fails the activity after the end was announced, where a canceled end —
+// which reads first, and again for the archive — would have been read on its
+// second try and returned nothing.
 func TestPublishEvent_OnlyACanceledEndReadsTheRecordFirst(t *testing.T) {
 	source := &canceledSource{events: gappedEvents("ork-gap"), canceledBy: "dana@acme", failures: 1}
 	archiver, store, _ := newArchiveFixture(t)
@@ -143,9 +162,9 @@ func TestPublishEvent_OnlyACanceledEndReadsTheRecordFirst(t *testing.T) {
 		RunId: "ork-gap", Sequence: 7, Type: orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		Status: orkstackv1.Status_STATUS_SUCCEEDED, Timestamp: timestamppb.New(created),
 	}, snapshots.putRun(t, finished), "ork-gap#7")
-	if err == nil || source.reads != 1 || len(notifier.runs) != 1 {
-		t.Fatalf("PublishEvent = %v after %d reads and %d deliveries; want the archive read's error after one read and one delivery",
-			err, source.reads, len(notifier.runs))
+	if err == nil || len(notifier.runs) != 1 {
+		t.Fatalf("PublishEvent = %v after %d deliveries; want the archive read's error after the end was announced once",
+			err, len(notifier.runs))
 	}
 	if _, err := store.GetRun(context.Background(), "ork-gap"); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("archived from a failed read: %v", err)
@@ -187,6 +206,9 @@ func TestRunWorkflow_AFailedReadIsRetriedBeforeTheEndIsAnnounced(t *testing.T) {
 		wantAnnounced string
 	}{
 		{"the first attempt's read fails", 1, "dana@acme"},
+		// The name is given up only on the last attempt the workflow gives
+		// the activity (eventActivityOptions): not one attempt sooner.
+		{"the first two attempts' reads fail", 2, "dana@acme"},
 		{"every attempt's first read fails", 3, ""},
 	}
 	for _, tt := range tests {

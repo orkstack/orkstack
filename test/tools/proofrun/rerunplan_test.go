@@ -527,24 +527,95 @@ func TestCmdRerunPlan_RefusesAnInvocationItCannotTrust(t *testing.T) {
 	}
 }
 
-// The argument list of every read the planner makes. A job's log is the one
-// raw, non-JSON body among them, and it carries terminal escape sequences
-// (a test's colours, a tool's progress bars): gh 2.103, which the runner image
-// ships, refuses to print such a body unless it is passed
-// --allow-escape-sequences, and the planner then had no log at all. The JSON
-// reads need no such flag, and get none.
-func TestGhArgs_HoldsTheArgumentListOfEachRead(t *testing.T) {
+// A job listing and a check run's annotations are read a page at a time, and
+// the planner must see every page: a run with more jobs than one page holds
+// would otherwise hide a failed job from it. The fake gh serves a second page
+// only to a call that asked for every page, as gh does with --paginate; the
+// planner's reading of the pages is the real one.
+func TestGhExec_ReadsEveryPageOfAListingItAskedAllPagesOf(t *testing.T) {
+	fakeGH(t, `paginate=no
+for a in "$@"; do [ "$a" = --paginate ] && paginate=yes; done
+echo '{"total_count":2,"jobs":[{"id":1,"name":"integration (1)"}]}'
+[ "$paginate" = yes ] && echo '{"total_count":2,"jobs":[{"id":2,"name":"integration (2)"}]}'
+exit 0`)
+	listing := "repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100"
+	ids := func(paginate bool) []int64 {
+		t.Helper()
+		raw, err := ghExec(listing, paginate)
+		if err != nil {
+			t.Fatalf("ghExec(paginate=%v): %v", paginate, err)
+		}
+		jobs, err := readJobPages(raw)
+		if err != nil {
+			t.Fatalf("the pages do not read: %v\n%s", err, raw)
+		}
+		var ids []int64
+		for _, j := range jobs {
+			ids = append(ids, j.ID)
+		}
+		return ids
+	}
+	if got := ids(true); !slices.Equal(got, []int64{1, 2}) {
+		t.Errorf("a read of every page saw jobs %v, want [1 2]", got)
+	}
+	if got := ids(false); !slices.Equal(got, []int64{1}) {
+		t.Errorf("a read of one page saw jobs %v, want [1]", got)
+	}
+}
+
+// The status gh reports on its standard error is what tells GitHub's "no log"
+// (404 Not Found, 410 Gone: a lost runner keeps none) from a read that failed
+// and may have hidden a failing test. ghExec carries that text into the error
+// it returns; without it a real 404 fails closed and no lost runner is ever
+// run again. The boundary is the status: 4041 is not 404.
+func TestGhExec_CarriesGHsStatusIntoTheError(t *testing.T) {
 	for _, c := range []struct {
-		path     string
-		paginate bool
-		want     string
+		name, stderr string
+		noLog        bool
 	}{
-		{"repos/o/r/actions/jobs/1/logs", false, "api --allow-escape-sequences repos/o/r/actions/jobs/1/logs"},
-		{"repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100", true, "api --paginate repos/o/r/actions/runs/1/attempts/1/jobs?per_page=100"},
-		{"repos/o/r/check-runs/5/annotations?per_page=100", true, "api --paginate repos/o/r/check-runs/5/annotations?per_page=100"},
+		{"not found", "gh: Not Found (HTTP 404)", true},
+		{"gone", "gh: Gone (HTTP 410)", true},
+		{"the status ends the message", "gh: Gone HTTP 410", true},
+		{"a server error", "gh: Server Error (HTTP 502)", false},
+		{"forbidden", "gh: Resource not accessible by integration (HTTP 403)", false},
+		{"a status that only starts like not found", "gh: HTTP 4041", false},
+		{"a status that only starts like gone", "gh: HTTP 4100", false},
+		{"no status", "gh: could not connect", false},
 	} {
-		if got := strings.Join(ghArgs(c.path, c.paginate), " "); got != c.want {
-			t.Errorf("ghArgs(%q, %v) = %q, want %q", c.path, c.paginate, got, c.want)
+		t.Run(c.name, func(t *testing.T) {
+			fakeGH(t, "echo '"+c.stderr+"' >&2\nexit 1")
+			_, err := ghExec("repos/o/r/actions/jobs/1/logs", false)
+			if err == nil {
+				t.Fatal("a gh that failed was read as a log")
+			}
+			if got := noLogKept(err); got != c.noLog {
+				t.Errorf("gh said %q: the failure reads as GitHub keeping no log: %v, want %v (error %q)", c.stderr, got, c.noLog, err)
+			}
+		})
+	}
+}
+
+// The control of the table above, through the planner: a lost runner whose
+// log gh reports as 404 is run again, and one whose log read fails with a 502
+// is not, with the planner reading the log through the real ghExec.
+func TestRerunPlan_ALostRunnersMissingLogIsRerunThroughGHsOwnError(t *testing.T) {
+	for _, c := range []struct {
+		stderr string
+		rerun  bool
+	}{
+		{"gh: Not Found (HTTP 404)", true},
+		{"gh: Server Error (HTTP 502)", false},
+	} {
+		api := &fakeAPI{jobs: []fakeJob{lostJob(2, "integration (2)"), proofJob(9)}}
+		fakeGH(t, "echo '"+c.stderr+"' >&2\nexit 1")
+		d := planRerun(func(path string, paginate bool) ([]byte, error) {
+			if strings.HasSuffix(path, "/logs") {
+				return ghExec(path, paginate)
+			}
+			return api.get(path, paginate)
+		}, planRepo, planRun, planAttempt, 3)
+		if d.Rerun != c.rerun {
+			t.Errorf("a log read that failed with %q: decision %+v, want a rerun: %v", c.stderr, d, c.rerun)
 		}
 	}
 }

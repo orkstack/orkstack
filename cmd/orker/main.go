@@ -451,6 +451,28 @@ func checkTunerCompatible(opts worker.Options) error {
 	return nil
 }
 
+// connectTemporal dials the cluster with the options this process runs on:
+// the telemetry package's (telemetry.ClientOptions is the one way a client's
+// options are built, TestClientOptions_IsHowOrkAndOrkerDialTemporal). An
+// Orker names no identity of its own, so the SDK gives it its default, which
+// advertises no engine capabilities.
+//
+// dialing, when set, is told the options just before the dial: a test's way
+// to see exactly what this process dials with, without a cluster to dial. It
+// is nil in production.
+func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, logger *slog.Logger,
+	dialing func(client.Options),
+) (client.Client, error) {
+	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
+	if err != nil {
+		return nil, err
+	}
+	if dialing != nil {
+		dialing(temporalOptions)
+	}
+	return client.DialContext(ctx, temporalOptions)
+}
+
 func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -563,11 +585,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	opts.Memos = memoStore
 	logger.Info("task log export ready", "enabled", opts.TaskLogs != nil)
 
-	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
-	if err != nil {
-		return err
-	}
-	temporalClient, err := client.DialContext(ctx, temporalOptions)
+	temporalClient, err := connectTemporal(ctx, cfg, sinks, logger, nil)
 	if err != nil {
 		return err
 	}

@@ -154,7 +154,6 @@ type unknownKeyWalk struct {
 	report func(unknownKey)
 	walked map[walkedNode]bool
 	fields map[reflect.Type]structKeys
-	visits int // nodes walked; the cost test reads it
 }
 
 // walkedNode is one node walked against one type.
@@ -200,7 +199,6 @@ func (w *unknownKeyWalk) walk(node *yaml.Node, t reflect.Type, path string) {
 		return
 	}
 	w.walked[at] = true
-	w.visits++
 	switch t.Kind() {
 	case reflect.Struct:
 		if node.Kind != yaml.MappingNode {

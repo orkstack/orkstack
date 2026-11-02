@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -542,6 +543,8 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 	t.Setenv("CONTAINER_SSHKEY", filepath.Join(dir, "id_podman"))
 	t.Setenv("XDG_DATA_HOME", "")
 	t.Setenv("AWS_SHARED_CREDENTIALS_FILE", filepath.Join(dir, "aws-credentials"))
+	t.Setenv("AWS_CONFIG_FILE", filepath.Join(dir, "aws-config"))
+	t.Setenv("AWS_WEB_IDENTITY_TOKEN_FILE", filepath.Join(dir, "irsa-web-identity-token"))
 	t.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(dir, "gcp.json"))
 	t.Setenv("AZURE_FEDERATED_TOKEN_FILE", filepath.Join(dir, "azure-token"))
 	t.Setenv("AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE", filepath.Join(dir, "eks-pod-identity-token"))
@@ -560,6 +563,8 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 		"env:AZURE_CLIENT_SECRET", "env:GOOGLE_APPLICATION_CREDENTIALS",
 		"env:CLOUDSDK_AUTH_ACCESS_TOKEN_FILE", "env:CLOUDSDK_CONFIG",
 		"file:"+filepath.Join(dir, "aws-credentials"),
+		"file:"+filepath.Join(dir, "aws-config"),
+		"file:"+filepath.Join(dir, "irsa-web-identity-token"),
 		"file:"+filepath.Join(dir, "eks-pod-identity-token"),
 		"file:"+filepath.Join(dir, "gcloud-config", "credentials.db"),
 		"file:"+filepath.Join(dir, "azure-config", "msal_token_cache.json"),
@@ -606,54 +611,177 @@ func TestSecurityPolicy_TheContainerCLIsOwnSourcesAreTheOrkers(t *testing.T) {
 		"file:"+filepath.Join(dir, "data", "containers", "storage"))
 }
 
+// probeImageDocs are the documents that quote the probe's image for an
+// operator to mirror or pull.
+var probeImageDocs = []string{"OCI_ACTIVITY_CONTRACT.md", "REASONS.md", "TROUBLESHOOTING.md", "UPGRADING.md"}
+
+// probeImageSettings are the files that set the probe's image for a CI lane or
+// a local cluster check.
+var probeImageSettings = []string{".github/workflows/podman.yml", "scripts/k8s-orker-check.sh", "scripts/kind-orker.sh"}
+
+var (
+	pinnedAlpine = regexp.MustCompile(`alpine:[0-9.]+@sha256:[0-9a-f]{64}`)
+	probeSetting = regexp.MustCompile(`(?m)^\s*PROBE_IMAGE(?::\s*|=)(\S+)\s*$`)
+)
+
+// staleProbeImageCopies names every copy of the boot probe's image under the
+// tree at root that is not probeImage. The first-party images and the proof
+// host's container must build from the same pinned alpine, and each place
+// that sets PROBE_IMAGE must set it once, to the probe's own image; a document
+// that quotes a pinned alpine must quote that one, but is not required to
+// quote any. Dependabot moves only the Dockerfiles (.github/dependabot.yml),
+// so a copy it left behind is what this finds.
+func staleProbeImageCopies(root, probeImage string) []string {
+	var stale []string
+	base := strings.TrimPrefix(probeImage, "docker.io/library/")
+	read := func(rel string) string {
+		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
+		if err != nil {
+			stale = append(stale, fmt.Sprintf("%s cannot be read: %v", rel, err))
+		}
+		return string(b)
+	}
+	builds, err := filepath.Glob(filepath.Join(root, "images", "*", "Dockerfile"))
+	if err != nil || len(builds) == 0 {
+		stale = append(stale, fmt.Sprintf("no first-party Dockerfiles under %s/images: %v", root, err))
+	}
+	files := []string{"examples/custom-image-shell/Dockerfile", ".github/actions/proof-host/action.yml"}
+	for _, dockerfile := range builds {
+		rel, _ := filepath.Rel(root, dockerfile)
+		files = append(files, filepath.ToSlash(rel))
+	}
+	for _, rel := range files {
+		refs := pinnedAlpine.FindAllString(read(rel), -1)
+		if len(refs) == 0 {
+			stale = append(stale, rel+" builds from no pinned alpine")
+		}
+		for _, ref := range refs {
+			if ref != base {
+				stale = append(stale, fmt.Sprintf("%s builds from %s; the boot probe runs %s", rel, ref, probeImage))
+			}
+		}
+	}
+	for _, doc := range probeImageDocs {
+		rel := "docs/" + doc
+		for _, ref := range pinnedAlpine.FindAllString(read(rel), -1) {
+			if ref != base {
+				stale = append(stale, fmt.Sprintf("%s quotes %s; the boot probe runs %s", rel, ref, probeImage))
+			}
+		}
+	}
+	for _, rel := range probeImageSettings {
+		sets := probeSetting.FindAllStringSubmatch(read(rel), -1)
+		if len(sets) != 1 {
+			stale = append(stale, fmt.Sprintf("%s sets PROBE_IMAGE %d times, want once", rel, len(sets)))
+			continue
+		}
+		if got := sets[0][1]; got != probeImage {
+			stale = append(stale, fmt.Sprintf("%s probes with %s; the boot probe runs %s", rel, got, probeImage))
+		}
+	}
+	return stale
+}
+
 // TestBindProbeImage_IsTheFirstPartyImagesBase: the boot probe runs the alpine
 // the first-party images build from, at the digest they pin, and the copies
 // of it outside the Orker move with it: the PROBE_IMAGE of the Podman
 // workflow, the Kubernetes check and the kind script, the shell example's
 // base, the proof-host action's container, and the documents that quote the
-// probe's image for an operator to mirror or pull. Dependabot moves only the
-// Dockerfiles (.github/dependabot.yml), so a copy it left behind fails here.
+// probe's image for an operator to mirror or pull.
 func TestBindProbeImage_IsTheFirstPartyImagesBase(t *testing.T) {
-	root := filepath.Join("..", "..")
-	base := strings.TrimPrefix(BindProbeImage, "docker.io/library/")
-	files, err := filepath.Glob(filepath.Join(root, "images", "*", "Dockerfile"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no first-party Dockerfiles found: %v", err)
+	for _, problem := range staleProbeImageCopies(filepath.Join("..", ".."), BindProbeImage) {
+		t.Error(problem)
 	}
-	files = append(files, filepath.Join(root, "examples", "custom-image-shell", "Dockerfile"),
-		filepath.Join(root, ".github", "actions", "proof-host", "action.yml"))
-	for _, doc := range []string{"OCI_ACTIVITY_CONTRACT.md", "REASONS.md", "TROUBLESHOOTING.md", "UPGRADING.md"} {
-		files = append(files, filepath.Join(root, "docs", doc))
+}
+
+// TestStaleProbeImageCopies_NamesTheCopyThatMoved holds the check above to
+// what it claims, on a tree of its own: a current tree is clean, and each copy
+// that is stale, missing or doubled is named, while a document that quotes no
+// alpine at all is no fault.
+func TestStaleProbeImageCopies_NamesTheCopyThatMoved(t *testing.T) {
+	current := "alpine:3.24@sha256:" + strings.Repeat("a", 64)
+	moved := "alpine:3.24@sha256:" + strings.Repeat("b", 64)
+	probe := "docker.io/library/" + current
+	tree := func() map[string]string {
+		files := map[string]string{
+			"images/activity-file/Dockerfile":        "FROM " + current + "\nCOPY . .\n",
+			"images/activity-json/Dockerfile":        "FROM " + current + "\n",
+			"examples/custom-image-shell/Dockerfile": "FROM " + current + "\n",
+			".github/actions/proof-host/action.yml":  "run: docker run --rm " + current + " getent hosts x\n",
+			".github/workflows/podman.yml":           "env:\n  PROBE_IMAGE: " + probe + "\n",
+			"scripts/k8s-orker-check.sh":             "PROBE_IMAGE=" + probe + "\nuse \"$PROBE_IMAGE\"\n",
+			"scripts/kind-orker.sh":                  "PROBE_IMAGE=" + probe + "\n",
+		}
+		for _, doc := range probeImageDocs {
+			files["docs/"+doc] = "Pull `docker pull " + probe + "` first.\n"
+		}
+		return files
 	}
-	pinned := regexp.MustCompile(`alpine:[0-9.]+@sha256:[0-9a-f]{64}`)
-	for _, file := range files {
-		b, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
-		refs := pinned.FindAllString(string(b), -1)
-		if len(refs) == 0 {
-			t.Errorf("%s builds from no pinned alpine", file)
-		}
-		for _, ref := range refs {
-			if ref != base {
-				t.Errorf("%s builds from %s; the boot probe runs %s", file, ref, BindProbeImage)
+	for _, tc := range []struct {
+		name string
+		edit func(files map[string]string)
+		want string // a word the one problem holds; "" for a clean tree
+	}{
+		{name: "every copy is current"},
+		{name: "a first-party Dockerfile on another digest",
+			edit: func(f map[string]string) { f["images/activity-json/Dockerfile"] = "FROM " + moved + "\n" },
+			want: "images/activity-json/Dockerfile"},
+		{name: "a first-party Dockerfile on an unpinned alpine",
+			edit: func(f map[string]string) { f["images/activity-file/Dockerfile"] = "FROM alpine:3.24\n" },
+			want: "images/activity-file/Dockerfile builds from no pinned alpine"},
+		{name: "the shell example on another digest",
+			edit: func(f map[string]string) { f["examples/custom-image-shell/Dockerfile"] = "FROM " + moved + "\n" },
+			want: "examples/custom-image-shell/Dockerfile"},
+		{name: "the proof host's container on another digest",
+			edit: func(f map[string]string) { f[".github/actions/proof-host/action.yml"] = "image: " + moved + "\n" },
+			want: ".github/actions/proof-host/action.yml"},
+		{name: "a PROBE_IMAGE that moved",
+			edit: func(f map[string]string) {
+				f["scripts/kind-orker.sh"] = "PROBE_IMAGE=docker.io/library/" + moved + "\n"
+			},
+			want: "scripts/kind-orker.sh probes with"},
+		{name: "a PROBE_IMAGE set twice",
+			edit: func(f map[string]string) { f[".github/workflows/podman.yml"] += "  PROBE_IMAGE: " + probe + "\n" },
+			want: ".github/workflows/podman.yml sets PROBE_IMAGE 2 times"},
+		{name: "a PROBE_IMAGE gone",
+			edit: func(f map[string]string) { f["scripts/k8s-orker-check.sh"] = "echo hello\n" },
+			want: "scripts/k8s-orker-check.sh sets PROBE_IMAGE 0 times"},
+		{name: "a document that quotes the old digest",
+			edit: func(f map[string]string) {
+				f["docs/TROUBLESHOOTING.md"] = "Run `docker pull docker.io/library/" + moved + "`.\n"
+			},
+			want: "docs/TROUBLESHOOTING.md quotes"},
+		{name: "a document that quotes no alpine",
+			edit: func(f map[string]string) { f["docs/UPGRADING.md"] = "The boot probe runs a small image.\n" }},
+		{name: "a document that is gone",
+			edit: func(f map[string]string) { delete(f, "docs/REASONS.md") },
+			want: "docs/REASONS.md cannot be read"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			files := tree()
+			if tc.edit != nil {
+				tc.edit(files)
 			}
-		}
-	}
-	probe := regexp.MustCompile(`(?m)^\s*PROBE_IMAGE(?::\s*|=)(\S+)\s*$`)
-	for _, rel := range []string{".github/workflows/podman.yml", "scripts/k8s-orker-check.sh", "scripts/kind-orker.sh"} {
-		b, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(rel)))
-		if err != nil {
-			t.Fatal(err)
-		}
-		sets := probe.FindAllSubmatch(b, -1)
-		if len(sets) != 1 {
-			t.Errorf("%s sets PROBE_IMAGE %d times, want once", rel, len(sets))
-			continue
-		}
-		if got := string(sets[0][1]); got != BindProbeImage {
-			t.Errorf("%s probes with %s; the boot probe runs %s", rel, got, BindProbeImage)
-		}
+			for rel, content := range files {
+				path := filepath.Join(root, filepath.FromSlash(rel))
+				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			stale := staleProbeImageCopies(root, probe)
+			if tc.want == "" {
+				if len(stale) != 0 {
+					t.Fatalf("staleProbeImageCopies = %q, want a clean tree", stale)
+				}
+				return
+			}
+			if len(stale) != 1 || !strings.Contains(stale[0], tc.want) {
+				t.Fatalf("staleProbeImageCopies = %q, want exactly one problem, holding %q", stale, tc.want)
+			}
+		})
 	}
 }

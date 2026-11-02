@@ -336,32 +336,40 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 			t.Fatalf("refusal %q of the refused keys %v is not a ValidationError", refusal, keys)
 		}
 		message := validation.Error()
-		// Outside the author's own quoted keys, nothing of the decoder's.
-		if unquoted := quoted.ReplaceAllString(message, `""`); strings.Contains(unquoted, "not found in type") ||
-			strings.Contains(unquoted, "dsl.") {
+		// Outside the author's own quoted keys, which may say anything,
+		// nothing of the decoder's, and the structure of the sentence is read.
+		unquoted := quoted.ReplaceAllString(message, `""`)
+		if strings.Contains(unquoted, "not found in type") || strings.Contains(unquoted, "dsl.") {
 			t.Fatalf("refusal %q names the decoder's internals", message)
 		}
 		first, rest := keys[0], keys[1:]
-		more := ""
-		if len(rest) > 0 {
-			named, noun, which := rest, "key", ""
-			if len(rest) > 1 {
-				noun = "keys"
-			}
-			if len(named) > 10 {
-				named, which = named[:10], ", the first 10"
-			}
-			names := make([]string, len(named))
-			for i, k := range named {
-				names[i] = fmt.Sprintf("%q at line %d", k.key, k.line)
-			}
-			more = fmt.Sprintf(" (and %d more unknown %s%s: %s)", len(rest), noun, which, strings.Join(names, ", "))
+		// It names, first, the earliest key the decoder refused, at its line.
+		if opening := fmt.Sprintf("line %d: unknown key %q", first.line, first.key); !strings.HasPrefix(message, opening) {
+			t.Fatalf("refusal %q does not open by naming the earliest refused key, %s", message, opening)
 		}
-		// By its line alone, with no field; an empty key at the top level
-		// also has the empty path, so the sentence decides, not the field.
-		if message == fmt.Sprintf("line %d: unknown key %q in the %s%s", first.line, first.key, kind, more) {
+		// Then how many others the decoder refused, and the first ten of them
+		// by name and line; no count when there are none.
+		counted := regexp.MustCompile(`and (\d+) more unknown key`).FindStringSubmatch(unquoted)
+		switch {
+		case len(rest) == 0 && counted != nil:
+			t.Fatalf("refusal %q counts other unknown keys, but the decoder refused none", message)
+		case len(rest) > 0 && (counted == nil || counted[1] != strconv.Itoa(len(rest))):
+			t.Fatalf("refusal %q does not count the %d other refused keys %v", message, len(rest), rest)
+		}
+		for _, k := range rest[:min(len(rest), 10)] {
+			if named := fmt.Sprintf("%q at line %d", k.key, k.line); !strings.Contains(message, named) {
+				t.Fatalf("refusal %q does not name the other refused key %s", message, named)
+			}
+		}
+		// A key found in the document is placed at its field path and the
+		// sentence ends with the keys its position takes; one found only by
+		// its line (a merge delivered it) is placed nowhere and takes none.
+		// The marker is looked for outside the quoted keys, since a key may
+		// say "; allowed: " itself.
+		const marker = "; allowed: "
+		if !strings.Contains(unquoted, marker) {
 			if validation.Field != "" {
-				t.Fatalf("refusal %q, by its line alone, is placed at %q", message, validation.Field)
+				t.Fatalf("refusal %q names no allowed keys, but is placed at %q", message, validation.Field)
 			}
 			return
 		}
@@ -373,16 +381,13 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 			t.Fatalf("%q is placed at %q, not at the path of %q, the first key the decoder refused (%q)",
 				message, validation.Field, first.key, typeErr.Errors)
 		}
-		where := "at the top level"
-		if parent != "" {
-			where = "in " + parent
+		if !strings.Contains(unquoted, kind) || (parent != "" && !strings.Contains(message, parent)) {
+			t.Fatalf("refusal %q does not say where %q stands: %q of the %s", message, first.key, parent, kind)
 		}
-		prefix := fmt.Sprintf("line %d: unknown key %q %s of the %s%s; allowed: ", first.line, first.key, where, kind, more)
-		after, found := strings.CutPrefix(message, prefix)
-		if !found {
-			t.Fatalf("refusal %q does not begin %q (the decoder refused %q)", message, prefix, typeErr.Errors)
-		}
-		allowed := strings.Split(after, ", ")
+		// The allowed keys end the sentence: sorted, distinct, and not the
+		// key that was refused. (The keys a position takes are declared tags,
+		// which never hold the marker, so the last one begins the list.)
+		allowed := strings.Split(message[strings.LastIndex(message, marker)+len(marker):], ", ")
 		if !sort.StringsAreSorted(allowed) {
 			t.Fatalf("the allowed keys %q are not sorted", allowed)
 		}

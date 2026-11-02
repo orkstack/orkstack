@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -27,27 +28,50 @@ import (
 // here returns its problems, so a companion test shows that it bites on a
 // weakened copy.
 
-// makeRecipe is the first line of one Makefile target and the tab-indented
-// lines under it.
-func makeRecipe(mk, target string) (string, bool) {
-	re := regexp.MustCompile(`(?m)^` + regexp.QuoteMeta(target) + `:[^\n]*\n(?:\t[^\n]*\n?)*`)
-	m := re.FindString(mk)
-	return m, m != ""
+// The rules run the Makefile: its dry runs (`make -n`) name the commands a
+// target would run once its variables are expanded, and `make vuln-js` and
+// `make vuln-images` run for real with a bun and a docker that record how they
+// were called (the scan's network is theirs to stand in for). Each rule takes
+// the path of the Makefile to run, so that a weakened copy can be held to it.
+
+// makeDryRun is what `make -n -s target` prints with mk, and whether the
+// target exists.
+func makeDryRun(t *testing.T, mk, target string, vars ...string) (string, bool) {
+	t.Helper()
+	// A recipe line that names $(MAKE) runs under -n, and the image scan's makes its
+	// database directory: a directory of the test's own, not the checkout's.
+	vars = append(vars, "VULN_IMAGES_DIR="+t.TempDir())
+	res := runMake(t, mk, mustRepoRoot(), nil, append([]string{"-n", "-s", target}, vars...)...)
+	if res.code != 0 && strings.Contains(res.out, "No rule to make target") {
+		return "", false
+	}
+	if res.code != 0 {
+		t.Fatalf("make -n %s: exit %d\n%s", target, res.code, res.out)
+	}
+	return res.out, true
 }
 
-// scanFails is a scan recipe's last line: any lane that failed fails the
-// target, whatever the loop's last command returned.
-var scanFails = regexp.MustCompile(`\tif \[ -n "\$\$failed" \]; then echo "[^"\n]*" >&2; exit 1; fi\n`)
+// hasCommandLine reports whether out has a line that is exactly command.
+func hasCommandLine(out, command string) bool {
+	for _, l := range strings.Split(out, "\n") {
+		if strings.TrimSpace(l) == command {
+			return true
+		}
+	}
+	return false
+}
 
-// lintProblems holds the Makefile to the rules above.
-func lintProblems(mk string) []string {
+// lintProblems holds `make lint` and `make vuln` to the rules above, by the
+// commands they print.
+func lintProblems(t *testing.T, mk string) []string {
+	t.Helper()
 	var p []string
-	lint, ok := makeRecipe(mk, "lint")
+	lint, ok := makeDryRun(t, mk, "lint")
 	if !ok {
 		return []string{"the Makefile has no lint target"}
 	}
 	for _, want := range []string{"go vet ./...", "go tool staticcheck ./...", "go tool staticcheck -tags=integration ./..."} {
-		if !strings.Contains(lint, want) {
+		if !hasCommandLine(lint, want) {
 			p = append(p, fmt.Sprintf("make lint does not run %q", want))
 		}
 	}
@@ -59,57 +83,239 @@ func lintProblems(mk string) []string {
 	if strings.Contains(lint, "staticcheck.conf") || strings.Contains(lint, "-checks") {
 		p = append(p, "make lint changes staticcheck's check set; it runs the default checks")
 	}
-	vuln, ok := makeRecipe(mk, "vuln")
-	if !ok || !strings.Contains(vuln, "go tool govulncheck ./...") {
+	if vuln, ok := makeDryRun(t, mk, "vuln"); !ok || !hasCommandLine(vuln, "go tool govulncheck ./...") {
 		p = append(p, "make vuln does not run `go tool govulncheck ./...`")
 	}
-	js, ok := makeRecipe(mk, "vuln-js")
-	switch {
-	case !ok:
-		p = append(p, "the Makefile has no vuln-js target")
-	case !strings.Contains(js, "for d in ui site; do"):
-		p = append(p, "make vuln-js does not audit both ui/ and site/")
-	case !strings.Contains(js, "(cd $$d && bun audit --audit-level=high) || failed="):
-		p = append(p, "make vuln-js does not fail on a high or critical advisory")
-	case strings.Contains(js, "--production") || strings.Contains(js, "--prod ") || strings.Contains(js, "--omit") || strings.Contains(js, "--ignore"):
-		p = append(p, "make vuln-js leaves dependencies or advisories out of the audit")
-	case !scanFails.MatchString(js):
-		p = append(p, "make vuln-js does not exit 1 when an audit failed")
+	return p
+}
+
+// fastPathProblems: nothing a proof or the fast path runs may reach the
+// network database, whatever the targets it is made of print.
+func fastPathProblems(t *testing.T, mk string) []string {
+	t.Helper()
+	var p []string
+	for _, target := range []string{"lint", "check", "merge-check", "test", "build"} {
+		out, ok := makeDryRun(t, mk, target)
+		if !ok {
+			continue
+		}
+		for _, banned := range []string{"govulncheck", "bun audit", "grype"} {
+			if strings.Contains(out, banned) {
+				p = append(p, fmt.Sprintf("make %s runs the vulnerability scan (%s), which needs the network", target, banned))
+			}
+		}
 	}
-	images, ok := makeRecipe(mk, "vuln-images")
+	return p
+}
+
+// stubBunScript records `<dir> <args>` of each call to $FAKE_BUN_LOG, and
+// fails the audits $FAKE_BUN_FAIL names: `<dir>:high` for the audit that fails
+// on a high or critical advisory, `<dir>:all` for the listing of every one.
+const stubBunScript = `echo "$(basename "$PWD") $*" >>"$FAKE_BUN_LOG"
+mode=all
+case " $* " in *" --audit-level=high "*) mode=high ;; esac
+case " $FAKE_BUN_FAIL " in *" $(basename "$PWD"):$mode "*) echo "bun audit: advisories" >&2; exit 1 ;; esac
+exit 0
+`
+
+// vulnJSProblems runs `make vuln-js` with a bun that records its calls: it
+// audits both the UI's and the site's lockfiles, lists every advisory, fails
+// on a high or critical one of either, with nothing left out of the audit
+// (no --production, --omit or --ignore), and a listing that fails alone does
+// not fail it.
+func vulnJSProblems(t *testing.T, mk string) []string {
+	t.Helper()
+	run := func(fail string) (makeResult, []string) {
+		bin, log := t.TempDir(), filepath.Join(t.TempDir(), "bun.log")
+		stubTool(t, bin, "bun", stubBunScript)
+		res := runMake(t, mk, mustRepoRoot(), []string{"GOBIN=" + bin, "PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"FAKE_BUN_LOG=" + log, "FAKE_BUN_FAIL=" + fail}, "vuln-js")
+		b, _ := os.ReadFile(log)
+		var calls []string
+		for _, l := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			if l != "" {
+				calls = append(calls, l)
+			}
+		}
+		return res, calls
+	}
+	res, calls := run("")
+	if res.code != 0 {
+		return []string{fmt.Sprintf("make vuln-js fails with no advisory (exit %d): %s", res.code, lastLine(res.out))}
+	}
+	var p []string
+	want := []string{"site audit", "site audit --audit-level=high", "ui audit", "ui audit --audit-level=high"}
+	if got := sorted(calls); !slices.Equal(got, want) {
+		p = append(p, fmt.Sprintf("make vuln-js ran bun as %q, want %q: both lockfiles, every advisory listed, high and critical failing, nothing left out", got, want))
+	}
+	for _, dir := range []string{"ui", "site"} {
+		res, _ := run(dir + ":high")
+		switch named := namedAfterIn(res.out); {
+		case res.code == 0:
+			p = append(p, fmt.Sprintf("make vuln-js passes a high or critical advisory in %s/", dir))
+		case !slices.Equal(named, []string{dir}):
+			p = append(p, fmt.Sprintf("make vuln-js fails a high advisory in %s/ naming %q, want it alone", dir, named))
+		}
+	}
+	if res, _ := run("ui:all site:all"); res.code != 0 {
+		p = append(p, "make vuln-js fails when only the listing of every advisory fails, not the audit that fails the run")
+	}
+	return p
+}
+
+// lastLine is the last line of a target's output that make did not write: what
+// the recipe said as it failed.
+func lastLine(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if !strings.HasPrefix(lines[i], "make: ***") {
+			return lines[i]
+		}
+	}
+	return ""
+}
+
+// namedAfterIn is the words a failing scan target names after "in:" in its
+// last line, up to a parenthesis: the lanes or images that failed.
+func namedAfterIn(out string) []string {
+	_, after, ok := strings.Cut(lastLine(out), " in:")
+	if !ok {
+		return nil
+	}
+	after, _, _ = strings.Cut(after, " (")
+	return strings.Fields(after)
+}
+
+// stubScanDocker records each call, one argument to a line and ended by a line
+// of dashes, to $FAKE_LOG, and fails the scan of the layout
+// $FAKE_DOCKER_FAIL names.
+const stubScanDocker = `for a in "$@"; do printf '%s\n' "$a"; last="$a"; done >>"$FAKE_LOG"
+echo '---' >>"$FAKE_LOG"
+case "$last" in *"/layouts/${FAKE_DOCKER_FAIL:-no-such-layout}") exit 1 ;; esac
+exit 0
+`
+
+// scanCalls parses stubScanDocker's log into the arguments of each call.
+func scanCalls(log string) [][]string {
+	var calls [][]string
+	for _, block := range strings.Split(log, "---\n") {
+		if block = strings.TrimSuffix(block, "\n"); block != "" {
+			calls = append(calls, strings.Split(block, "\n"))
+		}
+	}
+	return calls
+}
+
+// makeVar is the value of a Makefile variable under mk.
+func makeVar(t *testing.T, mk, name string) []string {
+	t.Helper()
+	res := runMake(t, mk, mustRepoRoot(), nil, "-s", "--no-print-directory", "--eval=print-%: ; @echo $($*)", "print-"+name)
+	if res.code != 0 {
+		t.Fatalf("printing %s: exit %d\n%s", name, res.code, res.out)
+	}
+	return strings.Fields(res.out)
+}
+
+// scannedImages is what `make vuln-images` should scan under mk: the release
+// images and every activity images/Makefile builds.
+func scannedImages(t *testing.T, mk string) []string {
+	t.Helper()
+	want := makeVar(t, mk, "RELEASE_IMAGES")
+	for _, a := range makeVar(t, mk, "VULN_ACTIVITIES") {
+		want = append(want, "activity-"+a)
+	}
+	return sorted(want)
+}
+
+// vulnImagesProblems runs `make vuln-images` over layouts already built
+// (LAYOUTS=) with a docker that records its calls: it scans every release
+// image and every activity once, each by the pinned Grype and the policy file,
+// with no capability, no new privilege and a read-only root, keeping Grype's
+// database and scratch under VULN_IMAGES_DIR; it fails on a failed scan, after
+// scanning the rest, and on an images/Makefile with no activity. Its build
+// step, which needs the network, is read from the dry run.
+func vulnImagesProblems(t *testing.T, mk string) []string {
+	t.Helper()
+	root := mustRepoRoot()
+	pin := ""
+	for _, line := range strings.Split(readRepoFile(t, "deploy/grype-image.txt"), "\n") {
+		if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "#") {
+			pin = line
+			break
+		}
+	}
+	run := func(fail string, extra ...string) (makeResult, [][]string, string, string) {
+		bin, work := t.TempDir(), t.TempDir()
+		log := filepath.Join(work, "docker.log")
+		layouts := filepath.Join(work, "layouts")
+		if err := os.MkdirAll(layouts, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		stubTool(t, bin, "docker", stubScanDocker)
+		args := append([]string{"vuln-images", "LAYOUTS=" + layouts, "VULN_IMAGES_DIR=" + filepath.Join(work, "scan")}, extra...)
+		res := runMake(t, mk, root, []string{"GOBIN=" + bin, "PATH=" + bin + string(os.PathListSeparator) + os.Getenv("PATH"),
+			"FAKE_LOG=" + log, "FAKE_DOCKER_FAIL=" + fail}, args...)
+		b, _ := os.ReadFile(log)
+		return res, scanCalls(string(b)), layouts, filepath.Join(work, "scan")
+	}
+	res, calls, layouts, scan := run("")
+	if res.code != 0 {
+		return []string{fmt.Sprintf("make vuln-images fails with no vulnerability (exit %d): %s", res.code, lastLine(res.out))}
+	}
+	var p []string
+	var scanned []string
+	for _, c := range calls {
+		scanned = append(scanned, strings.TrimPrefix(c[len(c)-1], "oci-dir:/layouts/"))
+		for _, need := range [][]string{{"--cap-drop=ALL"}, {"--security-opt", "no-new-privileges"}, {"--read-only"}, {"-c", "/grype.yaml"},
+			{"--platform", "linux/amd64"}, {"-e", "GRYPE_DB_CACHE_DIR=/db"}, {"-e", "TMPDIR=/scratch"},
+			{"-v", scan + "/db:/db"}, {"-v", scan + "/tmp:/scratch"}, {"-v", layouts + ":/layouts:ro"}, {"-v", root + "/deploy/grype.yaml:/grype.yaml:ro"}} {
+			found := false
+			for i, a := range c {
+				if a == need[0] && (len(need) == 1 || (i+1 < len(c) && c[i+1] == need[1])) {
+					found = true
+				}
+			}
+			if !found {
+				p = append(p, fmt.Sprintf("make vuln-images scans %s without %s", c[len(c)-1], strings.Join(need, " ")))
+			}
+		}
+		if i := slices.Index(c, "-c"); i < 1 || c[i-1] != pin {
+			p = append(p, fmt.Sprintf("make vuln-images scans %s with something other than the Grype image deploy/grype-image.txt pins", c[len(c)-1]))
+		}
+	}
+	if want := scannedImages(t, mk); !slices.Equal(sorted(scanned), want) {
+		p = append(p, fmt.Sprintf("make vuln-images scanned %q, want each of %q once: the release images and every activity", sorted(scanned), want))
+	}
+
+	// A scan that fails fails the target, after the rest were scanned.
+	failing := "activity-" + makeVar(t, mk, "VULN_ACTIVITIES")[0]
+	if res, calls, _, _ := run(failing); res.code == 0 {
+		p = append(p, "make vuln-images passes a scan that failed")
+	} else {
+		if named := namedAfterIn(res.out); !slices.Equal(named, []string{failing}) {
+			p = append(p, fmt.Sprintf("make vuln-images names %q for the scan that failed, want %q alone", named, failing))
+		}
+		if len(calls) != len(scanned) {
+			p = append(p, fmt.Sprintf("make vuln-images stopped after %d of %d scans when one failed", len(calls), len(scanned)))
+		}
+	}
+	// An images/Makefile that names no activity is a scan of nothing.
+	if res, calls, _, _ := run("", "VULN_ACTIVITIES="); res.code == 0 || len(calls) != 0 {
+		p = append(p, fmt.Sprintf("make vuln-images passes when it has no activity to scan (exit %d, %d scans)", res.code, len(calls)))
+	}
+
+	// What needs the network is read from the dry run: it builds what a
+	// release publishes, for the platform scanned, and keeps Grype's database,
+	// about 3 GB, in the checkout and never under a /tmp that may be a tmpfs.
+	dry, ok := makeDryRun(t, mk, "vuln-images")
 	switch {
 	case !ok:
 		p = append(p, "the Makefile has no vuln-images target")
-	case !strings.Contains(images, "grep -v '^#' deploy/grype-image.txt"):
-		p = append(p, "make vuln-images does not run the Grype image deploy/grype-image.txt pins")
-	case !strings.Contains(images, "/deploy/grype.yaml:/grype.yaml:ro") || !strings.Contains(images, `"$$grype" -c /grype.yaml `):
-		p = append(p, "make vuln-images does not scan by deploy/grype.yaml's policy")
-	case !strings.Contains(images, "for t in $(VULN_IMAGES); do") || !strings.Contains(images, `|| failed="$$failed $$t"`):
-		p = append(p, "make vuln-images does not scan every image and fail on any one")
-	case !strings.Contains(images, "$(MAKE) release-images VERSION=v0.0.0"):
-		p = append(p, "make vuln-images does not build the images a release publishes")
-	case !strings.Contains(images, `[ -n '$(strip $(VULN_ACTIVITIES))' ] || {`):
-		p = append(p, "make vuln-images passes when it has no activity to scan")
-	case !strings.Contains(images, "docker run --rm --user \"$$(id -u):$$(id -g)\" --cap-drop=ALL --security-opt no-new-privileges --read-only "):
-		p = append(p, "make vuln-images runs the scanner with a capability, a new privilege or a writable root")
-	case !scanFails.MatchString(images):
-		p = append(p, "make vuln-images does not exit 1 when a scan failed")
-	case !strings.Contains(images, "-e GRYPE_DB_CACHE_DIR=/db -e TMPDIR=/scratch") ||
-		!strings.Contains(images, "-v '$(VULN_IMAGES_DIR)/db:/db' -v '$(VULN_IMAGES_DIR)/tmp:/scratch'"):
-		p = append(p, "make vuln-images keeps Grype's database or scratch outside VULN_IMAGES_DIR")
+	case !regexp.MustCompile(`(?m)release-images\b.*VERSION=v0\.0\.0\b.*PLATFORMS=linux/amd64|release-images\b.*PLATFORMS=linux/amd64.*VERSION=v0\.0\.0\b`).MatchString(dry):
+		p = append(p, "make vuln-images does not build the images a release publishes (release-images, v0.0.0, linux/amd64)")
 	}
-	// Grype's database is about 3 GB unpacked: it is kept in the checkout, on
-	// disk, never under a /tmp that may be a small tmpfs.
-	if dir := regexp.MustCompile(`(?m)^VULN_IMAGES_DIR \?= (.+)$`).FindStringSubmatch(mk); dir == nil || !strings.HasPrefix(dir[1], "$(CURDIR)/") {
-		p = append(p, "make vuln-images keeps Grype's database outside the checkout (VULN_IMAGES_DIR is not under $(CURDIR))")
-	}
-	// Nothing a proof or the fast path runs may reach the network database.
-	for _, target := range []string{"lint", "check", "merge-check", "test", "build"} {
-		recipe, ok := makeRecipe(mk, target)
-		if ok && (strings.Contains(recipe, "vuln") || strings.Contains(recipe, "govulncheck") ||
-			strings.Contains(recipe, "bun audit") || strings.Contains(recipe, "grype")) {
-			p = append(p, fmt.Sprintf("make %s runs the vulnerability scan, which needs the network", target))
-		}
+	if dir := makeVar(t, mk, "VULN_IMAGES_DIR"); len(dir) != 1 || !strings.HasPrefix(dir[0], root+"/") {
+		p = append(p, fmt.Sprintf("make vuln-images keeps Grype's database in %q, outside the checkout %s", dir, root))
 	}
 	return p
 }
@@ -123,44 +329,72 @@ func readRepoFile(t *testing.T, rel string) string {
 	return string(b)
 }
 
+// staticAnalysisProblems is every rule of the Makefile, run over the Makefile
+// at mk, by the kinds named (all of them when none is).
+func staticAnalysisProblems(t *testing.T, mk string, kinds ...string) []string {
+	t.Helper()
+	has := func(k string) bool { return len(kinds) == 0 || slices.Contains(kinds, k) }
+	var p []string
+	if has("lint") {
+		p = append(p, lintProblems(t, mk)...)
+	}
+	if has("fastpath") {
+		p = append(p, fastPathProblems(t, mk)...)
+	}
+	if has("js") {
+		p = append(p, vulnJSProblems(t, mk)...)
+	}
+	if has("images") {
+		p = append(p, vulnImagesProblems(t, mk)...)
+	}
+	return p
+}
+
 func TestMakefile_LintRunsStaticcheckAndNothingOnTheNetwork(t *testing.T) {
+	root := mustRepoRoot()
 	mk := readRepoFile(t, "Makefile")
-	if p := lintProblems(mk); len(p) > 0 {
+	if p := staticAnalysisProblems(t, filepath.Join(root, "Makefile")); len(p) > 0 {
 		t.Fatalf("Makefile:\n  %s", strings.Join(p, "\n  "))
 	}
-	for _, c := range []struct{ name, from, to string }{
-		{"the build-tagged run dropped", "\tgo tool staticcheck -tags=integration ./...\n", ""},
-		{"the plain run dropped", "\tgo tool staticcheck ./...\n", ""},
-		{"an unpinned staticcheck", "\tgo tool staticcheck ./...\n", "\tgo run honnef.co/go/tools/cmd/staticcheck@latest ./...\n"},
-		{"a narrowed check set", "\tgo tool staticcheck ./...\n", "\tgo tool staticcheck -checks=SA4006 ./...\n"},
-		{"the vulnerability scan inside lint", "\tgo tool staticcheck ./...\n", "\tgo tool staticcheck ./...\n\tgo tool govulncheck ./...\n"},
-		{"the vulnerability scan dropped", "\tgo tool govulncheck ./...\n", "\ttrue\n"},
-		{"merge-check running the scan", "merge-check: build lint test ", "merge-check: build lint test vuln "},
-		{"merge-check running the image scan", "merge-check: build lint test ", "merge-check: build lint test vuln-images "},
-		{"the JavaScript audit dropped", "\n.PHONY: vuln-js\nvuln-js:", "\n.PHONY: vuln-jsx\nvuln-jsx:"},
-		{"the site not audited", "for d in ui site; do", "for d in ui; do"},
-		{"the audit failing on nothing", "(cd $$d && bun audit --audit-level=high) || failed=", "(cd $$d && bun audit --audit-level=high) || true; failed="},
-		{"the audit failing only on critical", "bun audit --audit-level=high", "bun audit --audit-level=critical"},
-		{"the audit without dev dependencies", "(cd $$d && bun audit --audit-level=high)", "(cd $$d && bun audit --audit-level=high --production)"},
-		{"the image scan dropped", "\n.PHONY: vuln-images\nvuln-images:", "\n.PHONY: vuln-imagez\nvuln-imagez:"},
-		{"an unpinned scanner", "grype=\"$$(grep -v '^#' deploy/grype-image.txt | head -1)\"", "grype=anchore/grype:latest"},
-		{"the scan without its policy", `"$$grype" -c /grype.yaml `, `"$$grype" `},
-		{"a failed image passed", `|| failed="$$failed $$t"`, "|| true"},
-		{"layouts that are not the release's", "$(MAKE) release-images VERSION=v0.0.0", "$(MAKE) -C images oci VERSION=v0.0.0"},
-		{"the audit exiting 0", `names the fixed versions)" >&2; exit 1; fi`, `names the fixed versions)" >&2; exit 0; fi`},
-		{"the image scan exiting 0", `a scan that could not run, in:$$failed" >&2; exit 1; fi`, `a scan that could not run, in:$$failed" >&2; fi`},
-		{"an empty activity list passing", `[ -n '$(strip $(VULN_ACTIVITIES))' ] || {`, `true || {`},
-		{"the database under /tmp", "VULN_IMAGES_DIR ?= $(CURDIR)/.data/vuln-images", "VULN_IMAGES_DIR ?= /tmp/vuln-images"},
-		{"the database dropped from the checkout", "VULN_IMAGES_DIR ?= $(CURDIR)/.data/vuln-images", "VULN_IMAGES_DIR ?= $(TMPDIR)/vuln-images"},
-		{"the scanner's scratch under /tmp", "-v '$(VULN_IMAGES_DIR)/tmp:/scratch'", "-v /tmp:/scratch"},
-		{"the scanner's database under /tmp", "-v '$(VULN_IMAGES_DIR)/db:/db'", "-v /tmp/grype-db:/db"},
-		{"a scanner with its capabilities", "--cap-drop=ALL --security-opt no-new-privileges --read-only ", ""},
+	// Each weakening of the Makefile is held to the rules of the kind it
+	// weakens: a copy of the Makefile is written and run.
+	for _, c := range []struct{ name, kind, from, to string }{
+		{"the build-tagged run dropped", "lint", "\tgo tool staticcheck -tags=integration ./...\n", ""},
+		{"the plain run dropped", "lint", "\tgo tool staticcheck ./...\n", ""},
+		{"an unpinned staticcheck", "lint", "\tgo tool staticcheck ./...\n", "\tgo run honnef.co/go/tools/cmd/staticcheck@latest ./...\n"},
+		{"a narrowed check set", "lint", "\tgo tool staticcheck ./...\n", "\tgo tool staticcheck -checks=SA4006 ./...\n"},
+		{"the vulnerability scan inside lint", "fastpath", "\tgo tool staticcheck ./...\n", "\tgo tool staticcheck ./...\n\tgo tool govulncheck ./...\n"},
+		{"the vulnerability scan dropped", "lint", "\tgo tool govulncheck ./...\n", "\ttrue\n"},
+		{"merge-check running the scan", "fastpath", "merge-check: build lint test ", "merge-check: build lint test vuln "},
+		{"merge-check running the image scan", "fastpath", "merge-check: build lint test ", "merge-check: build lint test vuln-images "},
+		{"the JavaScript audit dropped", "js", "\n.PHONY: vuln-js\nvuln-js:", "\n.PHONY: vuln-jsx\nvuln-jsx:"},
+		{"the site not audited", "js", "for d in ui site; do", "for d in ui; do"},
+		{"the audit failing on nothing", "js", "(cd $$d && bun audit --audit-level=high) || failed=", "(cd $$d && bun audit --audit-level=high) || true; failed="},
+		{"the audit failing only on critical", "js", "bun audit --audit-level=high", "bun audit --audit-level=critical"},
+		{"the audit without dev dependencies", "js", "(cd $$d && bun audit --audit-level=high)", "(cd $$d && bun audit --audit-level=high --production)"},
+		{"the image scan dropped", "images", "\n.PHONY: vuln-images\nvuln-images:", "\n.PHONY: vuln-imagez\nvuln-imagez:"},
+		{"an unpinned scanner", "images", "grype=\"$$(grep -v '^#' deploy/grype-image.txt | head -1)\"", "grype=anchore/grype:latest"},
+		{"the scan without its policy", "images", `"$$grype" -c /grype.yaml `, `"$$grype" `},
+		{"a failed image passed", "images", `|| failed="$$failed $$t"`, "|| true"},
+		{"layouts that are not the release's", "images", "$(MAKE) release-images VERSION=v0.0.0", "$(MAKE) -C images oci VERSION=v0.0.0"},
+		{"the audit exiting 0", "js", `names the fixed versions)" >&2; exit 1; fi`, `names the fixed versions)" >&2; exit 0; fi`},
+		{"the image scan exiting 0", "images", `a scan that could not run, in:$$failed" >&2; exit 1; fi`, `a scan that could not run, in:$$failed" >&2; fi`},
+		{"an empty activity list passing", "images", `[ -n '$(strip $(VULN_ACTIVITIES))' ] || {`, `true || {`},
+		{"the database under /tmp", "images", "VULN_IMAGES_DIR ?= $(CURDIR)/.data/vuln-images", "VULN_IMAGES_DIR ?= /tmp/vuln-images"},
+		{"the database dropped from the checkout", "images", "VULN_IMAGES_DIR ?= $(CURDIR)/.data/vuln-images", "VULN_IMAGES_DIR ?= $(TMPDIR)/vuln-images"},
+		{"the scanner's scratch under /tmp", "images", "-v '$(VULN_IMAGES_DIR)/tmp:/scratch'", "-v /tmp:/scratch"},
+		{"the scanner's database under /tmp", "images", "-v '$(VULN_IMAGES_DIR)/db:/db'", "-v /tmp/grype-db:/db"},
+		{"a scanner with its capabilities", "images", "--cap-drop=ALL --security-opt no-new-privileges --read-only ", ""},
 	} {
 		if !strings.Contains(mk, c.from) {
 			t.Fatalf("the mutation %q finds nothing to change in the Makefile", c.name)
 		}
+		weakened := filepath.Join(t.TempDir(), "Makefile")
 		// A target's prerequisites ride its first line, which its recipe starts with.
-		if len(lintProblems(strings.Replace(mk, c.from, c.to, 1))) == 0 {
+		if err := os.WriteFile(weakened, []byte(strings.Replace(mk, c.from, c.to, 1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if len(staticAnalysisProblems(t, weakened, c.kind)) == 0 {
 			t.Errorf("the rule accepts the weakening %q", c.name)
 		}
 	}
@@ -288,34 +522,22 @@ func TestWorkflows_TheNightlyScansJavaScriptAndImages(t *testing.T) {
 }
 
 // TestVulnImages_ScansEveryImageAReleasePublishes: make vuln-images scans the
-// release images and every activity images/Makefile builds, read from its
-// print-activities with none of the caller's make flags (a `make -n` would
-// otherwise print the recipe instead of the list), and images/Makefile builds
-// every activity directory, so neither a new activity nor a renamed one can
-// narrow the scan in silence.
+// release images and every activity images/Makefile builds, as its
+// print-activities names them (the scan itself is run by
+// TestMakefile_LintRunsStaticcheckAndNothingOnTheNetwork's rule), and
+// images/Makefile prints, so builds, every activity directory, so neither a
+// new activity nor a renamed one can narrow the scan in silence.
 func TestVulnImages_ScansEveryImageAReleasePublishes(t *testing.T) {
-	mk := readRepoFile(t, "Makefile")
-	for _, line := range []string{
-		"\nVULN_ACTIVITIES = $(shell MAKEFLAGS= $(MAKE) -s --no-print-directory -C images print-activities)\n",
-		"\nVULN_IMAGES = $(RELEASE_IMAGES) $(addprefix activity-,$(VULN_ACTIVITIES))\n",
-	} {
-		if !strings.Contains(mk, line) {
-			t.Fatalf("the Makefile's image list is not the release images and images/Makefile's activities: it has no line %q", strings.TrimSpace(line))
-		}
-	}
-	images := readRepoFile(t, "images/Makefile")
-	if print, ok := makeRecipe(images, "print-activities"); !ok || !strings.HasSuffix(print, "\n\t@echo $(ACTIVITIES)\n") {
-		t.Fatalf("images/Makefile's print-activities does not print exactly its ACTIVITIES:\n%s", print)
-	}
-	line := regexp.MustCompile(`(?m)^ACTIVITIES := (.+)$`).FindStringSubmatch(images)
-	if line == nil {
-		t.Fatal("images/Makefile has no ACTIVITIES line")
+	root := mustRepoRoot()
+	res := runMake(t, filepath.Join(root, "images", "Makefile"), filepath.Join(root, "images"), nil, "-s", "--no-print-directory", "print-activities")
+	if res.code != 0 {
+		t.Fatalf("make print-activities: exit %d\n%s", res.code, res.out)
 	}
 	var built []string
-	for _, a := range strings.Fields(line[1]) {
+	for _, a := range strings.Fields(res.out) {
 		built = append(built, "activity-"+a)
 	}
-	dockerfiles, err := filepath.Glob(filepath.Join("..", "..", "..", "images", "activity-*", "Dockerfile"))
+	dockerfiles, err := filepath.Glob(filepath.Join(root, "images", "activity-*", "Dockerfile"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,10 +545,18 @@ func TestVulnImages_ScansEveryImageAReleasePublishes(t *testing.T) {
 	for _, d := range dockerfiles {
 		dirs = append(dirs, filepath.Base(filepath.Dir(d)))
 	}
-	sort.Strings(built)
-	sort.Strings(dirs)
-	if len(built) == 0 || strings.Join(built, " ") != strings.Join(dirs, " ") {
-		t.Errorf("images/ holds the activities %q, and images/Makefile builds, and make vuln-images scans, %q", dirs, built)
+	if len(built) == 0 || !slices.Equal(sorted(built), sorted(dirs)) {
+		t.Errorf("images/ holds the activities %q, and images/Makefile prints, builds, and make vuln-images scans, %q", dirs, built)
+	}
+	// What the scan is made of, expanded: the release images, then those.
+	scan := scannedImages(t, filepath.Join(root, "Makefile"))
+	for _, b := range built {
+		if !slices.Contains(scan, b) {
+			t.Errorf("make vuln-images does not scan %s: it scans %q", b, scan)
+		}
+	}
+	if len(scan) <= len(built) {
+		t.Errorf("make vuln-images scans %q, none of them a release image", scan)
 	}
 }
 

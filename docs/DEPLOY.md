@@ -3953,7 +3953,7 @@ record the raise to the initial interval on both branches.
 
 The replayer compares neither a priority nor a retry policy: it matches a
 scheduled activity by its id and type alone
-(`TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy`). So a key or a
+(`TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy`). So a key or a
 spacing added to a recorded command never breaks a replay; a version gate is
 what keeps a recorded run on the values it was recorded with, and these tests
 compare those values themselves.

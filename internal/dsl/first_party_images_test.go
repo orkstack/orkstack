@@ -494,17 +494,30 @@ func TestFirstPartyImages_SharedHelpersAreByteIdentical(t *testing.T) {
 
 func TestActivityTemplate_GomplateIsAPinnedVerifiedRelease(t *testing.T) {
 	dockerfile := readImageFile(t, "activity-template", "Dockerfile")
-	for _, want := range []string{
-		"ARG GOMPLATE_VERSION=5.3.1",
-		"ARG GOMPLATE_BASE_URL=https://github.com/hairyhenderson/gomplate/releases/download",
-		`"${GOMPLATE_BASE_URL}/v${GOMPLATE_VERSION}/gomplate_linux-${TARGETARCH}"`,
-		"ARG GOMPLATE_SHA256_AMD64=2a618bfb02a54dd3c76d92ae4375ccc1f33eeb0545d6565ea7c3388359cb93f8",
-		"ARG GOMPLATE_SHA256_ARM64=d00242bd08eda5badcea34491b392437237722e7d7e00f8ed05686124a43f61b",
-		"sha256sum -c",
+	// The shape of a pinned, verified release, not which release: a bump
+	// changes the version and the two digests together, and this holds
+	// whichever it moves to.
+	sums := map[string]string{}
+	for _, want := range []struct{ what, pattern string }{
+		{"a release version (semver)", `(?m)^ARG GOMPLATE_VERSION=\d+\.\d+\.\d+$`},
+		{"an https download base", `(?m)^ARG GOMPLATE_BASE_URL=https://\S+$`},
+		{"the asset of that version, for the architecture being built",
+			`"\$\{GOMPLATE_BASE_URL\}/v\$\{GOMPLATE_VERSION\}/\S*\$\{TARGETARCH\}"`},
+		{"a SHA-256 for amd64", `(?m)^ARG GOMPLATE_SHA256_AMD64=[0-9a-f]{64}$`},
+		{"a SHA-256 for arm64", `(?m)^ARG GOMPLATE_SHA256_ARM64=[0-9a-f]{64}$`},
+		{"each architecture checked against its own SHA-256",
+			`amd64\) sum="\$GOMPLATE_SHA256_AMD64"[\s\S]*arm64\) sum="\$GOMPLATE_SHA256_ARM64"`},
+		{"the download checked before it is installed", `sha256sum -c`},
 	} {
-		if !strings.Contains(dockerfile, want) {
-			t.Errorf("Dockerfile lacks %q", want)
+		if !regexp.MustCompile(want.pattern).MatchString(dockerfile) {
+			t.Errorf("Dockerfile lacks %s (/%s/)", want.what, want.pattern)
 		}
+	}
+	for _, m := range regexp.MustCompile(`(?m)^ARG GOMPLATE_SHA256_(AMD64|ARM64)=(\S+)$`).FindAllStringSubmatch(dockerfile, -1) {
+		sums[m[1]] = m[2]
+	}
+	if len(sums) == 2 && sums["AMD64"] == sums["ARM64"] {
+		t.Errorf("both architectures pin the same SHA-256 %s: one of them is not a checksum of its own binary", sums["AMD64"])
 	}
 	for _, forbidden := range []string{"go install", "golang:"} {
 		if strings.Contains(dockerfile, forbidden) {

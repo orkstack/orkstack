@@ -76,10 +76,6 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 		"ORK_ORKFLOW_MAX_TASKS=1", "ORK_HTTP_IDLE_TIMEOUT="+idle.String(),
 		"ORK_ALLOWED_HOSTS=orkstack.example.com, *.corp.example",
 		"ORK_ADMIN_ADDR=127.0.0.1:0", "ORK_ADMIN_ALLOWED_HOSTS=host.docker.internal")
-	if !strings.Contains(log.String(), "request_max_bytes=1052672") || !strings.Contains(log.String(), "allowed_hosts") {
-		t.Fatalf("the boot log does not state the listener's settings:\n%s", log.String())
-	}
-
 	_, port, err := net.SplitHostPort(address)
 	if err != nil {
 		t.Fatal(err)

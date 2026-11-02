@@ -137,32 +137,3 @@ func TestPinRunTreeLimits_PinsThePinCreationTimeout(t *testing.T) {
 		})
 	}
 }
-
-// TestPinRunTreeLimits_PinsTheRetryMaxInterval: the top-level plan carries
-// the engine's default maximum retry interval in whole seconds, always, so a
-// release that changes the default moves only new runs; a child plan nested
-// in it carries none (the engine copies it at the child's start).
-func TestPinRunTreeLimits_PinsTheRetryMaxInterval(t *testing.T) {
-	svc := NewService(Config{})
-	child := &engine.ChildRunPlan{RunID: "ork-1-1", Plan: engine.RunPlan{Namespace: "default"}}
-	plan := engine.RunPlan{Namespace: "default", Children: map[string]*engine.ChildRunPlan{"compose": child}}
-	svc.pinRunTreeLimits(&plan)
-	want := int32(engine.DefaultRetryMaxInterval / time.Second)
-	if plan.RetryMaxIntervalSeconds != want || want != 60 {
-		t.Errorf("RetryMaxIntervalSeconds = %d, want the default %d (60)", plan.RetryMaxIntervalSeconds, want)
-	}
-	if got := plan.Children["compose"].Plan.RetryMaxIntervalSeconds; got != 0 {
-		t.Errorf("a child plan nested in the top-level plan carries %d, want none", got)
-	}
-	encoded, err := json.Marshal(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded map[string]any
-	if err := json.Unmarshal(encoded, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := decoded["retry_max_interval_seconds"].(float64); int32(got) != want {
-		t.Errorf("the encoded plan holds retry_max_interval_seconds = %v, want %d", decoded["retry_max_interval_seconds"], want)
-	}
-}

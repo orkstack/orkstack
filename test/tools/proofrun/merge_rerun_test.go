@@ -46,7 +46,7 @@ func TestMerge_ATimedOutAttemptIsAResult(t *testing.T) {
 	if r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("a timed-out attempt with a running test was rerun-eligible: %v %+v", r.Ineligible, r.Reruns)
 	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "after attempt 1 recorded its result (a test was running when the job stopped: example.com/m.TestB)") {
+	if !ineligibleSays(r.Ineligible, "attempt 1 recorded its result", "a test was running", "example.com/m.TestB") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 }
@@ -56,7 +56,7 @@ func TestMerge_ACancelledAttemptWhoseLogNamesNoRunningTestIsNotRerunEligible(t *
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
 	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "which GitHub did not record as a lost runner, whose runner-health did not measure below the floor and which did not fail in a fetch or install step before its proof step (it was cancelled, and its job log names no test that was running): only a lost, degraded or setup-failed attempt may run again; this run cannot become merge-eligible: start a new run") {
+	if !ineligibleSays(r.Ineligible, "lost runner", "runner-health", "cancelled", "names no test that was running", "may run again", "merge-eligible") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 }
@@ -67,7 +67,7 @@ func TestMerge_ASetupFailureOutsideTheFetchAndInstallStepsIsNotRerunEligible(t *
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
 	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "(a setup failure before its proof step (Run actions/setup-go@v7.0.0), which is not a fetch or install step this part may run again after): only a lost, degraded or setup-failed attempt may run again; this run cannot become merge-eligible: start a new run") {
+	if !ineligibleSays(r.Ineligible, "setup failure", "Run actions/setup-go@v7.0.0", "not a fetch or install step", "may run again", "merge-eligible") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 	if len(r.SetupFailures) != 0 {

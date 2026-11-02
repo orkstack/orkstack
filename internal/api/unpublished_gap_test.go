@@ -3,10 +3,12 @@ package api_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,6 +19,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/evidence"
@@ -123,11 +126,58 @@ func TestUnpublishedStart_LiveAndArchivedReadsAgree(t *testing.T) {
 	}
 }
 
+// TestUnpublishedStart_TheStreamEventsRPCEndsInDataLoss: a client of the
+// StreamEvents RPC, over the real handler, reads the same answer the Service
+// method gives: from 0 the stream ends DataLoss with the sentence that names
+// 1 as never published and has sent nothing, and from 1 it serves RUN_FAILED
+// at 2 and ends cleanly.
+func TestUnpublishedStart_TheStreamEventsRPCEndsInDataLoss(t *testing.T) {
+	run := &orkstackv1.Run{Id: unpublishedRunID, Namespace: "default", OrkflowName: "broken",
+		Status: orkstackv1.Status_STATUS_FAILED, Error: &orkstackv1.Error{Code: engine.RunDefinitionCorruptCode},
+		CreatedAt: timestamppb.Now(), FinishedAt: timestamppb.Now()}
+	svc := api.NewService(api.Config{Reader: unpublishedReader{&fakeReader{
+		runs:   map[string]*orkstackv1.Run{unpublishedRunID: run},
+		events: map[string][]*orkstackv1.Event{unpublishedRunID: unpublishedRunEvents()},
+	}}})
+	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
+	t.Cleanup(server.Close)
+	client := orkstackv1connect.NewRunServiceClient(server.Client(), server.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	read := func(from int64) ([]*orkstackv1.Event, error) {
+		stream, err := client.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: unpublishedRunID, FromSequence: from}))
+		if err != nil {
+			return nil, err
+		}
+		defer stream.Close()
+		var sent []*orkstackv1.Event
+		for stream.Receive() {
+			sent = append(sent, stream.Msg())
+		}
+		return sent, stream.Err()
+	}
+
+	sent, err := read(0)
+	var connectErr *connect.Error
+	if connect.CodeOf(err) != connect.CodeDataLoss || !errors.As(err, &connectErr) || connectErr.Message() != unpublishedSentence {
+		t.Fatalf("from 0: err = %v, want DataLoss %q", err, unpublishedSentence)
+	}
+	if len(sent) != 0 {
+		t.Fatalf("from 0: sent %d events before the gap, want none: the gap is the start", len(sent))
+	}
+	sent, err = read(1)
+	if err != nil || len(sent) != 1 || sent[0].GetSequence() != 2 || sent[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
+		t.Fatalf("from 1: %v (%v), want RUN_FAILED at 2", sent, err)
+	}
+}
+
 // TestUnpublishedEventsReason_NamesTheGapInEveryNotice: the engine and the
 // evidence bundle carry one reason for numbers a run never published, and
-// every notice built on it — the archive's error, a live read's error, the
-// bundle's — says never published, never lost from object storage. A lost
-// segment's notice keeps its own wording.
+// every notice the engine builds on it — the archive's error and a live
+// read's error — says never published, never lost from object storage. A
+// lost segment's notice keeps its own wording. The bundle's notice
+// (evidence.EventGap.Sentence) is held to the same by the evidence package's
+// TestEventGapSentence_NamesTheCause, which is where that sentence lives.
 func TestUnpublishedEventsReason_NamesTheGapInEveryNotice(t *testing.T) {
 	if engine.UnpublishedEventsReason != evidence.UnpublishedEventsReason {
 		t.Fatalf("engine says %q, evidence %q: one reason, word for word",
@@ -142,10 +192,6 @@ func TestUnpublishedEventsReason_NamesTheGapInEveryNotice(t *testing.T) {
 				"events 1–1 of run r were never published (the run's history holds no event under these numbers)"},
 		{(&engine.UnpublishedEventsError{RunID: "r", Gaps: []engine.EventGap{unpublishedGap}}).Error(),
 			"events 1–1 of run r were never published (the run's history holds no event under these numbers)"},
-		{evidence.EventGap{First: 1, Last: 1, Reason: evidence.UnpublishedEventsReason}.Sentence(),
-			"events 1–1 of this run were never published (the run's history holds no event under these numbers)"},
-		{evidence.EventGap{First: 1201, Last: 2400, Reason: "segment object missing"}.Sentence(),
-			"events 1201–2400 of this run were lost from object storage before it was archived (segment object missing)"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("notice = %q,\nwant     %q", tc.got, tc.want)
@@ -177,6 +223,29 @@ func TestEvidenceExport_AnUnpublishedStartIsSchemaTwo(t *testing.T) {
 	}
 	if report := verifyBundle(t, r.data); len(report.EventGaps) != 1 || report.EventGaps[0] != want {
 		t.Fatalf("Verify reported gaps %+v, want %+v", report.EventGaps, want)
+	}
+
+	// The archive body in the bundle records the same range as a line of its
+	// own, between the run's snapshot and the one event it kept: the gap is
+	// in the stream a reader replays, not only in the manifest.
+	var kinds []string
+	var gapLines []engine.EventGap
+	for _, line := range bytes.Split(bytes.TrimSpace(tarMembers(t, r.data)["run.jsonl"]), []byte("\n")) {
+		var parsed struct {
+			Kind string           `json:"kind"`
+			Gap  *engine.EventGap `json:"gap"`
+		}
+		if err := json.Unmarshal(line, &parsed); err != nil {
+			t.Fatalf("run.jsonl line %q: %v", line, err)
+		}
+		kinds = append(kinds, parsed.Kind)
+		if parsed.Gap != nil {
+			gapLines = append(gapLines, *parsed.Gap)
+		}
+	}
+	if !slices.Equal(kinds, []string{engine.ArchiveKindRun, engine.ArchiveKindGap, engine.ArchiveKindEvent}) ||
+		len(gapLines) != 1 || gapLines[0] != unpublishedGap {
+		t.Fatalf("run.jsonl lines are %v with gap lines %+v, want run, gap, event with the gap %+v", kinds, gapLines, unpublishedGap)
 	}
 }
 
@@ -283,26 +352,21 @@ func TestEvidenceExport_ARunNeverArchivedSaysSo(t *testing.T) {
 		// locateFails is whether the run cannot be located a second time.
 		locateFails bool
 		want        string
-		// logged is what the warn log must say, or "" for no warn; cause is
-		// the error it must carry.
-		logged, cause string
+		// cause is the error the warn must carry, or "" for no warn at all.
+		cause string
 	}{
-		{"it published no terminal event", false, nil, false, never, "", ""},
-		{"it published its terminal event", true, nil, false, retry, "", ""},
-		{"its history cannot be read", false, errors.New("history unavailable"), false, retry,
-			"could not read whether a run with no archive published its terminal event", "history unavailable"},
-		{"it cannot be located again", false, nil, true, retry,
-			"could not locate a run with no archive", "cluster unreachable"},
+		{"it published no terminal event", false, nil, false, never, ""},
+		{"it published its terminal event", true, nil, false, retry, ""},
+		{"its history cannot be read", false, errors.New("history unavailable"), false, retry, "history unavailable"},
+		{"it cannot be located again", false, nil, true, retry, "cluster unreachable"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var logs bytes.Buffer
-			var router *locateFailsAfterFirst
 			f := newEvidenceFixture(t, withConfig(func(cfg *api.Config) {
 				cfg.Reader = terminalReader{cfg.Reader.(*fakeReader), tc.published, tc.err}
 				cfg.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
 				if tc.locateFails {
-					router = &locateFailsAfterFirst{NamespaceRouter: engine.NewSingleRouter(engine.Binding{Reader: cfg.Reader})}
-					cfg.Router = router
+					cfg.Router = &locateFailsAfterFirst{NamespaceRouter: engine.NewSingleRouter(engine.Binding{Reader: cfg.Reader})}
 				}
 			}))
 			f.reader.setRun(&orkstackv1.Run{Id: "ork-never", OrkflowName: "evidence", Status: orkstackv1.Status_STATUS_FAILED})
@@ -313,17 +377,21 @@ func TestEvidenceExport_ARunNeverArchivedSaysSo(t *testing.T) {
 			if tc.want == never && strings.Contains(r.err.Error(), "retry") {
 				t.Fatalf("export = %v, want no retry for a run that is never archived", r.err)
 			}
-			switch logged := logs.String(); {
-			case tc.logged == "" && logged != "":
-				t.Fatalf("export logged %s, want nothing at warn", logged)
-			case tc.logged != "" && (!strings.Contains(logged, `"level":"WARN"`) || !strings.Contains(logged, tc.logged) ||
-				!strings.Contains(logged, `"run_id":"ork-never"`) || !strings.Contains(logged, tc.cause)):
-				t.Fatalf("export logged %q, want a warn saying %q with the run id and %q", logged, tc.logged, tc.cause)
+			// A cause the export could not read is a warning of its own, at
+			// WARN, naming the run and carrying the cause: the only trace of
+			// why the answer is "retry". The cause appears only where the
+			// failing call is made (the second locate, the history read), so
+			// finding it also shows that call was reached.
+			records := logRecords(t, logs.String())
+			if tc.cause == "" {
+				if len(records) != 0 {
+					t.Fatalf("export logged %v, want nothing at warn", records)
+				}
+				return
 			}
-			// The second Locate is neverArchived's: without it the warn
-			// above could not be the one under test.
-			if router != nil && router.calls.Load() < 2 {
-				t.Fatalf("the router was asked %d times, want the export to locate the run again", router.calls.Load())
+			if len(records) != 1 || records[0]["level"] != "WARN" || records[0]["run_id"] != "ork-never" ||
+				!strings.Contains(fmt.Sprint(records[0]["error"]), tc.cause) {
+				t.Fatalf("export logged %v, want one WARN record for run ork-never whose error carries %q", records, tc.cause)
 			}
 		})
 	}

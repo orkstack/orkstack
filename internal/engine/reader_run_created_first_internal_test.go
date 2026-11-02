@@ -36,9 +36,18 @@ func runCreatedFirstHistory(t *testing.T, name string) (string, []*historypb.His
 	return runID, recorded.GetEvents()
 }
 
-// withoutPublishes is a history with its last n PublishEvent schedulings
-// removed (every one when n is negative): the same ending with those
-// events' snapshot writes refused, so it published none of them.
+// withoutPublishes is a recorded history with its last n PublishEvent
+// schedulings removed (every one when n is negative): the same ending with
+// those events' snapshot writes refused, so it published none of them. It is
+// the one derivation the reader's rows make from the committed fixtures, and
+// it is exact for what the reader reads. The reader takes an ending's events
+// from the PublishEvent schedulings (isPublishEvent) and the execution's
+// close, and nothing else of the run's commands; a refused write differs from
+// a taken one in the failed write's marker, which the reader never looks at,
+// and in the PublishEvent that a taken write goes on to schedule. The same
+// endings on a real cluster are the rows of
+// TestIntegration_ARefusedRunCreatedReadsBackTheDefinitionCode, which read the
+// real histories back through the reader and the API.
 func withoutPublishes(events []*historypb.HistoryEvent, n int) []*historypb.HistoryEvent {
 	var publishes []int
 	for i, e := range events {
@@ -173,6 +182,62 @@ func TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap(t *t
 			}
 			if published, err := reader.PublishedTerminalEvent(context.Background(), runID); err != nil || published != tc.published {
 				t.Fatalf("PublishedTerminalEvent = %v (%v), want %v", published, err, tc.published)
+			}
+		})
+	}
+}
+
+// TestScanState_OnlyTheStartOfAFirstExecutionCanBeUnpublished: the reader
+// names a gap below the first event a run's first execution published, and
+// nowhere else. A number consumed later without an event is not checked, an
+// execution that started from a carry has its earlier events in segments and
+// begins wherever the run had got to, and a run that published RUN_CREATED
+// first has no gap to name. The table runs the decision on its own: the
+// recorded histories reach it only through the endings above, and no history
+// a cluster records holds a mid-stream burn, so each guard that keeps the
+// decision to the start of a first execution is held here. The carried guard
+// is the documented rule, not a second line of defence the reader needs
+// today: adoptCarry raises the scan's last sequence to the carry's before a
+// carried execution's first event is delivered, so for every carry a run
+// writes (its earlier events end at 1 or later) the last-sequence guard
+// already refuses it, and removing this one fails no read of a real history.
+func TestScanState_OnlyTheStartOfAFirstExecutionCanBeUnpublished(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// state: what the scan had done before this event.
+		carried      bool
+		lastSequence int64
+		seen         []int64
+		// first is the event's sequence.
+		first int64
+		// gap is the numbers named as never published, "" for none.
+		gap string
+	}{
+		{name: "RUN_CREATED was not published and the next event is 2", first: 2, gap: "1–1"},
+		{name: "the first event published is 5", first: 5, gap: "1–4"},
+		{name: "the first event is RUN_CREATED at 1", first: 1},
+		{name: "an event numbered 0 is no later than 1", first: 0},
+		{name: "a number burned after the run began is not checked", lastSequence: 3, seen: []int64{1, 2, 3}, first: 5},
+		{name: "events up to 3 are known to have been published, though none was delivered", lastSequence: 3, first: 5},
+		{name: "an event was delivered already, whatever its number", seen: []int64{0}, first: 5},
+		{name: "a generation that started from a carry begins where the run had got to", carried: true, first: 12},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := newScanState(false)
+			st.carried, st.lastSequence = tc.carried, tc.lastSequence
+			for _, sequence := range tc.seen {
+				st.seen[sequence] = struct{}{}
+			}
+			gap, ok := st.unpublishedStart(&orkstackv1.Event{Sequence: tc.first})
+			got := ""
+			if ok {
+				got = fmt.Sprintf("%d–%d", gap.First, gap.Last)
+				if !gap.Unpublished() {
+					t.Errorf("the gap %s gives the reason %q, want the unpublished one", got, gap.Reason)
+				}
+			}
+			if got != tc.gap {
+				t.Fatalf("unpublishedStart(%d) named %q, want %q", tc.first, got, tc.gap)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+	"unicode"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -23,24 +24,97 @@ func canceledRun(by string) *orkstackv1.Run {
 	}
 }
 
-// `run get` says who canceled the run with the caption every principal this
-// CLI prints carries, and says nothing at all when nobody is recorded.
-func TestRenderRun_SaysWhoCanceledTheRunAsAsserted(t *testing.T) {
-	var out bytes.Buffer
-	if err := renderRun(&out, canceledRun("dana@acme")); err != nil {
-		t.Fatalf("renderRun: %v", err)
+// unsafePrincipals are gateway header values that would break a detail
+// line if printed as they are: a tab splits the table's columns, an escape
+// reaches the terminal, a bidi override reorders the caption, and a line or
+// paragraph separator ends the line before the caption. Each renders with
+// every such character as a space.
+var unsafePrincipals = []struct {
+	name, principal, shown string
+}{
+	{"plain", "dana@acme", "dana@acme"},
+	{"a tab and an escape", "dana\t@acme\x1b[2J", "dana @acme [2J"},
+	{"a bidi override", "dana\u202e@acme", "dana @acme"},
+	{"a newline", "dana\n@acme", "dana @acme"},
+	{"a line separator", "dana\u2028@acme", "dana @acme"},
+	{"a zero-width joiner", "dana\u200d@acme", "dana @acme"},
+}
+
+// detailLine is the one line of a detail view that opens with label, or the
+// test fails when there is not exactly one.
+func detailLine(t *testing.T, out, label string) string {
+	t.Helper()
+	var found []string
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.HasPrefix(line, label) {
+			found = append(found, line)
+		}
 	}
-	want := "Canceled by: dana@acme (asserted by the gateway; not authenticated)"
-	if got := collapseSpaces(out.String()); !strings.Contains(got, want) {
-		t.Fatalf("run get output lacks %q:\n%s", want, out.String())
+	if len(found) != 1 {
+		t.Fatalf("output has %d %q lines, want 1:\n%s", len(found), label, out)
+	}
+	return found[0]
+}
+
+// requirePrintable fails when line carries a control, format or separator
+// character a terminal would act on.
+func requirePrintable(t *testing.T, line string) {
+	t.Helper()
+	for _, r := range line {
+		if unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp) {
+			t.Fatalf("line carries %U: %q", r, line)
+		}
+	}
+}
+
+// `run get` says who canceled the run on one line, the gateway's control,
+// format and separator characters as spaces, with the caption every
+// principal this CLI prints carries after it; and says nothing at all when
+// nobody is recorded.
+func TestRenderRun_SaysWhoCanceledTheRunAsAsserted(t *testing.T) {
+	for _, tt := range unsafePrincipals {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			if err := renderRun(&out, canceledRun(tt.principal)); err != nil {
+				t.Fatalf("renderRun: %v", err)
+			}
+			line := detailLine(t, out.String(), "Canceled by:")
+			requirePrintable(t, line)
+			want := "Canceled by: " + tt.shown + " " + principalCaption
+			if got := collapseSpaces(line); got != want {
+				t.Fatalf("Canceled by line = %q, want %q", got, want)
+			}
+		})
 	}
 
-	out.Reset()
+	var out bytes.Buffer
 	if err := renderRun(&out, canceledRun("")); err != nil {
 		t.Fatalf("renderRun: %v", err)
 	}
 	if strings.Contains(out.String(), "Canceled by") {
 		t.Fatalf("a run nobody is recorded as canceling shows a Canceled by line:\n%s", out.String())
+	}
+}
+
+// `run get` prints an origin's principal the same way: one line, the
+// gateway's control, format and separator characters as spaces, the caption
+// after it.
+func TestRenderRun_PrintsTheOriginPrincipalAsAsserted(t *testing.T) {
+	for _, tt := range unsafePrincipals {
+		t.Run(tt.name, func(t *testing.T) {
+			run := canceledRun("")
+			run.Origin.Principal = tt.principal
+			var out bytes.Buffer
+			if err := renderRun(&out, run); err != nil {
+				t.Fatalf("renderRun: %v", err)
+			}
+			line := detailLine(t, out.String(), "Principal:")
+			requirePrintable(t, line)
+			want := "Principal: " + tt.shown + " " + principalCaption
+			if got := collapseSpaces(line); got != want {
+				t.Fatalf("Principal line = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

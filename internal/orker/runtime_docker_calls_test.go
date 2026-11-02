@@ -57,7 +57,9 @@ import (
 // make that run hang for 30 s, answer the daemon's own deadline error, or be
 // refused for another reason; sigtimeoutruns (its content N) makes only the
 // first N such runs answer the deadline error. Every `kill --signal TERM`
-// touches termsent.
+// touches termsent. A test that must act while a call is in flight asks for
+// watch (runtime_docker_watch_test.go), after which each invocation is also
+// written to a pipe it reads.
 type countingDocker struct {
 	t   *testing.T
 	dir string
@@ -74,6 +76,7 @@ func newCountingDocker(t *testing.T) *countingDocker {
 	script := `#!/bin/sh
 S=` + shellQuote(dir) + `
 echo "$*" >> "$S/calls"
+if [ -p "$S/live" ]; then echo "$*" > "$S/live"; fi
 if [ -e "$S/noise" ]; then echo "Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg." >&2; fi
 case "$1" in
   image)

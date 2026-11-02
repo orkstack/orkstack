@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"go.temporal.io/sdk/interceptor"
+	"go.temporal.io/sdk/activity"
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -451,12 +451,21 @@ func TestExecute_TheTasksOwnShapeIsRefusedBeforeTheCommitCheck(t *testing.T) {
 	}
 }
 
+// testActivityQueue is the task queue the SDK's activity test environment
+// reports for the activity it runs; an Activities whose pool channel is that
+// queue admits the activity as one polled from the pool, which is what holds
+// a permit's reservation to trim.
+const testActivityQueue = "default-test-taskqueue"
+
 // TestCapacity_ARequestAboveThisOrkersCapReservesNothingWhateverItsOutcome:
 // the capacity ledger is asked the request the policy resolves, which is
 // nothing for a request above this Orker's cap. An attempt that adopts a
 // commit, reuses a hit or is refused for that request therefore reserves
 // nothing past its poll, is never a RESOURCE_ADMISSION_MISMATCH, and leaves
-// the ledger at rest.
+// the ledger at rest. It is driven through the worker interceptor the shipped
+// Orker installs, which admits the attempt before the dispatcher sees it; the
+// last row is the control, an attempt within the cap, which must hold exactly
+// its resolved request while it runs and give it back when it returns.
 func TestCapacity_ARequestAboveThisOrkersCapReservesNothingWhateverItsOutcome(t *testing.T) {
 	cpuCap := narrowerOrkers[0]
 	for _, path := range []struct {
@@ -466,10 +475,13 @@ func TestCapacity_ARequestAboveThisOrkersCapReservesNothingWhateverItsOutcome(t 
 		seed bool
 		// refused is whether the narrower Orker refuses the attempt.
 		refused bool
+		// within asks for what this Orker's cap admits: the control.
+		within bool
 	}{
 		{name: "adopted", seed: true},
 		{name: "a memo hit", cached: true, seed: true},
 		{name: "refused", refused: true},
+		{name: "adopted within the cap", seed: true, within: true},
 	} {
 		t.Run(path.name, func(t *testing.T) {
 			h := policyOrderHarness(t)
@@ -483,32 +495,81 @@ func TestCapacity_ARequestAboveThisOrkersCapReservesNothingWhateverItsOutcome(t 
 			if path.cached {
 				in = policyOrderInput(t, cpuCap, "ork-order-ledger-2", true)
 			}
+			if path.within {
+				in.Resources = &orkstackv1.ResourceRequest{Cpu: "1"}
+			}
 			cpuCap.narrow(h.dispatcher)
 			ceiling, err := h.dispatcher.Policy.ceiling()
 			if err != nil {
 				t.Fatal(err)
 			}
-			c := newCapacity(ceiling.add(ceiling), ceiling, 16)
+			// A capacity of exactly one cap: whatever an attempt reserves
+			// beyond the poll it was delivered on does not fit.
+			c := newCapacity(ceiling, ceiling, 16)
+			a := &Activities{dispatcher: h.dispatcher, cordon: NewCordon(), pins: newOpenPins(), capacity: c, taskQueue: testActivityQueue}
 
+			// What the attempt may hold while it runs: the request the policy
+			// resolves, which is nothing above the cap.
+			wantHeld := h.dispatcher.Policy.ReservedResources(in.GetResources())
+			if path.within != (wantHeld != nil) {
+				t.Fatalf("the policy resolves the request to %v; the row asks for a request within the cap: %t", wantHeld, path.within)
+			}
+
+			var (
+				ran     bool
+				during  CapacityReading
+				result  *orkstackv1.ExecuteTaskResult
+				execErr error
+			)
+			env := activityEnv(a)
+			env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+				ran, during = true, c.reading()
+				result, execErr = a.ExecuteTask(ctx, in)
+				return result, execErr
+			}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+
+			// The SDK reserved the cap for the poll and delivered the task on it.
 			permit := mustReserve(t, c)
 			c.markUsed(permit)
-			request := executeTaskRequest(h.dispatcher.Policy, &interceptor.ExecuteActivityInput{Args: []any{in}})
-			if request != (amount{}) {
-				t.Fatalf("a request above this Orker's cap reserves %s, want nothing", request)
+			_, intercepted := env.ExecuteActivity(task.ActivityExecuteTask, in)
+			if !ran {
+				t.Fatalf("the interceptor refused the attempt before the dispatcher saw it: %v (a request this Orker "+
+					"resolves to %v must never be %s)", intercepted, wantHeld, ReasonResourceAdmissionMismatch)
 			}
-			admission, err := c.admit(true, request)
-			if err != nil {
-				t.Fatalf("admit = %v; a request the policy resolves to nothing is never a mismatch", err)
-			}
-			wantReserved(t, c, "admitted", amount{})
 
-			_, err = h.dispatcher.Execute(context.Background(), in)
-			if (err != nil) != path.refused {
-				t.Fatalf("Execute = %v, want refused %t", err, path.refused)
+			if failure := failureOf(execErr); path.refused {
+				if failure == nil || failure.Reason != ReasonResourceRefused {
+					t.Fatalf("Execute = %v, want %s", execErr, ReasonResourceRefused)
+				}
+			} else if execErr != nil {
+				t.Fatalf("Execute = %v, want the attempt to succeed", execErr)
 			}
-			admission.Done()
+			switch {
+			case path.refused:
+			case path.cached:
+				if outcome := result.GetCache().GetOutcome(); outcome != orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT {
+					t.Fatalf("cache outcome = %v, want a hit", outcome)
+				}
+			default:
+				if !result.GetCommitAdopted() {
+					t.Fatalf("result = %v, want the first attempt's commit adopted", result)
+				}
+			}
+
+			if during.ReservedCPU != wantHeld.GetCpu() || during.ReservedMemory != wantHeld.GetMemoryBytes() {
+				t.Errorf("while the attempt ran the ledger held %g cpu, %d bytes; want its resolved request, %g cpu, %d bytes",
+					during.ReservedCPU, during.ReservedMemory, wantHeld.GetCpu(), wantHeld.GetMemoryBytes())
+			}
+			if after := c.reading(); after.ReservedCPU != 0 || after.ReservedMemory != 0 {
+				t.Errorf("after the attempt returned the ledger still holds %g cpu, %d bytes", after.ReservedCPU, after.ReservedMemory)
+			}
 			c.release(permit)
-			wantReserved(t, c, "done", amount{})
+			if rest := c.reading(); rest.ReservedCPU != 0 || rest.ReservedMemory != 0 {
+				t.Errorf("after the permit was released the ledger holds %g cpu, %d bytes, want it at rest", rest.ReservedCPU, rest.ReservedMemory)
+			}
+			if c.tryReserve() == nil {
+				t.Error("no poll fits after the attempt: the ledger is not at rest")
+			}
 		})
 	}
 }

@@ -214,37 +214,48 @@ func TestIntegration_RecordRunCreatedFirstHistories(t *testing.T) {
 // recorded as a gap. With the terminal write refused too, nothing is
 // published: GetRun and the stream read the code from the execution's close,
 // at 1, and nothing archives it, as for any run that publishes no terminal
-// event.
+// event. With RUN_CREATED written and the terminal write refused, the stream
+// is RUN_CREATED and the execution's close read as the terminal event at 2.
+// These are the real-cluster histories the reader's unit rows derive from
+// the recorded fixtures (TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap),
+// and in every case the stream's last event and GetRun say one failure message.
 func TestIntegration_ARefusedRunCreatedReadsBackTheDefinitionCode(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		refuse   func(n int, sequence int64) bool
 		want     string
 		terminal bool
+		// created is how many writes of RUN_CREATED's number begin.
+		created int
 	}{
-		{"the terminal event written", func(n int, _ int64) bool { return n >= 1 }, "[2:RUN_FAILED]", true},
-		{"every write refused", func(int, int64) bool { return true }, "[1:RUN_FAILED]", false},
+		{"the terminal event written", func(n int, _ int64) bool { return n >= 1 }, "[2:RUN_FAILED]", true, 2},
+		{"every write refused", func(int, int64) bool { return true }, "[1:RUN_FAILED]", false, 2},
+		{"only the terminal write refused", func(_ int, sequence int64) bool { return sequence == 2 }, "[1:RUN_CREATED 2:RUN_FAILED]", false, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer cancel()
 			s := newChaosStack(t, ctx, "run-created-first-readback")
 			runID, _, _, writes := s.corruptStart(t, tc.refuse)
-			if n, _, others := writes.counts(); n != 2 || others == 0 {
-				t.Fatalf("RUN_CREATED's writes began %d times and %d attempts were at other numbers, want 2 and the "+
-					"terminal event attempted", n, others)
+			if n, _, others := writes.counts(); n != tc.created || others == 0 {
+				t.Fatalf("RUN_CREATED's writes began %d times and %d attempts were at other numbers, want %d and the "+
+					"terminal event attempted", n, others, tc.created)
 			}
 			a := s.serveAPI(api.Config{})
 			served := s.requireStreamed(t, a, runID, tc.want, tc.terminal)
 			last := served[len(served)-1]
-			if !strings.Contains(last.GetMessage(), "not the definition") && !strings.Contains(last.GetMessage(), "another orkflow") {
-				t.Fatalf("the served terminal event says %q, want the definition's failure", last.GetMessage())
-			}
 			run, err := s.reader.GetRun(ctx, runID)
 			if err != nil || run.GetStatus() != orkstackv1.Status_STATUS_FAILED ||
 				run.GetError().GetCode() != engine.RunDefinitionCorruptCode ||
 				run.GetError().GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION {
 				t.Fatalf("GetRun = %v (%v), want FAILED %s ContractViolation", run.GetError(), err, engine.RunDefinitionCorruptCode)
+			}
+			// The stream's last event and GetRun say the same failure, whether
+			// the run published its end or the reader read it off the
+			// execution's close: one sentence, not a sentence each.
+			if last.GetMessage() == "" || last.GetMessage() != run.GetError().GetMessage() {
+				t.Fatalf("the served terminal event says %q, GetRun says %q, want the one failure message",
+					last.GetMessage(), run.GetError().GetMessage())
 			}
 			if !tc.terminal {
 				if _, err := s.archive.LoadRun(ctx, runID); !errors.Is(err, artifacts.ErrNotFound) {

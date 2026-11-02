@@ -25,7 +25,7 @@ import (
 //     plan said.
 //
 // Temporal's replayer matches a scheduled activity by type and id alone
-// (TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy), so these tests
+// (TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy), so these tests
 // compare the decided value themselves: what the history recorded against
 // what current code sends on replay.
 const (
@@ -338,18 +338,22 @@ func TestRetryMaxIntervalHistories_CatchTheGateRemoved(t *testing.T) {
 	requireIntervals(t, maximumIntervals(capture), 1, 100*time.Second)
 }
 
-// TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy is the SDK
-// evidence the gates above rest on: a recorded history whose pin creation
-// requests and tasks carried no priority, and whose retries had their own
-// policy, replays clean against code that sends every one of those commands
-// with a fairness key and a different retry policy — the replayer matches a
-// scheduled activity by its id and type only (go.temporal.io/sdk
-// internal/internal_task_handlers.go, isCommandMatchEvent). So adding a key
-// to a recorded command can never break a replay, and only a version gate
-// keeps a recorded run on the values it was recorded with. The control
-// changes one command's activity type, which the replayer refuses, so the
-// replay is known to compare commands at all.
-func TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy(t *testing.T) {
+// TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy is a premise
+// check on the Temporal SDK, not a test of OrkStack code: it holds the SDK to
+// the behaviour the gates above rest on, so an SDK upgrade that starts
+// comparing a command's priority or retry policy fails here, naming the
+// premise, rather than in a replay test that looks unrelated.
+//
+// The premise: a recorded history whose pin creation requests and tasks
+// carried no priority, and whose retries had their own policy, replays clean
+// against code that sends every one of those commands with a fairness key and
+// a different retry policy — the replayer matches a scheduled activity by its
+// id and type only (go.temporal.io/sdk internal/internal_task_handlers.go,
+// isCommandMatchEvent). So adding a key to a recorded command can never break
+// a replay, and only a version gate keeps a recorded run on the values it was
+// recorded with. The control changes one command's activity type, which the
+// replayer refuses, so the replay is known to compare commands at all.
+func TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy(t *testing.T) {
 	recorded := loadHistoryFile(t, pinCreationTimeoutLegacy)
 	runID, _, _, plan, _ := startArgs(t, recorded)
 	if plan.Fairness != nil {

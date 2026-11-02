@@ -378,6 +378,39 @@ func composeMaxDepthFromEnv() (int32, error) {
 	return value, nil
 }
 
+// connectTemporal dials the cluster with the options this process runs on:
+// the telemetry package's (telemetry.ClientOptions is the one way a client's
+// options are built, TestClientOptions_IsHowOrkAndOrkerDialTemporal), under
+// the identity an engine advertises its capabilities in.
+//
+// The run worker and the projection worker share this client, so both poll
+// with its identity: the SDK's own, followed by the engine capabilities this
+// build advertises. A submit that needs a capability checks the cluster's
+// poller list for a process without it (engine.MissingCapability,
+// docs/DEPLOY.md §5).
+//
+// It returns the client and the identity it was dialed with, which a
+// cancellation that records who asked names on the cluster itself
+// (TemporalStarter.CancelRun).
+//
+// dialing, when set, is told the options just before the dial: a test's way
+// to see exactly what this process dials with, without a cluster to dial. It
+// is nil in production.
+func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, logger *slog.Logger,
+	dialing func(client.Options),
+) (temporalClient client.Client, identity string, err error) {
+	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
+	if err != nil {
+		return nil, "", err
+	}
+	temporalOptions.Identity = engine.EngineIdentity(sdkIdentity())
+	if dialing != nil {
+		dialing(temporalOptions)
+	}
+	temporalClient, err = client.DialContext(ctx, temporalOptions)
+	return temporalClient, temporalOptions.Identity, err
+}
+
 // sdkIdentity is the identity the Temporal SDK gives a client that names
 // none: `pid@host@` (go.temporal.io/sdk internal getWorkerIdentity("")).
 func sdkIdentity() string {
@@ -992,17 +1025,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 
-	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
-	if err != nil {
-		return err
-	}
-	// The run worker and the projection worker share this client, so both
-	// poll with its identity: the SDK's own, followed by the engine
-	// capabilities this build advertises. A submit that needs a capability
-	// checks the cluster's poller list for a process without it
-	// (engine.MissingCapability, docs/DEPLOY.md §5).
-	temporalOptions.Identity = engine.EngineIdentity(sdkIdentity())
-	temporalClient, err := client.DialContext(ctx, temporalOptions)
+	temporalClient, clusterIdentity, err := connectTemporal(ctx, cfg, sinks, logger, nil)
 	if err != nil {
 		return err
 	}
@@ -1323,7 +1346,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		WithOriginIndex(originIndexed).
 		// What the client was dialed with: a cancellation that records who
 		// asked names them on the cluster itself (TemporalStarter.CancelRun).
-		WithClusterIdentity(cfg.temporalNamespace, temporalOptions.Identity)
+		WithClusterIdentity(cfg.temporalNamespace, clusterIdentity)
 
 	// Pool routing: the cluster answers whether a pool has Orkers, so a submit
 	// onto a pool nothing serves fails at submit rather than leaving a run in

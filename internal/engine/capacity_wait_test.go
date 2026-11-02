@@ -45,12 +45,15 @@ func editedOrker(o *orkstackv1.DescribeOrkerResult, edit func(*orkstackv1.Descri
 // that answered and takes new tasks declares a capacity, runs a task, and
 // cannot fit its per-task cap beside what it has reserved — and every live
 // Orker answered. Anything else is nil, so the clients keep "waiting for an
-// Orker".
+// Orker". Every pool asked about is answered from its own Orkers of the one
+// inventory: want is pool "build"'s, and also holds the others the row asks
+// about, a nil entry being a pool that is not waiting for capacity.
 func TestCapacityWaits_EveryCountedOrkerMustBeFull(t *testing.T) {
 	cases := []struct {
 		name       string
 		fleet      *fakeFleet
 		want       *orkstackv1.CapacityWait
+		also       map[string]*orkstackv1.CapacityWait
 		unanswered int
 	}{
 		{
@@ -143,32 +146,49 @@ func TestCapacityWaits_EveryCountedOrkerMustBeFull(t *testing.T) {
 			name:  "another pool's full orkers say nothing about this one",
 			fleet: fleetOf(sizedOrker("g-1", "gpu", 4, 0, 4, 0)),
 		},
+		{
+			name: "a pool with an orker that has room, and a pool no orker serves, are not waiting beside a full one",
+			fleet: fleetOf(
+				sizedOrker("b-1", "build", 4, 0, 4, 0),
+				sizedOrker("g-1", "gpu", 4, 0, 4, 0),
+				sizedOrker("g-2", "gpu", 4, 0, 1, 0)),
+			want: &orkstackv1.CapacityWait{Pool: "build", Orkers: 1,
+				Reserved: &orkstackv1.ResourceQuantity{Cpu: 4},
+				Capacity: &orkstackv1.ResourceQuantity{Cpu: 4}},
+			also: map[string]*orkstackv1.CapacityWait{"gpu": nil, "io": nil},
+		},
+		{
+			name: "two full pools are each reported on their own orkers",
+			fleet: fleetOf(
+				sizedOrker("b-1", "build", 4, 0, 4, 0),
+				sizedOrker("g-1", "gpu", 4, 0, 4, 0),
+				sizedOrker("g-2", "gpu", 4, 0, 3, 0)),
+			want: &orkstackv1.CapacityWait{Pool: "build", Orkers: 1,
+				Reserved: &orkstackv1.ResourceQuantity{Cpu: 4},
+				Capacity: &orkstackv1.ResourceQuantity{Cpu: 4}},
+			also: map[string]*orkstackv1.CapacityWait{"gpu": {Pool: "gpu", Orkers: 2,
+				Reserved: &orkstackv1.ResourceQuantity{Cpu: 7},
+				Capacity: &orkstackv1.ResourceQuantity{Cpu: 8}}},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			waits, unanswered := capacityWaitsOf(t, tc.fleet, "build")
+			pools := []string{"build"}
+			for pool := range tc.also {
+				pools = append(pools, pool)
+			}
+			waits, unanswered := capacityWaitsOf(t, tc.fleet, pools...)
 			if got := waits["build"]; !proto.Equal(got, tc.want) {
 				t.Fatalf("capacity wait = %v, want %v", got, tc.want)
+			}
+			for pool, want := range tc.also {
+				if got := waits[pool]; !proto.Equal(got, want) {
+					t.Fatalf("pool %s capacity wait = %v, want %v", pool, got, want)
+				}
 			}
 			if unanswered != tc.unanswered {
 				t.Fatalf("unanswered = %d, want %d", unanswered, tc.unanswered)
 			}
 		})
-	}
-}
-
-// TestCapacityWaits_OneReadingAnswersEveryPool: the rule asks nothing of
-// its own, so each pool is answered from the one reading.
-func TestCapacityWaits_OneReadingAnswersEveryPool(t *testing.T) {
-	fleet := fleetOf(
-		sizedOrker("b-1", "build", 4, 0, 4, 0),
-		sizedOrker("g-1", "gpu", 4, 0, 4, 0),
-		sizedOrker("g-2", "gpu", 4, 0, 1, 0))
-	waits, _ := capacityWaitsOf(t, fleet, "build", "gpu", "io")
-	if fleet.reads != 1 || len(fleet.asked) != 3 {
-		t.Fatalf("presence reads = %d and describes = %v, want the one reading", fleet.reads, fleet.asked)
-	}
-	if waits["build"] == nil || waits["gpu"] != nil || waits["io"] != nil {
-		t.Fatalf("waits = %v, want only build waiting for capacity", waits)
 	}
 }
