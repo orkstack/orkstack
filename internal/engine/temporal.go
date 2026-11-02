@@ -56,11 +56,12 @@ type TemporalStarter struct {
 	// refused (ErrCancelNotWired).
 	clusterNamespace string
 	clusterIdentity  string
-	// cancelRetryInterval and cancelRetryBudget replace the constants of the
-	// same names when set: a test's, never production's
-	// (WithCancelRetryForTest).
-	cancelRetryInterval time.Duration
-	cancelRetryBudget   time.Duration
+	// cancelBound and cancelWait replace the clock CancelRun's retry runs on
+	// when set: the context that ends with the retry budget, and the wait
+	// between two tries. A test's, never production's
+	// (WithCancelClockForTest); nil is context.WithTimeout and time.After.
+	cancelBound func(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc)
+	cancelWait  func(interval time.Duration) <-chan time.Time
 }
 
 // NewTemporalStarter returns a starter that dispatches RunWorkflow onto queue.
@@ -269,11 +270,12 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request C
 		RequestId: newActivityID("cancel-run"),
 		Reason:    reason,
 	}
-	interval, budget := cancelRetryInterval, cancelRetryBudget
-	if s.cancelRetryInterval > 0 {
-		interval, budget = s.cancelRetryInterval, s.cancelRetryBudget
+	bound, wait := context.WithTimeout, time.After
+	if s.cancelBound != nil {
+		bound, wait = s.cancelBound, s.cancelWait
 	}
-	budgetCtx, done := context.WithTimeout(ctx, budget)
+	interval := cancelRetryInterval
+	budgetCtx, done := bound(ctx, cancelRetryBudget)
 	defer done()
 	var refused error // the cluster's last transient refusal
 	for {
@@ -301,7 +303,7 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request C
 				return fmt.Errorf("cancel run %s: %w (the cluster last answered: %v)", runID, ctx.Err(), err)
 			}
 			return fmt.Errorf("cancel run %s: %w", runID, err)
-		case <-time.After(interval):
+		case <-wait(interval):
 		}
 		interval = min(2*interval, cancelRetryMaxInterval)
 	}

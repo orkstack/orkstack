@@ -28,14 +28,59 @@ test('the order the inputs are named in does not matter, their set does', () => 
 	expect(forward === fewer).toBe(false);
 });
 
-test('the default inputs name the sources, assets, configs, the lockfile and the examples', () => {
-	expect(BUILD_INPUTS).toContain('src');
-	expect(BUILD_INPUTS).toContain('static');
-	expect(BUILD_INPUTS).toContain('bun.lock');
-	// SvelteKit's own configuration is the sveltekit() plugin's, in vite.config.ts.
-	expect(BUILD_INPUTS).toContain('vite.config.ts');
-	// The build writes the example gallery from the repository's examples/.
-	expect(BUILD_INPUTS).toContain('../examples');
+// A file for every input the build reads, under a ui/ beside an examples/.
+const defaultInputFiles = [
+	'src/app.txt',
+	'src/lib/gen/client.ts',
+	'static/favicon.svg',
+	'vite.config.ts',
+	'tsconfig.json',
+	'package.json',
+	'bun.lock',
+	'../examples/hello.ork.yaml'
+];
+
+test('every default input has a file among the edited ones', () => {
+	const uncovered = BUILD_INPUTS.filter(
+		(input) => !defaultInputFiles.some((file) => file === input || file.startsWith(`${input}/`))
+	);
+	expect(uncovered).toEqual([]);
+});
+
+for (const edited of defaultInputFiles) {
+	test(`with the default inputs an edit to ${edited} changes the hash`, () => {
+		const repo = mkdtempSync(`${tmpdir()}/orkstack-build-hash-`);
+		try {
+			for (const file of defaultInputFiles) {
+				const path = `${repo}/ui/${file}`;
+				mkdirSync(path.slice(0, path.lastIndexOf('/')), { recursive: true });
+				writeFileSync(path, `${file} one`);
+			}
+			const before = buildInputsHash(`${repo}/ui`);
+			writeFileSync(`${repo}/ui/${edited}`, `${edited} two`);
+			expect(buildInputsHash(`${repo}/ui`) === before).toBe(false);
+		} finally {
+			rmSync(repo, { recursive: true, force: true });
+		}
+	});
+}
+
+test('with the default inputs a file the build does not read leaves the hash alone', () => {
+	const repo = mkdtempSync(`${tmpdir()}/orkstack-build-hash-`);
+	try {
+		mkdirSync(`${repo}/ui/src`, { recursive: true });
+		writeFileSync(`${repo}/ui/src/app.txt`, 'one');
+		const before = buildInputsHash(`${repo}/ui`);
+		// The build's own output and the installed packages most of all: a hash
+		// over them would change with every build and every install.
+		for (const file of ['e2e/some.spec.ts', 'README.md', 'build/index.html', 'node_modules/pkg/index.js']) {
+			mkdirSync(`${repo}/ui/${file.slice(0, file.lastIndexOf('/') + 1)}`, { recursive: true });
+			writeFileSync(`${repo}/ui/${file}`, file);
+		}
+		expect(buildInputsHash(`${repo}/ui`)).toBe(before);
+	} finally {
+		rmSync(repo, { recursive: true, force: true });
+	}
 });
 
 test('an input beside ui/ is walked: an edited example changes the hash', () => {

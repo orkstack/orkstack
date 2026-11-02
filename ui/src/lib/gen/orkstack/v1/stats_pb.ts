@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/stats.proto.
  */
 export const file_orkstack_v1_stats: GenFile = /*@__PURE__*/
-  fileDesc("ChdvcmtzdGFjay92MS9zdGF0cy5wcm90bxILb3Jrc3RhY2sudjEipwEKD0dldFN0YXRzUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbiJGCg9PcmtmbG93RmFpbHVyZXMSFAoMb3JrZmxvd19uYW1lGAEgASgJEg4KBmZhaWxlZBgCIAEoAxINCgV0b3RhbBgDIAEoAyKjBQoQR2V0U3RhdHNSZXNwb25zZRJHCg5ydW5zX2J5X3N0YXR1cxgBIAMoCzIvLm9ya3N0YWNrLnYxLkdldFN0YXRzUmVzcG9uc2UuUnVuc0J5U3RhdHVzRW50cnkSFAoMc3VjY2Vzc19yYXRlGAIgASgBEhwKFHN1Y2Nlc3NfcmF0ZV9kZWZpbmVkGAMgASgIEi8KDHA1MF9kdXJhdGlvbhgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIvCgxwOTVfZHVyYXRpb24YBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SOwoXZHVyYXRpb25fY292ZXJhZ2Vfc2luY2UYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEh0KFWR1cmF0aW9uX3NhbXBsZV9jb3VudBgHIAEoAxIyCgxtb3N0X2ZhaWxpbmcYCCADKAsyHC5vcmtzdGFjay52MS5PcmtmbG93RmFpbHVyZXMSIQoHcnVubmluZxgJIAMoCzIQLm9ya3N0YWNrLnYxLlJ1bhIgCgVwb29scxgKIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSLwoLY29tcHV0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgOIAEoCRIwCgx3aW5kb3dfc2luY2UYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAaMwoRUnVuc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ASK2AgoaR2V0RmFpbHVyZUJyZWFrZG93blJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEikKBXNpbmNlGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKwoIbG9va2JhY2sYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SFAoMb3JrZmxvd19uYW1lGAUgASgJEi0KCGdyb3VwX2J5GAYgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkSLgoIY2F0ZWdvcnkYByABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSDQoFbGltaXQYCCABKAUi5QIKDEZhaWx1cmVHcm91cBIUCgxvcmtmbG93X25hbWUYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRjb2RlGAMgASgJEi4KCGNhdGVnb3J5GAQgASgOMhwub3Jrc3RhY2sudjEuRmFpbHVyZUNhdGVnb3J5EhQKDGltYWdlX3Bpbm5lZBgFIAEoCRIMCgRwb29sGAYgASgJEg0KBXBoYXNlGAcgASgJEhAKCG9ya2VyX2lkGAggASgJEhEKCXJ1bl9jb3VudBgJIAEoAxIuCgpmaXJzdF9zZWVuGAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBItCglsYXN0X3NlZW4YCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKD2V4YW1wbGVfcnVuX2lkcxgMIAMoCRIgChhhdHRlbXB0X2V2aWRlbmNlX21pc3NpbmcYDSABKAMizwMKG0dldEZhaWx1cmVCcmVha2Rvd25SZXNwb25zZRIpCgZncm91cHMYASADKAsyGS5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXASHQoVZmFpbGVkX3J1bnNfaW5fd2luZG93GAIgASgDEhsKE2ZhaWxlZF9ydW5zX3NjYW5uZWQYAyABKAMSGwoTZmFpbGVkX3J1bnNfZ3JvdXBlZBgEIAEoAxIUCgxncm91cHNfdG90YWwYBSABKAMSIAoYYXR0ZW1wdF9ldmlkZW5jZV9taXNzaW5nGAYgASgDEh0KFWF0dGVtcHRfZXZpZGVuY2VfcmVhZBgHIAEoCBItCghncm91cF9ieRgIIAMoDjIbLm9ya3N0YWNrLnYxLkZhaWx1cmVHcm91cEJ5EhEKCW5hbWVzcGFjZRgJIAEoCRIwCgx3aW5kb3dfc2luY2UYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLY29tcHV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIoACChRHZXRGbGFrZUluZGV4UmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIUCgxvcmtmbG93X25hbWUYBSABKAkSLQoIZ3JvdXBfYnkYBiADKA4yGy5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXBCeRINCgVsaW1pdBgHIAEoBSKjBAoKRmxha2VHcm91cBIUCgxvcmtmbG93X25hbWUYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRwb29sGAMgASgJEhAKCG9ya2VyX2lkGAQgASgJEg0KBXBoYXNlGAUgASgJEhQKDGltYWdlX3Bpbm5lZBgGIAEoCRIVCg1ydW5zX29ic2VydmVkGAcgASgDEhQKDHJ1bnNfcmV0cmllZBgIIAEoAxISCgpyZXRyeV9yYXRlGAkgASgBEhoKEnJldHJ5X3JhdGVfZGVmaW5lZBgKIAEoCBIdChVydW5zX2V2aWRlbmNlX21pc3NpbmcYCyABKAMSFAoMcDUwX2F0dGVtcHRzGAwgASgFEhQKDHA5NV9hdHRlbXB0cxgNIAEoBRIWCg5yZXRyeV9hdHRlbXB0cxgOIAEoAxIbChN1bnJlcG9ydGVkX2F0dGVtcHRzGA8gASgDEhUKDWRvbWluYW50X2NvZGUYECABKAkSNwoRZG9taW5hbnRfY2F0ZWdvcnkYESABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSFgoOZG9taW5hbnRfcGhhc2UYEiABKAkSFgoOZG9taW5hbnRfY291bnQYEyABKAMSMwoPbGFzdF9yZXRyaWVkX2F0GBQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIXCg9leGFtcGxlX3J1bl9pZHMYFSADKAkixwMKFUdldEZsYWtlSW5kZXhSZXNwb25zZRInCgZncm91cHMYASADKAsyFy5vcmtzdGFjay52MS5GbGFrZUdyb3VwEhYKDnJ1bnNfaW5fd2luZG93GAIgASgDEhQKDHJ1bnNfc2Nhbm5lZBgDIAEoAxIXCg9ydW5zX2Rpc3BhdGNoZWQYBCABKAMSHgoWcnVuc19ldmlkZW5jZV9jb21wbGV0ZRgFIAEoAxIdChVydW5zX2V2aWRlbmNlX21pc3NpbmcYBiABKAMSFAoMZ3JvdXBzX3RvdGFsGAcgASgDEhIKCmJvZHlfa2V5ZWQYCCABKAgSLQoIZ3JvdXBfYnkYCSADKA4yGy5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXBCeRIRCgluYW1lc3BhY2UYCiABKAkSMAoMd2luZG93X3NpbmNlGAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgx3aW5kb3dfdW50aWwYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2NvbXB1dGVkX2F0GA0gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLWAQoPR2V0VXNhZ2VSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIpCgVzaW5jZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKQoFdW50aWwYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEisKCGxvb2tiYWNrGAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi0KCGdyb3VwX2J5GAUgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkijAIKCFVzYWdlUm93EhQKDG9ya2Zsb3dfbmFtZRgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEgwKBHBvb2wYAyABKAkSDAoEcnVucxgEIAEoAxINCgV0YXNrcxgFIAEoAxIQCghhdHRlbXB0cxgGIAEoAxIUCgx0YXNrX3NlY29uZHMYByABKAESEwoLY3B1X3NlY29uZHMYCCABKAESEwoLZ2liX3NlY29uZHMYCSABKAESIgoaYXR0ZW1wdHNfd2l0aG91dF9yZXNvdXJjZXMYCiABKAMSGwoTYXR0ZW1wdHNfdW5tZWFzdXJlZBgLIAEoAxIbChN1bnJlcG9ydGVkX2F0dGVtcHRzGAwgASgDIsIEChBHZXRVc2FnZVJlc3BvbnNlEiQKBXRvdGFsGAEgASgLMhUub3Jrc3RhY2sudjEuVXNhZ2VSb3cSIwoEcm93cxgCIAMoCzIVLm9ya3N0YWNrLnYxLlVzYWdlUm93Ei0KCGdyb3VwX2J5GAMgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkSFgoOcnVuc19pbl93aW5kb3cYBCABKAMSFAoMcnVuc19zY2FubmVkGAUgASgDEhcKD3J1bnNfZGlzcGF0Y2hlZBgGIAEoAxIeChZydW5zX2V2aWRlbmNlX2NvbXBsZXRlGAcgASgDEh0KFXJ1bnNfZXZpZGVuY2VfbWlzc2luZxgIIAEoAxIyCg5jb3ZlcmFnZV9zaW5jZRgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASIwoGYnVkZ2V0GAogASgLMhMub3Jrc3RhY2sudjEuQnVkZ2V0EhUKDWJ1ZGdldF93aW5kb3cYCyABKAgSFgoOYnVkZ2V0X3JlYWNoZWQYDCABKAgSEQoJbmFtZXNwYWNlGA0gASgJEjAKDHdpbmRvd19zaW5jZRgOIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMAoMd2luZG93X3VudGlsGA8gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtjb21wdXRlZF9hdBgQIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqlAIKDkZhaWx1cmVHcm91cEJ5EiAKHEZBSUxVUkVfR1JPVVBfQllfVU5TUEVDSUZJRUQQABIcChhGQUlMVVJFX0dST1VQX0JZX09SS0ZMT1cQARIZChVGQUlMVVJFX0dST1VQX0JZX1RBU0sQAhIZChVGQUlMVVJFX0dST1VQX0JZX0NPREUQAxIdChlGQUlMVVJFX0dST1VQX0JZX0NBVEVHT1JZEAQSGgoWRkFJTFVSRV9HUk9VUF9CWV9JTUFHRRAFEhkKFUZBSUxVUkVfR1JPVVBfQllfUE9PTBAGEhoKFkZBSUxVUkVfR1JPVVBfQllfUEhBU0UQBxIaChZGQUlMVVJFX0dST1VQX0JZX09SS0VSEAgy4gIKDFN0YXRzU2VydmljZRJHCghHZXRTdGF0cxIcLm9ya3N0YWNrLnYxLkdldFN0YXRzUmVxdWVzdBodLm9ya3N0YWNrLnYxLkdldFN0YXRzUmVzcG9uc2USaAoTR2V0RmFpbHVyZUJyZWFrZG93bhInLm9ya3N0YWNrLnYxLkdldEZhaWx1cmVCcmVha2Rvd25SZXF1ZXN0Gigub3Jrc3RhY2sudjEuR2V0RmFpbHVyZUJyZWFrZG93blJlc3BvbnNlElYKDUdldEZsYWtlSW5kZXgSIS5vcmtzdGFjay52MS5HZXRGbGFrZUluZGV4UmVxdWVzdBoiLm9ya3N0YWNrLnYxLkdldEZsYWtlSW5kZXhSZXNwb25zZRJHCghHZXRVc2FnZRIcLm9ya3N0YWNrLnYxLkdldFVzYWdlUmVxdWVzdBodLm9ya3N0YWNrLnYxLkdldFVzYWdlUmVzcG9uc2VCpgEKD2NvbS5vcmtzdGFjay52MUIKU3RhdHNQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_namespace, file_orkstack_v1_run]);
+  fileDesc("ChdvcmtzdGFjay92MS9zdGF0cy5wcm90bxILb3Jrc3RhY2sudjEihAIKD0dldFN0YXRzUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIzCgxidWNrZXRfd2lkdGgYBSABKA4yHS5vcmtzdGFjay52MS5TdGF0c0J1Y2tldFdpZHRoEhAKCHRpbWV6b25lGAYgASgJEhQKDGJ1Y2tldF9jb3VudBgHIAEoBSLtAQoLU3RhdHNCdWNrZXQSKQoFc2luY2UYASABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBJCCg5ydW5zX2J5X3N0YXR1cxgDIAMoCzIqLm9ya3N0YWNrLnYxLlN0YXRzQnVja2V0LlJ1bnNCeVN0YXR1c0VudHJ5Eg8KB3BhcnRpYWwYBCABKAgaMwoRUnVuc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ASJGCg9PcmtmbG93RmFpbHVyZXMSFAoMb3JrZmxvd19uYW1lGAEgASgJEg4KBmZhaWxlZBgCIAEoAxINCgV0b3RhbBgDIAEoAyKVBgoQR2V0U3RhdHNSZXNwb25zZRJHCg5ydW5zX2J5X3N0YXR1cxgBIAMoCzIvLm9ya3N0YWNrLnYxLkdldFN0YXRzUmVzcG9uc2UuUnVuc0J5U3RhdHVzRW50cnkSFAoMc3VjY2Vzc19yYXRlGAIgASgBEhwKFHN1Y2Nlc3NfcmF0ZV9kZWZpbmVkGAMgASgIEi8KDHA1MF9kdXJhdGlvbhgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIvCgxwOTVfZHVyYXRpb24YBSABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SOwoXZHVyYXRpb25fY292ZXJhZ2Vfc2luY2UYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEh0KFWR1cmF0aW9uX3NhbXBsZV9jb3VudBgHIAEoAxIyCgxtb3N0X2ZhaWxpbmcYCCADKAsyHC5vcmtzdGFjay52MS5PcmtmbG93RmFpbHVyZXMSIQoHcnVubmluZxgJIAMoCzIQLm9ya3N0YWNrLnYxLlJ1bhIgCgVwb29scxgKIAMoCzIRLm9ya3N0YWNrLnYxLlBvb2wSLwoLY29tcHV0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCW5hbWVzcGFjZRgOIAEoCRIwCgx3aW5kb3dfc2luY2UYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgNIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKQoHYnVja2V0cxgPIAMoCzIYLm9ya3N0YWNrLnYxLlN0YXRzQnVja2V0EjMKDGJ1Y2tldF93aWR0aBgQIAEoDjIdLm9ya3N0YWNrLnYxLlN0YXRzQnVja2V0V2lkdGgSEAoIdGltZXpvbmUYESABKAkaMwoRUnVuc0J5U3RhdHVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgDOgI4ASK2AgoaR2V0RmFpbHVyZUJyZWFrZG93blJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEikKBXNpbmNlGAIgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgDIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKwoIbG9va2JhY2sYBCABKAsyGS5nb29nbGUucHJvdG9idWYuRHVyYXRpb24SFAoMb3JrZmxvd19uYW1lGAUgASgJEi0KCGdyb3VwX2J5GAYgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkSLgoIY2F0ZWdvcnkYByABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSDQoFbGltaXQYCCABKAUi5QIKDEZhaWx1cmVHcm91cBIUCgxvcmtmbG93X25hbWUYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRjb2RlGAMgASgJEi4KCGNhdGVnb3J5GAQgASgOMhwub3Jrc3RhY2sudjEuRmFpbHVyZUNhdGVnb3J5EhQKDGltYWdlX3Bpbm5lZBgFIAEoCRIMCgRwb29sGAYgASgJEg0KBXBoYXNlGAcgASgJEhAKCG9ya2VyX2lkGAggASgJEhEKCXJ1bl9jb3VudBgJIAEoAxIuCgpmaXJzdF9zZWVuGAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBItCglsYXN0X3NlZW4YCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhcKD2V4YW1wbGVfcnVuX2lkcxgMIAMoCRIgChhhdHRlbXB0X2V2aWRlbmNlX21pc3NpbmcYDSABKAMizwMKG0dldEZhaWx1cmVCcmVha2Rvd25SZXNwb25zZRIpCgZncm91cHMYASADKAsyGS5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXASHQoVZmFpbGVkX3J1bnNfaW5fd2luZG93GAIgASgDEhsKE2ZhaWxlZF9ydW5zX3NjYW5uZWQYAyABKAMSGwoTZmFpbGVkX3J1bnNfZ3JvdXBlZBgEIAEoAxIUCgxncm91cHNfdG90YWwYBSABKAMSIAoYYXR0ZW1wdF9ldmlkZW5jZV9taXNzaW5nGAYgASgDEh0KFWF0dGVtcHRfZXZpZGVuY2VfcmVhZBgHIAEoCBItCghncm91cF9ieRgIIAMoDjIbLm9ya3N0YWNrLnYxLkZhaWx1cmVHcm91cEJ5EhEKCW5hbWVzcGFjZRgJIAEoCRIwCgx3aW5kb3dfc2luY2UYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjAKDHdpbmRvd191bnRpbBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLY29tcHV0ZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIoACChRHZXRGbGFrZUluZGV4UmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIrCghsb29rYmFjaxgEIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIUCgxvcmtmbG93X25hbWUYBSABKAkSLQoIZ3JvdXBfYnkYBiADKA4yGy5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXBCeRINCgVsaW1pdBgHIAEoBSKjBAoKRmxha2VHcm91cBIUCgxvcmtmbG93X25hbWUYASABKAkSDwoHdGFza19pZBgCIAEoCRIMCgRwb29sGAMgASgJEhAKCG9ya2VyX2lkGAQgASgJEg0KBXBoYXNlGAUgASgJEhQKDGltYWdlX3Bpbm5lZBgGIAEoCRIVCg1ydW5zX29ic2VydmVkGAcgASgDEhQKDHJ1bnNfcmV0cmllZBgIIAEoAxISCgpyZXRyeV9yYXRlGAkgASgBEhoKEnJldHJ5X3JhdGVfZGVmaW5lZBgKIAEoCBIdChVydW5zX2V2aWRlbmNlX21pc3NpbmcYCyABKAMSFAoMcDUwX2F0dGVtcHRzGAwgASgFEhQKDHA5NV9hdHRlbXB0cxgNIAEoBRIWCg5yZXRyeV9hdHRlbXB0cxgOIAEoAxIbChN1bnJlcG9ydGVkX2F0dGVtcHRzGA8gASgDEhUKDWRvbWluYW50X2NvZGUYECABKAkSNwoRZG9taW5hbnRfY2F0ZWdvcnkYESABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSFgoOZG9taW5hbnRfcGhhc2UYEiABKAkSFgoOZG9taW5hbnRfY291bnQYEyABKAMSMwoPbGFzdF9yZXRyaWVkX2F0GBQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIXCg9leGFtcGxlX3J1bl9pZHMYFSADKAkixwMKFUdldEZsYWtlSW5kZXhSZXNwb25zZRInCgZncm91cHMYASADKAsyFy5vcmtzdGFjay52MS5GbGFrZUdyb3VwEhYKDnJ1bnNfaW5fd2luZG93GAIgASgDEhQKDHJ1bnNfc2Nhbm5lZBgDIAEoAxIXCg9ydW5zX2Rpc3BhdGNoZWQYBCABKAMSHgoWcnVuc19ldmlkZW5jZV9jb21wbGV0ZRgFIAEoAxIdChVydW5zX2V2aWRlbmNlX21pc3NpbmcYBiABKAMSFAoMZ3JvdXBzX3RvdGFsGAcgASgDEhIKCmJvZHlfa2V5ZWQYCCABKAgSLQoIZ3JvdXBfYnkYCSADKA4yGy5vcmtzdGFjay52MS5GYWlsdXJlR3JvdXBCeRIRCgluYW1lc3BhY2UYCiABKAkSMAoMd2luZG93X3NpbmNlGAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIwCgx3aW5kb3dfdW50aWwYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2NvbXB1dGVkX2F0GA0gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLWAQoPR2V0VXNhZ2VSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIpCgVzaW5jZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASKQoFdW50aWwYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEisKCGxvb2tiYWNrGAQgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi0KCGdyb3VwX2J5GAUgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkijAIKCFVzYWdlUm93EhQKDG9ya2Zsb3dfbmFtZRgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEgwKBHBvb2wYAyABKAkSDAoEcnVucxgEIAEoAxINCgV0YXNrcxgFIAEoAxIQCghhdHRlbXB0cxgGIAEoAxIUCgx0YXNrX3NlY29uZHMYByABKAESEwoLY3B1X3NlY29uZHMYCCABKAESEwoLZ2liX3NlY29uZHMYCSABKAESIgoaYXR0ZW1wdHNfd2l0aG91dF9yZXNvdXJjZXMYCiABKAMSGwoTYXR0ZW1wdHNfdW5tZWFzdXJlZBgLIAEoAxIbChN1bnJlcG9ydGVkX2F0dGVtcHRzGAwgASgDIsIEChBHZXRVc2FnZVJlc3BvbnNlEiQKBXRvdGFsGAEgASgLMhUub3Jrc3RhY2sudjEuVXNhZ2VSb3cSIwoEcm93cxgCIAMoCzIVLm9ya3N0YWNrLnYxLlVzYWdlUm93Ei0KCGdyb3VwX2J5GAMgAygOMhsub3Jrc3RhY2sudjEuRmFpbHVyZUdyb3VwQnkSFgoOcnVuc19pbl93aW5kb3cYBCABKAMSFAoMcnVuc19zY2FubmVkGAUgASgDEhcKD3J1bnNfZGlzcGF0Y2hlZBgGIAEoAxIeChZydW5zX2V2aWRlbmNlX2NvbXBsZXRlGAcgASgDEh0KFXJ1bnNfZXZpZGVuY2VfbWlzc2luZxgIIAEoAxIyCg5jb3ZlcmFnZV9zaW5jZRgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASIwoGYnVkZ2V0GAogASgLMhMub3Jrc3RhY2sudjEuQnVkZ2V0EhUKDWJ1ZGdldF93aW5kb3cYCyABKAgSFgoOYnVkZ2V0X3JlYWNoZWQYDCABKAgSEQoJbmFtZXNwYWNlGA0gASgJEjAKDHdpbmRvd19zaW5jZRgOIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMAoMd2luZG93X3VudGlsGA8gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtjb21wdXRlZF9hdBgQIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqbwoQU3RhdHNCdWNrZXRXaWR0aBIiCh5TVEFUU19CVUNLRVRfV0lEVEhfVU5TUEVDSUZJRUQQABIbChdTVEFUU19CVUNLRVRfV0lEVEhfSE9VUhABEhoKFlNUQVRTX0JVQ0tFVF9XSURUSF9EQVkQAiqUAgoORmFpbHVyZUdyb3VwQnkSIAocRkFJTFVSRV9HUk9VUF9CWV9VTlNQRUNJRklFRBAAEhwKGEZBSUxVUkVfR1JPVVBfQllfT1JLRkxPVxABEhkKFUZBSUxVUkVfR1JPVVBfQllfVEFTSxACEhkKFUZBSUxVUkVfR1JPVVBfQllfQ09ERRADEh0KGUZBSUxVUkVfR1JPVVBfQllfQ0FURUdPUlkQBBIaChZGQUlMVVJFX0dST1VQX0JZX0lNQUdFEAUSGQoVRkFJTFVSRV9HUk9VUF9CWV9QT09MEAYSGgoWRkFJTFVSRV9HUk9VUF9CWV9QSEFTRRAHEhoKFkZBSUxVUkVfR1JPVVBfQllfT1JLRVIQCDLiAgoMU3RhdHNTZXJ2aWNlEkcKCEdldFN0YXRzEhwub3Jrc3RhY2sudjEuR2V0U3RhdHNSZXF1ZXN0Gh0ub3Jrc3RhY2sudjEuR2V0U3RhdHNSZXNwb25zZRJoChNHZXRGYWlsdXJlQnJlYWtkb3duEicub3Jrc3RhY2sudjEuR2V0RmFpbHVyZUJyZWFrZG93blJlcXVlc3QaKC5vcmtzdGFjay52MS5HZXRGYWlsdXJlQnJlYWtkb3duUmVzcG9uc2USVgoNR2V0Rmxha2VJbmRleBIhLm9ya3N0YWNrLnYxLkdldEZsYWtlSW5kZXhSZXF1ZXN0GiIub3Jrc3RhY2sudjEuR2V0Rmxha2VJbmRleFJlc3BvbnNlEkcKCEdldFVzYWdlEhwub3Jrc3RhY2sudjEuR2V0VXNhZ2VSZXF1ZXN0Gh0ub3Jrc3RhY2sudjEuR2V0VXNhZ2VSZXNwb25zZUKmAQoPY29tLm9ya3N0YWNrLnYxQgpTdGF0c1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_namespace, file_orkstack_v1_run]);
 
 /**
  * @generated from message orkstack.v1.GetStatsRequest
@@ -64,6 +64,45 @@ export type GetStatsRequest = Message<"orkstack.v1.GetStatsRequest"> & {
    * @generated from field: google.protobuf.Duration lookback = 4;
    */
   lookback?: Duration | undefined;
+
+  /**
+   * bucket_width asks for a series as well as the window's totals: the
+   * window cut into consecutive buckets of this width (see StatsBucket).
+   * UNSPECIFIED, the default, asks for none, and the answer is then exactly
+   * what it is without this field.
+   *
+   * @generated from field: orkstack.v1.StatsBucketWidth bucket_width = 5;
+   */
+  bucketWidth: StatsBucketWidth;
+
+  /**
+   * timezone is the IANA zone whose wall clock draws the bucket boundaries,
+   * such as "America/Los_Angeles", read from the engine's time zone
+   * database. Empty is UTC. "Local" is refused: it names the zone of
+   * whichever machine reads it. Set without bucket_width, it is refused.
+   *
+   * A zone and not an offset: a fixed offset is wrong on every day on the
+   * far side of a daylight-saving change inside the window, and a zone keeps
+   * ONE clock — the request states a zone and a unit, never an instant the
+   * client computed, and the server derives every boundary from them.
+   *
+   * @generated from field: string timezone = 6;
+   */
+  timezone: string;
+
+  /**
+   * bucket_count states the window as "the last N whole buckets, ending with
+   * the one that holds the window's last instant": how a client asks for the
+   * last seven days, today included, without computing a local midnight on
+   * its own clock. until still ends the window (empty is now), so the last
+   * bucket is cut short there. 0 means the window comes from since and
+   * lookback, as without a series; 1 to 1000 is accepted. Set together with
+   * since or lookback, set without bucket_width, negative, or above 1000, it
+   * is refused.
+   *
+   * @generated from field: int32 bucket_count = 7;
+   */
+  bucketCount: number;
 };
 
 /**
@@ -72,6 +111,67 @@ export type GetStatsRequest = Message<"orkstack.v1.GetStatsRequest"> & {
  */
 export const GetStatsRequestSchema: GenMessage<GetStatsRequest> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_stats, 0);
+
+/**
+ * StatsBucket is one bucket of a series: the runs the namespace CREATED in
+ * [since, until), counted exactly as GetStatsResponse.runs_by_status counts
+ * the window's. One window, one population holds per bucket: a run is in the
+ * bucket it was submitted in, whenever it ends.
+ *
+ * @generated from message orkstack.v1.StatsBucket
+ */
+export type StatsBucket = Message<"orkstack.v1.StatsBucket"> & {
+  /**
+   * inclusive
+   *
+   * @generated from field: google.protobuf.Timestamp since = 1;
+   */
+  since?: Timestamp | undefined;
+
+  /**
+   * exclusive
+   *
+   * @generated from field: google.protobuf.Timestamp until = 2;
+   */
+  until?: Timestamp | undefined;
+
+  /**
+   * runs_by_status has the window's four keys, always present. succeeded,
+   * failed and canceled count the bucket's runs that have finished; running
+   * counts the bucket's runs not finished when the answer was computed. The
+   * four sum to how many runs the bucket created, up to one skew: a run
+   * still going is placed by the cluster's record of its start, a finished
+   * one by the archive's stamp of its creation, and the two differ by the
+   * milliseconds a submission takes, so a run submitted that close to a
+   * boundary can change buckets when it finishes.
+   *
+   * Across the series, succeeded, failed and canceled sum EXACTLY to the
+   * window's runs_by_status: both come from one scan of the archive index.
+   * running sums to at most the window's running, and the difference is the
+   * runs still going that were created before window_since. The window's
+   * running is a fact about now and counts them; no bucket can, because none
+   * of them was created in one.
+   *
+   * @generated from field: map<string, int64> runs_by_status = 3;
+   */
+  runsByStatus: { [key: string]: bigint };
+
+  /**
+   * partial is true when the window cut this bucket short, so it spans less
+   * than its whole hour or day: the first bucket of a window that starts
+   * mid-day, and the last bucket of one that ends now ("today, so far").
+   *
+   * @generated from field: bool partial = 4;
+   */
+  partial: boolean;
+};
+
+/**
+ * Describes the message orkstack.v1.StatsBucket.
+ * Use `create(StatsBucketSchema)` to create a new message.
+ */
+export const StatsBucketSchema: GenMessage<StatsBucket> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_stats, 1);
 
 /**
  * OrkflowFailures is one orkflow's failure record inside the window: how many
@@ -104,7 +204,7 @@ export type OrkflowFailures = Message<"orkstack.v1.OrkflowFailures"> & {
  * Use `create(OrkflowFailuresSchema)` to create a new message.
  */
 export const OrkflowFailuresSchema: GenMessage<OrkflowFailures> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 1);
+  messageDesc(file_orkstack_v1_stats, 2);
 
 /**
  * @generated from message orkstack.v1.GetStatsResponse
@@ -266,6 +366,31 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
    * @generated from field: google.protobuf.Timestamp window_until = 13;
    */
   windowUntil?: Timestamp | undefined;
+
+  /**
+   * buckets is the series the request asked for, oldest first. It tiles
+   * [window_since, window_until) exactly: the first bucket starts at
+   * window_since, each ends where the next starts, and the last ends at
+   * window_until. With bucket_count, window_since is the start of the first
+   * whole bucket, so every number above describes exactly the span the
+   * buckets tile. Empty when the request asked for no series.
+   *
+   * @generated from field: repeated orkstack.v1.StatsBucket buckets = 15;
+   */
+  buckets: StatsBucket[];
+
+  /**
+   * bucket_width and timezone are the series actually drawn, resolved: an
+   * empty timezone answers "UTC". Unset when no series was asked for.
+   *
+   * @generated from field: orkstack.v1.StatsBucketWidth bucket_width = 16;
+   */
+  bucketWidth: StatsBucketWidth;
+
+  /**
+   * @generated from field: string timezone = 17;
+   */
+  timezone: string;
 };
 
 /**
@@ -273,7 +398,7 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
  * Use `create(GetStatsResponseSchema)` to create a new message.
  */
 export const GetStatsResponseSchema: GenMessage<GetStatsResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 2);
+  messageDesc(file_orkstack_v1_stats, 3);
 
 /**
  * @generated from message orkstack.v1.GetFailureBreakdownRequest
@@ -344,7 +469,7 @@ export type GetFailureBreakdownRequest = Message<"orkstack.v1.GetFailureBreakdow
  * Use `create(GetFailureBreakdownRequestSchema)` to create a new message.
  */
 export const GetFailureBreakdownRequestSchema: GenMessage<GetFailureBreakdownRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 3);
+  messageDesc(file_orkstack_v1_stats, 4);
 
 /**
  * FailureGroup is every failed run in the window that shares one fingerprint.
@@ -442,7 +567,7 @@ export type FailureGroup = Message<"orkstack.v1.FailureGroup"> & {
  * Use `create(FailureGroupSchema)` to create a new message.
  */
 export const FailureGroupSchema: GenMessage<FailureGroup> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 4);
+  messageDesc(file_orkstack_v1_stats, 5);
 
 /**
  * @generated from message orkstack.v1.GetFailureBreakdownResponse
@@ -541,7 +666,7 @@ export type GetFailureBreakdownResponse = Message<"orkstack.v1.GetFailureBreakdo
  * Use `create(GetFailureBreakdownResponseSchema)` to create a new message.
  */
 export const GetFailureBreakdownResponseSchema: GenMessage<GetFailureBreakdownResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 5);
+  messageDesc(file_orkstack_v1_stats, 6);
 
 /**
  * @generated from message orkstack.v1.GetFlakeIndexRequest
@@ -614,7 +739,7 @@ export type GetFlakeIndexRequest = Message<"orkstack.v1.GetFlakeIndexRequest"> &
  * Use `create(GetFlakeIndexRequestSchema)` to create a new message.
  */
 export const GetFlakeIndexRequestSchema: GenMessage<GetFlakeIndexRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 6);
+  messageDesc(file_orkstack_v1_stats, 7);
 
 /**
  * FlakeGroup is every (run, task) pair in the window whose attempts share
@@ -794,7 +919,7 @@ export type FlakeGroup = Message<"orkstack.v1.FlakeGroup"> & {
  * Use `create(FlakeGroupSchema)` to create a new message.
  */
 export const FlakeGroupSchema: GenMessage<FlakeGroup> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 7);
+  messageDesc(file_orkstack_v1_stats, 8);
 
 /**
  * @generated from message orkstack.v1.GetFlakeIndexResponse
@@ -906,7 +1031,7 @@ export type GetFlakeIndexResponse = Message<"orkstack.v1.GetFlakeIndexResponse">
  * Use `create(GetFlakeIndexResponseSchema)` to create a new message.
  */
 export const GetFlakeIndexResponseSchema: GenMessage<GetFlakeIndexResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 8);
+  messageDesc(file_orkstack_v1_stats, 9);
 
 /**
  * @generated from message orkstack.v1.GetUsageRequest
@@ -958,7 +1083,7 @@ export type GetUsageRequest = Message<"orkstack.v1.GetUsageRequest"> & {
  * Use `create(GetUsageRequestSchema)` to create a new message.
  */
 export const GetUsageRequestSchema: GenMessage<GetUsageRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 9);
+  messageDesc(file_orkstack_v1_stats, 10);
 
 /**
  * UsageRow is one group's reserved consumption, or the namespace total.
@@ -1072,7 +1197,7 @@ export type UsageRow = Message<"orkstack.v1.UsageRow"> & {
  * Use `create(UsageRowSchema)` to create a new message.
  */
 export const UsageRowSchema: GenMessage<UsageRow> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 10);
+  messageDesc(file_orkstack_v1_stats, 11);
 
 /**
  * @generated from message orkstack.v1.GetUsageResponse
@@ -1227,7 +1352,45 @@ export type GetUsageResponse = Message<"orkstack.v1.GetUsageResponse"> & {
  * Use `create(GetUsageResponseSchema)` to create a new message.
  */
 export const GetUsageResponseSchema: GenMessage<GetUsageResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_stats, 11);
+  messageDesc(file_orkstack_v1_stats, 12);
+
+/**
+ * StatsBucketWidth is the calendar unit one bucket of a series spans, read
+ * on the wall clock of the request's timezone.
+ *
+ * A bucket is one stretch of time whose wall-clock label — the local date
+ * for DAY, the local date and hour for HOUR — does not change. So a day is
+ * 23 or 25 hours long when the zone's clocks change inside it, an hour that
+ * a fall-back repeats is ONE two-hour bucket, and a date or an hour the
+ * zone's clocks skip has no bucket at all. There is no width below an hour:
+ * a curve finer than that is what the telemetry pipeline's counters are for.
+ *
+ * @generated from enum orkstack.v1.StatsBucketWidth
+ */
+export enum StatsBucketWidth {
+  /**
+   * no series
+   *
+   * @generated from enum value: STATS_BUCKET_WIDTH_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: STATS_BUCKET_WIDTH_HOUR = 1;
+   */
+  HOUR = 1,
+
+  /**
+   * @generated from enum value: STATS_BUCKET_WIDTH_DAY = 2;
+   */
+  DAY = 2,
+}
+
+/**
+ * Describes the enum orkstack.v1.StatsBucketWidth.
+ */
+export const StatsBucketWidthSchema: GenEnum<StatsBucketWidth> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_stats, 0);
 
 /**
  * FailureGroupBy names one dimension of a fingerprint. The order of the
@@ -1302,7 +1465,7 @@ export enum FailureGroupBy {
  * Describes the enum orkstack.v1.FailureGroupBy.
  */
 export const FailureGroupBySchema: GenEnum<FailureGroupBy> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_stats, 0);
+  enumDesc(file_orkstack_v1_stats, 1);
 
 /**
  * StatsService answers one question — "how is this namespace doing?" — from
@@ -1325,7 +1488,9 @@ export const FailureGroupBySchema: GenEnum<FailureGroupBy> = /*@__PURE__*/
  */
 export const StatsService: GenService<{
   /**
-   * GetStats reports one namespace's runs over one time window.
+   * GetStats reports one namespace's runs over one time window and, when the
+   * request names a bucket_width, the same window as a series of hours or
+   * days — from the same scan, so the series and the totals cannot disagree.
    *
    * @generated from rpc orkstack.v1.StatsService.GetStats
    */

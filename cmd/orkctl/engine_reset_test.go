@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -127,18 +128,21 @@ func TestRunWatch_ResumesAStreamWhoseConnectionWasReset(t *testing.T) {
 	}
 }
 
-// resetWay is one way a reset reaches orkctl: the code its resume line names
-// and the cause that code carries.
-type resetWay struct{ code, cause string }
+// resetWay is one way a reset reaches orkctl: the code its resume line
+// names. The cause after the code is the OS's and the HTTP/2 client's own
+// wording, which neither orkctl nor this test owns.
+type resetWay string
 
-var (
-	resetRead              = resetWay{code: "canceled", cause: "connection reset by peer"}
-	resetAfterDroppedWrite = resetWay{code: "unavailable", cause: "unexpected EOF"}
+const (
+	resetRead              resetWay = "canceled"
+	resetAfterDroppedWrite resetWay = "unavailable"
 )
 
+// saidBy reports whether line is the first resume of a stream interrupted
+// with w's code.
 func (w resetWay) saidBy(line string) bool {
-	said, ok := strings.CutPrefix(line, "watch run: the event stream was interrupted ("+w.code+": ")
-	return ok && strings.Contains(said, w.cause)
+	said, ok := strings.CutPrefix(line, "watch run: the event stream was interrupted ("+string(w)+": ")
+	return ok && strings.HasSuffix(said, " (1 of "+strconv.Itoa(watchResumeLimit)+")")
 }
 
 // TestRunWatch_EndsWhenTheConnectionEndsMidStream holds what DEPLOY.md and the
@@ -156,8 +160,8 @@ func TestRunWatch_EndsWhenTheConnectionEndsMidStream(t *testing.T) {
 	out := &liveWriter{triggers: map[string]func(){"event 2": func() { handler.closeWrite() }}}
 	outcome := watchAgainstTo(t, handler, out)
 	outcome.requireExit(t, exitError)
-	if want := "Error: watch run: internal: protocol error: incomplete envelope: unexpected EOF"; !strings.Contains(outcome.stderr, want) {
-		t.Fatalf("stderr = %q, want %q", outcome.stderr, want)
+	if want := "Error: watch run: internal: "; !strings.Contains(outcome.stderr, want) {
+		t.Fatalf("stderr = %q, want the watch to end on %q", outcome.stderr, want)
 	}
 	requireSequences(t, printedSequences(t, out.buf.String()), 1, 2)
 	if got := handler.calls(); len(got) != 1 {

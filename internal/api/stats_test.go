@@ -122,7 +122,21 @@ type seededRun struct {
 // newStatsFixture wires a service the way `ork` does: a durable archive, a
 // cluster-backed reader, a namespace registry, and NOTHING answering from
 // process memory.
-func newStatsFixture(t *testing.T, at time.Time, namespaces ...string) *statsFixture {
+func newStatsFixture(t testing.TB, at time.Time, namespaces ...string) *statsFixture {
+	t.Helper()
+	return newStatsFixtureOver(t, at, nil, namespaces...)
+}
+
+// newStatsFixtureOver is newStatsFixture with the archive's store wrapped,
+// for a test about a store that behaves differently from a well-behaved one.
+// The wrapper sees every read and write the production archiver makes; a nil
+// wrap is the store as it is.
+func newStatsFixtureOver(
+	t testing.TB,
+	at time.Time,
+	wrap func(artifacts.RunArchive) artifacts.RunArchive,
+	namespaces ...string,
+) *statsFixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
 	if err != nil {
@@ -137,7 +151,10 @@ func newStatsFixture(t *testing.T, at time.Time, namespaces ...string) *statsFix
 	clock := newStatsClock(at)
 	reader := &fakeReader{executions: map[string]engine.Executions{}}
 	runs := engine.NewRunStore()
-	archive := bodyReadPanics{inner: store}
+	var archive artifacts.RunArchive = bodyReadPanics{inner: store}
+	if wrap != nil {
+		archive = wrap(archive)
+	}
 	svc := api.NewService(api.Config{
 		Reader:     reader,
 		Runs:       runs,
@@ -360,6 +377,45 @@ func TestGetStats_TwoSeededNamespacesReportExactCountsRateAndPercentiles(t *test
 	if alpha.GetDurationSampleCount() == beta.GetDurationSampleCount() {
 		t.Errorf("both namespaces sampled %d durations; the window is not scoped",
 			alpha.GetDurationSampleCount())
+	}
+}
+
+// TestGetStats_ARunTheArchiveHoldsIsNotAlsoRunning: in the moment after a
+// run ends, the archive already holds it while the cluster's index of
+// executions still lists it as live. The run is counted once, as finished,
+// in the window, in the running list, and in its bucket of a series.
+//
+// Mutation it catches: the live list taken as the cluster gave it, which
+// counts the run twice — the defect TestIntegration_TwoReplicasReportTheSame
+// StatsForTwoNamespaces caught as running 2 beside 4 finished of 5 runs.
+func TestGetStats_ARunTheArchiveHoldsIsNotAlsoRunning(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	fixture := newStatsFixture(t, now, "payments")
+	created := now.Add(-time.Hour)
+	ended := fixture.archiveRun(t, "payments", "charge", orkstackv1.Status_STATUS_SUCCEEDED, created)
+	fixture.reader.executions["payments"] = engine.Executions{Running: []*orkstackv1.Run{
+		liveRun(ended, "payments", "charge", created), // the index has not caught up with its close
+		liveRun("ork-still-going", "payments", "charge", created),
+	}}
+	handler := api.NewStatsHandler(fixture.svc, 0)
+	for _, req := range []*orkstackv1.GetStatsRequest{
+		{Namespace: "payments"},
+		{Namespace: "payments", BucketWidth: orkstackv1.StatsBucketWidth_STATS_BUCKET_WIDTH_DAY},
+	} {
+		got := getStats(t, handler, req)
+		assertCounts(t, "payments", got, map[string]int64{
+			"running": 1, "succeeded": 1, "failed": 0, "canceled": 0,
+		})
+		assertRunning(t, "payments", got, []string{"ork-still-going"})
+		var running, succeeded int64
+		for _, b := range got.GetBuckets() {
+			running += b.GetRunsByStatus()["running"]
+			succeeded += b.GetRunsByStatus()["succeeded"]
+		}
+		if req.GetBucketWidth() != orkstackv1.StatsBucketWidth_STATS_BUCKET_WIDTH_UNSPECIFIED &&
+			(running != 1 || succeeded != 1) {
+			t.Errorf("the buckets count %d running and %d succeeded, want 1 and 1", running, succeeded)
+		}
 	}
 }
 

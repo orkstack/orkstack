@@ -7,9 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -252,36 +252,53 @@ func TestResolveSecret_RepeatsTheFloorBesideTheRead(t *testing.T) {
 // source outside the floor names the floor; one of the Orker's own says no
 // floor admits it; a file named by anything but a plain absolute path says
 // that rule holds under every floor. Neither of the last two speaks of the
-// floor as what refused it, so neither misleads under an empty one.
+// floor as what refused it, so neither misleads under an empty one. Each
+// refusal is SECRET_NOT_PERMITTED, names the secret and quotes the source, and
+// carries the policy's own refusal whole; the read beside it says the same.
 func TestDispatcher_ASecretRefusalSaysWhichRuleRefusedIt(t *testing.T) {
+	// What each rule's refusal says and the other two never do.
 	const (
-		own = `secret "s": "%s" is this orker's own (%s), which no secret floor admits; it is refused ` +
-			`before anything runs, whatever this orker's ORK_ORKER_SECRET_ALLOW says`
-		path = `secret "s": "%s" has a ".." segment, which is refused rather than normalized; a file source ` +
-			`is read by a plain absolute name of at most 4096 bytes, under every floor, and is refused before anything runs`
+		byFloor = "outside that floor"
+		byOwn   = "whatever this orker's"
+		byPath  = "under every floor"
 	)
 	for _, tc := range []struct {
 		floor  []string
 		source string
-		want   string
+		rule   string
 	}{
-		{[]string{"env:SANDBOX_*"}, "env:PROD_DB", `secret "s": "env:PROD_DB" matches none of env:SANDBOX_* ` +
-			`(this orker's ORK_ORKER_SECRET_ALLOW); a source outside that floor is refused before anything runs`},
-		{nil, "env:ORK_S3_SECRET_KEY", fmt.Sprintf(own, "env:ORK_S3_SECRET_KEY", "one of its variables")},
-		{[]string{"env:*"}, "env:ORK_S3_SECRET_KEY", fmt.Sprintf(own, "env:ORK_S3_SECRET_KEY", "one of its variables")},
-		{nil, "file:/proc/self/environ", fmt.Sprintf(own, "file:/proc/self/environ", "one of its files")},
-		{nil, "file:/etc/orkstack/../db", fmt.Sprintf(path, "file:/etc/orkstack/../db")},
-		{[]string{"file:/etc/*/*"}, "file:/etc/orkstack/../db", fmt.Sprintf(path, "file:/etc/orkstack/../db")},
+		{[]string{"env:SANDBOX_*"}, "env:PROD_DB", byFloor},
+		{nil, "env:ORK_S3_SECRET_KEY", byOwn},
+		{[]string{"env:*"}, "env:ORK_S3_SECRET_KEY", byOwn},
+		{nil, "file:/proc/self/environ", byOwn},
+		{nil, "file:/etc/orkstack/../db", byPath},
+		{[]string{"file:/etc/*/*"}, "file:/etc/orkstack/../db", byPath},
 	} {
 		d := newAttemptDispatcher(t, &capturingRuntime{}, artifacts.NewMemoryAttemptStore())
 		d.Policy.SecretAllow = tc.floor
 		in := baseExportInput("grab")
 		in.Secrets = []*orkstackv1.SecretRef{{Name: "s", Source: tc.source}}
-		failure := d.Validate(in)
-		if failure == nil || failure.Reason != ReasonSecretNotPermitted || failure.Message != tc.want {
-			t.Errorf("floor %q, source %q: Validate = %v, want %s:\n%s", tc.floor, tc.source, failure, ReasonSecretNotPermitted, tc.want)
+		cause := d.Policy.AllowsSecretSource(tc.source)
+		if cause == nil {
+			t.Fatalf("floor %q, source %q: the policy admits it, so the row refuses nothing", tc.floor, tc.source)
 		}
-		if _, beside := d.resolveSecret(in.Secrets[0]); beside == nil || beside.Message != tc.want {
+
+		failure := d.Validate(in)
+		if failure == nil || failure.Reason != ReasonSecretNotPermitted {
+			t.Errorf("floor %q, source %q: Validate = %v, want %s", tc.floor, tc.source, failure, ReasonSecretNotPermitted)
+			continue
+		}
+		for _, want := range []string{strconv.Quote("s"), strconv.Quote(tc.source), cause.Error(), tc.rule} {
+			if !strings.Contains(failure.Message, want) {
+				t.Errorf("floor %q, source %q: the refusal lacks %s:\n%s", tc.floor, tc.source, want, failure.Message)
+			}
+		}
+		for _, other := range []string{byFloor, byOwn, byPath} {
+			if other != tc.rule && strings.Contains(failure.Message, other) {
+				t.Errorf("floor %q, source %q: the refusal speaks of another rule (%s):\n%s", tc.floor, tc.source, other, failure.Message)
+			}
+		}
+		if _, beside := d.resolveSecret(in.Secrets[0]); beside == nil || beside.Reason != failure.Reason || beside.Message != failure.Message {
 			t.Errorf("floor %q, source %q: resolveSecret = %v, want the same refusal beside the read", tc.floor, tc.source, beside)
 		}
 	}
@@ -404,8 +421,11 @@ func TestNewActivities_TheWorkRootIsTheOrkersOwn(t *testing.T) {
 		activities := NewActivitiesWithOptions(nil, opts)
 		assertOwn(t, activities.Dispatcher().Policy, staged)
 	}
-	if len(explicit.own) != 0 {
-		t.Fatalf("the caller's policy was changed in place: %v", explicit.own)
+	// The constructor builds its own policy from the caller's: the caller's
+	// still admits a task's file at that path, which only the work root's
+	// being its own would refuse.
+	if err := explicit.AllowsSecretSource(staged); err != nil {
+		t.Fatalf("the caller's policy was changed in place, and now refuses %q: %v", staged, err)
 	}
 	// No work root is the temp dir, where every attempt then lives.
 	activities := NewActivitiesWithOptions(nil, Options{})
@@ -413,8 +433,8 @@ func TestNewActivities_TheWorkRootIsTheOrkersOwn(t *testing.T) {
 }
 
 // TestBoot_WarnsThatAnEmptySecretFloorAdmitsEverySourceButTheOrkersOwn: an
-// Orker with no floor says so at boot, naming the setting, and one with a
-// floor does not.
+// Orker with no floor says so at boot, as a warning that names the setting,
+// and one with a floor does not.
 func TestBoot_WarnsThatAnEmptySecretFloorAdmitsEverySourceButTheOrkersOwn(t *testing.T) {
 	for _, tc := range []struct {
 		allow []string
@@ -430,16 +450,20 @@ func TestBoot_WarnsThatAnEmptySecretFloorAdmitsEverySourceButTheOrkersOwn(t *tes
 			WorkRoot: t.TempDir(),
 			Runtime:  &DockerRuntime{Bin: fake.bin},
 			Policy:   &policy,
-			Logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+			Logger:   jsonLogTo(&logs),
 		})
 		t.Cleanup(activities.Close)
 		if err := activities.Boot(context.Background()); err != nil {
 			t.Fatalf("Boot = %v", err)
 		}
-		warned := strings.Contains(logs.String(), "level=WARN msg=\"secret floor is empty") &&
-			strings.Contains(logs.String(), SecretAllowVar)
+		warned := false
+		for _, record := range logRecords(t, &logs) {
+			if record.level() == "WARN" && record.mentions(SecretAllowVar) {
+				warned = true
+			}
+		}
 		if warned != tc.warn {
-			t.Errorf("floor %q: warned = %t, want %t; logs:\n%s", tc.allow, warned, tc.warn, logs.String())
+			t.Errorf("floor %q: warned about %s = %t, want %t; logs:\n%s", tc.allow, SecretAllowVar, warned, tc.warn, logs.String())
 		}
 	}
 }

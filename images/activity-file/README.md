@@ -84,7 +84,12 @@ task's `with:` before anything runs: a missing required key or an unknown
 unknown or missing `op` exits `2`), and the three `values.json` keys of
 Output.
 
-`orkctl activity inspect file` renders it as a table.
+The same document draws the image's icon and describes the image, each op
+and each key, packed into its `org.orkstack.activity.icon` and
+`org.orkstack.activity.docs` labels, which the API returns for clients to
+show.
+
+`orkctl activity inspect file` renders it all as a table.
 
 ## Cancellation
 

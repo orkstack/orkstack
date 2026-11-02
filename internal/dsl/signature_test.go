@@ -140,11 +140,11 @@ func TestSignatureVerifier_AcceptsABundle(t *testing.T) {
 		f := newSigFixture(t)
 		f.double.ServeReferrersAPI()
 		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), f.bundle(t, f.key, f.image.GetIndexDigest()))
+		// A registry with the referrers API is never asked for the referrers
+		// tag: were it, this one would fail the read and the verdict with it.
+		f.double.SetStatusAt("/v2/"+sigRepo+"/manifests/"+cosigntest.ReferrersTag(f.image.GetIndexDigest()), http.StatusInternalServerError)
 		if err := f.verify(); err != nil {
 			t.Fatalf("Verify = %v, want nil", err)
-		}
-		if n := f.double.CountSuffix("/manifests/" + cosigntest.ReferrersTag(f.image.GetIndexDigest())); n != 0 {
-			t.Fatalf("a registry with the referrers API was asked for the referrers tag %d time(s)", n)
 		}
 	})
 	t.Run("the legacy layout is read first and still verifies", func(t *testing.T) {
@@ -152,11 +152,13 @@ func TestSignatureVerifier_AcceptsABundle(t *testing.T) {
 		other, _ := cosigntest.GenerateKey()
 		f.double.Sign(sigRepo, f.image.GetIndexDigest(), f.layer(t, f.key, f.image.GetIndexDigest()))
 		f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), f.bundle(t, other, f.image.GetIndexDigest()))
+		// A signature that verifies in the legacy layout is the verdict: the
+		// bundles are not read, so a registry that fails every bundle read
+		// (the referrers API and the referrers tag alike) changes nothing.
+		f.double.SetStatus("/referrers/", http.StatusInternalServerError)
+		f.double.SetStatusAt("/v2/"+sigRepo+"/manifests/"+cosigntest.ReferrersTag(f.image.GetIndexDigest()), http.StatusInternalServerError)
 		if err := f.verify(); err != nil {
 			t.Fatalf("Verify = %v, want nil", err)
-		}
-		if n := f.double.CountSuffix("/manifests/" + cosigntest.ReferrersTag(f.image.GetIndexDigest())); n != 0 {
-			t.Fatalf("a verified legacy signature still asked for bundles (%d GETs)", n)
 		}
 	})
 	t.Run("a bundle by the key beside a legacy signature by another", func(t *testing.T) {
@@ -293,12 +295,12 @@ func TestSignatureVerifier_AnAttestationAloneIsNotASignature(t *testing.T) {
 	f.double.PutReferrers(sigRepo, f.image.GetIndexDigest(), cosigntest.ReferrersIndex(cosigntest.Referrer{
 		Manifest: manifest, ArtifactType: cosigntest.BundleType, PredicateType: "https://slsa.dev/provenance/v1",
 	}, cosigntest.Referrer{Manifest: sbom, ArtifactType: "application/spdx+json"}))
-	requireSignatureCode(t, f.verify(), task.ReasonImageNotSigned)
+	// Neither referrer is fetched: were either, this registry would fail the
+	// read, and the verdict would be a registry problem, not "not signed".
 	for _, m := range [][]byte{manifest, sbom} {
-		if n := f.double.CountSuffix("/manifests/" + cosigntest.Digest(m)); n != 0 {
-			t.Fatalf("a referrer that is not a signature was fetched %d time(s)", n)
-		}
+		f.double.SetStatusAt("/v2/"+sigRepo+"/manifests/"+cosigntest.Digest(m), http.StatusInternalServerError)
 	}
+	requireSignatureCode(t, f.verify(), task.ReasonImageNotSigned)
 }
 
 // TestSignatureVerifier_BundleRegistryFailuresAreUnavailable: any GET the
@@ -485,13 +487,14 @@ func TestSignatureVerifier_BoundsLayersAndPayloads(t *testing.T) {
 
 func TestSignatureVerifier_MalformedKeyIsNotPermitted(t *testing.T) {
 	f := newSigFixture(t)
+	// No request leaves for a key that cannot verify anything: were one to,
+	// this registry would fail it, and the verdict would be a registry
+	// problem, not a refused policy.
+	f.double.SetStatus("/v2/", http.StatusInternalServerError)
 	err := f.v.Verify(context.Background(), f.image, "cosign:release", "not a pem")
 	sig := requireSignatureCode(t, err, task.ReasonImageNotPermitted)
 	if !strings.Contains(sig.Error(), `the run's image policy names signer "cosign:release" with no usable key; this is an engine defect, not a workload error`) {
 		t.Fatalf("sentence = %s", sig.Error())
-	}
-	if len(f.double.Requests()) != 0 {
-		t.Fatalf("a malformed key reached the registry: %v", f.double.Requests())
 	}
 }
 
@@ -636,12 +639,12 @@ func TestSignatureVerifier_AnotherBundleVersionIsASignatureItCannotRead(t *testi
 	f.double.PutReferrers(sigRepo, f.image.GetIndexDigest(), cosigntest.ReferrersIndex(cosigntest.Referrer{
 		Manifest: manifest, ArtifactType: "application/vnd.dev.sigstore.bundle.v0.4+json", PredicateType: cosigntest.SignPredicateType,
 	}))
+	// It is not fetched: were it, this registry would fail the read, and the
+	// verdict would be a registry problem, not an invalid signature.
+	f.double.SetStatusAt("/v2/"+sigRepo+"/manifests/"+cosigntest.Digest(manifest), http.StatusInternalServerError)
 	sig := requireSignatureCode(t, f.verify(), task.ReasonImageSignatureInvalid)
 	if !strings.Contains(sig.Detail, "has 1 cosign signature(s)") {
 		t.Fatalf("detail = %s", sig.Detail)
-	}
-	if n := f.double.CountSuffix("/manifests/" + cosigntest.Digest(manifest)); n != 0 {
-		t.Fatalf("a bundle of a version it cannot read was fetched %d time(s)", n)
 	}
 }
 
@@ -728,11 +731,10 @@ func TestSignatureVerifier_FallsBackToTheReferrersTag(t *testing.T) {
 			f := newSigFixture(t)
 			f.double.SignBundle(sigRepo, f.image.GetIndexDigest(), f.bundle(t, f.key, f.image.GetIndexDigest()))
 			f.double.SetStatus("/referrers/", status)
+			// The bundle is stored only where the referrers tag lists it, so
+			// a verified image is the proof that the tag was read.
 			if err := f.verify(); err != nil {
 				t.Fatalf("Verify = %v, want nil", err)
-			}
-			if n := f.double.CountSuffix("/manifests/" + cosigntest.ReferrersTag(f.image.GetIndexDigest())); n != 1 {
-				t.Fatalf("the referrers tag was read %d times, want once", n)
 			}
 		})
 	}

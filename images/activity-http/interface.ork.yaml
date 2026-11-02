@@ -1,37 +1,79 @@
 # The with: contract of images/activity-http (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
-# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
-# that line.
+# Dockerfile's three activity LABEL lines (interface, icon and docs); edit
+# this file, never those lines.
 apiVersion: orkstack/v1
 kind: ActivityInterface
+description: >-
+  Performs one HTTP request and reports the response as data. Any response it
+  receives is a success, whatever its status; the task fails only when the
+  request could not be made at all.
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><ellipse cx="8" cy="8" rx="2.5" ry="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2.2 8h11.6" stroke="currentColor" stroke-width="1.4"/></svg>
 fields:
   url:
     type: string
     required: true
+    description: >-
+      The absolute URL to request.
   headers:
     type: object
+    description: >-
+      Request headers, one per key, such as `Accept: application/json`. Each
+      value reaches curl as data, never as an argument.
   body:
     type: string|object|array
+    description: >-
+      The request body. A string is sent as written; a mapping or a list is sent
+      as compact JSON, with a JSON content type unless `headers` sets one.
   timeoutSeconds:
     type: number
+    description: >-
+      How long the whole request may take, in seconds, before the task fails.
   captureBodyAs:
     type: string
+    description: >-
+      Saves the response body as an output artifact of this name, a plain file
+      name.
 ops:
-  get: {}
-  post: {}
-  put: {}
-  patch: {}
-  delete: {}
-  head: {}
+  get:
+    description: >-
+      Sends a GET request; the op used when `op` is absent.
+  post:
+    description: >-
+      Sends a POST request with `body`.
+  put:
+    description: >-
+      Sends a PUT request with `body`.
+  patch:
+    description: >-
+      Sends a PATCH request with `body`.
+  delete:
+    description: >-
+      Sends a DELETE request.
+  head:
+    description: >-
+      Sends a HEAD request: the response has headers and no body.
 defaultOp: get
 values:
   status:
     type: number
+    description: >-
+      The HTTP status code. A non-2xx status is reported here, not as a failure.
   headers:
     type: object
+    description: >-
+      The response headers; a repeated header keeps its last value.
   durationMs:
     type: number
+    description: >-
+      Wall-clock time of the request, in milliseconds.
   sizeBytes:
     type: number
+    description: >-
+      Size of the response body, in bytes.
   json:
     type: object
+    description: >-
+      The parsed response body, present only when it is valid JSON of at most 1
+      MiB.

@@ -15,6 +15,14 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- Runs created per day or per hour, on the viewer's own calendar. `GetStats`
+  takes `bucket_width` (`HOUR` or `DAY`), an IANA `timezone` and
+  `bucket_count`, and adds `buckets` to the window it already answers: each
+  bucket counts the runs created in it, by status, from the same read as the
+  window's totals, so the finished counts add up to the window's exactly.
+  `orkctl stats --by day` prints the last 7 days in this machine's zone, today
+  included (`--by hour` the last 24 hours, `--buckets N`, `--timezone`); a day
+  is 23 or 25 hours when the zone's clocks change in it.
 - An Orker that declares no capacity says at boot that its admission is best
   effort, bounded only by `max_concurrent`
   (`capacity not declared: admission is best effort, bounded only by max_concurrent`).
@@ -77,6 +85,26 @@ version's own, and its text is the release's notes on GitHub, word for word.
   `orkctl run list` shows `CANCELED by … (asserted)`. It stays after the run
   is retired. A cancel without the header, and runs canceled before this
   release, show no name.
+- Activity images can carry an icon and descriptions of themselves, of each
+  op and of each `with:` and `values.json` key. Add `icon:` and
+  `description:` to an `interface.ork.yaml`; `orkctl activity build
+  --interface` packs them into the image (`orkctl activity interface pack
+  --label icon|docs` prints them for other build tools). `orkctl activity
+  inspect` shows them, and `ListActivities` and `InspectActivity` return
+  them for clients to draw and explain. All six first-party images now
+  carry both.
+
+  Compatibility: the icon and descriptions travel in two new image labels,
+  `org.orkstack.activity.icon` and `org.orkstack.activity.docs`; the
+  interface label is unchanged, so an engine of an earlier release still
+  reads an image's whole interface. An `orkctl` of an earlier release
+  refuses an `interface.ork.yaml` that uses `icon:` or `description:`: build
+  such images with this release's `orkctl`. Against an engine of an earlier
+  release, which reads no icon, `orkctl activity inspect` says the image
+  declares none.
+- `InspectActivity` can answer a reference pinned by digest from what that
+  engine already read for it, when asked (`allow_cached`), so a client
+  showing many tasks' images costs no registry read each time.
 
 ### Changed
 
@@ -251,9 +279,17 @@ version's own, and its text is the release's notes on GitHub, word for word.
   cluster could not take the cancellation, and `CANCELED` or
   `DEADLINE_EXCEEDED` when the caller gave up first, instead of `INTERNAL`.
   A client may retry the first two.
+- The reason an image's interface could not be read (`interface_error`, in
+  `orkctl activity inspect` and the API) now shows every control or format
+  character it quotes as an escape, such as `\u001b`, and is cut at 512
+  bytes, so an image cannot write to an operator's terminal through it.
 
 ### Fixed
 
+- `GetStats` and `orkctl stats` no longer count a run twice — once as
+  finished, once as running — in the moment after it ends, before the
+  cluster's index of executions catches up with its close. A run the archive
+  holds is counted as finished only.
 - An Orker's own policy checks — its cpu and memory caps, secret schemes and
   `ORK_ORKER_SECRET_ALLOW` floor — now run after commit adoption and the memo
   step. A retry whose result another Orker of the pool already committed, or a

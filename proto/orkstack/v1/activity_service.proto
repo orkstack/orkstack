@@ -46,9 +46,11 @@ service ActivityService {
   rpc CordonOrker(CordonOrkerRequest) returns (CordonOrkerResponse);
   // InspectActivity resolves ONE reference on demand — a catalog name or
   // any registry reference `uses:` would accept — and reports it as
-  // ListActivities would: the pinned digest, platforms, and the interface
-  // the image declares. It is uncached, reads engine configuration and the
-  // registry only, never asks an Orker, and writes nothing.
+  // ListActivities would: the pinned digest, platforms, and the interface,
+  // icon and docs the image declares. It resolves afresh on every call,
+  // unless the request sets allow_cached for a reference that pins a digest.
+  // It reads engine configuration and the registry only, never asks an
+  // Orker, and writes nothing.
   rpc InspectActivity(InspectActivityRequest) returns (InspectActivityResponse);
 }
 
@@ -57,6 +59,16 @@ message InspectActivityRequest {
   // four rules (§4.2, Catalog.ResolveUses): a catalog name, or a registry
   // reference carrying `/`, `:` or `@`. A template is refused.
   string reference = 1;
+  // allow_cached lets a reference that pins a digest ("repo@sha256:…", a
+  // task's image.pinned) be answered from what this replica already read for
+  // that digest, which never changes: a run page asks once per distinct image
+  // its tasks ran, and a cached answer costs no registry read. Such an answer
+  // carries the resolved_at of that earlier read, and may outlive a manifest
+  // deleted since. A tag is resolved afresh whatever this says, and a
+  // resolution that failed is never kept. False (orkctl activity inspect)
+  // resolves afresh: a deleted or unauthorized image fails exactly as apply
+  // would. Unrelated to a task's cache: and its memos.
+  bool allow_cached = 2;
 }
 
 message InspectActivityResponse { ActivityInfo activity = 1; }
@@ -87,9 +99,11 @@ message ListActivitiesRequest {
 
 // ActivityInfo is one catalog entry, resolved.
 //
-// resolved_at is a READ-MODEL field on a live catalog read, and is unrelated
-// to the ImageRef.resolved_at that activity.proto reserves: nothing hashes it,
-// and it is never stored in a version document.
+// resolved_at is a READ-MODEL field: when this answer was read from the
+// registry (on a live catalog read, or the earlier read an allow_cached
+// InspectActivity answer comes from). It is unrelated to the
+// ImageRef.resolved_at that activity.proto reserves: nothing hashes it, and
+// it is never stored in a version document.
 message ActivityInfo {
   string name = 1;          // catalog key, e.g. "shell"; empty for InspectActivity of a raw reference
   string reference = 2;     // as configured, e.g. ghcr.io/orkstack/activity-shell:0.1
@@ -114,7 +128,103 @@ message ActivityInfo {
   // the contract — or when the index advertised no platform manifest to
   // read a config from. It distinguishes "declares nothing" from "declares
   // something this engine cannot read". Empty whenever interface is set.
+  // Like icon_error and docs_error it is safe to show as text: a parser's
+  // message can quote what the image wrote, so every control or format
+  // character in it, and every byte that is not UTF-8, is written as an
+  // escape (\u001b, \xff), and it is at most 512 bytes.
   string interface_error = 8;
+
+  // icon is what the image draws itself as, read from the
+  // org.orkstack.activity.icon label of the same config, a READ-MODEL field
+  // exactly as interface is: hashed by nothing, stored nowhere, and never
+  // part of a task's image or a definition. Unset when the image carries no such label, an
+  // empty one, one that could not be read (icon_error says why), or when the
+  // reference did not resolve: a client then draws its default activity icon.
+  // Never markup: a client draws each element itself.
+  ActivityIcon icon = 9;
+  // icon_error is non-empty when the image carries a non-empty icon label
+  // that could not be turned into an ActivityIcon, or when the index
+  // advertised no platform manifest to read a config from (interface_error
+  // and docs_error then say the same). Empty whenever icon is set. Escaped
+  // and bounded as interface_error is.
+  string icon_error = 10;
+  // docs is what the image says about itself in words, read from the
+  // org.orkstack.activity.docs label of the same config, a READ-MODEL field
+  // exactly as interface is. Its keys are interface's keys: a client joins the
+  // two by key. Unset when the image carries no such label, an empty one, or
+  // one that could not be read (docs_error says why).
+  ActivityDocs docs = 11;
+  // docs_error is non-empty when the image carries a non-empty docs label
+  // that could not be turned into an ActivityDocs, one that describes an op
+  // or key the interface it was read with does not declare, or when no
+  // config could be read. Empty whenever docs is set. Escaped and bounded
+  // as interface_error is.
+  string docs_error = 12;
+}
+
+// ActivityIcon is an image's icon: one small single-colour SVG drawing on a
+// 16 by 16 grid, made only of the elements and attributes the
+// org.orkstack.activity.icon label may hold (docs/ACTIVITY_IMAGES.md, "The
+// icon"). The label holds the SVG text, at most 2048 bytes; this is that
+// drawing as a tree, every name allowlisted and every value checked against
+// its own grammar, never markup. The root svg element is implied: a client
+// draws it with viewBox="0 0 16 16", fill="currentColor", and attributes.
+message ActivityIcon {
+  // attributes are the root svg element's presentation attributes, in the
+  // order the SVG gave them.
+  repeated IconAttribute attributes = 1;
+  // elements are the drawing below the root, in order: path, circle,
+  // ellipse, rect, line, polyline, polygon or g, at most 32 in all.
+  repeated IconElement elements = 2;
+}
+
+// IconElement is one element of an ActivityIcon.
+message IconElement {
+  // name is path, circle, ellipse, rect, line, polyline, polygon or g.
+  string name = 1;
+  // attributes are its geometry and presentation attributes, in the order
+  // the SVG gave them.
+  repeated IconAttribute attributes = 2;
+  // children are a g's elements; every other element has none.
+  repeated IconElement children = 3;
+}
+
+// IconAttribute is one attribute of an icon element: an allowlisted name and
+// a value held to that name's grammar.
+message IconAttribute {
+  string name = 1;
+  string value = 2;
+}
+
+// ActivityDocs holds the descriptions an image gives, in plain text, of
+// itself, its ops, its with: keys and its values.json keys. The label
+// org.orkstack.activity.docs holds this message's protojson encoding
+// (lowerCamel names), verbatim. Every text is one paragraph of plain text,
+// with no control character; text between a pair of backticks is code, and
+// nothing else is interpreted.
+message ActivityDocs {
+  // schema_version is 1. Any other value is reported through
+  // ActivityInfo.docs_error.
+  int32 schema_version = 1;
+  // description is the activity's, at most 1000 characters.
+  string description = 2;
+  // fields describes keys of ActivityInterface.fields, at most 500
+  // characters each.
+  map<string, string> fields = 3;
+  // ops describes ops of ActivityInterface.ops, and the keys each declares.
+  map<string, OpDocs> ops = 4;
+  // values describes keys of ActivityInterface.values, at most 500
+  // characters each.
+  map<string, string> values = 5;
+}
+
+// OpDocs describes one op and the keys it reads beside the shared ones.
+message OpDocs {
+  // description is the op's, at most 500 characters.
+  string description = 1;
+  // fields describes keys of that op's OpSchema.fields, at most 500
+  // characters each.
+  map<string, string> fields = 2;
 }
 
 // FieldSchema is one `with:` key's declaration. It is EXACTLY the

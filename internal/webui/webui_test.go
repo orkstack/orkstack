@@ -517,6 +517,47 @@ func TestHandler_APageWithoutAPolicyRunsNoInlineScript(t *testing.T) {
 	}
 }
 
+// maxNamedPolicy is the most a page may name (16 KiB, counted as written in
+// the page, before it is unescaped): a policy over it is not sent as a header
+// whole, so the page gets the strict default instead.
+const maxNamedPolicy = 16 << 10
+
+// pageNaming is a page whose <meta> names a policy of exactly size bytes as
+// written, and the policy it names.
+func pageNaming(size int) (page, policy string) {
+	policy = "default-src 'self'; script-src 'self'; "
+	policy += strings.Repeat("a", size-len(policy))
+	return `<!doctype html><meta http-equiv="content-security-policy" content="` + policy + `">`, policy
+}
+
+// A page's policy is sent whole or not at all: one at the bound is the
+// page's own, and one a byte over it, or far over it, is the strict default
+// rather than a truncated policy that would drop its later directives.
+func TestHandler_APageNamingAnOversizedPolicyGetsTheDefault(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		size     int
+		oversize bool
+	}{
+		{name: "a small policy", size: 200},
+		{name: "a policy at the bound", size: maxNamedPolicy},
+		{name: "a policy one byte over the bound", size: maxNamedPolicy + 1, oversize: true},
+		{name: "a policy of 20 KiB", size: 20 << 10, oversize: true},
+	} {
+		page, policy := pageNaming(tc.size)
+		h := webui.Handler(fstest.MapFS{"index.html": {Data: []byte(page)}})
+		got := get(t, h, "GET", "/", nil).Header.Get("Content-Security-Policy")
+		want := "frame-ancestors 'none'; " + policy
+		if tc.oversize {
+			want = webui.DefaultPagePolicy
+		}
+		if got != want {
+			t.Errorf("%s: Content-Security-Policy is %d bytes %.80q, want %d bytes %.80q",
+				tc.name, len(got), got, len(want), want)
+		}
+	}
+}
+
 // Every other response the UI sends, an error included, forbids everything,
 // so a file of the build opened as a document (an SVG, say) runs nothing.
 func TestHandler_EveryOtherResponseForbidsEverything(t *testing.T) {

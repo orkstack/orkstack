@@ -1,7 +1,6 @@
 package dsl_test
 
 import (
-	"fmt"
 	"strings"
 	"testing"
 
@@ -22,102 +21,107 @@ tasks:
 
 // TestCompile_RetryRules is rule 47: a retry: the cluster would refuse — a
 // maximum interval below the initial one, or a backoff coefficient below 1 —
-// is refused at compile, naming the path and both values, instead of leaving
+// is refused at compile, naming the path and the values, instead of leaving
 // every run that reaches the task stuck on a workflow task the cluster fails
-// forever.
+// forever. Each refusal is placed at the field, names the task, pairs each
+// path it speaks of with the value written there (so a swapped pair is
+// caught), and says which rule it is in one word; the sentence around them
+// is the author's to read, not this test's to copy.
 func TestCompile_RetryRules(t *testing.T) {
-	const maxBelow = `task "fetch": retry.maximum_interval_seconds %d is below retry.initial_interval_seconds %d — ` +
-		`the longest wait between attempts cannot be shorter than the first; set it to at least %d, ` +
-		`or omit it for the default, which is never shorter than the first`
-	const coefficientBelow = `task "fetch": retry.backoff_coefficient %s is below 1 — it multiplies each wait ` +
-		`to give the next, so it must be at least 1; write 1 for a constant wait, or omit it (2: each wait doubles)`
-	const coefficientNotFinite = `task "fetch": retry.backoff_coefficient %s is not a finite number — it multiplies ` +
-		`each wait to give the next, so it must be a number of at least 1; write 1 for a constant wait, or omit it ` +
-		`(2: each wait doubles)`
-	const initialNegative = `task "fetch": retry.initial_interval_seconds %d is negative — it is the wait before ` +
-		`the second attempt, in seconds; omit it for the default of 1`
-	const maxNegative = `task "fetch": retry.maximum_interval_seconds %d is negative — it is the longest wait ` +
-		`between attempts, in seconds; omit it for the default, which is never shorter than the first`
 	for _, tc := range []struct {
-		name, retry, field, message string
+		name, retry, field string
+		says               []string
 	}{
 		{
-			name:    "a negative initial interval",
-			retry:   "{maximum_attempts: 3, initial_interval_seconds: -5}",
-			field:   "tasks[0].retry.initial_interval_seconds",
-			message: fmt.Sprintf(initialNegative, -5),
+			name:  "a negative initial interval",
+			retry: "{maximum_attempts: 3, initial_interval_seconds: -5}",
+			field: "tasks[0].retry.initial_interval_seconds",
+			says:  []string{`task "fetch"`, "retry.initial_interval_seconds -5", "negative"},
 		},
 		{
-			name:    "a negative maximum interval",
-			retry:   "{maximum_attempts: 3, maximum_interval_seconds: -1}",
-			field:   "tasks[0].retry.maximum_interval_seconds",
-			message: fmt.Sprintf(maxNegative, -1),
+			name:  "a negative maximum interval",
+			retry: "{maximum_attempts: 3, maximum_interval_seconds: -1}",
+			field: "tasks[0].retry.maximum_interval_seconds",
+			says:  []string{`task "fetch"`, "retry.maximum_interval_seconds -1", "negative"},
 		},
 		{
-			name:    "a negative maximum interval after a set initial one",
-			retry:   "{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: -60}",
-			field:   "tasks[0].retry.maximum_interval_seconds",
-			message: fmt.Sprintf(maxNegative, -60),
+			name:  "a negative maximum interval after a set initial one",
+			retry: "{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: -60}",
+			field: "tasks[0].retry.maximum_interval_seconds",
+			says:  []string{`task "fetch"`, "retry.maximum_interval_seconds -60", "negative"},
 		},
 		{
-			name:    "a coefficient just below 1",
-			retry:   "{maximum_attempts: 3, backoff_coefficient: 0.999}",
-			field:   "tasks[0].retry.backoff_coefficient",
-			message: fmt.Sprintf(coefficientBelow, "0.999"),
+			name:  "a coefficient just below 1",
+			retry: "{maximum_attempts: 3, backoff_coefficient: 0.999}",
+			field: "tasks[0].retry.backoff_coefficient",
+			says:  []string{`task "fetch"`, "retry.backoff_coefficient 0.999", "below 1"},
 		},
 		{
-			name:    "an infinite coefficient",
-			retry:   "{maximum_attempts: 3, backoff_coefficient: .inf, maximum_interval_seconds: 60}",
-			field:   "tasks[0].retry.backoff_coefficient",
-			message: fmt.Sprintf(coefficientNotFinite, "+Inf"),
+			name:  "an infinite coefficient",
+			retry: "{maximum_attempts: 3, backoff_coefficient: .inf, maximum_interval_seconds: 60}",
+			field: "tasks[0].retry.backoff_coefficient",
+			says:  []string{`task "fetch"`, "retry.backoff_coefficient +Inf", "finite"},
 		},
 		{
-			name:    "a maximum below the initial interval",
-			retry:   "{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: 10}",
-			field:   "tasks[0].retry.maximum_interval_seconds",
-			message: fmt.Sprintf(maxBelow, 10, 30, 30),
+			name:  "a maximum below the initial interval",
+			retry: "{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: 10}",
+			field: "tasks[0].retry.maximum_interval_seconds",
+			says: []string{`task "fetch"`, "retry.maximum_interval_seconds 10 is below retry.initial_interval_seconds 30",
+				"at least 30"},
 		},
 		{
-			name:    "a maximum below the initial interval with one attempt",
-			retry:   "{maximum_attempts: 1, initial_interval_seconds: 5, maximum_interval_seconds: 4}",
-			field:   "tasks[0].retry.maximum_interval_seconds",
-			message: fmt.Sprintf(maxBelow, 4, 5, 5),
+			name:  "a maximum below the initial interval with one attempt",
+			retry: "{maximum_attempts: 1, initial_interval_seconds: 5, maximum_interval_seconds: 4}",
+			field: "tasks[0].retry.maximum_interval_seconds",
+			says: []string{`task "fetch"`, "retry.maximum_interval_seconds 4 is below retry.initial_interval_seconds 5",
+				"at least 5"},
 		},
 		{
-			name:    "a coefficient between 0 and 1",
-			retry:   "{maximum_attempts: 3, backoff_coefficient: 0.5}",
-			field:   "tasks[0].retry.backoff_coefficient",
-			message: fmt.Sprintf(coefficientBelow, "0.5"),
+			name:  "a coefficient between 0 and 1",
+			retry: "{maximum_attempts: 3, backoff_coefficient: 0.5}",
+			field: "tasks[0].retry.backoff_coefficient",
+			says:  []string{`task "fetch"`, "retry.backoff_coefficient 0.5", "below 1"},
 		},
 		{
-			name:    "a negative coefficient",
-			retry:   "{maximum_attempts: 3, backoff_coefficient: -2}",
-			field:   "tasks[0].retry.backoff_coefficient",
-			message: fmt.Sprintf(coefficientBelow, "-2"),
+			name:  "a negative coefficient",
+			retry: "{maximum_attempts: 3, backoff_coefficient: -2}",
+			field: "tasks[0].retry.backoff_coefficient",
+			says:  []string{`task "fetch"`, "retry.backoff_coefficient -2", "below 1"},
 		},
 		{
-			name:    "a coefficient that is not a number",
-			retry:   "{maximum_attempts: 3, backoff_coefficient: .nan}",
-			field:   "tasks[0].retry.backoff_coefficient",
-			message: fmt.Sprintf(coefficientNotFinite, "NaN"),
+			name:  "a coefficient that is not a number",
+			retry: "{maximum_attempts: 3, backoff_coefficient: .nan}",
+			field: "tasks[0].retry.backoff_coefficient",
+			says:  []string{`task "fetch"`, "retry.backoff_coefficient NaN", "finite"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := dsl.Compile(retryDoc(tc.retry))
-			if err == nil || fieldOf(err) != tc.field || err.Error() != tc.message {
-				t.Fatalf("Compile(retry: %s) = %v (field %q)\nwant %q at %q", tc.retry, err, fieldOf(err), tc.message, tc.field)
+			if err == nil {
+				t.Fatalf("Compile(retry: %s) accepted a retry the cluster would refuse", tc.retry)
+			}
+			if got := fieldOf(err); got != tc.field {
+				t.Errorf("Compile(retry: %s) refused at field %q, want %q: %v", tc.retry, got, tc.field, err)
+			}
+			for _, fragment := range tc.says {
+				if !strings.Contains(err.Error(), fragment) {
+					t.Errorf("Compile(retry: %s) = %q, which does not say %q", tc.retry, err, fragment)
+				}
 			}
 		})
 	}
 	// An interval is an integer field, so a non-finite one never reaches the
-	// rule: the document does not decode.
-	for _, notFinite := range []string{
-		"{maximum_attempts: 3, initial_interval_seconds: .inf}",
-		"{maximum_attempts: 3, maximum_interval_seconds: -.inf}",
-		"{maximum_attempts: 3, maximum_interval_seconds: .nan}",
+	// rule: the document is refused at the line that writes it, naming the
+	// value. (retryDoc opens with a blank line, so its retry: is line 9.)
+	for _, notFinite := range []struct{ retry, value string }{
+		{"{maximum_attempts: 3, initial_interval_seconds: .inf}", ".inf"},
+		{"{maximum_attempts: 3, maximum_interval_seconds: -.inf}", "-.inf"},
+		{"{maximum_attempts: 3, maximum_interval_seconds: .nan}", ".nan"},
 	} {
-		if _, err := dsl.Compile(retryDoc(notFinite)); err == nil || !strings.Contains(err.Error(), "into int32") {
-			t.Errorf("Compile(retry: %s) = %v, want the document refused as not an integer", notFinite, err)
+		_, err := dsl.Compile(retryDoc(notFinite.retry))
+		if err == nil || !strings.Contains(err.Error(), "line 9") || !strings.Contains(err.Error(), notFinite.value) {
+			t.Errorf("Compile(retry: %s) = %v, want the document refused at line 9 naming %s",
+				notFinite.retry, err, notFinite.value)
 		}
 	}
 	for _, ok := range []string{

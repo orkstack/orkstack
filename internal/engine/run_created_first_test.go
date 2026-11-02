@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -20,33 +22,86 @@ import (
 // errStoreDown is the snapshot write failure a test injects.
 var errStoreDown = errors.New("object storage unreachable")
 
-// snapshotAttempts fails the first failing write attempts of sequence 1 —
-// every one when failing is negative — and every attempt of sequence 2 when
-// terminal is set, and counts every attempt by sequence.
-type snapshotAttempts struct {
-	mu       sync.Mutex
-	failing  int
-	terminal bool
-	tries    map[int64]int
+// snapshotWrites fails event snapshot writes by their number — the n-th
+// write of one event's sequence, counted from 1 — and counts the distinct
+// writes of each sequence. A write is one local activity however many
+// attempts the engine's retry policy gives it, and a refused write refuses
+// every attempt, the way a store that is down does; so what a row says is
+// which writes the store refuses, not how often the engine asks again. It is
+// an interceptor on the run's worker, which sees each write as the workflow
+// starts it, and the hook of the harness's snapshot store (onSnapshot), which
+// sees each attempt.
+type snapshotWrites struct {
+	interceptor.WorkerInterceptorBase
+	// refuse says whether the store refuses write n (from 1) of sequence.
+	refuse func(sequence int64, n int) bool
+
+	mu     sync.Mutex
+	writes map[int64]int
 }
 
-func (a *snapshotAttempts) write(_ *orkstackv1.Run, sequence int64) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.tries[sequence]++
-	if sequence == 1 && (a.failing < 0 || a.tries[1] <= a.failing) {
-		return errStoreDown
+func (w *snapshotWrites) InterceptWorkflow(_ workflow.Context, next interceptor.WorkflowInboundInterceptor) interceptor.WorkflowInboundInterceptor {
+	return &snapshotWritesInbound{WorkflowInboundInterceptorBase: interceptor.WorkflowInboundInterceptorBase{Next: next}, root: w}
+}
+
+type snapshotWritesInbound struct {
+	interceptor.WorkflowInboundInterceptorBase
+	root *snapshotWrites
+}
+
+func (i *snapshotWritesInbound) Init(outbound interceptor.WorkflowOutboundInterceptor) error {
+	return i.Next.Init(&snapshotWritesOutbound{WorkflowOutboundInterceptorBase: interceptor.WorkflowOutboundInterceptorBase{Next: outbound}, root: i.root})
+}
+
+type snapshotWritesOutbound struct {
+	interceptor.WorkflowOutboundInterceptorBase
+	root *snapshotWrites
+}
+
+func (o *snapshotWritesOutbound) ExecuteLocalActivity(ctx workflow.Context, activityType string, args ...any) workflow.Future {
+	if activityType != engine.ActivityWriteSnapshot && activityType != engine.ActivityWriteSnapshotOrOverlay || len(args) < 2 {
+		return o.Next.ExecuteLocalActivity(ctx, activityType, args...)
 	}
-	if sequence == 2 && a.terminal {
+	if sequence, ok := args[1].(int64); ok {
+		o.root.mu.Lock()
+		if o.root.writes == nil {
+			o.root.writes = map[int64]int{}
+		}
+		o.root.writes[sequence]++
+		o.root.mu.Unlock()
+	}
+	return o.Next.ExecuteLocalActivity(ctx, activityType, args...)
+}
+
+// store is the harness's onSnapshot hook: it fails an attempt of a write the
+// store refuses.
+func (w *snapshotWrites) store(_ *orkstackv1.Run, sequence int64) error {
+	w.mu.Lock()
+	n := w.writes[sequence]
+	w.mu.Unlock()
+	if w.refuse != nil && w.refuse(sequence, n) {
 		return errStoreDown
 	}
 	return nil
 }
 
-func (a *snapshotAttempts) of(sequence int64) int {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.tries[sequence]
+// of is how many distinct writes of sequence the workflow started.
+func (w *snapshotWrites) of(sequence int64) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.writes[sequence]
+}
+
+// refusing builds a refuse function from the writes it refuses: by sequence,
+// the write numbers (every write of the sequence when the list is empty).
+func refusing(bySequence map[int64][]int) func(int64, int) bool {
+	return func(sequence int64, n int) bool {
+		numbers, ok := bySequence[sequence]
+		if !ok {
+			return false
+		}
+		return len(numbers) == 0 || slices.Contains(numbers, n)
+	}
 }
 
 // TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd:
@@ -70,34 +125,33 @@ func TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd(t *tes
 	}
 	writes := []struct {
 		name string
-		// failing is how many of sequence 1's write attempts fail: the
-		// snapshot's local activity makes three, so 3 fails its first
-		// write, and -1 every one.
-		failing int
-		// terminal fails every write of the terminal event's snapshot.
-		terminal bool
+		// refuse is the writes the store refuses, by event sequence: the
+		// write numbers of that sequence (every write when the list is empty).
+		refuse map[int64][]int
 		// want is the stream published; a trailing ":" takes the ending's
 		// terminal event type.
 		want string
-		// tries is how many attempts sequence 1's writes make in all.
-		tries int
+		// runCreated is how many distinct writes RUN_CREATED's number
+		// (sequence 1) is given: one, and one more where the first is refused.
+		runCreated int
 	}{
-		{"its write takes", 0, false, "1:RUN_CREATED 2:", 1},
-		{"its first write fails and the second takes", 3, false, "1:RUN_CREATED 2:", 4},
-		{"neither write takes", -1, false, "2:", 6},
+		{"its write takes", nil, "1:RUN_CREATED 2:", 1},
+		{"its first write fails and the second takes", map[int64][]int{1: {1}}, "1:RUN_CREATED 2:", 2},
+		{"neither write takes", map[int64][]int{1: {}}, "2:", 2},
 		// The terminal event's own failure is the one any run may meet: the
 		// reader numbers the close after the last event published.
-		{"its write takes and the terminal's does not", 0, true, "1:RUN_CREATED", 1},
-		{"its second write takes and the terminal's does not", 3, true, "1:RUN_CREATED", 4},
-		{"nothing takes", -1, true, "", 6},
+		{"its write takes and the terminal's does not", map[int64][]int{2: {}}, "1:RUN_CREATED", 1},
+		{"its second write takes and the terminal's does not", map[int64][]int{1: {1}, 2: {}}, "1:RUN_CREATED", 2},
+		{"nothing takes", map[int64][]int{1: {}, 2: {}}, "", 2},
 	}
 	for _, ending := range endings {
 		for _, w := range writes {
 			t.Run(ending.name+"/"+w.name, func(t *testing.T) {
 				var suite testsuite.WorkflowTestSuite
 				h := newHarnessCtx(t, &suite, okBehavior)
-				attempts := &snapshotAttempts{failing: w.failing, terminal: w.terminal, tries: map[int64]int{}}
-				h.onSnapshot = attempts.write
+				store := &snapshotWrites{refuse: refusing(w.refuse)}
+				h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{store}}))
+				h.onSnapshot = store.store
 				wf := definedChain(t)
 				stub, plan := storeDefinition(t, h.snapshots, definitionRunID, wf, continuedPlan(1<<20))
 				h.snapshots.remove(definitionURI(t, h.snapshots, wf, definitionRunID, plan))
@@ -122,14 +176,14 @@ func TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd(t *tes
 				if got := strings.Join(definitionEventTypes(published), " "); got != want {
 					t.Fatalf("published %q, want %q", got, want)
 				}
-				if got := attempts.of(1); got != w.tries {
-					t.Errorf("RUN_CREATED's writes made %d attempts, want %d", got, w.tries)
+				if got := store.of(1); got != w.runCreated {
+					t.Errorf("RUN_CREATED's number was written %d times, want %d", got, w.runCreated)
 				}
-				// The terminal event's snapshot is written, at 2, whatever
-				// became of RUN_CREATED; nothing is ever written past it.
-				if attempts.of(2) == 0 || attempts.of(3) != 0 {
-					t.Errorf("snapshot attempts by sequence %v, want the terminal event's at 2 and nothing after it",
-						attempts.tries)
+				// The terminal event's snapshot is written once, at 2,
+				// whatever became of RUN_CREATED; nothing is ever written
+				// past it.
+				if got, after := store.of(2), store.of(3); got != 1 || after != 0 {
+					t.Errorf("the terminal event's number was written %d times and the one after it %d, want once and never", got, after)
 				}
 			})
 		}
@@ -137,14 +191,14 @@ func TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd(t *tes
 }
 
 // endBeforeStartWith runs generation 0 of a run whose definition object is
-// gone, canceled during its load, with attempts in front of its snapshot
-// writes and capture on its worker, and returns what it published.
-func endBeforeStartWith(t *testing.T, attempts *snapshotAttempts, capture *pinCreationCapture) []*orkstackv1.Event {
+// gone, canceled during its load, with store in front of its snapshot writes
+// and capture on its worker, and returns what it published.
+func endBeforeStartWith(t *testing.T, store *snapshotWrites, capture *pinCreationCapture) []*orkstackv1.Event {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	h := newHarnessCtx(t, &suite, okBehavior)
-	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
-	h.onSnapshot = attempts.write
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture, store}}))
+	h.onSnapshot = store.store
 	wf := definedChain(t)
 	stub, plan := storeDefinition(t, h.snapshots, definitionRunID, wf, continuedPlan(1<<20))
 	h.snapshots.remove(definitionURI(t, h.snapshots, wf, definitionRunID, plan))
@@ -164,17 +218,17 @@ func endBeforeStartWith(t *testing.T, attempts *snapshotAttempts, capture *pinCr
 // fails asks it once, where it fails.
 func TestRunWorkflow_TheRunCreatedFirstGateIsAskedOnlyWhereItsWriteFails(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		failing int
-		asked   int
+		name   string
+		refuse map[int64][]int
+		asked  int
 	}{
-		{"its write takes", 0, 0},
-		{"its first write fails", 3, 1},
-		{"neither write takes", -1, 1},
+		{"its write takes", nil, 0},
+		{"its first write fails", map[int64][]int{1: {1}}, 1},
+		{"neither write takes", map[int64][]int{1: {}}, 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			capture := &pinCreationCapture{}
-			endBeforeStartWith(t, &snapshotAttempts{failing: tc.failing, tries: map[int64]int{}}, capture)
+			endBeforeStartWith(t, &snapshotWrites{refuse: refusing(tc.refuse)}, capture)
 			asked := capture.versionsAsked(engine.RunCreatedFirstChange)
 			if len(asked) != tc.asked {
 				t.Fatalf("%s asked %v, want %d question(s)", engine.RunCreatedFirstChange, asked, tc.asked)
@@ -197,13 +251,13 @@ func TestRunWorkflow_TheRunCreatedFirstGateIsAskedOnlyWhereItsWriteFails(t *test
 func TestRunWorkflow_AGateOffEndingBeforeStartKeepsTheLegacyWrites(t *testing.T) {
 	defer engine.DisableRunCreatedFirstGateForTest()()
 	capture := &pinCreationCapture{}
-	attempts := &snapshotAttempts{failing: 3, tries: map[int64]int{}}
-	published := endBeforeStartWith(t, attempts, capture)
+	store := &snapshotWrites{refuse: refusing(map[int64][]int{1: {1}})}
+	published := endBeforeStartWith(t, store, capture)
 	if got := strings.Join(definitionEventTypes(published), " "); got != "2:RUN_CANCELED" {
 		t.Fatalf("published %q, want the legacy %q", got, "2:RUN_CANCELED")
 	}
-	if got := attempts.of(1); got != 3 {
-		t.Fatalf("RUN_CREATED's write made %d attempts, want one write's 3", got)
+	if got := store.of(1); got != 1 {
+		t.Fatalf("RUN_CREATED's number was written %d times, want the one write the legacy path makes", got)
 	}
 	if asked := capture.versionsAsked(engine.RunCreatedFirstChange); len(asked) != 0 {
 		t.Fatalf("%s asked %v with the gate off, want no question", engine.RunCreatedFirstChange, asked)

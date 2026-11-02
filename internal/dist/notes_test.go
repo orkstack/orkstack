@@ -285,10 +285,13 @@ func TestCheckNothingUnreleased(t *testing.T) {
 	}
 }
 
-// TestRepository_TheFirstReleaseSaysFirstRelease: 0.1.0's notes are the one
-// line the first release says, so the changes folded into it at merge are
-// dropped, not moved under its heading.
-func TestRepository_TheFirstReleaseSaysFirstRelease(t *testing.T) {
+// TestReleaseGuard_TheShippedFirstReleaseKeepsItsOneLine is a release guard
+// over the live CHANGELOG.md, not a test of the notes code (the tests above
+// run the extraction on text of their own): 0.1.0 is published, its notes are
+// the one line the first release says, and the changes folded into it at
+// merge were dropped, not moved under its heading. It pins that content on
+// purpose, and fails only if the section of a shipped release is edited.
+func TestReleaseGuard_TheShippedFirstReleaseKeepsItsOneLine(t *testing.T) {
 	t.Parallel()
 	got, err := dist.ReleaseNotes(readRepoFile(t, dist.ChangelogFile), mustVersion(t, "v0.1.0"))
 	if err != nil || got != "First release.\n" {

@@ -2,12 +2,15 @@ package hostpolicy
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // engine is the API listener's settings, as internal/api names them.
@@ -156,21 +159,195 @@ func TestNew_RefusesAnEntryThatIsNotANameOrAPattern(t *testing.T) {
 	}
 }
 
-// Judging a name Host allocates nothing when it is written in lower case,
-// admitted or refused, so a flood of requests costs the guard no garbage;
-// folding an upper-case name costs one copy.
-func TestPolicy_AllowsAllocatesNothingForALowerCaseName(t *testing.T) {
+// A Host header is input the guard does not control, and one is judged on
+// every request, so a flood of them (a page that loops, a probe aimed at the
+// wrong port) costs only what judging costs: a few microseconds of CPU for a
+// name, admitted or refused, and a cost that grows with the length of a
+// hostile one no faster than reading it. The bound is the CPU time of the
+// calling thread (threadCPU), which a host loaded by other processes cannot
+// move, at about five times what judging took where it was measured (10 ms for
+// the names, 25 ms for the long Hosts); a judgement that compiles a pattern
+// or resolves a name costs far more.
+func TestPolicy_AllowsJudgesAFloodOfHostsWithinACPUBound(t *testing.T) {
+	// The race detector's instrumentation slows judging several times over
+	// (race_enabled_test.go); the bound is scaled by it, never dropped.
+	slowdown := time.Duration(1)
+	if raceBuild {
+		slowdown = raceSlowdown
+	}
 	policy := mustNew(t, "ork.internal:8080", "orkstack.example.com", "*.corp.example")
+	var names []string
+	names = append(names, allowedEntries...)
+	for host := range allowedCases {
+		names = append(names, host)
+	}
+	for _, tc := range defaultCases {
+		names = append(names, tc.hosts...)
+	}
+	long := strings.Repeat("a.", 4<<10)
 	for _, tc := range []struct {
-		host   string
-		allocs float64
+		name   string
+		hosts  []string
+		rounds int
+		bound  time.Duration // for all the judgements
 	}{
-		{"orkstack.example.com:443", 0}, {"a.corp.example", 0}, {"ork.internal:8080", 0}, {"ork:8080", 0},
-		{"ork_1", 0}, {"evil.example:8080", 0}, {"2130706433", 0}, {"localhost", 0}, {"app.localhost:5173", 0},
-		{"127.0.0.1:8080", 0}, {"ORKSTACK.example.com", 1},
+		{"the names of the tables", names, 400, 60 * time.Millisecond},
+		{"a Host as long as a header line", []string{long, strings.ToUpper(long), long + ":8080", "[" + long + "]:80",
+			strings.Repeat("a", 8<<10) + ".example"}, 100, 120 * time.Millisecond},
 	} {
-		if got := testing.AllocsPerRun(100, func() { policy.Allows(tc.host) }); got > tc.allocs {
-			t.Errorf("Allows(%q): %.0f allocations, want at most %.0f", tc.host, got, tc.allocs)
+		func() {
+			runtime.LockOSThread()
+			defer runtime.UnlockOSThread()
+			startCPU, cpu := threadCPU()
+			startWall := time.Now()
+			judgements := 0
+			for range tc.rounds {
+				for _, host := range tc.hosts {
+					policy.Allows(host)
+					judgements++
+				}
+			}
+			cost, clock := time.Since(startWall), "wall clock"
+			if end, ok := threadCPU(); cpu && ok {
+				cost, clock = end-startCPU, "thread CPU time"
+			}
+			t.Logf("%s: %d judgements took %v of %s", tc.name, judgements, cost, clock)
+			if bound := tc.bound * slowdown; cost > bound {
+				t.Errorf("%s: %d judgements took %v of %s, want at most %v", tc.name, judgements, cost, clock, bound)
+			}
+		}()
+	}
+}
+
+// refusalRecords are the log lines of a guard writing JSON, one object each.
+func refusalRecords(t *testing.T, logged *strings.Builder) []map[string]any {
+	t.Helper()
+	var records []map[string]any
+	for line := range strings.SplitSeq(strings.TrimSpace(logged.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		record := map[string]any{}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+// refuse sends guard one request for target with the Host host, and returns
+// what the refusal answered.
+func refuse(guard http.Handler, target, host string) *http.Response {
+	req := httptest.NewRequest(http.MethodGet, target, nil)
+	req.Host = host
+	rec := httptest.NewRecorder()
+	guard.ServeHTTP(rec, req)
+	return rec.Result()
+}
+
+// fakeClock is a clock a test moves by hand.
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.now }
+
+// A page or a probe that loops is one log line per refusalLogInterval, and
+// the line that ends an interval counts the refusals it did not log, so the
+// log says how loud the loop was without being as loud: nothing is logged
+// before the interval has passed, the first refusal after it is, the count
+// starts over, and every refusal is still answered 403.
+func TestPolicy_GuardLogsARefusalOncePerIntervalAndCountsTheRest(t *testing.T) {
+	clock := &fakeClock{now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}
+	policy := mustNew(t, ":8080")
+	policy.clock = clock.Now
+	var logged strings.Builder
+	guard := policy.Guard(http.NotFoundHandler(), slog.New(slog.NewJSONHandler(&logged, nil)))
+
+	// step moves the clock and refuses one request, returning how many lines
+	// that refusal logged.
+	step := func(advance time.Duration, host string) int {
+		clock.now = clock.now.Add(advance)
+		before := len(refusalRecords(t, &logged))
+		if res := refuse(guard, "/", host); res.StatusCode != http.StatusForbidden {
+			t.Fatalf("Host %q: status %d, want 403 whether or not it was logged", host, res.StatusCode)
+		}
+		return len(refusalRecords(t, &logged)) - before
+	}
+	unlogged := func() any { // refused_unlogged of the last line
+		records := refusalRecords(t, &logged)
+		return records[len(records)-1]["refused_unlogged"]
+	}
+
+	if step(0, "first.example") != 1 || unlogged() != 0.0 {
+		t.Fatalf("the first refusal: want one line counting no refusal before it, got %v", unlogged())
+	}
+	// Three more inside the interval, the last a nanosecond short of it.
+	for _, advance := range []time.Duration{time.Second, time.Second, refusalLogInterval - 2*time.Second - time.Nanosecond} {
+		if step(advance, "loop.example") != 0 {
+			t.Fatalf("a refusal %v after the last line was logged before the interval of %v", advance, refusalLogInterval)
+		}
+	}
+	// At the interval, the next is logged and counts the three before it.
+	if step(time.Nanosecond, "later.example") != 1 || unlogged() != 3.0 {
+		t.Fatalf("the refusal at the interval: want one line counting 3 refusals, got %v", unlogged())
+	}
+	records := refusalRecords(t, &logged)
+	if got := records[len(records)-1]["host"]; got != "later.example" {
+		t.Errorf("the line that ended the interval names Host %v, want later.example", got)
+	}
+	// The count starts over: the next line counts only what followed the last.
+	if step(time.Second, "loop.example") != 0 {
+		t.Fatal("a refusal right after a line was logged")
+	}
+	if step(refusalLogInterval, "again.example") != 1 || unlogged() != 1.0 {
+		t.Fatalf("the refusal one interval on: want one line counting 1 refusal, got %v", unlogged())
+	}
+	// A burst far inside one interval is still one line.
+	for range 50 {
+		if step(time.Millisecond, "burst.example") != 0 {
+			t.Fatal("a refusal a millisecond after a line was logged")
+		}
+	}
+	if step(refusalLogInterval, "end.example") != 1 || unlogged() != 50.0 {
+		t.Fatalf("after a burst of 50: want one line counting 50 refusals, got %v", unlogged())
+	}
+}
+
+// A refused Host is echoed in the answer and the log so the operator can read
+// what to allow, but only the first maxLoggedHost bytes of it, marked as cut:
+// a hostile Host cannot make the guard write a line as long as a header.
+func TestPolicy_GuardEchoesAtMostTheStartOfALongHost(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		size int
+		cut  bool
+	}{
+		{"a short Host", 20, false},
+		{"a Host at the bound", maxLoggedHost, false},
+		{"a Host a byte over it", maxLoggedHost + 1, true},
+		{"a Host of 8 KiB", 8 << 10, true},
+	} {
+		host := "evil." + strings.Repeat("x", tc.size-len("evil."))
+		var logged strings.Builder
+		guard := mustNew(t, ":8080").Guard(http.NotFoundHandler(), slog.New(slog.NewJSONHandler(&logged, nil)))
+		res := refuse(guard, "/", host)
+		answer, _ := io.ReadAll(res.Body)
+		records := refusalRecords(t, &logged)
+		if res.StatusCode != http.StatusForbidden || len(records) != 1 {
+			t.Fatalf("%s: status %d with %d log lines, want a 403 and one line", tc.name, res.StatusCode, len(records))
+		}
+		wantEcho := host
+		if tc.cut {
+			wantEcho = host[:maxLoggedHost] + "…"
+		}
+		if !strings.Contains(string(answer), fmt.Sprintf("%q", wantEcho)) {
+			t.Errorf("%s: the answer does not name the Host as %.40q… (%d bytes), got %.80q", tc.name, wantEcho, len(wantEcho), answer)
+		}
+		if got := records[0]["host"]; got != wantEcho {
+			t.Errorf("%s: the log names the Host %.40q (%d bytes), want %.40q (%d bytes)", tc.name, got, len(fmt.Sprint(got)), wantEcho, len(wantEcho))
+		}
+		if tc.cut && (strings.Contains(string(answer), host[:maxLoggedHost+1]) || len(answer) > 1<<10) {
+			t.Errorf("%s: the answer to a %d byte Host is %d bytes, which echoes more than the start of it", tc.name, len(host), len(answer))
 		}
 	}
 }
@@ -182,7 +359,10 @@ func TestPolicy_AllowsAllocatesNothingForALowerCaseName(t *testing.T) {
 func TestPolicy_GuardRefusesAForeignHostBeforeAnyHandler(t *testing.T) {
 	reached := 0
 	var logged strings.Builder
-	guard := mustNew(t, ":8080").Guard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	policy := mustNew(t, ":8080")
+	// The burst is one instant, so no slow host can spread it over an interval.
+	policy.clock = (&fakeClock{now: time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)}).Now
+	guard := policy.Guard(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached++
 		w.WriteHeader(http.StatusNoContent)
 	}), slog.New(slog.NewTextHandler(&logged, nil)))

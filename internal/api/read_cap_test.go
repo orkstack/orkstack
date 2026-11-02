@@ -154,21 +154,19 @@ func TestRequestMaxBytesFor_IsFourTimesAnApplyAtEveryTaskCeiling(t *testing.T) {
 	}
 }
 
-// The cap is the base plus a fixed allowance a task, so raising the ceiling
-// raises it in step, and the default is the cap of the default ceiling.
-func TestRequestMaxBytesFor_GrowsWithTheTaskCeiling(t *testing.T) {
-	for _, tc := range []struct {
-		ceiling int32
-		want    int64
-	}{
-		{ceiling: 1, want: 1<<20 + 4<<10},
-		{ceiling: 1000, want: 1<<20 + 1000*4<<10},
-		{ceiling: engine.DefaultOrkflowMaxTasks, want: 17_432_576},
-		{ceiling: 100_000, want: 1<<20 + 100_000*4<<10},
-	} {
-		if got := api.RequestMaxBytesFor(tc.ceiling); got != tc.want {
-			t.Errorf("RequestMaxBytesFor(%d) = %d, want %d", tc.ceiling, got, tc.want)
+// Raising the task ceiling raises the cap, and the default is the cap of the
+// default ceiling. What the cap must be at each ceiling is held by
+// TestRequestMaxBytesFor_IsFourTimesAnApplyAtEveryTaskCeiling above, against
+// requests measured at those ceilings; this holds only that the ceiling is
+// what the cap follows.
+func TestRequestMaxBytesFor_FollowsTheTaskCeiling(t *testing.T) {
+	previous := api.RequestMaxBytesFor(1)
+	for _, ceiling := range []int32{2, 1000, engine.DefaultOrkflowMaxTasks, 100_000} {
+		got := api.RequestMaxBytesFor(ceiling)
+		if got <= previous {
+			t.Errorf("RequestMaxBytesFor(%d) = %d, not above %d, the cap at a lower ceiling", ceiling, got, previous)
 		}
+		previous = got
 	}
 	if got, want := int64(api.DefaultRequestMaxBytes), api.RequestMaxBytesFor(engine.DefaultOrkflowMaxTasks); got != want {
 		t.Errorf("DefaultRequestMaxBytes = %d, want RequestMaxBytesFor(%d) = %d", got, engine.DefaultOrkflowMaxTasks, want)

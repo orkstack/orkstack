@@ -4,6 +4,7 @@ Pinned      ghcr.io/acme/http@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 Media type  application/vnd.oci.image.manifest.v1+json
 Platforms   -
 Resolved    2026-01-02T03:04:05Z
+Icon        none — clients draw the default icon
 
 Interface   schema 1 · selected by op: (6 ops, default get) · 5 keys shared by every op
 

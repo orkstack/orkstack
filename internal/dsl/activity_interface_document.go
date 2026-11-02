@@ -45,17 +45,21 @@ const interfaceHeaderMissing = "the document has no apiVersion or kind: an activ
 // packer writes the label's version (lowestSchemaVersion). Its yaml tags are
 // the key table the document's JSON Schema is generated from.
 type interfaceDocument struct {
-	APIVersion string                            `yaml:"apiVersion"`
-	Kind       string                            `yaml:"kind"`
-	Fields     map[string]interfaceFieldDocument `yaml:"fields"`
-	Ops        map[string]interfaceOpDocument    `yaml:"ops"`
-	DefaultOp  string                            `yaml:"defaultOp"`
-	Values     map[string]interfaceFieldDocument `yaml:"values"`
+	APIVersion  string                            `yaml:"apiVersion"`
+	Kind        string                            `yaml:"kind"`
+	Description yaml.Node                         `yaml:"description"`
+	Icon        yaml.Node                         `yaml:"icon"`
+	Fields      map[string]interfaceFieldDocument `yaml:"fields"`
+	Ops         map[string]interfaceOpDocument    `yaml:"ops"`
+	DefaultOp   string                            `yaml:"defaultOp"`
+	Values      map[string]interfaceFieldDocument `yaml:"values"`
 }
 
-// interfaceOpDocument is one op: the keys it reads beside fields.
+// interfaceOpDocument is one op: what it does, and the keys it reads beside
+// fields.
 type interfaceOpDocument struct {
-	Fields map[string]interfaceFieldDocument `yaml:"fields"`
+	Description yaml.Node                         `yaml:"description"`
+	Fields      map[string]interfaceFieldDocument `yaml:"fields"`
 }
 
 // interfaceFieldDocument is one with: key's declaration.
@@ -67,13 +71,36 @@ type interfaceFieldDocument struct {
 	// Default is authored data, so it becomes JSON through the strict
 	// mapping (AuthoredJSON), never a lenient decode.
 	Default yaml.Node `yaml:"default"`
+	// Description is text, packed into the DocsLabel label, never the
+	// interface's: FieldSchema keeps exactly the inputs: vocabulary.
+	Description yaml.Node `yaml:"description"`
 }
 
-// ParseInterfaceDocument reads an authored activity interface: the header,
-// the strict mapping for every default, and the rules a label is held to
-// (validateInterface). The interface it returns carries the schemaVersion
-// the packer writes. Pure.
+// ActivityDeclaration is everything one activity interface document
+// declares, one message per label it packs into. Icon and Docs are nil when
+// the document declares none.
+type ActivityDeclaration struct {
+	Interface *orkstackv1.ActivityInterface
+	Icon      *orkstackv1.ActivityIcon
+	Docs      *orkstackv1.ActivityDocs
+}
+
+// ParseInterfaceDocument is ParseActivityDocument's interface: what the
+// document packs into the InterfaceLabel label. Pure.
 func ParseInterfaceDocument(source []byte) (*orkstackv1.ActivityInterface, error) {
+	decl, err := ParseActivityDocument(source)
+	if err != nil {
+		return nil, err
+	}
+	return decl.Interface, nil
+}
+
+// ParseActivityDocument reads an authored activity interface: the header,
+// the strict mapping for every default, and the rules each label is held to
+// (validateInterface, ParseIconSVG, validateDocs and
+// CheckDocsAgainstInterface). Every message it returns carries the
+// schemaVersion the packer writes. Pure.
+func ParseActivityDocument(source []byte) (*ActivityDeclaration, error) {
 	if len(source) > MaxInterfaceDocumentBytes {
 		return nil, fmt.Errorf("the document is %d bytes, limit is %d", len(source), MaxInterfaceDocumentBytes)
 	}
@@ -143,7 +170,132 @@ func ParseInterfaceDocument(source []byte) (*orkstackv1.ActivityInterface, error
 	if err := validateInterface(iface); err != nil {
 		return nil, err
 	}
-	return iface, nil
+	decl := &ActivityDeclaration{Interface: iface}
+	if decl.Icon, err = documentIcon(&doc.Icon); err != nil {
+		return nil, err
+	}
+	if decl.Docs, err = documentDocs(&doc); err != nil {
+		return nil, err
+	}
+	if err := CheckDocsAgainstInterface(decl.Docs, iface); err != nil {
+		return nil, err
+	}
+	return decl, nil
+}
+
+// documentString reads a string scalar at path, "" when the key is absent.
+// A number, a boolean, a null or a collection is refused, naming the path,
+// rather than read as its text.
+func documentString(node *yaml.Node, path string) (string, error) {
+	if node.Kind == 0 {
+		return "", nil
+	}
+	if !stringScalarNode(node) {
+		return "", validationError(path, fmt.Errorf("%s must be a string, got %s", path, DescribeNode(node)))
+	}
+	return node.Value, nil
+}
+
+// documentIcon is the document's icon: — the SVG source, as an author
+// drew it — read as the label would be, or nil when it declares none.
+func documentIcon(node *yaml.Node) (*orkstackv1.ActivityIcon, error) {
+	if node.Kind == 0 {
+		return nil, nil
+	}
+	svg, err := documentString(node, "icon")
+	if err != nil {
+		return nil, err
+	}
+	// An empty icon: is refused as an empty description: is; an image that
+	// draws none omits the key.
+	svg = strings.TrimSpace(svg)
+	if svg == "" {
+		return nil, validationError("icon", errors.New("icon is empty: omit an icon that draws nothing"))
+	}
+	icon, err := ParseIconSVG(svg)
+	if err != nil {
+		return nil, validationError("icon", fmt.Errorf("icon: %w", err))
+	}
+	// The label holds the canonical form, which may differ in length from
+	// the source: hold it to the label's bound here, where the author is.
+	if n := len(CanonicalIconSVG(icon)); n > MaxIconLabelBytes {
+		return nil, validationError("icon", fmt.Errorf("icon: packs to %d bytes of SVG, limit is %d", n, MaxIconLabelBytes))
+	}
+	return icon, nil
+}
+
+// documentDocs gathers every description: of the document into one
+// ActivityDocs, or nil when it holds none. Each text is trimmed — a folded
+// block scalar's final line break is not part of it — and checked where it
+// stands, so a refusal names the document's own path.
+func documentDocs(doc *interfaceDocument) (*orkstackv1.ActivityDocs, error) {
+	docs := &orkstackv1.ActivityDocs{}
+	found := false
+	text := func(path string, node *yaml.Node, limit int) (string, error) {
+		raw, err := documentString(node, path)
+		if err != nil || node.Kind == 0 {
+			return "", err
+		}
+		trimmed := strings.TrimSpace(raw)
+		if err := checkText(path, trimmed, limit); err != nil {
+			return "", validationError(path, err)
+		}
+		found = true
+		return trimmed, nil
+	}
+	keyTexts := func(where string, fields map[string]interfaceFieldDocument) (map[string]string, error) {
+		var out map[string]string
+		for _, key := range mapKeys(fields) {
+			field := fields[key]
+			described, err := text(where+"."+key+".description", &field.Description, MaxDescriptionChars)
+			if err != nil {
+				return nil, err
+			}
+			if described == "" {
+				continue
+			}
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[key] = described
+		}
+		return out, nil
+	}
+	var err error
+	if docs.Description, err = text("description", &doc.Description, MaxActivityDescriptionChars); err != nil {
+		return nil, err
+	}
+	if docs.Fields, err = keyTexts("fields", doc.Fields); err != nil {
+		return nil, err
+	}
+	if docs.Values, err = keyTexts("values", doc.Values); err != nil {
+		return nil, err
+	}
+	for _, name := range mapKeys(doc.Ops) {
+		op := doc.Ops[name]
+		described := &orkstackv1.OpDocs{}
+		if described.Description, err = text("ops."+name+".description", &op.Description, MaxDescriptionChars); err != nil {
+			return nil, err
+		}
+		if described.Fields, err = keyTexts("ops."+name+".fields", op.Fields); err != nil {
+			return nil, err
+		}
+		if described.Description == "" && len(described.Fields) == 0 {
+			continue
+		}
+		if docs.Ops == nil {
+			docs.Ops = map[string]*orkstackv1.OpDocs{}
+		}
+		docs.Ops[name] = described
+	}
+	if !found {
+		return nil, nil
+	}
+	docs.SchemaVersion = lowestDocsSchemaVersion(docs)
+	if err := validateDocs(docs); err != nil {
+		return nil, err
+	}
+	return docs, nil
 }
 
 // interfaceFields converts one fields/values map; where names it in errors.
@@ -292,7 +444,14 @@ func PackInterfaceLabel(iface *orkstackv1.ActivityInterface) (string, error) {
 	if err := validateInterface(out); err != nil {
 		return "", err
 	}
-	raw, err := protojson.Marshal(out)
+	return packLabel(out, MaxInterfaceLabelBytes)
+}
+
+// packLabel is the canonical label encoding every activity label shares:
+// protojson (lowerCamel names, field order, map keys sorted), compacted, a
+// single quote escaped as \u0027, refused past limit bytes.
+func packLabel(message proto.Message, limit int) (string, error) {
+	raw, err := protojson.Marshal(message)
 	if err != nil {
 		return "", fmt.Errorf("encode the label: %w", err)
 	}
@@ -301,8 +460,8 @@ func PackInterfaceLabel(iface *orkstackv1.ActivityInterface) (string, error) {
 		return "", fmt.Errorf("encode the label: %w", err)
 	}
 	label := strings.ReplaceAll(compact.String(), "'", `\u0027`)
-	if len(label) > MaxInterfaceLabelBytes {
-		return "", fmt.Errorf("label is %d bytes, limit is %d", len(label), MaxInterfaceLabelBytes)
+	if len(label) > limit {
+		return "", fmt.Errorf("label is %d bytes, limit is %d", len(label), limit)
 	}
 	return label, nil
 }

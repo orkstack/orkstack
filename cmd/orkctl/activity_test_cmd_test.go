@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -481,5 +483,41 @@ func TestActivityTestReport_ShowsTheInterface(t *testing.T) {
 	}
 	if decoded.Interface.Status != "malformed" || decoded.Interface.Error != "the label is not JSON" || !decoded.OK {
 		t.Errorf("--json interface = %+v ok=%t, want malformed with its error and ok", decoded.Interface, decoded.OK)
+	}
+}
+
+// TestActivitySuite_HoldsItsWorkRootAsItsOwn: the dispatcher `activity test`
+// builds stages every attempt's workspace, staged secrets among them, under
+// its work root, and its policy refuses a secret source beneath that root as
+// one of its own files, as an Orker's does (AGENTS.md §6); so a task under
+// test can never name another attempt's staged secret.
+func TestActivitySuite_HoldsItsWorkRootAsItsOwn(t *testing.T) {
+	t.Setenv("ORK_ORKER_SECRET_ALLOW", "")
+	pinned := &orkstackv1.ImageRef{IndexDigest: "sha256:" + strings.Repeat("c", 64)}
+	suite := &activitySuite{
+		image: "registry.example/acme/tool:1",
+		root:  t.TempDir(),
+		resolveImage: func(context.Context) (*dsl.Resolution, error) {
+			return &dsl.Resolution{Image: pinned}, nil
+		},
+	}
+	if err := suite.build(t.Context()); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	work := suite.dispatcher.WorkRoot
+	if work == "" {
+		t.Fatal("the suite's dispatcher has no work root of its own")
+	}
+	for _, source := range []string{
+		"file:" + work,
+		"file:" + filepath.Join(work, "ork-attempt-1", "secrets", "tok"),
+	} {
+		var own *orker.OwnSourceRefusal
+		if err := suite.dispatcher.Policy.AllowsSecretSource(source); !errors.As(err, &own) {
+			t.Errorf("AllowsSecretSource(%q) = %v, want the refusal of one of its own files", source, err)
+		}
+	}
+	if err := suite.dispatcher.Policy.AllowsSecretSource("file:" + filepath.Join(t.TempDir(), "tok")); err != nil {
+		t.Errorf("a file outside the work root is refused: %v", err)
 	}
 }

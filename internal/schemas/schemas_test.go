@@ -178,7 +178,8 @@ func TestInterfaces_TheGeneratorRefusesALineBuildKitCannotRead(t *testing.T) {
 			}
 			files := map[string]string{
 				"interface.ork.yaml": interfaceDocumentPacking(t, tc.label),
-				"Dockerfile":         "FROM scratch\nLABEL " + dsl.InterfaceLabel + "='{}'\n",
+				"Dockerfile": "FROM scratch\nLABEL " + dsl.InterfaceLabel + "='{}'\nLABEL " + dsl.IconLabel + "=''\nLABEL " +
+					dsl.DocsLabel + "=''\n",
 			}
 			for name, content := range files {
 				if err := os.WriteFile(filepath.Join(image, name), []byte(content), 0o644); err != nil {
@@ -202,20 +203,33 @@ func TestInterfaces_TheGeneratorRefusesALineBuildKitCannotRead(t *testing.T) {
 	}
 }
 
-// TestInterfaces_TheGeneratorReplacesOnlyTheLabelLine: a Dockerfile's other
-// lines are its author's, and a Dockerfile with no interface LABEL line, or
-// two, is refused rather than guessed at.
-func TestInterfaces_TheGeneratorReplacesOnlyTheLabelLine(t *testing.T) {
-	const document = "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields:\n  a:\n    type: string\n"
-	const label = `LABEL ` + dsl.InterfaceLabel + `='{"schemaVersion":1,"fields":{"a":{"type":"string"}}}'`
+// TestInterfaces_TheGeneratorReplacesOnlyTheLabelLines: a Dockerfile's
+// other lines are its author's; each of the three activity LABEL lines is
+// replaced by what its packer writes, an undeclared icon or docs by the empty
+// value; and a Dockerfile missing a line, or holding one twice, is refused
+// rather than guessed at.
+func TestInterfaces_TheGeneratorReplacesOnlyTheLabelLines(t *testing.T) {
+	const document = "apiVersion: orkstack/v1\nkind: ActivityInterface\ndescription: It's \"a\".\n" +
+		"icon: |\n  <svg viewBox=\"0 0 16 16\">\n    <path d=\"M4 7h8\" stroke=\"currentColor\"/>\n  </svg>\nfields:\n  a:\n    type: string\n"
+	const bare = "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields:\n  a:\n    type: string\n"
+	const iface = `LABEL ` + dsl.InterfaceLabel + `='{"schemaVersion":1,"fields":{"a":{"type":"string"}}}'`
+	const icon = `LABEL ` + dsl.IconLabel + `='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 7h8" stroke="currentColor"/></svg>'`
+	const docs = `LABEL ` + dsl.DocsLabel + `='{"schemaVersion":1,"description":"It\u0027s \"a\"."}'`
+	const noIcon, noDocs = `LABEL ` + dsl.IconLabel + `=''`, `LABEL ` + dsl.DocsLabel + `=''`
+	stale := "LABEL " + dsl.InterfaceLabel + "='{}'\nLABEL " + dsl.DocsLabel + "='{}'\nLABEL " + dsl.IconLabel + "='x'\n"
 	for _, tc := range []struct {
-		name, dockerfile, want, err string
+		name, document, dockerfile, want, err string
 	}{
-		{"stale", "FROM scratch\n# kept\nLABEL " + dsl.InterfaceLabel + "='{}'\nENTRYPOINT [\"/x\"]\n",
-			"FROM scratch\n# kept\n" + label + "\nENTRYPOINT [\"/x\"]\n", ""},
-		{"current", "FROM scratch\n" + label + "\n", "FROM scratch\n" + label + "\n", ""},
-		{"none", "FROM scratch\n", "", "carries 0 interface LABEL lines, want exactly one"},
-		{"two", "FROM scratch\n" + label + "\n" + label + "\n", "", "carries 2 interface LABEL lines, want exactly one"},
+		{"stale", document, "FROM scratch\n# kept\n" + stale + "ENTRYPOINT [\"/x\"]\n",
+			"FROM scratch\n# kept\n" + iface + "\n" + docs + "\n" + icon + "\nENTRYPOINT [\"/x\"]\n", ""},
+		{"current", document, "FROM scratch\n" + iface + "\n" + icon + "\n" + docs + "\n",
+			"FROM scratch\n" + iface + "\n" + icon + "\n" + docs + "\n", ""},
+		{"undeclared", bare, "FROM scratch\n" + stale, "FROM scratch\n" + iface + "\n" + noDocs + "\n" + noIcon + "\n", ""},
+		{"none", document, "FROM scratch\n", "", "carries 0 " + dsl.InterfaceLabel + " LABEL lines, want exactly one"},
+		{"no icon line", document, "FROM scratch\n" + iface + "\n" + docs + "\n", "",
+			"carries 0 " + dsl.IconLabel + " LABEL lines, want exactly one"},
+		{"two", document, "FROM scratch\n" + iface + "\n" + iface + "\n" + icon + "\n" + docs + "\n", "",
+			"carries 2 " + dsl.InterfaceLabel + " LABEL lines, want exactly one"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -223,7 +237,7 @@ func TestInterfaces_TheGeneratorReplacesOnlyTheLabelLine(t *testing.T) {
 			if err := os.MkdirAll(image, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			for name, content := range map[string]string{"interface.ork.yaml": document, "Dockerfile": tc.dockerfile} {
+			for name, content := range map[string]string{"interface.ork.yaml": tc.document, "Dockerfile": tc.dockerfile} {
 				if err := os.WriteFile(filepath.Join(image, name), []byte(content), 0o644); err != nil {
 					t.Fatal(err)
 				}

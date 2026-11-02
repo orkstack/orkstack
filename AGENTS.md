@@ -547,6 +547,13 @@ internal never appears on any of those surfaces.
   granted each attempt, multiplied by how long it held it — derived on read
   (`StatsService.GetUsage`), never measured utilization and never a stored
   counter.
+- **Series** means one `GetStats` answer's window cut into consecutive
+  **buckets** of one width (`HOUR` or `DAY`) on one IANA zone's wall clock,
+  each counting the runs created in it (`orkstackv1.StatsBucket`), derived on
+  read from the same scan as the window's totals and never stored. A bucket is
+  one stretch of that wall clock with one label (the local date, or date and
+  hour). Where "bucket" could be read either way, a bucket of a series and the
+  object-store bucket (`ORK_S3_BUCKET`) are each named in full.
 - **Telemetry sink** means an operator-declared OTLP destination, named, in
   `ORK_TELEMETRY_SINKS`. `default` is reserved: it means the standard `OTEL_*`
   environment, not an entry in that YAML. As implemented, a table that

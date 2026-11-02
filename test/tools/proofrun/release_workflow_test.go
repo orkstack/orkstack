@@ -1,11 +1,9 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -837,22 +835,9 @@ func TestWorkflows_TheCosignPinIsTheRepositorysPin(t *testing.T) {
 			}
 		}
 	}
-	// The committed signing config names no service, and is the one
-	// publish's check accepts.
-	config, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "cosign-signing-config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var got, want any
-	if err := json.Unmarshal(config, &got); err != nil {
-		t.Fatalf("deploy/cosign-signing-config.json: %v", err)
-	}
-	if err := json.Unmarshal([]byte(emptySigningConfig), &want); err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("deploy/cosign-signing-config.json is %s, not the config that names no service (%s)", config, emptySigningConfig)
-	}
+	// The committed signing config names no service: that it is the one
+	// publish's check accepts is run by
+	// TestRelease_ThePublishRefusesASigningConfigThatNamesAService.
 	// The release key is committed: without it validate refuses every
 	// dispatch (docs/PROOFS.md §10, "Set up release signing").
 	key, err := os.ReadFile(filepath.Join("..", "..", "..", "deploy", "cosign.pub"))

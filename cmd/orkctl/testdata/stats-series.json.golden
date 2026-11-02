@@ -1,0 +1,119 @@
+{
+  "runsByStatus": {
+    "canceled": "1",
+    "failed": "1",
+    "running": "2",
+    "succeeded": "2"
+  },
+  "successRate": 0.5,
+  "successRateDefined": true,
+  "durationCoverageSince": "2025-12-30T03:04:05Z",
+  "mostFailing": [
+    {
+      "orkflowName": "deploy",
+      "failed": "1",
+      "total": "3"
+    }
+  ],
+  "running": [
+    {
+      "id": "ork-live-1",
+      "orkflowName": "deploy",
+      "status": "RUNNING",
+      "createdAt": "2026-01-02T02:54:05Z",
+      "namespace": "default"
+    },
+    {
+      "id": "ork-live-old",
+      "orkflowName": "nightly",
+      "status": "RUNNING",
+      "createdAt": "2025-12-03T03:04:05Z",
+      "namespace": "default"
+    }
+  ],
+  "pools": [
+    {
+      "name": "main",
+      "isDefault": true
+    }
+  ],
+  "computedAt": "2026-01-02T03:04:05Z",
+  "namespace": "default",
+  "windowSince": "2025-12-26T08:00:00Z",
+  "windowUntil": "2026-01-02T03:04:05Z",
+  "buckets": [
+    {
+      "since": "2025-12-26T08:00:00Z",
+      "until": "2025-12-27T08:00:00Z",
+      "runsByStatus": {
+        "canceled": "0",
+        "failed": "0",
+        "running": "0",
+        "succeeded": "0"
+      }
+    },
+    {
+      "since": "2025-12-27T08:00:00Z",
+      "until": "2025-12-28T08:00:00Z",
+      "runsByStatus": {
+        "canceled": "0",
+        "failed": "0",
+        "running": "0",
+        "succeeded": "0"
+      }
+    },
+    {
+      "since": "2025-12-28T08:00:00Z",
+      "until": "2025-12-29T08:00:00Z",
+      "runsByStatus": {
+        "canceled": "0",
+        "failed": "0",
+        "running": "0",
+        "succeeded": "0"
+      }
+    },
+    {
+      "since": "2025-12-29T08:00:00Z",
+      "until": "2025-12-30T08:00:00Z",
+      "runsByStatus": {
+        "canceled": "0",
+        "failed": "0",
+        "running": "0",
+        "succeeded": "0"
+      }
+    },
+    {
+      "since": "2025-12-30T08:00:00Z",
+      "until": "2025-12-31T08:00:00Z",
+      "runsByStatus": {
+        "canceled": "0",
+        "failed": "0",
+        "running": "0",
+        "succeeded": "0"
+      }
+    },
+    {
+      "since": "2025-12-31T08:00:00Z",
+      "until": "2026-01-01T08:00:00Z",
+      "runsByStatus": {
+        "canceled": "0",
+        "failed": "0",
+        "running": "0",
+        "succeeded": "0"
+      }
+    },
+    {
+      "since": "2026-01-01T08:00:00Z",
+      "until": "2026-01-02T03:04:05Z",
+      "runsByStatus": {
+        "canceled": "1",
+        "failed": "1",
+        "running": "1",
+        "succeeded": "2"
+      },
+      "partial": true
+    }
+  ],
+  "bucketWidth": "DAY",
+  "timezone": "America/Los_Angeles"
+}

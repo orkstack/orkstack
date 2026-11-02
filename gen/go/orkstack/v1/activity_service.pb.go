@@ -28,7 +28,17 @@ type InspectActivityRequest struct {
 	// reference is what a task would write in `uses:`, resolved by the same
 	// four rules (§4.2, Catalog.ResolveUses): a catalog name, or a registry
 	// reference carrying `/`, `:` or `@`. A template is refused.
-	Reference     string `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
+	Reference string `protobuf:"bytes,1,opt,name=reference,proto3" json:"reference,omitempty"`
+	// allow_cached lets a reference that pins a digest ("repo@sha256:…", a
+	// task's image.pinned) be answered from what this replica already read for
+	// that digest, which never changes: a run page asks once per distinct image
+	// its tasks ran, and a cached answer costs no registry read. Such an answer
+	// carries the resolved_at of that earlier read, and may outlive a manifest
+	// deleted since. A tag is resolved afresh whatever this says, and a
+	// resolution that failed is never kept. False (orkctl activity inspect)
+	// resolves afresh: a deleted or unauthorized image fails exactly as apply
+	// would. Unrelated to a task's cache: and its memos.
+	AllowCached   bool `protobuf:"varint,2,opt,name=allow_cached,json=allowCached,proto3" json:"allow_cached,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -68,6 +78,13 @@ func (x *InspectActivityRequest) GetReference() string {
 		return x.Reference
 	}
 	return ""
+}
+
+func (x *InspectActivityRequest) GetAllowCached() bool {
+	if x != nil {
+		return x.AllowCached
+	}
+	return false
 }
 
 type InspectActivityResponse struct {
@@ -160,9 +177,11 @@ func (x *ListActivitiesRequest) GetFilters() []*FieldFilter {
 
 // ActivityInfo is one catalog entry, resolved.
 //
-// resolved_at is a READ-MODEL field on a live catalog read, and is unrelated
-// to the ImageRef.resolved_at that activity.proto reserves: nothing hashes it,
-// and it is never stored in a version document.
+// resolved_at is a READ-MODEL field: when this answer was read from the
+// registry (on a live catalog read, or the earlier read an allow_cached
+// InspectActivity answer comes from). It is unrelated to the
+// ImageRef.resolved_at that activity.proto reserves: nothing hashes it, and
+// it is never stored in a version document.
 type ActivityInfo struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                  // catalog key, e.g. "shell"; empty for InspectActivity of a raw reference
@@ -187,9 +206,39 @@ type ActivityInfo struct {
 	// the contract — or when the index advertised no platform manifest to
 	// read a config from. It distinguishes "declares nothing" from "declares
 	// something this engine cannot read". Empty whenever interface is set.
+	// Like icon_error and docs_error it is safe to show as text: a parser's
+	// message can quote what the image wrote, so every control or format
+	// character in it, and every byte that is not UTF-8, is written as an
+	// escape (\u001b, \xff), and it is at most 512 bytes.
 	InterfaceError string `protobuf:"bytes,8,opt,name=interface_error,json=interfaceError,proto3" json:"interface_error,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// icon is what the image draws itself as, read from the
+	// org.orkstack.activity.icon label of the same config, a READ-MODEL field
+	// exactly as interface is: hashed by nothing, stored nowhere, and never
+	// part of a task's image or a definition. Unset when the image carries no such label, an
+	// empty one, one that could not be read (icon_error says why), or when the
+	// reference did not resolve: a client then draws its default activity icon.
+	// Never markup: a client draws each element itself.
+	Icon *ActivityIcon `protobuf:"bytes,9,opt,name=icon,proto3" json:"icon,omitempty"`
+	// icon_error is non-empty when the image carries a non-empty icon label
+	// that could not be turned into an ActivityIcon, or when the index
+	// advertised no platform manifest to read a config from (interface_error
+	// and docs_error then say the same). Empty whenever icon is set. Escaped
+	// and bounded as interface_error is.
+	IconError string `protobuf:"bytes,10,opt,name=icon_error,json=iconError,proto3" json:"icon_error,omitempty"`
+	// docs is what the image says about itself in words, read from the
+	// org.orkstack.activity.docs label of the same config, a READ-MODEL field
+	// exactly as interface is. Its keys are interface's keys: a client joins the
+	// two by key. Unset when the image carries no such label, an empty one, or
+	// one that could not be read (docs_error says why).
+	Docs *ActivityDocs `protobuf:"bytes,11,opt,name=docs,proto3" json:"docs,omitempty"`
+	// docs_error is non-empty when the image carries a non-empty docs label
+	// that could not be turned into an ActivityDocs, one that describes an op
+	// or key the interface it was read with does not declare, or when no
+	// config could be read. Empty whenever docs is set. Escaped and bounded
+	// as interface_error is.
+	DocsError     string `protobuf:"bytes,12,opt,name=docs_error,json=docsError,proto3" json:"docs_error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ActivityInfo) Reset() {
@@ -278,6 +327,362 @@ func (x *ActivityInfo) GetInterfaceError() string {
 	return ""
 }
 
+func (x *ActivityInfo) GetIcon() *ActivityIcon {
+	if x != nil {
+		return x.Icon
+	}
+	return nil
+}
+
+func (x *ActivityInfo) GetIconError() string {
+	if x != nil {
+		return x.IconError
+	}
+	return ""
+}
+
+func (x *ActivityInfo) GetDocs() *ActivityDocs {
+	if x != nil {
+		return x.Docs
+	}
+	return nil
+}
+
+func (x *ActivityInfo) GetDocsError() string {
+	if x != nil {
+		return x.DocsError
+	}
+	return ""
+}
+
+// ActivityIcon is an image's icon: one small single-colour SVG drawing on a
+// 16 by 16 grid, made only of the elements and attributes the
+// org.orkstack.activity.icon label may hold (docs/ACTIVITY_IMAGES.md, "The
+// icon"). The label holds the SVG text, at most 2048 bytes; this is that
+// drawing as a tree, every name allowlisted and every value checked against
+// its own grammar, never markup. The root svg element is implied: a client
+// draws it with viewBox="0 0 16 16", fill="currentColor", and attributes.
+type ActivityIcon struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// attributes are the root svg element's presentation attributes, in the
+	// order the SVG gave them.
+	Attributes []*IconAttribute `protobuf:"bytes,1,rep,name=attributes,proto3" json:"attributes,omitempty"`
+	// elements are the drawing below the root, in order: path, circle,
+	// ellipse, rect, line, polyline, polygon or g, at most 32 in all.
+	Elements      []*IconElement `protobuf:"bytes,2,rep,name=elements,proto3" json:"elements,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ActivityIcon) Reset() {
+	*x = ActivityIcon{}
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActivityIcon) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActivityIcon) ProtoMessage() {}
+
+func (x *ActivityIcon) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActivityIcon.ProtoReflect.Descriptor instead.
+func (*ActivityIcon) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ActivityIcon) GetAttributes() []*IconAttribute {
+	if x != nil {
+		return x.Attributes
+	}
+	return nil
+}
+
+func (x *ActivityIcon) GetElements() []*IconElement {
+	if x != nil {
+		return x.Elements
+	}
+	return nil
+}
+
+// IconElement is one element of an ActivityIcon.
+type IconElement struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// name is path, circle, ellipse, rect, line, polyline, polygon or g.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// attributes are its geometry and presentation attributes, in the order
+	// the SVG gave them.
+	Attributes []*IconAttribute `protobuf:"bytes,2,rep,name=attributes,proto3" json:"attributes,omitempty"`
+	// children are a g's elements; every other element has none.
+	Children      []*IconElement `protobuf:"bytes,3,rep,name=children,proto3" json:"children,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IconElement) Reset() {
+	*x = IconElement{}
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IconElement) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IconElement) ProtoMessage() {}
+
+func (x *IconElement) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IconElement.ProtoReflect.Descriptor instead.
+func (*IconElement) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *IconElement) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *IconElement) GetAttributes() []*IconAttribute {
+	if x != nil {
+		return x.Attributes
+	}
+	return nil
+}
+
+func (x *IconElement) GetChildren() []*IconElement {
+	if x != nil {
+		return x.Children
+	}
+	return nil
+}
+
+// IconAttribute is one attribute of an icon element: an allowlisted name and
+// a value held to that name's grammar.
+type IconAttribute struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Value         string                 `protobuf:"bytes,2,opt,name=value,proto3" json:"value,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IconAttribute) Reset() {
+	*x = IconAttribute{}
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IconAttribute) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IconAttribute) ProtoMessage() {}
+
+func (x *IconAttribute) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IconAttribute.ProtoReflect.Descriptor instead.
+func (*IconAttribute) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *IconAttribute) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *IconAttribute) GetValue() string {
+	if x != nil {
+		return x.Value
+	}
+	return ""
+}
+
+// ActivityDocs holds the descriptions an image gives, in plain text, of
+// itself, its ops, its with: keys and its values.json keys. The label
+// org.orkstack.activity.docs holds this message's protojson encoding
+// (lowerCamel names), verbatim. Every text is one paragraph of plain text,
+// with no control character; text between a pair of backticks is code, and
+// nothing else is interpreted.
+type ActivityDocs struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// schema_version is 1. Any other value is reported through
+	// ActivityInfo.docs_error.
+	SchemaVersion int32 `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	// description is the activity's, at most 1000 characters.
+	Description string `protobuf:"bytes,2,opt,name=description,proto3" json:"description,omitempty"`
+	// fields describes keys of ActivityInterface.fields, at most 500
+	// characters each.
+	Fields map[string]string `protobuf:"bytes,3,rep,name=fields,proto3" json:"fields,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// ops describes ops of ActivityInterface.ops, and the keys each declares.
+	Ops map[string]*OpDocs `protobuf:"bytes,4,rep,name=ops,proto3" json:"ops,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// values describes keys of ActivityInterface.values, at most 500
+	// characters each.
+	Values        map[string]string `protobuf:"bytes,5,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ActivityDocs) Reset() {
+	*x = ActivityDocs{}
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ActivityDocs) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ActivityDocs) ProtoMessage() {}
+
+func (x *ActivityDocs) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ActivityDocs.ProtoReflect.Descriptor instead.
+func (*ActivityDocs) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ActivityDocs) GetSchemaVersion() int32 {
+	if x != nil {
+		return x.SchemaVersion
+	}
+	return 0
+}
+
+func (x *ActivityDocs) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *ActivityDocs) GetFields() map[string]string {
+	if x != nil {
+		return x.Fields
+	}
+	return nil
+}
+
+func (x *ActivityDocs) GetOps() map[string]*OpDocs {
+	if x != nil {
+		return x.Ops
+	}
+	return nil
+}
+
+func (x *ActivityDocs) GetValues() map[string]string {
+	if x != nil {
+		return x.Values
+	}
+	return nil
+}
+
+// OpDocs describes one op and the keys it reads beside the shared ones.
+type OpDocs struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// description is the op's, at most 500 characters.
+	Description string `protobuf:"bytes,1,opt,name=description,proto3" json:"description,omitempty"`
+	// fields describes keys of that op's OpSchema.fields, at most 500
+	// characters each.
+	Fields        map[string]string `protobuf:"bytes,2,rep,name=fields,proto3" json:"fields,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpDocs) Reset() {
+	*x = OpDocs{}
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpDocs) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpDocs) ProtoMessage() {}
+
+func (x *OpDocs) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpDocs.ProtoReflect.Descriptor instead.
+func (*OpDocs) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *OpDocs) GetDescription() string {
+	if x != nil {
+		return x.Description
+	}
+	return ""
+}
+
+func (x *OpDocs) GetFields() map[string]string {
+	if x != nil {
+		return x.Fields
+	}
+	return nil
+}
+
 // FieldSchema is one `with:` key's declaration. It is EXACTLY the
 // vocabulary an Orkflow's `inputs:` already has (docs/DSL.md, "Inputs")
 // and not one word more: no pattern, no range, no enum, no nesting.
@@ -301,7 +706,7 @@ type FieldSchema struct {
 
 func (x *FieldSchema) Reset() {
 	*x = FieldSchema{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[4]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -313,7 +718,7 @@ func (x *FieldSchema) String() string {
 func (*FieldSchema) ProtoMessage() {}
 
 func (x *FieldSchema) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[4]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -326,7 +731,7 @@ func (x *FieldSchema) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FieldSchema.ProtoReflect.Descriptor instead.
 func (*FieldSchema) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{4}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *FieldSchema) GetType() string {
@@ -360,7 +765,7 @@ type OpSchema struct {
 
 func (x *OpSchema) Reset() {
 	*x = OpSchema{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[5]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -372,7 +777,7 @@ func (x *OpSchema) String() string {
 func (*OpSchema) ProtoMessage() {}
 
 func (x *OpSchema) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[5]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -385,7 +790,7 @@ func (x *OpSchema) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpSchema.ProtoReflect.Descriptor instead.
 func (*OpSchema) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{5}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *OpSchema) GetFields() map[string]*FieldSchema {
@@ -428,7 +833,7 @@ type ActivityInterface struct {
 
 func (x *ActivityInterface) Reset() {
 	*x = ActivityInterface{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[6]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -440,7 +845,7 @@ func (x *ActivityInterface) String() string {
 func (*ActivityInterface) ProtoMessage() {}
 
 func (x *ActivityInterface) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[6]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -453,7 +858,7 @@ func (x *ActivityInterface) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivityInterface.ProtoReflect.Descriptor instead.
 func (*ActivityInterface) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{6}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *ActivityInterface) GetSchemaVersion() int32 {
@@ -503,7 +908,7 @@ type ListActivitiesResponse struct {
 
 func (x *ListActivitiesResponse) Reset() {
 	*x = ListActivitiesResponse{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[7]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -515,7 +920,7 @@ func (x *ListActivitiesResponse) String() string {
 func (*ListActivitiesResponse) ProtoMessage() {}
 
 func (x *ListActivitiesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[7]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -528,7 +933,7 @@ func (x *ListActivitiesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListActivitiesResponse.ProtoReflect.Descriptor instead.
 func (*ListActivitiesResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{7}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *ListActivitiesResponse) GetActivities() []*ActivityInfo {
@@ -546,7 +951,7 @@ type DescribeOrkerRequest struct {
 
 func (x *DescribeOrkerRequest) Reset() {
 	*x = DescribeOrkerRequest{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[8]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -558,7 +963,7 @@ func (x *DescribeOrkerRequest) String() string {
 func (*DescribeOrkerRequest) ProtoMessage() {}
 
 func (x *DescribeOrkerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[8]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -571,7 +976,7 @@ func (x *DescribeOrkerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DescribeOrkerRequest.ProtoReflect.Descriptor instead.
 func (*DescribeOrkerRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{8}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{13}
 }
 
 type DescribeOrkerResponse struct {
@@ -583,7 +988,7 @@ type DescribeOrkerResponse struct {
 
 func (x *DescribeOrkerResponse) Reset() {
 	*x = DescribeOrkerResponse{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[9]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -595,7 +1000,7 @@ func (x *DescribeOrkerResponse) String() string {
 func (*DescribeOrkerResponse) ProtoMessage() {}
 
 func (x *DescribeOrkerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[9]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -608,7 +1013,7 @@ func (x *DescribeOrkerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DescribeOrkerResponse.ProtoReflect.Descriptor instead.
 func (*DescribeOrkerResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{9}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *DescribeOrkerResponse) GetOrker() *DescribeOrkerResult {
@@ -627,7 +1032,7 @@ type ListOrkersRequest struct {
 
 func (x *ListOrkersRequest) Reset() {
 	*x = ListOrkersRequest{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[10]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -639,7 +1044,7 @@ func (x *ListOrkersRequest) String() string {
 func (*ListOrkersRequest) ProtoMessage() {}
 
 func (x *ListOrkersRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[10]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -652,7 +1057,7 @@ func (x *ListOrkersRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListOrkersRequest.ProtoReflect.Descriptor instead.
 func (*ListOrkersRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{10}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *ListOrkersRequest) GetFilters() []*FieldFilter {
@@ -673,7 +1078,7 @@ type ListOrkersResponse struct {
 
 func (x *ListOrkersResponse) Reset() {
 	*x = ListOrkersResponse{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[11]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -685,7 +1090,7 @@ func (x *ListOrkersResponse) String() string {
 func (*ListOrkersResponse) ProtoMessage() {}
 
 func (x *ListOrkersResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[11]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -698,7 +1103,7 @@ func (x *ListOrkersResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListOrkersResponse.ProtoReflect.Descriptor instead.
 func (*ListOrkersResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{11}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *ListOrkersResponse) GetOrkers() []*Orker {
@@ -721,7 +1126,7 @@ type CordonOrkerRequest struct {
 
 func (x *CordonOrkerRequest) Reset() {
 	*x = CordonOrkerRequest{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[12]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -733,7 +1138,7 @@ func (x *CordonOrkerRequest) String() string {
 func (*CordonOrkerRequest) ProtoMessage() {}
 
 func (x *CordonOrkerRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[12]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -746,7 +1151,7 @@ func (x *CordonOrkerRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CordonOrkerRequest.ProtoReflect.Descriptor instead.
 func (*CordonOrkerRequest) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{12}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *CordonOrkerRequest) GetOrkerId() string {
@@ -779,7 +1184,7 @@ type CordonOrkerResponse struct {
 
 func (x *CordonOrkerResponse) Reset() {
 	*x = CordonOrkerResponse{}
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[13]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -791,7 +1196,7 @@ func (x *CordonOrkerResponse) String() string {
 func (*CordonOrkerResponse) ProtoMessage() {}
 
 func (x *CordonOrkerResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_activity_service_proto_msgTypes[13]
+	mi := &file_orkstack_v1_activity_service_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -804,7 +1209,7 @@ func (x *CordonOrkerResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CordonOrkerResponse.ProtoReflect.Descriptor instead.
 func (*CordonOrkerResponse) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{13}
+	return file_orkstack_v1_activity_service_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *CordonOrkerResponse) GetOrker() *Orker {
@@ -818,9 +1223,10 @@ var File_orkstack_v1_activity_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_activity_service_proto_rawDesc = "" +
 	"\n" +
-	"\"orkstack/v1/activity_service.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/filter.proto\"6\n" +
+	"\"orkstack/v1/activity_service.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/filter.proto\"Y\n" +
 	"\x16InspectActivityRequest\x12\x1c\n" +
-	"\treference\x18\x01 \x01(\tR\treference\"P\n" +
+	"\treference\x18\x01 \x01(\tR\treference\x12!\n" +
+	"\fallow_cached\x18\x02 \x01(\bR\vallowCached\"P\n" +
 	"\x17InspectActivityResponse\x125\n" +
 	"\bactivity\x18\x01 \x01(\v2\x19.orkstack.v1.ActivityInfoR\bactivity\"\xbc\x01\n" +
 	"\x15ListActivitiesRequest\x122\n" +
@@ -828,7 +1234,7 @@ const file_orkstack_v1_activity_service_proto_rawDesc = "" +
 	"\x18orkstack.v1.ActivityInfo\x12\x13\n" +
 	"\x04name\x12\x04Name\x1a\x05\x01\x02\x03\x04\x05\x12\x1d\n" +
 	"\treference\x12\tReference\x1a\x05\x01\x02\x03\x04\x05\x12\x1b\n" +
-	"\findex_digest\x12\x06Digest\x1a\x03\x01\x02\x03\"\xc4\x02\n" +
+	"\findex_digest\x12\x06Digest\x1a\x03\x01\x02\x03\"\xe0\x03\n" +
 	"\fActivityInfo\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\treference\x18\x02 \x01(\tR\treference\x12!\n" +
@@ -839,7 +1245,49 @@ const file_orkstack_v1_activity_service_proto_rawDesc = "" +
 	"\vresolved_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"resolvedAt\x12<\n" +
 	"\tinterface\x18\a \x01(\v2\x1e.orkstack.v1.ActivityInterfaceR\tinterface\x12'\n" +
-	"\x0finterface_error\x18\b \x01(\tR\x0einterfaceError\"o\n" +
+	"\x0finterface_error\x18\b \x01(\tR\x0einterfaceError\x12-\n" +
+	"\x04icon\x18\t \x01(\v2\x19.orkstack.v1.ActivityIconR\x04icon\x12\x1d\n" +
+	"\n" +
+	"icon_error\x18\n" +
+	" \x01(\tR\ticonError\x12-\n" +
+	"\x04docs\x18\v \x01(\v2\x19.orkstack.v1.ActivityDocsR\x04docs\x12\x1d\n" +
+	"\n" +
+	"docs_error\x18\f \x01(\tR\tdocsError\"\x80\x01\n" +
+	"\fActivityIcon\x12:\n" +
+	"\n" +
+	"attributes\x18\x01 \x03(\v2\x1a.orkstack.v1.IconAttributeR\n" +
+	"attributes\x124\n" +
+	"\belements\x18\x02 \x03(\v2\x18.orkstack.v1.IconElementR\belements\"\x93\x01\n" +
+	"\vIconElement\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12:\n" +
+	"\n" +
+	"attributes\x18\x02 \x03(\v2\x1a.orkstack.v1.IconAttributeR\n" +
+	"attributes\x124\n" +
+	"\bchildren\x18\x03 \x03(\v2\x18.orkstack.v1.IconElementR\bchildren\"9\n" +
+	"\rIconAttribute\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value\"\xce\x03\n" +
+	"\fActivityDocs\x12%\n" +
+	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12 \n" +
+	"\vdescription\x18\x02 \x01(\tR\vdescription\x12=\n" +
+	"\x06fields\x18\x03 \x03(\v2%.orkstack.v1.ActivityDocs.FieldsEntryR\x06fields\x124\n" +
+	"\x03ops\x18\x04 \x03(\v2\".orkstack.v1.ActivityDocs.OpsEntryR\x03ops\x12=\n" +
+	"\x06values\x18\x05 \x03(\v2%.orkstack.v1.ActivityDocs.ValuesEntryR\x06values\x1a9\n" +
+	"\vFieldsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1aK\n" +
+	"\bOpsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12)\n" +
+	"\x05value\x18\x02 \x01(\v2\x13.orkstack.v1.OpDocsR\x05value:\x028\x01\x1a9\n" +
+	"\vValuesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9e\x01\n" +
+	"\x06OpDocs\x12 \n" +
+	"\vdescription\x18\x01 \x01(\tR\vdescription\x127\n" +
+	"\x06fields\x18\x02 \x03(\v2\x1f.orkstack.v1.OpDocs.FieldsEntryR\x06fields\x1a9\n" +
+	"\vFieldsEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"o\n" +
 	"\vFieldSchema\x12\x12\n" +
 	"\x04type\x18\x01 \x01(\tR\x04type\x12\x1a\n" +
 	"\brequired\x18\x02 \x01(\bR\brequired\x120\n" +
@@ -908,66 +1356,86 @@ func file_orkstack_v1_activity_service_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_activity_service_proto_rawDescData
 }
 
-var file_orkstack_v1_activity_service_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_orkstack_v1_activity_service_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
 var file_orkstack_v1_activity_service_proto_goTypes = []any{
 	(*InspectActivityRequest)(nil),  // 0: orkstack.v1.InspectActivityRequest
 	(*InspectActivityResponse)(nil), // 1: orkstack.v1.InspectActivityResponse
 	(*ListActivitiesRequest)(nil),   // 2: orkstack.v1.ListActivitiesRequest
 	(*ActivityInfo)(nil),            // 3: orkstack.v1.ActivityInfo
-	(*FieldSchema)(nil),             // 4: orkstack.v1.FieldSchema
-	(*OpSchema)(nil),                // 5: orkstack.v1.OpSchema
-	(*ActivityInterface)(nil),       // 6: orkstack.v1.ActivityInterface
-	(*ListActivitiesResponse)(nil),  // 7: orkstack.v1.ListActivitiesResponse
-	(*DescribeOrkerRequest)(nil),    // 8: orkstack.v1.DescribeOrkerRequest
-	(*DescribeOrkerResponse)(nil),   // 9: orkstack.v1.DescribeOrkerResponse
-	(*ListOrkersRequest)(nil),       // 10: orkstack.v1.ListOrkersRequest
-	(*ListOrkersResponse)(nil),      // 11: orkstack.v1.ListOrkersResponse
-	(*CordonOrkerRequest)(nil),      // 12: orkstack.v1.CordonOrkerRequest
-	(*CordonOrkerResponse)(nil),     // 13: orkstack.v1.CordonOrkerResponse
-	nil,                             // 14: orkstack.v1.OpSchema.FieldsEntry
-	nil,                             // 15: orkstack.v1.ActivityInterface.FieldsEntry
-	nil,                             // 16: orkstack.v1.ActivityInterface.OpsEntry
-	nil,                             // 17: orkstack.v1.ActivityInterface.ValuesEntry
-	(*FieldFilter)(nil),             // 18: orkstack.v1.FieldFilter
-	(*timestamppb.Timestamp)(nil),   // 19: google.protobuf.Timestamp
-	(*structpb.Value)(nil),          // 20: google.protobuf.Value
-	(*DescribeOrkerResult)(nil),     // 21: orkstack.v1.DescribeOrkerResult
-	(*Orker)(nil),                   // 22: orkstack.v1.Orker
+	(*ActivityIcon)(nil),            // 4: orkstack.v1.ActivityIcon
+	(*IconElement)(nil),             // 5: orkstack.v1.IconElement
+	(*IconAttribute)(nil),           // 6: orkstack.v1.IconAttribute
+	(*ActivityDocs)(nil),            // 7: orkstack.v1.ActivityDocs
+	(*OpDocs)(nil),                  // 8: orkstack.v1.OpDocs
+	(*FieldSchema)(nil),             // 9: orkstack.v1.FieldSchema
+	(*OpSchema)(nil),                // 10: orkstack.v1.OpSchema
+	(*ActivityInterface)(nil),       // 11: orkstack.v1.ActivityInterface
+	(*ListActivitiesResponse)(nil),  // 12: orkstack.v1.ListActivitiesResponse
+	(*DescribeOrkerRequest)(nil),    // 13: orkstack.v1.DescribeOrkerRequest
+	(*DescribeOrkerResponse)(nil),   // 14: orkstack.v1.DescribeOrkerResponse
+	(*ListOrkersRequest)(nil),       // 15: orkstack.v1.ListOrkersRequest
+	(*ListOrkersResponse)(nil),      // 16: orkstack.v1.ListOrkersResponse
+	(*CordonOrkerRequest)(nil),      // 17: orkstack.v1.CordonOrkerRequest
+	(*CordonOrkerResponse)(nil),     // 18: orkstack.v1.CordonOrkerResponse
+	nil,                             // 19: orkstack.v1.ActivityDocs.FieldsEntry
+	nil,                             // 20: orkstack.v1.ActivityDocs.OpsEntry
+	nil,                             // 21: orkstack.v1.ActivityDocs.ValuesEntry
+	nil,                             // 22: orkstack.v1.OpDocs.FieldsEntry
+	nil,                             // 23: orkstack.v1.OpSchema.FieldsEntry
+	nil,                             // 24: orkstack.v1.ActivityInterface.FieldsEntry
+	nil,                             // 25: orkstack.v1.ActivityInterface.OpsEntry
+	nil,                             // 26: orkstack.v1.ActivityInterface.ValuesEntry
+	(*FieldFilter)(nil),             // 27: orkstack.v1.FieldFilter
+	(*timestamppb.Timestamp)(nil),   // 28: google.protobuf.Timestamp
+	(*structpb.Value)(nil),          // 29: google.protobuf.Value
+	(*DescribeOrkerResult)(nil),     // 30: orkstack.v1.DescribeOrkerResult
+	(*Orker)(nil),                   // 31: orkstack.v1.Orker
 }
 var file_orkstack_v1_activity_service_proto_depIdxs = []int32{
 	3,  // 0: orkstack.v1.InspectActivityResponse.activity:type_name -> orkstack.v1.ActivityInfo
-	18, // 1: orkstack.v1.ListActivitiesRequest.filters:type_name -> orkstack.v1.FieldFilter
-	19, // 2: orkstack.v1.ActivityInfo.resolved_at:type_name -> google.protobuf.Timestamp
-	6,  // 3: orkstack.v1.ActivityInfo.interface:type_name -> orkstack.v1.ActivityInterface
-	20, // 4: orkstack.v1.FieldSchema.default:type_name -> google.protobuf.Value
-	14, // 5: orkstack.v1.OpSchema.fields:type_name -> orkstack.v1.OpSchema.FieldsEntry
-	15, // 6: orkstack.v1.ActivityInterface.fields:type_name -> orkstack.v1.ActivityInterface.FieldsEntry
-	16, // 7: orkstack.v1.ActivityInterface.ops:type_name -> orkstack.v1.ActivityInterface.OpsEntry
-	17, // 8: orkstack.v1.ActivityInterface.values:type_name -> orkstack.v1.ActivityInterface.ValuesEntry
-	3,  // 9: orkstack.v1.ListActivitiesResponse.activities:type_name -> orkstack.v1.ActivityInfo
-	21, // 10: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
-	18, // 11: orkstack.v1.ListOrkersRequest.filters:type_name -> orkstack.v1.FieldFilter
-	22, // 12: orkstack.v1.ListOrkersResponse.orkers:type_name -> orkstack.v1.Orker
-	22, // 13: orkstack.v1.CordonOrkerResponse.orker:type_name -> orkstack.v1.Orker
-	4,  // 14: orkstack.v1.OpSchema.FieldsEntry.value:type_name -> orkstack.v1.FieldSchema
-	4,  // 15: orkstack.v1.ActivityInterface.FieldsEntry.value:type_name -> orkstack.v1.FieldSchema
-	5,  // 16: orkstack.v1.ActivityInterface.OpsEntry.value:type_name -> orkstack.v1.OpSchema
-	4,  // 17: orkstack.v1.ActivityInterface.ValuesEntry.value:type_name -> orkstack.v1.FieldSchema
-	2,  // 18: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
-	8,  // 19: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
-	10, // 20: orkstack.v1.ActivityService.ListOrkers:input_type -> orkstack.v1.ListOrkersRequest
-	12, // 21: orkstack.v1.ActivityService.CordonOrker:input_type -> orkstack.v1.CordonOrkerRequest
-	0,  // 22: orkstack.v1.ActivityService.InspectActivity:input_type -> orkstack.v1.InspectActivityRequest
-	7,  // 23: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
-	9,  // 24: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
-	11, // 25: orkstack.v1.ActivityService.ListOrkers:output_type -> orkstack.v1.ListOrkersResponse
-	13, // 26: orkstack.v1.ActivityService.CordonOrker:output_type -> orkstack.v1.CordonOrkerResponse
-	1,  // 27: orkstack.v1.ActivityService.InspectActivity:output_type -> orkstack.v1.InspectActivityResponse
-	23, // [23:28] is the sub-list for method output_type
-	18, // [18:23] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	27, // 1: orkstack.v1.ListActivitiesRequest.filters:type_name -> orkstack.v1.FieldFilter
+	28, // 2: orkstack.v1.ActivityInfo.resolved_at:type_name -> google.protobuf.Timestamp
+	11, // 3: orkstack.v1.ActivityInfo.interface:type_name -> orkstack.v1.ActivityInterface
+	4,  // 4: orkstack.v1.ActivityInfo.icon:type_name -> orkstack.v1.ActivityIcon
+	7,  // 5: orkstack.v1.ActivityInfo.docs:type_name -> orkstack.v1.ActivityDocs
+	6,  // 6: orkstack.v1.ActivityIcon.attributes:type_name -> orkstack.v1.IconAttribute
+	5,  // 7: orkstack.v1.ActivityIcon.elements:type_name -> orkstack.v1.IconElement
+	6,  // 8: orkstack.v1.IconElement.attributes:type_name -> orkstack.v1.IconAttribute
+	5,  // 9: orkstack.v1.IconElement.children:type_name -> orkstack.v1.IconElement
+	19, // 10: orkstack.v1.ActivityDocs.fields:type_name -> orkstack.v1.ActivityDocs.FieldsEntry
+	20, // 11: orkstack.v1.ActivityDocs.ops:type_name -> orkstack.v1.ActivityDocs.OpsEntry
+	21, // 12: orkstack.v1.ActivityDocs.values:type_name -> orkstack.v1.ActivityDocs.ValuesEntry
+	22, // 13: orkstack.v1.OpDocs.fields:type_name -> orkstack.v1.OpDocs.FieldsEntry
+	29, // 14: orkstack.v1.FieldSchema.default:type_name -> google.protobuf.Value
+	23, // 15: orkstack.v1.OpSchema.fields:type_name -> orkstack.v1.OpSchema.FieldsEntry
+	24, // 16: orkstack.v1.ActivityInterface.fields:type_name -> orkstack.v1.ActivityInterface.FieldsEntry
+	25, // 17: orkstack.v1.ActivityInterface.ops:type_name -> orkstack.v1.ActivityInterface.OpsEntry
+	26, // 18: orkstack.v1.ActivityInterface.values:type_name -> orkstack.v1.ActivityInterface.ValuesEntry
+	3,  // 19: orkstack.v1.ListActivitiesResponse.activities:type_name -> orkstack.v1.ActivityInfo
+	30, // 20: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
+	27, // 21: orkstack.v1.ListOrkersRequest.filters:type_name -> orkstack.v1.FieldFilter
+	31, // 22: orkstack.v1.ListOrkersResponse.orkers:type_name -> orkstack.v1.Orker
+	31, // 23: orkstack.v1.CordonOrkerResponse.orker:type_name -> orkstack.v1.Orker
+	8,  // 24: orkstack.v1.ActivityDocs.OpsEntry.value:type_name -> orkstack.v1.OpDocs
+	9,  // 25: orkstack.v1.OpSchema.FieldsEntry.value:type_name -> orkstack.v1.FieldSchema
+	9,  // 26: orkstack.v1.ActivityInterface.FieldsEntry.value:type_name -> orkstack.v1.FieldSchema
+	10, // 27: orkstack.v1.ActivityInterface.OpsEntry.value:type_name -> orkstack.v1.OpSchema
+	9,  // 28: orkstack.v1.ActivityInterface.ValuesEntry.value:type_name -> orkstack.v1.FieldSchema
+	2,  // 29: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
+	13, // 30: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
+	15, // 31: orkstack.v1.ActivityService.ListOrkers:input_type -> orkstack.v1.ListOrkersRequest
+	17, // 32: orkstack.v1.ActivityService.CordonOrker:input_type -> orkstack.v1.CordonOrkerRequest
+	0,  // 33: orkstack.v1.ActivityService.InspectActivity:input_type -> orkstack.v1.InspectActivityRequest
+	12, // 34: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
+	14, // 35: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
+	16, // 36: orkstack.v1.ActivityService.ListOrkers:output_type -> orkstack.v1.ListOrkersResponse
+	18, // 37: orkstack.v1.ActivityService.CordonOrker:output_type -> orkstack.v1.CordonOrkerResponse
+	1,  // 38: orkstack.v1.ActivityService.InspectActivity:output_type -> orkstack.v1.InspectActivityResponse
+	34, // [34:39] is the sub-list for method output_type
+	29, // [29:34] is the sub-list for method input_type
+	29, // [29:29] is the sub-list for extension type_name
+	29, // [29:29] is the sub-list for extension extendee
+	0,  // [0:29] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_service_proto_init() }
@@ -983,7 +1451,7 @@ func file_orkstack_v1_activity_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_activity_service_proto_rawDesc), len(file_orkstack_v1_activity_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   18,
+			NumMessages:   27,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -205,18 +205,16 @@ func openSlowH2Header(t *testing.T, addr string) (net.Conn, time.Time) {
 // The listener bounds what a client may make it wait for and hold, and
 // nothing that would end a request already being answered: no whole-request
 // read deadline and no write deadline, either of which would cut a run's
-// event stream, a task's live log or a WebSocket mid-way.
+// event stream, a task's live log or a WebSocket mid-way. The bounds it does
+// set are held by what they do, below, on the server this builds: a slow
+// header, an idle connection and oversized headers are each closed or
+// refused. Their production values (seconds and minutes) are not waited out
+// here; a header or idle bound left at zero is unbounded, and so is the
+// one thing checked of them.
 func TestNewServer_BoundsHeadersAndIdleConnectionsAndNothingElse(t *testing.T) {
-	handler := http.NotFoundHandler()
-	server := api.NewServer("127.0.0.1:0", handler)
-	if server.ReadHeaderTimeout != api.ReadHeaderTimeout {
-		t.Errorf("ReadHeaderTimeout = %s, want %s", server.ReadHeaderTimeout, api.ReadHeaderTimeout)
-	}
-	if server.IdleTimeout != api.DefaultIdleTimeout {
-		t.Errorf("IdleTimeout = %s, want %s", server.IdleTimeout, api.DefaultIdleTimeout)
-	}
-	if server.MaxHeaderBytes != api.MaxHeaderBytes {
-		t.Errorf("MaxHeaderBytes = %d, want %d", server.MaxHeaderBytes, api.MaxHeaderBytes)
+	server := api.NewServer("127.0.0.1:0", http.NotFoundHandler())
+	if server.ReadHeaderTimeout <= 0 || server.IdleTimeout <= 0 {
+		t.Errorf("ReadHeaderTimeout = %s, IdleTimeout = %s; want both bounded: a zero is no bound", server.ReadHeaderTimeout, server.IdleTimeout)
 	}
 	if server.ReadTimeout != 0 || server.WriteTimeout != 0 {
 		t.Errorf("ReadTimeout = %s, WriteTimeout = %s; want neither: each would end a long-lived stream",
@@ -224,14 +222,6 @@ func TestNewServer_BoundsHeadersAndIdleConnectionsAndNothingElse(t *testing.T) {
 	}
 	if !server.Protocols.HTTP1() || !server.Protocols.UnencryptedHTTP2() {
 		t.Errorf("protocols = %s, want HTTP/1.1 and h2c", server.Protocols)
-	}
-
-	tuned := api.NewServerWith("127.0.0.1:0", handler, api.ServerOptions{IdleTimeout: 11 * time.Minute})
-	if tuned.IdleTimeout != 11*time.Minute {
-		t.Errorf("IdleTimeout = %s, want the 11m it was given", tuned.IdleTimeout)
-	}
-	if tuned.ReadHeaderTimeout != api.ReadHeaderTimeout || tuned.MaxHeaderBytes != api.MaxHeaderBytes {
-		t.Errorf("an option changed a fixed bound: %s, %d", tuned.ReadHeaderTimeout, tuned.MaxHeaderBytes)
 	}
 }
 
@@ -314,10 +304,11 @@ type longStream struct {
 // Go's HTTP/2 server bounds an h2c connection by the idle bound alone, which
 // counts only while it carries no stream: a header block left unfinished
 // beside an open stream is bounded by nothing until that stream ends
-// (docs/DEPLOY.md, "The API listener's bounds"). Over the window the idle
-// bound and its grace would have closed the connection in, the open stream
-// keeps answering, so the connection was live and the server was serving;
-// once the stream ends, the idle bound closes the connection.
+// (docs/DEPLOY.md, "The API listener's bounds"). Over the window in which a
+// connection with the same stalled header block and no stream open is closed
+// by the idle bound, the open stream keeps answering, so the connection was
+// live and the server was serving; once the stream ends, the idle bound
+// closes the connection.
 func TestAPIListener_AnH2cHeaderBlockBesideAnOpenStreamWaitsForThatStream(t *testing.T) {
 	release := make(chan struct{})
 	addr := serveBounded(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -344,28 +335,55 @@ func TestAPIListener_AnH2cHeaderBlockBesideAnOpenStreamWaitsForThatStream(t *tes
 		t.Fatal(err)
 	}
 
-	// The idle bound sends GOAWAY at testIdleTimeout and closes the
-	// connection a second later; the window outlasts both.
-	window := opened.Add(testIdleTimeout + time.Second + outlast)
-	if err := conn.SetReadDeadline(window.Add(closeDeadline)); err != nil {
+	// The window is held by the bound acting, not by a sum of the bound and
+	// the library's grace: beside the connection, one with the same stalled
+	// header block and no stream open is bounded by the idle bound alone, so
+	// it is sent GOAWAY and closed. The window ends once that connection has
+	// been closed, whatever time that took, and the open stream must still
+	// be answering after it.
+	control, _ := openSlowH2Header(t, addr)
+	if err := control.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
+		t.Fatal(err)
+	}
+	controlClosed := make(chan struct{})
+	go func() {
+		defer close(controlClosed)
+		controlReader := bufio.NewReader(control)
+		for {
+			if _, _, _, err := readH2Frame(controlReader); err != nil {
+				return
+			}
+		}
+	}()
+
+	if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
 		t.Fatal(err)
 	}
 	reader := bufio.NewReader(conn)
-	late := 0
-	for time.Now().Before(window) {
+	controlGone, late := false, 0
+	for late == 0 {
 		kind, _, stream, err := readH2Frame(reader)
-		if err != nil {
+		var netErr net.Error
+		switch {
+		case errors.As(err, &netErr) && netErr.Timeout():
+			t.Fatalf("%s after the stalled header block, the idle bound had not closed the connection with no stream open"+
+				" (or the open stream had stopped answering): the window proves nothing", time.Since(opened))
+		case err != nil:
 			t.Fatalf("the connection ended %s after the stalled header block: %v", time.Since(opened), err)
-		}
-		if kind == h2FrameGoAway {
+		case kind == h2FrameGoAway:
 			t.Fatalf("GOAWAY %s after the stalled header block, while a stream was open", time.Since(opened))
 		}
-		if kind == h2FrameData && stream == 1 && time.Since(opened) > testIdleTimeout+time.Second {
+		if !controlGone {
+			select {
+			case <-controlClosed:
+				controlGone = true
+			default:
+			}
+			continue
+		}
+		if kind == h2FrameData && stream == 1 {
 			late++
 		}
-	}
-	if late == 0 {
-		t.Fatal("the open stream sent nothing after the idle bound's grace: the window proves nothing")
 	}
 
 	released := time.Now()

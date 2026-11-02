@@ -54,9 +54,9 @@
 #   PROOF_GATES=a,b     run only these gates — debugging only, never merge-eligible
 #   PROOF_TEMPORAL=own  `shared` uses make infra-up's Temporal — debugging only,
 #                       never merge-eligible
-#   FUZZ_BUDGET=105m    the nightly fuzz lane's whole time, shared equally by its
+#   FUZZ_BUDGET=125m    the nightly fuzz lane's whole time, shared equally by its
 #                       Fuzz targets: a whole number of s, m or h (the CI fuzz
-#                       step is limited to 135m, docs/PROOFS.md §2.3)
+#                       step is limited to 140m, docs/PROOFS.md §2.3)
 #   PROOF_FAIL_FAST=1   stop at the first failing gate: the fast gates run first,
 #                       one after another, and a failure in any gate stops the
 #                       gates still running and starts no other. 0 runs every
@@ -234,7 +234,7 @@ PROOF_FAIL_FAST="${PROOF_FAIL_FAST:-1}"
 [[ "$PROOF_UI_WORKERS" =~ ^[1-9][0-9]*$ ]] || invalid "PROOF_UI_WORKERS must be a positive integer"
 case "$PROOF_TEMPORAL" in own | shared) ;; *) invalid "PROOF_TEMPORAL must be own or shared" ;; esac
 case "$PROOF_FAIL_FAST" in 0 | 1) ;; *) invalid "PROOF_FAIL_FAST must be 1 (the default) or 0" ;; esac
-FUZZ_BUDGET="${FUZZ_BUDGET:-105m}"
+FUZZ_BUDGET="${FUZZ_BUDGET:-125m}"
 [[ "$FUZZ_BUDGET" =~ ^[1-9][0-9]*[smh]$ ]] || invalid "FUZZ_BUDGET must be a whole number of s, m or h, not '$FUZZ_BUDGET'"
 REGISTRY="${ORK_LOCAL_REGISTRY:-localhost:5001}"
 if [ -z "$PROOF_ID" ]; then

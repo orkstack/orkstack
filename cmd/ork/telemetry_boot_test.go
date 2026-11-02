@@ -1,15 +1,18 @@
 package main
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
 	"go.temporal.io/sdk/client"
 
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/telemetry"
 )
 
@@ -44,11 +47,53 @@ func clearTelemetryEnv(t *testing.T) {
 	}
 }
 
+// testAddress is an address no SDK default names, so a setting dropped or
+// swapped on the way to the dial shows; a loopback IP literal on a port
+// nothing listens on, so the canceled dial resolves no name.
+const testAddress = "127.0.0.1:1"
+
+// dialedWith is what connectTemporal hands the SDK to dial with, and the
+// identity it returns. The context is already canceled, so the dial itself
+// fails at once and nothing is contacted: what is read is the options.
+func dialedWith(t *testing.T, cfg config, sinks *telemetry.Sinks, logger *slog.Logger) (client.Options, string) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	var dialed client.Options
+	told := false
+	_, identity, _ := connectTemporal(ctx, cfg, sinks, logger, func(options client.Options) { dialed, told = options, true })
+	if !told {
+		t.Fatal("connectTemporal dialed without building its options")
+	}
+	return dialed, identity
+}
+
+// requireEngineDial holds what every engine dial carries whatever telemetry
+// is set: where it dials and as whom, the engine's capabilities advertised in
+// its identity (and that identity the one returned, which the cluster-side
+// cancellation records), and the worker's environment never reported.
+func requireEngineDial(t *testing.T, got client.Options, identity string, cfg config, logger *slog.Logger) {
+	t.Helper()
+	if got.HostPort != cfg.temporalAddress || got.Namespace != cfg.temporalNamespace || got.Logger != logger {
+		t.Fatalf("dialed %q in namespace %q with logger %v, want %q, %q and the process logger",
+			got.HostPort, got.Namespace, got.Logger, cfg.temporalAddress, cfg.temporalNamespace)
+	}
+	if !slices.Equal(engine.IdentityCapabilities(got.Identity), engine.EngineCapabilities) || !strings.HasPrefix(got.Identity, sdkIdentity()) {
+		t.Fatalf("identity %q advertises %v, want the SDK's identity followed by %v",
+			got.Identity, engine.IdentityCapabilities(got.Identity), engine.EngineCapabilities)
+	}
+	if identity != got.Identity {
+		t.Fatalf("connectTemporal returned identity %q, but dialed as %q", identity, got.Identity)
+	}
+	if !got.DisableWorkerEnvironmentInfo {
+		t.Fatalf("client.Options.DisableWorkerEnvironmentInfo = false, want true: the worker's environment is never reported")
+	}
+}
+
 // TestBootTelemetryZeroConfig holds the non-negotiable invariant: with no
 // telemetry env set, this binary's sinks, its Temporal metrics handler, and
-// the client options it dials with are exactly what it had before
-// internal/telemetry existed, and those options never report the worker's
-// environment to Temporal.
+// the client options it dials with carry no telemetry at all, and those
+// options never report the worker's environment to Temporal.
 func TestBootTelemetryZeroConfig(t *testing.T) {
 	clearTelemetryEnv(t)
 
@@ -63,36 +108,20 @@ func TestBootTelemetryZeroConfig(t *testing.T) {
 		t.Fatalf("TemporalMetricsHandler = %v, want nil", h)
 	}
 
-	cfg := config{
-		temporalAddress:   client.DefaultHostPort,
-		temporalNamespace: "default",
-	}
-	// A real, non-nil *slog.Logger: client.Options.Logger is the Temporal SDK's
-	// own log.Logger interface, and comparing a typed-nil *slog.Logger boxed
-	// into that interface against a literal nil would never be equal — that
-	// is an artifact of how Go interfaces box nils, not something this test
-	// should be asserting about.
+	// Where this binary dials is a setting of its own: values that differ
+	// from each other and from the SDK's defaults, so one swapped for another
+	// shows. A real, non-nil *slog.Logger: client.Options.Logger is the
+	// Temporal SDK's own log.Logger interface, and a typed-nil *slog.Logger
+	// boxed into it would never compare equal to a literal nil.
+	cfg := config{temporalAddress: testAddress, temporalNamespace: "ork-zero-config"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	got, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
-	if err != nil {
-		t.Fatalf("telemetry.ClientOptions: %v", err)
-	}
-	want := client.Options{
-		HostPort:  cfg.temporalAddress,
-		Namespace: cfg.temporalNamespace,
-		Logger:    logger,
-	}
-	if got.HostPort != want.HostPort || got.Namespace != want.Namespace || got.Logger != want.Logger {
-		t.Fatalf("telemetry.ClientOptions = %+v, want %+v", got, want)
-	}
+	got, identity := dialedWith(t, cfg, sinks, logger)
+	requireEngineDial(t, got, identity, cfg, logger)
 	if got.MetricsHandler != nil {
 		t.Fatalf("client.Options.MetricsHandler = %v, want nil", got.MetricsHandler)
 	}
 	if len(got.Interceptors) != 0 {
 		t.Fatalf("client.Options.Interceptors = %v, want none", got.Interceptors)
-	}
-	if !got.DisableWorkerEnvironmentInfo {
-		t.Fatalf("client.Options.DisableWorkerEnvironmentInfo = false, want true: the worker's environment is never reported")
 	}
 
 	// The API handler is the zero-config invariant's other half: with
@@ -125,6 +154,32 @@ func TestAPIHandlerWrapsWithTracingOn(t *testing.T) {
 	h := apiHandler(tcfg, sinks, mux)
 	if h == http.Handler(mux) {
 		t.Fatal("apiHandler with tracing on = the bare *http.ServeMux, want it wrapped")
+	}
+}
+
+// TestConnectTemporal_DialsWithTheTelemetryItWasGiven: with metrics and traces
+// on, the options this binary dials with carry the default sink's metrics
+// handler and tracing interceptor, and the dial is otherwise what it is with
+// telemetry off.
+func TestConnectTemporal_DialsWithTheTelemetryItWasGiven(t *testing.T) {
+	clearTelemetryEnv(t)
+	t.Setenv(telemetry.MetricsExporterVar, "otlp")
+	t.Setenv(telemetry.TracesExporterVar, "otlp")
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
+	_, sinks, err := telemetry.Boot(telemetry.ServiceEngine)
+	if err != nil {
+		t.Fatalf("telemetry.Boot: %v", err)
+	}
+
+	cfg := config{temporalAddress: testAddress, temporalNamespace: "ork-telemetry-on"}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	got, identity := dialedWith(t, cfg, sinks, logger)
+	requireEngineDial(t, got, identity, cfg, logger)
+	if got.MetricsHandler == nil {
+		t.Fatal("client.Options.MetricsHandler = nil with OTEL_METRICS_EXPORTER=otlp, want the Temporal client's metrics")
+	}
+	if len(got.Interceptors) == 0 {
+		t.Fatal("client.Options.Interceptors = none with OTEL_TRACES_EXPORTER=otlp, want the tracing interceptor")
 	}
 }
 

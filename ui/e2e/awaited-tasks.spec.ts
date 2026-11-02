@@ -89,6 +89,34 @@ tasks:
 `;
 }
 
+// Two approvals in a row: the run ends only when the test resolves the
+// second, so the test decides when the terminal event arrives.
+const GATES = 'two-gates';
+function gatesWorkflow(): string {
+	return `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${GATES}
+version: "0.1.0"
+description: Two approvals in a row.
+tasks:
+  - id: first
+    await:
+      timeout_seconds: 3600
+      schema:
+        approver:
+          type: string
+          required: true
+  - id: second
+    needs: [first]
+    await:
+      timeout_seconds: 3600
+      schema:
+        approver:
+          type: string
+          required: true
+`;
+}
+
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
@@ -111,6 +139,7 @@ test.beforeAll(async () => {
 	});
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'awaited tasks' } });
 	await rpc('OrkflowService/ApplyOrkflow', { yaml: workflow(), namespace: NS });
+	await rpc('OrkflowService/ApplyOrkflow', { yaml: gatesWorkflow(), namespace: NS });
 	note(`namespace ${NS}, orkflow ${NAME}@0.1.0, engine ${ENGINE}, ui ${UI}`);
 });
 
@@ -273,4 +302,79 @@ test('a link clicked as the run resolves still navigates', async ({ page, reques
 	await expect(page.getByTestId('orkflow-submit-run')).toBeVisible();
 	note(`link clicked while ${runId} resolved and finished: landed on /orkflows/${NAME}`);
 	await shot(page, 'screenshot-link-during-resolution.png');
+});
+
+// A link that stays on the run page, clicked while the run is about to end,
+// still leaves the page holding the run's final snapshot. The run page
+// re-reads itself on the terminal event; a re-read begun while a navigation
+// is loading is dropped by the router once that navigation lands (SvelteKit
+// 3's client.js `_invalidate`), and the navigation's own load read the run
+// before it ended, so the page must wait the navigation out and re-read after
+// it (#lib/settle.ts). Every snapshot read is held, each as the engine
+// answered it when it was made, so the overlap is certain: the navigation's
+// read is made while the second approval still waits, and the run ends while
+// that navigation is loading.
+test('a same-page link loading as the run ends still shows its final values', async ({ page }) => {
+	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: GATES, namespace: NS });
+	const runId = submitted.run.id;
+	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
+	await expect(page.getByTestId('task-first-status')).toHaveText('AWAITING', { timeout: 120_000 });
+	await expect(
+		page.locator('[data-testid="run-versions"][data-loaded="true"], [data-testid="run-versions-error"]')
+	).toBeVisible();
+
+	let armed = false;
+	let landed = false;
+	const held: (() => void)[] = [];
+	await page.route('**/orkstack.v1.RunService/GetRun', async (route) => {
+		if (!armed) return route.continue();
+		const response = await route.fetch();
+		if (!landed) await new Promise<void>((release) => held.push(release));
+		await route.fulfill({ response });
+	});
+	armed = true;
+	// A failed assertion below must not leave the page's reads pending.
+	const releaseAll = () => {
+		landed = true;
+		armed = false;
+		for (const release of held) release();
+	};
+	try {
+		// The first approval's TASK_RESOLVED starts a re-read; its read is held.
+		await rpc('RunService/ResolveAwait', {
+			runId, namespace: NS, taskId: 'first', valuesJson: '{"approver": "first-operator"}'
+		});
+		await expect.poll(() => held.length, { timeout: 60_000 }).toBeGreaterThan(0);
+		const beforeClick = held.length;
+		// That re-read is still loading, so the click's navigation re-runs the
+		// page's load, and its read of the run is held too: the second approval
+		// is still waiting when it is made.
+		await page.getByTestId('events-toggle').click();
+		await expect.poll(() => held.length, { timeout: 30_000 }).toBeGreaterThan(beforeClick);
+		const navigationReads = held.length;
+
+		// The run ends while the navigation is loading. The second approval's
+		// status comes from the event stream, which nothing holds.
+		await expect(page.getByTestId('task-second-status')).toHaveText('AWAITING', { timeout: 60_000 });
+		await rpc('RunService/ResolveAwait', {
+			runId, namespace: NS, taskId: 'second', valuesJson: '{"approver": "ci-bot"}'
+		});
+		await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+
+		// The navigation lands on the snapshot it read before the run ended.
+		for (const release of held.slice(0, navigationReads)) release();
+		await expect(page).toHaveURL(/[?&]events=1/);
+		// Every read from here on is answered as it is made; a re-read the router
+		// would drop was begun while the navigation loaded, and is held until now.
+		landed = true;
+		armed = false;
+		for (const release of held.slice(navigationReads)) release();
+
+		await expect(page.getByTestId('task-second-status')).toHaveText('SUCCEEDED');
+		await expect(page.getByTestId('task-values-second')).toContainText('ci-bot', { timeout: 60_000 });
+		note(`same-page link while ${runId} ended: ${navigationReads} reads held until the navigation landed, final values shown`);
+		await shot(page, 'screenshot-same-page-link-as-run-ends.png');
+	} finally {
+		releaseAll();
+	}
 });

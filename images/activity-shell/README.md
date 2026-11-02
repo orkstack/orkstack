@@ -121,7 +121,12 @@ task's `with:` before anything runs: a missing required key or an unknown
 is absent, and every `values.json` key of Output — `value` is the captured
 stdout of `op: eval`.
 
-`orkctl activity inspect shell` renders it as a table.
+The same document draws the image's icon and describes the image, each op
+and each key, packed into its `org.orkstack.activity.icon` and
+`org.orkstack.activity.docs` labels, which the API returns for clients to
+show.
+
+`orkctl activity inspect shell` renders it all as a table.
 
 ## stdout, stderr, and cancellation
 

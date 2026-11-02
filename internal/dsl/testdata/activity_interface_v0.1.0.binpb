@@ -1,0 +1,27 @@
+
++orkstack/v1/activity_interface_v0.1.0.protoorkstack.v1google/protobuf/struct.proto"o
+FieldSchema
+type (	Rtype
+required (Rrequired0
+default (2.google.protobuf.ValueRdefault"š
+OpSchema9
+fields (2!.orkstack.v1.OpSchema.FieldsEntryRfieldsS
+FieldsEntry
+key (	Rkey.
+value (2.orkstack.v1.FieldSchemaRvalue:8"•
+ActivityInterface%
+schema_version (RschemaVersionB
+fields (2*.orkstack.v1.ActivityInterface.FieldsEntryRfields9
+ops (2'.orkstack.v1.ActivityInterface.OpsEntryRops
+
+default_op (	R	defaultOpB
+values (2*.orkstack.v1.ActivityInterface.ValuesEntryRvaluesS
+FieldsEntry
+key (	Rkey.
+value (2.orkstack.v1.FieldSchemaRvalue:8M
+OpsEntry
+key (	Rkey+
+value (2.orkstack.v1.OpSchemaRvalue:8S
+ValuesEntry
+key (	Rkey.
+value (2.orkstack.v1.FieldSchemaRvalue:8bproto3

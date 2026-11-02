@@ -349,6 +349,11 @@ missing `op` exits `2`).
 whatever the filter returns, and the interface vocabulary has no "any" type.
 The declared values are the three keys an `as:` run reports.
 
+The same document draws the image's icon and describes the image, each op
+and each key, packed into its `org.orkstack.activity.icon` and
+`org.orkstack.activity.docs` labels, which the API returns for clients to
+show.
+
 ## Cancellation
 
 jq runs in the background under a TERM trap (the OCI Activity Contract's

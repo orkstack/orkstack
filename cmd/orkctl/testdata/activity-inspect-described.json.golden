@@ -1,0 +1,130 @@
+{
+  "activity": {
+    "reference": "ghcr.io/acme/described:1",
+    "indexDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "resolvedAt": "2026-01-02T03:04:05Z",
+    "interface": {
+      "schemaVersion": 1,
+      "fields": {
+        "verbose": {
+          "type": "boolean"
+        }
+      },
+      "ops": {
+        "check": {},
+        "copy": {
+          "fields": {
+            "src": {
+              "type": "string",
+              "required": true
+            }
+          }
+        }
+      },
+      "defaultOp": "copy",
+      "values": {
+        "path": {
+          "type": "string"
+        },
+        "size": {
+          "type": "number"
+        }
+      }
+    },
+    "icon": {
+      "elements": [
+        {
+          "name": "path",
+          "attributes": [
+            {
+              "name": "d",
+              "value": "M4 2h6l3 3v9H4z"
+            },
+            {
+              "name": "fill",
+              "value": "none"
+            },
+            {
+              "name": "stroke",
+              "value": "currentColor"
+            },
+            {
+              "name": "stroke-width",
+              "value": "1.4"
+            }
+          ]
+        },
+        {
+          "name": "circle",
+          "attributes": [
+            {
+              "name": "cx",
+              "value": "8"
+            },
+            {
+              "name": "cy",
+              "value": "9"
+            },
+            {
+              "name": "r",
+              "value": "2"
+            }
+          ]
+        },
+        {
+          "name": "g",
+          "attributes": [
+            {
+              "name": "transform",
+              "value": "translate(0 1)"
+            }
+          ],
+          "children": [
+            {
+              "name": "path",
+              "attributes": [
+                {
+                  "name": "d",
+                  "value": "M6 12h4"
+                }
+              ]
+            },
+            {
+              "name": "g",
+              "children": [
+                {
+                  "name": "path",
+                  "attributes": [
+                    {
+                      "name": "d",
+                      "value": "M6 13h4"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "docs": {
+      "schemaVersion": 1,
+      "description": "Copies files into output artifacts, and says what it copied in `values.json`, one file at a time.",
+      "fields": {
+        "verbose": "Prints each file it copies."
+      },
+      "ops": {
+        "copy": {
+          "description": "Copies one file.",
+          "fields": {
+            "src": "The file to copy, under `/orkstack/input`. A relative path resolves there, and a `..` component is refused rather than normalized away."
+          }
+        }
+      },
+      "values": {
+        "path": "The artifact the copy wrote."
+      }
+    }
+  }
+}

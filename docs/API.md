@@ -33,7 +33,7 @@ Defined in `proto/orkstack/v1/activity_service.proto`.
 | `DescribeOrker` | [`DescribeOrkerRequest`](#describeorkerrequest) | [`DescribeOrkerResponse`](#describeorkerresponse) | DescribeOrker is the pool-liveness probe (§6.5). It is answered by an Orker of that pool, so it answers only when an Orker is actually polling that pool. |
 | `ListOrkers` | [`ListOrkersRequest`](#listorkersrequest) | [`ListOrkersResponse`](#listorkersresponse) | ListOrkers is the fleet: one row per live Orker of the deployment, derived on read. Like Pool, nothing WRITES an Orker — the list comes from the cluster's own poller records and each Orker's own answer, so any replica answers and none holds state of its own (AGENTS.md §7). It NARROWS rather than refusing: an Orker that did not answer keeps its row and carries unavailable_reason. Two conditions are distinct: a known poller whose describe failed is a row with unavailable_reason; an orker_id that NO live poller answers to is an EMPTY list, never NOT_FOUND — a read for an id nothing polls is an empty answer, and the drain loop relies on it (CordonOrker, a write, is the one that answers NOT_FOUND for that id).<br><br>An orker_id EQUALS filter asks exactly that one Orker, and no other, and returns at most one row: it is what `orkctl orker get` and the drain loop send, so a drain costs one activity per poll and not one per Orker of the fleet. Every other filter is applied to the inventory; an unreachable row is kept under a pool, build_id or cordoned filter, since none of those was measured on it. A malformed orker_id in an equals, not-equals or in filter is INVALID_ARGUMENT before any read. |
 | `CordonOrker` | [`CordonOrkerRequest`](#cordonorkerrequest) | [`CordonOrkerResponse`](#cordonorkerresponse) | CordonOrker sets or clears ONE Orker's cordon: a process-local flag delivered to that Orker alone, lost when the process exits. A cordoned Orker takes no new task and opens no new pin; everything already in flight on it is untouched. The response is the Orker's state AFTER the change, as the Orker itself reported it. |
-| `InspectActivity` | [`InspectActivityRequest`](#inspectactivityrequest) | [`InspectActivityResponse`](#inspectactivityresponse) | InspectActivity resolves ONE reference on demand — a catalog name or any registry reference `uses:` would accept — and reports it as ListActivities would: the pinned digest, platforms, and the interface the image declares. It is uncached, reads engine configuration and the registry only, never asks an Orker, and writes nothing. |
+| `InspectActivity` | [`InspectActivityRequest`](#inspectactivityrequest) | [`InspectActivityResponse`](#inspectactivityresponse) | InspectActivity resolves ONE reference on demand — a catalog name or any registry reference `uses:` would accept — and reports it as ListActivities would: the pinned digest, platforms, and the interface, icon and docs the image declares. It resolves afresh on every call, unless the request sets allow_cached for a reference that pins a digest. It reads engine configuration and the registry only, never asks an Orker, and writes nothing. |
 
 ### AuditService
 
@@ -208,7 +208,7 @@ Defined in `proto/orkstack/v1/stats.proto`.
 
 | Method | Request | Response | Description |
 |---|---|---|---|
-| `GetStats` | [`GetStatsRequest`](#getstatsrequest) | [`GetStatsResponse`](#getstatsresponse) | GetStats reports one namespace's runs over one time window. |
+| `GetStats` | [`GetStatsRequest`](#getstatsrequest) | [`GetStatsResponse`](#getstatsresponse) | GetStats reports one namespace's runs over one time window and, when the request names a bucket_width, the same window as a series of hours or days — from the same scan, so the series and the totals cannot disagree. |
 | `GetFailureBreakdown` | [`GetFailureBreakdownRequest`](#getfailurebreakdownrequest) | [`GetFailureBreakdownResponse`](#getfailurebreakdownresponse) | GetFailureBreakdown groups one namespace's FAILED runs over one window by the dimensions the caller names. It is the read that makes the §4 failure categories pay: a category nobody counts is a comment.<br><br>It reads run BODIES — one per failed run in the window — which GetStats deliberately never does. The discriminating facts are not in the index key, and widening the key would be a migration and a second copy of the body. So the cost is bounded three ways instead: by the window, by the failed subset of it, and by a scan budget that FAILS the call rather than answering from a subset (see GetFailureBreakdownResponse). |
 | `GetFlakeIndex` | [`GetFlakeIndexRequest`](#getflakeindexrequest) | [`GetFlakeIndexResponse`](#getflakeindexresponse) | GetFlakeIndex groups one namespace's dispatched tasks over one window by the dimensions the caller names and reports, per group, how often a task needed more than one attempt. It is the one cross-run read of the per-attempt records the Orker writes: a SUCCEEDED run that retried is invisible to every other number this service reports, by construction.<br><br>It reads run BODIES — one per finished run in the window, not only the failed ones — and one attempt listing per dispatched task. That is more than GetFailureBreakdown reads and far more than GetStats, which reads none, so the cost is bounded the same three ways: by the window, by an optional orkflow, and by a scan budget that FAILS the call rather than answering from a subset (see GetFlakeIndexResponse). |
 | `GetUsage` | [`GetUsageRequest`](#getusagerequest) | [`GetUsageResponse`](#getusageresponse) | GetUsage reports how much of the fleet one namespace RESERVED over one window: task-seconds, and cpu-seconds and GiB-seconds as each attempt's reservation multiplied by how long its Orker held it. It is the read a budget is held against, and the one the admission gate itself makes for an enforced budget.<br><br>It reads the archive index (keys), every finished run's body in the window, and every attempt record of those runs, so its cost is bounded three ways: by the window, by a whole-answer cache whose age every answer carries (computed_at), and by a scan bound that FAILS the call rather than answering from a subset (see GetUsageResponse). |
@@ -290,13 +290,47 @@ Defined in `proto/orkstack/v1/webhook_service.proto`.
 
 ## Messages
 
+### ActivityDocs
+
+ActivityDocs holds the descriptions an image gives, in plain text, of
+itself, its ops, its with: keys and its values.json keys. The label
+org.orkstack.activity.docs holds this message's protojson encoding
+(lowerCamel names), verbatim. Every text is one paragraph of plain text,
+with no control character; text between a pair of backticks is code, and
+nothing else is interpreted.
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | `int32` | schema_version is 1. Any other value is reported through ActivityInfo.docs_error. |
+| `description` | `string` | description is the activity's, at most 1000 characters. |
+| `fields` | map&lt;`string`, `string`&gt; | fields describes keys of ActivityInterface.fields, at most 500 characters each. |
+| `ops` | map&lt;`string`, [`OpDocs`](#opdocs)&gt; | ops describes ops of ActivityInterface.ops, and the keys each declares. |
+| `values` | map&lt;`string`, `string`&gt; | values describes keys of ActivityInterface.values, at most 500 characters each. |
+
+### ActivityIcon
+
+ActivityIcon is an image's icon: one small single-colour SVG drawing on a
+16 by 16 grid, made only of the elements and attributes the
+org.orkstack.activity.icon label may hold (docs/ACTIVITY_IMAGES.md, "The
+icon"). The label holds the SVG text, at most 2048 bytes; this is that
+drawing as a tree, every name allowlisted and every value checked against
+its own grammar, never markup. The root svg element is implied: a client
+draws it with viewBox="0 0 16 16", fill="currentColor", and attributes.
+
+| Field | Type | Description |
+|---|---|---|
+| `attributes` | repeated [`IconAttribute`](#iconattribute) | attributes are the root svg element's presentation attributes, in the order the SVG gave them. |
+| `elements` | repeated [`IconElement`](#iconelement) | elements are the drawing below the root, in order: path, circle, ellipse, rect, line, polyline, polygon or g, at most 32 in all. |
+
 ### ActivityInfo
 
 ActivityInfo is one catalog entry, resolved.
 
-resolved_at is a READ-MODEL field on a live catalog read, and is unrelated
-to the ImageRef.resolved_at that activity.proto reserves: nothing hashes it,
-and it is never stored in a version document.
+resolved_at is a READ-MODEL field: when this answer was read from the
+registry (on a live catalog read, or the earlier read an allow_cached
+InspectActivity answer comes from). It is unrelated to the
+ImageRef.resolved_at that activity.proto reserves: nothing hashes it, and
+it is never stored in a version document.
 
 | Field | Type | Description |
 |---|---|---|
@@ -307,7 +341,11 @@ and it is never stored in a version document.
 | `platforms` | repeated `string` |  |
 | `resolved_at` | `google.protobuf.Timestamp` |  |
 | `interface` | [`ActivityInterface`](#activityinterface) | interface is what the image declares about its `with:` block, read from the org.orkstack.activity.interface label of the resolved image's config (§4.3 step 7). Unset when the image carries no label, when the label could not be read (interface_error says why), or when the reference did not resolve (index_digest is then empty too).<br><br>It is a READ-MODEL field exactly as resolved_at is: derived from immutable, digest-addressed content on every read, hashed by nothing, stored nowhere. |
-| `interface_error` | `string` | interface_error is non-empty when the image carries the label but it could not be turned into an ActivityInterface — malformed JSON, a schema_version this engine does not read, a vocabulary word outside the contract — or when the index advertised no platform manifest to read a config from. It distinguishes "declares nothing" from "declares something this engine cannot read". Empty whenever interface is set. |
+| `interface_error` | `string` | interface_error is non-empty when the image carries the label but it could not be turned into an ActivityInterface — malformed JSON, a schema_version this engine does not read, a vocabulary word outside the contract — or when the index advertised no platform manifest to read a config from. It distinguishes "declares nothing" from "declares something this engine cannot read". Empty whenever interface is set. Like icon_error and docs_error it is safe to show as text: a parser's message can quote what the image wrote, so every control or format character in it, and every byte that is not UTF-8, is written as an escape (\u001b, \xff), and it is at most 512 bytes. |
+| `icon` | [`ActivityIcon`](#activityicon) | icon is what the image draws itself as, read from the org.orkstack.activity.icon label of the same config, a READ-MODEL field exactly as interface is: hashed by nothing, stored nowhere, and never part of a task's image or a definition. Unset when the image carries no such label, an empty one, one that could not be read (icon_error says why), or when the reference did not resolve: a client then draws its default activity icon. Never markup: a client draws each element itself. |
+| `icon_error` | `string` | icon_error is non-empty when the image carries a non-empty icon label that could not be turned into an ActivityIcon, or when the index advertised no platform manifest to read a config from (interface_error and docs_error then say the same). Empty whenever icon is set. Escaped and bounded as interface_error is. |
+| `docs` | [`ActivityDocs`](#activitydocs) | docs is what the image says about itself in words, read from the org.orkstack.activity.docs label of the same config, a READ-MODEL field exactly as interface is. Its keys are interface's keys: a client joins the two by key. Unset when the image carries no such label, an empty one, or one that could not be read (docs_error says why). |
+| `docs_error` | `string` | docs_error is non-empty when the image carries a non-empty docs label that could not be turned into an ActivityDocs, one that describes an op or key the interface it was read with does not declare, or when no config could be read. Empty whenever docs is set. Escaped and bounded as interface_error is. |
 
 ### ActivityInterface
 
@@ -1288,6 +1326,9 @@ not name the namespace that the id exists.
 | `since` | `google.protobuf.Timestamp` | since is the inclusive start of the window. Empty means lookback before the window ends, and lookback's own default is 24 hours. |
 | `until` | `google.protobuf.Timestamp` | until is the exclusive end of the window. Empty means the moment the answer is computed. A window whose end is not after its start is refused rather than answered with zeros, which is a number that reads like a fact. |
 | `lookback` | `google.protobuf.Duration` | lookback says how far back from `until` the window reaches, for the client that means "the last six hours" rather than a pair of instants. It is ignored when `since` is set.<br><br>It exists so that ONE clock decides a relative window. A client that resolved "six hours ago" itself would be pairing its own clock with the server's — the two ends of one window measured by two machines — and a client running a few minutes fast would silently ask about a window of the wrong length, or about one that ends before it starts. The times a window is compared against are the server's either way, so the arithmetic belongs there. |
+| `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width asks for a series as well as the window's totals: the window cut into consecutive buckets of this width (see StatsBucket). UNSPECIFIED, the default, asks for none, and the answer is then exactly what it is without this field. |
+| `timezone` | `string` | timezone is the IANA zone whose wall clock draws the bucket boundaries, such as "America/Los_Angeles", read from the engine's time zone database. Empty is UTC. "Local" is refused: it names the zone of whichever machine reads it. Set without bucket_width, it is refused.<br><br>A zone and not an offset: a fixed offset is wrong on every day on the far side of a daylight-saving change inside the window, and a zone keeps ONE clock — the request states a zone and a unit, never an instant the client computed, and the server derives every boundary from them. |
+| `bucket_count` | `int32` | bucket_count states the window as "the last N whole buckets, ending with the one that holds the window's last instant": how a client asks for the last seven days, today included, without computing a local midnight on its own clock. until still ends the window (empty is now), so the last bucket is cut short there. 0 means the window comes from since and lookback, as without a series; 1 to 1000 is accepted. Set together with since or lookback, set without bucket_width, negative, or above 1000, it is refused. |
 
 ### GetStatsResponse
 
@@ -1307,6 +1348,9 @@ not name the namespace that the id exists.
 | `namespace` | `string` | namespace, window_since and window_until are the question that was actually answered, with an empty request resolved. A client that asked for "the default namespace, the last day" cannot label its own numbers without them, and it should not have to know the default's name to do it. |
 | `window_since` | `google.protobuf.Timestamp` |  |
 | `window_until` | `google.protobuf.Timestamp` |  |
+| `buckets` | repeated [`StatsBucket`](#statsbucket) | buckets is the series the request asked for, oldest first. It tiles [window_since, window_until) exactly: the first bucket starts at window_since, each ends where the next starts, and the last ends at window_until. With bucket_count, window_since is the start of the first whole bucket, so every number above describes exactly the span the buckets tile. Empty when the request asked for no series. |
+| `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width and timezone are the series actually drawn, resolved: an empty timezone answers "UTC". Unset when no series was asked for. |
+| `timezone` | `string` |  |
 
 ### GetSystemInfoRequest
 
@@ -1357,6 +1401,26 @@ No fields.
 | `window_until` | `google.protobuf.Timestamp` |  |
 | `computed_at` | `google.protobuf.Timestamp` |  |
 
+### IconAttribute
+
+IconAttribute is one attribute of an icon element: an allowlisted name and
+a value held to that name's grammar.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `value` | `string` |  |
+
+### IconElement
+
+IconElement is one element of an ActivityIcon.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is path, circle, ellipse, rect, line, polyline, polygon or g. |
+| `attributes` | repeated [`IconAttribute`](#iconattribute) | attributes are its geometry and presentation attributes, in the order the SVG gave them. |
+| `children` | repeated [`IconElement`](#iconelement) | children are a g's elements; every other element has none. |
+
 ### ImagePolicy
 
 ImagePolicy is the deployment's supply-chain floor (AGENTS.md §5): which
@@ -1400,6 +1464,7 @@ what `pinned` names, whatever a tag does later.
 | Field | Type | Description |
 |---|---|---|
 | `reference` | `string` | reference is what a task would write in `uses:`, resolved by the same four rules (§4.2, Catalog.ResolveUses): a catalog name, or a registry reference carrying `/`, `:` or `@`. A template is refused. |
+| `allow_cached` | `bool` | allow_cached lets a reference that pins a digest ("repo@sha256:…", a task's image.pinned) be answered from what this replica already read for that digest, which never changes: a run page asks once per distinct image its tasks ran, and a cached answer costs no registry read. Such an answer carries the resolved_at of that earlier read, and may outlive a manifest deleted since. A tag is resolved afresh whatever this says, and a resolution that failed is never kept. False (orkctl activity inspect) resolves afresh: a deleted or unauthorized image fails exactly as apply would. Unrelated to a task's cache: and its memos. |
 
 ### InspectActivityResponse
 
@@ -1798,6 +1863,15 @@ presence check (hold != nil) and a hold can never be half-set.
 |---|---|---|
 | `reason` | `string` | reason is required. A hold with no reason is refused by the registry: the next operator to read this document is the one who has to decide whether to release it, and "on hold" with no why is not a decision they can make. It is a short human line, bounded at 512 bytes with no control characters, never a secret and never machine-parsed. |
 | `since` | `google.protobuf.Timestamp` | since is written by the registry on the write that SET the hold and preserved on every later write while it stays set, never supplied by a client — the same rule created_at/updated_at follow. Editing the reason of a hold does not move it: the door has been closed since the first write, whatever the sign on it now says. |
+
+### OpDocs
+
+OpDocs describes one op and the keys it reads beside the shared ones.
+
+| Field | Type | Description |
+|---|---|---|
+| `description` | `string` | description is the op's, at most 500 characters. |
+| `fields` | map&lt;`string`, `string`&gt; | fields describes keys of that op's OpSchema.fields, at most 500 characters each. |
 
 ### OpSchema
 
@@ -2487,6 +2561,20 @@ appears in a proto message, in Temporal history, or in the archive.
 | `updated_at` | `google.protobuf.Timestamp` |  |
 | `interface_verdict` | [`InterfaceVerdict`](#interfaceverdict) | interface_verdict is the promoted version's declared interface compared with compared_version — what ran when no version was named, until now. UNSPECIFIED, with compared_version empty, when the promotion did not change what runs. BREAKING here means the request acknowledged it. |
 | `compared_version` | `string` |  |
+
+### StatsBucket
+
+StatsBucket is one bucket of a series: the runs the namespace CREATED in
+[since, until), counted exactly as GetStatsResponse.runs_by_status counts
+the window's. One window, one population holds per bucket: a run is in the
+bucket it was submitted in, whenever it ends.
+
+| Field | Type | Description |
+|---|---|---|
+| `since` | `google.protobuf.Timestamp` | inclusive |
+| `until` | `google.protobuf.Timestamp` | exclusive |
+| `runs_by_status` | map&lt;`string`, `int64`&gt; | runs_by_status has the window's four keys, always present. succeeded, failed and canceled count the bucket's runs that have finished; running counts the bucket's runs not finished when the answer was computed. The four sum to how many runs the bucket created, up to one skew: a run still going is placed by the cluster's record of its start, a finished one by the archive's stamp of its creation, and the two differ by the milliseconds a submission takes, so a run submitted that close to a boundary can change buckets when it finishes.<br><br>Across the series, succeeded, failed and canceled sum EXACTLY to the window's runs_by_status: both come from one scan of the archive index. running sums to at most the window's running, and the difference is the runs still going that were created before window_since. The window's running is a fact about now and counts them; no bucket can, because none of them was created in one. |
+| `partial` | `bool` | partial is true when the window cut this bucket short, so it spans less than its whole hour or day: the first bucket of a window that starts mid-day, and the last bucket of one that ends now ("today, so far"). |
 
 ### StreamEventsRequest
 
@@ -3285,6 +3373,24 @@ audit fact, so no request field carries a kind.
 | `RUN_ORIGIN_KIND_SCHEDULE` | 3 | SCHEDULE: a schedule fired. id is the schedule id (sch-…). Defined here so orkflow-schedules stamps it without touching Run; nothing produces it until that proposal lands. |
 | `RUN_ORIGIN_KIND_PARENT_RUN` | 4 | PARENT_RUN: a child run started by a composing parent. id is the PARENT run's id. Defined here so composed-orkflows adds no Run field of its own; nothing produces it until that proposal lands. |
 | `RUN_ORIGIN_KIND_RUN_AGAIN` | 5 | RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the SOURCE run's id, which the server confirmed exists in this namespace. |
+
+### StatsBucketWidth
+
+StatsBucketWidth is the calendar unit one bucket of a series spans, read
+on the wall clock of the request's timezone.
+
+A bucket is one stretch of time whose wall-clock label — the local date
+for DAY, the local date and hour for HOUR — does not change. So a day is
+23 or 25 hours long when the zone's clocks change inside it, an hour that
+a fall-back repeats is ONE two-hour bucket, and a date or an hour the
+zone's clocks skip has no bucket at all. There is no width below an hour:
+a curve finer than that is what the telemetry pipeline's counters are for.
+
+| Value | Number | Description |
+|---|---|---|
+| `STATS_BUCKET_WIDTH_UNSPECIFIED` | 0 | no series |
+| `STATS_BUCKET_WIDTH_HOUR` | 1 |  |
+| `STATS_BUCKET_WIDTH_DAY` | 2 |  |
 
 ### Status
 

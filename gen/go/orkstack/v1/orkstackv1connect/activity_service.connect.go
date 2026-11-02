@@ -85,9 +85,11 @@ type ActivityServiceClient interface {
 	CordonOrker(context.Context, *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error)
 	// InspectActivity resolves ONE reference on demand — a catalog name or
 	// any registry reference `uses:` would accept — and reports it as
-	// ListActivities would: the pinned digest, platforms, and the interface
-	// the image declares. It is uncached, reads engine configuration and the
-	// registry only, never asks an Orker, and writes nothing.
+	// ListActivities would: the pinned digest, platforms, and the interface,
+	// icon and docs the image declares. It resolves afresh on every call,
+	// unless the request sets allow_cached for a reference that pins a digest.
+	// It reads engine configuration and the registry only, never asks an
+	// Orker, and writes nothing.
 	InspectActivity(context.Context, *connect.Request[v1.InspectActivityRequest]) (*connect.Response[v1.InspectActivityResponse], error)
 }
 
@@ -204,9 +206,11 @@ type ActivityServiceHandler interface {
 	CordonOrker(context.Context, *connect.Request[v1.CordonOrkerRequest]) (*connect.Response[v1.CordonOrkerResponse], error)
 	// InspectActivity resolves ONE reference on demand — a catalog name or
 	// any registry reference `uses:` would accept — and reports it as
-	// ListActivities would: the pinned digest, platforms, and the interface
-	// the image declares. It is uncached, reads engine configuration and the
-	// registry only, never asks an Orker, and writes nothing.
+	// ListActivities would: the pinned digest, platforms, and the interface,
+	// icon and docs the image declares. It resolves afresh on every call,
+	// unless the request sets allow_cached for a reference that pins a digest.
+	// It reads engine configuration and the registry only, never asks an
+	// Orker, and writes nothing.
 	InspectActivity(context.Context, *connect.Request[v1.InspectActivityRequest]) (*connect.Response[v1.InspectActivityResponse], error)
 }
 

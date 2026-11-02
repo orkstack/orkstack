@@ -378,7 +378,7 @@ phase, and is one CI part (§5):
   same tree holds the same skips to its unit gate, and here they only narrow
   what the lane hunts, are counted in its ledger summary, and are refused
   from a ledger that does not say its run had `-short`.
-- **`fuzz`** runs `proofrun fuzz -budget $FUZZ_BUDGET` (default `105m`; a
+- **`fuzz`** runs `proofrun fuzz -budget $FUZZ_BUDGET` (default `125m`; a
   whole number of `s`, `m` or `h`; the `nightly.yml` dispatch has a
   `fuzz_budget` input): every `Fuzz*` target `go test -list '^Fuzz' ./...`
   finds, one after another, and the lane's whole wall-clock time is the
@@ -408,13 +408,15 @@ phase, and is one CI part (§5):
   therefore fails a unit test before it can make a nightly red; the answer is
   a larger budget with a longer step and job limit, or fewer targets. The
   unit test reads the budgets the repository sets, not the one a dispatch
-  supplies: a dispatched `fuzz_budget` above 120 minutes ends in the step's
+  supplies: a dispatched `fuzz_budget` above 125 minutes ends in the step's
   timeout, with no ledger.
-  The CI budget is 105 minutes for the 93 targets (`go test -list '^Fuzz'
-  ./...`) of this tree: a turn of about 68 seconds, of which the first
-  targets fuzz 22 beside the assumed 45 seconds of overhead, and later ones
-  more, since a measured overhead is usually well under the assumed one. The
-  fuzz step is limited to 135 minutes and its job to 155. Its ledger,
+  The CI budget is 125 minutes, room for 125 targets at the minimum and the
+  assumed overhead: the 104 targets (`go test -list '^Fuzz' ./...`) of this
+  tree, with room for a fifth more before a new one fails the unit test. For
+  104 targets that is a turn of about 72 seconds, of which the first targets
+  fuzz 27 beside the assumed 45 seconds of overhead, and later ones more,
+  since a measured overhead is usually well under the assumed one. The fuzz
+  step is limited to 140 minutes and its job to 160. Its ledger,
   `fuzz-tests.json`, has one entry per target with the `seconds` it took and
   the `fuzz_seconds` it was given, and each target keeps its log under
   `fuzz/`; the lane's own log line for a target says the fuzz time it was

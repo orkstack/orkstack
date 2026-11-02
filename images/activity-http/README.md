@@ -100,7 +100,12 @@ read nothing beyond them, `get` when `op` is absent, and every `values.json`
 key of Output — `json` included, although it is present only for a JSON body
 of at most 1 MiB.
 
-`orkctl activity inspect http` renders it as a table.
+The same document draws the image's icon and describes the image, each op
+and each key, packed into its `org.orkstack.activity.icon` and
+`org.orkstack.activity.docs` labels, which the API returns for clients to
+show.
+
+`orkctl activity inspect http` renders it all as a table.
 
 ## Cancellation
 

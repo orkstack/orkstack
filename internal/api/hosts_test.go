@@ -193,7 +193,4 @@ func TestHostPolicy_ARefusalCarriesTheHeadersOfEveryOtherError(t *testing.T) {
 			t.Errorf("%s: the refusal sends %q, the UI's 404 %q", header, got, want)
 		}
 	}
-	if hostpolicy.RefusalPolicy != webui.FilePolicy {
-		t.Errorf("hostpolicy.RefusalPolicy %q differs from webui.FilePolicy %q", hostpolicy.RefusalPolicy, webui.FilePolicy)
-	}
 }

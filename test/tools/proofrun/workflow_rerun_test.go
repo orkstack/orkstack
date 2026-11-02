@@ -19,27 +19,84 @@ import (
 
 const proofRerunFile = "proof-rerun.yml"
 
-// rerunGuardTerms are the terms the job's `if:` ANDs together.
-var rerunGuardTerms = []string{
-	"vars.PROOF_AUTO_RERUN == 'true'",
-	"github.event.workflow_run.conclusion == 'failure'",
-	"github.event.workflow_run.head_repository.full_name == github.repository",
-	rerunWhichRuns,
+// rerunGuardCase is one completed run the job's `if:` is asked about, as the
+// event's context describes it, and whether the job may start for it. A proof
+// of a candidate is a push to validate/full/**; a nightly is a schedule or a
+// dispatch on the default branch, the only runs whose proof is main's nightly
+// (docs/PROOFS.md §6). Each refused case differs from the first admitted one
+// by one thing a stranger, a fork, a feature branch or a cap could change.
+type rerunGuardCase struct {
+	name  string
+	set   map[string]string // the context, over the admitted candidate run's
+	admit bool
 }
 
-// rerunWhichRuns is the one term of the guard that may hold an `||`, in
-// parentheses: the two kinds of run it answers, each pinned to its workflow
-// file, its event and its branch. A proof of a candidate is a push to
-// validate/full/**; a nightly is a schedule or a dispatch on the default
-// branch, the only runs whose proof is main's nightly (docs/PROOFS.md §6).
-const rerunWhichRuns = "((github.event.workflow_run.path == '.github/workflows/proof.yml'" +
-	" && github.event.workflow_run.event == 'push'" +
-	" && startsWith(github.event.workflow_run.head_branch, 'validate/full/'))" +
-	" || (github.event.workflow_run.path == '.github/workflows/nightly.yml'" +
-	" && (github.event.workflow_run.event == 'schedule' || github.event.workflow_run.event == 'workflow_dispatch')" +
-	" && github.event.workflow_run.head_branch == github.event.repository.default_branch))"
+func rerunGuardCases() []rerunGuardCase {
+	const (
+		path     = "github.event.workflow_run.path"
+		event    = "github.event.workflow_run.event"
+		branch   = "github.event.workflow_run.head_branch"
+		attempt  = "github.event.workflow_run.run_attempt"
+		proof    = ".github/workflows/proof.yml"
+		nightly  = ".github/workflows/nightly.yml"
+		validate = "validate/full/some-change"
+	)
+	return []rerunGuardCase{
+		{"a candidate's failed proof, on its first attempt", nil, true},
+		{"a candidate's failed proof, on the last attempt the cap allows", map[string]string{attempt: fmt.Sprint(defaultMaxRunAttempts - 1)}, true},
+		{"a nightly's schedule on the default branch", map[string]string{path: nightly, event: "schedule", branch: "main"}, true},
+		{"a nightly's dispatch on the default branch", map[string]string{path: nightly, event: "workflow_dispatch", branch: "main"}, true},
 
-var rerunCapRE = regexp.MustCompile(`github\.event\.workflow_run\.run_attempt < ([0-9]+)`)
+		{"the switch off", map[string]string{"vars.PROOF_AUTO_RERUN": ""}, false},
+		{"the switch on for something else", map[string]string{"vars.PROOF_AUTO_RERUN": "yes"}, false},
+		{"a proof that passed", map[string]string{"github.event.workflow_run.conclusion": "success"}, false},
+		{"a proof that was cancelled", map[string]string{"github.event.workflow_run.conclusion": "cancelled"}, false},
+		{"a fork's run", map[string]string{"github.event.workflow_run.head_repository.full_name": "stranger/r"}, false},
+		{"the attempt that reaches the cap", map[string]string{attempt: fmt.Sprint(defaultMaxRunAttempts)}, false},
+		{"an attempt past the cap", map[string]string{attempt: fmt.Sprint(defaultMaxRunAttempts + 1)}, false},
+		{"a proof of a feature branch", map[string]string{branch: "feature/x"}, false},
+		{"a proof of the default branch", map[string]string{branch: "main"}, false},
+		{"a proof of a branch that only starts like validate", map[string]string{branch: "validate/other"}, false},
+		{"a proof run by a pull request", map[string]string{event: "pull_request"}, false},
+		{"a proof run by a dispatch", map[string]string{event: "workflow_dispatch"}, false},
+		{"another workflow's run on a candidate branch", map[string]string{path: ".github/workflows/ci.yml"}, false},
+		{"a run of nothing but a candidate's branch and event", map[string]string{path: ""}, false},
+		{"a nightly of a feature branch", map[string]string{path: nightly, event: "schedule", branch: "feature/x"}, false},
+		{"a nightly pushed", map[string]string{path: nightly, event: "push", branch: "main"}, false},
+		{"a nightly of a pull request", map[string]string{path: nightly, event: "pull_request", branch: "main"}, false},
+		{"a nightly with the candidate's branch and event", map[string]string{path: nightly, event: "push", branch: validate}, false},
+		{"the candidate's workflow on a schedule", map[string]string{path: proof, event: "schedule", branch: "main"}, false},
+		{"another workflow on a schedule", map[string]string{path: ".github/workflows/ci.yml", event: "schedule", branch: "main"}, false},
+		{"a run of an event the guard does not name", map[string]string{event: "workflow_run"}, false},
+		// An `||` the guard grew outside its terms admits what they refuse.
+		{"every term failing, from a dispatch", map[string]string{
+			"vars.PROOF_AUTO_RERUN": "", "github.event.workflow_run.conclusion": "success",
+			"github.event.workflow_run.head_repository.full_name": "stranger/r", attempt: "9",
+			path: ".github/workflows/ci.yml", event: "pull_request", branch: "feature/x", "github.event_name": "workflow_dispatch",
+		}, false},
+	}
+}
+
+// rerunGuardContext is the context of the first admitted case: a candidate's
+// failed proof, pushed to a validate/full branch of this repository.
+func rerunGuardContext(over map[string]string) map[string]string {
+	ctx := map[string]string{
+		"vars.PROOF_AUTO_RERUN":                               "true",
+		"github.repository":                                   "o/r",
+		"github.event.repository.default_branch":              "main",
+		"github.event_name":                                   "workflow_run",
+		"github.event.workflow_run.conclusion":                "failure",
+		"github.event.workflow_run.head_repository.full_name": "o/r",
+		"github.event.workflow_run.run_attempt":               "1",
+		"github.event.workflow_run.path":                      ".github/workflows/proof.yml",
+		"github.event.workflow_run.event":                     "push",
+		"github.event.workflow_run.head_branch":               "validate/full/some-change",
+	}
+	for k, v := range over {
+		ctx[k] = v
+	}
+	return ctx
+}
 
 func proofRerunProblems(w *wfFile) []string {
 	var p []string
@@ -88,15 +145,21 @@ func proofRerunProblems(w *wfFile) []string {
 	if or, balanced := topLevelOr(cond); or || !balanced {
 		p = append(p, fmt.Sprintf("jobs.rerun.if = %q has a top-level ||, or unbalanced parentheses", job.If))
 	}
-	for _, term := range rerunGuardTerms {
-		if !strings.Contains(cond, term) {
-			p = append(p, fmt.Sprintf("jobs.rerun.if lacks %q", term))
+	// What the guard admits, run by run, rather than how it is written. The
+	// cap is the planner's own default: at most two automatic reruns.
+	for _, c := range rerunGuardCases() {
+		got, err := evalGHExpr(cond, rerunGuardContext(c.set))
+		if err != nil {
+			p = append(p, fmt.Sprintf("jobs.rerun.if cannot be evaluated: %v", err))
+			break
 		}
-	}
-	if m := rerunCapRE.FindStringSubmatch(cond); m == nil {
-		p = append(p, "jobs.rerun.if has no cap on github.event.workflow_run.run_attempt")
-	} else if m[1] != fmt.Sprint(defaultMaxRunAttempts) {
-		p = append(p, fmt.Sprintf("jobs.rerun.if caps the run attempt below %s, and the planner's -max-attempts defaults to %d: at most two automatic reruns", m[1], defaultMaxRunAttempts))
+		if got != c.admit {
+			verb := "refuses"
+			if !c.admit {
+				verb = "admits"
+			}
+			p = append(p, fmt.Sprintf("jobs.rerun.if %s %s", verb, c.name))
+		}
 	}
 	if strings.Contains(cond, "!=") {
 		p = append(p, "jobs.rerun.if compares with !=, which admits what it does not name")

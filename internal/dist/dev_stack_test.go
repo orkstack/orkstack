@@ -147,10 +147,15 @@ func (r *resetRepo) write(rel, content string, mode os.FileMode) {
 }
 
 // run runs `scripts/reset.sh --force` in the throwaway repository and returns
-// its exit status and output.
+// its exit status and output. It runs as the account that owns the
+// repository: the one running the tests, or, when that is root (whom no
+// permission stops), an unprivileged account the repository is handed to.
 func (r *resetRepo) run() (int, string) {
 	r.t.Helper()
 	cmd := exec.Command("bash", filepath.Join(r.root, "scripts", "reset.sh"), "--force")
+	if os.Geteuid() == 0 {
+		r.dropPrivileges(cmd)
+	}
 	var env []string
 	for _, kv := range os.Environ() {
 		name, _, _ := strings.Cut(kv, "=")
@@ -205,14 +210,12 @@ func shellQuote(s string) string {
 // TestResetScript_RemovesWorkspacesTheOrkerSealed: an Orker seals a
 // workspace's input/ read-only (0555), and one that ended uncleanly — an e2e
 // Orker killed mid-task — leaves it under .data/work. `make reset` removes it
-// all the same, and its own check finds no state left.
+// all the same, and its own check finds no state left. (root removes a
+// read-only directory anyway, so a test run as root hands the script to an
+// unprivileged account that owns the repository, as the contributor is:
+// resetRepo.run.)
 func TestResetScript_RemovesWorkspacesTheOrkerSealed(t *testing.T) {
 	t.Parallel()
-	if os.Geteuid() == 0 {
-		// root removes a read-only directory anyway, so here the case could
-		// not fail; it is the contributor's, who is not root.
-		t.Skip("running as root, under which a sealed workspace never stops rm, so this case could not fail")
-	}
 	r := newResetRepo(t)
 	ws, err := orker.NewWorkspace(filepath.Join(r.root, ".data", "work", "e2e-run-page-p1-abc", "ork-run-1-task-1"))
 	if err != nil {

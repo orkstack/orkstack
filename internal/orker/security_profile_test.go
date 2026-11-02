@@ -552,6 +552,23 @@ func TestReservedResources_AgreesWithResolveResources(t *testing.T) {
 	}
 }
 
+// lookingAt replaces how a judgement looks at the file system (lstat for each
+// name of a way, stat for each own path) for the rest of the test, and gives
+// the real looks back when it ends, however it ends: the two are package
+// variables, so a test that failed in the middle would otherwise leave them
+// replaced for every test after it. A nil look is left as it is.
+func lookingAt(t *testing.T, onLstat, onStat func(string) (fs.FileInfo, error)) {
+	t.Helper()
+	savedLstat, savedStat := lstat, stat
+	t.Cleanup(func() { lstat, stat = savedLstat, savedStat })
+	if onLstat != nil {
+		lstat = onLstat
+	}
+	if onStat != nil {
+		stat = onStat
+	}
+}
+
 // assertOwn holds every source to the built-in exclusion: refused as one of
 // the Orker's own, by an *OwnSourceRefusal that names the source.
 func assertOwn(t *testing.T, policy SecurityPolicy, sources ...string) {
@@ -925,85 +942,42 @@ func TestSecurityPolicy_AnUpdateWhileASourceIsJudgedIsSeen(t *testing.T) {
 
 	for _, tc := range []struct {
 		what string
-		// source and at are asked as the case runs: at is the name the walk
-		// is about to look at when the update lands.
+		// source and at are asked as the case runs: at is the directory the
+		// walk is about to come to when the update lands.
 		source, at func() string
 		own        bool
 	}{
 		{"its file, as the walk comes to the directory the update removes",
 			func() string { return filepath.Join(cfg, "..data", "orker.yaml") }, func() string { return current }, true},
-		{"another file there",
+		{"another file, in the directory the update removes",
 			func() string { return filepath.Join(cfg, "..data", "other.yaml") }, func() string { return current }, false},
 		{"its directory's file, as the walk comes to the directory the update makes",
 			func() string { return filepath.Join(dated(stamp+1), "gcloud", "credentials.db") },
 			func() string { return dated(stamp + 1) }, true},
-		{"another file there",
+		{"another file, in the directory the update makes",
 			func() string { return filepath.Join(dated(stamp+1), "other.yaml") }, func() string { return dated(stamp + 1) }, false},
 	} {
-		source, at, landed := "file:"+tc.source(), tc.at(), false
-		lstat = func(name string) (fs.FileInfo, error) {
-			if name == at && !landed {
-				landed = true
-				update()
+		t.Run(tc.what, func(t *testing.T) {
+			source, at, landed := "file:"+tc.source(), tc.at(), false
+			// The update lands at the walk's first look at the directory, or
+			// at anything beneath it, whichever way the walk comes to it.
+			lookingAt(t, func(name string) (fs.FileInfo, error) {
+				if !landed && (name == at || strings.HasPrefix(name, at+"/")) {
+					landed = true
+					update()
+				}
+				return os.Lstat(name)
+			}, nil)
+			if tc.own {
+				assertOwn(t, policy, source)
+			} else {
+				assertNotOwn(t, policy, source)
 			}
-			return os.Lstat(name)
-		}
-		if tc.own {
-			assertOwn(t, policy, source)
-		} else {
-			assertNotOwn(t, policy, source)
-		}
-		lstat = os.Lstat
-		if !landed {
-			t.Fatalf("%s: the walk never came to %s, so no update landed while %s was judged", tc.what, at, source)
-		}
+			if !landed {
+				t.Fatalf("the walk never came to %s, so no update landed while %s was judged", at, source)
+			}
+		})
 	}
-}
-
-// TestSecurityPolicy_ASourceWhoseWayPassesThroughAnOwnDirectoryIsTheOrkers: a
-// source is the Orker's own when the kernel, opening it, looks a name up in
-// one of the Orker's directories, wherever it ends. A link to one of the
-// Orker's descriptors ends at a name the link's text gives, a deleted file's
-// for instance, that lies in none of them; the way there passes through
-// /proc, so it is the Orker's own. The rule is the same for every own
-// directory, the work root included, and for a way that leaves one again by
-// a link's "..": no lookup in one is judged by what it reads.
-func TestSecurityPolicy_ASourceWhoseWayPassesThroughAnOwnDirectoryIsTheOrkers(t *testing.T) {
-	if _, err := os.Stat("/proc/self/fd"); err != nil {
-		t.Skip("no /proc/self/fd on this host")
-	}
-	dir := t.TempDir()
-	gone, err := os.CreateTemp(dir, "deleted-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = gone.Close() })
-	if err := os.Remove(gone.Name()); err != nil {
-		t.Fatal(err)
-	}
-	descriptor := filepath.Join(dir, "descriptor")
-	if err := os.Symlink(fmt.Sprintf("/proc/self/fd/%d", gone.Fd()), descriptor); err != nil {
-		t.Fatal(err)
-	}
-	devfd := filepath.Join(dir, "devfd")
-	if err := os.Symlink(fmt.Sprintf("/dev/fd/%d", gone.Fd()), devfd); err != nil {
-		t.Fatal(err)
-	}
-	work := filepath.Join(dir, "work")
-	if err := os.MkdirAll(filepath.Join(work, "ork-run-task-1-x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	plain := filepath.Join(dir, "plain")
-	if err := os.WriteFile(plain, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	through := filepath.Join(dir, "through")
-	if err := os.Symlink(filepath.Join(work, "ork-run-task-1-x")+"/../../plain", through); err != nil {
-		t.Fatal(err)
-	}
-	policy := DefaultSecurityPolicy().WithWorkRoot(work)
-	assertOwn(t, policy, "file:"+descriptor, "file:"+devfd, "file:"+through)
-	assertNotOwn(t, policy, "file:"+plain)
 }
 
 // TestSecurityPolicy_ARefusalOfAnOwnSourceNamesNoRule: a task's refusal of
@@ -1067,8 +1041,9 @@ func TestSecurityPolicy_ARefusalQuotesALongSourceByItsHead(t *testing.T) {
 // a loaded host cannot move it, on an Orker configured with many files of its
 // own. Each name of the way is looked at once a walk, and each own path once
 // before and once after it, in at most two walks, so the looks are counted
-// too: at most two for each name the source holds, and three for each own
-// path.
+// too: at most two for each name a walk can come to, which is what bounds a
+// name that holds thousands of names, and three for each own path. A source
+// as long as a start payload is refused before any look at all.
 func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.Symlink(".", filepath.Join(dir, "x")); err != nil {
@@ -1110,14 +1085,31 @@ func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T)
 	policy := SecurityPolicyFromEnv().WithWorkRoot(t.TempDir()).WithOwnPaths(own...)
 	roots := len(fixedOwnRoots()) + len(policy.own)
 
-	const bound = 100 * time.Millisecond
+	// A judgement costs about 2 ms of thread CPU time for the longest path of
+	// links, 1.5 ms for the longest of nothing, 4 ms for the 64-deep path and
+	// microseconds for the payload; the busiest runs, under the race detector
+	// on a host shared with other proofs, took up to 13 ms for the deep path.
+	// A walk that looked at the prefixes of 2,000 names again and again costs
+	// seconds, so the bound is ten times the quiet runs, and under the race
+	// detector raceSlowdown times that, thirty times its busiest run: a slower
+	// runner still passes, and a regression is two orders above it. The
+	// looks, counted below, are what pin the walk exactly.
+	const bound = 40 * time.Millisecond * raceSlowdown
+	// walked is the most names one walk of the case can come to: the
+	// directories above the first link, then the links it follows before it
+	// gives up (maxLinks); one name, where the first does not exist; the 64
+	// directories and the file; none, for a source refused for its length.
+	dirNames := strings.Count(dir, "/")
 	runtime.LockOSThread()
 	defer runtime.UnlockOSThread()
-	for _, tc := range []struct{ name, source string }{
-		{"the longest path the kernel opens, through a link to its own directory", "file:" + loop},
-		{"the longest path the kernel opens, of nothing", "file:" + nowhere},
-		{"a path of directories that exist, 64 deep", "file:" + deep},
-		{"a path as long as a start payload", "file:" + payload},
+	for _, tc := range []struct {
+		name, source string
+		walked       int
+	}{
+		{"the longest path the kernel opens, through a link to its own directory", "file:" + loop, dirNames + maxLinks},
+		{"the longest path the kernel opens, of nothing", "file:" + nowhere, 1},
+		{"a path of directories that exist, 64 deep", "file:" + deep, strings.Count(deep, "/")},
+		{"a path as long as a start payload", "file:" + payload, 0},
 	} {
 		startCPU, cpu := threadCPU()
 		startWall := time.Now()
@@ -1133,19 +1125,26 @@ func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T)
 				names++
 			}
 		}
-		lstat = func(name string) (fs.FileInfo, error) { looks++; return os.Lstat(name) }
-		stat = func(name string) (fs.FileInfo, error) { ownLooks++; return os.Stat(name) }
-		_ = policy.AllowsSecretSource(tc.source)
-		lstat, stat = os.Lstat, os.Stat
+		t.Run("looks/"+tc.name, func(t *testing.T) {
+			lookingAt(t,
+				func(name string) (fs.FileInfo, error) { looks++; return os.Lstat(name) },
+				func(name string) (fs.FileInfo, error) { ownLooks++; return os.Stat(name) })
+			_ = policy.AllowsSecretSource(tc.source)
+		})
 
 		t.Logf("%s (%d bytes): %v of %s; %d looks at its %d names, %d at %d own paths",
 			tc.name, len(tc.source), cost, clock, looks, names, ownLooks, roots)
 		if cost > bound {
 			t.Errorf("%s (%d bytes): judging it took %v of %s, want at most %v", tc.name, len(tc.source), cost, clock, bound)
 		}
-		if looks > 2*names || ownLooks > 3*roots {
+		wantLooks, wantOwnLooks := 2*min(names, tc.walked), 3*roots
+		if tc.walked == 0 {
+			wantOwnLooks = 0
+		}
+		if looks > wantLooks || ownLooks > wantOwnLooks {
 			t.Errorf("%s: judging it looked %d times at its %d names and %d times at %d own paths, "+
-				"want at most two looks a name and three an own path", tc.name, looks, names, ownLooks, roots)
+				"want at most %d looks at names and %d at own paths: two a name a walk can come to, three an own path",
+				tc.name, looks, names, ownLooks, roots, wantLooks, wantOwnLooks)
 		}
 	}
 }

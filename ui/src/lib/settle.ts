@@ -16,7 +16,8 @@
 // keeps the data the event said was stale, and the run page would mark a
 // pre-terminal snapshot as its terminal one. So under SvelteKit 3 this guard no longer
 // keeps the click (the e2e specs that click as a run resolves pass without
-// it); it keeps the re-read (test/settle.test.ts models the router's rule).
+// it); it keeps the re-read (e2e/awaited-tasks.spec.ts holds a same-page link's
+// navigation open as the run ends and requires the final snapshot).
 //
 // afterNavigation waits out every navigation in flight first, then re-reads
 // only if the page that asked is still mounted: a navigation that left it has

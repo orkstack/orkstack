@@ -23,6 +23,7 @@ const unavailable = "unavailable"
 
 func newStatsCommand(g *globalFlags) *cobra.Command {
 	var since string
+	var series seriesFlags
 	cmd := &cobra.Command{
 		Use:   "stats",
 		Short: "Summarise a namespace's runs",
@@ -35,10 +36,28 @@ func newStatsCommand(g *globalFlags) *cobra.Command {
 			"has no duration yet.\n\n" +
 			"Every number is derived when it is asked for, from the same records\n" +
 			"`orkctl run list` and `orkctl namespace get` read, so any engine replica\n" +
-			"gives the same answer. Nothing here is a stored counter.",
+			"gives the same answer. Nothing here is a stored counter.\n\n" +
+			"--by day or --by hour adds a series: the same window cut into days or\n" +
+			"hours on the wall clock of --timezone (default: this machine's zone), each\n" +
+			"bucket counting the runs it created. With --by and no --since the window\n" +
+			"is the last 7 days (day) or 24 hours (hour), the current one included;\n" +
+			"--buckets N asks for the last N instead. The server draws every boundary,\n" +
+			"so a day is 23 or 25 hours long when the zone's clocks change in it.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			req := &orkstackv1.GetStatsRequest{Namespace: g.namespace}
+			series.bucketsSet = cmd.Flags().Changed("buckets")
+			series.timezoneSet = cmd.Flags().Changed("timezone")
+			localZone := func() string {
+				name, guessed := machineZone()
+				if guessed != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), "orkctl: "+guessed)
+				}
+				return name
+			}
+			if err := applySeriesFlags(req, series, since, localZone); err != nil {
+				return err
+			}
 			if since != "" {
 				window, at, err := parseSince(since)
 				if err != nil {
@@ -58,7 +77,10 @@ func newStatsCommand(g *globalFlags) *cobra.Command {
 
 			resp, err := g.statsClient().GetStats(ctx, connect.NewRequest(req))
 			if err != nil {
-				return rpcError("get stats", err)
+				return machineZoneRefused(rpcError("get stats", err), err, req, series)
+			}
+			if err := requireSeries(req, resp.Msg); err != nil {
+				return err
 			}
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
@@ -68,7 +90,15 @@ func newStatsCommand(g *globalFlags) *cobra.Command {
 	}
 	cmd.Flags().StringVar(&since, "since", "",
 		"how far back to look: a duration such as 6h, or an RFC3339 instant "+
-			"(default: the last 24 hours)")
+			"(default: the last 24 hours; with --by, the last 7 days or 24 hours)")
+	cmd.Flags().StringVar(&series.by, "by", "",
+		"add a series of the window by day or by hour")
+	cmd.Flags().IntVar(&series.buckets, "buckets", 0,
+		"with --by: the last N days or hours, the current one included "+
+			"(default 7 days or 24 hours)")
+	cmd.Flags().StringVar(&series.timezone, "timezone", "",
+		"with --by: the IANA time zone whose days or hours the series counts "+
+			"(default: this machine's zone, else UTC)")
 	cmd.AddCommand(newStatsFailuresCommand(g))
 	cmd.AddCommand(newStatsFlakesCommand(g))
 	cmd.AddCommand(newStatsUsageCommand(g))
@@ -121,6 +151,9 @@ func renderStats(out io.Writer, stats *orkstackv1.GetStatsResponse) error {
 	fmt.Fprintf(header, "Computed:\t%s\n", formatTime(stats.GetComputedAt()))
 	fmt.Fprintf(header, "Success rate:\t%s\n", successRateLabel(stats))
 	fmt.Fprintf(header, "Run duration:\t%s\n", durationLabel(stats))
+	if len(stats.GetBuckets()) > 0 {
+		fmt.Fprintf(header, "Series:\tby %s, %s\n", seriesWord(stats), orDash(stats.GetTimezone()))
+	}
 	if err := header.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
@@ -142,6 +175,12 @@ func renderStats(out io.Writer, stats *orkstackv1.GetStatsResponse) error {
 	}
 	if err := counts.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
+	}
+	if len(stats.GetBuckets()) > 0 {
+		fmt.Fprintln(out)
+		if err := renderSeries(out, stats); err != nil {
+			return err
+		}
 	}
 
 	fmt.Fprintln(out)
@@ -222,4 +261,12 @@ func durationLabel(stats *orkstackv1.GetStatsResponse) string {
 	return fmt.Sprintf("%s (%d of the window's finished runs, since %s)",
 		strings.Join(parts, "  "),
 		stats.GetDurationSampleCount(), formatTime(stats.GetDurationCoverageSince()))
+}
+
+// seriesWord is how a series' width reads in a sentence.
+func seriesWord(stats *orkstackv1.GetStatsResponse) string {
+	if stats.GetBucketWidth() == orkstackv1.StatsBucketWidth_STATS_BUCKET_WIDTH_HOUR {
+		return "hour"
+	}
+	return "day"
 }

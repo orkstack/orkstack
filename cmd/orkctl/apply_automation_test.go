@@ -186,7 +186,8 @@ func TestApply_ClassifiesDocumentsByKind(t *testing.T) {
 			`x.ork.yaml: unknown document kind "orkflow": want kind: Orkflow or kind: Automation`},
 		{"apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n", orkflowDocument,
 			`x.ork.yaml: kind: ActivityInterface is an activity interface, not a document to apply: pack it into an image's ` +
-				`org.orkstack.activity.interface label with orkctl activity interface pack, or build the image with ` +
+				`org.orkstack.activity.interface, org.orkstack.activity.icon and org.orkstack.activity.docs labels with ` +
+				`orkctl activity interface pack, or build the image with ` +
 				`orkctl activity build --interface`},
 	}
 	for _, tc := range cases {

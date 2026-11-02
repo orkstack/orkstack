@@ -208,10 +208,14 @@ func DisableRetryMaxIntervalGateForTest() (restore func()) {
 	return func() { retryMaxIntervalGateDisabledForTest.Store(false) }
 }
 
-// WithCancelRetryForTest makes CancelRun's own retry wait interval between
-// tries, for at most budget, so a test of it does not wait the production
-// spacing.
-func (s *TemporalStarter) WithCancelRetryForTest(interval, budget time.Duration) *TemporalStarter {
-	s.cancelRetryInterval, s.cancelRetryBudget = interval, budget
+// WithCancelClockForTest puts CancelRun's retry on a clock the test drives:
+// bound makes the context that ends with the retry budget (given the caller's
+// context and the budget), and wait the channel that fires after a spacing.
+// A test of it then waits for nothing and ends the budget when it chooses.
+func (s *TemporalStarter) WithCancelClockForTest(
+	bound func(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc),
+	wait func(interval time.Duration) <-chan time.Time,
+) *TemporalStarter {
+	s.cancelBound, s.cancelWait = bound, wait
 	return s
 }

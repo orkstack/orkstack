@@ -54,8 +54,21 @@ const InterfaceDocument = "interface.ork.yaml"
 // near MaxInterfaceLabelBytes fits a --label argument, not a LABEL line.
 const MaxDockerfileLine = 65535
 
-// labelLine is the interface label's line in a Dockerfile.
-var labelLine = regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`)
+// activityLabel is one label an interface document packs into, and its
+// line in a Dockerfile.
+type activityLabel struct {
+	name string
+	line *regexp.Regexp
+}
+
+func newActivityLabel(name string) activityLabel {
+	return activityLabel{name, regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(name) + `='([^']*)'$`)}
+}
+
+// activityLabels are the labels in the order packAll returns their values.
+var activityLabels = []activityLabel{
+	newActivityLabel(dsl.InterfaceLabel), newActivityLabel(dsl.IconLabel), newActivityLabel(dsl.DocsLabel),
+}
 
 // readInterface parses one image directory's interface document.
 func readInterface(dir string) (*orkstackv1.ActivityInterface, error) {
@@ -86,11 +99,13 @@ func FirstPartyInterfaces(repoRoot string) (map[string]*orkstackv1.ActivityInter
 }
 
 // Dockerfiles returns the Dockerfile of every image directory under images/
-// and examples/ that holds an interface.ork.yaml, with its one interface
-// LABEL line replaced by the line PackInterfaceLabel writes for that
-// document — keyed by path from the repository root. Every other line is the
-// Dockerfile's own. A Dockerfile without exactly one such line is refused:
-// the line is where the author put it, and the generator never guesses.
+// and examples/ that holds an interface.ork.yaml, with its three activity
+// LABEL lines — interface, icon and docs — each replaced by the line its
+// packer writes for that document (an icon or docs the document does not
+// declare is the empty value, which clears a label a base image set) — keyed
+// by path from the repository root. Every other line is the Dockerfile's own.
+// A Dockerfile without exactly one line per label is refused: the lines are
+// where the author put them, and the generator never guesses.
 func Dockerfiles(repoRoot string) (map[string][]byte, error) {
 	var documents []string
 	for _, parent := range []string{"images", "examples"} {
@@ -103,30 +118,38 @@ func Dockerfiles(repoRoot string) (map[string][]byte, error) {
 	out := map[string][]byte{}
 	for _, document := range documents {
 		dir := filepath.Dir(document)
-		iface, err := readInterface(dir)
+		source, err := os.ReadFile(document)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("schemas: read %s: %w", document, err)
 		}
-		label, err := dsl.PackInterfaceLabel(iface)
+		decl, err := dsl.ParseActivityDocument(source)
+		if err != nil {
+			return nil, fmt.Errorf("schemas: %s: %w", document, err)
+		}
+		values, err := packAll(decl)
 		if err != nil {
 			return nil, fmt.Errorf("schemas: %s: %w", document, err)
 		}
 		path := filepath.Join(dir, "Dockerfile")
-		raw, err := os.ReadFile(path)
+		generated, err := os.ReadFile(path) // the Dockerfile, each label's line replaced in turn
 		if err != nil {
 			return nil, fmt.Errorf("schemas: read %s: %w", path, err)
 		}
-		lines := labelLine.FindAllIndex(raw, -1)
-		if len(lines) != 1 {
-			return nil, fmt.Errorf("schemas: %s carries %d interface LABEL lines, want exactly one for %s to replace: "+
-				"one line, LABEL %s='…', single-quoted and unbroken", path, len(lines), InterfaceDocument, dsl.InterfaceLabel)
+		for i, entry := range activityLabels {
+			label := entry.name
+			lines := entry.line.FindAllIndex(generated, -1)
+			if len(lines) != 1 {
+				return nil, fmt.Errorf("schemas: %s carries %d %s LABEL lines, want exactly one for %s to replace: "+
+					"one line, LABEL %s='…', single-quoted and unbroken ('' when the document declares none)",
+					path, len(lines), label, InterfaceDocument, label)
+			}
+			line := "LABEL " + label + "='" + values[i] + "'"
+			if len(line) > MaxDockerfileLine {
+				return nil, fmt.Errorf("schemas: %s: the %s LABEL line would be %d bytes, and BuildKit refuses a Dockerfile "+
+					"line over %d; build the image with orkctl activity build --interface instead", path, label, len(line), MaxDockerfileLine)
+			}
+			generated = append(append(append([]byte{}, generated[:lines[0][0]]...), line...), generated[lines[0][1]:]...)
 		}
-		line := "LABEL " + dsl.InterfaceLabel + "='" + label + "'"
-		if len(line) > MaxDockerfileLine {
-			return nil, fmt.Errorf("schemas: %s: the interface LABEL line would be %d bytes, and BuildKit refuses a Dockerfile "+
-				"line over %d; build the image with orkctl activity build --interface instead", path, len(line), MaxDockerfileLine)
-		}
-		generated := append(append(append([]byte{}, raw[:lines[0][0]]...), line...), raw[lines[0][1]:]...)
 		rel, err := filepath.Rel(repoRoot, path)
 		if err != nil {
 			return nil, err
@@ -134,6 +157,23 @@ func Dockerfiles(repoRoot string) (map[string][]byte, error) {
 		out[filepath.ToSlash(rel)] = generated
 	}
 	return out, nil
+}
+
+// packAll is the value of each of activityLabels for one document, in order.
+func packAll(decl *dsl.ActivityDeclaration) ([]string, error) {
+	iface, err := dsl.PackInterfaceLabel(decl.Interface)
+	if err != nil {
+		return nil, err
+	}
+	icon, err := dsl.PackIconLabel(decl.Icon)
+	if err != nil {
+		return nil, err
+	}
+	docs, err := dsl.PackDocsLabel(decl.Docs, decl.Interface)
+	if err != nil {
+		return nil, err
+	}
+	return []string{iface, icon, docs}, nil
 }
 
 // Trees are the three schemas as JSON trees, keyed by file name.

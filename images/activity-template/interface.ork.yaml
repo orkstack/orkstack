@@ -1,31 +1,65 @@
 # The with: contract of images/activity-template (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
-# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
-# that line.
+# Dockerfile's three activity LABEL lines (interface, icon and docs); edit
+# this file, never those lines.
 apiVersion: orkstack/v1
 kind: ActivityInterface
+description: >-
+  Renders one text file from a template with gomplate, from a JSON data file,
+  inline values and named datasources. A key the template reads that the data
+  does not hold is an error, not an empty string.
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2 6h12M6.2 6v7.5" stroke="currentColor" stroke-width="1.4"/></svg>
 ops:
   render:
+    description: >-
+      Renders `src` into one output artifact.
     fields:
       src:
         type: string
         required: true
+        description: >-
+          The template file. A relative path resolves under `/orkstack/input`.
       data:
         type: string
+        description: >-
+          A JSON file holding an object: the template's root data, and the
+          datasource `data`.
       values:
         type: object
+        description: >-
+          An inline object deep-merged over `data` for the root data, and the
+          datasource `values`.
       datasources:
         type: object
+        description: >-
+          Datasource name to file path. A file ending in `.yaml` or `.yml` is
+          read as YAML, any other as JSON.
       leftDelim:
         type: string
+        description: >-
+          The opening delimiter to use instead of `{{`, for a file that holds
+          `{{` itself. Set together with `rightDelim`.
       rightDelim:
         type: string
+        description: >-
+          The closing delimiter to use instead of `}}`. Set together with
+          `leftDelim`.
       as:
         type: string
+        description: >-
+          The output artifact's name. Defaults to the base name of `src` without
+          `.tmpl`, `.tpl` or `.gotmpl`.
 values:
   path:
     type: string
+    description: >-
+      The artifact the render wrote.
   sizeBytes:
     type: number
+    description: >-
+      The artifact's size in bytes.
   sha256:
     type: string
+    description: >-
+      The artifact's SHA-256 in hex.

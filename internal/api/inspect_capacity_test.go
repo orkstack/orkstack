@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -226,19 +227,23 @@ func TestInspectRun_AFailedInventoryReadIsWarnedAtMostOncePerInterval(t *testing
 		cfg.Reader = liveReader
 		cfg.Now = func() time.Time { clock.Lock(); defer clock.Unlock(); return now }
 		cfg.Fleet = fleet
-		cfg.Logger = slog.New(slog.NewTextHandler(&logs, nil))
+		cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	})
 	f := &inspectFixture{readerFixture: fixture, live: liveReader}
-	warned := func() int {
-		return strings.Count(logs.String(), "the Orker inventory could not be read")
+	warned := func() []map[string]any {
+		return recordsAt(logRecords(t, logs.String()), "WARN")
 	}
 	for i := 0; i < 3; i++ {
 		if _, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()}); err != nil {
 			t.Fatalf("InspectRun: %v", err)
 		}
 	}
-	if got := warned(); got != 1 {
-		t.Fatalf("three failed reads warned %d times, want 1", got)
+	first := warned()
+	if len(first) != 1 {
+		t.Fatalf("three failed reads logged %d warnings, want 1: %v", len(first), first)
+	}
+	if first[0]["run_id"] != run.GetId() || !strings.Contains(fmt.Sprint(first[0]["error"]), "frontend unavailable") {
+		t.Fatalf("the warning = %v, want the run and the read's error as attributes", first[0])
 	}
 	if fleet.observeOrkers != 3 {
 		t.Fatalf("presence reads = %d, want 3: a failure is never kept", fleet.observeOrkers)
@@ -249,7 +254,48 @@ func TestInspectRun_AFailedInventoryReadIsWarnedAtMostOncePerInterval(t *testing
 	if _, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()}); err != nil {
 		t.Fatalf("InspectRun: %v", err)
 	}
-	if got := warned(); got != 2 {
-		t.Fatalf("a failure a minute later warned %d times in all, want 2", got)
+	if got := warned(); len(got) != 2 {
+		t.Fatalf("a failure a minute later logged %d warnings in all, want 2", len(got))
+	}
+}
+
+// TestInspectRun_AnAttemptIsAskedAboutOnceNoPollCouldBeAboutToTakeIt: an
+// Orker's outstanding poll takes a task within moments, so an attempt that
+// has waited less than capacityWaitAfter is not asked about, however full the
+// pool is, and costs the inventory nothing; one that has waited that long is.
+func TestInspectRun_AnAttemptIsAskedAboutOnceNoPollCouldBeAboutToTakeIt(t *testing.T) {
+	after := api.CapacityWaitAfterForTest
+	for _, tc := range []struct {
+		name   string
+		waited time.Duration
+		asked  bool
+	}{
+		{"just scheduled", 0, false},
+		{"a moment short of it", after - time.Nanosecond, false},
+		{"exactly as long", after, true},
+		{"long past it", 10 * after, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			run := inspectRun("ork-capacity-7", orkstackv1.Status_STATUS_RUNNING, "build")
+			routeTasksTo(run, "build", "build")
+			attempt := waitingAttempt("build")
+			attempt.AttemptScheduledAt = timestamppb.New(inspectNow.Add(-tc.waited))
+			fleet := capacityFleet()
+			f := newCapacityInspectFixture(t, run, []*orkstackv1.LiveAttempt{attempt}, fleet)
+
+			resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
+			if err != nil {
+				t.Fatalf("InspectRun: %v", err)
+			}
+			wait := resp.GetAttempts()[0].GetCapacityWait()
+			if tc.asked && (wait.GetPool() != "build" || fleet.observeOrkers != 1) {
+				t.Fatalf("an attempt waiting %s: capacity_wait = %v after %d inventory reads, want the full pool after one",
+					tc.waited, wait, fleet.observeOrkers)
+			}
+			if !tc.asked && (wait != nil || fleet.observeOrkers != 0) {
+				t.Fatalf("an attempt waiting %s: capacity_wait = %v after %d inventory reads, want none and no read",
+					tc.waited, wait, fleet.observeOrkers)
+			}
+		})
 	}
 }

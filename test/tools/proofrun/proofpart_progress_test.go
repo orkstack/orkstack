@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"syscall"
 	"testing"
@@ -22,34 +21,90 @@ import (
 // event, said it was "cancelled before any test started". The integration
 // gate now also prints those lines to the job's log as they happen.
 
+// partHarness runs the part for the first integration shard through its own
+// part_main, with what a runner would give it (its prerequisites, the
+// runner-health floor, its cleanup) stubbed and its gates other than the
+// integration gate left unrun, and with the integration gate's part_run the
+// script's own, over a command of the test's: part_main's call of it, its
+// PART_STREAM and its log name, are the script's, read by running it and not
+// by reading its text. The prelude is the shell options scripts/proof.sh sets
+// before it sources the part, in force while the gate runs; BREAK_STREAM swaps
+// the stream filter for one grep cannot run.
+const partHarness = `source "$PART_SH"
+eval "real_$(declare -f part_run)"
+part_require() { return 0; }
+part_runner_health() { return 0; }
+part_cleanup() { :; }
+part_run() {
+	[ "$1" = integration ] || return 0
+	[ -z "${BREAK_STREAM:-}" ] || PART_STREAM='('
+	eval "$PRELUDE"
+	real_part_run integration "$2" sh "$GATE"
+	exit $?
+}
+PR="$DIR/proofrun"
+: >"$PR"
+part_main integration:1
+`
+
+// proofScriptOptions are the shell options scripts/proof.sh sets before it
+// sources the part: its first top-level `set` line, so the part runs in the
+// test under the options it runs under in a proof.
+func proofScriptOptions(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "set -") && !strings.ContainsAny(line, "$;|&") {
+			return line
+		}
+	}
+	t.Fatal("scripts/proof.sh sets no shell options before it sources the part")
+	return ""
+}
+
 // partRun runs scripts/proof-part.sh's part_run for the integration gate, as
 // part_main calls it, over a command that prints script, in a fresh part
 // directory. It returns the function's standard output, its exit status and
 // the directory.
 func partRun(t *testing.T, script string) (string, int, string) {
 	t.Helper()
-	return partRunAs(t, "", partIntegrationCall(t), script)
+	return partRunAs(t, "", false, script)
 }
 
-// partRunAs is partRun with prelude run first in the shell that sources the
-// part (the shell options scripts/proof.sh sets before it does), and call in
-// place of part_main's own call of part_run.
-func partRunAs(t *testing.T, prelude, call, script string) (string, int, string) {
+// partHarnessCmd is the harness over the gate script script, in a fresh part
+// directory dir, which is also its working directory (no repository).
+func partHarnessCmd(t *testing.T, dir, prelude string, breakStream bool, script string, env ...string) *exec.Cmd {
 	t.Helper()
 	bash, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skip("bash is not installed")
 	}
-	dir := t.TempDir()
 	gate := filepath.Join(t.TempDir(), "gate.sh")
 	if err := os.WriteFile(gate, []byte(script+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bash, "-c", prelude+`source "$PART_SH" && `+call+` sh "$GATE"`)
-	cmd.Env = []string{
+	cmd := exec.Command(bash, "-c", partHarness)
+	cmd.Dir = dir
+	cmd.Env = append([]string{
 		"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "PART_SH=" + filepath.Join(mustRepoRoot(), "scripts", "proof-part.sh"),
-		"DIR=" + dir, "GATE=" + gate,
+		"DIR=" + dir, "GATE=" + gate, "PRELUDE=" + prelude,
+	}, env...)
+	if breakStream {
+		cmd.Env = append(cmd.Env, "BREAK_STREAM=1")
 	}
+	return cmd
+}
+
+// partRunAs is partRun with prelude in force while the gate runs (the shell
+// options scripts/proof.sh sets), and, with breakStream, a stream filter
+// that cannot run.
+func partRunAs(t *testing.T, prelude string, breakStream bool, script string) (string, int, string) {
+	t.Helper()
+	dir := t.TempDir()
+	cmd := partHarnessCmd(t, dir, prelude, breakStream, script)
 	out, err := cmd.Output()
 	status := 0
 	if err != nil {
@@ -60,21 +115,6 @@ func partRunAs(t *testing.T, prelude, call, script string) (string, int, string)
 		status = ee.ExitCode()
 	}
 	return string(out), status, dir
-}
-
-// partIntegrationCall is how part_main runs the integration gate, up to the
-// command: whatever it sets before part_run, and part_run's gate and log.
-func partIntegrationCall(t *testing.T) string {
-	t.Helper()
-	b, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof-part.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	m := regexp.MustCompile(`(?m)^\s*((?:[A-Z_]+='[^']*' )*part_run integration integration\.log) env `).FindStringSubmatch(string(b))
-	if m == nil {
-		t.Fatal("scripts/proof-part.sh runs no integration gate through part_run")
-	}
-	return m[1]
 }
 
 func TestProofPart_TheIntegrationGatePrintsItsProgressToTheJobLog(t *testing.T) {
@@ -114,15 +154,7 @@ echo "proofrun: start example.com/m TestB"`)
 // (grep's exit 1). It holds with scripts/proof.sh's shell options too, which
 // the part runs under, and without them.
 func TestProofPart_TheIntegrationGateKeepsItsExitStatus(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	const proofOptions = "set -uo pipefail"
-	if !strings.Contains(string(b), "\n"+proofOptions+"\n") {
-		t.Fatalf("scripts/proof.sh no longer sets %q; this test runs the part under it", proofOptions)
-	}
-	for _, prelude := range []string{"", proofOptions + "; "} {
+	for _, prelude := range []string{"", proofScriptOptions(t)} {
 		for _, c := range []struct {
 			script string
 			status int
@@ -134,7 +166,7 @@ func TestProofPart_TheIntegrationGateKeepsItsExitStatus(t *testing.T) {
 			{`echo "nothing the merger reads"`, 0},
 			{`echo "proofrun: start example.com/m TestA"`, 0},
 		} {
-			out, status, dir := partRunAs(t, prelude, partIntegrationCall(t), c.script)
+			out, status, dir := partRunAs(t, prelude, false, c.script)
 			if status != c.status {
 				t.Errorf("%q%q: part_run exits %d, want %d:\n%s", prelude, c.script, status, c.status, out)
 			}
@@ -154,13 +186,10 @@ func TestProofPart_TheIntegrationGateKeepsItsExitStatus(t *testing.T) {
 // keep, so it fails a gate that passed, as a log tee cannot write does: the
 // gate's result is never a pass the part could not stream.
 func TestProofPart_TheIntegrationGateFailsWhenItsStreamCannotRun(t *testing.T) {
-	// An extended regular expression grep refuses (exit 2).
-	call := strings.Replace(partIntegrationCall(t), "PART_STREAM='^proofrun: (start|outcome) '", "PART_STREAM='('", 1)
-	if call == partIntegrationCall(t) {
-		t.Fatal("scripts/proof-part.sh's integration gate no longer sets the PART_STREAM this test replaces")
-	}
+	// The harness swaps the stream for an extended regular expression grep
+	// refuses (exit 2).
 	for _, script := range []string{`exit 0`, `echo "proofrun: start example.com/m TestA"`} {
-		out, status, dir := partRunAs(t, "", call, script)
+		out, status, dir := partRunAs(t, "", true, script)
 		if status == 0 {
 			t.Errorf("%q: part_run passes a gate whose stream filter could not run:\n%s", script, out)
 		}
@@ -175,19 +204,7 @@ func TestProofPart_TheIntegrationGateFailsWhenItsStreamCannotRun(t *testing.T) {
 // and a channel of the lines it prints, closed at their end.
 func startPartRun(t *testing.T, dir, script string, env ...string) (*exec.Cmd, <-chan string) {
 	t.Helper()
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash is not installed")
-	}
-	gate := filepath.Join(t.TempDir(), "gate.sh")
-	if err := os.WriteFile(gate, []byte(script+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	cmd := exec.Command(bash, "-c", `source "$PART_SH" && `+partIntegrationCall(t)+` sh "$GATE"`)
-	cmd.Env = append([]string{
-		"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "PART_SH=" + filepath.Join(mustRepoRoot(), "scripts", "proof-part.sh"),
-		"DIR=" + dir, "GATE=" + gate,
-	}, env...)
+	cmd := partHarnessCmd(t, dir, "", false, script, env...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	out, err := cmd.StdoutPipe()
 	if err != nil {
@@ -309,17 +326,11 @@ func TestProofPart_TheIntegrationGateStreamsPastABinaryByte(t *testing.T) {
 // A log the gate's output cannot be written to fails the gate, as the
 // redirect it replaced did, whatever the gate itself exited.
 func TestProofPart_TheIntegrationGateFailsWhenItsLogCannotBeWritten(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash is not installed")
-	}
 	dir := t.TempDir()
 	if err := os.Mkdir(filepath.Join(dir, "integration.log"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bash, "-c", `source "$PART_SH" && `+partIntegrationCall(t)+` sh -c 'echo "proofrun: start example.com/m TestA"'`)
-	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + dir, "PART_SH=" + filepath.Join(mustRepoRoot(), "scripts", "proof-part.sh"), "DIR=" + dir}
-	err = cmd.Run()
+	err := partHarnessCmd(t, dir, "", false, `echo "proofrun: start example.com/m TestA"`).Run()
 	if ee, ok := err.(*exec.ExitError); !ok || ee.ExitCode() == 0 {
 		t.Errorf("part_run exits %v, want a failure", err)
 	}

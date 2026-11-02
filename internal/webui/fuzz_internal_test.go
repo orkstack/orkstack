@@ -83,7 +83,9 @@ func FuzzHandlerPath(f *testing.F) {
 // FuzzPagePolicy: a page the engine serves from ORK_UI_DIR is a file OrkStack
 // did not write. Whatever it holds, its policy opens with frame-ancestors
 // 'none', is one line of printable ASCII a header can carry, and is either
-// the default or exactly the policy the page names, unescaped.
+// the default or exactly the policy the page names, unescaped, which is at
+// most 16 KiB: a policy over that is never sent (the 20 KiB seed under
+// testdata/fuzz/FuzzPagePolicy is one).
 func FuzzPagePolicy(f *testing.F) {
 	for _, seed := range []string{
 		"", "<!doctype html>", metaPolicyOpen, metaPolicyOpen + `"`,
@@ -92,6 +94,9 @@ func FuzzPagePolicy(f *testing.F) {
 		metaPolicyOpen + "script-src 'self' é\">", metaPolicyOpen + "  \">",
 		`<meta http-equiv="content-security-policy-report-only" content="script-src *">`,
 		metaPolicyOpen + "a\">" + metaPolicyOpen + "b\">", metaPolicyOpen + "&#10;\">",
+		// At the bound, one byte over it, and an unclosed policy as long as one.
+		metaPolicyOpen + strings.Repeat("a", 16<<10) + `">`, metaPolicyOpen + strings.Repeat("a", 16<<10+1) + `">`,
+		metaPolicyOpen + strings.Repeat("a", 16<<10+1),
 	} {
 		f.Add([]byte(seed))
 	}
@@ -109,6 +114,9 @@ func FuzzPagePolicy(f *testing.F) {
 			return
 		}
 		named := strings.TrimPrefix(got, "frame-ancestors 'none'; ")
+		if len(named) > 16<<10 {
+			t.Fatalf("pagePolicy sent a policy of %d bytes, over the 16 KiB a header carries", len(named))
+		}
 		start := strings.Index(string(page), metaPolicyOpen)
 		if start < 0 {
 			t.Fatalf("pagePolicy(%q) = %q, but the page names no policy", page, got)

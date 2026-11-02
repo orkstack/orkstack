@@ -86,6 +86,12 @@ needs `ORK_S3_*` either way.
   wearing the same address.
 - **`ORK_HTTP_ADDR` is the one variable that must differ** when replicas share
   a host. On separate hosts it does not have to.
+- **One time zone database.** A stats series' day and hour boundaries are
+  drawn from the engine's zone database (`docs/STATS.md`, "A series"): the copy
+  linked into the release binaries, or the host's own zoneinfo, which Go reads
+  first when it has one. Replicas of one image agree; replicas on hosts whose
+  zone databases differ can draw a zone's boundaries differently wherever the
+  two versions disagree about its rules.
 - **No sticky sessions, no leader.** `GetRun`, `ListRuns`, `StreamEvents` and
   `/ws/runs/{id}` are answered from Temporal, so any replica serves any run —
   inside the namespace the request names. A run id addresses a run within a
@@ -2084,6 +2090,16 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   includes the web UI on the same port: `/`, its assets under `/_app/` and
   every route of the app, so a gateway that routes by path sends those to
   `ork` too (§0, "The web UI").
+- **Activity inspects answered from memory.** The catalog read
+  (`ListActivities`) carries each image's interface, icon and descriptions,
+  reused for 5 minutes. An `InspectActivity` that sets `allow_cached` for a
+  reference pinning a digest — what a client asks about the images a run's
+  tasks ran — is answered from a per-process cache once that process has
+  read the digest: at most 512 answers or about 16 MiB of memory, least
+  recently used first out, never a failure, never a tag. Any API caller can
+  fill it, and it stays bounded. A replica that restarts reads each digest
+  once more. Without `allow_cached` (`orkctl activity inspect`, the Admin
+  page's inspect form) every inspect reads the registry, as apply does.
 - **Run ids** are `ork-{timestamp}-{sequence}` and single-use for all time.
   Nothing may parse one or derive meaning from its parts — the sequence
   carries a per-process nonce in its high half (`internal/engine/runid.go`),
@@ -3947,7 +3963,7 @@ record the raise to the initial interval on both branches.
 
 The replayer compares neither a priority nor a retry policy: it matches a
 scheduled activity by its id and type alone
-(`TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy`). So a key or a
+(`TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy`). So a key or a
 spacing added to a recorded command never breaks a replay; a version gate is
 what keeps a recorded run on the values it was recorded with, and these tests
 compare those values themselves.

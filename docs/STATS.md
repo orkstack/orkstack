@@ -10,6 +10,8 @@ orkctl -n payments stats           # one namespace
 orkctl -n payments stats --since 6h
 orkctl -n payments stats --since 2026-05-01T09:00:00Z
 orkctl -n payments stats --json    # the same answer, for a machine
+orkctl -n payments stats --by day  # and runs created each day, the last 7 days (§2)
+orkctl -n payments stats --by hour --buckets 6 --timezone Europe/Lisbon
 orkctl -n payments stats failures  # the window's failed runs, grouped (§6)
 orkctl -n payments stats flakes    # the window's tasks that needed a retry (§7)
 orkctl -n payments stats usage     # reserved cpu and memory, held against a budget (§8)
@@ -24,26 +26,29 @@ read, `orkctl run timing` (`docs/UI_CLI_PARITY.md`, "Task timing").
 
 | Field | Where it comes from | Over which runs |
 |---|---|---|
-| `runs_by_status["running"]`, `running[]` | the cluster's index of executions | created in the window and not finished |
+| `runs_by_status["running"]`, `running[]` | the cluster's index of executions | executing now, created before the window's end (§2) |
 | `runs_by_status["succeeded"/"failed"/"canceled"]` | the run archive's INDEX KEYS | created in the window and finished |
 | `success_rate`, `success_rate_defined` | the same index keys | the same |
 | `most_failing[]` | the same index keys | the same |
 | `p50_duration`, `p95_duration`, `duration_sample_count` | the cluster's index of executions | the same |
 | `duration_coverage_since` | the window, held against how long executions are kept | — |
 | `pools[]` | the Orkers polling for each pool's work, live | — |
+| `buckets[]` | the same index keys, and the same live runs | created in the bucket (§2, "A series") |
 
 **There is no counter and no write path.** Every number is derived when it is
 asked for. A stored counter would be a third record of facts two records
 already hold, and the day it disagreed with them there would be no way to say
 which was lying.
 
-This is also why `StatsService` is not where a time-series dashboard's counters
-come from: it answers "how is this namespace doing right now," derived on read
-from the two sources above, and stores nothing between one answer and the
-next. A counter you can graph over weeks — `ork.runs`, `ork.tasks`, and the
-rest — comes from the telemetry pipeline instead (`docs/DEPLOY.md`,
-"Lifecycle metrics"), which is the write path this service deliberately has
-none of.
+This is also why `StatsService` keeps no time series of its own. A series here
+(§2) is the window's runs counted again by the hour or day that created them,
+derived on read from the same two sources and stored nowhere between one
+answer and the next, so it is bounded: at most 1000 buckets, and no width
+narrower than an hour. A counter you can graph over months, by the minute, or
+of things that never became a run — `ork.runs`, `ork.tasks`,
+`ork.runs.refused`, and the rest — comes from the telemetry pipeline instead
+(`docs/DEPLOY.md`, "Lifecycle metrics"), which is the write path this service
+deliberately has none of.
 
 A submission refused by namespace admission (a hold, or `max_running`) is in
 neither record — it never became a run — so it is reported nowhere here; it
@@ -58,8 +63,9 @@ real engine processes to that.
 orkflow, status and time in the object KEY, so counting is a prefix scan that
 transfers no bodies at all. That is a property of the type, not a habit:
 the stats handler holds a `RunIndexTallier`, whose only method is a keys-only
-tally, and the tests run it against a store that panics if a body is fetched
-(`TestGetStats_ReadsIndexKeysAndNeverARunBody`).
+tally (and, for a series, a `RunIndexSeriesTallier`, whose only method is
+the same tally cut into buckets), and the tests run it against a store that
+panics if a body is fetched (`TestGetStats_ReadsIndexKeysAndNeverARunBody`).
 
 ## 2. The window
 
@@ -112,6 +118,74 @@ above by `until` but not below by `since`. A run that started last week and is
 still going is the run most worth seeing, and a window that hid it would be
 hiding it precisely when it mattered.
 
+### A series
+
+`bucket_width` (`HOUR` or `DAY`) asks for the window cut into consecutive
+buckets as well, in `buckets[]`, oldest first, from the same scan: one
+archive listing feeds the window's totals and every bucket. Each bucket counts
+the runs CREATED in it, exactly as the window does — one window, one
+population, per bucket — with the same four status keys always present.
+
+```bash
+orkctl stats --by day                           # the last 7 days, today included
+orkctl stats --by hour                          # the last 24 hours, this hour included
+orkctl stats --by day --buckets 30 --timezone UTC
+orkctl stats --by day --since 2026-10-01T00:00:00-07:00   # a stated window, cut
+```
+
+**The zone's wall clock draws the buckets.** `timezone` names an IANA zone
+(`America/Los_Angeles`; empty is UTC; `Local` is refused, as for a schedule).
+A bucket is one stretch of time with one wall-clock label — the local date for
+`DAY`, the local date and hour for `HOUR` — so a day is 23 or 25 hours when the
+zone's clocks change inside it, the hour a fall-back repeats is one two-hour
+bucket, and a date or hour the clocks skip has no bucket. A fixed offset would
+be wrong on every day across a daylight-saving change; a viewer at 20:00 in Los
+Angeles, which is already tomorrow in UTC, sees their evening in today's
+bucket, not tomorrow's. The boundaries come from the engine's zone database,
+the copy linked into the release binaries or the host's own (`docs/DEPLOY.md`,
+"One time zone database").
+
+**One clock still decides the window.** `bucket_count` N asks for the last N
+whole buckets, ending with the one that holds the window's last instant — "the
+last 7 days, today included" — and the server computes where that starts.
+`orkctl stats --by` sends exactly that: a width, a zone and a count, never an
+instant this machine computed, which is why it refuses a date-only `--since`
+beside `--by` (a date names no zone). Its zone is `--timezone`, else this
+machine's (`$TZ`, then `/etc/localtime`, each used only if it names a zone);
+when it has to guess, it says so on stderr. An engine that answers `--by` with
+no buckets predates series, and `orkctl` refuses the answer, naming it, rather
+than printing the totals as the series. With `since` or `lookback` instead,
+the window is resolved as always and the series only cuts it, so its first and
+last buckets may be partial; `partial` marks a bucket the window cut short.
+
+**The sums.** Across the series, `succeeded`, `failed`, `canceled` (and any
+other status the archive spells) add up exactly to the window's
+`runs_by_status`. `running` adds up to at most the window's `running`: the
+difference is the runs still going that were created before `window_since`,
+which the window counts as a fact about now and no bucket can claim.
+`orkctl` prints that difference. A bucket's keys sum to the runs it created,
+up to one skew: a run still going is placed by the cluster's record of its
+start and a finished one by the archive's stamp of its creation — the two ends
+of one submission, milliseconds apart — and the archive write follows a run's
+end, so a run submitted at a boundary can move to the neighbouring bucket when
+it finishes.
+
+**Bounds, refused rather than answered from a subset.** At most 1000 buckets
+(a year of days, a month of hours): a `bucket_count` above it, or a window
+that would cut into more, is `invalid_argument`, naming the limit. So is a
+`timezone` or `bucket_count` sent without `bucket_width`, a `bucket_count`
+beside `since` or `lookback`, a zone the database does not hold, and a window
+bound outside the years a timestamp holds. An archive that cannot count by
+bucket is `failed_precondition`, and an outage of its store `unavailable`, as
+for the window. What no request can cause is `internal`, and says to ask
+for the window's totals alone, without a series: a live run with no creation
+time, or one created after the window, and an index entry outside the window
+it was listed for. Each would otherwise vanish from a bar or land in the wrong
+one. A series adds no read: it is the same scan, folded twice.
+
+The series is an API and `orkctl` read today; the web UI does not draw it
+yet.
+
 ## 3. Numbers that cannot be answered say so
 
 A dashboard that renders "no data" as `0` is worse than one that renders
@@ -135,6 +209,13 @@ There is no `pending` key. Telling an accepted run from a started one means
 reading that run's history, one read per run, which is the cost this whole
 service exists to avoid. `running` means "accepted and not finished", and the
 `running` list is the same set.
+
+A run is never counted twice. The cluster's index of executions reports a
+run's close a moment after the archive holds the run, so for that moment one
+run is finished in one record and live in the other. The archive's word is
+final — a run it holds has ended — so the run is counted as finished only, and
+is in neither `running` nor any bucket's running count
+(`TestGetStats_ARunTheArchiveHoldsIsNotAlsoRunning`).
 
 `success_rate` counts canceled runs as finished. A deployment that cancels half
 its runs has not succeeded at them, and excluding them would make the rate rise
@@ -161,7 +242,10 @@ The cache **cannot change an answer**:
   could produce numbers no computation ever produced.
 - Its key is the namespace and the window **as requested** — including
   `lookback`, because "the last hour" and "the last day" are two questions. A
-  request that pins both bounds gets the answer to exactly those instants.
+  request that pins both bounds gets the answer to exactly those instants. A
+  series is part of the question too: `bucket_width`, `timezone` and
+  `bucket_count` are in the key, as sent, so a day series and an hour series,
+  or one day series in two zones, are never each other's answer.
 - `computed_at` travels on the wire, so how old an answer is never has to be
   guessed.
 - A namespace that does not exist is still `NotFound`, and a window that ends
@@ -182,6 +266,8 @@ are equal field for field.
   pages the request FAILS rather than answering from a subset: a percentile
   over a truncated sample looks like an answer and is not one.
 - One liveness probe per pool in scope — typically two or three.
+- A series adds nothing to this list: the same listing is folded into the
+  buckets as it is counted into the window.
 - All of it divided by the cache TTL, per namespace and window.
 
 Registering the namespace search attribute (the engine provisions it at boot)

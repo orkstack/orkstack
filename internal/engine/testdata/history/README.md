@@ -607,8 +607,8 @@ branch.
   fixture replayed with the gate skipped is sent 100 seconds where it recorded
   60)
 - behaviour: `TestRunWorkflow_AnUnsetMaximumIntervalWaitsThePlansNumber`,
-  `TestRunWorkflow_AGateOffRetryKeepsTheLegacy100Seconds`,
-  `TestRunWorkflow_APlanWithoutTheRetryNumberKeeps100Seconds`,
+  `TestRunWorkflow_ALegacyRunKeepsTheLegacyMaximumInterval` (a gate off and
+  a plan without the retry number both keep 100 seconds),
   `TestRunWorkflow_ACarriedGenerationKeepsTheRetryDecision`
 - recorder: `TestIntegration_RecordRetryMaxIntervalHistories`
   (`e1_gates_integration_test.go`), as above.
@@ -631,12 +631,13 @@ refused policy and never got past `prepare`.
   compares the recorded maximum interval with what current code sends on
   replay, so a change that dropped the raise sends 60 or 100 seconds and
   fails it)
-- behaviour: `TestRunWorkflow_AnInitialIntervalAboveTheLegacyMaximumIsScheduled`,
+- behaviour: `TestRunWorkflow_ALegacyRunKeepsTheLegacyMaximumInterval` (its
+  120-second initial interval row),
   `TestIntegration_ARetryWithALongInitialIntervalIsScheduled`
 - recorder: `TestIntegration_RecordRetryLongInitialHistories`
   (`e1_gates_integration_test.go`), as above.
 
-`TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy` is the premise of
+`TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy` is the premise of
 both pairs: `run-pin-creation-timeout-legacy-v1.json`, recorded with no
 priority on any activity, replays clean against code that sends every task and
 creation request with a fairness key and another retry policy, and a renamed

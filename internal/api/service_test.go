@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"connectrpc.com/connect"
 	"github.com/coder/websocket"
@@ -574,17 +575,26 @@ func TestCancelRunForwardsToStarter(t *testing.T) {
 
 // The Ork-Principal on a CancelRun travels with the cancellation, bounded as
 // an origin's principal is, so the run can record who asked; with no header
-// it is empty.
+// it is empty. The bound is the one SubmitRun records the same header under,
+// and what it leaves is a valid string of at most 256 bytes that says it was
+// shortened.
 func TestCancelRun_PassesTheAssertedPrincipal(t *testing.T) {
-	overlong := strings.Repeat("d", 300)
+	const bound = 256
 	tests := []struct {
 		name   string
 		header string
-		want   string
+		// exact is the principal passed on when it is the header's own
+		// bytes (or its only repair); a bounded row is held to the
+		// properties instead.
+		exact   string
+		bounded bool
 	}{
-		{"asserted", "dana@acme", "dana@acme"},
-		{"none", "", ""},
-		{"bounded", overlong, overlong[:256-len(artifacts.AttemptTruncationMarker)] + artifacts.AttemptTruncationMarker},
+		{name: "asserted", header: "dana@acme", exact: "dana@acme"},
+		{name: "none"},
+		{name: "overlong", header: strings.Repeat("d", 300), bounded: true},
+		{name: "overlong in multibyte characters", header: strings.Repeat("€", 100), bounded: true},
+		{name: "invalid UTF-8", header: "dana\xff@acme", exact: "dana\ufffd@acme"},
+		{name: "overlong around invalid UTF-8", header: strings.Repeat("d", 150) + "\xff" + strings.Repeat("d", 150), bounded: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -594,28 +604,39 @@ func TestCancelRun_PassesTheAssertedPrincipal(t *testing.T) {
 				connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 				t.Fatalf("Apply: %v", err)
 			}
-			if _, err := f.runClient().SubmitRun(ctx,
-				connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err != nil {
+			submit := connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})
+			cancel := connect.NewRequest(&orkstackv1.CancelRunRequest{RunId: "run-001", Reason: "stop"})
+			if tt.header != "" {
+				submit.Header().Set(api.AuditPrincipalHeader, tt.header)
+				cancel.Header().Set(api.AuditPrincipalHeader, tt.header)
+			}
+			if _, err := f.runClient().SubmitRun(ctx, submit); err != nil {
 				t.Fatalf("SubmitRun: %v", err)
 			}
-			req := connect.NewRequest(&orkstackv1.CancelRunRequest{RunId: "run-001", Reason: "stop"})
-			if tt.header != "" {
-				req.Header().Set(api.AuditPrincipalHeader, tt.header)
-			}
-			if _, err := f.runClient().CancelRun(ctx, req); err != nil {
+			if _, err := f.runClient().CancelRun(ctx, cancel); err != nil {
 				t.Fatalf("CancelRun: %v", err)
 			}
 			f.starter.mu.Lock()
 			defer f.starter.mu.Unlock()
-			if len(f.starter.cancelRequests) != 1 {
-				t.Fatalf("cancel requests = %v, want one", f.starter.cancelRequests)
+			if len(f.starter.cancelRequests) != 1 || len(f.starter.plans) != 1 || f.starter.plans[0].Origin == nil {
+				t.Fatalf("cancel requests = %v, plans = %v, want one of each with an origin", f.starter.cancelRequests, f.starter.plans)
 			}
 			got := f.starter.cancelRequests[0]
-			if got.Principal != tt.want || got.Reason != "stop" {
-				t.Fatalf("cancel request = %+v, want principal %q and reason stop", got, tt.want)
+			if got.Reason != "stop" {
+				t.Fatalf("cancel request = %+v, want reason stop", got)
 			}
-			if len(got.Principal) > engine.CanceledByMaxBytes {
-				t.Fatalf("principal of %d bytes is over the bound the run reads back", len(got.Principal))
+			if recorded := f.starter.plans[0].Origin.Principal; got.Principal != recorded {
+				t.Fatalf("the cancel passes principal %q, but the run's origin recorded %q for the same header", got.Principal, recorded)
+			}
+			if len(got.Principal) > bound || len(got.Principal) > engine.CanceledByMaxBytes || !utf8.ValidString(got.Principal) {
+				t.Fatalf("principal of %d bytes (valid UTF-8 %v), want a valid string of at most %d and at most the %d the run reads back",
+					len(got.Principal), utf8.ValidString(got.Principal), bound, engine.CanceledByMaxBytes)
+			}
+			if !tt.bounded && got.Principal != tt.exact {
+				t.Fatalf("principal = %q, want %q", got.Principal, tt.exact)
+			}
+			if tt.bounded && (!strings.HasSuffix(got.Principal, artifacts.AttemptTruncationMarker) || len(got.Principal) < bound-utf8.UTFMax) {
+				t.Fatalf("principal = %q, want the header cut to nearly %d bytes and ending in the truncation marker", got.Principal, bound)
 			}
 		})
 	}

@@ -4,5 +4,6 @@ Pinned      ghcr.io/acme/broken@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 Media type  application/vnd.oci.image.manifest.v1+json
 Platforms   -
 Resolved    2026-01-02T03:04:05Z
+Icon        none — clients draw the default icon
 
 Interface   malformed — label is not the JSON encoding of an ActivityInterface: proto: (line 1:27): unknown field "pattern"
