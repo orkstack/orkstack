@@ -59,7 +59,10 @@ type snapshotWritesOutbound struct {
 }
 
 func (o *snapshotWritesOutbound) ExecuteLocalActivity(ctx workflow.Context, activityType string, args ...any) workflow.Future {
-	if sequence, ok := args[1].(int64); ok && (activityType == engine.ActivityWriteSnapshot || activityType == engine.ActivityWriteSnapshotOrOverlay) {
+	if activityType != engine.ActivityWriteSnapshot && activityType != engine.ActivityWriteSnapshotOrOverlay || len(args) < 2 {
+		return o.Next.ExecuteLocalActivity(ctx, activityType, args...)
+	}
+	if sequence, ok := args[1].(int64); ok {
 		o.root.mu.Lock()
 		if o.root.writes == nil {
 			o.root.writes = map[int64]int{}
