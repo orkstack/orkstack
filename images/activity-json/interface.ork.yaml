@@ -1,42 +1,87 @@
 # The with: contract of images/activity-json (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
-# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
-# that line.
+# Dockerfile's three activity LABEL lines (interface, icon and docs); edit
+# this file, never those lines.
 apiVersion: orkstack/v1
 kind: ActivityInterface
+description: >-
+  Runs one jq filter over JSON files, a fan-out's items or nothing at all, or
+  deep-merges JSON objects: the default compute step. The one result is reported
+  as `result`, or written as an artifact when `as` is set.
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M6 2.5c-1.6 0-2 .8-2 2v1.6c0 .9-.5 1.4-1.5 1.9 1 .5 1.5 1 1.5 1.9v1.6c0 1.2.4 2 2 2M10 2.5c1.6 0 2 .8 2 2v1.6c0 .9.5 1.4 1.5 1.9-1 .5-1.5 1-1.5 1.9v1.6c0 1.2-.4 2-2 2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
 ops:
   query:
+    description: >-
+      Runs `filter` over exactly one source: `src`, `srcs`, `gather` or
+      `nullInput`.
     fields:
       filter:
         type: string
         required: true
+        description: >-
+          One jq program, such as `.items | length`, at most 64 KiB, that
+          produces exactly one result.
       src:
         type: string
+        description: >-
+          One JSON file for the filter to read.
       slurp:
         type: boolean
         default: false
+        description: >-
+          Only with `src`: reads every JSON value in the file as one array, for
+          JSON Lines.
       srcs:
         type: array
+        description: >-
+          JSON files the filter reads as one array of every value they hold, in
+          order.
       gather:
         type: string
+        description: >-
+          A fan-out task's id: the filter reads its items' `values.json` objects
+          as one array, in item order.
       nullInput:
         type: boolean
         default: false
+        description: >-
+          Runs the filter once with `null` as its input, reading no file.
       vars:
         type: object
+        description: >-
+          An object bound as the jq variable `$vars`, read as `$vars.region` or
+          `$vars["a key"]`; at most 64 KiB as compact JSON.
       as:
         type: string
+        description: >-
+          Writes the result as an output artifact of this name instead of
+          reporting it as `result`.
   merge:
+    description: >-
+      Deep-merges JSON objects, left to right.
     fields:
       srcs:
         type: array
         required: true
+        description: >-
+          At least two files, each holding exactly one JSON object, merged in
+          order.
       as:
         type: string
+        description: >-
+          Writes the merged object as an output artifact of this name instead of
+          reporting it as `result`.
 values:
   path:
     type: string
+    description: >-
+      When `as` is set, the artifact the result was written to.
   sizeBytes:
     type: number
+    description: >-
+      When `as` is set, the artifact's size in bytes.
   sha256:
     type: string
+    description: >-
+      When `as` is set, the artifact's SHA-256 in hex.

@@ -44,12 +44,15 @@ ENV GIT_ALLOW_PROTOCOL=https
 # Never root.
 USER 65532:65532
 
-# The with: contract, declared (docs/ACTIVITY_IMAGES.md, "Declaring the
-# interface"). Optional: the engine checks a document's with: against it at
-# validate and apply; the container never reads it. The line is generated
-# from interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`: edit
-# that file, never this line.
+# The with: contract, the icon and the descriptions, declared
+# (docs/ACTIVITY_IMAGES.md, "Declaring the interface"). Optional: the engine
+# checks a document's with: against the interface at validate and apply, and
+# clients draw the icon and show the descriptions; the container never reads
+# them. The three lines are generated from interface.ork.yaml by
+# `go run ./internal/schemas/cmd/genschemas`: edit that file, never these lines.
 LABEL org.orkstack.activity.interface='{"schemaVersion":1,"fields":{"caFile":{"type":"string"},"ref":{"type":"string"},"tokenSecret":{"type":"string"},"tokenUser":{"type":"string","default":"x-access-token"},"url":{"type":"string","required":true}},"ops":{"clone":{"fields":{"as":{"type":"string","default":"src.tar.gz"},"depth":{"type":"number","default":1},"dest":{"type":"string"}}},"resolve":{}},"values":{"commit":{"type":"string"},"path":{"type":"string"},"ref":{"type":"string"},"sha256":{"type":"string"},"sizeBytes":{"type":"number"}}}'
+LABEL org.orkstack.activity.icon='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><circle cx="4.5" cy="3.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="4.5" cy="12.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="11.5" cy="5.5" r="1.7" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M4.5 5.2v5.6M11.5 7.2c0 2.6-2.2 3.2-5.4 4.1" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>'
+LABEL org.orkstack.activity.docs='{"schemaVersion":1,"description":"Reads a git repository over HTTPS: checks one commit out as a source tarball or as a working tree in a pin, or resolves a ref to its commit. A token is read from a secret file and kept out of every argument, URL and log.","fields":{"caFile":"A PEM bundle in the workspace that replaces git\u0027s trust store for this task.","ref":"A branch, a tag, a full ref name or a full commit id. Without it, the remote\u0027s `HEAD`.","tokenSecret":"The name of a `secrets:` entry whose file holds the access token.","tokenUser":"The user name sent with the token, such as `oauth2` for GitLab or `x-token-auth` for Bitbucket.","url":"The repository\u0027s `https://` URL, with no credentials, query or fragment."},"ops":{"clone":{"description":"Checks one commit out, as a source tarball (`as`) or into a pin\u0027s shared directory (`dest`).","fields":{"as":"The source tarball\u0027s artifact name.","depth":"How many commits of history to fetch; `0` fetches all of it.","dest":"A directory under `/orkstack/shared` to check out into instead of a tarball; only for a pinned task."}},"resolve":{"description":"Resolves `ref` to its commit id and fetches nothing else."}},"values":{"commit":"The full id of the commit checked out or resolved.","path":"The tarball or the working tree the checkout wrote.","ref":"The remote ref that matched, or the commit id itself when `ref` was one.","sha256":"When `as` is used, the tarball\u0027s SHA-256 in hex.","sizeBytes":"When `as` is used, the tarball\u0027s size in bytes."}}'
 
 # Exec form, mandatory.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]

@@ -138,8 +138,8 @@ func (s *Service) resolveImages(ctx context.Context, wf *orkstackv1.Orkflow) (ds
 }
 
 // fillActivityInfo copies one resolution into a catalog or inspect answer.
-// The interface is a READ-MODEL field, like resolved_at: derived from the
-// digest-addressed image on every read and stored nowhere.
+// The interface, icon and docs are READ-MODEL fields, like resolved_at:
+// derived from the digest-addressed image and stored nowhere.
 func fillActivityInfo(info *orkstackv1.ActivityInfo, res *dsl.Resolution, now time.Time) {
 	image := res.Image
 	info.IndexDigest = image.GetIndexDigest()
@@ -148,6 +148,10 @@ func fillActivityInfo(info *orkstackv1.ActivityInfo, res *dsl.Resolution, now ti
 	info.ResolvedAt = timestamppb.New(now)
 	info.Interface = res.Interface
 	info.InterfaceError = res.InterfaceError
+	info.Icon = res.Icon
+	info.IconError = res.IconError
+	info.Docs = res.Docs
+	info.DocsError = res.DocsError
 }
 
 func (s *Service) activityCatalog() dsl.Catalog {

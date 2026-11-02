@@ -1,10 +1,13 @@
 package dsl
 
 import (
+	"encoding/json"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // schemaKeys reads an object schema's property names, sorted.
@@ -111,4 +114,87 @@ func TestActivityInterfaceSchema_BoundsAreTheParsers(t *testing.T) {
 			t.Errorf("the type pattern %s does not name %s", pattern, word)
 		}
 	}
+}
+
+// stringVerdict evaluates the string keywords a generated schema uses for a
+// description — type, minLength, maxLength (in characters, as JSON Schema
+// counts) and pattern — against one value.
+func stringVerdict(t *testing.T, schema map[string]any, value string) bool {
+	t.Helper()
+	if schema["type"] != "string" {
+		t.Fatalf("schema %v is not a string schema", schema)
+	}
+	n := utf8.RuneCountInString(value)
+	if limit, ok := schema["minLength"].(int); ok && n < limit {
+		return false
+	}
+	if limit, ok := schema["maxLength"].(int); ok && n > limit {
+		return false
+	}
+	if pattern, ok := schema["pattern"].(string); ok && !regexp.MustCompile(pattern).MatchString(value) {
+		return false
+	}
+	return true
+}
+
+// TestActivityInterfaceSchema_JudgesLengthAndLineBreaksAsThePackerDoes: for
+// each place a description stands, the generated schema and the packer
+// agree on the rules the schema models — not empty, a length in
+// characters, no line break but a block scalar's last — so the editor flags
+// those refusals and none the packer would accept. The schema does not
+// model the character rules (control, format, noncharacters) or the icon's
+// SVG allowlist; those are the parser's alone.
+func TestActivityInterfaceSchema_JudgesLengthAndLineBreaksAsThePackerDoes(t *testing.T) {
+	root, err := ActivityInterfaceSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defs := root["definitions"].(map[string]any)
+	description := func(def map[string]any) map[string]any {
+		return def["properties"].(map[string]any)["description"].(map[string]any)
+	}
+	places := []struct {
+		name     string
+		schema   map[string]any
+		document func(quoted string) string
+		limit    int
+	}{
+		{"the activity", unwrapDescribed(description(root)),
+			func(q string) string { return "description: " + q + "\n" }, MaxActivityDescriptionChars},
+		{"a key", unwrapDescribed(description(defs["activityinterface.field"].(map[string]any))),
+			func(q string) string { return "fields:\n  a:\n    type: string\n    description: " + q + "\n" }, MaxDescriptionChars},
+		{"an op", unwrapDescribed(description(defs["activityinterface.op"].(map[string]any))),
+			func(q string) string { return "ops:\n  a:\n    description: " + q + "\n" }, MaxDescriptionChars},
+	}
+	for _, place := range places {
+		for _, value := range []string{
+			"Copies one file.",
+			"Two `code` spans and ünïcödé.",
+			"A folded block scalar ends with a line break.\n",
+			"one\ntwo",
+			"one\r\ntwo",
+			"one\rtwo",
+			strings.Repeat("日", place.limit),
+			strings.Repeat("a", place.limit+1),
+			"",
+		} {
+			quoted, err := json.Marshal(value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, parseErr := ParseActivityDocument([]byte("apiVersion: orkstack/v1\nkind: ActivityInterface\n" + place.document(string(quoted))))
+			if schema := stringVerdict(t, place.schema, value); schema != (parseErr == nil) {
+				t.Errorf("%s: for %q the schema says %v, the packer %v", place.name, truncateText(value), schema, parseErr)
+			}
+		}
+	}
+}
+
+// unwrapDescribed is a property's own schema, under withDescription's allOf
+// when it has one.
+func unwrapDescribed(schema map[string]any) map[string]any {
+	if all, ok := schema["allOf"].([]any); ok && len(all) == 1 {
+		return all[0].(map[string]any)
+	}
+	return schema
 }

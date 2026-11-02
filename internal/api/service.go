@@ -444,6 +444,9 @@ type Service struct {
 	// digest. Both live here because ApplyOrkflow is where §4.3 puts them.
 	catalog  dsl.Catalog
 	resolver ImageResolver
+	// pinnedActivities answers InspectActivity for a digest-pinned reference
+	// this process has already read (activity_inspect_cache.go).
+	pinnedActivities *pinnedActivityCache
 	// router resolves which cluster answers for a namespace or a run. It
 	// holds one binding today; every read and write path goes through it, so
 	// partitioning namespaces across clusters later is configuration rather
@@ -565,6 +568,7 @@ func NewService(cfg Config) *Service {
 		capabilities:          cfg.Capabilities,
 		catalog:               cfg.Catalog,
 		resolver:              cfg.Resolver,
+		pinnedActivities:      newPinnedActivityCache(),
 		system:                cfg.System,
 		telemetrySinks:        cfg.TelemetrySinks,
 		router:                cfg.Router,

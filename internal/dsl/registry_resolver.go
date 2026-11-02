@@ -16,6 +16,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -127,8 +129,20 @@ type Resolution struct {
 	// Interface is the parsed label, or nil when the image carries none or
 	// InterfaceError says why it could not be read.
 	Interface *orkstackv1.ActivityInterface
-	// InterfaceError is ActivityInfo.interface_error, verbatim.
+	// InterfaceError is ActivityInfo.interface_error: the parser's reason,
+	// through SafeReason.
 	InterfaceError string
+	// Icon is the parsed IconLabel label, or nil when the image carries
+	// none, an empty one, or IconError says why it could not be read.
+	Icon *orkstackv1.ActivityIcon
+	// IconError is ActivityInfo.icon_error, through SafeReason.
+	IconError string
+	// Docs is the parsed DocsLabel label, checked against Interface, or nil
+	// when the image carries none, an empty one, or DocsError says why it
+	// could not be read.
+	Docs *orkstackv1.ActivityDocs
+	// DocsError is ActivityInfo.docs_error, through SafeReason.
+	DocsError string
 }
 
 // Resolutions is ResolveOrkflow's answer, keyed by the task's `uses:` —
@@ -252,13 +266,15 @@ func (r *Resolver) Inspect(ctx context.Context, uses, reference string) (*Resolu
 const errNoPlatformManifest = "index advertises no platform manifest to read a config from"
 
 // readInterface is §4.3 step 7: locate the image manifest, read its config
-// blob, and parse the interface label from config.Labels.
+// blob, and parse the interface, icon and docs labels from config.Labels.
 //
 // A failure to FETCH (7a–7d) fails resolution: a registry that serves a
 // manifest but not its config cannot serve a pull, and apply must not pin a
 // digest nobody can pull (step 5). A label that cannot be PARSED never fails
 // resolution (7e) — the image is still pinned and runnable, and only the
-// apply-time check is lost, which InterfaceError reports.
+// apply-time check, the icon or the docs is lost, which InterfaceError,
+// IconError or DocsError reports. The three are read independently: one
+// label that cannot be read never costs another.
 func (r *Resolver) readInterface(ctx context.Context, ref Reference, body []byte, contentType string,
 	authorization *string, res *Resolution,
 ) error {
@@ -267,7 +283,7 @@ func (r *Resolver) readInterface(ctx context.Context, ref Reference, body []byte
 	case MediaTypeOCIIndex, MediaTypeDockerManifestList:
 		digest, ok := selectPlatformManifest(body)
 		if !ok {
-			res.InterfaceError = errNoPlatformManifest
+			res.noConfig()
 			return nil
 		}
 		platform, platformType, _, err := r.getManifest(ctx, ref, digest, authorization)
@@ -281,7 +297,7 @@ func (r *Resolver) readInterface(ctx context.Context, ref Reference, body []byte
 		}
 		switch mediaTypeOf(platformType) {
 		case MediaTypeOCIIndex, MediaTypeDockerManifestList:
-			res.InterfaceError = errNoPlatformManifest
+			res.noConfig()
 			return nil
 		}
 		manifest = platform
@@ -301,21 +317,111 @@ func (r *Resolver) readInterface(ctx context.Context, ref Reference, body []byte
 			Detail: fmt.Sprintf("manifest names config %s but the registry served a blob hashing to %s",
 				configDigest, got)}
 	}
-	value, present, err := labelOf(config, InterfaceLabel)
+	labels, err := labelsOf(config)
 	if err != nil {
 		return &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
 			Detail: "config blob is not valid JSON", Err: err}
 	}
-	if !present {
-		return nil
-	}
-	iface, err := ParseInterfaceLabel(value)
-	if err != nil {
-		res.InterfaceError = err.Error()
-		return nil
-	}
-	res.Interface = iface
+	labelReaders{iface: ParseInterfaceLabel, icon: ParseIconLabel, docs: ParseDocsLabel}.read(labels, res)
 	return nil
+}
+
+// noConfig is the answer for an index step 7a cannot read a config through:
+// whether the image declares an interface, an icon or docs cannot be known,
+// and each says so rather than reading as "declares none".
+func (res *Resolution) noConfig() {
+	res.InterfaceError = errNoPlatformManifest
+	res.IconError = errNoPlatformManifest
+	res.DocsError = errNoPlatformManifest
+}
+
+// labelReaders are the parsers readLabels runs, one per label. They are a
+// value so a test can stand in a parser whose message quotes raw bytes —
+// today's parsers quote everything they echo — and see that the reason a
+// client is given is still safe: SafeReason is defence in depth.
+type labelReaders struct {
+	iface func(string) (*orkstackv1.ActivityInterface, error)
+	icon  func(string) (*orkstackv1.ActivityIcon, error)
+	docs  func(string) (*orkstackv1.ActivityDocs, error)
+}
+
+// read parses the three activity labels of one config into res. The
+// interface label is read exactly as before the icon and docs labels
+// existed: present means parsed, and its error is its own.
+func (r labelReaders) read(labels map[string]string, res *Resolution) {
+	if value, present := labels[InterfaceLabel]; present {
+		if iface, err := r.iface(value); err != nil {
+			res.InterfaceError = SafeReason(err.Error())
+		} else {
+			res.Interface = iface
+		}
+	}
+	if icon, err := r.icon(labels[IconLabel]); err != nil {
+		res.IconError = SafeReason(err.Error())
+	} else {
+		res.Icon = icon
+	}
+	docs, err := r.docs(labels[DocsLabel])
+	if err == nil && docs != nil {
+		err = CheckDocsAgainstInterface(docs, res.Interface)
+	}
+	if err != nil {
+		res.DocsError = SafeReason(err.Error())
+	} else {
+		res.Docs = docs
+	}
+}
+
+// maxReasonBytes bounds a reason a label could not be read.
+const maxReasonBytes = 512
+
+// SafeReason is why a label could not be read, as every client may show it:
+// a parser's message can quote the label, which an untrusted image wrote, so
+// every control or format character and every byte that is not UTF-8 is
+// written as an escape, and the reason is cut to at most maxReasonBytes, an
+// ellipsis included. What it
+// returns holds no character that moves a terminal's cursor or reorders a
+// line.
+func SafeReason(reason string) string {
+	var pieces []string
+	total := 0
+	for i := 0; i < len(reason); {
+		r, size := utf8.DecodeRuneInString(reason[i:])
+		var piece string
+		switch {
+		case r == utf8.RuneError && size <= 1:
+			piece = fmt.Sprintf("\\x%02x", reason[i])
+		case unicode.IsControl(r), unicode.Is(unicode.Cf, r), r == 0x2028, r == 0x2029:
+			piece = runeEscape(r)
+		default:
+			piece = string(r)
+		}
+		pieces = append(pieces, piece)
+		total += len(piece)
+		i += size
+	}
+	if total <= maxReasonBytes {
+		return strings.Join(pieces, "")
+	}
+	// Cut between pieces, never inside an escape or a character, with room
+	// for the ellipsis that says the reason was cut.
+	var b strings.Builder
+	for _, piece := range pieces {
+		if b.Len()+len(piece) > maxReasonBytes-len("…") {
+			break
+		}
+		b.WriteString(piece)
+	}
+	return b.String() + "…"
+}
+
+// runeEscape is r as a Go escape: \uXXXX, or \UXXXXXXXX past the Basic
+// Multilingual Plane, so the digits after it are never read as its own.
+func runeEscape(r rune) string {
+	if r > 0xffff {
+		return fmt.Sprintf("\\U%08x", r)
+	}
+	return fmt.Sprintf("\\u%04x", r)
 }
 
 func digestOf(body []byte) string {
@@ -379,19 +485,18 @@ func configDescriptor(manifest []byte) (string, error) {
 	return parsed.Config.Digest, nil
 }
 
-// labelOf reads config.Labels[name] from an OCI image config (Docker's
-// config uses the same path).
-func labelOf(config []byte, name string) (string, bool, error) {
+// labelsOf reads config.Labels from an OCI image config (Docker's config
+// uses the same path).
+func labelsOf(config []byte) (map[string]string, error) {
 	var parsed struct {
 		Config struct {
 			Labels map[string]string `json:"Labels"`
 		} `json:"config"`
 	}
 	if err := json.Unmarshal(config, &parsed); err != nil {
-		return "", false, err
+		return nil, err
 	}
-	value, present := parsed.Config.Labels[name]
-	return value, present, nil
+	return parsed.Config.Labels, nil
 }
 
 // indexPlatforms reads manifests[].platform for an index, and returns nothing

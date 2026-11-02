@@ -1,34 +1,67 @@
 # The with: contract of images/activity-shell (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
-# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
-# that line.
+# Dockerfile's three activity LABEL lines (interface, icon and docs); edit
+# this file, never those lines.
 apiVersion: orkstack/v1
 kind: ActivityInterface
+description: >-
+  Runs a command, a script or an expression in the container and reports how it
+  ended. `command` is argv, never a shell string, so a rendered value cannot
+  become code.
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="1.75" y="1.75" width="12.5" height="12.5" rx="2.5" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M10 5.6c-.4-.6-1.1-.9-2-.9-1.1 0-1.9.6-1.9 1.4 0 .9.8 1.2 1.9 1.5 1.1.3 1.9.7 1.9 1.6 0 .9-.8 1.5-1.9 1.5-.9 0-1.6-.3-2-.9M8 3.6v1.1M8 11.2v1.2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
 ops:
   exec:
+    description: >-
+      Runs `command` as argv; its exit status is the task's. The op used when
+      `op` is absent.
     fields:
       command:
         type: array
         required: true
+        description: >-
+          The argv to run, one element per argument, never handed to a shell.
   script:
+    description: >-
+      Writes `script` to a file and runs it; its exit status is the task's.
     fields:
       script:
         type: string
         required: true
+        description: >-
+          The program text, written to `/orkstack/tmp/script` and made
+          executable.
       interpreter:
         type: string
+        description: >-
+          The program that runs the script, such as `python3`. Without it the
+          script's own shebang line decides, and `sh` runs a script without one.
       command:
         type: array
+        description: >-
+          Arguments passed to the script as its positional parameters.
   eval:
+    description: >-
+      Runs `command` as argv and reports its stdout as `value`. A non-zero exit
+      is reported in `exitCode`, not as a failure.
     fields:
       command:
         type: array
         required: true
+        description: >-
+          The argv to run, one element per argument. What it prints on stdout
+          becomes `value`.
 defaultOp: exec
 values:
   exitCode:
     type: number
+    description: >-
+      The exit status of the command or script.
   scriptPath:
     type: string
+    description: >-
+      Where `op: script` wrote the script.
   value:
     type: string
+    description: >-
+      What the command of `op: eval` printed on stdout.

@@ -62,6 +62,13 @@
           "pattern": "^[a-z][a-z0-9_-]{0,63}$",
           "type": "string"
         },
+        "description": {
+          "description": "What the activity does: one paragraph of plain text, `code` in backticks; packed into the `org.orkstack.activity.docs` label.",
+          "maxLength": 1000,
+          "minLength": 1,
+          "pattern": "^[^\\n\\r]*\\n?$",
+          "type": "string"
+        },
         "fields": {
           "allOf": [
             {
@@ -69,6 +76,11 @@
             }
           ],
           "description": "The top-level `with:` keys every op reads (for an image with no `op`, the whole `with:` block)."
+        },
+        "icon": {
+          "description": "The image's icon: one SVG on viewBox=\"0 0 16 16\" of path, circle, ellipse, rect, line, polyline, polygon and g, drawn in currentColor, at most 2048 bytes; packed into the `org.orkstack.activity.icon` label. Clients draw a default icon for an image without one.",
+          "minLength": 1,
+          "type": "string"
         },
         "kind": {
           "const": "ActivityInterface",
@@ -114,10 +126,17 @@
     },
     "activityinterface.field": {
       "additionalProperties": false,
-      "description": "One `with:` key: `type`, `required` and a documentary `default` — the vocabulary an Orkflow's `inputs:` has, and not one word more.",
+      "description": "One `with:` key: `type`, `required` and a documentary `default` — the vocabulary an Orkflow's `inputs:` has, and not one word more — and a `description`, which packs into the `org.orkstack.activity.docs` label instead.",
       "properties": {
         "default": {
           "description": "Documentary: what the image assumes when the key is absent. Never written into `with:`; not null, and of the declared type."
+        },
+        "description": {
+          "description": "What this key means: one paragraph of plain text, `code` in backticks; packed into the `org.orkstack.activity.docs` label.",
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^[^\\n\\r]*\\n?$",
+          "type": "string"
         },
         "required": {
           "description": "The image refuses to run without this key. A key with a default is never required.",
@@ -151,8 +170,15 @@
     },
     "activityinterface.op": {
       "additionalProperties": false,
-      "description": "One op: the keys it reads beside `fields`.",
+      "description": "One op: what it does, and the keys it reads beside `fields`.",
       "properties": {
+        "description": {
+          "description": "What this op does: one paragraph of plain text, `code` in backticks; packed into the `org.orkstack.activity.docs` label.",
+          "maxLength": 500,
+          "minLength": 1,
+          "pattern": "^[^\\n\\r]*\\n?$",
+          "type": "string"
+        },
         "fields": {
           "allOf": [
             {

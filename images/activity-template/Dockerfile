@@ -63,12 +63,15 @@ ENV TZ=UTC
 # Never root.
 USER 65532:65532
 
-# The with: contract, declared (docs/ACTIVITY_IMAGES.md, "Declaring the
-# interface"). Optional: the engine checks a document's with: against it at
-# validate and apply; the container never reads it. The line is generated
-# from interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`: edit
-# that file, never this line.
+# The with: contract, the icon and the descriptions, declared
+# (docs/ACTIVITY_IMAGES.md, "Declaring the interface"). Optional: the engine
+# checks a document's with: against the interface at validate and apply, and
+# clients draw the icon and show the descriptions; the container never reads
+# them. The three lines are generated from interface.ork.yaml by
+# `go run ./internal/schemas/cmd/genschemas`: edit that file, never these lines.
 LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"render":{"fields":{"as":{"type":"string"},"data":{"type":"string"},"datasources":{"type":"object"},"leftDelim":{"type":"string"},"rightDelim":{"type":"string"},"src":{"type":"string","required":true},"values":{"type":"object"}}}},"values":{"path":{"type":"string"},"sha256":{"type":"string"},"sizeBytes":{"type":"number"}}}'
+LABEL org.orkstack.activity.icon='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="2" y="2.5" width="12" height="11" rx="1.8" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M2 6h12M6.2 6v7.5" stroke="currentColor" stroke-width="1.4"/></svg>'
+LABEL org.orkstack.activity.docs='{"schemaVersion":1,"description":"Renders one text file from a template with gomplate, from a JSON data file, inline values and named datasources. A key the template reads that the data does not hold is an error, not an empty string.","ops":{"render":{"description":"Renders `src` into one output artifact.","fields":{"as":"The output artifact\u0027s name. Defaults to the base name of `src` without `.tmpl`, `.tpl` or `.gotmpl`.","data":"A JSON file holding an object: the template\u0027s root data, and the datasource `data`.","datasources":"Datasource name to file path. A file ending in `.yaml` or `.yml` is read as YAML, any other as JSON.","leftDelim":"The opening delimiter to use instead of `{{`, for a file that holds `{{` itself. Set together with `rightDelim`.","rightDelim":"The closing delimiter to use instead of `}}`. Set together with `leftDelim`.","src":"The template file. A relative path resolves under `/orkstack/input`.","values":"An inline object deep-merged over `data` for the root data, and the datasource `values`."}}},"values":{"path":"The artifact the render wrote.","sha256":"The artifact\u0027s SHA-256 in hex.","sizeBytes":"The artifact\u0027s size in bytes."}}'
 
 # Exec form, mandatory.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]
