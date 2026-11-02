@@ -1,0 +1,25 @@
+Activity    ghcr.io/acme/described:1 (reference)
+Reference   ghcr.io/acme/described:1
+Pinned      ghcr.io/acme/described@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+Media type  application/vnd.oci.image.manifest.v1+json
+Platforms   -
+Resolved    2026-01-02T03:04:05Z
+Description Copies files into output artifacts, and says what it copied in `values.json`, one file at a time.
+Icon        declared · 6 elements
+
+Interface   schema 1 · selected by op: (2 ops, default copy) · 1 key shared by every op
+
+OP     KEY      TYPE     REQUIRED  DEFAULT  DESCRIPTION
+*      verbose  boolean  no        -        Prints each file it copies.
+check  -        -        -         -        -
+copy   src      string   yes       -        The file to copy, under `/orkstack/input`. A relative path resolves there, and …
+
+OPS
+OP     DESCRIPTION
+check  -
+copy   Copies one file.
+
+VALUES
+KEY   TYPE    DESCRIPTION
+path  string  The artifact the copy wrote.
+size  number  -

@@ -38,7 +38,7 @@ first-party image is built exactly the way any third-party image is.
 Flags:
 
 - `--file STRING` — path to the Dockerfile
-- `--interface STRING` — a kind: ActivityInterface document to pack into the image's org.orkstack.activity.interface label (it replaces a LABEL of that key in the Dockerfile)
+- `--interface STRING` — a kind: ActivityInterface document to pack into the image's org.orkstack.activity.interface, org.orkstack.activity.icon and org.orkstack.activity.docs labels (each replaces a LABEL of that key in the Dockerfile; an icon or descriptions the document does not declare are set empty, clearing a base image's)
 - `--platform STRING` — target platform(s), e.g. linux/amd64,linux/arm64
 - `--push` (default `true`) — push after building; --push=false builds only
 - `--tag STRING` — the registry reference to build and push (required)
@@ -59,6 +59,9 @@ registry reference ("ghcr.io/acme/migrate:v3") — and show the digest it pins
 and the with: interface the image declares in its
 org.orkstack.activity.interface label: which keys each op reads, their type,
 whether each is required, and the keys the image writes to values.json.
+It also shows whether the image declares an icon (org.orkstack.activity.icon)
+and the descriptions it gives of itself, its ops and its keys
+(org.orkstack.activity.docs); --json carries them whole.
 
 An image without the label is an ordinary activity; its with: is checked by the
 image itself at run time. This reads engine configuration and the registry,
@@ -84,16 +87,26 @@ Inherited flags:
 
 ## `orkctl activity interface pack`
 
-Print the interface label value a kind: ActivityInterface document packs into
+Print a label value a kind: ActivityInterface document packs into
 
-Read a kind: ActivityInterface document and print the value of the
-org.orkstack.activity.interface label it packs into: compact JSON,
-one line, the same bytes for the same declaration. The document is checked
-by the rules the engine reads a label by, so a value this prints is never
-one the engine refuses.
+Read a kind: ActivityInterface document and print the value of one label it
+packs into: one line — compact JSON, or the icon's canonical SVG — the same
+bytes for the same declaration.
+The document is checked by the rules the engine reads each label by, so a
+value this prints is never one the engine refuses.
 
-Pass the value to any toolchain's --label, or use `orkctl activity build
---interface FILE`, which does so itself.
+--label names the label: interface (the default) is org.orkstack.activity.interface,
+icon is org.orkstack.activity.icon and docs is org.orkstack.activity.docs,
+which hold the document's icon: and its descriptions. A document that
+declares no icon, or no description, prints an empty line: the empty value
+declares none, and clears a label a base image set.
+
+Pass the values to any toolchain's --label, or use `orkctl activity build
+--interface FILE`, which passes all three itself.
+
+Flags:
+
+- `--label STRING` (default `interface`) — the label to print: interface, icon or docs
 
 Inherited flags:
 

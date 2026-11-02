@@ -33,7 +33,7 @@ Defined in `proto/orkstack/v1/activity_service.proto`.
 | `DescribeOrker` | [`DescribeOrkerRequest`](#describeorkerrequest) | [`DescribeOrkerResponse`](#describeorkerresponse) | DescribeOrker is the pool-liveness probe (§6.5). It is answered by an Orker of that pool, so it answers only when an Orker is actually polling that pool. |
 | `ListOrkers` | [`ListOrkersRequest`](#listorkersrequest) | [`ListOrkersResponse`](#listorkersresponse) | ListOrkers is the fleet: one row per live Orker of the deployment, derived on read. Like Pool, nothing WRITES an Orker — the list comes from the cluster's own poller records and each Orker's own answer, so any replica answers and none holds state of its own (AGENTS.md §7). It NARROWS rather than refusing: an Orker that did not answer keeps its row and carries unavailable_reason. Two conditions are distinct: a known poller whose describe failed is a row with unavailable_reason; an orker_id that NO live poller answers to is an EMPTY list, never NOT_FOUND — a read for an id nothing polls is an empty answer, and the drain loop relies on it (CordonOrker, a write, is the one that answers NOT_FOUND for that id).<br><br>An orker_id EQUALS filter asks exactly that one Orker, and no other, and returns at most one row: it is what `orkctl orker get` and the drain loop send, so a drain costs one activity per poll and not one per Orker of the fleet. Every other filter is applied to the inventory; an unreachable row is kept under a pool, build_id or cordoned filter, since none of those was measured on it. A malformed orker_id in an equals, not-equals or in filter is INVALID_ARGUMENT before any read. |
 | `CordonOrker` | [`CordonOrkerRequest`](#cordonorkerrequest) | [`CordonOrkerResponse`](#cordonorkerresponse) | CordonOrker sets or clears ONE Orker's cordon: a process-local flag delivered to that Orker alone, lost when the process exits. A cordoned Orker takes no new task and opens no new pin; everything already in flight on it is untouched. The response is the Orker's state AFTER the change, as the Orker itself reported it. |
-| `InspectActivity` | [`InspectActivityRequest`](#inspectactivityrequest) | [`InspectActivityResponse`](#inspectactivityresponse) | InspectActivity resolves ONE reference on demand — a catalog name or any registry reference `uses:` would accept — and reports it as ListActivities would: the pinned digest, platforms, and the interface the image declares. It is uncached, reads engine configuration and the registry only, never asks an Orker, and writes nothing. |
+| `InspectActivity` | [`InspectActivityRequest`](#inspectactivityrequest) | [`InspectActivityResponse`](#inspectactivityresponse) | InspectActivity resolves ONE reference on demand — a catalog name or any registry reference `uses:` would accept — and reports it as ListActivities would: the pinned digest, platforms, and the interface, icon and docs the image declares. It resolves afresh on every call, unless the request sets allow_cached for a reference that pins a digest. It reads engine configuration and the registry only, never asks an Orker, and writes nothing. |
 
 ### AuditService
 
@@ -290,13 +290,47 @@ Defined in `proto/orkstack/v1/webhook_service.proto`.
 
 ## Messages
 
+### ActivityDocs
+
+ActivityDocs holds the descriptions an image gives, in plain text, of
+itself, its ops, its with: keys and its values.json keys. The label
+org.orkstack.activity.docs holds this message's protojson encoding
+(lowerCamel names), verbatim. Every text is one paragraph of plain text,
+with no control character; text between a pair of backticks is code, and
+nothing else is interpreted.
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | `int32` | schema_version is 1. Any other value is reported through ActivityInfo.docs_error. |
+| `description` | `string` | description is the activity's, at most 1000 characters. |
+| `fields` | map&lt;`string`, `string`&gt; | fields describes keys of ActivityInterface.fields, at most 500 characters each. |
+| `ops` | map&lt;`string`, [`OpDocs`](#opdocs)&gt; | ops describes ops of ActivityInterface.ops, and the keys each declares. |
+| `values` | map&lt;`string`, `string`&gt; | values describes keys of ActivityInterface.values, at most 500 characters each. |
+
+### ActivityIcon
+
+ActivityIcon is an image's icon: one small single-colour SVG drawing on a
+16 by 16 grid, made only of the elements and attributes the
+org.orkstack.activity.icon label may hold (docs/ACTIVITY_IMAGES.md, "The
+icon"). The label holds the SVG text, at most 2048 bytes; this is that
+drawing as a tree, every name allowlisted and every value checked against
+its own grammar, never markup. The root svg element is implied: a client
+draws it with viewBox="0 0 16 16", fill="currentColor", and attributes.
+
+| Field | Type | Description |
+|---|---|---|
+| `attributes` | repeated [`IconAttribute`](#iconattribute) | attributes are the root svg element's presentation attributes, in the order the SVG gave them. |
+| `elements` | repeated [`IconElement`](#iconelement) | elements are the drawing below the root, in order: path, circle, ellipse, rect, line, polyline, polygon or g, at most 32 in all. |
+
 ### ActivityInfo
 
 ActivityInfo is one catalog entry, resolved.
 
-resolved_at is a READ-MODEL field on a live catalog read, and is unrelated
-to the ImageRef.resolved_at that activity.proto reserves: nothing hashes it,
-and it is never stored in a version document.
+resolved_at is a READ-MODEL field: when this answer was read from the
+registry (on a live catalog read, or the earlier read an allow_cached
+InspectActivity answer comes from). It is unrelated to the
+ImageRef.resolved_at that activity.proto reserves: nothing hashes it, and
+it is never stored in a version document.
 
 | Field | Type | Description |
 |---|---|---|
@@ -307,7 +341,11 @@ and it is never stored in a version document.
 | `platforms` | repeated `string` |  |
 | `resolved_at` | `google.protobuf.Timestamp` |  |
 | `interface` | [`ActivityInterface`](#activityinterface) | interface is what the image declares about its `with:` block, read from the org.orkstack.activity.interface label of the resolved image's config (§4.3 step 7). Unset when the image carries no label, when the label could not be read (interface_error says why), or when the reference did not resolve (index_digest is then empty too).<br><br>It is a READ-MODEL field exactly as resolved_at is: derived from immutable, digest-addressed content on every read, hashed by nothing, stored nowhere. |
-| `interface_error` | `string` | interface_error is non-empty when the image carries the label but it could not be turned into an ActivityInterface — malformed JSON, a schema_version this engine does not read, a vocabulary word outside the contract — or when the index advertised no platform manifest to read a config from. It distinguishes "declares nothing" from "declares something this engine cannot read". Empty whenever interface is set. |
+| `interface_error` | `string` | interface_error is non-empty when the image carries the label but it could not be turned into an ActivityInterface — malformed JSON, a schema_version this engine does not read, a vocabulary word outside the contract — or when the index advertised no platform manifest to read a config from. It distinguishes "declares nothing" from "declares something this engine cannot read". Empty whenever interface is set. Like icon_error and docs_error it is safe to show as text: a parser's message can quote what the image wrote, so every control or format character in it, and every byte that is not UTF-8, is written as an escape (\u001b, \xff), and it is at most 512 bytes. |
+| `icon` | [`ActivityIcon`](#activityicon) | icon is what the image draws itself as, read from the org.orkstack.activity.icon label of the same config, a READ-MODEL field exactly as interface is: hashed by nothing, stored nowhere, and never part of a task's image or a definition. Unset when the image carries no such label, an empty one, one that could not be read (icon_error says why), or when the reference did not resolve: a client then draws its default activity icon. Never markup: a client draws each element itself. |
+| `icon_error` | `string` | icon_error is non-empty when the image carries a non-empty icon label that could not be turned into an ActivityIcon, or when the index advertised no platform manifest to read a config from (interface_error and docs_error then say the same). Empty whenever icon is set. Escaped and bounded as interface_error is. |
+| `docs` | [`ActivityDocs`](#activitydocs) | docs is what the image says about itself in words, read from the org.orkstack.activity.docs label of the same config, a READ-MODEL field exactly as interface is. Its keys are interface's keys: a client joins the two by key. Unset when the image carries no such label, an empty one, or one that could not be read (docs_error says why). |
+| `docs_error` | `string` | docs_error is non-empty when the image carries a non-empty docs label that could not be turned into an ActivityDocs, one that describes an op or key the interface it was read with does not declare, or when no config could be read. Empty whenever docs is set. Escaped and bounded as interface_error is. |
 
 ### ActivityInterface
 
@@ -1363,6 +1401,26 @@ No fields.
 | `window_until` | `google.protobuf.Timestamp` |  |
 | `computed_at` | `google.protobuf.Timestamp` |  |
 
+### IconAttribute
+
+IconAttribute is one attribute of an icon element: an allowlisted name and
+a value held to that name's grammar.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `value` | `string` |  |
+
+### IconElement
+
+IconElement is one element of an ActivityIcon.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is path, circle, ellipse, rect, line, polyline, polygon or g. |
+| `attributes` | repeated [`IconAttribute`](#iconattribute) | attributes are its geometry and presentation attributes, in the order the SVG gave them. |
+| `children` | repeated [`IconElement`](#iconelement) | children are a g's elements; every other element has none. |
+
 ### ImagePolicy
 
 ImagePolicy is the deployment's supply-chain floor (AGENTS.md §5): which
@@ -1406,6 +1464,7 @@ what `pinned` names, whatever a tag does later.
 | Field | Type | Description |
 |---|---|---|
 | `reference` | `string` | reference is what a task would write in `uses:`, resolved by the same four rules (§4.2, Catalog.ResolveUses): a catalog name, or a registry reference carrying `/`, `:` or `@`. A template is refused. |
+| `allow_cached` | `bool` | allow_cached lets a reference that pins a digest ("repo@sha256:…", a task's image.pinned) be answered from what this replica already read for that digest, which never changes: a run page asks once per distinct image its tasks ran, and a cached answer costs no registry read. Such an answer carries the resolved_at of that earlier read, and may outlive a manifest deleted since. A tag is resolved afresh whatever this says, and a resolution that failed is never kept. False (orkctl activity inspect) resolves afresh: a deleted or unauthorized image fails exactly as apply would. Unrelated to a task's cache: and its memos. |
 
 ### InspectActivityResponse
 
@@ -1804,6 +1863,15 @@ presence check (hold != nil) and a hold can never be half-set.
 |---|---|---|
 | `reason` | `string` | reason is required. A hold with no reason is refused by the registry: the next operator to read this document is the one who has to decide whether to release it, and "on hold" with no why is not a decision they can make. It is a short human line, bounded at 512 bytes with no control characters, never a secret and never machine-parsed. |
 | `since` | `google.protobuf.Timestamp` | since is written by the registry on the write that SET the hold and preserved on every later write while it stays set, never supplied by a client — the same rule created_at/updated_at follow. Editing the reason of a hold does not move it: the door has been closed since the first write, whatever the sign on it now says. |
+
+### OpDocs
+
+OpDocs describes one op and the keys it reads beside the shared ones.
+
+| Field | Type | Description |
+|---|---|---|
+| `description` | `string` | description is the op's, at most 500 characters. |
+| `fields` | map&lt;`string`, `string`&gt; | fields describes keys of that op's OpSchema.fields, at most 500 characters each. |
 
 ### OpSchema
 

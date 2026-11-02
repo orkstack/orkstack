@@ -55,16 +55,17 @@ func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 
 			// The document is packed before anything is built, so one that
 			// cannot be packed builds nothing.
-			var label string
+			var labels []packedLabel
 			if iface != "" {
-				packed, err := packInterfaceFile(iface)
+				packed, err := packDocumentFile(iface)
 				if err != nil {
 					return err
 				}
-				label = packed
-				fmt.Fprintf(out, "Declaring the interface of %s in the %s label.\n", iface, dsl.InterfaceLabel)
+				labels = packed
+				fmt.Fprintf(out, "Declaring the interface, icon and descriptions of %s in the %s, %s and %s labels.\n",
+					iface, dsl.InterfaceLabel, dsl.IconLabel, dsl.DocsLabel)
 			}
-			if err := runDocker(cmd, out, activityBuildArgs(tag, platform, file, label, context)...); err != nil {
+			if err := runDocker(cmd, out, activityBuildArgs(tag, platform, file, labels, context)...); err != nil {
 				return err
 			}
 			if !push {
@@ -103,16 +104,17 @@ func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform(s), e.g. linux/amd64,linux/arm64")
 	cmd.Flags().StringVar(&file, "file", "", "path to the Dockerfile")
 	cmd.Flags().StringVar(&iface, "interface", "",
-		"a kind: ActivityInterface document to pack into the image's "+dsl.InterfaceLabel+
-			" label (it replaces a LABEL of that key in the Dockerfile)")
+		"a kind: ActivityInterface document to pack into the image's "+dsl.InterfaceLabel+", "+dsl.IconLabel+
+			" and "+dsl.DocsLabel+" labels (each replaces a LABEL of that key in the Dockerfile; an icon or "+
+			"descriptions the document does not declare are set empty, clearing a base image's)")
 	return cmd
 }
 
-// activityBuildArgs is the toolchain's argv for one build. A packed
-// interface is one --label key=value argument: no shell stands between
-// orkctl and the toolchain, so the label's quotes and braces arrive as they
-// are.
-func activityBuildArgs(tag, platform, file, label, context string) []string {
+// activityBuildArgs is the toolchain's argv for one build. Each packed label
+// is one --label key=value argument, an undeclared icon or docs with the
+// empty value: no shell stands between orkctl and the toolchain, so the
+// labels' quotes and braces arrive as they are.
+func activityBuildArgs(tag, platform, file string, labels []packedLabel, context string) []string {
 	args := []string{"build", "--tag", tag}
 	if platform != "" {
 		args = append(args, "--platform", platform)
@@ -120,8 +122,8 @@ func activityBuildArgs(tag, platform, file, label, context string) []string {
 	if file != "" {
 		args = append(args, "--file", file)
 	}
-	if label != "" {
-		args = append(args, "--label", dsl.InterfaceLabel+"="+label)
+	for _, label := range labels {
+		args = append(args, "--label", label.key+"="+label.value)
 	}
 	return append(args, context)
 }
@@ -146,13 +148,17 @@ func runDocker(cmd *cobra.Command, out interface{ Write([]byte) (int, error) }, 
 	return nil
 }
 
-// describeDockerArgs is argv for an error message: a packed interface label,
+// describeDockerArgs is argv for an error message: a packed activity label,
 // up to 64 KiB of JSON, is named by its size rather than echoed.
 func describeDockerArgs(args []string) string {
 	out := make([]string, len(args))
 	for i, arg := range args {
-		if value, ok := strings.CutPrefix(arg, dsl.InterfaceLabel+"="); ok {
-			arg = fmt.Sprintf("%s=<packed interface, %d bytes>", dsl.InterfaceLabel, len(value))
+		for _, label := range []struct{ key, what string }{
+			{dsl.InterfaceLabel, "interface"}, {dsl.IconLabel, "icon"}, {dsl.DocsLabel, "docs"},
+		} {
+			if value, ok := strings.CutPrefix(arg, label.key+"="); ok {
+				arg = fmt.Sprintf("%s=<packed %s, %d bytes>", label.key, label.what, len(value))
+			}
 		}
 		out[i] = arg
 	}

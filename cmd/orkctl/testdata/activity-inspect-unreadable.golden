@@ -1,0 +1,19 @@
+Activity    ghcr.io/acme/unreadable:1 (reference)
+Reference   ghcr.io/acme/unreadable:1
+Pinned      ghcr.io/acme/unreadable@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+Media type  application/vnd.oci.image.manifest.v1+json
+Platforms   -
+Resolved    2026-01-02T03:04:05Z
+Description malformed — describes the shared with: key "dest", which the interface does not declare; an image built FROM another inherits every label it does not set
+Icon        malformed — holds the element "script"\u001b]0;title\u0007; an icon holds only path, circle, ellipse, rect, line, polyline, polygon and g
+
+Interface   schema 1 · 3 keys
+
+KEY     TYPE     REQUIRED  DEFAULT
+dryRun  boolean  no        false
+region  string   no        "eu-west-1"
+target  string   yes       -
+
+VALUES
+KEY       TYPE
+deployed  boolean

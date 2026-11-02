@@ -4,6 +4,7 @@ Pinned      ghcr.io/acme/deploy@sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
 Media type  application/vnd.oci.image.manifest.v1+json
 Platforms   -
 Resolved    2026-01-02T03:04:05Z
+Icon        none — clients draw the default icon
 
 Interface   schema 1 · 3 keys
 

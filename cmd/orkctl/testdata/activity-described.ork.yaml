@@ -1,0 +1,31 @@
+# A small described activity interface: the fixture activity inspect's
+# described goldens render.
+apiVersion: orkstack/v1
+kind: ActivityInterface
+description: >-
+  Copies files into output artifacts, and says what it copied in
+  `values.json`, one file at a time.
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 2h6l3 3v9H4z" fill="none" stroke="currentColor" stroke-width="1.4"/><circle cx="8" cy="9" r="2"/><g transform="translate(0 1)"><path d="M6 12h4"/><g><path d="M6 13h4"/></g></g></svg>
+fields:
+  verbose:
+    type: boolean
+    description: Prints each file it copies.
+ops:
+  copy:
+    description: Copies one file.
+    fields:
+      src:
+        type: string
+        required: true
+        description: >-
+          The file to copy, under `/orkstack/input`. A relative path resolves
+          there, and a `..` component is refused rather than normalized away.
+  check: {}
+defaultOp: copy
+values:
+  path:
+    type: string
+    description: The artifact the copy wrote.
+  size:
+    type: number

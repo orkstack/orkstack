@@ -78,7 +78,7 @@ When a task is cancelled, the container gets `SIGTERM`. It has 30 seconds to exi
 | `--tag` | The registry reference to build and push. Required. |
 | `--platform` | Target platforms, such as `linux/amd64,linux/arm64`. |
 | `--push` | Push after the build. Default `true`. |
-| `--interface` | An `interface.ork.yaml` to pack into the image's interface label. |
+| `--interface` | An `interface.ork.yaml` to pack into the image's interface, icon and description labels. |
 
 `orkctl activity build <path>` prints a reference with `@sha256:` in it. Paste that reference into `uses:` if your deployment requires digests. A tag resolves to a digest when you apply.
 
@@ -103,6 +103,32 @@ fields:
 Build with `orkctl activity build <path> --tag <ref> --interface interface.ork.yaml`. It packs the file into the image's `org.orkstack.activity.interface` label. With another build tool, pass the value `orkctl activity interface pack interface.ork.yaml` prints to its `--label`.
 
 `orkctl apply` then checks each task's `with:` keys against the label before any run starts. The interface is optional. The container never reads it. `orkctl activity inspect <reference>` shows what the image declares.
+
+## Give it an icon and descriptions
+
+Add a `description:` to the file, to each op and to each key, and an `icon:` holding one small SVG:
+
+```yaml
+apiVersion: orkstack/v1
+kind: ActivityInterface
+description: Reports on one file.
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 1.8h5L12.5 5.3v8.9H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 1.8v3.5h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+fields:
+  src:
+    type: string
+    required: true
+    description: The file to report on, under `/orkstack/input`.
+```
+
+OrkStack returns both through its API, so a client can draw the icon beside your tasks and explain each key. For an image without an icon, a client draws a default one.
+
+- A description is one paragraph of plain text. Put a key, an op or a path in backticks to show it as code; nothing else is interpreted.
+- Draw the icon on `viewBox="0 0 16 16"` with `stroke="currentColor"` and a 1.4 stroke. Use only paths, circles, ellipses, rectangles, lines, polylines, polygons and groups, at most 2 KB.
+- Give every outline `fill="none"`. A client is expected to fill an element with no `fill` in the text colour.
+- Anything outside that, such as a colour, text, a style or a link, refuses the whole icon, and a client draws the default one instead.
+
+The same `--interface` build packs them into two labels of their own, so an older engine still reads your interface unchanged. `orkctl activity inspect <reference>` shows the descriptions and whether the image has an icon.
 
 ## When an attempt fails
 
@@ -131,6 +157,7 @@ A contract violation is never retried. A non-zero exit is retried only when the 
 
 - [Activity images and the `op` convention](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#activity-images-and-the-op-convention): the conventions for images that share one shape
 - [Declaring the interface](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#declaring-the-interface): the `with:` label and `interface.ork.yaml`
+- [Describing the activity](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#describing-the-activity) and [The icon](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#the-icon): the description and icon labels, and their limits
 - [OCI Activity Contract, section 3](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#3-the-orkstack-workspace): the workspace, file by file
 - [OCI Activity Contract, section 10.1](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#101-the-dockerfile-and-entry-script-rules): the Dockerfile and entry-script rules
 - [Test an activity image](/docs/how-to/test-an-activity-image/): check your image before a run uses it

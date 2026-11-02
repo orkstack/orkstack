@@ -1,65 +1,125 @@
 # The with: contract of images/activity-file (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
-# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
-# that line.
+# Dockerfile's three activity LABEL lines (interface, icon and docs); edit
+# this file, never those lines.
 apiVersion: orkstack/v1
 kind: ActivityInterface
+description: >-
+  Seven small file operations: `copy`, `checksum`, `gzip`, `gunzip`, `tar`,
+  `untar` and `concat`. Every op but `checksum` writes exactly one output
+  artifact. Paths resolve inside the workspace, and a `..` component is refused.
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 1.8h5L12.5 5.3v8.9H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 1.8v3.5h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
 ops:
   copy:
+    description: >-
+      Copies one file to an output artifact.
     fields:
       src:
         type: string
         required: true
+        description: >-
+          The file to copy. A relative path resolves under `/orkstack/input`.
       as:
         type: string
+        description: >-
+          The output artifact's name. Defaults to the base name of `src`.
   checksum:
+    description: >-
+      Reports one file's size and SHA-256, and writes no artifact.
     fields:
       src:
         type: string
         required: true
+        description: >-
+          The file to read. A relative path resolves under `/orkstack/input`.
   gzip:
+    description: >-
+      Compresses one file with gzip.
     fields:
       src:
         type: string
         required: true
+        description: >-
+          The file to compress. A relative path resolves under
+          `/orkstack/input`.
       as:
         type: string
+        description: >-
+          The output artifact's name. Defaults to the base name of `src` plus
+          `.gz`.
   gunzip:
+    description: >-
+      Decompresses one gzip file.
     fields:
       src:
         type: string
         required: true
+        description: >-
+          The gzip file to decompress. A relative path resolves under
+          `/orkstack/input`.
       as:
         type: string
+        description: >-
+          The output artifact's name. Defaults to the base name of `src` without
+          `.gz`.
   tar:
+    description: >-
+      Packs files into one gzipped tar archive, each under its base name.
     fields:
       srcs:
         type: array
         required: true
+        description: >-
+          The files to pack, in order. Relative paths resolve under
+          `/orkstack/input`.
       as:
         type: string
+        description: >-
+          The output artifact's name. Defaults to `archive.tar.gz`.
   untar:
+    description: >-
+      Extracts one named member of a tar archive.
     fields:
       src:
         type: string
         required: true
+        description: >-
+          The tar archive. A relative path resolves under `/orkstack/input`.
       member:
         type: string
         required: true
+        description: >-
+          The path, inside the archive, of the one file to extract.
       as:
         type: string
+        description: >-
+          The output artifact's name. Defaults to the base name of `member`.
   concat:
+    description: >-
+      Joins files, in order, into one output artifact.
     fields:
       srcs:
         type: array
         required: true
+        description: >-
+          The files to join, in order. Relative paths resolve under
+          `/orkstack/input`.
       as:
         type: string
         required: true
+        description: >-
+          The output artifact's name; required for `concat`.
 values:
   path:
     type: string
+    description: >-
+      The file the op wrote, or for `checksum` the file it read.
   sizeBytes:
     type: number
+    description: >-
+      Size of that file, in bytes.
   sha256:
     type: string
+    description: >-
+      SHA-256 of that file, in hex.

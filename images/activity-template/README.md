@@ -347,6 +347,11 @@ missing `op` exits `2`), and the three `values.json` keys of Output. The
 delimiters declare no default: a documentary `"{{"` would invite you to write
 it, and a literal `{{` in `with:` is a template the Orker would try to render.
 
+The same document draws the image's icon and describes the image, each op
+and each key, packed into its `org.orkstack.activity.icon` and
+`org.orkstack.activity.docs` labels, which the API returns for clients to
+show.
+
 ## Output
 
 `/orkstack/output/values.json` is activity-file's three keys:

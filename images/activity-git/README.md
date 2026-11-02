@@ -353,6 +353,11 @@ task's `with:` before anything runs: a missing `url` or an unknown `op` is an
 error, an undeclared key a warning. Five keys shared by both ops, two ops, no
 default op (an unknown or missing `op` exits `2`).
 
+The same document draws the image's icon and describes the image, each op
+and each key, packed into its `org.orkstack.activity.icon` and
+`org.orkstack.activity.docs` labels, which the API returns for clients to
+show.
+
 ## Cancellation
 
 `ls-remote`, the fetch, the checkout and the archive each run in the

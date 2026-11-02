@@ -16,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/activity_service.proto.
  */
 export const file_orkstack_v1_activity_service: GenFile = /*@__PURE__*/
-  fileDesc("CiJvcmtzdGFjay92MS9hY3Rpdml0eV9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSIrChZJbnNwZWN0QWN0aXZpdHlSZXF1ZXN0EhEKCXJlZmVyZW5jZRgBIAEoCSJGChdJbnNwZWN0QWN0aXZpdHlSZXNwb25zZRIrCghhY3Rpdml0eRgBIAEoCzIZLm9ya3N0YWNrLnYxLkFjdGl2aXR5SW5mbyKzAQoVTGlzdEFjdGl2aXRpZXNSZXF1ZXN0EikKB2ZpbHRlcnMYASADKAsyGC5vcmtzdGFjay52MS5GaWVsZEZpbHRlcjpvorsYawoYb3Jrc3RhY2sudjEuQWN0aXZpdHlJbmZvEhMKBG5hbWUSBE5hbWUaBQECAwQFEh0KCXJlZmVyZW5jZRIJUmVmZXJlbmNlGgUBAgMEBRIbCgxpbmRleF9kaWdlc3QSBkRpZ2VzdBoDAQIDIukBCgxBY3Rpdml0eUluZm8SDAoEbmFtZRgBIAEoCRIRCglyZWZlcmVuY2UYAiABKAkSFAoMaW5kZXhfZGlnZXN0GAMgASgJEhIKCm1lZGlhX3R5cGUYBCABKAkSEQoJcGxhdGZvcm1zGAUgAygJEi8KC3Jlc29sdmVkX2F0GAYgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIxCglpbnRlcmZhY2UYByABKAsyHi5vcmtzdGFjay52MS5BY3Rpdml0eUludGVyZmFjZRIXCg9pbnRlcmZhY2VfZXJyb3IYCCABKAkiVgoLRmllbGRTY2hlbWESDAoEdHlwZRgBIAEoCRIQCghyZXF1aXJlZBgCIAEoCBInCgdkZWZhdWx0GAMgASgLMhYuZ29vZ2xlLnByb3RvYnVmLlZhbHVlIoYBCghPcFNjaGVtYRIxCgZmaWVsZHMYASADKAsyIS5vcmtzdGFjay52MS5PcFNjaGVtYS5GaWVsZHNFbnRyeRpHCgtGaWVsZHNFbnRyeRILCgNrZXkYASABKAkSJwoFdmFsdWUYAiABKAsyGC5vcmtzdGFjay52MS5GaWVsZFNjaGVtYToCOAEiwgMKEUFjdGl2aXR5SW50ZXJmYWNlEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEjoKBmZpZWxkcxgCIAMoCzIqLm9ya3N0YWNrLnYxLkFjdGl2aXR5SW50ZXJmYWNlLkZpZWxkc0VudHJ5EjQKA29wcxgDIAMoCzInLm9ya3N0YWNrLnYxLkFjdGl2aXR5SW50ZXJmYWNlLk9wc0VudHJ5EhIKCmRlZmF1bHRfb3AYBCABKAkSOgoGdmFsdWVzGAUgAygLMioub3Jrc3RhY2sudjEuQWN0aXZpdHlJbnRlcmZhY2UuVmFsdWVzRW50cnkaRwoLRmllbGRzRW50cnkSCwoDa2V5GAEgASgJEicKBXZhbHVlGAIgASgLMhgub3Jrc3RhY2sudjEuRmllbGRTY2hlbWE6AjgBGkEKCE9wc0VudHJ5EgsKA2tleRgBIAEoCRIkCgV2YWx1ZRgCIAEoCzIVLm9ya3N0YWNrLnYxLk9wU2NoZW1hOgI4ARpHCgtWYWx1ZXNFbnRyeRILCgNrZXkYASABKAkSJwoFdmFsdWUYAiABKAsyGC5vcmtzdGFjay52MS5GaWVsZFNjaGVtYToCOAEiRwoWTGlzdEFjdGl2aXRpZXNSZXNwb25zZRItCgphY3Rpdml0aWVzGAEgAygLMhkub3Jrc3RhY2sudjEuQWN0aXZpdHlJbmZvIhYKFERlc2NyaWJlT3JrZXJSZXF1ZXN0IkgKFURlc2NyaWJlT3JrZXJSZXNwb25zZRIvCgVvcmtlchgBIAEoCzIgLm9ya3N0YWNrLnYxLkRlc2NyaWJlT3JrZXJSZXN1bHQi9wEKEUxpc3RPcmtlcnNSZXF1ZXN0EikKB2ZpbHRlcnMYAyADKAsyGC5vcmtzdGFjay52MS5GaWVsZEZpbHRlcjqaAaK7GJUBChFvcmtzdGFjay52MS5PcmtlchIaCghvcmtlcl9pZBIFT3JrZXIaBQECAwQFOAISFwoEcG9vbBIEUG9vbBoFAQIDBAUoATgBEhwKCGJ1aWxkX2lkEgdSZWxlYXNlGgUBAgMEBSgBEhkKCGNvcmRvbmVkEghDb3Jkb25lZBoBASgBGhJ1bmF2YWlsYWJsZV9yZWFzb25KBAgBEAJKBAgCEANSBHBvb2xSCG9ya2VyX2lkIjgKEkxpc3RPcmtlcnNSZXNwb25zZRIiCgZvcmtlcnMYASADKAsyEi5vcmtzdGFjay52MS5PcmtlciJIChJDb3Jkb25PcmtlclJlcXVlc3QSEAoIb3JrZXJfaWQYASABKAkSEAoIY29yZG9uZWQYAiABKAgSDgoGcmVhc29uGAMgASgJIjgKE0NvcmRvbk9ya2VyUmVzcG9uc2USIQoFb3JrZXIYASABKAsyEi5vcmtzdGFjay52MS5PcmtlcjLDAwoPQWN0aXZpdHlTZXJ2aWNlElkKDkxpc3RBY3Rpdml0aWVzEiIub3Jrc3RhY2sudjEuTGlzdEFjdGl2aXRpZXNSZXF1ZXN0GiMub3Jrc3RhY2sudjEuTGlzdEFjdGl2aXRpZXNSZXNwb25zZRJWCg1EZXNjcmliZU9ya2VyEiEub3Jrc3RhY2sudjEuRGVzY3JpYmVPcmtlclJlcXVlc3QaIi5vcmtzdGFjay52MS5EZXNjcmliZU9ya2VyUmVzcG9uc2USTQoKTGlzdE9ya2VycxIeLm9ya3N0YWNrLnYxLkxpc3RPcmtlcnNSZXF1ZXN0Gh8ub3Jrc3RhY2sudjEuTGlzdE9ya2Vyc1Jlc3BvbnNlElAKC0NvcmRvbk9ya2VyEh8ub3Jrc3RhY2sudjEuQ29yZG9uT3JrZXJSZXF1ZXN0GiAub3Jrc3RhY2sudjEuQ29yZG9uT3JrZXJSZXNwb25zZRJcCg9JbnNwZWN0QWN0aXZpdHkSIy5vcmtzdGFjay52MS5JbnNwZWN0QWN0aXZpdHlSZXF1ZXN0GiQub3Jrc3RhY2sudjEuSW5zcGVjdEFjdGl2aXR5UmVzcG9uc2VCsAEKD2NvbS5vcmtzdGFjay52MUIUQWN0aXZpdHlTZXJ2aWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_filter]);
+  fileDesc("CiJvcmtzdGFjay92MS9hY3Rpdml0eV9zZXJ2aWNlLnByb3RvEgtvcmtzdGFjay52MSJBChZJbnNwZWN0QWN0aXZpdHlSZXF1ZXN0EhEKCXJlZmVyZW5jZRgBIAEoCRIUCgxhbGxvd19jYWNoZWQYAiABKAgiRgoXSW5zcGVjdEFjdGl2aXR5UmVzcG9uc2USKwoIYWN0aXZpdHkYASABKAsyGS5vcmtzdGFjay52MS5BY3Rpdml0eUluZm8iswEKFUxpc3RBY3Rpdml0aWVzUmVxdWVzdBIpCgdmaWx0ZXJzGAEgAygLMhgub3Jrc3RhY2sudjEuRmllbGRGaWx0ZXI6b6K7GGsKGG9ya3N0YWNrLnYxLkFjdGl2aXR5SW5mbxITCgRuYW1lEgROYW1lGgUBAgMEBRIdCglyZWZlcmVuY2USCVJlZmVyZW5jZRoFAQIDBAUSGwoMaW5kZXhfZGlnZXN0EgZEaWdlc3QaAwECAyLjAgoMQWN0aXZpdHlJbmZvEgwKBG5hbWUYASABKAkSEQoJcmVmZXJlbmNlGAIgASgJEhQKDGluZGV4X2RpZ2VzdBgDIAEoCRISCgptZWRpYV90eXBlGAQgASgJEhEKCXBsYXRmb3JtcxgFIAMoCRIvCgtyZXNvbHZlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMQoJaW50ZXJmYWNlGAcgASgLMh4ub3Jrc3RhY2sudjEuQWN0aXZpdHlJbnRlcmZhY2USFwoPaW50ZXJmYWNlX2Vycm9yGAggASgJEicKBGljb24YCSABKAsyGS5vcmtzdGFjay52MS5BY3Rpdml0eUljb24SEgoKaWNvbl9lcnJvchgKIAEoCRInCgRkb2NzGAsgASgLMhkub3Jrc3RhY2sudjEuQWN0aXZpdHlEb2NzEhIKCmRvY3NfZXJyb3IYDCABKAkiagoMQWN0aXZpdHlJY29uEi4KCmF0dHJpYnV0ZXMYASADKAsyGi5vcmtzdGFjay52MS5JY29uQXR0cmlidXRlEioKCGVsZW1lbnRzGAIgAygLMhgub3Jrc3RhY2sudjEuSWNvbkVsZW1lbnQidwoLSWNvbkVsZW1lbnQSDAoEbmFtZRgBIAEoCRIuCgphdHRyaWJ1dGVzGAIgAygLMhoub3Jrc3RhY2sudjEuSWNvbkF0dHJpYnV0ZRIqCghjaGlsZHJlbhgDIAMoCzIYLm9ya3N0YWNrLnYxLkljb25FbGVtZW50IiwKDUljb25BdHRyaWJ1dGUSDAoEbmFtZRgBIAEoCRINCgV2YWx1ZRgCIAEoCSL5AgoMQWN0aXZpdHlEb2NzEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEhMKC2Rlc2NyaXB0aW9uGAIgASgJEjUKBmZpZWxkcxgDIAMoCzIlLm9ya3N0YWNrLnYxLkFjdGl2aXR5RG9jcy5GaWVsZHNFbnRyeRIvCgNvcHMYBCADKAsyIi5vcmtzdGFjay52MS5BY3Rpdml0eURvY3MuT3BzRW50cnkSNQoGdmFsdWVzGAUgAygLMiUub3Jrc3RhY2sudjEuQWN0aXZpdHlEb2NzLlZhbHVlc0VudHJ5Gi0KC0ZpZWxkc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaPwoIT3BzRW50cnkSCwoDa2V5GAEgASgJEiIKBXZhbHVlGAIgASgLMhMub3Jrc3RhY2sudjEuT3BEb2NzOgI4ARotCgtWYWx1ZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIn0KBk9wRG9jcxITCgtkZXNjcmlwdGlvbhgBIAEoCRIvCgZmaWVsZHMYAiADKAsyHy5vcmtzdGFjay52MS5PcERvY3MuRmllbGRzRW50cnkaLQoLRmllbGRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJWCgtGaWVsZFNjaGVtYRIMCgR0eXBlGAEgASgJEhAKCHJlcXVpcmVkGAIgASgIEicKB2RlZmF1bHQYAyABKAsyFi5nb29nbGUucHJvdG9idWYuVmFsdWUihgEKCE9wU2NoZW1hEjEKBmZpZWxkcxgBIAMoCzIhLm9ya3N0YWNrLnYxLk9wU2NoZW1hLkZpZWxkc0VudHJ5GkcKC0ZpZWxkc0VudHJ5EgsKA2tleRgBIAEoCRInCgV2YWx1ZRgCIAEoCzIYLm9ya3N0YWNrLnYxLkZpZWxkU2NoZW1hOgI4ASLCAwoRQWN0aXZpdHlJbnRlcmZhY2USFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSOgoGZmllbGRzGAIgAygLMioub3Jrc3RhY2sudjEuQWN0aXZpdHlJbnRlcmZhY2UuRmllbGRzRW50cnkSNAoDb3BzGAMgAygLMicub3Jrc3RhY2sudjEuQWN0aXZpdHlJbnRlcmZhY2UuT3BzRW50cnkSEgoKZGVmYXVsdF9vcBgEIAEoCRI6CgZ2YWx1ZXMYBSADKAsyKi5vcmtzdGFjay52MS5BY3Rpdml0eUludGVyZmFjZS5WYWx1ZXNFbnRyeRpHCgtGaWVsZHNFbnRyeRILCgNrZXkYASABKAkSJwoFdmFsdWUYAiABKAsyGC5vcmtzdGFjay52MS5GaWVsZFNjaGVtYToCOAEaQQoIT3BzRW50cnkSCwoDa2V5GAEgASgJEiQKBXZhbHVlGAIgASgLMhUub3Jrc3RhY2sudjEuT3BTY2hlbWE6AjgBGkcKC1ZhbHVlc0VudHJ5EgsKA2tleRgBIAEoCRInCgV2YWx1ZRgCIAEoCzIYLm9ya3N0YWNrLnYxLkZpZWxkU2NoZW1hOgI4ASJHChZMaXN0QWN0aXZpdGllc1Jlc3BvbnNlEi0KCmFjdGl2aXRpZXMYASADKAsyGS5vcmtzdGFjay52MS5BY3Rpdml0eUluZm8iFgoURGVzY3JpYmVPcmtlclJlcXVlc3QiSAoVRGVzY3JpYmVPcmtlclJlc3BvbnNlEi8KBW9ya2VyGAEgASgLMiAub3Jrc3RhY2sudjEuRGVzY3JpYmVPcmtlclJlc3VsdCL3AQoRTGlzdE9ya2Vyc1JlcXVlc3QSKQoHZmlsdGVycxgDIAMoCzIYLm9ya3N0YWNrLnYxLkZpZWxkRmlsdGVyOpoBorsYlQEKEW9ya3N0YWNrLnYxLk9ya2VyEhoKCG9ya2VyX2lkEgVPcmtlchoFAQIDBAU4AhIXCgRwb29sEgRQb29sGgUBAgMEBSgBOAESHAoIYnVpbGRfaWQSB1JlbGVhc2UaBQECAwQFKAESGQoIY29yZG9uZWQSCENvcmRvbmVkGgEBKAEaEnVuYXZhaWxhYmxlX3JlYXNvbkoECAEQAkoECAIQA1IEcG9vbFIIb3JrZXJfaWQiOAoSTGlzdE9ya2Vyc1Jlc3BvbnNlEiIKBm9ya2VycxgBIAMoCzISLm9ya3N0YWNrLnYxLk9ya2VyIkgKEkNvcmRvbk9ya2VyUmVxdWVzdBIQCghvcmtlcl9pZBgBIAEoCRIQCghjb3Jkb25lZBgCIAEoCBIOCgZyZWFzb24YAyABKAkiOAoTQ29yZG9uT3JrZXJSZXNwb25zZRIhCgVvcmtlchgBIAEoCzISLm9ya3N0YWNrLnYxLk9ya2VyMsMDCg9BY3Rpdml0eVNlcnZpY2USWQoOTGlzdEFjdGl2aXRpZXMSIi5vcmtzdGFjay52MS5MaXN0QWN0aXZpdGllc1JlcXVlc3QaIy5vcmtzdGFjay52MS5MaXN0QWN0aXZpdGllc1Jlc3BvbnNlElYKDURlc2NyaWJlT3JrZXISIS5vcmtzdGFjay52MS5EZXNjcmliZU9ya2VyUmVxdWVzdBoiLm9ya3N0YWNrLnYxLkRlc2NyaWJlT3JrZXJSZXNwb25zZRJNCgpMaXN0T3JrZXJzEh4ub3Jrc3RhY2sudjEuTGlzdE9ya2Vyc1JlcXVlc3QaHy5vcmtzdGFjay52MS5MaXN0T3JrZXJzUmVzcG9uc2USUAoLQ29yZG9uT3JrZXISHy5vcmtzdGFjay52MS5Db3Jkb25PcmtlclJlcXVlc3QaIC5vcmtzdGFjay52MS5Db3Jkb25PcmtlclJlc3BvbnNlElwKD0luc3BlY3RBY3Rpdml0eRIjLm9ya3N0YWNrLnYxLkluc3BlY3RBY3Rpdml0eVJlcXVlc3QaJC5vcmtzdGFjay52MS5JbnNwZWN0QWN0aXZpdHlSZXNwb25zZUKwAQoPY29tLm9ya3N0YWNrLnYxQhRBY3Rpdml0eVNlcnZpY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_filter]);
 
 /**
  * @generated from message orkstack.v1.InspectActivityRequest
@@ -30,6 +30,21 @@ export type InspectActivityRequest = Message<"orkstack.v1.InspectActivityRequest
    * @generated from field: string reference = 1;
    */
   reference: string;
+
+  /**
+   * allow_cached lets a reference that pins a digest ("repo@sha256:…", a
+   * task's image.pinned) be answered from what this replica already read for
+   * that digest, which never changes: a run page asks once per distinct image
+   * its tasks ran, and a cached answer costs no registry read. Such an answer
+   * carries the resolved_at of that earlier read, and may outlive a manifest
+   * deleted since. A tag is resolved afresh whatever this says, and a
+   * resolution that failed is never kept. False (orkctl activity inspect)
+   * resolves afresh: a deleted or unauthorized image fails exactly as apply
+   * would. Unrelated to a task's cache: and its memos.
+   *
+   * @generated from field: bool allow_cached = 2;
+   */
+  allowCached: boolean;
 };
 
 /**
@@ -76,9 +91,11 @@ export const ListActivitiesRequestSchema: GenMessage<ListActivitiesRequest> = /*
 /**
  * ActivityInfo is one catalog entry, resolved.
  *
- * resolved_at is a READ-MODEL field on a live catalog read, and is unrelated
- * to the ImageRef.resolved_at that activity.proto reserves: nothing hashes it,
- * and it is never stored in a version document.
+ * resolved_at is a READ-MODEL field: when this answer was read from the
+ * registry (on a live catalog read, or the earlier read an allow_cached
+ * InspectActivity answer comes from). It is unrelated to the
+ * ImageRef.resolved_at that activity.proto reserves: nothing hashes it, and
+ * it is never stored in a version document.
  *
  * @generated from message orkstack.v1.ActivityInfo
  */
@@ -141,10 +158,60 @@ export type ActivityInfo = Message<"orkstack.v1.ActivityInfo"> & {
    * the contract — or when the index advertised no platform manifest to
    * read a config from. It distinguishes "declares nothing" from "declares
    * something this engine cannot read". Empty whenever interface is set.
+   * Like icon_error and docs_error it is safe to show as text: a parser's
+   * message can quote what the image wrote, so every control or format
+   * character in it, and every byte that is not UTF-8, is written as an
+   * escape (\u001b, \xff), and it is at most 512 bytes.
    *
    * @generated from field: string interface_error = 8;
    */
   interfaceError: string;
+
+  /**
+   * icon is what the image draws itself as, read from the
+   * org.orkstack.activity.icon label of the same config, a READ-MODEL field
+   * exactly as interface is: hashed by nothing, stored nowhere, and never
+   * part of a task's image or a definition. Unset when the image carries no such label, an
+   * empty one, one that could not be read (icon_error says why), or when the
+   * reference did not resolve: a client then draws its default activity icon.
+   * Never markup: a client draws each element itself.
+   *
+   * @generated from field: orkstack.v1.ActivityIcon icon = 9;
+   */
+  icon?: ActivityIcon | undefined;
+
+  /**
+   * icon_error is non-empty when the image carries a non-empty icon label
+   * that could not be turned into an ActivityIcon, or when the index
+   * advertised no platform manifest to read a config from (interface_error
+   * and docs_error then say the same). Empty whenever icon is set. Escaped
+   * and bounded as interface_error is.
+   *
+   * @generated from field: string icon_error = 10;
+   */
+  iconError: string;
+
+  /**
+   * docs is what the image says about itself in words, read from the
+   * org.orkstack.activity.docs label of the same config, a READ-MODEL field
+   * exactly as interface is. Its keys are interface's keys: a client joins the
+   * two by key. Unset when the image carries no such label, an empty one, or
+   * one that could not be read (docs_error says why).
+   *
+   * @generated from field: orkstack.v1.ActivityDocs docs = 11;
+   */
+  docs?: ActivityDocs | undefined;
+
+  /**
+   * docs_error is non-empty when the image carries a non-empty docs label
+   * that could not be turned into an ActivityDocs, one that describes an op
+   * or key the interface it was read with does not declare, or when no
+   * config could be read. Empty whenever docs is set. Escaped and bounded
+   * as interface_error is.
+   *
+   * @generated from field: string docs_error = 12;
+   */
+  docsError: string;
 };
 
 /**
@@ -153,6 +220,189 @@ export type ActivityInfo = Message<"orkstack.v1.ActivityInfo"> & {
  */
 export const ActivityInfoSchema: GenMessage<ActivityInfo> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_activity_service, 3);
+
+/**
+ * ActivityIcon is an image's icon: one small single-colour SVG drawing on a
+ * 16 by 16 grid, made only of the elements and attributes the
+ * org.orkstack.activity.icon label may hold (docs/ACTIVITY_IMAGES.md, "The
+ * icon"). The label holds the SVG text, at most 2048 bytes; this is that
+ * drawing as a tree, every name allowlisted and every value checked against
+ * its own grammar, never markup. The root svg element is implied: a client
+ * draws it with viewBox="0 0 16 16", fill="currentColor", and attributes.
+ *
+ * @generated from message orkstack.v1.ActivityIcon
+ */
+export type ActivityIcon = Message<"orkstack.v1.ActivityIcon"> & {
+  /**
+   * attributes are the root svg element's presentation attributes, in the
+   * order the SVG gave them.
+   *
+   * @generated from field: repeated orkstack.v1.IconAttribute attributes = 1;
+   */
+  attributes: IconAttribute[];
+
+  /**
+   * elements are the drawing below the root, in order: path, circle,
+   * ellipse, rect, line, polyline, polygon or g, at most 32 in all.
+   *
+   * @generated from field: repeated orkstack.v1.IconElement elements = 2;
+   */
+  elements: IconElement[];
+};
+
+/**
+ * Describes the message orkstack.v1.ActivityIcon.
+ * Use `create(ActivityIconSchema)` to create a new message.
+ */
+export const ActivityIconSchema: GenMessage<ActivityIcon> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity_service, 4);
+
+/**
+ * IconElement is one element of an ActivityIcon.
+ *
+ * @generated from message orkstack.v1.IconElement
+ */
+export type IconElement = Message<"orkstack.v1.IconElement"> & {
+  /**
+   * name is path, circle, ellipse, rect, line, polyline, polygon or g.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * attributes are its geometry and presentation attributes, in the order
+   * the SVG gave them.
+   *
+   * @generated from field: repeated orkstack.v1.IconAttribute attributes = 2;
+   */
+  attributes: IconAttribute[];
+
+  /**
+   * children are a g's elements; every other element has none.
+   *
+   * @generated from field: repeated orkstack.v1.IconElement children = 3;
+   */
+  children: IconElement[];
+};
+
+/**
+ * Describes the message orkstack.v1.IconElement.
+ * Use `create(IconElementSchema)` to create a new message.
+ */
+export const IconElementSchema: GenMessage<IconElement> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity_service, 5);
+
+/**
+ * IconAttribute is one attribute of an icon element: an allowlisted name and
+ * a value held to that name's grammar.
+ *
+ * @generated from message orkstack.v1.IconAttribute
+ */
+export type IconAttribute = Message<"orkstack.v1.IconAttribute"> & {
+  /**
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * @generated from field: string value = 2;
+   */
+  value: string;
+};
+
+/**
+ * Describes the message orkstack.v1.IconAttribute.
+ * Use `create(IconAttributeSchema)` to create a new message.
+ */
+export const IconAttributeSchema: GenMessage<IconAttribute> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity_service, 6);
+
+/**
+ * ActivityDocs holds the descriptions an image gives, in plain text, of
+ * itself, its ops, its with: keys and its values.json keys. The label
+ * org.orkstack.activity.docs holds this message's protojson encoding
+ * (lowerCamel names), verbatim. Every text is one paragraph of plain text,
+ * with no control character; text between a pair of backticks is code, and
+ * nothing else is interpreted.
+ *
+ * @generated from message orkstack.v1.ActivityDocs
+ */
+export type ActivityDocs = Message<"orkstack.v1.ActivityDocs"> & {
+  /**
+   * schema_version is 1. Any other value is reported through
+   * ActivityInfo.docs_error.
+   *
+   * @generated from field: int32 schema_version = 1;
+   */
+  schemaVersion: number;
+
+  /**
+   * description is the activity's, at most 1000 characters.
+   *
+   * @generated from field: string description = 2;
+   */
+  description: string;
+
+  /**
+   * fields describes keys of ActivityInterface.fields, at most 500
+   * characters each.
+   *
+   * @generated from field: map<string, string> fields = 3;
+   */
+  fields: { [key: string]: string };
+
+  /**
+   * ops describes ops of ActivityInterface.ops, and the keys each declares.
+   *
+   * @generated from field: map<string, orkstack.v1.OpDocs> ops = 4;
+   */
+  ops: { [key: string]: OpDocs };
+
+  /**
+   * values describes keys of ActivityInterface.values, at most 500
+   * characters each.
+   *
+   * @generated from field: map<string, string> values = 5;
+   */
+  values: { [key: string]: string };
+};
+
+/**
+ * Describes the message orkstack.v1.ActivityDocs.
+ * Use `create(ActivityDocsSchema)` to create a new message.
+ */
+export const ActivityDocsSchema: GenMessage<ActivityDocs> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity_service, 7);
+
+/**
+ * OpDocs describes one op and the keys it reads beside the shared ones.
+ *
+ * @generated from message orkstack.v1.OpDocs
+ */
+export type OpDocs = Message<"orkstack.v1.OpDocs"> & {
+  /**
+   * description is the op's, at most 500 characters.
+   *
+   * @generated from field: string description = 1;
+   */
+  description: string;
+
+  /**
+   * fields describes keys of that op's OpSchema.fields, at most 500
+   * characters each.
+   *
+   * @generated from field: map<string, string> fields = 2;
+   */
+  fields: { [key: string]: string };
+};
+
+/**
+ * Describes the message orkstack.v1.OpDocs.
+ * Use `create(OpDocsSchema)` to create a new message.
+ */
+export const OpDocsSchema: GenMessage<OpDocs> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity_service, 8);
 
 /**
  * FieldSchema is one `with:` key's declaration. It is EXACTLY the
@@ -195,7 +445,7 @@ export type FieldSchema = Message<"orkstack.v1.FieldSchema"> & {
  * Use `create(FieldSchemaSchema)` to create a new message.
  */
 export const FieldSchemaSchema: GenMessage<FieldSchema> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 4);
+  messageDesc(file_orkstack_v1_activity_service, 9);
 
 /**
  * OpSchema is the key set one `op` reads, beside the shared `fields`.
@@ -214,7 +464,7 @@ export type OpSchema = Message<"orkstack.v1.OpSchema"> & {
  * Use `create(OpSchemaSchema)` to create a new message.
  */
 export const OpSchemaSchema: GenMessage<OpSchema> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 5);
+  messageDesc(file_orkstack_v1_activity_service, 10);
 
 /**
  * ActivityInterface is what an image declares about its `with:` block. The
@@ -277,7 +527,7 @@ export type ActivityInterface = Message<"orkstack.v1.ActivityInterface"> & {
  * Use `create(ActivityInterfaceSchema)` to create a new message.
  */
 export const ActivityInterfaceSchema: GenMessage<ActivityInterface> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 6);
+  messageDesc(file_orkstack_v1_activity_service, 11);
 
 /**
  * @generated from message orkstack.v1.ListActivitiesResponse
@@ -298,7 +548,7 @@ export type ListActivitiesResponse = Message<"orkstack.v1.ListActivitiesResponse
  * Use `create(ListActivitiesResponseSchema)` to create a new message.
  */
 export const ListActivitiesResponseSchema: GenMessage<ListActivitiesResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 7);
+  messageDesc(file_orkstack_v1_activity_service, 12);
 
 /**
  * @generated from message orkstack.v1.DescribeOrkerRequest
@@ -311,7 +561,7 @@ export type DescribeOrkerRequest = Message<"orkstack.v1.DescribeOrkerRequest"> &
  * Use `create(DescribeOrkerRequestSchema)` to create a new message.
  */
 export const DescribeOrkerRequestSchema: GenMessage<DescribeOrkerRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 8);
+  messageDesc(file_orkstack_v1_activity_service, 13);
 
 /**
  * @generated from message orkstack.v1.DescribeOrkerResponse
@@ -328,7 +578,7 @@ export type DescribeOrkerResponse = Message<"orkstack.v1.DescribeOrkerResponse">
  * Use `create(DescribeOrkerResponseSchema)` to create a new message.
  */
 export const DescribeOrkerResponseSchema: GenMessage<DescribeOrkerResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 9);
+  messageDesc(file_orkstack_v1_activity_service, 14);
 
 /**
  * @generated from message orkstack.v1.ListOrkersRequest
@@ -345,7 +595,7 @@ export type ListOrkersRequest = Message<"orkstack.v1.ListOrkersRequest"> & {
  * Use `create(ListOrkersRequestSchema)` to create a new message.
  */
 export const ListOrkersRequestSchema: GenMessage<ListOrkersRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 10);
+  messageDesc(file_orkstack_v1_activity_service, 15);
 
 /**
  * @generated from message orkstack.v1.ListOrkersResponse
@@ -365,7 +615,7 @@ export type ListOrkersResponse = Message<"orkstack.v1.ListOrkersResponse"> & {
  * Use `create(ListOrkersResponseSchema)` to create a new message.
  */
 export const ListOrkersResponseSchema: GenMessage<ListOrkersResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 11);
+  messageDesc(file_orkstack_v1_activity_service, 16);
 
 /**
  * @generated from message orkstack.v1.CordonOrkerRequest
@@ -395,7 +645,7 @@ export type CordonOrkerRequest = Message<"orkstack.v1.CordonOrkerRequest"> & {
  * Use `create(CordonOrkerRequestSchema)` to create a new message.
  */
 export const CordonOrkerRequestSchema: GenMessage<CordonOrkerRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 12);
+  messageDesc(file_orkstack_v1_activity_service, 17);
 
 /**
  * @generated from message orkstack.v1.CordonOrkerResponse
@@ -412,7 +662,7 @@ export type CordonOrkerResponse = Message<"orkstack.v1.CordonOrkerResponse"> & {
  * Use `create(CordonOrkerResponseSchema)` to create a new message.
  */
 export const CordonOrkerResponseSchema: GenMessage<CordonOrkerResponse> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_activity_service, 13);
+  messageDesc(file_orkstack_v1_activity_service, 18);
 
 /**
  * ActivityService reports what this deployment can run: an activity is an
@@ -487,9 +737,11 @@ export const ActivityService: GenService<{
   /**
    * InspectActivity resolves ONE reference on demand — a catalog name or
    * any registry reference `uses:` would accept — and reports it as
-   * ListActivities would: the pinned digest, platforms, and the interface
-   * the image declares. It is uncached, reads engine configuration and the
-   * registry only, never asks an Orker, and writes nothing.
+   * ListActivities would: the pinned digest, platforms, and the interface,
+   * icon and docs the image declares. It resolves afresh on every call,
+   * unless the request sets allow_cached for a reference that pins a digest.
+   * It reads engine configuration and the registry only, never asks an
+   * Orker, and writes nothing.
    *
    * @generated from rpc orkstack.v1.ActivityService.InspectActivity
    */

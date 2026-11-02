@@ -100,12 +100,18 @@ func (errNoOrker) Error() string {
 
 // InspectActivity resolves ONE reference on demand — a catalog name or any
 // registry reference `uses:` would accept — and answers it as ListActivities
-// would, interface included.
+// would, interface, icon and docs included.
 //
-// It is uncached on purpose: an operator asks it once, about one reference.
-// It performs the same GETs an apply of that reference performs, to the same
-// hosts with the same credential, so it widens no network surface. It is a
-// read: nothing is written and nothing is audited.
+// It resolves afresh, performing the GETs an apply of that reference
+// performs — so a deleted or unauthorized image fails here as it would at
+// apply — unless the caller sets allow_cached for a reference that pins a
+// digest: a run page asking about the images its tasks ran, once per
+// distinct image. That is answered from pinnedActivityCache once this
+// process has read the digest, because what the registry serves under a
+// digest never changes. A cache answers here and nowhere else: apply, submit
+// and signature checks share dsl.Resolver, which always GETs (OCI Activity
+// Contract §4.3). Either way it widens no network surface. It is a read:
+// nothing is written and nothing is audited.
 func (s *Service) InspectActivity(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.InspectActivityRequest],
@@ -124,14 +130,31 @@ func (s *Service) InspectActivity(
 	if err != nil {
 		return nil, applyResolveError(err)
 	}
+	_, isCatalogName := catalog[requested]
+	key := ""
+	if req.Msg.GetAllowCached() {
+		key = pinnedKey(reference)
+	}
+	if key != "" {
+		if info := s.pinnedActivities.get(key); info != nil {
+			info.Reference = reference
+			if isCatalogName {
+				info.Name = requested
+			}
+			return connect.NewResponse(&orkstackv1.InspectActivityResponse{Activity: info}), nil
+		}
+	}
 	res, err := s.resolver.Inspect(ctx, requested, reference)
 	if err != nil {
 		return nil, applyResolveError(err)
 	}
 	info := &orkstackv1.ActivityInfo{Reference: reference}
-	if _, isCatalogName := catalog[requested]; isCatalogName {
+	if isCatalogName {
 		info.Name = requested
 	}
 	fillActivityInfo(info, res, s.now())
+	if key != "" {
+		s.pinnedActivities.put(key, info)
+	}
 	return connect.NewResponse(&orkstackv1.InspectActivityResponse{Activity: info}), nil
 }

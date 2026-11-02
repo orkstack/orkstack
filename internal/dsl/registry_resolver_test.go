@@ -614,8 +614,10 @@ func TestInspect_AnIndexWithNoRunnablePlatformReportsItAsUnreadable(t *testing.T
 	if err != nil {
 		t.Fatalf("inspect: %v — an unreadable interface must never fail resolution", err)
 	}
-	if res.InterfaceError != "index advertises no platform manifest to read a config from" {
-		t.Fatalf("interface error = %q", res.InterfaceError)
+	for what, got := range map[string]string{"interface": res.InterfaceError, "icon": res.IconError, "docs": res.DocsError} {
+		if got != "index advertises no platform manifest to read a config from" {
+			t.Fatalf("%s error = %q: no config was read, so whether the image declares one cannot be known", what, got)
+		}
 	}
 	if res.Interface != nil || res.Image.GetIndexDigest() != digestOf(body) {
 		t.Fatalf("resolution = %+v, want a pinned image and no interface", res)

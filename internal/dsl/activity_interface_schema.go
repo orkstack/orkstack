@@ -53,7 +53,24 @@ func interfaceSchemaKeys() map[string]map[string]any {
 			"description": "The image refuses to run without this key. A key with a default is never required."},
 		"interfaceFieldDocument.default": {
 			"description": "Documentary: what the image assumes when the key is absent. Never written into `with:`; not null, and of the declared type."},
+		"interfaceFieldDocument.description": withDescription(textSchema(MaxDescriptionChars),
+			"What this key means: one paragraph of plain text, `code` in backticks; packed into the `"+DocsLabel+"` label."),
+		"interfaceDocument.description": withDescription(textSchema(MaxActivityDescriptionChars),
+			"What the activity does: one paragraph of plain text, `code` in backticks; packed into the `"+DocsLabel+"` label."),
+		"interfaceOpDocument.description": withDescription(textSchema(MaxDescriptionChars),
+			"What this op does: one paragraph of plain text, `code` in backticks; packed into the `"+DocsLabel+"` label."),
+		"interfaceDocument.icon": {"type": "string", "minLength": 1,
+			"description": "The image's icon: one SVG on viewBox=\"0 0 16 16\" of path, circle, ellipse, rect, line, polyline, " +
+				"polygon and g, drawn in currentColor, at most " + fmt.Sprint(MaxIconLabelBytes) + " bytes; packed into the `" +
+				IconLabel + "` label. Clients draw a default icon for an image without one."},
 	}
+}
+
+// textSchema is a description's schema: a string of at most limit
+// characters, with no line break but the one a block scalar ends with, which
+// pack trims. JSON Schema counts characters as the parser does.
+func textSchema(limit int) map[string]any {
+	return map[string]any{"type": "string", "minLength": 1, "maxLength": limit, "pattern": `^[^\n\r]*\n?$`}
 }
 
 // interfaceObjectSchema reflects one document struct into a closed object.
@@ -101,8 +118,9 @@ func ActivityInterfaceSchema() (map[string]any, error) {
 		return nil, fmt.Errorf("dsl schema: interface schema entries name no parser key: %s", strings.Join(stale, ", "))
 	}
 	field["required"] = []any{"type"}
-	field["description"] = "One `with:` key: `type`, `required` and a documentary `default` — the vocabulary an Orkflow's `inputs:` has, and not one word more."
-	op["description"] = "One op: the keys it reads beside `fields`."
+	field["description"] = "One `with:` key: `type`, `required` and a documentary `default` — the vocabulary an Orkflow's `inputs:` has, " +
+		"and not one word more — and a `description`, which packs into the `" + DocsLabel + "` label instead."
+	op["description"] = "One op: what it does, and the keys it reads beside `fields`."
 	root["required"] = []any{"apiVersion", "kind"}
 	root["$schema"] = SchemaDialect
 	root["$comment"] = SchemaComment

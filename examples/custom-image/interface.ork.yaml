@@ -1,35 +1,65 @@
 # The with: contract of examples/custom-image (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"). `go run ./internal/schemas/cmd/genschemas` packs it into the
-# Dockerfile's org.orkstack.activity.interface LABEL; edit this file, never
-# that line. In a project of your own, which has no genschemas, drop the
-# Dockerfile's LABEL and build with
+# Dockerfile's three activity LABEL lines (interface, icon and docs); edit
+# this file, never those lines. In a project of your own, which has no
+# genschemas, drop the Dockerfile's LABEL lines and build with
 # `orkctl activity build <dir> --tag <ref> --interface interface.ork.yaml`.
 apiVersion: orkstack/v1
 kind: ActivityInterface
+description: >-
+  Reports on one file: its lines, words and bytes, written as a seven-line
+  report artifact, plus what the task was given. A user's own activity, with no
+  OrkStack SDK.
 fields:
   label:
     type: string
+    description: >-
+      The label to report. Without it, one item of a fan-out over strings
+      reports the item itself.
   src:
     type: string
+    description: >-
+      The file to report on, by the `file` activity's path rules. Without it, no
+      report is written.
   as:
     type: string
     default: "report.txt"
+    description: >-
+      The report artifact's name.
 values:
   idempotencyKey:
     type: string
+    description: >-
+      The task's idempotency key, from `task.json`.
   attempt:
     type: number
+    description: >-
+      Which attempt of the task this was.
   taskId:
     type: string
+    description: >-
+      The task's id.
   label:
     type: string
+    description: >-
+      The label reported, when there is one.
   argv:
     type: array
+    description: >-
+      The container's arguments, never rendered.
   source:
     type: string
+    description: >-
+      The file reported on, with `src`.
   artifact:
     type: string
+    description: >-
+      The report artifact's name, with `src`.
   stats:
     type: object
+    description: >-
+      The file's lines, words and bytes, with `src`.
   each:
     type: object
+    description: >-
+      The fan-out item's index, count and item, for one item of a fan-out.

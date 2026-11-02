@@ -30,12 +30,15 @@ ENV TZ=UTC
 # Never root.
 USER 65532:65532
 
-# The with: contract, declared (docs/ACTIVITY_IMAGES.md, "Declaring the
-# interface"). Optional: the engine checks a document's with: against it at
-# validate and apply; the container never reads it. The line is generated
-# from interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`: edit
-# that file, never this line.
+# The with: contract, the icon and the descriptions, declared
+# (docs/ACTIVITY_IMAGES.md, "Declaring the interface"). Optional: the engine
+# checks a document's with: against the interface at validate and apply, and
+# clients draw the icon and show the descriptions; the container never reads
+# them. The three lines are generated from interface.ork.yaml by
+# `go run ./internal/schemas/cmd/genschemas`: edit that file, never these lines.
 LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"merge":{"fields":{"as":{"type":"string"},"srcs":{"type":"array","required":true}}},"query":{"fields":{"as":{"type":"string"},"filter":{"type":"string","required":true},"gather":{"type":"string"},"nullInput":{"type":"boolean","default":false},"slurp":{"type":"boolean","default":false},"src":{"type":"string"},"srcs":{"type":"array"},"vars":{"type":"object"}}}},"values":{"path":{"type":"string"},"sha256":{"type":"string"},"sizeBytes":{"type":"number"}}}'
+LABEL org.orkstack.activity.icon='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M6 2.5c-1.6 0-2 .8-2 2v1.6c0 .9-.5 1.4-1.5 1.9 1 .5 1.5 1 1.5 1.9v1.6c0 1.2.4 2 2 2M10 2.5c1.6 0 2 .8 2 2v1.6c0 .9.5 1.4 1.5 1.9-1 .5-1.5 1-1.5 1.9v1.6c0 1.2-.4 2-2 2" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>'
+LABEL org.orkstack.activity.docs='{"schemaVersion":1,"description":"Runs one jq filter over JSON files, a fan-out\u0027s items or nothing at all, or deep-merges JSON objects: the default compute step. The one result is reported as `result`, or written as an artifact when `as` is set.","ops":{"merge":{"description":"Deep-merges JSON objects, left to right.","fields":{"as":"Writes the merged object as an output artifact of this name instead of reporting it as `result`.","srcs":"At least two files, each holding exactly one JSON object, merged in order."}},"query":{"description":"Runs `filter` over exactly one source: `src`, `srcs`, `gather` or `nullInput`.","fields":{"as":"Writes the result as an output artifact of this name instead of reporting it as `result`.","filter":"One jq program, such as `.items | length`, at most 64 KiB, that produces exactly one result.","gather":"A fan-out task\u0027s id: the filter reads its items\u0027 `values.json` objects as one array, in item order.","nullInput":"Runs the filter once with `null` as its input, reading no file.","slurp":"Only with `src`: reads every JSON value in the file as one array, for JSON Lines.","src":"One JSON file for the filter to read.","srcs":"JSON files the filter reads as one array of every value they hold, in order.","vars":"An object bound as the jq variable `$vars`, read as `$vars.region` or `$vars[\"a key\"]`; at most 64 KiB as compact JSON."}}},"values":{"path":"When `as` is set, the artifact the result was written to.","sha256":"When `as` is set, the artifact\u0027s SHA-256 in hex.","sizeBytes":"When `as` is set, the artifact\u0027s size in bytes."}}'
 
 # Exec form, mandatory.
 ENTRYPOINT ["/usr/local/bin/entry.sh"]
