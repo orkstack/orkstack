@@ -33,14 +33,39 @@ func runMake(t *testing.T, makefile, dir string, env []string, args ...string) m
 	// make runs a recipe line that names $(MAKE) even under -n, and the
 	// Makefile has such lines that run docker and bun: nothing a run of it here
 	// reaches is the host's own. docker and bun are stubs that succeed and do
-	// nothing, first on PATH and in GOBIN (which the Makefile puts first on
-	// PATH); a run that names its own in env has them instead.
+	// nothing, and every other tool that reaches a registry or the network is
+	// a tripwire that fails the test. They come before the host's PATH, in
+	// GOBIN (which the Makefile puts first on PATH) unless the run names its
+	// own, and after the run's own stubs, which a PATH in env names first.
 	safe := t.TempDir()
+	tripped := filepath.Join(safe, "tripped")
 	stubTool(t, safe, "docker", "exit 0\n")
 	stubTool(t, safe, "bun", "exit 0\n")
-	cmd.Env = append(cmd.Env, "PATH="+safe+string(os.PathListSeparator)+os.Getenv("PATH"), "GOBIN="+safe)
-	cmd.Env = append(cmd.Env, env...)
+	for _, tool := range networkTools {
+		stubTool(t, safe, tool, "echo "+tool+" >> '"+tripped+"'\nexit 99\n")
+	}
+	hostPath := os.Getenv("PATH")
+	path := safe + string(os.PathListSeparator) + hostPath
+	gobin := "GOBIN=" + safe
+	var rest []string
+	for _, kv := range env {
+		switch {
+		case strings.HasPrefix(kv, "PATH="):
+			// The run's own stubs, then the safe ones, then the host's.
+			own := strings.TrimSuffix(strings.TrimSuffix(strings.TrimPrefix(kv, "PATH="), hostPath), string(os.PathListSeparator))
+			path = own + string(os.PathListSeparator) + path
+		case strings.HasPrefix(kv, "GOBIN="):
+			gobin = kv
+		default:
+			rest = append(rest, kv)
+		}
+	}
+	cmd.Env = append(cmd.Env, "PATH="+path, gobin)
+	cmd.Env = append(cmd.Env, rest...)
 	out, err := cmd.CombinedOutput()
+	if reached, readErr := os.ReadFile(tripped); readErr == nil {
+		t.Fatalf("make reached the host's %s; stub it in the run's own PATH:\n%s", strings.Fields(string(reached)), out)
+	}
 	res := makeResult{out: string(out)}
 	if err != nil {
 		ee, ok := err.(*exec.ExitError)
@@ -51,6 +76,10 @@ func runMake(t *testing.T, makefile, dir string, env []string, args ...string) m
 	}
 	return res
 }
+
+// networkTools are the tools a Makefile recipe could reach a registry or the
+// network with; runMake makes each a tripwire unless the run stubs it.
+var networkTools = []string{"grype", "cosign", "gh", "skopeo", "crane", "curl", "wget", "govulncheck"}
 
 // stubTool writes an executable named name in dir with body, a POSIX shell
 // script.

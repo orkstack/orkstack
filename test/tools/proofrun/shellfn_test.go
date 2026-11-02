@@ -59,14 +59,26 @@ func proofScriptFunctions(t *testing.T, names ...string) string {
 // needs (proc_start reads /proc/<pid>/stat).
 func needBash(t *testing.T) string {
 	t.Helper()
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash is not installed")
-	}
 	if runtime.GOOS != "linux" {
 		t.Skip("scripts/proof.sh reads /proc")
 	}
-	return bash
+	return requireTool(t, "bash")
+}
+
+// requireTool is the path of a tool the proof host has. On Linux, where every
+// proof runs, a missing one fails the test: a skip there is not a pass
+// (AGENTS.md §11.1). Elsewhere the test does not apply, and is skipped.
+func requireTool(t *testing.T, name string) string {
+	t.Helper()
+	path, err := exec.LookPath(name)
+	if err == nil {
+		return path
+	}
+	if runtime.GOOS == "linux" {
+		t.Fatalf("%s is required where proofs run: %v", name, err)
+	}
+	t.Skipf("%s is not installed", name)
+	return ""
 }
 
 // runProofShell runs script under bash in dir, with the fake PATH the test

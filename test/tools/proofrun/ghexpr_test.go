@@ -13,7 +13,9 @@ import (
 // the empty string, as GitHub's null), string and number literals, true and
 // false, `==`, `!=`, `<`, `&&`, `||`, `!`, parentheses and startsWith.
 // Strings compare without regard to case, as GitHub's do; two numbers compare
-// as numbers. Anything else is an error, so a guard that grows a construct
+// as numbers. Truthiness is GitHub's: false, 0, the empty string and null are
+// falsy, so the string "0" is truthy; `&&` and `||` yield an operand, as
+// GitHub's do. Anything else is an error, so a guard that grows a construct
 // the evaluator does not know fails its test rather than passing it.
 func evalGHExpr(expr string, ctx map[string]string) (bool, error) {
 	p := &ghParser{src: expr, ctx: ctx}
@@ -32,13 +34,20 @@ type ghValue struct {
 	s      string
 	b      bool
 	isBool bool
+	// isNum marks a number literal; a context value is a string.
+	isNum bool
 }
 
 func (v ghValue) truthy() bool {
-	if v.isBool {
+	switch {
+	case v.isBool:
 		return v.b
+	case v.isNum:
+		n, err := strconv.ParseFloat(v.s, 64)
+		return err == nil && n != 0
+	default:
+		return v.s != ""
 	}
-	return v.s != "" && v.s != "0"
 }
 
 type ghParser struct {
@@ -67,7 +76,9 @@ func (p *ghParser) or() (ghValue, error) {
 	for err == nil && p.eat("||") {
 		var r ghValue
 		if r, err = p.and(); err == nil {
-			v = ghValue{b: v.truthy() || r.truthy(), isBool: true}
+			if !v.truthy() {
+				v = r
+			}
 		}
 	}
 	return v, err
@@ -78,7 +89,9 @@ func (p *ghParser) and() (ghValue, error) {
 	for err == nil && p.eat("&&") {
 		var r ghValue
 		if r, err = p.cmp(); err == nil {
-			v = ghValue{b: v.truthy() && r.truthy(), isBool: true}
+			if v.truthy() {
+				v = r
+			}
 		}
 	}
 	return v, err
@@ -166,7 +179,7 @@ func (p *ghParser) primary() (ghValue, error) {
 		for p.pos < len(p.src) && (p.src[p.pos] >= '0' && p.src[p.pos] <= '9' || p.src[p.pos] == '.') {
 			p.pos++
 		}
-		return ghValue{s: p.src[start:p.pos]}, nil
+		return ghValue{s: p.src[start:p.pos], isNum: true}, nil
 	case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
 		start := p.pos
 		for p.pos < len(p.src) && (p.src[p.pos] == '_' || p.src[p.pos] == '.' || p.src[p.pos] == '-' ||
@@ -197,7 +210,7 @@ func (p *ghParser) primary() (ghValue, error) {
 }
 
 func TestEvalGHExpr_EvaluatesTheGuardsConstructs(t *testing.T) {
-	ctx := map[string]string{"a.b": "Foo", "n": "2", "branch": "validate/full/x", "empty": ""}
+	ctx := map[string]string{"a.b": "Foo", "n": "2", "branch": "validate/full/x", "empty": "", "zero": "0"}
 	for _, c := range []struct {
 		expr string
 		want bool
@@ -216,6 +229,12 @@ func TestEvalGHExpr_EvaluatesTheGuardsConstructs(t *testing.T) {
 		{"!(a.b == 'foo')", false, false},
 		{"a.b == 'x''y'", false, false},
 		{"empty", false, false},
+		{"zero", true, false}, // the string "0" is truthy, as GitHub's is
+		{"'0'", true, false},  // and so is the literal
+		{"0", false, false},   // the number 0 is not
+		{"0 || empty", false, false},
+		{"empty || 'x'", true, false},       // || yields its second operand
+		{"a.b && 0", false, false},          // && yields its second operand
 		{"contains(a.b, 'F')", false, true}, // a function the evaluator does not know
 		{"a.b == ", false, true},
 		{"(a.b == 'foo'", false, true},

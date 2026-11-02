@@ -31,13 +31,10 @@ func extractCheck(t *testing.T, rel string, re *regexp.Regexp) string {
 // runJQCheck runs `jq -es PROGRAM` over input and says whether it accepts it.
 func runJQCheck(t *testing.T, program, input string) bool {
 	t.Helper()
-	jq, err := exec.LookPath("jq")
-	if err != nil {
-		t.Skip("jq is not installed")
-	}
+	jq := requireTool(t, "jq")
 	cmd := exec.Command(jq, "-es", program)
 	cmd.Stdin = strings.NewReader(input)
-	err = cmd.Run()
+	err := cmd.Run()
 	if err == nil {
 		return true
 	}
@@ -120,10 +117,7 @@ func TestRelease_ThePublishRefusesASigningConfigThatNamesAService(t *testing.T) 
 // push by its digest, as a whole line: the workflow's own grep runs over notes
 // that do and notes that do not.
 func TestRelease_ThePublishRefusesNotesThatMissAnImagesDigest(t *testing.T) {
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash is not installed")
-	}
+	bash := requireTool(t, "bash")
 	grep := extractCheck(t, ".github/workflows/release.yml",
 		regexp.MustCompile(`(grep -qxF "cosign verify[^"]*" meta/notes\.md)`))
 	const (
