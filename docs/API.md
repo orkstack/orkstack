@@ -208,7 +208,7 @@ Defined in `proto/orkstack/v1/stats.proto`.
 
 | Method | Request | Response | Description |
 |---|---|---|---|
-| `GetStats` | [`GetStatsRequest`](#getstatsrequest) | [`GetStatsResponse`](#getstatsresponse) | GetStats reports one namespace's runs over one time window. |
+| `GetStats` | [`GetStatsRequest`](#getstatsrequest) | [`GetStatsResponse`](#getstatsresponse) | GetStats reports one namespace's runs over one time window and, when the request names a bucket_width, the same window as a series of hours or days — from the same scan, so the series and the totals cannot disagree. |
 | `GetFailureBreakdown` | [`GetFailureBreakdownRequest`](#getfailurebreakdownrequest) | [`GetFailureBreakdownResponse`](#getfailurebreakdownresponse) | GetFailureBreakdown groups one namespace's FAILED runs over one window by the dimensions the caller names. It is the read that makes the §4 failure categories pay: a category nobody counts is a comment.<br><br>It reads run BODIES — one per failed run in the window — which GetStats deliberately never does. The discriminating facts are not in the index key, and widening the key would be a migration and a second copy of the body. So the cost is bounded three ways instead: by the window, by the failed subset of it, and by a scan budget that FAILS the call rather than answering from a subset (see GetFailureBreakdownResponse). |
 | `GetFlakeIndex` | [`GetFlakeIndexRequest`](#getflakeindexrequest) | [`GetFlakeIndexResponse`](#getflakeindexresponse) | GetFlakeIndex groups one namespace's dispatched tasks over one window by the dimensions the caller names and reports, per group, how often a task needed more than one attempt. It is the one cross-run read of the per-attempt records the Orker writes: a SUCCEEDED run that retried is invisible to every other number this service reports, by construction.<br><br>It reads run BODIES — one per finished run in the window, not only the failed ones — and one attempt listing per dispatched task. That is more than GetFailureBreakdown reads and far more than GetStats, which reads none, so the cost is bounded the same three ways: by the window, by an optional orkflow, and by a scan budget that FAILS the call rather than answering from a subset (see GetFlakeIndexResponse). |
 | `GetUsage` | [`GetUsageRequest`](#getusagerequest) | [`GetUsageResponse`](#getusageresponse) | GetUsage reports how much of the fleet one namespace RESERVED over one window: task-seconds, and cpu-seconds and GiB-seconds as each attempt's reservation multiplied by how long its Orker held it. It is the read a budget is held against, and the one the admission gate itself makes for an enforced budget.<br><br>It reads the archive index (keys), every finished run's body in the window, and every attempt record of those runs, so its cost is bounded three ways: by the window, by a whole-answer cache whose age every answer carries (computed_at), and by a scan bound that FAILS the call rather than answering from a subset (see GetUsageResponse). |
@@ -1288,6 +1288,9 @@ not name the namespace that the id exists.
 | `since` | `google.protobuf.Timestamp` | since is the inclusive start of the window. Empty means lookback before the window ends, and lookback's own default is 24 hours. |
 | `until` | `google.protobuf.Timestamp` | until is the exclusive end of the window. Empty means the moment the answer is computed. A window whose end is not after its start is refused rather than answered with zeros, which is a number that reads like a fact. |
 | `lookback` | `google.protobuf.Duration` | lookback says how far back from `until` the window reaches, for the client that means "the last six hours" rather than a pair of instants. It is ignored when `since` is set.<br><br>It exists so that ONE clock decides a relative window. A client that resolved "six hours ago" itself would be pairing its own clock with the server's — the two ends of one window measured by two machines — and a client running a few minutes fast would silently ask about a window of the wrong length, or about one that ends before it starts. The times a window is compared against are the server's either way, so the arithmetic belongs there. |
+| `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width asks for a series as well as the window's totals: the window cut into consecutive buckets of this width (see StatsBucket). UNSPECIFIED, the default, asks for none, and the answer is then exactly what it is without this field. |
+| `timezone` | `string` | timezone is the IANA zone whose wall clock draws the bucket boundaries, such as "America/Los_Angeles", read from the engine's time zone database. Empty is UTC. "Local" is refused: it names the zone of whichever machine reads it. Set without bucket_width, it is refused.<br><br>A zone and not an offset: a fixed offset is wrong on every day on the far side of a daylight-saving change inside the window, and a zone keeps ONE clock — the request states a zone and a unit, never an instant the client computed, and the server derives every boundary from them. |
+| `bucket_count` | `int32` | bucket_count states the window as "the last N whole buckets, ending with the one that holds the window's last instant": how a client asks for the last seven days, today included, without computing a local midnight on its own clock. until still ends the window (empty is now), so the last bucket is cut short there. 0 means the window comes from since and lookback, as without a series; 1 to 1000 is accepted. Set together with since or lookback, set without bucket_width, negative, or above 1000, it is refused. |
 
 ### GetStatsResponse
 
@@ -1307,6 +1310,9 @@ not name the namespace that the id exists.
 | `namespace` | `string` | namespace, window_since and window_until are the question that was actually answered, with an empty request resolved. A client that asked for "the default namespace, the last day" cannot label its own numbers without them, and it should not have to know the default's name to do it. |
 | `window_since` | `google.protobuf.Timestamp` |  |
 | `window_until` | `google.protobuf.Timestamp` |  |
+| `buckets` | repeated [`StatsBucket`](#statsbucket) | buckets is the series the request asked for, oldest first. It tiles [window_since, window_until) exactly: the first bucket starts at window_since, each ends where the next starts, and the last ends at window_until. With bucket_count, window_since is the start of the first whole bucket, so every number above describes exactly the span the buckets tile. Empty when the request asked for no series. |
+| `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width and timezone are the series actually drawn, resolved: an empty timezone answers "UTC". Unset when no series was asked for. |
+| `timezone` | `string` |  |
 
 ### GetSystemInfoRequest
 
@@ -2488,6 +2494,20 @@ appears in a proto message, in Temporal history, or in the archive.
 | `interface_verdict` | [`InterfaceVerdict`](#interfaceverdict) | interface_verdict is the promoted version's declared interface compared with compared_version — what ran when no version was named, until now. UNSPECIFIED, with compared_version empty, when the promotion did not change what runs. BREAKING here means the request acknowledged it. |
 | `compared_version` | `string` |  |
 
+### StatsBucket
+
+StatsBucket is one bucket of a series: the runs the namespace CREATED in
+[since, until), counted exactly as GetStatsResponse.runs_by_status counts
+the window's. One window, one population holds per bucket: a run is in the
+bucket it was submitted in, whenever it ends.
+
+| Field | Type | Description |
+|---|---|---|
+| `since` | `google.protobuf.Timestamp` | inclusive |
+| `until` | `google.protobuf.Timestamp` | exclusive |
+| `runs_by_status` | map&lt;`string`, `int64`&gt; | runs_by_status has the window's four keys, always present. succeeded, failed and canceled count the bucket's runs that have finished; running counts the bucket's runs not finished when the answer was computed. The four sum to how many runs the bucket created, up to one skew: a run still going is placed by the cluster's record of its start, a finished one by the archive's stamp of its creation, and the two differ by the milliseconds a submission takes, so a run submitted that close to a boundary can change buckets when it finishes.<br><br>Across the series, succeeded, failed and canceled sum EXACTLY to the window's runs_by_status: both come from one scan of the archive index. running sums to at most the window's running, and the difference is the runs still going that were created before window_since. The window's running is a fact about now and counts them; no bucket can, because none of them was created in one. |
+| `partial` | `bool` | partial is true when the window cut this bucket short, so it spans less than its whole hour or day: the first bucket of a window that starts mid-day, and the last bucket of one that ends now ("today, so far"). |
+
 ### StreamEventsRequest
 
 | Field | Type | Description |
@@ -3285,6 +3305,24 @@ audit fact, so no request field carries a kind.
 | `RUN_ORIGIN_KIND_SCHEDULE` | 3 | SCHEDULE: a schedule fired. id is the schedule id (sch-…). Defined here so orkflow-schedules stamps it without touching Run; nothing produces it until that proposal lands. |
 | `RUN_ORIGIN_KIND_PARENT_RUN` | 4 | PARENT_RUN: a child run started by a composing parent. id is the PARENT run's id. Defined here so composed-orkflows adds no Run field of its own; nothing produces it until that proposal lands. |
 | `RUN_ORIGIN_KIND_RUN_AGAIN` | 5 | RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the SOURCE run's id, which the server confirmed exists in this namespace. |
+
+### StatsBucketWidth
+
+StatsBucketWidth is the calendar unit one bucket of a series spans, read
+on the wall clock of the request's timezone.
+
+A bucket is one stretch of time whose wall-clock label — the local date
+for DAY, the local date and hour for HOUR — does not change. So a day is
+23 or 25 hours long when the zone's clocks change inside it, an hour that
+a fall-back repeats is ONE two-hour bucket, and a date or an hour the
+zone's clocks skip has no bucket at all. There is no width below an hour:
+a curve finer than that is what the telemetry pipeline's counters are for.
+
+| Value | Number | Description |
+|---|---|---|
+| `STATS_BUCKET_WIDTH_UNSPECIFIED` | 0 | no series |
+| `STATS_BUCKET_WIDTH_HOUR` | 1 |  |
+| `STATS_BUCKET_WIDTH_DAY` | 2 |  |
 
 ### Status
 

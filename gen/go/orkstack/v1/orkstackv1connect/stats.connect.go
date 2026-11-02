@@ -47,7 +47,9 @@ const (
 
 // StatsServiceClient is a client for the orkstack.v1.StatsService service.
 type StatsServiceClient interface {
-	// GetStats reports one namespace's runs over one time window.
+	// GetStats reports one namespace's runs over one time window and, when the
+	// request names a bucket_width, the same window as a series of hours or
+	// days — from the same scan, so the series and the totals cannot disagree.
 	GetStats(context.Context, *connect.Request[v1.GetStatsRequest]) (*connect.Response[v1.GetStatsResponse], error)
 	// GetFailureBreakdown groups one namespace's FAILED runs over one window by
 	// the dimensions the caller names. It is the read that makes the §4
@@ -155,7 +157,9 @@ func (c *statsServiceClient) GetUsage(ctx context.Context, req *connect.Request[
 
 // StatsServiceHandler is an implementation of the orkstack.v1.StatsService service.
 type StatsServiceHandler interface {
-	// GetStats reports one namespace's runs over one time window.
+	// GetStats reports one namespace's runs over one time window and, when the
+	// request names a bucket_width, the same window as a series of hours or
+	// days — from the same scan, so the series and the totals cannot disagree.
 	GetStats(context.Context, *connect.Request[v1.GetStatsRequest]) (*connect.Response[v1.GetStatsResponse], error)
 	// GetFailureBreakdown groups one namespace's FAILED runs over one window by
 	// the dimensions the caller names. It is the read that makes the §4
