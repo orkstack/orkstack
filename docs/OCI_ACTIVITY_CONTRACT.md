@@ -848,8 +848,14 @@ compile and store. For each distinct `uses` the resolver:
    config cannot serve a pull either, so a failure here fails the apply with
    the codes below. A malformed **label** never does: the image is still
    pinned and runnable, and the reason is reported as an interface warning.
-   The interface is not an `ImageRef` field and never reaches the digest; it
-   is recomputed from the digest-addressed image on every read.
+   The same config's icon and docs labels (`org.orkstack.activity.icon`,
+   `org.orkstack.activity.docs`) are read beside it, each on its own; one that
+   cannot be read is reported on the catalog and inspect reads and never
+   warns. None of the three is an `ImageRef` field or reaches the digest;
+   each is recomputed from the digest-addressed image on every read, except
+   that an `InspectActivity` asking with `allow_cached` about a pinned digest
+   may be answered from an earlier read of it. The
+   container ABI does not change: the container never reads a label.
 7. Checks the image against the image policy in force (§4.7).
 
 Failures are apply-time errors, never silent and never a fallback to a tag:

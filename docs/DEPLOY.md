@@ -2084,6 +2084,16 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   includes the web UI on the same port: `/`, its assets under `/_app/` and
   every route of the app, so a gateway that routes by path sends those to
   `ork` too (§0, "The web UI").
+- **Activity inspects answered from memory.** The catalog read
+  (`ListActivities`) carries each image's interface, icon and descriptions,
+  reused for 5 minutes. An `InspectActivity` that sets `allow_cached` for a
+  reference pinning a digest — what a client asks about the images a run's
+  tasks ran — is answered from a per-process cache once that process has
+  read the digest: at most 512 answers or about 16 MiB of memory, least
+  recently used first out, never a failure, never a tag. Any API caller can
+  fill it, and it stays bounded. A replica that restarts reads each digest
+  once more. Without `allow_cached` (`orkctl activity inspect`, the Admin
+  page's inspect form) every inspect reads the registry, as apply does.
 - **Run ids** are `ork-{timestamp}-{sequence}` and single-use for all time.
   Nothing may parse one or derive meaning from its parts — the sequence
   carries a per-process nonce in its high half (`internal/engine/runid.go`),

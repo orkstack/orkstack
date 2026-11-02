@@ -31,6 +31,10 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
 - **Any replica answers.** Every read comes from Temporal or the shared store,
   never from process memory, so a replica that started nothing answers
   identically for runs, attempts, deliveries and audit records others made.
+  The one read a replica may answer from memory is an `InspectActivity` that
+  asks for it (`allow_cached`) about a reference pinning a digest: what a
+  digest names never changes, so every replica reports the same image, each
+  with the time it read it, even after the registry has deleted it.
 - **Rendered once, server-side.** Where the engine renders a value (a diff
   cell, a plan step, a reason sentence), both clients print it verbatim. An
   unknown reason token from a newer build prints as itself; its row is never
@@ -1391,6 +1395,18 @@ and WARNINGs, and `apply` prints the warnings. UI: **Admin → Activities**, the
 filter form over the catalog, the same column with a disclosure of the declared table and an **Inspect a
 reference** form; the Apply page and the editor show the `tasks[i].with.<key>`
 issues, warnings kept after apply.
+
+An image's icon and descriptions (the same document's other two labels):
+`activity inspect` prints a `Description` line (the activity's description,
+whitespace collapsed, or `malformed — <docs_error>`; absent when there is
+none), an `Icon` line (`-` unresolved, `none — clients draw the default
+icon`, `malformed — <icon_error>`, or `declared · N elements`), a `DESCRIPTION`
+column on the interface and values tables that have one (each cell cut at
+80 characters with `…`), and an `OPS` table when an op has a description;
+`--json` carries them whole. A control or format character a server sends in
+any of these is printed as its `\u` escape. UI: not yet shown — these strings
+are the contract the UI's activity icon, run-page icons and editor panel
+follow.
 
 ### Dashboard reads
 

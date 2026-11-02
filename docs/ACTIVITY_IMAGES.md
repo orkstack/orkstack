@@ -68,9 +68,16 @@ during the apply-time resolution that already pins the digest (OCI Activity
 Contract §4.3) and checks every task's `with:` against it at `orkctl orkflow
 validate` and at apply (`docs/DSL.md`, validation rule 14). The container never
 reads the label, and nothing about it is stored: it is recomputed from the
-digest-addressed image on every read, so it can never disagree with what runs.
-For a multi-platform image the label is read from the first platform manifest
-in index order, so every platform variant should carry the same label.
+digest-addressed image on every read (an `InspectActivity` that asks with
+`allow_cached` about a pinned digest may get an earlier read of it), so it
+can never disagree with what runs.
+Beside it, an image MAY draw itself an icon (`org.orkstack.activity.icon`,
+"The icon") and describe itself, its ops and its keys in words
+(`org.orkstack.activity.docs`, "Describing the activity"), which the API
+returns for clients to show; nothing checks a run against them. For a
+multi-platform image all three labels are read from the first platform
+manifest in index order, so every platform variant should carry the same
+labels.
 
 The label is **optional**. An image without it is an ordinary activity,
 resolved, applied and run exactly as before; its `with:` is checked by the
@@ -81,8 +88,9 @@ image itself at run time (rule 2 above).
 The label's value is one line of JSON, which is hard to read and review once
 an image has more than a few keys. Write the declaration as an activity
 interface document instead, and let `orkctl` pack it into the label. The
-document is YAML with the header every authored document has, and the keys the
-label has (below):
+document is YAML with the header every authored document has, the keys the
+label has (below), and the `description:` and `icon:` keys the other two
+labels hold:
 
 ```yaml
 # interface.ork.yaml, beside the Dockerfile.
@@ -103,9 +111,13 @@ values:
 ```
 
 `orkctl activity build <context> --tag <ref> --interface interface.ork.yaml`
-packs it into the image it builds, as one `--label` that replaces a `LABEL` of
-the same key in the Dockerfile; a document it cannot pack builds nothing. Any
-other toolchain takes the value `orkctl activity interface pack` prints:
+packs it into the image it builds, as one `--label` per label — interface,
+icon and docs — each replacing a `LABEL` of the same key in the Dockerfile; an
+icon or descriptions the document does not declare are passed empty, which
+clears a label a base image set. A document it cannot pack builds nothing. Any
+other toolchain takes the values `orkctl activity interface pack` prints, one
+label per call (`--label interface`, the default, `icon` or `docs`; an
+undeclared one prints an empty line):
 
 | Toolchain | Where the value goes |
 |---|---|
@@ -113,7 +125,7 @@ other toolchain takes the value `orkctl activity interface pack` prints:
 | ko | `--image-label` with the same `key=value` |
 | rules_oci | `oci_image`'s `labels` |
 | nix `dockerTools` | `config.Labels` |
-| a Dockerfile alone | paste it as `LABEL org.orkstack.activity.interface='<value>'`; the value never holds a single quote, which pack writes as a JSON unicode escape, so it fits a single-quoted line as it is — up to BuildKit's 65,535-byte line, past which only a `--label` carries it |
+| a Dockerfile alone | paste each as `LABEL org.orkstack.activity.interface='<value>'` (and `….icon`, `….docs`); a value never holds a single quote, which pack writes as a JSON unicode escape, so it fits a single-quoted line as it is — up to BuildKit's 65,535-byte line, past which only a `--label` carries it |
 
 The value is canonical: one declaration always packs to the same bytes (map
 keys sorted, no whitespace), so the label contributes the same bytes to every
@@ -136,8 +148,12 @@ its command line and skips one it finds in a directory, naming it on
 stderr.
 
 Labels are inherited from a base image: an image built `FROM` a labelled image
-declares the base's interface until it declares its own, with `--interface`
-or a `LABEL` of the same key.
+declares the base's interface, icon and descriptions until it declares its
+own, with `--interface` (which sets all three) or a `LABEL` of each key; an
+empty icon or docs label declares none. An image that overrides only the
+interface label of a first-party base keeps the base's descriptions, which
+then describe keys its interface does not declare: they are reported
+unreadable (below), never shown against the wrong keys.
 
 ### The label
 
@@ -188,16 +204,150 @@ What a document is told:
   it warns once and still runs the image; first-party images and engines are
   released together.
 
-`orkctl activity inspect <name-or-reference>` and Admin → Activities show what
-an image declares, and `orkctl activity test <image>` reports it beside the
+`orkctl activity inspect <name-or-reference>` shows what an image declares —
+its interface, icon and descriptions — and Admin → Activities shows its
+interface. `orkctl activity test <image>` reports the interface beside the
 contract's assertions (declared, none or malformed), read as apply reads it;
 the label is optional, so the test never fails over it. Every first-party
-image carries the label, and so does each
-example image: each one's `interface.ork.yaml`, beside its Dockerfile, is the
-source, and `go run ./internal/schemas/cmd/genschemas` writes the Dockerfile's
-one interface `LABEL` line from it, so a plain `docker build` of the directory
-still declares it; a stale line fails the unit tests. Each README's "Interface"
+image carries the three labels, and so does each example image: each one's
+`interface.ork.yaml`, beside its Dockerfile, is the source, and
+`go run ./internal/schemas/cmd/genschemas` writes the Dockerfile's three
+activity `LABEL` lines from it (an undeclared icon or docs as `''`), so a
+plain `docker build` of the directory still declares them; a stale line fails
+the unit tests. Each README's "Interface"
 section links the document.
+
+### Describing the activity
+
+A document may say what the activity does, what each op does, and what each
+`with:` key and `values.json` key means, each with a `description:` beside
+its declaration:
+
+```yaml
+apiVersion: orkstack/v1
+kind: ActivityInterface
+description: >-
+  Copies one file into an output artifact.
+ops:
+  copy:
+    description: Copies one file.
+    fields:
+      src:
+        type: string
+        required: true
+        description: >-
+          The file to copy, under `/orkstack/input`.
+values:
+  path:
+    type: string
+    description: The artifact the copy wrote.
+```
+
+Pack writes the descriptions into their own label, `org.orkstack.activity.docs`,
+never into the interface label, whose vocabulary stays exactly `inputs:`'s.
+Its value is the protojson of `orkstack.v1.ActivityDocs` — `schemaVersion`
+(`1`), the activity's `description`, `fields` (shared key → text), `ops` (op →
+its `description` and its `fields`) and `values` (key → text):
+
+```dockerfile
+LABEL org.orkstack.activity.docs='{"schemaVersion":1,"description":"Copies one file into an output artifact.","ops":{"copy":{"description":"Copies one file.","fields":{"src":"The file to copy, under `/orkstack/input`."}}},"values":{"path":"The artifact the copy wrote."}}'
+```
+
+A description is **one paragraph of plain text**. Text between a pair of
+backticks on it, non-empty and with no backtick inside, is code — a key, an
+op, a path — which a client may show in a code face; nothing else is
+interpreted, so markup and links are text. Write a long one as a folded block
+scalar (`>-`), whose lines join into one paragraph; pack trims each. A
+description must be valid UTF-8 and not empty, and hold no control character
+— a line break, a tab or a carriage return included — no format character
+(bidirectional marks and overrides, zero-width and invisible characters, tag
+characters), which would show text other than it reads, and no noncharacter.
+Bounds, in characters: the activity's description at most 1,000, an op's,
+a key's or a value's at most 500; the label at most 64 KiB, with the
+interface's own bounds on ops, keys and their names. The implied `op` key is
+not described: the activity's and each op's descriptions cover it. Every
+first-party image describes itself, each op and every key it declares.
+
+The engine checks the descriptions against the interface the same image
+declares: an op, key or value it describes must be one that interface
+declares, in the same place. When the image carries no interface label, or
+one this engine cannot read, the descriptions are read unchecked — the labels
+fail independently.
+
+### The icon
+
+A document may draw the activity an icon — one small SVG, drawn in the
+current colour on a 16 by 16 grid, as `activity-file`'s page is:
+
+```yaml
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 1.8h5L12.5 5.3v8.9H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 1.8v3.5h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+```
+
+An image without an icon omits the key: an empty `icon:` is refused, as an
+empty `description:` is.
+
+Draw it at 16 px with a 1.4 stroke, round caps and joins, and 1 px of
+padding on every side, as the first-party icons are; a client is expected to
+draw it at 15 to 24 px, in its own text colour. Pack checks it and writes it into
+`org.orkstack.activity.icon` as one canonical line — double quotes,
+attributes in their order, comments, the XML declaration, `title` and `desc`
+dropped:
+
+```dockerfile
+LABEL org.orkstack.activity.icon='<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4 1.8h5L12.5 5.3v8.9H4z" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 1.8v3.5h3.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>'
+```
+
+An icon may hold only this, and anything else refuses the whole icon — a
+client then draws the default one, never part of an icon:
+
+| Where | Allowed |
+|---|---|
+| the root `<svg>` | `xmlns` (the SVG namespace only), `viewBox` exactly `0 0 16 16`, `width` and `height` (dropped), presentation attributes |
+| elements below it | `path`, `circle`, `ellipse`, `rect`, `line`, `polyline`, `polygon`, `g` |
+| presentation attributes, on any of them | `fill` and `stroke` (`none` or `currentColor`), `stroke-width` (0 to 4), `stroke-linecap` (`butt`, `round`, `square`), `stroke-linejoin` (`miter`, `round`, `bevel`), `fill-rule` and `clip-rule` (`nonzero`, `evenodd`) |
+| geometry, only where it belongs | `path`: `d` (SVG path data); `circle`: `cx`, `cy`, `r`; `ellipse`: `cx`, `cy`, `rx`, `ry`; `rect`: `x`, `y`, `width`, `height`, `rx`, `ry`; `line`: `x1`, `y1`, `x2`, `y2`; `polyline` and `polygon`: `points` (number pairs); `g`: `transform` (`matrix`, `translate`, `scale`, `rotate`, `skewX`, `skewY`) |
+
+Numbers are plain — a sign, digits, a fraction, an exponent; no unit, no
+`%` — and lie between -10,000 and 10,000; a radius, width or height is never
+negative. Comments, the XML declaration, space between elements, and `title`
+and `desc` with their text are dropped. Everything else is refused: text,
+`use` and every `href`, `image`, `text`, `style` and `class`, `id`, scripts
+and event attributes, gradients, patterns, filters, masks, clip paths,
+markers, animation, `opacity`, any colour but `currentColor`, a DOCTYPE,
+other processing instructions, CDATA, namespaced attributes, and an attribute
+given twice. Bounds: at most 2,048 bytes, 32 elements below the root, and `g`
+nested 4 deep.
+
+The API returns the icon as a tree of those elements and attributes, never
+as markup; a client builds the drawing from it, drawing the root itself as
+`<svg viewBox="0 0 16 16" fill="currentColor">` plus the icon's own root
+attributes. An element with no `fill` of its own is therefore filled in the
+text colour, never in SVG's default black: give a line or an outline
+`fill="none"`.
+
+### The default icon
+
+For an image without an icon — no label, an empty one, one the engine cannot
+read, or a reference that did not resolve — a client draws the default
+activity icon, a container. It is never put in a label:
+
+```yaml
+icon: |-
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M8 1.8 13.5 5v6L8 14.2 2.5 11V5zM2.5 5 8 8.2 13.5 5M8 8.2v6" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+```
+
+### Unreadable labels and older engines
+
+Each of the three labels is read on its own: an icon or descriptions the
+engine cannot read never cost the interface, nor each other. Such a label is
+reported, with the reason, as the activity's `icon_error` or `docs_error` and
+in `orkctl activity inspect` (`malformed — …`); it never stops a document
+from validating or a run from starting, and it is never shown raw. An engine
+older than the icon and docs labels reads the interface label alone, which
+they leave byte-for-byte unchanged, so an image that carries them declares the
+same interface to every release. An `orkctl` older than them refuses a
+document that uses `description:` or `icon:`.
 
 ## First-party reference images
 
