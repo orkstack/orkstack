@@ -299,8 +299,9 @@ func (a *EventActivities) PublishEvent(
 }
 
 // publishAttempts is how many attempts RunWorkflow gives the projection
-// activity (eventActivityOptions; TestPublishAttempts_MatchTheRetryPolicy
-// holds the two together).
+// activity (eventActivityOptions;
+// TestRunWorkflow_AFailedReadIsRetriedBeforeTheEndIsAnnounced holds the two
+// together).
 const publishAttempts = 3
 
 // lastPublishAttempt reports whether this PublishEvent is the last attempt the

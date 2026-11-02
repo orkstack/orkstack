@@ -29,9 +29,10 @@ import (
 const RetryMaxIntervalChange = "retry-max-interval"
 
 // legacyRetryMaxInterval is what every build before the gate hardcoded, and
-// what a DefaultVersion branch keeps; it is frozen
-// (TestLegacyRetryMaxInterval_IsFrozen), and a change to the default moves
-// DefaultRetryMaxInterval instead.
+// what a DefaultVersion branch keeps; it is frozen by the recorded legacy
+// histories (TestRunWorkflow_ReplaysCommittedRetryMaxIntervalHistories) and
+// TestRunWorkflow_ALegacyRunKeepsTheLegacyMaximumInterval, and a change to
+// the default moves DefaultRetryMaxInterval instead.
 const legacyRetryMaxInterval = 100 * time.Second
 
 // retryMaxIntervalGateDisabledForTest is a TEST-ONLY switch, the precedent of
