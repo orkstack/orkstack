@@ -47,6 +47,11 @@ func clearTelemetryEnv(t *testing.T) {
 	}
 }
 
+// testAddress is an address no SDK default names, so a setting dropped or
+// swapped on the way to the dial shows; a loopback IP literal on a port
+// nothing listens on, so the canceled dial resolves no name.
+const testAddress = "127.0.0.1:1"
+
 // dialedWith is what connectTemporal hands the SDK to dial with, and the
 // identity it returns. The context is already canceled, so the dial itself
 // fails at once and nothing is contacted: what is read is the options.
@@ -108,7 +113,7 @@ func TestBootTelemetryZeroConfig(t *testing.T) {
 	// shows. A real, non-nil *slog.Logger: client.Options.Logger is the
 	// Temporal SDK's own log.Logger interface, and a typed-nil *slog.Logger
 	// boxed into it would never compare equal to a literal nil.
-	cfg := config{temporalAddress: "temporal.example.test:7233", temporalNamespace: "ork-zero-config"}
+	cfg := config{temporalAddress: testAddress, temporalNamespace: "ork-zero-config"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	got, identity := dialedWith(t, cfg, sinks, logger)
 	requireEngineDial(t, got, identity, cfg, logger)
@@ -166,7 +171,7 @@ func TestConnectTemporal_DialsWithTheTelemetryItWasGiven(t *testing.T) {
 		t.Fatalf("telemetry.Boot: %v", err)
 	}
 
-	cfg := config{temporalAddress: "temporal.example.test:7233", temporalNamespace: "ork-telemetry-on"}
+	cfg := config{temporalAddress: testAddress, temporalNamespace: "ork-telemetry-on"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	got, identity := dialedWith(t, cfg, sinks, logger)
 	requireEngineDial(t, got, identity, cfg, logger)
