@@ -20,7 +20,7 @@
 			type="button"
 			data-testid={c.testid}
 			aria-label={c.label}
-			title={c.label}
+			data-tip={c.label}
 			aria-pressed={appearance.choice === c.theme}
 			onclick={() => appearance.set(c.theme)}
 			class="inline-flex size-7 items-center justify-center text-ink-muted transition-colors not-first:border-l not-first:border-rule hover:text-ink aria-pressed:bg-ink aria-pressed:text-on-ink"

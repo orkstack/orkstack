@@ -13,6 +13,10 @@
 	import OrkflowCallers from '#lib/components/OrkflowCallers.svelte';
 	import RunSubmitPanel from '#lib/components/RunSubmitPanel.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import FactsStrip from '#lib/components/FactsStrip.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+	import Plate from '#lib/components/Plate.svelte';
+	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { registerProvider } from '#lib/palette/context.ts';
 	import { orkflowPageCommands } from '#lib/palette/orkflowPage.ts';
 	import { setTitleBlock } from '#lib/sheet.svelte.ts';
@@ -57,9 +61,9 @@
 	const tabs = [
 		{ id: 'overview', label: 'Overview' },
 		{ id: 'versions', label: 'Versions' },
-		{ id: 'triggers', label: 'Triggers' },
+		{ id: 'edit', label: 'Edit' },
 		{ id: 'schedules', label: 'Schedules' },
-		{ id: 'edit', label: 'Edit' }
+		{ id: 'triggers', label: 'Triggers' }
 	];
 
 	// Submitting is a dialog on this page rather than a trip to a page that
@@ -156,33 +160,34 @@
 <SheetHeader title={wf?.name ?? data.name} testid="orkflow-name">
 	{#snippet meta()}
 		{#if wf}
-			<p class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-				<span class="figure font-semibold text-ink" data-testid="orkflow-version">v{wf.version}</span>
-				<span class="text-xs text-ink-muted">Applied {fmtTimestamp(wf.createdAt)}</span>
-			</p>
-			{#if wf.description}<p class="mt-1 max-w-prose">{wf.description}</p>{/if}
+			{#snippet version()}<span data-testid="orkflow-version"><Plate key="version" value={wf.version} /></span>{/snippet}
+			{#snippet digest()}{#if wf.definitionDigest}<Plate key="sha256" value={wf.definitionDigest.replace(/^sha256:/, '').slice(0, 12)} tip={wf.definitionDigest} />{:else}—{/if}{/snippet}
+			{#snippet appliedAt()}<TimeAgo at={wf.createdAt} />{/snippet}
+			<FactsStrip facts={[{ label: 'Current version', value: version }, { label: 'Definition', value: digest }, { label: 'Applied', value: appliedAt }]} />
+			{#if wf.description}<p class="mt-2 max-w-prose">{wf.description}</p>{/if}
 		{/if}
 	{/snippet}
 	{#snippet actions()}
 		<a
 			href={listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters(wf?.name ?? data.name, '', '', '') })}
-			class="btn">View runs</a
+			class="btn btn-quiet">View runs</a
 		>
 		{#if wf}
-			<button type="button" data-testid="orkflow-submit-run" onclick={() => (submitDialogOpen = true)} class="btn btn-primary">
-				Submit a run
-			</button>
+			<!-- One orange action per screen: on the Edit tab it is Apply version. -->
+			<button type="button" data-testid="orkflow-submit-run" onclick={() => (submitDialogOpen = true)} class="btn {data.tab === 'edit' ? '' : 'btn-primary'}"
+				><Icon name="play" />Submit a run</button
+			>
 		{/if}
 	{/snippet}
 </SheetHeader>
 
-<nav class="mb-6 flex gap-1 overflow-x-auto border-b border-rule" aria-label="Orkflow views">
+<nav class="tabs mb-5" aria-label="Orkflow views">
 	{#each tabs as tab (tab.id)}
 		<a
 			href={tabHref(tab.id)}
 			data-testid="tab-{tab.id}"
 			aria-current={data.tab === tab.id ? 'page' : undefined}
-			class="caps -mb-px shrink-0 border-b-2 border-transparent px-3 py-2.5 text-ink-muted transition-colors hover:text-ink current:border-blue current:text-ink"
+			class="tab"
 		>
 			{tab.label}
 		</a>
@@ -322,7 +327,7 @@
 										<!-- The child's definition digest: what this version pins it as. -->
 										<span
 											class="font-mono text-xs text-ink-secondary"
-											title={task.orkflow.definitionDigest}
+											data-tip={task.orkflow.definitionDigest}
 											data-digest={task.orkflow.definitionDigest}
 											data-testid="task-child-digest-{task.id}"
 											>{shortDigest(task.orkflow.definitionDigest) || '—'}</span
@@ -330,7 +335,7 @@
 									{:else if task.image?.indexDigest}
 										<span
 											class="font-mono text-xs text-ink-secondary"
-											title={task.image.indexDigest}
+											data-tip={task.image.indexDigest}
 											data-digest={task.image.indexDigest}
 											data-testid="task-image-digest-{task.id}"
 											>{shortDigest(task.image.indexDigest)}</span
@@ -339,7 +344,7 @@
 										<span
 											class="text-xs text-ink-muted"
 											data-testid="task-image-unpinned-{task.id}"
-											title="this task's image was not resolved to a digest">unpinned</span
+											data-tip="this task's image was not resolved to a digest">unpinned</span
 										>
 									{/if}
 								</td>
@@ -459,3 +464,54 @@
 		{/snippet}
 	</Dialog>
 {/if}
+
+<style>
+	.tabs {
+		display: inline-flex;
+		max-width: 100%;
+		gap: 2px;
+		padding: 3px;
+		overflow-x: auto;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		background: var(--surface-2);
+		scrollbar-width: none;
+	}
+	.tab {
+		display: inline-flex;
+		align-items: center;
+		height: 28px;
+		padding: 0 12px;
+		border-radius: 6px;
+		color: var(--ink-2);
+		font-size: 13.5px;
+		font-weight: 600;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.tab:hover {
+		color: var(--ink);
+	}
+	.tab[aria-current='page'] {
+		background: var(--surface);
+		color: var(--navy-text);
+		font-weight: 700;
+		box-shadow:
+			0 0 0 1px var(--line-2),
+			var(--shadow),
+			inset 0 -2px 0 var(--navy-text);
+	}
+	.tab:focus-visible {
+		outline-offset: -2px;
+	}
+	@media (max-width: 640px) {
+		.tab {
+			min-height: 40px;
+		}
+	}
+	@media (forced-colors: active) {
+		.tab[aria-current='page'] {
+			outline: 2px solid Highlight;
+		}
+	}
+</style>

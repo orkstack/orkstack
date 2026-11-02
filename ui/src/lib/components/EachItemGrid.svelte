@@ -139,11 +139,11 @@
 					type="button"
 					data-item={item.index}
 					data-testid="task-{taskId}-item-{item.index}"
-					data-status={itemStatusText(item)}
+					data-status={Status[item.status ?? Status.UNSPECIFIED]}
 					data-cached={isCachedItem(item) ? 'true' : undefined}
 					aria-label={itemAriaLabel(item)}
 					aria-pressed={selected === item.index}
-					title={itemAriaLabel(item)}
+					data-tip={itemAriaLabel(item)}
 					onclick={() => onSelect(selected === item.index ? undefined : item.index)}
 					class="relative inline-flex h-7 min-w-7 items-center justify-center rounded-sm border px-1 font-mono text-2xs leading-none {STATUS_CLASSES[
 						item.status
@@ -176,7 +176,7 @@
 						data-testid="task-{taskId}-item-panel-live"
 						data-live={line.kind}
 						data-stale={line.stale}
-						title={line.title}
+						data-tip={line.title}
 						class={line.stale ? 'font-medium text-ink-secondary' : ''}>{line.text}</span
 					>
 				{/if}

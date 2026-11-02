@@ -35,8 +35,12 @@
 		 * trigger's and the listbox's aria-label (selectName.ts).
 		 */
 		label?: string;
-		/** 'console' is the compact log-pane variant, where this sits among 11 px mono chrome. */
-		variant?: 'default' | 'console';
+		/**
+		 * 'console' is the compact log-pane variant; 'namespace' is the
+		 * sidebar's switch, its value under a "Namespace" label beside an
+		 * avatar of its first letter.
+		 */
+		variant?: 'default' | 'console' | 'namespace' | 'chip';
 	}
 
 	let {
@@ -214,7 +218,7 @@
 </script>
 
 <div
-	class="relative {isConsole ? 'inline-block' : 'block w-full'}"
+	class="relative {isConsole || variant === 'chip' ? 'inline-block' : 'block w-full'}"
 	use:dismissOnOutsideOrEscape={() => {
 		if (open) closePanel();
 	}}
@@ -234,22 +238,26 @@
 		onclick={() => (open ? closePanel() : openPanel())}
 		onkeydown={onKeydown}
 		class={isConsole
-			? 'inline-flex h-6 w-full items-center justify-between gap-1 rounded-sm border border-rule-strong bg-paper px-1.5 text-left text-2xs text-ink hover:bg-hover disabled:pointer-events-none disabled:opacity-50'
-			: 'field inline-flex h-9 w-full items-center justify-between gap-2 px-3 text-left text-sm hover:bg-hover disabled:pointer-events-none disabled:opacity-50'}
+			? 'inline-flex h-6 w-full items-center justify-between gap-1 rounded-sm border border-line-strong bg-surface px-1.5 text-left text-2xs text-ink hover:bg-hover disabled:pointer-events-none disabled:opacity-50'
+			: variant === 'chip'
+				? 'chip disabled:pointer-events-none disabled:opacity-50'
+				: variant === 'namespace'
+				? 'flex w-full items-center gap-2.5 rounded-sm border border-side-field-line bg-side-field px-2.5 py-1.75 text-left text-side-strong hover:bg-side-hover disabled:pointer-events-none disabled:opacity-50'
+				: 'field inline-flex h-8.5 w-full items-center justify-between gap-2 px-3 text-left text-dense hover:bg-hover disabled:pointer-events-none disabled:opacity-50'}
 	>
-		<span class="truncate">{selectedLabel}</span>
-		<svg
-			viewBox="0 0 20 20"
-			fill="none"
-			stroke="currentColor"
-			stroke-width="1.5"
-			stroke-linecap="round"
-			stroke-linejoin="round"
-			aria-hidden="true"
-			class="shrink-0 {isConsole ? 'size-3 text-ink-muted' : 'size-4 text-ink-muted'}"
-		>
-			<path d="m6 8 4 4 4-4" />
-		</svg>
+		{#if variant === 'namespace'}
+			<span aria-hidden="true" class="grid size-6.5 shrink-0 place-items-center rounded-sm bg-mark-base text-sm font-bold text-mark-line"
+				>{selectedLabel.slice(0, 1).toUpperCase()}</span
+			>
+			<span class="min-w-0 flex-1 leading-tight"
+				><small class="block text-sm text-side-ink-2">Namespace</small><b class="block truncate font-semibold">{selectedLabel}</b></span
+			>
+		{:else if variant === 'chip'}
+			<span aria-hidden="true">{label}</span><b>{selectedLabel}</b>
+		{:else}
+			<span class="truncate">{selectedLabel}</span>
+		{/if}
+		<svg viewBox="0 0 16 16" aria-hidden="true" class="shrink-0 {isConsole ? 'size-3 text-ink-3' : 'size-4 text-ink-3'}"><use href="#i-chev" /></svg>
 	</button>
 
 	{#if open}
@@ -261,8 +269,8 @@
 			data-testid="{testid}-listbox"
 			data-overlay
 			class={isConsole
-				? 'absolute z-10 mt-1 max-h-64 w-full overflow-auto rounded-sm border border-ink bg-sheet normal-case shadow-overlay'
-				: 'absolute z-10 mt-1 max-h-64 w-full min-w-max overflow-auto rounded-md border border-ink bg-sheet py-1 shadow-overlay'}
+				? 'absolute z-30 mt-1 max-h-64 w-full overflow-auto rounded-sm border border-line-2 bg-surface normal-case shadow-overlay'
+				: 'scroll-panel absolute z-30 mt-1 max-h-64 w-full min-w-max overflow-auto rounded-md border border-line-2 bg-surface p-1 shadow-overlay'}
 		>
 			{#each options as option, index (option.value)}
 				<button

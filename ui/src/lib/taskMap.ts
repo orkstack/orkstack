@@ -432,8 +432,8 @@ function line(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number,
 
 /**
  * Draws one cell's mark — the canvas rendering of the same table the CSS
- * stamps draw from (#lib/statusMarks.ts): filled square, live dot, waiting ring,
- * crossed, struck, hatched, hollow, dotted.
+ * stamps draw from (#lib/statusMarks.ts): filled square, live dot, awaiting
+ * diamond, failed triangle, struck, dashed, hollow, dotted.
  */
 function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: number, colors: MapColors): void {
 	const { x, y, w: s } = r;
@@ -452,18 +452,26 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
 			ctx.fillRect(x + (s - d) / 2, y + (s - d) / 2, d, d);
 			break;
 		}
-		case 'ring':
+		case 'diamond':
 			ctx.fillStyle = c.bg;
 			ctx.fillRect(x, y, s, s);
 			ctx.strokeStyle = c.solid;
-			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
+			ctx.beginPath();
+			ctx.moveTo(x + s / 2, y + 0.5);
+			ctx.lineTo(x + s - 0.5, y + s / 2);
+			ctx.lineTo(x + s / 2, y + s - 0.5);
+			ctx.lineTo(x + 0.5, y + s / 2);
+			ctx.closePath();
+			ctx.stroke();
 			break;
-		case 'cross':
+		case 'triangle':
 			ctx.fillStyle = c.solid;
-			ctx.fillRect(x, y, s, s);
-			ctx.strokeStyle = colors.paper;
-			line(ctx, x + 1, y + 1, x + s - 1, y + s - 1);
-			line(ctx, x + s - 1, y + 1, x + 1, y + s - 1);
+			ctx.beginPath();
+			ctx.moveTo(x + s / 2, y);
+			ctx.lineTo(x + s, y + s);
+			ctx.lineTo(x, y + s);
+			ctx.closePath();
+			ctx.fill();
 			break;
 		case 'strike':
 			ctx.fillStyle = c.bg;
@@ -472,11 +480,10 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
 			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
 			line(ctx, x + s - 1, y + 1, x + 1, y + s - 1);
 			break;
-		case 'hatch':
+		case 'dash':
 			ctx.strokeStyle = c.solid;
-			line(ctx, x, y + s / 2, x + s / 2, y);
-			line(ctx, x + s / 2, y + s, x + s, y + s / 2);
-			line(ctx, x, y + s, x + s, y);
+			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
+			line(ctx, x + 2, y + s / 2, x + s - 2, y + s / 2);
 			break;
 		case 'hollow':
 			ctx.strokeStyle = c.solid;

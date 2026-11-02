@@ -364,7 +364,8 @@ function block(opening: string): string {
 const namesIn = (body: string) => new Set([...body.matchAll(/^\s*(--[a-z0-9-]+)\s*:/gm)].map((m) => m[1]));
 
 /** Read with var() from CSS or an inline style; never a utility. */
-const RUNTIME_ONLY = /^--(?:color-pin-|color-syntax-|rule-|duration-|grid-pitch-|underline-offset$|opacity-)/;
+const RUNTIME_ONLY =
+	/^--(?:color-pin-|color-syntax-|rule-|duration-|dur-|grid-pitch-|underline-offset$|opacity-|r$|r-sm$|font-ui$|font-code$|shadow$|(?!color-|font-|text-|tracking-|leading-|radius-|spacing|shadow-|ease-|animate-)[a-z])/;
 
 test('rule 6: tokens.css and the registration declare the same names', () => {
 	const registered = new Set(
@@ -380,12 +381,26 @@ test('rule 6: tokens.css and the registration declare the same names', () => {
 	expect(other.map((m) => m[0].trim())).toEqual([]);
 });
 
-test('rule 6: light and dark declare exactly the same colours and shadows', () => {
+const MEDIA_DARK = "@media (prefers-color-scheme: dark) {\n\t:root:not([data-theme='light']) {";
+
+/** The system dark setting's block: the same roles as the explicit dark choice. */
+function mediaBlock(): string {
+	const start = tokensCss.indexOf(MEDIA_DARK);
+	if (start < 0) throw new Error('tokens.css has no block for the system dark setting');
+	return tokensCss.slice(start, tokensCss.indexOf('\n\t}', start));
+}
+
+const declsIn = (body: string) => [...body.matchAll(/^\s*(--[a-z0-9-]+)\s*:\s*([^;]+);/gm)].map((m) => `${m[1]}: ${m[2].trim()}`);
+
+test('rule 6: light and dark declare exactly the same roles, and both dark blocks the same values', () => {
 	const light = [...namesIn(block(LIGHT))].sort();
 	const dark = [...namesIn(block(DARK))].sort();
-	expect(light.length > 30).toBe(true);
+	expect(light.length > 90).toBe(true);
 	expect(dark).toEqual(light);
-	expect(light.every((n) => n.startsWith('--color-') || n.startsWith('--shadow-'))).toBe(true);
+	// The system setting and an explicit choice paint one dark theme.
+	expect(declsIn(mediaBlock()).sort()).toEqual(declsIn(block(DARK)).sort());
+	// No themed block declares a Tailwind name: utilities read the aliases.
+	expect(light.filter((n) => n.startsWith('--color-') && !/^--color-pin-/.test(n))).toEqual([]);
 	// The invariant block holds no literal colour: its colours are aliases.
 	const literal = [...block(INVARIANT).matchAll(/^\s*(--color-[a-z0-9-]+)\s*:\s*(?!\s|var\()([^;]+);/gm)].map((m) => m[1]);
 	expect(literal).toEqual([]);
@@ -408,8 +423,15 @@ export function portabilityProblems(css: string): string[] {
 					/^@keyframes [\w-]+$/.test(selector) ||
 					selector === ':root' ||
 					selector === ":root, :root[data-theme='light']" ||
-					selector === ":root[data-theme='dark']";
+					selector === ":root[data-theme='dark']" ||
+					selector === '@media (prefers-color-scheme: dark)';
 				if (!ok) problems.push(selector);
+				// The system dark setting's block holds one selector: the dark roles
+				// unless light was chosen.
+				if (selector === '@media (prefers-color-scheme: dark)') {
+					const inner = body.slice(i + 1, body.indexOf('{', i + 1)).trim().replace(/\s+/g, ' ');
+					if (inner !== ":root:not([data-theme='light'])") problems.push(`@media ${inner}`);
+				}
 			}
 			depth++;
 		} else if (body[i] === '}') {
@@ -432,6 +454,9 @@ export function appCssValues(css: string): string[] {
 test('rule 7 fixtures', () => {
 	expect(portabilityProblems("@import 'x.css';\n.btn { color: red }\n:root { --a: url(x) }")).toHaveLength(3);
 	expect(portabilityProblems(":root { --a: 1px }\n:root[data-theme='dark'] { --b: 2px }\n@keyframes x { from { opacity: 0 } }")).toEqual([]);
+	expect(portabilityProblems("@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) { --b: 2px } }")).toEqual([]);
+	expect(portabilityProblems('@media (prefers-color-scheme: dark) { .card { --b: 2px } }')).toEqual(['@media .card']);
+	expect(portabilityProblems('@media (min-width: 640px) { :root { --b: 2px } }')).toHaveLength(1);
 	expect(appCssValues('.a { width: 3px; color: #fff; transition: 1s cubic-bezier(0,0,1,1) }')).toHaveLength(4);
 	expect(appCssValues("@import './tokens.css';\n.a { width: calc(var(--spacing) * 9); opacity: var(--opacity-disabled); background: linear-gradient(45deg, transparent 38%, var(--color-paper) 38% 62%) }")).toEqual([]);
 });

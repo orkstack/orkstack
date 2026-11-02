@@ -1,29 +1,57 @@
 import { errorMessage } from '#lib/client.ts';
+import { orkflowClient } from '#lib/clients/orkflows.ts';
 import { runClient } from '#lib/clients/runs.ts';
+import { statsClient } from '#lib/clients/stats.ts';
 import { namespaceFrom } from '#lib/namespace.ts';
 import { pageNumber, pageSize } from '#lib/browsing.ts';
-import { filtersFromUrl } from '#lib/listFilter.ts';
+import { filterOf, filtersFromUrl } from '#lib/listFilter.ts';
+import { FilterOperator } from '#lib/gen/orkstack/v1/filter_pb.ts';
+import { FailureGroupBy } from '#lib/gen/orkstack/v1/stats_pb.ts';
 import type { PageLoad } from './$types';
 
+const DAY = { seconds: 86_400n, nanos: 0 };
+const WEEK = { seconds: 7n * 86_400n, nanos: 0 };
+
+// The list is the page's own read, awaited; everything above it — the 24 h
+// tiles, the latest failure, the 7-day charts and the Orkflow names the
+// filter chip offers — streams in after, so the list never waits for a
+// stats scan. Each part settles on its own and says so when it cannot.
 export const load: PageLoad = async ({ fetch, url }) => {
 	const namespace = namespaceFrom(url);
 	const size = pageSize(url.searchParams.get('size') ?? '');
 	const cursor = url.searchParams.get('cursor') ?? '';
-	// The page number is a LABEL for the cursor beside it, counted by the
-	// client because the engine answers with a token and no position. A number
-	// without a cursor names no page the engine could return, so it is 1.
 	const page = cursor ? pageNumber(url.searchParams.get('page') ?? '') : 1;
-	// The filters ride the URL as repeated `filter` parameters in the CLI
-	// grammar (docs/UI_CLI_PARITY.md "Filtering lists"). One that does not
-	// parse is shown without a request; what a field may take is the
-	// engine's to refuse, and its refusal is shown verbatim.
 	const { filters: applied, error: filterError } = filtersFromUrl(url);
 	const coordinates = { namespace, size, cursor, page, applied };
-	if (filterError) return { runs: [], nextPageToken: '', ...coordinates, error: filterError as string | null };
+
+	const stats = statsClient(fetch);
+	const day = stats.getStats({ namespace, lookback: DAY });
+	const week = stats.getStats({ namespace, lookback: WEEK });
+	const failures = stats.getFailureBreakdown({ namespace, lookback: WEEK, groupBy: [FailureGroupBy.CODE, FailureGroupBy.CATEGORY], limit: 5 });
+	const flakes = stats.getFlakeIndex({ namespace, lookback: WEEK, groupBy: [FailureGroupBy.ORKFLOW, FailureGroupBy.TASK], limit: 5 });
+	const latestFailure = runClient(fetch)
+		.listRuns({ namespace, pageSize: 1, filters: [filterOf('status', FilterOperator.EQUALS, ['FAILED'])] })
+		.then((res) => res.runs[0] ?? null);
+	const orkflowNames = orkflowClient(fetch)
+		.listOrkflows({ namespace, pageSize: 200 })
+		.then((res) => [...new Set(res.orkflows.map((o) => o.name))].sort());
+	// Every streamed read is caught where it is made: a refused stats call
+	// leaves its card saying so, never an unhandled rejection.
+	const settle = <T>(p: Promise<T>) => p.then((value) => ({ value, error: null as string | null }), (err) => ({ value: null as T | null, error: errorMessage(err) }));
+	const insights = {
+		day: settle(day),
+		week: settle(week),
+		failures: settle(failures),
+		flakes: settle(flakes),
+		latestFailure: settle(latestFailure),
+		orkflowNames: settle(orkflowNames)
+	};
+
+	if (filterError) return { runs: [], nextPageToken: '', ...coordinates, insights, error: filterError as string | null };
 	try {
 		const res = await runClient(fetch).listRuns({ namespace, pageSize: size, pageToken: cursor, filters: applied });
-		return { runs: res.runs, nextPageToken: res.nextPageToken, ...coordinates, error: null as string | null };
+		return { runs: res.runs, nextPageToken: res.nextPageToken, ...coordinates, insights, error: null as string | null };
 	} catch (err) {
-		return { runs: [], nextPageToken: '', ...coordinates, error: errorMessage(err) };
+		return { runs: [], nextPageToken: '', ...coordinates, insights, error: errorMessage(err) };
 	}
 };

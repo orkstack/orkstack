@@ -1,4 +1,9 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import CliPopover from './CliPopover.svelte';
+	import EditorDocsRail from './EditorDocsRail.svelte';
+	import Icon from './Icon.svelte';
+	import { shellQuote } from '#lib/runDetail.ts';
 	// The Edit tab: change ONE stored version's YAML and apply it as a new one.
 	//
 	// Three decisions are load-bearing here and none is cosmetic:
@@ -292,6 +297,25 @@
 		conflictDiff = null;
 		conflictDiffError = '';
 	}
+
+	// ---- Layout C: the problems chip, the docs rail, the More disclosure ----
+	const allFindings = $derived([...session.engineFindings, ...session.localFindings]);
+	const errorCount = $derived(allFindings.filter((f) => f.severity === 'error').length);
+	const warningCount = $derived(allFindings.filter((f) => f.severity === 'warning').length);
+	const problemCount = $derived(errorCount + warningCount);
+	// Apply is held only by the engine's own verdict on this exact text, never
+	// by what the editor finds on its own.
+	const engineCurrent = $derived(session.engine.kind === 'answered' && session.engine.text === yaml);
+	const engineErrors = $derived(engineCurrent ? session.engineFindings.filter((f) => f.severity === 'error').length : 0);
+	const applyHeld = $derived(engineErrors > 0);
+	// The list is open while there are problems; the chip folds it away.
+	let problemsOpen = $state(true);
+	let moreOpen = $state(false);
+	let railOpen = $state(true);
+	onMount(() => {
+		railOpen = matchMedia('(min-width: 1280px)').matches;
+	});
+	const atCaret = $derived(session.caretTask);
 </script>
 
 {#if error}
@@ -309,54 +333,129 @@
 	<p data-testid="editor-loading" class="text-sm text-ink-muted">Reloading the stored document…</p>
 {:else}
 	<form
-		class="space-y-4"
+		class="grid gap-4"
 		data-testid="editor-form"
 		onsubmit={(e) => {
 			e.preventDefault();
 			void apply();
 		}}
 	>
-		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-ink-secondary">
-			<span>
-				Editing <span class="font-medium text-ink">{name}</span> in namespace
-				<span class="font-medium text-ink">{namespaceLabel(namespace)}</span>, derived from
-				version
-				<span class="figure font-semibold text-blue" data-testid="editor-base-version">{base}</span>.
-			</span>
-			<span class="text-xs text-ink-muted">
-				The newest applied version is
-				<span class="font-medium text-ink-secondary" data-testid="editor-head-version"
-					>{expectedHead}</span
-				>{#if base === expectedHead}, which is what this edit is derived from.{:else}<span
-						data-testid="editor-fork-notice"
-					>&nbsp;— applying forks forward from {base} and becomes the new head. The version that
-						runs is unchanged until somebody promotes.</span
+		<div class="ed-bar">
+			<p class="min-w-0 flex-[1_1_20rem] text-dense text-ink-2">
+				Editing <b class="text-ink">{name}</b> from version
+				<span class="figure font-semibold text-navy-text" data-testid="editor-base-version">{base}</span>; the newest is
+				<span class="figure font-semibold text-ink" data-testid="editor-head-version">{expectedHead}</span>.
+				{#if base !== expectedHead}<span data-testid="editor-fork-notice"
+						>Applying forks forward from {base} and becomes the new head; the version that runs is unchanged until somebody promotes.</span
 					>{/if}
-			</span>
-			<span class="text-xs text-ink-muted">
-				Applying stores a NEW version — change <code>version:</code> before you apply. Re-applying
-				the same version with different content is refused.
-			</span>
+				Applying stores a new version: change <code>version:</code> first.
+			</p>
+			<div class="flex flex-wrap items-center gap-2">
+				<button type="button" data-testid="editor-validate" disabled={validating || applying} onclick={() => void validate()} class="btn">{validating ? 'Validating…' : 'Validate'}</button>
+				<button
+					type="submit"
+					data-testid="editor-apply"
+					aria-disabled={applyHeld || applying || validating ? 'true' : undefined}
+					aria-describedby={applyHeld ? 'editor-apply-why' : undefined}
+					onclick={(e) => {
+						if (applyHeld || applying || validating) e.preventDefault();
+					}}
+					class="btn btn-primary"
+				>
+					<Icon name="apply" />{applying ? 'Applying…' : 'Apply version'}
+				</button>
+				<CliPopover
+					testid="editor-cli"
+					title="Command line: this Orkflow"
+					commands={[
+						{ label: 'Check a file without storing it', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} orkflow validate ${name}.ork.yaml` },
+						{ label: 'Apply it as a new version', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} apply ${name}.ork.yaml` },
+						{ label: 'Edit it in your own editor', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} orkflow edit ${name}` }
+					]}
+				/>
+			</div>
+			{#if applyHeld}
+				<p id="editor-apply-why" class="apply-why" data-testid="editor-apply-why">Fix {engineErrors} {engineErrors === 1 ? 'problem' : 'problems'} to apply</p>
+			{/if}
 		</div>
 
-		<div>
-			<span id="editor-yaml-label" class="field-label">Orkflow YAML</span>
-			<YamlField
-				bind:value={yaml}
-				kind="Orkflow"
-				{namespace}
-				{session}
-				testid="editor-yaml"
-				label="Orkflow YAML"
-				labelledby="editor-yaml-label"
-				rows={24}
-				oninput={() => (noop = '')}
-			/>
-		</div>
-		<div class="flex flex-wrap gap-3 text-sm">
-			<label class="link cursor-pointer font-semibold">Import YAML<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
-			<button type="button" data-testid="editor-export" onclick={exportYaml} class="link font-semibold">Export YAML</button>
-			{#if dirty}<span data-testid="editor-unsaved" class="caps self-center text-ink-secondary">Unsaved changes</span>{/if}
+		<div class="ed-grid" class:rail-closed={!railOpen}>
+			<section class="card edcard" aria-labelledby="editor-yaml-label">
+				<div class="card-head">
+					<h2 id="editor-yaml-label">Edit</h2>
+					{#if problemCount > 0}
+						<button
+							type="button"
+							class="chip"
+							aria-expanded={problemsOpen}
+							aria-controls="editor-problems"
+							data-testid="editor-problems-chip"
+							onclick={() => (problemsOpen = !problemsOpen)}
+							><span>Problems:</span><b
+								>{errorCount} {errorCount === 1 ? 'error' : 'errors'}{#if warningCount}, {warningCount} {warningCount === 1 ? 'warning' : 'warnings'}{/if}</b
+							><Icon name="chev" /></button
+						>
+					{/if}
+					<div class="card-end">
+						{#if dirty}<span data-testid="editor-unsaved" class="text-sm font-semibold text-ink-3">Unsaved changes</span>{/if}
+						<span class="ie">
+							<label class="btn btn-sm btn-quiet cursor-pointer">Import<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
+							<button type="button" data-testid="editor-export" onclick={exportYaml} class="btn btn-sm btn-quiet">Export</button>
+						</span>
+						<!-- A plain disclosure: Escape and focus leaving it close it. -->
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<span
+							class="more-wrap"
+							onkeydown={(e) => {
+								if (e.key === 'Escape' && moreOpen) {
+									e.stopPropagation();
+									moreOpen = false;
+									(e.currentTarget.querySelector('[data-testid="editor-more"]') as HTMLElement | null)?.focus();
+								}
+							}}
+						>
+							<button
+								type="button"
+								class="btn btn-sm btn-icon"
+								aria-label="More actions"
+								aria-expanded={moreOpen}
+								aria-controls="editor-more"
+								data-testid="editor-more"
+								onclick={() => (moreOpen = !moreOpen)}
+								onfocusout={(e) => {
+									const next = e.relatedTarget as Node | null;
+									if (!next || !(e.currentTarget.parentElement?.contains(next))) moreOpen = false;
+								}}><Icon name="more" /></button
+							>
+							{#if moreOpen}
+								<span id="editor-more" class="more-pop pop" data-testid="editor-more-menu">
+									<label class="more-item cursor-pointer">Import<input type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={(e) => { moreOpen = false; importYaml(e); }} /></label>
+									<button type="button" class="more-item" onclick={() => { moreOpen = false; exportYaml(); }}>Export</button>
+								</span>
+							{/if}
+						</span>
+					</div>
+				</div>
+				<div class="px-0">
+					<YamlField
+						bind:value={yaml}
+						kind="Orkflow"
+						{namespace}
+						{session}
+						testid="editor-yaml"
+						label="Orkflow YAML"
+						labelledby="editor-yaml-label"
+						rows={24}
+						oninput={() => (noop = '')}
+					/>
+				</div>
+				{#if problemsOpen && problemCount > 0}
+					<section id="editor-problems" class="plist scroll-panel" aria-label="Problems" data-testid="editor-problems">
+						<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" level={3} />
+					</section>
+				{/if}
+			</section>
+			<EditorDocsRail task={atCaret} open={railOpen} ontoggle={() => (railOpen = !railOpen)} />
 		</div>
 
 		{#if applyError}
@@ -377,10 +476,12 @@
 				{warning}
 			</div>
 		{/each}
-		<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" />
-		{#if applied}
-			<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
-		{/if}
+		<!-- A live region that is always there, so the apply's one confirmation is announced. -->
+		<div role="status">
+			{#if applied}
+				<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
+			{/if}
+		</div>
 
 		{#if conflict}
 			<div
@@ -462,14 +563,144 @@
 			</div>
 		{/if}
 
-		<button type="button" data-testid="editor-validate" disabled={validating || applying} onclick={() => void validate()} class="btn mr-3">{validating ? 'Validating…' : 'Validate'}</button>
-		<button
-			type="submit"
-			data-testid="editor-apply"
-			disabled={applying || validating}
-			class="btn btn-primary"
-		>
-			{applying ? 'Applying…' : `Apply as a new version of ${name}`}
-		</button>
 	</form>
 {/if}
+
+<style>
+	.ed-bar {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 10px 20px;
+	}
+	.apply-why {
+		flex-basis: 100%;
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--fail);
+	}
+	.ed-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 320px;
+		gap: 16px;
+		align-items: start;
+	}
+	.edcard {
+		position: sticky;
+		top: calc(var(--spacing-bar) + 16px);
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	.edcard :global(.cm-editor) {
+		height: max(420px, calc(100dvh - var(--spacing-bar) - 300px)) !important;
+		min-height: 0 !important;
+		max-height: none !important;
+		border: 0 !important;
+		border-radius: 0;
+	}
+	.edcard :global(.yaml-field > div:last-child) {
+		margin: 0;
+		padding: 8px 16px;
+		border-top: 1px solid var(--line);
+		background: var(--surface-2);
+	}
+	.plist {
+		max-height: 196px;
+		overflow-y: auto;
+		scrollbar-gutter: stable;
+		padding: 8px 16px;
+		border-top: 1px solid var(--line);
+	}
+	.more-wrap {
+		position: relative;
+		display: none;
+	}
+	.more-pop {
+		right: 0;
+		top: calc(100% + 4px);
+		display: grid;
+		min-width: 140px;
+		padding: 4px;
+	}
+	.more-item {
+		display: block;
+		padding: 8px 10px;
+		border: 0;
+		border-radius: 4px;
+		background: transparent;
+		color: var(--ink);
+		font: inherit;
+		font-size: 14px;
+		text-align: left;
+		cursor: pointer;
+	}
+	.more-item:hover,
+	.more-item:focus-within,
+	.more-item:focus-visible {
+		background: var(--hover);
+	}
+	@media (max-width: 1359px) {
+		.ed-grid {
+			grid-template-columns: minmax(0, 1fr) 296px;
+		}
+	}
+	@media (min-width: 1181px) and (max-width: 1279px) {
+		.ed-grid.rail-closed {
+			grid-template-columns: minmax(0, 1fr) 44px;
+		}
+		.ed-grid.rail-closed :global(.rail .rail-head > p) {
+			display: none;
+		}
+		.ed-grid.rail-closed :global(.rail .rail-head) {
+			padding: 8px 2px;
+		}
+	}
+	@media (min-width: 1280px) {
+		.ed-grid.rail-closed {
+			grid-template-columns: minmax(0, 1fr) 44px;
+		}
+		.ed-grid.rail-closed :global(.rail .rail-head > p) {
+			display: none;
+		}
+		.ed-grid.rail-closed :global(.rail .rail-head) {
+			padding: 8px 2px;
+		}
+	}
+	@media (max-width: 1180px) {
+		.ed-grid {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.edcard {
+			position: static;
+		}
+		.edcard :global(.cm-editor) {
+			height: clamp(380px, 58dvh, 680px);
+		}
+		.ed-grid.rail-closed :global(.rail) {
+			position: sticky;
+			bottom: 0;
+			z-index: 10;
+		}
+		:global(html:has(.ed-grid.rail-closed)) {
+			scroll-padding-bottom: 80px;
+		}
+	}
+	@media (max-width: 640px) {
+		.ed-grid.rail-closed :global(.rail) {
+			position: static;
+		}
+		:global(html:has(.ed-grid.rail-closed)) {
+			scroll-padding-bottom: 0;
+		}
+	}
+	@media (max-width: 400px) {
+		.ie {
+			display: none;
+		}
+		.more-wrap {
+			display: inline-block;
+		}
+	}
+</style>

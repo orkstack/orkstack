@@ -163,7 +163,7 @@
 							>
 								{attemptOutcomeLabel(attempt.outcome)}
 							</span>
-							{#if attempt.phase}<span title="the phase the attempt ended in">{attempt.phase}</span>{/if}
+							{#if attempt.phase}<span data-tip="the phase the attempt ended in">{attempt.phase}</span>{/if}
 							{#if attempt.startedAt}<span>{fmtTime(attempt.startedAt)}</span>{/if}
 							{#if attempt.startedAt && attempt.finishedAt}
 								<span>{formatDuration(attempt.startedAt, attempt.finishedAt)}</span>
@@ -173,7 +173,7 @@
 								<span class={exitCode === 0 ? '' : 'text-failed-fg'}>exit {exitCode}</span>
 							{/if}
 							{#if attempt.commitAdopted}
-								<span title="this attempt found an existing commit and returned it without running the container">adopted</span>
+								<span data-tip="this attempt found an existing commit and returned it without running the container">adopted</span>
 							{/if}
 							<span class="ml-auto flex items-center gap-2">
 								{#if failure}

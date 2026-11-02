@@ -84,7 +84,7 @@
 			<span
 				data-testid="{testid}-category"
 				data-category={categoryTestid(category)}
-				title={failureCategoryBlurb(category)}
+				data-tip={failureCategoryBlurb(category)}
 				class="stamp {failureCategoryClasses(category)}"
 			>
 				{failureCategoryLabel(category)}

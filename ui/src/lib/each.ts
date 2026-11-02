@@ -201,7 +201,7 @@ export function itemStatusText(item: ItemView): string {
 	return label;
 }
 
-/** itemAriaLabel is a cell's accessible name: "item 97, SUCCEEDED, attempt 2". */
+/** itemAriaLabel is a cell's accessible name: "item 97, Succeeded, attempt 2". */
 export function itemAriaLabel(item: ItemView): string {
 	return `item ${item.index}, ${itemStatusText(item)}, attempt ${item.attempt}${isCachedItem(item) ? ', cached' : ''}`;
 }

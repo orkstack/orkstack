@@ -29,7 +29,7 @@
 	<span
 		data-testid={testid}
 		data-outcome="hit"
-		title="No container ran: this task's result was reused from an identical earlier run."
+		data-tip="No container ran: this task's result was reused from an identical earlier run."
 		class="stamp border-blue bg-blue-tint text-blue-strong"
 	>
 		{cacheOutcomeLabel(cache?.outcome)}
@@ -44,7 +44,7 @@
 	<span
 		data-testid={testid}
 		data-outcome="miss"
-		title={missReasonSentence(cache?.missReason ?? '', cache?.missDetail ?? '')}
+		data-tip={missReasonSentence(cache?.missReason ?? '', cache?.missDetail ?? '')}
 		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>{cacheOutcomeLabel(cache?.outcome)}</span
 	>
@@ -52,7 +52,7 @@
 	<span
 		data-testid={testid}
 		data-outcome="bypassed"
-		title="The run was submitted with Ignore cached results (--no-cache): the container ran and its memo was refreshed."
+		data-tip="The run was submitted with Ignore cached results (--no-cache): the container ran and its memo was refreshed."
 		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>{cacheOutcomeLabel(cache?.outcome)}</span
 	>
@@ -60,7 +60,7 @@
 	<span
 		data-testid={testid}
 		data-outcome="unreported"
-		title="the Orker that ran this task predates caching"
+		data-tip="the Orker that ran this task predates caching"
 		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>Cache not reported</span
 	>

@@ -21,24 +21,24 @@
 	let { title, testid = undefined, mono = false, short = undefined, meta = undefined, actions = undefined }: Props = $props();
 </script>
 
-<header class="mb-6 flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b border-rule pb-4">
+<header class="mb-5 flex flex-wrap items-start justify-between gap-x-5 gap-y-3">
 	<div class="min-w-0">
 		<h1
 			data-testid={testid}
-			class="text-xl font-semibold tracking-tight text-ink {mono ? 'font-mono break-all' : ''} {short ? 'max-sm:sr-only' : ''}"
+			class="page-h1 text-ink {mono ? 'font-mono break-all' : ''} {short ? 'max-sm:sr-only' : ''}"
 		>
 			{title}
 		</h1>
 		{#if short}
 			<p
 				aria-hidden="true"
-				title={title}
-				class="text-xl font-semibold tracking-tight whitespace-nowrap text-ink sm:hidden {mono ? 'font-mono' : ''}"
+				data-tip={title}
+				class="page-h1 whitespace-nowrap text-ink sm:hidden {mono ? 'font-mono' : ''}"
 			>
 				{short}
 			</p>
 		{/if}
-		{#if meta}<div class="mt-1 text-sm text-ink-secondary">{@render meta()}</div>{/if}
+		{#if meta}<div class="mt-2 text-dense text-ink-2">{@render meta()}</div>{/if}
 	</div>
 	{#if actions}<div class="flex max-w-full min-w-0 flex-wrap items-center gap-2">{@render actions()}</div>{/if}
 </header>

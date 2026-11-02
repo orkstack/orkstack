@@ -1,14 +1,18 @@
 /*
  * The app's stylesheet: Tailwind, the two self-hosted faces, the tokens and
- * their registration, then the base layer and a handful of primitives.
+ * their registration, then the base layer and Harbour's primitives — the
+ * button, card, plate, status pill, chip, tile, table, facts strip, progress
+ * ring, retry mark, live control and the one tooltip — that every page draws
+ * with.
  *
  * No value is written here. Every colour, size, radius, shadow and motion
  * lives in ./tokens.css (ui/test/tokens.test.ts refuses a raw value anywhere
- * else); this file only says which token each element takes.
+ * else); this file only says which token each element takes. A component's
+ * own layout, with its own breakpoints, lives in that component's <style>.
  */
 @import 'tailwindcss';
-@import '@fontsource-variable/archivo-narrow/wght.css';
-@import '@fontsource-variable/spline-sans-mono/wght.css';
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
 @import './tokens.css';
 @import './tailwind-tokens.css';
 
@@ -18,25 +22,25 @@
 @layer base {
 	html {
 		/* WCAG 2.4.11: a focused control is never hidden under the sticky top
-		   bar or the title block. */
-		scroll-padding-top: var(--spacing-bar);
+		   bar. */
+		scroll-padding-top: calc(var(--spacing-bar) + var(--spacing) * 4);
 		scroll-padding-bottom: var(--spacing-titleblock);
-		scrollbar-color: var(--color-rule-strong) transparent;
-		accent-color: var(--color-blue);
+		accent-color: var(--color-navy-text);
+		-webkit-text-size-adjust: 100%;
 	}
 	body {
-		background-color: var(--color-paper);
+		background-color: var(--color-bg);
 		color: var(--color-ink);
 		font-family: var(--font-sans);
 		font-weight: var(--font-weight-body);
 		font-size: var(--text-base);
-		line-height: var(--text-base--line-height);
+		line-height: var(--leading-normal);
 		-webkit-font-smoothing: antialiased;
 		-moz-osx-font-smoothing: grayscale;
-		caret-color: var(--color-blue);
+		caret-color: var(--color-navy-text);
 	}
 	::selection {
-		background-color: var(--color-blue-tint);
+		background-color: var(--color-navy-tint);
 		color: var(--color-ink);
 	}
 	code,
@@ -45,11 +49,15 @@
 	samp {
 		font-family: var(--font-mono);
 	}
+	code {
+		font-size: var(--text-code);
+	}
 	a {
+		color: var(--color-link);
 		text-underline-offset: var(--underline-offset);
 	}
-	/* One focus indicator for every control: a solid line in the focus
-	   colour, at least 3:1 on every ground (tokenContrast.test.ts). */
+	/* One focus indicator for every control: a 2 px ring 2 px out, in the
+	   focus colour, at least 3:1 on every ground (tokenContrast.test.ts). */
 	:focus-visible {
 		outline: var(--rule-frame) solid var(--color-focus);
 		outline-offset: var(--rule-frame);
@@ -61,7 +69,7 @@
 		outline-offset: var(--rule-frame);
 	}
 	::placeholder {
-		color: var(--color-ink-placeholder);
+		color: var(--color-ink-3);
 		opacity: 1;
 	}
 	h1,
@@ -69,154 +77,879 @@
 	h3 {
 		text-wrap: balance;
 	}
+	p,
+	small {
+		text-wrap: pretty;
+	}
+	main:focus,
+	h1[tabindex='-1']:focus {
+		outline: none;
+	}
+	/* A modal is open: the page beneath does not scroll. */
+	html:has(dialog[open]:modal) {
+		overflow: hidden;
+	}
+	dialog::backdrop {
+		background-color: var(--color-scrim);
+	}
+
+	/* Scrollbars, drawn from the tokens in both themes; in forced colours
+	   the system's own. Thumb against track: 3.8:1 light, 4.3:1 dark. */
+	@media (forced-colors: none) {
+		html,
+		.scroll-panel {
+			scrollbar-color: var(--sb-thumb) var(--sb-track);
+			scrollbar-width: thin;
+		}
+		html:hover,
+		.scroll-panel:hover {
+			scrollbar-color: var(--sb-thumb-hover) var(--sb-track);
+		}
+		html {
+			scrollbar-gutter: stable;
+		}
+		.scroll-log {
+			scrollbar-color: var(--sb-log-thumb) var(--sb-log-track);
+			scrollbar-width: thin;
+		}
+		.scroll-log:hover {
+			scrollbar-color: var(--sb-log-thumb-hover) var(--sb-log-track);
+		}
+	}
 }
 
 @layer components {
-	/* Tracked caps: table heads, title-block labels, section heads. */
-	.caps {
-		font-size: var(--text-2xs);
-		line-height: var(--text-2xs--line-height);
-		font-weight: var(--font-weight-semibold);
-		letter-spacing: var(--tracking-caps);
-		text-transform: uppercase;
+	/* Text only assistive technology reads. */
+	.sr {
+		position: absolute;
+		width: var(--rule-hair);
+		height: var(--rule-hair);
+		overflow: hidden;
+		clip-path: inset(50%);
+		white-space: nowrap;
 	}
-
+	/* A label: what a table head, a dt or a small heading says. Harbour sets
+	   labels in sentence case, never tracked caps. */
+	.caps {
+		font-size: var(--text-sm);
+		line-height: var(--text-sm--line-height);
+		font-weight: var(--font-weight-semibold);
+	}
 	/* A figure: ids, digests, counts, durations. */
 	.figure {
 		font-family: var(--font-mono);
 		font-variant-numeric: tabular-nums;
 	}
-
+	.num {
+		font-variant-numeric: tabular-nums;
+	}
 	.link {
-		color: var(--color-blue);
+		color: var(--color-link);
 		text-decoration-line: underline;
-		text-decoration-color: color-mix(in oklab, var(--color-blue) 40%, transparent);
+		text-decoration-color: color-mix(in oklab, var(--color-link) 40%, transparent);
 		text-underline-offset: var(--underline-offset);
 	}
 	.link:hover {
 		text-decoration-color: currentColor;
 	}
 
-	/* Buttons. One ink-filled primary per sheet; quiet for the rest. */
+	/* ---- Buttons ----------------------------------------------------- */
+	/* Neutral by default. Orange (btn-primary) only for the one action that
+	   creates work or commits a change on the screen's own object; no hue
+	   for a destructive one (its confirm is solid ink: btn-destroy); quiet
+	   for a text action. Every button reaches a 40 px hit area. */
 	.btn {
+		position: relative;
 		display: inline-flex;
-		height: calc(var(--spacing) * 9);
+		height: calc(var(--spacing) * 8.5);
 		align-items: center;
 		justify-content: center;
 		gap: calc(var(--spacing) * 1.5);
-		border: var(--rule-hair) solid var(--color-rule-strong);
+		border: var(--rule-hair) solid var(--color-line-2);
 		border-radius: var(--radius-sm);
-		background-color: var(--color-paper);
+		background-color: var(--color-surface);
 		padding-inline: calc(var(--spacing) * 3.5);
-		font-size: var(--text-sm);
-		line-height: var(--text-sm--line-height);
+		font-size: var(--text-dense);
+		line-height: var(--leading-none);
 		font-weight: var(--font-weight-semibold);
 		color: var(--color-ink);
 		white-space: nowrap;
-		transition-property: color, background-color, border-color;
-		transition-duration: var(--duration-fast);
-		transition-timing-function: var(--ease-out);
+		text-decoration: none;
+		cursor: pointer;
+		box-shadow: var(--shadow-card);
+		transition-property: color, background-color, border-color, box-shadow, transform;
+		transition-duration: var(--dur-instant);
+		transition-timing-function: var(--ease-in);
+	}
+	.btn::after {
+		content: '';
+		position: absolute;
+		inset: calc(var(--spacing) * -0.75) 0;
+	}
+	.btn > svg {
+		width: calc(var(--spacing) * 4);
+		height: calc(var(--spacing) * 4);
+		flex: none;
+	}
+	.btn:has(> svg:first-child) {
+		padding-left: calc(var(--spacing) * 3);
 	}
 	.btn:hover {
 		background-color: var(--color-hover);
+		border-color: var(--color-line-strong);
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		.btn:active {
+			transform: scale(0.98);
+		}
 	}
 	.btn:disabled,
 	.btn[aria-disabled='true'] {
-		pointer-events: none;
-		opacity: var(--opacity-disabled);
+		background-color: var(--color-surface-2);
+		border-color: var(--color-line-2);
+		color: var(--color-ink-3);
+		box-shadow: none;
+		cursor: not-allowed;
+		transform: none;
 	}
 	.btn-primary {
-		border-color: var(--color-ink);
-		background-color: var(--color-ink);
-		color: var(--color-on-ink);
+		border-color: var(--color-accent-edge);
+		background-color: var(--color-accent);
+		color: var(--color-on-accent);
 	}
 	.btn-primary:hover {
-		border-color: var(--color-ink-secondary);
-		background-color: var(--color-ink-secondary);
+		border-color: var(--color-accent-edge);
+		background-color: var(--color-accent-hover);
 	}
-	.btn-danger {
-		border-color: var(--color-red);
-		background-color: var(--color-red);
-		color: var(--color-on-ink);
+	.btn-primary[aria-disabled='true']:hover,
+	.btn-primary:disabled:hover {
+		border-color: var(--color-line-2);
+		background-color: var(--color-surface-2);
 	}
-	.btn-danger:hover {
-		border-color: var(--color-red-strong);
-		background-color: var(--color-red-strong);
-	}
-	.btn-sm {
-		height: calc(var(--spacing) * 7);
-		padding-inline: calc(var(--spacing) * 2.5);
-		font-size: var(--text-xs);
-		line-height: var(--text-xs--line-height);
-	}
-	/* A square icon button, at least 24 px (WCAG 2.5.8). */
-	.btn-icon {
-		width: calc(var(--spacing) * 8);
-		height: calc(var(--spacing) * 8);
-		padding: 0;
+	.btn-quiet {
 		border-color: transparent;
 		background-color: transparent;
-		color: var(--color-ink-secondary);
+		box-shadow: none;
+		color: var(--color-ink-2);
 	}
-	.btn-icon:hover {
+	.btn-quiet:hover {
+		border-color: transparent;
+		background-color: var(--color-hover);
 		color: var(--color-ink);
 	}
+	/* The confirm of a reason dialog: solid ink, navy in light, near white in
+	   dark. Never a trigger on a page. */
+	.btn-destroy,
+	.btn-danger {
+		border-color: var(--color-destroy-bg);
+		background-color: var(--color-destroy-bg);
+		color: var(--color-destroy-ink);
+	}
+	.btn-destroy:hover,
+	.btn-danger:hover {
+		border-color: var(--color-destroy-hover);
+		background-color: var(--color-destroy-hover);
+	}
+	/* A held button stays grey whatever its variant, hovered or not. */
+	.btn[aria-disabled='true']:hover,
+	.btn:disabled:hover {
+		border-color: var(--color-line-2);
+		background-color: var(--color-surface-2);
+		color: var(--color-ink-3);
+	}
+	.btn-sm {
+		height: calc(var(--spacing) * 7.5);
+		padding-inline: calc(var(--spacing) * 2.5);
+		font-size: var(--text-sm);
+	}
+	.btn-sm::after {
+		inset: calc(var(--spacing) * -1.25) 0;
+	}
+	.btn-sm:has(> svg:first-child) {
+		padding-left: calc(var(--spacing) * 2);
+	}
+	/* An icon-only button (terminal, copy, More): square, named by aria-label. */
+	.btn-icon {
+		width: calc(var(--spacing) * 8.5);
+		padding: 0;
+		color: var(--color-ink-2);
+	}
+	.btn-icon:has(> svg:first-child) {
+		padding-left: 0;
+	}
+	.btn-icon:hover,
+	.btn-icon[aria-expanded='true'] {
+		color: var(--color-ink);
+	}
+	.btn-icon[aria-expanded='true'] {
+		background-color: var(--color-surface-2);
+		border-color: var(--color-line-strong);
+	}
+	.btn-icon.btn-sm {
+		width: calc(var(--spacing) * 7.5);
+	}
+	/* A divider between a screen's quiet actions and its own. */
+	.act-gap {
+		width: var(--rule-hair);
+		align-self: stretch;
+		margin: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2);
+		background-color: var(--color-line);
+	}
+	@variant max-sm {
+		.btn {
+			min-height: calc(var(--spacing) * 10);
+		}
+		.act-gap {
+			display: none;
+		}
+	}
 
-	/* Inputs, textareas and Select triggers. */
+	/* ---- Fields ------------------------------------------------------ */
 	.field {
-		border: var(--rule-hair) solid var(--color-rule-strong);
+		border: var(--rule-hair) solid var(--color-line-strong);
 		border-radius: var(--radius-sm);
-		background-color: var(--color-paper);
+		background-color: var(--color-surface);
 		color: var(--color-ink);
 	}
-
-	/* A form's field block: a caps label above its control, and an optional
-	   hint in the label's own line set in plain case. */
 	.field-label {
 		display: block;
 		margin-bottom: calc(var(--spacing) * 1.5);
+		font-size: var(--text-sm);
+		line-height: var(--text-sm--line-height);
+		font-weight: var(--font-weight-semibold);
+		color: var(--color-ink-2);
+	}
+	.field-hint {
+		font-size: var(--text-sm);
+		font-weight: var(--font-weight-normal);
+		color: var(--color-ink-3);
+	}
+	/* The search field of a list. */
+	.search {
+		display: flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 2);
+		height: calc(var(--spacing) * 8.5);
+		padding-inline: calc(var(--spacing) * 2.5);
+		border: var(--rule-hair) solid var(--color-line-strong);
+		border-radius: var(--radius-sm);
+		background-color: var(--color-surface);
+		color: var(--color-ink-3);
+	}
+	.search:focus-within {
+		outline: var(--rule-frame) solid var(--color-focus);
+		outline-offset: var(--rule-frame);
+	}
+	.search input {
+		min-width: 0;
+		width: 100%;
+		border: 0;
+		outline: 0;
+		background: transparent;
+		font: inherit;
+		font-size: var(--text-dense);
+		color: var(--color-ink);
+	}
+
+	/* ---- Cards ------------------------------------------------------- */
+	.card {
+		min-width: 0;
+		border: var(--rule-hair) solid var(--color-line);
+		border-radius: var(--radius-md);
+		background-color: var(--color-surface);
+		box-shadow: var(--shadow-card);
+	}
+	.card-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5) calc(var(--spacing) * 3);
+		min-height: calc(var(--spacing) * 13);
+		padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+		border-bottom: var(--rule-hair) solid var(--color-line);
+	}
+	.card-head h2,
+	.card-head h3 {
+		font-size: var(--text-md);
+		line-height: var(--text-md--line-height);
+		font-weight: var(--font-weight-heading);
+	}
+	.card-sub {
+		font-size: var(--text-dense);
+		color: var(--color-ink-3);
+	}
+	.card-end {
+		margin-left: auto;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: calc(var(--spacing) * 2);
+	}
+	/* A key and value list inside a card. */
+	.kv {
+		display: grid;
+		grid-template-columns: minmax(0, auto) minmax(0, 1fr);
+		gap: calc(var(--spacing) * 1.5) calc(var(--spacing) * 4);
+		margin: 0;
+		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
+		font-size: var(--text-dense);
+	}
+	.kv dt {
+		color: var(--color-ink-3);
+		font-weight: var(--font-weight-medium);
+	}
+	.kv dd {
+		margin: 0;
+		min-width: 0;
+		overflow-wrap: anywhere;
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* ---- Page header ------------------------------------------------- */
+	.page-h1 {
+		font-size: var(--text-xl);
+		line-height: var(--text-xl--line-height);
+		font-weight: var(--font-weight-bold);
+		letter-spacing: var(--tracking-tight);
+	}
+
+	/* ---- Plate: one way to set every identifier, version and digest ---- */
+	.plate {
+		display: inline-flex;
+		align-items: stretch;
+		max-width: 100%;
+		overflow: hidden;
+		border: var(--rule-hair) solid var(--color-line-2);
+		border-radius: var(--radius-sm);
+		background-color: var(--color-surface);
+		line-height: var(--leading-none);
+		white-space: nowrap;
+		vertical-align: middle;
+	}
+	.plate > .plate-k,
+	.plate > .plate-v {
+		display: flex;
+		align-items: center;
+		padding: calc(var(--spacing) * 1.5) calc(var(--spacing) * 2);
+	}
+	.plate > .plate-k {
+		border-right: var(--rule-hair) solid var(--color-line);
+		background-color: var(--color-surface-2);
+		color: var(--color-ink-3);
+		font-size: var(--text-sm);
+		font-weight: var(--font-weight-semibold);
+	}
+	.plate > .plate-v {
+		display: block;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font-family: var(--font-mono);
+		font-size: var(--text-sm);
+		line-height: var(--leading-none);
+		color: var(--color-ink);
+	}
+	.plate > button {
+		display: grid;
+		place-items: center;
+		min-width: calc(var(--spacing) * 7.5);
+		padding: 0 calc(var(--spacing) * 2);
+		border: 0;
+		border-left: var(--rule-hair) solid var(--color-line);
+		background: transparent;
+		color: var(--color-ink-3);
+		cursor: pointer;
+	}
+	.plate > button:hover {
+		background-color: var(--color-hover);
+		color: var(--color-ink);
+	}
+	.plate > button:focus-visible {
+		outline-offset: calc(var(--rule-frame) * -1.5);
+	}
+	.plate > button > svg {
+		width: calc(var(--spacing) * 4);
+		height: calc(var(--spacing) * 4);
+	}
+	.plate-sm > .plate-k,
+	.plate-sm > .plate-v {
+		padding: var(--spacing) calc(var(--spacing) * 1.5);
+		font-size: var(--text-2xs);
+	}
+
+	/* ---- Status pill: the mark, the word, then the colour -------------- */
+	/* Statuses differ by mark shape, never by hue alone (WCAG 1.4.1): a
+	   circle running, a square succeeded, a triangle failed, a ring waiting,
+	   a diamond awaiting, a slashed square canceled, an outlined square
+	   pending. The mark is CSS on the pill itself (no element), because a
+	   run page holds thousands of pills; #lib/statusMarks.ts names each. */
+	.stamp {
+		display: inline-flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		height: calc(var(--spacing) * 6);
+		padding: 0 calc(var(--spacing) * 2.5) 0 calc(var(--spacing) * 2);
+		border: 0;
+		border-radius: var(--radius-full);
+		font-size: var(--text-sm);
+		line-height: var(--leading-none);
+		font-weight: var(--font-weight-semibold);
+		white-space: nowrap;
+	}
+	/* Pending and skipped: no tint, an outline instead. */
+	.pill-outline {
+		box-shadow: inset 0 0 0 var(--rule-hair) var(--color-line-2);
+	}
+	.stamp-sm {
+		height: calc(var(--spacing) * 5);
+		font-size: var(--text-xs);
+	}
+	.mark-square::before,
+	.mark-tri::before,
+	.mark-strike::before,
+	.mark-dash::before,
+	.mark-hollow::before,
+	.mark-dotted::before,
+	.mark-dot,
+	.mark-ring,
+	.mark-diamond,
+	.mark-wait {
+		content: '';
+		flex: none;
+		display: inline-block;
+		width: calc(var(--spacing) * 2);
+		height: calc(var(--spacing) * 2);
+	}
+	.mark-square::before {
+		border-radius: var(--rule-frame);
+		background-color: var(--color-ok-mark);
+	}
+	.mark-tri::before {
+		background-color: var(--color-fail-mark);
+		clip-path: polygon(50% 0, 100% 100%, 0 100%);
+	}
+	.mark-strike::before {
+		border: var(--rule-hair) solid var(--color-cancel);
+		border-radius: var(--rule-frame);
+		background-image: linear-gradient(
+			135deg,
+			transparent 42%,
+			var(--color-cancel) 42% 58%,
+			transparent 58%
+		);
+	}
+	.mark-dash::before {
+		border: var(--rule-hair) solid var(--color-cancel);
+		border-radius: var(--rule-frame);
+		background-image: linear-gradient(transparent 42%, var(--color-cancel) 42% 58%, transparent 58%);
+	}
+	.mark-hollow::before {
+		border: var(--rule-hair) solid var(--color-pend-mark);
+		border-radius: var(--rule-frame);
+	}
+	.mark-dotted::before {
+		border: var(--rule-hair) dotted var(--color-pend-mark);
+		border-radius: var(--rule-frame);
+	}
+	.mark-dot {
+		border-radius: var(--radius-full);
+		background-color: var(--color-run);
+	}
+	.mark-ring,
+	.mark-wait {
+		border: var(--rule-frame) solid var(--color-wait-mark);
+		border-radius: var(--radius-full);
+	}
+	.mark-diamond {
+		width: calc(var(--spacing) * 1.75);
+		height: calc(var(--spacing) * 1.75);
+		border: var(--rule-frame) solid var(--color-await);
+		transform: rotate(45deg);
+	}
+	.pill-wait {
+		background-color: var(--color-wait-tint);
+		color: var(--color-wait);
+	}
+	/* A pill with no mark: a plain label (Default, From the cache). */
+	.pill-plain {
+		display: inline-flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		height: calc(var(--spacing) * 6);
+		padding: 0 calc(var(--spacing) * 2.5);
+		border-radius: var(--radius-full);
+		background-color: var(--color-surface-2);
+		box-shadow: inset 0 0 0 var(--rule-hair) var(--color-line);
+		color: var(--color-ink-2);
+		font-size: var(--text-sm);
+		font-weight: var(--font-weight-semibold);
+		white-space: nowrap;
+	}
+	/* A navy tag: a count or a kind. */
+	.tag {
+		display: inline-flex;
+		align-items: center;
+		height: calc(var(--spacing) * 5.5);
+		padding: 0 calc(var(--spacing) * 2);
+		border-radius: var(--radius-full);
+		background-color: var(--color-navy-tint);
+		color: var(--color-navy-text);
+		font-size: var(--text-sm);
+		font-weight: var(--font-weight-semibold);
+		white-space: nowrap;
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		.stamp .mark-dot {
+			animation: var(--animate-live-dot);
+		}
+	}
+	@media (forced-colors: active) {
+		.mark-square::before,
+		.mark-tri::before,
+		.mark-strike::before,
+		.mark-dash::before,
+		.mark-hollow::before,
+		.mark-dotted::before,
+		.mark-dot,
+		.mark-ring,
+		.mark-diamond,
+		.mark-wait {
+			forced-color-adjust: none;
+			outline: var(--rule-hair) solid CanvasText;
+		}
+	}
+
+	/* ---- Asserted: beside every principal (AGENTS.md §7) ------------- */
+	.atag {
+		display: inline-flex;
+		align-items: center;
+		height: calc(var(--spacing) * 4.5);
+		padding: 0 calc(var(--spacing) * 1.5);
+		border: var(--rule-hair) solid var(--color-line-2);
+		border-radius: var(--radius-full);
+		background-color: var(--color-surface);
+		color: var(--color-ink-3);
+		font-size: var(--text-2xs);
+		font-weight: var(--font-weight-semibold);
+		line-height: var(--leading-none);
+		white-space: nowrap;
+	}
+
+	/* ---- Facts strip: label and value pairs with vertical rules ------- */
+	.fstrip {
+		display: flex;
+		flex-wrap: wrap;
+		gap: calc(var(--spacing) * 2) 0;
+		margin: 0;
+	}
+	.fstrip > div {
+		display: grid;
+		align-content: start;
+		gap: calc(var(--spacing) * 0.5);
+		min-width: 0;
+		padding: 0 calc(var(--spacing) * 4.5);
+		border-left: var(--rule-hair) solid var(--color-line);
+	}
+	.fstrip > div:first-child {
+		padding-left: 0;
+		border-left: 0;
+	}
+	.fstrip dt {
 		font-size: var(--text-2xs);
 		line-height: var(--text-2xs--line-height);
 		font-weight: var(--font-weight-semibold);
-		letter-spacing: var(--tracking-caps);
-		text-transform: uppercase;
-		color: var(--color-ink-secondary);
+		color: var(--color-ink-3);
 	}
-	.field-hint {
-		font-size: var(--text-xs);
-		font-weight: var(--font-weight-normal);
-		letter-spacing: var(--tracking-normal);
-		text-transform: none;
-		color: var(--color-ink-muted);
+	.fstrip dd {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		min-width: 0;
+		min-height: calc(var(--spacing) * 6);
+		margin: 0;
+		font-size: var(--text-base);
+		color: var(--color-ink);
+		font-variant-numeric: tabular-nums;
+	}
+	@variant max-sm {
+		.fstrip {
+			display: grid;
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+			gap: calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+		}
+		.fstrip > div {
+			padding: 0;
+			border-left: 0;
+		}
 	}
 
-	/* A hairline-ruled table: caps heads on the sunken ground. */
+	/* ---- Progress ring ------------------------------------------------ */
+	.pring {
+		display: inline-flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+	}
+	.pring > svg {
+		width: calc(var(--spacing) * 5);
+		height: calc(var(--spacing) * 5);
+		flex: none;
+	}
+	.pring .trk {
+		fill: none;
+		stroke: var(--color-surface-3);
+		stroke-width: 3;
+	}
+	.pring .val {
+		fill: none;
+		stroke: var(--color-meter);
+		stroke-width: 3;
+	}
+	.pring b {
+		font-weight: var(--font-weight-heading);
+		font-variant-numeric: tabular-nums;
+	}
+	.pring.is-failed .val {
+		stroke: var(--color-fail-mark);
+	}
+	.pring.is-canceled .val {
+		stroke: var(--color-ink-3);
+	}
+	.pring-sm > svg {
+		width: calc(var(--spacing) * 4);
+		height: calc(var(--spacing) * 4);
+	}
+	.pring-sm b {
+		font-weight: var(--font-weight-semibold);
+		font-size: var(--text-dense);
+		color: var(--color-ink-2);
+	}
+	@media (forced-colors: active) {
+		.pring > svg {
+			forced-color-adjust: none;
+		}
+	}
+
+	/* ---- Retry mark: attempts, the count inside ----------------------- */
+	.retry {
+		position: relative;
+		display: inline-grid;
+		place-items: center;
+		flex: none;
+		width: calc(var(--spacing) * 5.5);
+		height: calc(var(--spacing) * 5.5);
+		color: var(--color-navy-text);
+		vertical-align: middle;
+	}
+	.retry > svg {
+		position: absolute;
+		inset: 0;
+		width: 100%;
+		height: 100%;
+	}
+	.retry > b {
+		font-size: var(--text-2xs);
+		transform: scale(0.84);
+		font-weight: var(--font-weight-bold);
+		line-height: var(--leading-none);
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* ---- Live-updates control ---------------------------------------- */
+	.livectl {
+		position: relative;
+		display: inline-flex;
+		align-items: stretch;
+		min-height: calc(var(--spacing) * 7.5);
+		border: var(--rule-hair) solid var(--color-line-strong);
+		border-radius: var(--radius-full);
+		background-color: var(--color-surface);
+		font-size: var(--text-sm);
+		vertical-align: middle;
+	}
+	.livectl .live-state {
+		display: inline-flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.75);
+		padding: 0 calc(var(--spacing) * 2.5) 0 calc(var(--spacing) * 2.75);
+		border-right: var(--rule-hair) solid var(--color-line);
+		color: var(--color-navy-text);
+		font-weight: var(--font-weight-semibold);
+	}
+	.livectl .live-dot {
+		position: relative;
+		width: calc(var(--spacing) * 2);
+		height: calc(var(--spacing) * 2);
+		border-radius: var(--radius-full);
+		background-color: var(--color-navy-text);
+	}
+	.livectl .live-dot::after {
+		content: '';
+		position: absolute;
+		inset: 0;
+		border-radius: var(--radius-full);
+		border: var(--rule-frame) solid var(--color-navy-text);
+		opacity: 0;
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		.livectl:not(.paused) .live-dot::after {
+			animation: var(--animate-live-ring);
+		}
+	}
+	.livectl .live-tg {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		padding: 0 calc(var(--spacing) * 3) 0 calc(var(--spacing) * 2.5);
+		border: 0;
+		border-radius: 0 var(--radius-full) var(--radius-full) 0;
+		background: transparent;
+		color: var(--color-ink);
+		font: inherit;
+		font-weight: var(--font-weight-semibold);
+		cursor: pointer;
+	}
+	.livectl .live-tg::after {
+		content: '';
+		position: absolute;
+		inset: calc(var(--spacing) * -1.5) 0;
+	}
+	.livectl .live-tg > svg {
+		width: calc(var(--spacing) * 4);
+		height: calc(var(--spacing) * 4);
+	}
+	.livectl .live-tg:hover {
+		background-color: var(--color-hover);
+	}
+	.livectl.paused {
+		border-style: dashed;
+		border-color: var(--color-ink-3);
+		background-color: var(--color-surface-2);
+	}
+	.livectl.paused .live-state {
+		color: var(--color-ink-2);
+	}
+	.livectl.paused .live-dot {
+		background-color: transparent;
+		box-shadow: inset 0 0 0 var(--rule-frame) var(--color-ink-3);
+	}
+	.livectl.paused .live-tg:hover {
+		background-color: var(--color-surface-3);
+	}
+	@media (forced-colors: active) {
+		.livectl {
+			border: var(--rule-hair) solid CanvasText;
+		}
+		.livectl.paused {
+			border-style: dashed;
+		}
+		.livectl .live-dot {
+			forced-color-adjust: none;
+			background-color: CanvasText;
+		}
+		.livectl.paused .live-dot {
+			background-color: Canvas;
+			box-shadow: none;
+			border: var(--rule-frame) solid CanvasText;
+		}
+	}
+
+	/* ---- Chips and tiles ------------------------------------------- */
+	.chip {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: calc(var(--spacing) * 1.5);
+		height: calc(var(--spacing) * 8.5);
+		padding: 0 calc(var(--spacing) * 3);
+		border: var(--rule-hair) solid var(--color-line-2);
+		border-radius: var(--radius-full);
+		background-color: var(--color-surface);
+		color: var(--color-ink-2);
+		font-size: var(--text-dense);
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.chip:hover {
+		border-color: var(--color-line-strong);
+	}
+	.chip b {
+		color: var(--color-ink);
+		font-weight: var(--font-weight-semibold);
+	}
+	.chip > svg {
+		width: calc(var(--spacing) * 4);
+		height: calc(var(--spacing) * 4);
+		color: var(--color-ink-3);
+	}
+	.tile {
+		display: grid;
+		align-content: start;
+		gap: var(--spacing);
+		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3.5) calc(var(--spacing) * 3.25);
+		border: var(--rule-hair) solid var(--color-line);
+		border-radius: var(--radius-md);
+		background-color: var(--color-surface);
+		box-shadow: var(--shadow-card);
+		color: var(--color-ink);
+		text-align: left;
+		cursor: pointer;
+	}
+	.tile:hover {
+		border-color: var(--color-line-strong);
+	}
+	.tile[aria-pressed='true'] {
+		border-color: var(--color-select);
+		box-shadow: inset 0 0 0 var(--rule-hair) var(--color-select);
+	}
+	@variant max-sm {
+		.chip {
+			min-height: calc(var(--spacing) * 10);
+		}
+	}
+	@media (forced-colors: active) {
+		.tile[aria-pressed='true'] {
+			outline: var(--rule-frame) solid CanvasText;
+		}
+	}
+
+	/* ---- Tables ------------------------------------------------------ */
 	.register {
 		width: 100%;
 		border-collapse: collapse;
-		font-size: var(--text-sm);
-		line-height: var(--text-sm--line-height);
+		font-size: var(--text-base);
 	}
 	.register th {
-		border-bottom: var(--rule-region) solid var(--color-ink);
-		background-color: var(--color-paper-sunken);
-		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+		padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 4);
+		border-bottom: var(--rule-hair) solid var(--color-line);
 		text-align: left;
-		font-size: var(--text-2xs);
-		line-height: var(--text-2xs--line-height);
+		font-size: var(--text-sm);
 		font-weight: var(--font-weight-semibold);
-		letter-spacing: var(--tracking-caps);
-		text-transform: uppercase;
-		color: var(--color-ink-muted);
+		color: var(--color-ink-3);
+		white-space: nowrap;
 	}
-	.register td {
-		border-bottom: var(--rule-hair) solid var(--color-rule);
-		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3);
+	.register td,
+	.register tbody th {
+		padding: calc(var(--spacing) * 2.75) calc(var(--spacing) * 4);
+		border-bottom: var(--rule-hair) solid var(--color-line);
+		vertical-align: middle;
+	}
+	.register tbody th {
+		font-size: var(--text-base);
+		font-weight: var(--font-weight-normal);
+		color: var(--color-ink);
+		white-space: normal;
+	}
+	.register tbody tr:hover > * {
+		background-color: var(--color-hover);
+	}
+	.register tbody tr:last-child > * {
+		border-bottom: 0;
 	}
 	/* A register that reflows below 640 px: each row becomes a small grid of
-	   its own cells — two columns, the cells placed by the page's max-sm:
-	   utilities — so nothing it says hides behind a sideways scroll. The page
-	   keeps the heads for assistive technology only (max-sm:sr-only). */
+	   its own cells, so nothing it says hides behind a sideways scroll. The
+	   page keeps the heads for assistive technology only (max-sm:sr-only). */
 	.register-stacked,
 	.register-stacked tbody {
 		@variant max-sm {
@@ -230,20 +963,18 @@
 			column-gap: calc(var(--spacing) * 3);
 			row-gap: var(--spacing);
 			align-items: center;
-			border-bottom: var(--rule-hair) solid var(--color-rule);
-			padding: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+			border-bottom: var(--rule-hair) solid var(--color-line);
+			padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
 		}
 	}
-	.register-stacked td {
+	.register-stacked td,
+	.register-stacked tbody th {
 		@variant max-sm {
 			min-width: 0;
 			border-bottom: 0;
 			padding: 0;
 		}
 	}
-	/* A stacked register of many facts (Admin → Namespaces): two equal
-	   columns, each fact under its column head's words, drawn from the cell's
-	   data-label; the heads stay for assistive technology. */
 	.register-pairs tr {
 		@variant max-sm {
 			grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -254,73 +985,99 @@
 		@variant max-sm {
 			content: attr(data-label);
 			display: block;
-			font-size: var(--text-2xs);
-			line-height: var(--text-2xs--line-height);
-			font-weight: var(--font-weight-semibold);
-			letter-spacing: var(--tracking-caps);
-			text-transform: uppercase;
-			color: var(--color-ink-muted);
+			margin-bottom: calc(var(--spacing) * 0.75);
 			font-family: var(--font-sans);
+			font-size: var(--text-xs);
+			font-weight: var(--font-weight-semibold);
+			color: var(--color-ink-3);
 		}
 	}
 
-	/* A drawing's frame: the region rule all round. */
-	.frame {
-		border: var(--rule-region) solid var(--color-ink);
+	/* ---- Banners ----------------------------------------------------- */
+	.alert {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: flex-start;
+		gap: calc(var(--spacing) * 2.5) calc(var(--spacing) * 3);
+		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 3.5);
+		border: var(--rule-hair) solid var(--color-line);
+		border-radius: var(--radius-md);
+		background-color: var(--color-surface);
+		box-shadow: var(--shadow-card);
 	}
-	/* A heavier rule above a region of a page. */
-	.region {
-		border-top: var(--rule-region) solid var(--color-ink);
+	.alert-fail {
+		border-left: var(--rule-alarm) solid var(--color-fail-mark);
 	}
-	/* The drafting grid: only ever behind the DAG. It scrolls with what is
-	   drawn on it. */
-	.drafting-grid {
-		background-color: var(--color-paper);
-		background-image:
-			linear-gradient(var(--color-grid-major) var(--rule-hair), transparent var(--rule-hair)),
-			linear-gradient(90deg, var(--color-grid-major) var(--rule-hair), transparent var(--rule-hair)),
-			linear-gradient(var(--color-grid) var(--rule-hair), transparent var(--rule-hair)),
-			linear-gradient(90deg, var(--color-grid) var(--rule-hair), transparent var(--rule-hair));
-		background-size:
-			var(--grid-pitch-major) var(--grid-pitch-major),
-			var(--grid-pitch-major) var(--grid-pitch-major),
-			var(--grid-pitch-minor) var(--grid-pitch-minor),
-			var(--grid-pitch-minor) var(--grid-pitch-minor);
-		background-attachment: local;
+	.alert-ic {
+		display: grid;
+		place-items: center;
+		flex: none;
+		width: calc(var(--spacing) * 7.5);
+		height: calc(var(--spacing) * 7.5);
+		border-radius: var(--radius-sm);
+	}
+	.alert-fail .alert-ic {
+		background-color: var(--color-fail-tint);
+		color: var(--color-fail);
+	}
+	/* The capacity note: one amber line under a header. */
+	.capline {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--spacing) calc(var(--spacing) * 2.5);
+		min-height: calc(var(--spacing) * 10.5);
+		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 3.5);
+		border: var(--rule-hair) solid var(--color-wait-mark);
+		border-left-width: var(--rule-alarm);
+		border-radius: var(--radius-md);
+		background-color: var(--color-surface);
 	}
 
+	/* ---- The drawing office's class names, redrawn in Harbour ------- */
+	.frame {
+		border: var(--rule-hair) solid var(--color-line);
+		border-radius: var(--radius-md);
+		background-color: var(--color-surface);
+	}
+	.region {
+		border-top: var(--rule-hair) solid var(--color-line);
+	}
+	/* The graph's ground: a dotted field that scrolls with what is drawn. */
+	.drafting-grid {
+		background-color: var(--color-surface-2);
+		background-image: radial-gradient(var(--color-line-2) var(--rule-hair), transparent var(--rule-hair));
+		background-size: calc(var(--spacing) * 4) calc(var(--spacing) * 4);
+		background-attachment: local;
+	}
 	/* A disclosure button's chevron, drawn on the button itself (no element:
 	   a run page holds one per task card), pointing down once expanded. */
 	.btn-disclosure::before {
 		content: '';
 		flex: none;
-		width: calc(var(--spacing) * 1.5);
-		height: calc(var(--spacing) * 1.5);
+		width: calc(var(--spacing) * 1.75);
+		height: calc(var(--spacing) * 1.75);
 		margin-inline: calc(var(--spacing) * 0.5);
-		border-right: var(--rule-region) solid var(--color-ink-muted);
-		border-bottom: var(--rule-region) solid var(--color-ink-muted);
+		border-right: var(--rule-region) solid var(--color-ink-3);
+		border-bottom: var(--rule-region) solid var(--color-ink-3);
 		transform: rotate(-45deg);
 	}
 	.btn-disclosure[aria-expanded='true']::before {
 		transform: rotate(45deg);
 	}
-
-	/* A run's task card the reader selected (the map, the DAG, the palette).
-	   Inset, because a card skipped by content-visibility clips paint
-	   outside its box. */
+	/* A run's task card the reader selected. Inset, because a card skipped
+	   by content-visibility clips paint outside its box. */
 	.task-card[data-selected='true'] {
-		outline: var(--rule-frame) solid var(--color-blue);
+		outline: var(--rule-frame) solid var(--color-select);
 		outline-offset: calc(var(--rule-frame) * -1);
 	}
-
-	/* A caveat that is not an alarm. The NOTE label is markup beside it. */
+	/* A caveat that is not an alarm. */
 	.note {
-		border: var(--rule-hair) solid var(--color-rule);
+		border: var(--rule-hair) solid var(--color-line);
 		border-radius: var(--radius-sm);
-		background-color: var(--color-paper-sunken);
+		background-color: var(--color-surface-2);
 		color: var(--color-ink);
 	}
-
 	/* A confirmation ("Applied x@y"): ink, after a drawn check mark. */
 	.confirm::before {
 		content: '';
@@ -328,35 +1085,37 @@
 		width: calc(var(--spacing) * 1.5);
 		height: calc(var(--spacing) * 2.5);
 		margin-right: calc(var(--spacing) * 2);
-		border-right: var(--rule-region) solid var(--color-ink);
-		border-bottom: var(--rule-region) solid var(--color-ink);
+		border-right: var(--rule-frame) solid var(--color-ok-mark);
+		border-bottom: var(--rule-frame) solid var(--color-ok-mark);
 		transform: translateY(-15%) rotate(45deg);
 		vertical-align: middle;
 	}
-
-	/* Severity: red ink, told apart by the mark before it — filled for an
-	   error, outlined for a warning — and by the word beside it. */
-	.severity-error,
+	/* Severity: an error is a red triangle, a warning an amber one; the word
+	   beside it says which. */
+	.severity-error {
+		color: var(--color-fail);
+	}
 	.severity-warning {
-		color: var(--color-red-strong);
+		color: var(--color-wait);
 	}
 	.severity-error::before,
 	.severity-warning::before {
 		content: '';
 		display: inline-block;
-		width: calc(var(--spacing) * 2);
+		width: calc(var(--spacing) * 2.25);
 		height: calc(var(--spacing) * 2);
 		margin-right: calc(var(--spacing) * 1.5);
-		border: var(--rule-region) solid var(--color-red);
-		vertical-align: middle;
+		clip-path: polygon(50% 0, 100% 100%, 0 100%);
+		vertical-align: baseline;
 	}
 	.severity-error::before {
-		background-color: var(--color-red);
+		background-color: var(--color-fail-mark);
+	}
+	.severity-warning::before {
+		background-color: var(--color-wait-mark);
 	}
 
-	/* Syntax: the colours of an authored document (src/lib/yaml/highlight.ts),
-	   the roles the YAML editor, the read-only YAML views and the site's code
-	   themes all draw. Keys at weight; comments in the muted ink, oblique. */
+	/* ---- Syntax ------------------------------------------------------ */
 	.syntax-key {
 		color: var(--color-syntax-key);
 		font-weight: var(--font-weight-semibold);
@@ -384,125 +1143,78 @@
 		color: var(--color-syntax-punctuation);
 	}
 
-	/* The status stamp: a 1 px frame, tracked caps, and a drawn mark before
-	   the word. The mark is CSS only — no element — because a run page holds
-	   thousands of stamps. Statuses differ by mark shape, never by hue alone
-	   (WCAG 1.4.1); #lib/statusMarks.ts names the mark of each status. */
-	.stamp {
-		display: inline-flex;
-		align-items: center;
-		gap: calc(var(--spacing) * 1.5);
-		border-width: var(--rule-hair);
-		border-style: solid;
-		border-radius: var(--radius-sm);
-		padding: 0 calc(var(--spacing) * 1.5);
-		font-size: var(--text-2xs);
-		line-height: var(--text-2xs--line-height);
-		font-weight: var(--font-weight-semibold);
-		letter-spacing: var(--tracking-caps);
-		text-transform: uppercase;
-		white-space: nowrap;
-	}
-	.mark-square::before,
-	.mark-cross::before,
-	.mark-strike::before,
-	.mark-hatch::before,
-	.mark-hollow::before,
-	.mark-dotted::before {
-		content: '';
-		flex: none;
-		width: calc(var(--spacing) * 2);
-		height: calc(var(--spacing) * 2);
-		border: var(--rule-hair) solid currentColor;
-	}
-	/* SUCCEEDED: a solid filled square. */
-	.mark-square::before {
-		border-color: var(--color-succeeded-solid);
-		background-color: var(--color-succeeded-solid);
-	}
-	/* FAILED: red, crossed through in paper. */
-	.mark-cross::before {
-		border-color: var(--color-failed-solid);
-		background-color: var(--color-failed-solid);
-		background-image:
-			linear-gradient(45deg, transparent 38%, var(--color-paper) 38% 62%, transparent 62%),
-			linear-gradient(-45deg, transparent 38%, var(--color-paper) 38% 62%, transparent 62%);
-	}
-	/* CANCELED: an outline struck once. */
-	.mark-strike::before {
-		border-color: var(--color-canceled-solid);
-		background-image: linear-gradient(
-			-45deg,
-			transparent 40%,
-			var(--color-canceled-solid) 40% 60%,
-			transparent 60%
-		);
-	}
-	/* SKIPPED: hatched, with a dashed outline. */
-	.mark-hatch::before {
-		border-style: dashed;
-		border-color: var(--color-skipped-solid);
-		background-image: repeating-linear-gradient(
-			45deg,
-			var(--color-skipped-solid) 0 25%,
-			transparent 25% 50%
-		);
-	}
-	/* PENDING: hollow, a solid outline. */
-	.mark-hollow::before {
-		border-color: var(--color-pending-solid);
-	}
-	/* UNSPECIFIED: hollow, a dotted outline. */
-	.mark-dotted::before {
-		border-style: dotted;
-		border-color: var(--color-unspecified-solid);
-	}
-	/* RUNNING and AWAITING draw their mark as the stamp's one inner span:
-	   a filled dot that pulses, and a ring that waits. */
-	.mark-dot,
-	.mark-ring {
-		flex: none;
-		width: calc(var(--spacing) * 2);
-		height: calc(var(--spacing) * 2);
-		border-radius: var(--radius-full);
-		border: var(--rule-region) solid var(--color-awaiting-solid);
-	}
-	.mark-dot {
-		border-color: var(--color-running-solid);
-		background-color: var(--color-running-solid);
-	}
-
-	/* Forced colours drop background images and recolour fills; a border in
-	   CanvasText keeps each mark a visible shape, and the word beside it
-	   always says which status it is. */
-	@media (forced-colors: active) {
-		.mark-square::before,
-		.mark-cross::before,
-		.mark-strike::before,
-		.mark-hatch::before,
-		.mark-hollow::before,
-		.mark-dotted::before,
-		.mark-dot,
-		.mark-ring {
-			border-color: CanvasText;
-		}
-		.mark-square::before,
-		.mark-cross::before,
-		.mark-dot {
-			background-color: CanvasText;
-		}
-	}
-
 	/* A keyboard shortcut. */
 	.kbd {
 		display: inline-flex;
 		align-items: center;
-		border: var(--rule-hair) solid var(--color-rule-strong);
+		padding: var(--spacing) calc(var(--spacing) * 1.5);
+		border: var(--rule-hair) solid var(--color-line-2);
 		border-radius: var(--radius-xs);
-		padding: 0 var(--spacing);
-		font-family: var(--font-mono);
+		background-color: var(--color-surface);
+		font-family: var(--font-sans);
 		font-size: var(--text-2xs);
-		line-height: var(--text-2xs--line-height);
-		color: var(--color-ink-muted);
+		font-weight: var(--font-weight-medium);
+		line-height: var(--leading-none);
+		color: var(--color-ink-3);
+		white-space: nowrap;
+	}
+
+	/* ---- The one tooltip -------------------------------------------- */
+	.tt {
+		position: fixed;
+		inset: auto;
+		margin: 0;
+		border: 0;
+		overflow: visible;
+		z-index: 95;
+		width: max-content;
+		max-width: var(--spacing-tip);
+		padding: calc(var(--spacing) * 2) calc(var(--spacing) * 2.5);
+		border-radius: var(--radius-sm);
+		background-color: var(--color-ink);
+		color: var(--color-surface);
+		font-size: var(--text-xs);
+		font-weight: var(--font-weight-medium);
+		line-height: var(--leading-normal);
+		box-shadow: var(--shadow-overlay);
+		pointer-events: auto;
+	}
+	/* A bridge over the gap, so the pointer can cross from the control onto
+	   the tip (WCAG 1.4.13). */
+	.tt::before {
+		content: '';
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 100%;
+		height: calc(var(--spacing) * 2.5);
+	}
+	.tt.up::before {
+		bottom: auto;
+		top: 100%;
+	}
+	time[data-tip] {
+		border-radius: var(--rule-frame);
+	}
+	@media (forced-colors: active) {
+		.tt {
+			border: var(--rule-hair) solid CanvasText;
+		}
+	}
+
+	/* ---- A popover (the command line, More) ------------------------- */
+	.pop {
+		position: absolute;
+		z-index: 30;
+		border: var(--rule-hair) solid var(--color-line-2);
+		border-radius: var(--radius-md);
+		background-color: var(--color-surface);
+		box-shadow: var(--shadow-overlay);
+	}
+	@media (prefers-reduced-motion: no-preference) {
+		.pop,
+		dialog[open] {
+			animation: var(--animate-overlay-in);
+		}
 	}
 }

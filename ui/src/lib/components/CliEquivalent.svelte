@@ -67,7 +67,7 @@
 				: 'size-8'}"
 		>
 			<!-- A shell prompt: the window, the caret, the cursor. -->
-			<Icon name="terminal" />{#if text}<span class="font-mono text-xs whitespace-nowrap">{text}</span>{/if}
+			<Icon name="term" />{#if text}<span class="font-mono text-xs whitespace-nowrap">{text}</span>{/if}
 		</button>
 	{/snippet}
 	{#snippet content()}

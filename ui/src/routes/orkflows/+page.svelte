@@ -161,10 +161,10 @@
 					<tr class="transition-colors hover:bg-hover" data-testid="orkflow-row-{wf.name}">
 						<td class="max-w-md">
 							<a href={withNamespace(`/orkflows/${wf.name}`, data.namespace)} class="link font-semibold">{wf.name}</a>
-							{#if wf.description}<p class="truncate text-xs text-ink-muted" title={wf.description}>{wf.description}</p>{/if}
+							{#if wf.description}<p class="truncate text-xs text-ink-muted" data-tip={wf.description}>{wf.description}</p>{/if}
 						</td>
 						<td class="figure text-ink max-sm:col-start-2 max-sm:row-start-1 max-sm:justify-self-end">{wf.version}</td>
-						<td class="figure text-ink-secondary max-sm:row-start-2 max-sm:text-xs" title={wf.definitionDigest || undefined} data-testid="orkflow-digest-{wf.name}"
+						<td class="figure text-ink-secondary max-sm:row-start-2 max-sm:text-xs" data-tip={wf.definitionDigest || undefined} data-testid="orkflow-digest-{wf.name}"
 							>{wf.definitionDigest ? digest8(wf.definitionDigest) : '—'}</td
 						>
 						<td class="figure text-right text-ink-secondary max-sm:col-start-2 max-sm:row-start-3 max-sm:justify-self-end max-sm:text-xs max-sm:after:ml-1 max-sm:after:font-sans max-sm:after:content-['tasks']" data-testid="orkflow-taskcount-{wf.name}">{wf.tasks.length}</td>

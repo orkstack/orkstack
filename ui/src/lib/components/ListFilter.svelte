@@ -49,9 +49,14 @@
 		clearHref: string;
 		/** Controls applied with the same submit (page size). */
 		children?: Snippet;
+		/**
+		 * Draws the form's own command-line popover. A page whose header
+		 * already has one (Runs) folds the filtered command into it instead.
+		 */
+		cli?: boolean;
 	}
 
-	let { request, applied, testid, command, onapply, clearHref, children }: Props = $props();
+	let { request, applied, testid, command, onapply, clearHref, children, cli: showCli = true }: Props = $props();
 
 	const spec = $derived(specFor(request));
 
@@ -176,7 +181,7 @@
 	}
 	const cli = $derived([...command, ...filterFlags(applied)].join(' '));
 
-	const inputClass = 'field h-9 px-3 text-sm';
+	const inputClass = 'field h-8.5 px-3 text-dense';
 </script>
 
 <!--
@@ -186,11 +191,11 @@
 	one line where they fit. With no filter it is one row; the list below
 	starts right under it.
 -->
-<form role="search" class="mb-3 flex flex-wrap items-center gap-2" data-testid="{testid}-filters" onsubmit={submit}>
+<form role="search" class="flex flex-wrap items-center gap-2 {showCli ? 'mb-3' : ''}" data-testid="{testid}-filters" onsubmit={submit}>
 	{#each rows as row, i (i)}
 		{@const field = declared(row.path)}
 		<div
-			class="flex flex-wrap items-center gap-1.5 rounded-sm border border-rule-strong bg-paper p-1 text-sm"
+			class="flex flex-wrap items-center gap-1.5 rounded-md border border-line-2 bg-surface-2 p-1 text-dense"
 			data-testid="{testid}-filter-row-{i}"
 		>
 			<label class="sr-only" for="{testid}-filter-field-{i}">Field</label>
@@ -248,18 +253,22 @@
 				class="btn-icon inline-flex size-8 items-center justify-center"
 				data-testid="{testid}-filter-remove-{i}"
 				aria-label="Remove this filter"
-				title="Remove this filter"
+				data-tip="Remove this filter"
 				onclick={() => removeRow(i)}><Icon name="close" /></button
 			>
 		</div>
 	{/each}
-	<button type="button" class="btn" data-testid="{testid}-filter-add" onclick={addRow}><Icon name="filter" class="size-3.5" />Add filter</button>
+	<button type="button" class="chip" data-testid="{testid}-filter-add" onclick={addRow}>Add filter<Icon name="chev" /></button>
 	{#if children}{@render children()}{/if}
-	<button type="submit" class="btn" data-testid="{testid}-filters-apply">Apply filters</button>
+	{#if rows.length > 0 || applied.length > 0 || children}
+		<button type="submit" class="btn btn-sm" data-testid="{testid}-filters-apply">Apply filters</button>
+	{/if}
 	{#if applied.length > 0}
 		<a href={clearHref} class="link text-sm font-medium" data-testid="{testid}-filters-clear">Clear filters</a>
 	{/if}
-	<div class="ml-auto">
-		<CliEquivalent testid="{testid}-filters-cli" label="CLI equivalent of these filters" command={cli} />
-	</div>
+	{#if showCli}
+		<div class="ml-auto">
+			<CliEquivalent testid="{testid}-filters-cli" label="CLI equivalent of these filters" command={cli} />
+		</div>
+	{/if}
 </form>

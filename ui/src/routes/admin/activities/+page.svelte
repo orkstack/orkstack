@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { filterFlags } from '#lib/listFilter.ts';
 	// The activity catalog (§4.2): what this deployment can run.
 	//
 	// An activity is an image, and which images exist is engine configuration
@@ -18,7 +19,10 @@
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ScopeNote from '#lib/components/ScopeNote.svelte';
-	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import ActivityIcon from '#lib/components/ActivityIcon.svelte';
+	import CliPopover from '#lib/components/CliPopover.svelte';
+	import Plate from '#lib/components/Plate.svelte';
+	import { activityKind } from '#lib/activityIcon.ts';
 	import ListFilter from '#lib/components/ListFilter.svelte';
 	import { listHref } from '#lib/browsing.ts';
 	import type { FieldFilter } from '#lib/listFilter.ts';
@@ -73,15 +77,6 @@
 	}
 
 	let retrying = $state(false);
-	let copiedLocalTool = $state('');
-	async function copyLocalTool(command: string, label: string, shownAt: string) {
-		if ((await copyText(command)) === 'copied') {
-			copiedLocalTool = label;
-			return;
-		}
-		selectByTestid(shownAt);
-		copiedLocalTool = MANUAL_COPY_MESSAGE;
-	}
 	async function retry() {
 		retrying = true;
 		try {
@@ -102,7 +97,18 @@
 
 <svelte:head><title>Admin — Activities — OrkStack</title></svelte:head>
 
-<SheetHeader title="Activities" />
+<header class="mb-5 flex flex-wrap items-start gap-3">
+	<h1 class="page-h1 min-w-0 flex-1">Activities</h1>
+	<CliPopover
+		testid="activities-cli"
+		title="Command line: activities"
+		commands={[
+			{ label: 'The catalog', command: ['orkctl', 'activity', 'list', ...filterFlags(data.applied)].join(' ') },
+			{ label: 'Build an image, on your machine', command: 'orkctl activity build ./images/my-activity' },
+			{ label: 'Run the activity contract test', command: 'orkctl activity test my-image' }
+		]}
+	/>
+</header>
 
 <ScopeNote testid="activities-scope-caption">
 	Every activity this deployment can run, as configured on the engine — deployment-wide, not scoped
@@ -174,30 +180,11 @@
 	{/if}
 </section>
 
-<section class="region mb-10 pt-3" data-testid="activity-local-tools">
-	<h2 class="text-md font-semibold text-ink">Local activity tools</h2>
-	<p class="mt-1 max-w-prose text-sm text-ink-secondary">
-		Builds and contract tests run on your machine with its OCI runtime. They are intentionally not browser actions.
-	</p>
-	<p class="mt-2 max-w-prose text-xs text-ink-muted">Prerequisites: a local build context, Docker or another supported OCI runtime, and access to the image registry when pushing.</p>
-	<ul class="mt-3 border-t border-rule">
-		<li class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2">
-			<p class="w-56 text-sm font-semibold text-ink">Build an image</p>
-			<code data-testid="activity-build-command" class="min-w-0 flex-1 break-all font-mono text-xs text-ink-secondary">orkctl activity build ./images/my-activity</code>
-			<button type="button" onclick={() => void copyLocalTool('orkctl activity build ./images/my-activity', 'Build command copied', 'activity-build-command')} class="btn btn-sm">Copy build command</button>
-		</li>
-		<li class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2">
-			<p class="w-56 text-sm font-semibold text-ink">Run the activity contract test</p>
-			<code data-testid="activity-test-command" class="min-w-0 flex-1 break-all font-mono text-xs text-ink-secondary">orkctl activity test my-image</code>
-			<button type="button" onclick={() => void copyLocalTool('orkctl activity test my-image', 'Test command copied', 'activity-test-command')} class="btn btn-sm">Copy test command</button>
-		</li>
-	</ul>
-	{#if copiedLocalTool}<p data-testid="activity-local-tool-copied" class="confirm mt-2 text-xs text-ink" role="status">{copiedLocalTool}</p>{/if}
-</section>
 
-<h2 class="mb-2 text-md font-semibold text-ink">Catalog</h2>
 
-<ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} />
+<h2 class="mb-2 text-md font-heading text-ink">Catalog</h2>
+
+<ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} cli={false} />
 
 {#if data.activitiesError}
 	<ErrorPanel
@@ -218,82 +205,54 @@
 		directly with <code>uses:</code>.
 	</p>
 {:else}
-	<div class="overflow-x-auto border-t-2 border-ink" data-testid="activity-list">
-		<table class="register min-w-[960px]">
+	<div class="card overflow-x-auto scroll-panel" data-testid="activity-list">
+		<table class="register acts">
 			<thead>
 				<tr>
-					<th scope="col">Name</th>
-					<th scope="col">Reference</th>
-					<th scope="col">Index digest</th>
-					<th scope="col">Media type</th>
-					<th scope="col">Platforms</th>
+					<th scope="col">Activity</th>
+					<th scope="col">Image</th>
+					<th scope="col">Digest and platforms</th>
+					<th scope="col">Ops</th>
 					<th scope="col">Interface</th>
-					<th scope="col">Resolved</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each data.activities as activity (activity.name)}
-					<tr
-						class="transition-colors hover:bg-hover"
-						data-testid="activity-row-{activity.name}"
-					>
-						<td class="font-mono font-semibold text-ink" data-testid="activity-name-{activity.name}">
-							{activity.name}
+					<tr data-testid="activity-row-{activity.name}">
+						<th scope="row">
+							<span class="inline-flex items-center gap-2 font-semibold text-ink" data-testid="activity-name-{activity.name}"
+								><ActivityIcon kind={activityKind(activity.name)} class="size-4 text-navy-text" />{activity.name}</span
+							>
+						</th>
+						<td data-label="Image" class="font-mono text-sm text-ink-2" data-testid="activity-reference-{activity.name}">
+							<span class="break-all">{activity.reference || '—'}</span>
 						</td>
-						<td
-							class="font-mono text-xs whitespace-nowrap text-ink-secondary"
-							data-testid="activity-reference-{activity.name}"
-						>
-							{activity.reference || '—'}
-						</td>
-						<!--
-							The digest is the PIN, and the pin is the point: it is
-							what makes a run explainable after a tag moves. It is
-							abbreviated for the eye but carried in full in `title`
-							and in a data attribute, so nothing here is the only
-							copy of the value.
-						-->
-						<td>
+						<td data-label="Digest and platforms">
 							{#if activity.indexDigest}
-								<span
-									class="figure text-xs whitespace-nowrap text-ink"
-									title={activity.indexDigest}
-									data-digest={activity.indexDigest}
-									data-testid="activity-digest-{activity.name}">{shortDigest(activity.indexDigest)}</span
+								<span data-digest={activity.indexDigest} data-testid="activity-digest-{activity.name}"
+									><Plate key="digest" value={shortDigest(activity.indexDigest)} tip={activity.indexDigest} small /></span
 								>
 							{:else}
-								<span
-									class="text-xs text-ink-muted"
-									data-testid="activity-digest-unresolved-{activity.name}"
-									title="this reference has not been resolved to an index digest">unresolved</span
-								>
+								<span class="text-sm text-ink-3" data-testid="activity-digest-unresolved-{activity.name}">unresolved</span>
 							{/if}
+							<span class="mt-1 block font-mono text-xs text-ink-3" data-testid="activity-platforms-{activity.name}"
+								>{activity.platforms.length > 0 ? activity.platforms.join(', ') : 'single manifest'}</span
+							>
+							<span class="sr" data-testid="activity-media-type-{activity.name}">{activity.mediaType || '—'}</span>
+							<span class="sr" data-testid="activity-resolved-at-{activity.name}">{fmtTimestamp(activity.resolvedAt)}</span>
 						</td>
-						<td
-							class="font-mono text-xs text-ink-muted"
-							data-testid="activity-media-type-{activity.name}"
-						>
-							{activity.mediaType || '—'}
-						</td>
-						<td class="font-mono text-xs text-ink-muted" data-testid="activity-platforms-{activity.name}">
-							{#if activity.platforms.length > 0}
-								{activity.platforms.join(', ')}
+						<td data-label="Ops" class="font-mono text-sm text-ink-2">
+							{#if activity.interface && Object.keys(activity.interface.ops).length > 0}
+								{Object.keys(activity.interface.ops).sort().join(', ')}
 							{:else}
-								<span title="a single-manifest reference advertises no platform list"
-									>single manifest</span
-								>
+								<span class="text-ink-3">—</span>
 							{/if}
 						</td>
-						<!--
-							What the image declares about its with: block. The cell
-							is a disclosure: the full table opens in a row beneath,
-							so the catalog stays one line per activity.
-						-->
-						<td class="text-xs">
+						<td data-label="Interface" class="text-sm">
 							{#if activity.indexDigest}
 								<button
 									type="button"
-									class="btn-disclosure inline-flex items-center gap-1 font-semibold whitespace-nowrap text-blue hover:underline"
+									class="btn btn-sm btn-quiet btn-disclosure"
 									aria-expanded={!!disclosed[activity.name]}
 									aria-controls="activity-interface-panel-{activity.name}"
 									data-testid="activity-interface-{activity.name}"
@@ -302,21 +261,13 @@
 									{interfaceSummary(activity)}
 								</button>
 							{:else}
-								<span class="text-ink-muted" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
+								<span class="text-ink-3" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
 							{/if}
-						</td>
-						<td class="figure text-xs whitespace-nowrap text-ink-muted" data-testid="activity-resolved-at-{activity.name}">
-							{fmtTimestamp(activity.resolvedAt)}
 						</td>
 					</tr>
 					{#if disclosed[activity.name]}
-						<tr class="bg-paper-sunken">
-							<td
-								colspan="7"
-								class="px-5 py-3"
-								id="activity-interface-panel-{activity.name}"
-								data-testid="activity-interface-panel-{activity.name}"
-							>
+						<tr class="bg-surface-2">
+							<td colspan="5" class="px-5 py-3" id="activity-interface-panel-{activity.name}" data-testid="activity-interface-panel-{activity.name}">
 								<ActivityInterface info={activity} />
 							</td>
 						</tr>
@@ -350,7 +301,7 @@
 		<button
 			type="submit"
 			disabled={inspecting || inspectReference.trim() === ''}
-			class="btn btn-primary"
+			class="btn"
 			data-testid="activity-inspect-submit">{inspecting ? 'Inspecting…' : 'Inspect'}</button
 		>
 		<CliEquivalent testid="activity-inspect-cli" command={inspectCli} label="orkctl activity inspect for this reference" />
@@ -384,3 +335,39 @@
 		</div>
 	{/if}
 </section>
+
+<style>
+	@media (max-width: 640px) {
+		.acts thead {
+			display: none;
+		}
+		.acts,
+		.acts tbody,
+		.acts tr,
+		.acts td,
+		.acts th {
+			display: block;
+		}
+		.acts tr {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr);
+			gap: 10px;
+			padding: 14px 16px;
+			border-bottom: 1px solid var(--line);
+		}
+		.acts td,
+		.acts th {
+			padding: 0 !important;
+			border: 0 !important;
+		}
+		.acts td[data-label]::before {
+			content: attr(data-label);
+			display: block;
+			margin-bottom: 3px;
+			font-family: var(--font-ui);
+			font-size: 12.5px;
+			font-weight: 600;
+			color: var(--ink-3);
+		}
+	}
+</style>

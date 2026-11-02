@@ -48,8 +48,8 @@
 	<span
 		data-testid={testid}
 		data-flaky={inRun ? undefined : 'true'}
-		{title}
-		class="stamp border-rule-strong bg-paper text-ink-secondary"
+		data-tip={title}
+		class="stamp pill-outline bg-surface text-ink-2"
 	>
 		{label}
 	</span>

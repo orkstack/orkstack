@@ -1,4 +1,5 @@
 <script lang="ts">
+	import LiveControl from './LiveControl.svelte';
 	import { onDestroy, untrack } from 'svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import Select from '#lib/components/Select.svelte';
@@ -221,6 +222,34 @@
 		if (started) dispatched = true;
 	});
 
+	// "Pause log": lines that arrive while paused are held, never dropped,
+	// and appended in order on resume.
+	let logPaused = $state(false);
+	let heldLines: LogLine[] = [];
+	function appendLines(more: LogLine[]): void {
+		const next = lines.concat(more);
+		if (next.length > scrollback) {
+			dropped += next.length - scrollback;
+			lines = next.slice(next.length - scrollback);
+		} else {
+			lines = next;
+		}
+	}
+	function toggleLogPause(): void {
+		logPaused = !logPaused;
+		if (!logPaused && heldLines.length) {
+			const due = heldLines;
+			heldLines = [];
+			appendLines(due);
+		}
+	}
+
+	// A paused log whose stream ends or fails resumes at once (a reconnect
+	// keeps the reader's pause): its last lines, usually the error, are never held back.
+	$effect(() => {
+		if (logPaused && (stateLabel === 'ENDED' || stateLabel === 'FAILED')) untrack(toggleLogPause);
+	});
+
 	const stateLabel = $derived.by(() => {
 		if (ended) return 'ENDED';
 		switch (socketState) {
@@ -274,6 +303,7 @@
 		// namespace or attempt — which is why the follow is reset with it: a
 		// different subject is a new read, and a new read starts at the tail.
 		lines = [];
+		heldLines = [];
 		dropped = 0;
 		truncated = false;
 		ended = false;
@@ -297,19 +327,16 @@
 					// The output of the try that failed is still in the
 					// artifact store; the notice below says how to read it.
 					lines = [];
+					heldLines = [];
 					dropped = 0;
 					truncated = false;
 					retried = true;
 				}
 				if (delivery.attempt > 0) shownAttempt = delivery.attempt;
+				if (delivery.restarted) heldLines = [];
 				if (delivery.lines.length > 0) {
-					const next = lines.concat(delivery.lines);
-					if (next.length > scrollback) {
-						dropped += next.length - scrollback;
-						lines = next.slice(next.length - scrollback);
-					} else {
-						lines = next;
-					}
+					if (untrack(() => logPaused)) heldLines.push(...delivery.lines);
+					else appendLines(delivery.lines);
 				}
 				if (delivery.truncated) truncated = true;
 				if (delivery.ended) ended = true;
@@ -433,31 +460,17 @@
 	{/if}
 
 	{#if open}
-		<div class="{ownToggle ? 'mt-2' : ''} overflow-hidden rounded-sm border border-rule bg-paper-sunken">
-			<div
-				class="flex flex-wrap items-center gap-3 border-b border-rule bg-paper-sunken px-3 py-2 font-mono text-2xs tracking-caps uppercase"
-			>
+		<div class="{ownToggle ? 'mt-2' : ''} overflow-hidden rounded-md border border-line bg-surface">
+			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-3 py-2 text-sm">
+				{#if stateLabel === 'LIVE' || logPaused}
+					<LiveControl what="log" paused={logPaused} ontoggle={toggleLogPause} testid="task-log-live-{taskId}" />
+				{/if}
 				<span
 					data-testid="task-log-state-{taskId}"
-					class="inline-flex items-center gap-1.5 {stateLabel === 'LIVE'
-						? 'text-blue'
-						: stateLabel === 'ENDED'
-							? 'text-ink-muted'
-							: stateLabel === 'FAILED'
-								? 'text-red'
-								: 'text-ink-secondary'}"
+					class="{stateLabel === 'LIVE' ? 'sr' : 'font-semibold'} {stateLabel === 'FAILED' ? 'text-fail' : 'text-ink-3'}"
+					>{stateLabel}</span
 				>
-					{#if stateLabel === 'LIVE'}
-						<span
-							class="size-1.5 rounded-full bg-green animate-live-dot motion-reduce:animate-none"
-							aria-hidden="true"
-						></span>
-					{/if}
-					{stateLabel}</span
-				>
-				<span data-testid="task-log-follow-{taskId}" class="text-ink-muted">
-					{following ? 'FOLLOWING' : 'PAUSED'}
-				</span>
+				<span data-testid="task-log-follow-{taskId}" class="sr">{following ? 'FOLLOWING' : 'PAUSED'}</span>
 				{#if maxAttempt > 1}
 					<!--
 						The task retried, so WHICH try is a question the reader
@@ -466,7 +479,7 @@
 						A number pins the pane to a finished try, which the
 						engine serves from the store.
 					-->
-					<label class="flex items-center gap-1.5 text-ink-muted normal-case">
+					<label class="flex items-center gap-1.5 text-ink-3">
 						Attempt:
 						<Select
 							testid="task-log-attempt-select-{taskId}"
@@ -480,14 +493,14 @@
 				{#if shownAttempt > 1 || pinned !== null}
 					<span
 						data-testid="task-log-attempt-{taskId}"
-						class="rounded-sm border border-rule-strong px-1.5 text-ink-secondary normal-case tracking-normal"
+						class="tag"
 						>attempt {shownAttempt || pinned}</span
 					>
 				{/if}
 				{#if hasStderr}
 					<span
 						data-testid="task-log-stderr-legend-{taskId}"
-						class="text-red/80 normal-case tracking-normal"
+						class="text-fail"
 					>
 						stderr shown in red
 					</span>
@@ -497,12 +510,12 @@
 						type="button"
 						data-testid="task-log-jump-{taskId}"
 						onclick={jumpToLatest}
-						class="h-6 rounded-sm border border-blue/40 px-2 text-blue normal-case tracking-normal hover:bg-blue/10"
+						class="btn btn-sm"
 					>
 						Jump to latest
 					</button>
 				{/if}
-				<span class="ml-auto text-ink-muted normal-case tracking-normal" data-testid="task-log-count-{taskId}">
+				<span class="num ml-auto text-ink-3" data-testid="task-log-count-{taskId}">
 					{lines.length} lines
 				</span>
 				<button
@@ -510,17 +523,18 @@
 					data-testid="task-log-download-{taskId}"
 					disabled={downloading || !dispatched}
 					onclick={downloadRetained}
-					class="h-6 rounded-sm border border-rule px-2 text-ink normal-case tracking-normal hover:bg-ink/5 disabled:opacity-50"
+					class="btn btn-sm btn-quiet"
 				>
 					{downloading ? 'Preparing download…' : 'Download retained logs'}
 				</button>
-				<label class="flex items-center gap-1 text-ink-muted normal-case tracking-normal">
-					Search
-					<input data-testid="task-log-search-{taskId}" bind:value={search} placeholder="loaded lines" class="h-6 w-28 rounded-sm border border-rule bg-paper-sunken px-1.5 text-ink placeholder:text-ink-muted" />
+				<label class="search h-7.5 max-w-44">
+					<span class="sr">Search the loaded lines</span>
+					<svg viewBox="0 0 16 16" aria-hidden="true" class="size-3.5 shrink-0"><use href="#i-search" /></svg>
+					<input data-testid="task-log-search-{taskId}" bind:value={search} placeholder="Search" />
 				</label>
 			</div>
 			{#if downloadError}
-				<p data-testid="task-log-download-error-{taskId}" class="border-b border-rule px-3 py-1.5 font-mono text-xs text-red">
+				<p data-testid="task-log-download-error-{taskId}" class="border-b border-line px-3 py-1.5 text-sm text-red">
 					{downloadError}
 				</p>
 			{/if}
@@ -528,7 +542,7 @@
 			{#if dropped > 0}
 				<p
 					data-testid="task-log-dropped-{taskId}"
-					class="border-b border-rule px-3 py-1.5 font-mono text-xs text-ink-secondary"
+					class="border-b border-line px-3 py-1.5 text-sm text-ink-secondary"
 				>
 					{dropped} earlier lines are no longer shown here (scrollback is {scrollback} lines).
 					The whole output is in the artifact store: <code class="text-ink"
@@ -540,7 +554,7 @@
 			{#if retried}
 				<p
 					data-testid="task-log-retried-{taskId}"
-					class="border-b border-rule px-3 py-1.5 font-mono text-xs text-ink-secondary"
+					class="border-b border-line px-3 py-1.5 text-sm text-ink-secondary"
 				>
 					This task retried, and this pane is now following attempt {shownAttempt}. The
 					earlier attempt's output is still in the artifact store:
@@ -551,7 +565,7 @@
 			{/if}
 
 			{#if socketState === 'failed'}
-				<div class="border-b border-rule bg-paper px-3 py-2">
+				<div class="border-b border-line px-3 py-2">
 					<ErrorPanel
 						testid="task-log-error-{taskId}"
 						retryTestid="task-log-retry-{taskId}"
@@ -563,18 +577,23 @@
 				</div>
 			{/if}
 
+			<!-- A scroll region a keyboard can scroll: a tab stop on purpose (WCAG 2.1.1). -->
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 			<div
 				bind:this={box}
 				onscroll={onScroll}
 				data-testid="task-log-{taskId}"
-				class="max-h-80 overflow-y-auto px-3 py-2 font-mono text-xs leading-5 [font-variant-ligatures:none] lg:max-h-[480px]"
+				tabindex="0"
+				role="region"
+				aria-label="Output of task {taskId}"
+				class="log-region scroll-log max-h-(--spacing-log) overflow-y-auto bg-log-bg px-3.5 py-2.5 font-mono text-xs leading-5 text-log-ink [font-variant-ligatures:none]"
 			>
 				{#if !started}
-					<p data-testid="task-log-waiting-{taskId}" class="text-ink-muted">
-						This task has not been dispatched yet. Its output appears here when it starts.
+					<p data-testid="task-log-waiting-{taskId}" class="text-log-ink-2">
+						No attempt yet, so no log. Its output appears here when the task starts.
 					</p>
 				{:else if lines.length === 0}
-					<p data-testid="task-log-empty-{taskId}" class="text-ink-muted">
+					<p data-testid="task-log-empty-{taskId}" class="text-log-ink-2">
 						{#if ended}
 							This task wrote nothing.
 						{:else if socketState === 'failed'}
@@ -584,7 +603,7 @@
 						{/if}
 					</p>
 				{:else if filteredLines.length === 0}
-					<p data-testid="task-log-no-match-{taskId}" class="text-ink-muted">No loaded lines match this search.</p>
+					<p data-testid="task-log-no-match-{taskId}" class="text-log-ink-2">No loaded lines match this search.</p>
 				{:else}
 					{#each filteredLines as line (line.n)}
 						<!--
@@ -600,10 +619,10 @@
 							data-line={line.n}
 							data-stream={line.stream}
 							class="whitespace-pre-wrap break-all {line.notice
-								? 'text-ink-secondary'
+								? 'text-log-ink-2'
 								: line.stream === 'stderr'
-									? 'text-red'
-									: 'text-ink'}"
+									? 'text-log-err'
+									: 'text-log-ink'}"
 						>
 							{line.text}
 						</div>
@@ -614,7 +633,7 @@
 			{#if truncated}
 				<p
 					data-testid="task-log-truncated-{taskId}"
-					class="border-t border-rule px-3 py-1.5 font-mono text-xs text-ink-secondary"
+					class="border-t border-line px-3 py-1.5 text-sm text-ink-secondary"
 				>
 					This task's output passed its cap and was truncated by the Orker. Nothing beyond the
 					notice above was stored.
@@ -623,3 +642,10 @@
 		</div>
 	{/if}
 </div>
+
+<style>
+	.log-region:focus-visible {
+		outline: 2px solid var(--log-ink);
+		outline-offset: -2px;
+	}
+</style>

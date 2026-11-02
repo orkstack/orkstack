@@ -31,8 +31,10 @@
 		type NodeState
 	} from '#lib/dag.ts';
 	import { activityLabel } from '#lib/activity.ts';
+	import { activityKind } from '#lib/activityIcon.ts';
 	import { isFailureHandler, joinTitle, joinWord } from '#lib/join.ts';
 	import { statusLabel } from '#lib/status.ts';
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import { statusClassWord, svgMark } from '#lib/statusMarks.ts';
 	import type { JoinPolicy } from '#lib/gen/orkstack/v1/activity_pb.ts';
 
@@ -77,10 +79,6 @@
 	const TEXT_X = 12;
 	const CACHED_TAG = 'cached';
 
-	/** A frame `pad` units outside the node's outline: the selection and focus marks. */
-	function frame(x: number, y: number, pad: number): string {
-		return `M ${x - pad} ${y - pad} h ${DAG_NODE_W + 2 * pad} v ${DAG_NODE_H + 2 * pad} h ${-(DAG_NODE_W + 2 * pad)} Z`;
-	}
 
 	function nodeName(task: Task, state: NodeState | undefined): string {
 		if (!state) return `Task ${task.id}`;
@@ -143,7 +141,7 @@
 			<g
 				data-testid={run ? `run-dag-node-${node.task.id}` : `dag-node-${node.task.id}`}
 				data-join={joinAttr(node.task.join)}
-				data-status={state ? statusLabel(state.status) : undefined}
+				data-status={state ? Status[state.status ?? Status.UNSPECIFIED] : undefined}
 				class="dag-node {word ? `is-${word}` : ''} {state?.neverStarted ? 'is-never' : ''} {selected === node.task.id
 					? 'is-selected'
 					: ''}"
@@ -162,12 +160,19 @@
 						y={node.y}
 						width={DAG_NODE_W}
 						height={DAG_NODE_H}
-						rx="2"
+						rx="10"
 						class="dag-outline"
 						stroke-dasharray={isFailureHandler(node.task.join) ? DAG_DASH : undefined}
 					/>
-					<path class="dag-select" d={frame(node.x, node.y, 3)} />
-					<path class="dag-focus" d={frame(node.x, node.y, 6)} />
+					<rect class="dag-focus" x={node.x - 5} y={node.y - 5} width={DAG_NODE_W + 10} height={DAG_NODE_H + 10} rx="14" />
+					<use
+						href="#i-a-{node.task.orkflow ? 'orkflow' : activityKind(node.task.uses, { awaited: !!node.task.await })}"
+						x={node.x + DAG_NODE_W - 25}
+						y={node.y + 11}
+						width="15"
+						height="15"
+						class="dag-icon"
+					/>
 					{#if state}
 						{#each svgMark(state.status, node.x + TEXT_X, node.y + 12, MARK) as part, i (i)}
 							{#if part.el === 'circle'}
@@ -202,7 +207,7 @@
 						<!-- A fan-out: one node, run as up to max_items items. -->
 						<text
 							data-testid={run ? `run-dag-node-${node.task.id}-each` : `dag-node-${node.task.id}-each`}
-							x={node.x + DAG_NODE_W - TEXT_X}
+							x={node.x + DAG_NODE_W - TEXT_X - 22}
 							y={node.y + 22}
 							text-anchor="end"
 							class="dag-tag">each ≤ {node.task.each.maxItems}</text
@@ -211,7 +216,7 @@
 						<!-- A join: when the task starts, decided from how its needs ended. -->
 						<text
 							data-testid={run ? `run-dag-node-${node.task.id}-join` : `dag-node-${node.task.id}-join`}
-							x={node.x + DAG_NODE_W - TEXT_X}
+							x={node.x + DAG_NODE_W - TEXT_X - 22}
 							y={node.y + 22}
 							text-anchor="end"
 							class="dag-tag">join {joinWord(node.task.join)}</text
@@ -234,54 +239,57 @@
 {/if}
 
 <style>
-	/* Ink on paper: a 1.5 px outline, the id in the sans, the second line in
-	   the mono. Every colour is a token; the markup carries geometry only. */
+	/* Harbour's graph: white rounded nodes on the dotted ground, the id in
+	   the sans, the second line in the mono, an activity icon top right.
+	   Every colour is a token; the markup carries geometry only. */
 	.dag-outline {
-		fill: var(--color-paper);
-		stroke: var(--color-ink);
-		stroke-width: var(--rule-region);
+		fill: var(--surface);
+		stroke: var(--line-2);
+		stroke-width: 1.5;
 	}
 	.dag-edge {
 		fill: none;
-		stroke: var(--color-ink);
-		stroke-width: var(--rule-region);
+		stroke: var(--line-strong);
+		stroke-width: 1.5;
 	}
 	/* A drawing scaled to its frame keeps its rules at their drawn weight. */
 	.dag-outline,
 	.dag-edge,
-	.dag-select,
 	.dag-focus {
 		vector-effect: non-scaling-stroke;
 	}
 	.dag-arrowhead {
-		fill: var(--color-ink);
+		fill: var(--line-strong);
 	}
 	.dag-id {
-		fill: var(--color-ink);
+		fill: var(--ink);
 		font-family: var(--font-sans);
 		font-size: var(--text-sm);
 		font-weight: var(--font-weight-semibold);
 	}
 	.dag-line {
-		fill: var(--color-ink-muted);
+		fill: var(--ink-3);
 		font-family: var(--font-mono);
 		font-size: var(--text-2xs);
 	}
-	/* A node's tags (each, join, cached, a composed Orkflow) are notes on the
-	   drawing, not links or live work: ink, never the accent. */
 	.dag-tag {
-		fill: var(--color-ink-secondary);
+		fill: var(--ink-2);
 		font-family: var(--font-mono);
 		font-size: var(--text-2xs);
 	}
-	.dag-select,
+	.dag-icon {
+		color: var(--ink-3);
+	}
 	.dag-focus {
 		fill: none;
 		stroke: transparent;
-		stroke-width: var(--rule-frame);
+		stroke-width: 2;
 	}
-	.dag-node.is-selected .dag-select {
-		stroke: var(--color-blue);
+	/* Selection is the node's own border, in ink; focus draws its own ring
+	   outside the box, so a selected node still shows focus. */
+	.dag-node.is-selected .dag-outline {
+		stroke: var(--select);
+		stroke-width: 2;
 	}
 	.dag-node a {
 		cursor: pointer;
@@ -290,57 +298,44 @@
 		outline: none;
 	}
 	.dag-node a:focus-visible .dag-focus {
-		stroke: var(--color-focus);
+		stroke: var(--focus);
 	}
 	.dag-node a:hover .dag-outline {
-		fill: var(--color-hover);
+		fill: var(--hover);
 	}
-
-	/* Run-page status, as the drawing draws it. */
 	.dag-node.is-failed .dag-outline {
-		stroke: var(--color-red);
-		stroke-width: var(--rule-alarm);
+		fill: var(--fail-tint);
+		stroke: var(--fail-mark);
+		stroke-width: 2;
 	}
-	.dag-node.is-failed .dag-id,
-	.dag-node.is-failed .dag-line {
-		fill: var(--color-red);
+	.dag-node.is-failed.is-selected .dag-outline {
+		stroke: var(--select);
 	}
-	/* Running now: a soft green box whose ground fades to paper and back,
-	   under a green outline. Under reduced motion it rests on the tint. */
 	.dag-node.is-running .dag-outline {
-		stroke: var(--color-running-border);
-		fill: var(--color-running-bg);
-		animation: var(--animate-live-fill);
+		stroke: var(--run);
 	}
 	.dag-node.is-awaiting .dag-outline {
-		stroke: var(--color-awaiting-border);
+		stroke: var(--await);
 	}
-	@media (prefers-reduced-motion: reduce) {
-		.dag-node.is-running .dag-outline {
-			animation: none;
-		}
+	/* A task that never started is greyed, not faded: its words keep 4.5:1. */
+	.dag-node.is-never .dag-outline {
+		fill: var(--dim-fill);
+		stroke: var(--dim-line);
 	}
-	.dag-node.is-never {
-		opacity: var(--opacity-faded);
+	.dag-node.is-never .dag-id {
+		fill: var(--ink-3);
+		font-weight: var(--font-weight-medium);
 	}
 
 	/* The status marks (statusMarks.svgMark). */
-	.mark-fill-paper {
-		fill: var(--color-paper);
-	}
-	.mark-line-paper {
-		fill: none;
-		stroke: var(--color-paper);
-		stroke-width: var(--rule-region);
-	}
 	.mark-fill-succeeded {
-		fill: var(--color-succeeded-solid);
+		fill: var(--ok-mark);
 	}
 	.mark-fill-running {
-		fill: var(--color-running-solid);
+		fill: var(--run);
 	}
 	.mark-fill-failed {
-		fill: var(--color-failed-solid);
+		fill: var(--fail-mark);
 	}
 	.mark-line-awaiting,
 	.mark-line-canceled,
@@ -348,29 +343,25 @@
 	.mark-line-pending,
 	.mark-line-unspecified {
 		fill: none;
-		stroke-width: var(--rule-region);
+		stroke-width: 1.5;
 	}
 	.mark-line-awaiting {
-		stroke: var(--color-awaiting-solid);
+		stroke: var(--await);
 	}
-	.mark-line-canceled {
-		stroke: var(--color-canceled-solid);
-	}
+	.mark-line-canceled,
 	.mark-line-skipped {
-		stroke: var(--color-skipped-solid);
+		stroke: var(--cancel);
 	}
-	.mark-line-pending {
-		stroke: var(--color-pending-solid);
-	}
+	.mark-line-pending,
 	.mark-line-unspecified {
-		stroke: var(--color-unspecified-solid);
+		stroke: var(--pend-mark);
 	}
 	@media (forced-colors: active) {
 		.dag-outline,
 		.dag-edge {
 			stroke: CanvasText;
 		}
-		.dag-node.is-selected .dag-select,
+		.dag-node.is-selected .dag-outline,
 		.dag-node a:focus-visible .dag-focus {
 			stroke: Highlight;
 		}

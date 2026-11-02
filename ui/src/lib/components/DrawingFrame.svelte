@@ -213,21 +213,21 @@
 	}
 </script>
 
-{#snippet scroller(testid: string, label: string, title: string, icon: 'chevronLeft' | 'chevronRight' | 'chevronUp' | 'chevronDown', more: boolean, go: () => void, last: boolean)}
+{#snippet scroller(testid: string, label: string, title: string, icon: 'chev-left' | 'chev-right' | 'chev-up' | 'chev', more: boolean, go: () => void, last: boolean)}
 	<button
 		type="button"
 		data-testid={testid}
-		class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-muted aria-disabled:opacity-50 {last ? '' : 'border-r border-rule'}"
+		class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-3 {last ? '' : 'border-r border-line'}"
 		aria-label={label}
-		{title}
+		data-tip={title}
 		aria-disabled={!more}
 		onclick={() => more && go()}><Icon name={icon} /></button
 	>
 {/snippet}
 
 {#snippet note(text: string, testidValue: string, action?: Snippet)}
-	<div data-testid={testidValue} class="note m-4 flex max-w-prose flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2 text-sm">
-		<span class="caps text-ink-muted">Note</span>
+	<div data-testid={testidValue} class="note m-4 flex max-w-prose flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2 text-dense">
+		<span class="font-semibold text-ink-3">Note</span>
 		<p class="min-w-0 flex-1">{text}</p>
 		{#if action}{@render action()}{/if}
 	</div>
@@ -243,11 +243,11 @@
 	bind:this={section}
 	data-testid={testid}
 	aria-label="Tasks of {orkflowLabel}"
-	class="frame relative isolate flex flex-col overflow-hidden max-h-drawing max-sm:max-h-drawing-tall {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
+	class="card relative isolate flex flex-col overflow-hidden max-h-drawing max-sm:max-h-drawing-tall {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
 	style:height={mapHeight !== undefined ? `${mapHeight}px` : undefined}
 >
 	<div
-		class="relative z-10 flex h-8 shrink-0 items-stretch self-start border-r border-b border-ink bg-paper {!drawn
+		class="relative z-10 flex min-h-12 shrink-0 flex-wrap items-center gap-3 self-stretch border-b border-line bg-surface px-3 py-2 {!drawn
 			? 'max-w-full'
 			: (hidden.left || hidden.right) && (hidden.up || hidden.down)
 				? 'max-w-[calc(100%-8rem)]'
@@ -256,7 +256,7 @@
 					: 'max-w-full'}"
 	>
 		{#if views.length > 1}
-			<div role="tablist" aria-label="View" class="flex shrink-0">
+			<div role="tablist" aria-label="View" class="seg">
 				{#each views as v, i (v.id)}
 					<button
 						type="button"
@@ -268,15 +268,13 @@
 						tabindex={view === v.id ? 0 : -1}
 						onclick={() => onview?.(v.id)}
 						onkeydown={(e) => onTabKey(e, i)}
-						class="caps border-r border-rule px-3 whitespace-nowrap {view === v.id
-							? 'bg-paper text-ink underline decoration-2 decoration-blue underline-offset-4'
-							: 'text-ink-muted hover:text-ink'}">{v.label}</button
+						>{v.label}</button
 					>
 				{/each}
 			</div>
 		{/if}
 		<!-- The Orkflow's name gives way; its version and task count never do. -->
-		<p class="flex min-w-0 items-center px-3 font-mono text-xs text-ink-secondary" title={caption}>
+		<p class="flex min-w-0 items-center text-dense text-ink-3" data-tip={caption}>
 			{#if captionLead && caption.startsWith(captionLead)}<span class="truncate">{captionLead}</span><span class="shrink-0 whitespace-pre"
 					>{caption.slice(captionLead.length)}</span
 				>{:else}<span class="truncate">{caption}</span>{/if}
@@ -328,15 +326,59 @@
 	{#if drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}
 		<!-- A drawing that does not fit says so on the frame's top band, for
 		     each way it overflows: the pair for a way with more to show. -->
-		<div class="absolute top-0 right-0 z-10 flex h-8 border-b border-l border-ink bg-paper">
+		<div class="absolute top-2 right-2 z-10 flex h-8 overflow-hidden rounded-sm border border-line-2 bg-surface">
 			{#if hidden.up || hidden.down}
-				{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chevronUp', hidden.up, () => scrollBy(-1, 'y'), false)}
-				{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chevronDown', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}
+				{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chev-up', hidden.up, () => scrollBy(-1, 'y'), false)}
+				{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chev', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}
 			{/if}
 			{#if hidden.left || hidden.right}
-				{@render scroller(`${prefix}-scroll-left`, 'Scroll the DAG left', 'More of the DAG to the left', 'chevronLeft', hidden.left, () => scrollBy(-1), false)}
-				{@render scroller(`${prefix}-scroll-right`, 'Scroll the DAG right', 'More of the DAG to the right', 'chevronRight', hidden.right, () => scrollBy(1), true)}
+				{@render scroller(`${prefix}-scroll-left`, 'Scroll the DAG left', 'More of the DAG to the left', 'chev-left', hidden.left, () => scrollBy(-1), false)}
+				{@render scroller(`${prefix}-scroll-right`, 'Scroll the DAG right', 'More of the DAG to the right', 'chev-right', hidden.right, () => scrollBy(1), true)}
 			{/if}
 		</div>
 	{/if}
 </section>
+
+<style>
+	.seg {
+		display: inline-flex;
+		flex: none;
+		gap: 2px;
+		padding: 3px;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		background: var(--surface-2);
+	}
+	.seg button {
+		display: inline-flex;
+		align-items: center;
+		height: 28px;
+		padding: 0 12px;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: var(--ink-2);
+		font-size: 13.5px;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.seg button[aria-selected='true'] {
+		background: var(--surface);
+		color: var(--navy-text);
+		box-shadow:
+			0 0 0 1px var(--line-2),
+			var(--shadow),
+			inset 0 -2px 0 var(--navy-text);
+		font-weight: 700;
+	}
+	.seg button:focus-visible {
+		outline-offset: -2px;
+	}
+	@media (forced-colors: active) {
+		.seg button[aria-selected='true'] {
+			outline: 2px solid Highlight;
+		}
+	}
+</style>
+

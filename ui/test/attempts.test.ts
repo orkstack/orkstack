@@ -200,7 +200,7 @@ test('outcomes are labelled by their enum name and painted from the status palet
 	// failed rose: nothing failed, the record is absent.
 	const unreportedClasses = attemptOutcomeClasses(AttemptOutcome.UNREPORTED);
 	expect(unreportedClasses).toBe(STATUS_CLASSES[Status.SKIPPED]);
-	expect(unreportedClasses).toContain('border-dashed');
+	expect(unreportedClasses).toContain('pill-outline');
 	expect(unreportedClasses).not.toBe(STATUS_CLASSES[Status.FAILED]);
 	expect(unreportedClasses).not.toContain('failed');
 });

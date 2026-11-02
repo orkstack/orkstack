@@ -7,6 +7,9 @@ import { readdirSync, readFileSync } from 'node:fs';
 // pointed those names at them. This test keeps it so — no source may spell a
 // legacy colour name, and the alias block may not come back.
 //
+// Harbour names its card ground `surface` again (--color-surface, bg-surface):
+// that one is a role of the current tokens, not the old alias.
+//
 // `--color-fg` is the one permanent alias (run-page-pins.spec.ts reads it by
 // name); it stays in tokens.css, but the utilities spelled with it
 // (`text-fg`) are legacy and are refused like the rest.
@@ -14,7 +17,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 const src = `${import.meta.dir}/../src`;
 
 const LEGACY =
-	'canvas|surface-raised|surface-sunken|surface-hover|surface|border-subtle|border-strong|border|fg-secondary|fg-muted|fg-placeholder|fg-inverse|fg|(?:brand|danger|success|warning|info)-\\d+|console-[a-z]+';
+	'canvas|surface-raised|surface-sunken|surface-hover|border-subtle|border-strong|border|fg-secondary|fg-muted|fg-placeholder|fg-inverse|fg|(?:brand|danger|success|warning|info)-\\d+|console-[a-z]+';
 const PREFIX = 'bg|text|border(?:-[xytrblse])?|ring|outline|fill|stroke|divide|decoration|accent|caret|placeholder|from|via|to|shadow';
 
 export function legacyUses(text: string): string[] {
@@ -24,8 +27,8 @@ export function legacyUses(text: string): string[] {
 }
 
 test('fixtures: legacy names are counted, the world’s own are not', () => {
-	expect(legacyUses('class="bg-surface text-fg-muted hover:border-border-strong bg-brand-600/40 text-console-fg" style="color: var(--color-fg)"')).toHaveLength(6);
-	expect(legacyUses('class="border bg-paper text-ink border-rule border-t text-red-strong bg-failed-bg text-2xs"')).toEqual([]);
+	expect(legacyUses('class="bg-surface-raised text-fg-muted hover:border-border-strong bg-brand-600/40 text-console-fg" style="color: var(--color-fg)"')).toHaveLength(6);
+	expect(legacyUses('class="border bg-surface bg-surface-2 bg-paper text-ink border-rule border-t text-red-strong bg-failed-bg text-2xs"')).toEqual([]);
 });
 
 test('no source spells a legacy colour name', () => {

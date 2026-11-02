@@ -2,17 +2,21 @@
 	import '../app.css';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import { onMount, untrack, type Component } from 'svelte';
+	import { onMount, tick, untrack, type Component } from 'svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
-	import MenuDrawer from '#lib/components/MenuDrawer.svelte';
+	import IconSprite from '#lib/components/IconSprite.svelte';
 	import Select from '#lib/components/Select.svelte';
+	import Sidebar from '#lib/components/Sidebar.svelte';
 	import ThemeSwitch from '#lib/components/ThemeSwitch.svelte';
-	import TitleBlock from '#lib/components/TitleBlock.svelte';
-	import TopBar from '#lib/components/TopBar.svelte';
-	import { operatePageOf, operateScope, pageOf } from '#lib/navigation.ts';
+	import Tooltip from '#lib/components/Tooltip.svelte';
+	import TopBar, { type Crumb } from '#lib/components/TopBar.svelte';
+	import { pageOf } from '#lib/navigation.ts';
+	import { shortRunId } from '#lib/runDetail.ts';
+	import { pollWhileVisible } from '#lib/visibility.ts';
+	import { statsClient } from '#lib/clients/stats.ts';
+	import { systemClient } from '#lib/clients/system.ts';
 	import { OVERLAY_SELECTOR, currentPlatform, isApplePlatform, paletteKey, shortcutAria, shortcutHint } from '#lib/palette/keys.ts';
 	import { provideTitleBlock } from '#lib/sheet.svelte.ts';
-	import type { TitleField } from '#lib/sheet.ts';
 	import { appearance } from '#lib/theme.svelte.ts';
 	import {
 		DEFAULT_NAMESPACE,
@@ -120,8 +124,78 @@
 
 	const link = (path: string) => withNamespace(path, data.namespace);
 
-	// ---- The menu drawer (below 1024 px) ----
+	// ---- The drawer (below 900 px) ----
+	// The sidebar becomes a drawer: opening it makes the page inert, Escape
+	// closes it, a navigation closes it, and so does the window growing back
+	// past 900 px, where the sidebar is part of the page again.
 	let drawerOpen = $state(false);
+	$effect(() => {
+		void page.url.pathname;
+		drawerOpen = false;
+	});
+	onMount(() => {
+		const wide = matchMedia('(min-width: 901px)');
+		const onWide = () => {
+			if (wide.matches) drawerOpen = false;
+		};
+		wide.addEventListener('change', onWide);
+		return () => wide.removeEventListener('change', onWide);
+	});
+	// The page behind the drawer is inert, Menu with it: the drawer takes the
+	// focus when it opens, and every way of closing it gives it back to Menu
+	// once the page is no longer inert.
+	async function openDrawer(): Promise<void> {
+		drawerOpen = true;
+		await tick();
+		document.querySelector<HTMLElement>('[data-testid="sidebar-close"]')?.focus();
+	}
+	async function closeDrawer(): Promise<void> {
+		drawerOpen = false;
+		await tick();
+		document.querySelector<HTMLElement>('[data-testid="menu-open"]')?.focus();
+	}
+	function onDrawerKey(event: KeyboardEvent): void {
+		if (event.key === 'Escape' && drawerOpen) {
+			event.preventDefault();
+			void closeDrawer();
+		}
+	}
+
+	// ---- The sidebar's live count and OrkStack's own build ----
+	// "N running" is every run of this namespace not finished now, the same
+	// population GetStats calls running; read once a page opens and every
+	// 30 s while the tab is visible. The build is read once.
+	let running = $state<number | null>(null);
+	let version = $state('');
+	$effect(() => {
+		const ns = data.namespace;
+		running = null;
+		let live = true;
+		const stop = pollWhileVisible(
+			() => {
+				statsClient(fetch)
+					.getStats({ namespace: ns, lookback: { seconds: 3600n, nanos: 0 } })
+					.then((res) => {
+						if (live) running = res.running.length;
+					})
+					.catch(() => {
+						if (live) running = null;
+					});
+			},
+			30_000,
+			{ immediate: true }
+		);
+		return () => {
+			live = false;
+			stop();
+		};
+	});
+	onMount(() => {
+		systemClient(fetch)
+			.getSystemInfo({})
+			.then((res) => (version = res.engineVersion))
+			.catch(() => {});
+	});
 
 	// ---- Appearance ----
 	// app.html's inline script already painted the resolved appearance before
@@ -166,29 +240,24 @@
 		return () => document.removeEventListener('keydown', onKey, { capture: true });
 	});
 
-	// ---- The title block ----
-	const titleBlock = provideTitleBlock();
-	const titleFields = $derived.by((): TitleField[] => {
-		void titleBlock.version;
-		const own = titleBlock.holder.fields();
-		if (own) return own;
+	// ---- The breadcrumb ----
+	// The namespace, the page, then where on it: a run, an Orkflow, a
+	// comparison. Pages still register their facts with the title-block
+	// holder; the breadcrumb reads none of them.
+	provideTitleBlock();
+	const crumbs = $derived.by((): Crumb[] => {
 		const path = page.url.pathname;
-		const fields: TitleField[] = [{ label: 'PAGE', value: pageOf(path)?.title ?? 'OrkStack' }];
-		fields.push({ label: 'NAMESPACE', value: namespaceLabel(data.namespace) });
-		const operate = operatePageOf(path);
-		if (operate) fields.push({ label: 'SCOPE', value: operateScope(operate.id) });
-		return fields;
-	});
-
-	// The block lifts (a soft shadow on its top edge) only while content runs
-	// on beneath it: a sentinel at the end of <main> says whether it is in view.
-	let lifted = $state(false);
-	let sentinel = $state<HTMLElement | undefined>(undefined);
-	$effect(() => {
-		if (!sentinel || typeof IntersectionObserver === 'undefined') return;
-		const observer = new IntersectionObserver(([entry]) => (lifted = !entry.isIntersecting));
-		observer.observe(sentinel);
-		return () => observer.disconnect();
+		const here = pageOf(path);
+		const out: Crumb[] = [{ label: namespaceLabel(data.namespace), href: link('/runs') }];
+		if (here && here.href !== '/' && here.href !== '/admin' && path.startsWith('/admin')) out.push({ label: 'Operate', href: link('/admin') });
+		out.push({ label: here?.label ?? 'OrkStack', href: here ? link(here.href) : undefined });
+		const rest = here && here.href !== '/' ? path.slice(here.href.length).split('/').filter(Boolean) : [];
+		for (const [i, part] of rest.entries()) {
+			const value = decodeURIComponent(part);
+			const label = here?.id === 'runs' && i === 0 ? shortRunId(value) : value === 'compare' ? 'Compare' : value;
+			out.push({ label, href: link(`${here!.href}/${rest.slice(0, i + 1).join('/')}`) });
+		}
+		return out;
 	});
 </script>
 
@@ -196,6 +265,7 @@
 	<Select
 		testid="namespace-picker"
 		label="Namespace"
+		variant="namespace"
 		value={namespaceLabel(data.namespace)}
 		options={options.map((name) => ({ value: name, label: name }))}
 		onchange={switchTo}
@@ -206,71 +276,67 @@
 	<ThemeSwitch />
 {/snippet}
 
-<a
-	href="#content"
-	class="sr-only z-50 bg-ink px-3 py-2 text-sm font-semibold text-on-ink focus:not-sr-only focus:fixed focus:top-2 focus:left-2"
-	>Skip to content</a
->
+<svelte:window onkeydown={onDrawerKey} />
+
+<a href="#content" class="skip" data-testid="skip-link">Skip to content</a>
+<IconSprite />
 
 {#if navPending}
 	<div
 		data-testid="nav-progress"
 		role="progressbar"
 		aria-label="Loading the next page"
-		class="pointer-events-none fixed inset-x-0 top-0 z-[60] h-0.5 overflow-hidden bg-blue-tint"
+		class="pointer-events-none fixed inset-x-0 top-0 z-[60] h-0.5 overflow-hidden bg-navy-tint"
 	>
-		<div class="h-full w-2/5 bg-blue animate-nav-progress motion-reduce:animate-live-dot"></div>
+		<div class="h-full w-2/5 bg-navy-text animate-nav-progress motion-reduce:animate-live-dot"></div>
 	</div>
 {/if}
 
-<div class="flex min-h-screen flex-col">
-	<TopBar
+<div class="app">
+	<Sidebar
 		pathname={page.url.pathname}
 		{link}
-		{drawerOpen}
-		shortcut={shortcutHint(apple)}
-		shortcutAria={shortcutAria(apple)}
-		onmenu={() => (drawerOpen = true)}
-		onpalette={() => void openPalette()}
+		{running}
+		{version}
 		picker={namespacePicker}
 		{themeSwitch}
+		drawer={drawerOpen}
+		onclose={() => void closeDrawer()}
 	/>
-
 	{#if drawerOpen}
-		<MenuDrawer
-			pathname={page.url.pathname}
-			{link}
-			onclose={() => (drawerOpen = false)}
-			picker={namespacePicker}
-			{themeSwitch}
+		<button type="button" class="scrim" tabindex="-1" aria-hidden="true" onclick={() => void closeDrawer()}></button>
+	{/if}
+
+	<div class="main" inert={drawerOpen}>
+		<TopBar
+			{crumbs}
+			{drawerOpen}
+			shortcut={shortcutHint(apple)}
+			shortcutAria={shortcutAria(apple)}
+			onmenu={() => void openDrawer()}
+			onpalette={() => void openPalette()}
 		/>
-	{/if}
 
-	{#if data.namespaceError}
-		<div class="px-gutter pt-4 sm:px-sheet">
-			<ErrorPanel
-				testid="namespace-error"
-				retryTestid="namespace-retry"
-				subject="the other namespaces (showing {namespaceLabel(data.namespace)})"
-				message={data.namespaceError}
-				busy={retryingNamespaces}
-				onretry={retryNamespaces}
-			/>
-		</div>
-	{/if}
+		{#if data.namespaceError}
+			<div class="content-pad pb-0">
+				<ErrorPanel
+					testid="namespace-error"
+					retryTestid="namespace-retry"
+					subject="the other namespaces (showing {namespaceLabel(data.namespace)})"
+					message={data.namespaceError}
+					busy={retryingNamespaces}
+					onretry={retryNamespaces}
+				/>
+			</div>
+		{/if}
 
-	<main
-		id="content"
-		tabindex="-1"
-		aria-busy={navPending}
-		class="mx-auto w-full max-w-[1440px] flex-1 px-gutter py-6 focus:outline-none sm:px-sheet"
-	>
-		{@render children()}
-		<div bind:this={sentinel} aria-hidden="true" class="h-px"></div>
-	</main>
-
-	<TitleBlock fields={titleFields} {lifted} />
+		<main id="content" tabindex="-1" aria-busy={navPending} class="content-pad">
+			{@render children()}
+		</main>
+	</div>
 </div>
+
+<Tooltip />
 
 {#if paletteOpen && Palette}
 	<Palette
@@ -280,3 +346,56 @@
 		onnamespace={switchTo}
 	/>
 {/if}
+
+<style>
+	.skip {
+		position: fixed;
+		left: 12px;
+		top: -60px;
+		z-index: 100;
+		padding: 8px 14px;
+		border-radius: var(--r-sm);
+		background: var(--ink);
+		color: var(--bg);
+		font-weight: 700;
+		text-decoration: none;
+	}
+	.skip:focus {
+		top: 10px;
+	}
+	.app {
+		display: grid;
+		grid-template-columns: var(--spacing-side) minmax(0, 1fr);
+		min-height: 100dvh;
+	}
+	.main {
+		display: flex;
+		min-width: 0;
+		flex-direction: column;
+	}
+	.content-pad {
+		width: 100%;
+		max-width: var(--spacing-content);
+		padding: 24px 28px 48px;
+	}
+	.scrim {
+		display: none;
+	}
+	@media (max-width: 900px) {
+		.app {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.content-pad {
+			padding: 16px 16px 40px;
+		}
+		.scrim {
+			display: block;
+			position: fixed;
+			inset: 0;
+			z-index: 39;
+			border: 0;
+			padding: 0;
+			background: var(--scrim);
+		}
+	}
+</style>

@@ -51,7 +51,7 @@
 							: 'bg-mark'}"
 					style:left="{segment.left * 100}%"
 					style:width="max({segment.width * 100}%, 2px)"
-					title={reason(segment.key) ? `${labels[segment.key]} unavailable: ${reason(segment.key)}` : undefined}
+					data-tip={reason(segment.key) ? `${labels[segment.key]} unavailable: ${reason(segment.key)}` : undefined}
 				></div>
 			{/each}
 		</div>
@@ -63,7 +63,7 @@
 				data-testid="task-{taskId}-{segment.key}"
 				data-ms={segment.q.kind === 'value' ? Math.round(segment.q.ms) : undefined}
 				data-reason={reason(segment.key)}
-				title={reason(segment.key)}
+				data-tip={reason(segment.key)}
 			>
 				{segment.label}
 				{formatQuantity(segment.q)}{#if reason(segment.key)}
@@ -72,7 +72,7 @@
 		{/each}
 		{#if timing.preContract && timing.total.kind === 'value'}
 			<span aria-hidden="true">·</span>
-			<span data-testid="task-{taskId}-total" title="this run was recorded before scheduled time existed; total is dispatch to finish">
+			<span data-testid="task-{taskId}-total" data-tip="this run was recorded before scheduled time existed; total is dispatch to finish">
 				Total {formatQuantity(timing.total)} (dispatch to finish)
 			</span>
 		{/if}

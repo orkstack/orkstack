@@ -30,7 +30,7 @@
 				aria-expanded={open}
 				aria-controls="{testid}-items"
 				onclick={() => (open = !open)}
-				class="btn gap-1.5">{label}<Icon name="chevronDown" class="size-4 text-ink-muted" /></button
+				class="btn gap-1.5">{label}<Icon name="chev" class="size-4 text-ink-muted" /></button
 			>
 		{/snippet}
 		{#snippet content()}

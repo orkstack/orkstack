@@ -31,7 +31,6 @@ const BANNED = [
 	'rev',
 	'revision',
 	'revisions',
-	'started by',
 	'sheet',
 	'sheets',
 	'title block',
@@ -63,7 +62,7 @@ export function renderedStrings(svelte: string): string[] {
 }
 
 test('the checker catches each banned word and passes plain English and identifiers', () => {
-	for (const s of ['Skip to the sheet', 'Sheet details', 'SHEET', 'Drawing', 'REV 0.4.2', 'Revision cloud', 'Started by', 'the task queue', 'SUPERSEDED', 'Title block']) {
+	for (const s of ['Skip to the sheet', 'Sheet details', 'SHEET', 'Drawing', 'REV 0.4.2', 'Revision cloud', 'the task queue', 'SUPERSEDED', 'Title block']) {
 		expect(bannedWords(s).length > 0).toBe(true);
 	}
 	for (const s of ['Draw all', 'drawn by hand', 'Skip to content', 'Page summary', 'Page details', 'Laying out the task map…', 'Version 0.4.2', 'Origin']) {
@@ -101,12 +100,16 @@ test('the shell and its new components render no banned word', () => {
 		'routes/+layout.svelte',
 		'routes/admin/+layout.svelte',
 		'lib/components/TopBar.svelte',
-		'lib/components/TitleBlock.svelte',
+		'lib/components/Sidebar.svelte',
 		'lib/components/SheetHeader.svelte',
 		'lib/components/ThemeSwitch.svelte',
 		'lib/components/CommandPalette.svelte',
-		'lib/components/MenuDrawer.svelte',
 		'lib/components/StatusPill.svelte',
+		// Harbour's primitives.
+		'lib/components/LiveControl.svelte',
+		'lib/components/CliPopover.svelte',
+		'lib/components/ConfirmDialog.svelte',
+		'lib/components/Dialog.svelte',
 		// Stage 2: the run sheet's new components.
 		'lib/components/TaskMap.svelte',
 		'lib/components/TaskMapLegend.svelte',
@@ -126,9 +129,10 @@ test('the shell and its new components render no banned word', () => {
 	// The landmark and the skip link carry the product's words.
 	const layout = readFileSync(`${import.meta.dir}/../src/routes/+layout.svelte`, 'utf8');
 	expect(layout.includes('Skip to content')).toBe(true);
-	const block = readFileSync(`${import.meta.dir}/../src/lib/components/TitleBlock.svelte`, 'utf8');
-	expect(block.includes('aria-label="Page summary"')).toBe(true);
-	expect(block.includes('Page details')).toBe(true);
+	const side = readFileSync(`${import.meta.dir}/../src/lib/components/Sidebar.svelte`, 'utf8');
+	expect(side.includes('aria-label="Main"')).toBe(true);
+	const top = readFileSync(`${import.meta.dir}/../src/lib/components/TopBar.svelte`, 'utf8');
+	expect(top.includes('aria-label="Breadcrumb"')).toBe(true);
 });
 
 // The commands a page adds to the palette, and the words its title block

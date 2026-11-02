@@ -23,7 +23,21 @@ const ALLOWED_REMOVALS: Record<string, string> = {
 	'id {}-retryable':
 		"FailurePanel no longer prints the error's bare retryable flag: what happened to the retries is one phrase read off the failing task's tries ({testid}-retry-state), so the run's cloud and the task's panel say the same thing (finish review 2026-10-22, run page contradictions). No spec read it; no spec changes.",
 	'id {}-filters-none':
-		"ListFilter's zero-state sentence is gone: the filter toolbar is one row and says nothing while no filter is in force (finish review, list-filter chrome). No spec read it; no spec changes."
+		"ListFilter's zero-state sentence is gone: the filter toolbar is one row and says nothing while no filter is in force (finish review, list-filter chrome). No spec read it; no spec changes.",
+	// Harbour (phase 2 of the UI revamp, 2026-11-01): the command line lives only
+	// behind the terminal icon (brief §6.4), one popover per screen or task row.
+	'id activity-build-command': 'Activities: the local build command is in the page\'s command-line popover (activities-cli), not printed on the page. admin.spec reads the popover.',
+	'id activity-test-command': 'Activities: the contract-test command is in the page\'s command-line popover (activities-cli). admin.spec reads the popover.',
+	'id activity-local-tools': 'Activities: the "Local activity tools" section is gone; its commands are in activities-cli.',
+	'id activity-local-tool-copied': 'Activities: the popover says what was copied in its own status line (activities-cli-status).',
+	'id orker-cordon-command': 'Pools: the cordon dialog no longer prints its orkctl command (brief §6.4); the Orker row\'s popover (orker-cli-{id}) lists it.',
+	'prop run-children-cli': "Run page: listing a run's child runs is the header's \"Child runs\" link; the command is in the run's popover.",
+	'prop run-stability-cli': 'Run page: the retry-history command is in the run popover, not beside the toggle.',
+	'prop run-task-{}-inspect-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	'prop run-task-{}-logs-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	'prop run-task-{}-replay-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	'prop run-task-{}-timing-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	'prop task-{}-cache-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli."
 };
 
 function sources(): string[] {

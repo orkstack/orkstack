@@ -14,7 +14,6 @@
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
 	import { withNamespace } from '#lib/namespace.ts';
 	import {
-		cordonCommand,
 		orkerCommand,
 		orkerLoad,
 		orkerPins,
@@ -22,7 +21,8 @@
 		orkerTasks
 	} from '#lib/orkers.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
-	import CliEquivalent from './CliEquivalent.svelte';
+	import CliPopover from './CliPopover.svelte';
+	import Icon from './Icon.svelte';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 
@@ -225,15 +225,14 @@
 									type="button"
 									data-testid="orker-cordon-{orker.orkerId}"
 									onclick={() => openCordon(orker)}
-									class="btn btn-sm border-red text-red-strong"
+									class="btn btn-sm"
+								><Icon name="pause" />Cordon…</button
 								>
-									Cordon
-								</button>
 							{/if}
-							<CliEquivalent
-								command={orkerCommand(orker)}
+							<CliPopover
 								testid="orker-cli-{orker.orkerId}"
-								label="CLI equivalent for {orker.orkerId}"
+								title="Command line: {orker.orkerId}"
+								commands={[{ label: 'This Orker', command: orkerCommand(orker) }]}
 							/>
 						</div>
 					{/if}
@@ -248,11 +247,15 @@
 		testid="orker-cordon-dialog"
 		title="Cordon {cordoning.orkerId}?"
 		acceptLabel="Cordon"
+		cancelLabel="Back"
+		glyph="pause"
+		destructive
 		acceptTestid="orker-cordon-accept"
 		cancelTestid="orker-cordon-cancel"
 		busy={cordonBusy}
 		error={cordonError}
 		acceptDisabled={!reason.trim()}
+		acceptDisabledReason="Give a reason to cordon this Orker."
 		onaccept={() => void acceptCordon()}
 		oncancel={() => {
 			cordoning = null;
@@ -265,23 +268,20 @@
 				{cordoning ? orkerLoad(cordoning) : ''}; they finish where they are. It will take no new task
 				and open no new pin until uncordoned or restarted.
 			</p>
-			<label class="mt-3 block text-sm font-medium text-ink" for="orker-cordon-reason"
-				>Reason <span class="font-normal text-ink-muted">(required)</span></label
+			<label class="text-dense font-semibold text-ink" for="orker-cordon-reason"
+				>Reason <span class="font-normal text-ink-3">(required)</span></label
 			>
 			<input
 				id="orker-cordon-reason"
 				data-testid="orker-cordon-reason"
 				bind:value={reason}
 				maxlength="256"
-				class="field mt-1 h-9 w-full px-3 text-sm"
+				required
+				aria-required="true"
+				aria-invalid={reason.trim() ? undefined : 'true'}
+				class="field h-9 w-full px-3 text-base"
 				placeholder="Why is this Orker leaving the pool?"
 			/>
-			<p
-				class="mt-3 overflow-x-auto border border-rule bg-paper-sunken p-2 font-mono text-xs text-ink-secondary"
-				data-testid="orker-cordon-command"
-			>
-				{cordonCommand(cordoning?.orkerId ?? '', reason.trim() || '<reason>')}
-			</p>
 		{/snippet}
 	</ConfirmDialog>
 {/if}
