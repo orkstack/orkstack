@@ -162,7 +162,8 @@ test('a cache miss says why, and the attempt timeline shows it', async ({ page }
 	const badge = page.getByTestId('task-train-cache');
 	await expect(badge).toHaveAttribute('data-outcome', 'miss', { timeout: 60_000 });
 	await expect(badge).toHaveText('Cache miss');
-	await expect(badge).toHaveAttribute('title', /No memo exists for this key/);
+	await badge.hover();
+	await expect(page.getByRole('tooltip')).toHaveText(/No memo exists for this key/);
 	await page.getByTestId('task-inspect-toggle-train').click();
 	await expect(page.getByTestId('task-train-cache-reason')).toContainText('No memo exists');
 	const row = page.getByTestId('task-train-attempt-1-cache');

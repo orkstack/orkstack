@@ -189,7 +189,7 @@ async function openFinished(page: Page): Promise<void> {
 		completedRun = await submit(COMPLETED);
 	}
 	await page.goto(`${UI_ORIGIN}/runs/${completedRun}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 }
 
 /** Opens the dialog and waits for a summary (retrying while the archive write lands). */
@@ -295,10 +295,10 @@ test('P3 the download completes only on last and the CLI verifies it', async ({ 
 test('P4 a live run offers no Evidence until it finishes', async ({ page }) => {
 	const live = await submit(SLEEPER);
 	await page.goto(`${UI_ORIGIN}/runs/${live}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('RUNNING', { timeout: 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Running', { timeout: 60_000 });
 	await expect(page.getByTestId('run-evidence')).toHaveCount(0);
 	await shot(page, 'screenshot-run-evidence-live.png');
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await expect(page.getByTestId('run-evidence')).toBeVisible();
 	note(`P4 run ${live}: no Evidence while RUNNING, Evidence once SUCCEEDED`);
 });
@@ -312,7 +312,7 @@ test('P5 no page-level control leaks when the dialog is closed', async ({ page }
 	await expect(page.getByTestId('run-evidence-summary')).toHaveCount(0);
 	await expect(page.getByTestId('run-evidence-manifest')).toHaveCount(0);
 	// The overview still reads as before.
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED');
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded');
 	await expect(page.getByTestId('task-completed')).toBeVisible();
 	await expect(page.getByTestId('run-again')).toBeVisible();
 	note('P5 the dialog leaves nothing on the page once closed');

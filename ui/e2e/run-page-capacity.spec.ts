@@ -257,9 +257,11 @@ test('a task waiting on a pool at its capacity says so; one waiting on a busy po
 	const cap = page.getByTestId('task-wait-cap-live');
 	await expect(cap).toHaveAttribute('data-live', 'capacity', { timeout: 60_000 });
 	await expect(cap).toContainText('Waiting for capacity · every orker of pool cap is full (reserved 1/1 cpu)');
-	await expect(cap).toHaveAttribute('title', /^No orker of pool cap has room for another task/);
+	await cap.hover();
+	const capTip = page.getByRole('tooltip');
+	await expect(capTip).toHaveText(/^No orker of pool cap has room for another task/);
 	note(`C1 task-wait-cap-live data-live=capacity text="${await cap.innerText()}"`);
-	note(`C1 title="${await cap.getAttribute('title')}"`);
+	note(`C1 tooltip="${await capTip.innerText()}"`);
 
 	// C2 — the control, from the same answer: busy, but not by a capacity.
 	const slots = page.getByTestId('task-wait-slots-live');
@@ -283,7 +285,7 @@ test('a task waiting on a pool at its capacity says so; one waiting on a busy po
 	// C4 — the capacity frees and the waiting tasks run.
 	await rpc('RunService/CancelRun', { runId: hold, reason: 'run-page-capacity e2e: free both pools' });
 	note(`cancelled ${hold}`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	await expect(page.getByTestId('task-wait-cap-live')).toHaveCount(0);
 	note(`C4 ${waiting} SUCCEEDED once ${hold}'s containers were removed`);
 	await shot(page, 'capacity-freed.png');

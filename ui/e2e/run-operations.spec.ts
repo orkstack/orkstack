@@ -119,7 +119,7 @@ test('cancel confirmation, authoritative status, pinned version, deep links and 
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: NAME });
 	const runId = submitted.run.id;
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('RUNNING', { timeout: 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Running', { timeout: 60_000 });
 	const initialElapsed = await page.getByTestId('run-elapsed').innerText();
 	await expect.poll(() => page.getByTestId('run-elapsed').innerText()).not.toBe(initialElapsed);
 	await expect(page.getByTestId('pinned-orkflow-link')).toHaveAttribute('href', new RegExp(`version=0.1.0.*ns=default`));
@@ -128,8 +128,11 @@ test('cancel confirmation, authoritative status, pinned version, deep links and 
 	// F-ui-ux-2: a destructive confirmation takes the focus on Cancel, Tab and
 	// Shift+Tab never leave it, and dismissing it hands the focus back.
 	await expect(page.getByTestId('cancel-run-dismiss')).toBeFocused();
+	// A native modal dialog: Tab cycles its controls and may pass to the
+	// browser's own chrome (the body is then active), but never to the page
+	// behind it, which is inert.
 	const insideConfirm = () =>
-		page.evaluate(() => !!document.activeElement?.closest('[data-testid="cancel-run-confirm"]'));
+		page.evaluate(() => !!document.activeElement?.closest('[data-testid="cancel-run-confirm"]') || document.activeElement === document.body);
 	for (let i = 0; i < 6; i++) {
 		await page.keyboard.press('Tab');
 		expect(await insideConfirm(), `Tab ${i + 1} stays in the dialog`).toBe(true);
@@ -148,7 +151,7 @@ test('cancel confirmation, authoritative status, pinned version, deep links and 
 	await page.getByTestId('cancel-run-accept').click();
 	await expect(page.getByTestId('cancellation-requested')).toContainText('Waiting for the run to stop');
 	await page.screenshot({ path: out('screenshot-cancel-requested.png'), fullPage: true });
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 
 	await page.getByTestId('task-deep-link-wait').click();
 	await expect(page).toHaveURL(/task=wait/);
@@ -178,7 +181,7 @@ test('completed values, bounded pane replay, JSON export and recorded artifacts 
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: COMPLETED_NAME, input: { data: { requested: 'evidence' } } });
 	const runId = submitted.run.id;
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	// activity-shell owns values.json for its script mode; the script's own
 	// output remains a retained log, while the public task value records its
 	// measured exit and script path.

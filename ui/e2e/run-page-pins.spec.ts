@@ -245,7 +245,7 @@ test('a pinned task states its pin and its orker, and one pin means one orker', 
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	// The run must SUCCEED: `read` cats a file `write` left in /orkstack/shared,
 	// so a green run is itself evidence the two shared one host's disk.
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	await shot(page, 'screenshot-run-pins.png');
 
 	// 1. Each member of `build` says which pin it is in, in the author's own

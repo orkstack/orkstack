@@ -145,7 +145,7 @@ test('a run submitted from the dialog with an origin reference shows submit, the
 		await shot(dialog, 'screenshot-submit-dialog-origin-ref.png');
 		await dialog.getByTestId('run-submit-cli-trigger').click();
 	});
-	await expect(page.getByTestId('run-origin-kind')).toHaveText('submit');
+	await expect(page.getByTestId('run-origin-kind')).toHaveText('Submit');
 	const link = page.getByTestId('run-origin-reference');
 	await expect(link).toHaveText(reference);
 	expect(await link.evaluate((node) => node.tagName)).toBe('A');
@@ -173,7 +173,7 @@ test('Run again records run-again linked to the source', async ({ page }) => {
 	const source = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: NAME, namespace: NS });
 	const sourceId = source.run.id;
 	await page.goto(`${UI}/runs/${sourceId}?ns=${NS}`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await page.getByTestId('run-again').click();
 	await expect(page.getByTestId('run-again-dialog')).toBeVisible();
 	await expect(page.getByTestId('run-submit-submit')).toBeEnabled();
@@ -185,14 +185,15 @@ test('Run again records run-again linked to the source', async ({ page }) => {
 	await page.waitForURL((url) => url.pathname.startsWith('/runs/') && !url.pathname.endsWith(sourceId));
 	const rerunId = decodeURIComponent(new URL(page.url()).pathname.split('/').pop() ?? '');
 	expect(rerunId).not.toBe(sourceId);
-	await expect(page.getByTestId('run-origin-kind')).toHaveText('run-again');
+	await expect(page.getByTestId('run-origin-kind')).toHaveText('Run again');
 	const link = page.getByTestId('run-origin-link');
-	await expect(link).toHaveText(sourceId);
+	// The link names the source run in its short form (first four and last six characters).
+	await expect(link).toHaveText(`${sourceId.slice(0, 4)}…${sourceId.slice(-6)}`);
 	await expect(link).toHaveAttribute('href', `/runs/${sourceId}?ns=${NS}`);
 	note(`run again of ${sourceId} -> ${rerunId}, origin link /runs/${sourceId}`);
 	await shot(page, 'screenshot-run-origin-run-again.png');
 	await link.click();
-	await expect(page.getByTestId('run-id')).toHaveText(sourceId);
+	await expect(page.getByTestId('run-id')).toContainText(sourceId);
 });
 
 test('a trigger-started run links to the Triggers tab and shows the description', async ({ page }) => {
@@ -210,10 +211,12 @@ test('a trigger-started run links to the Triggers tab and shows the description'
 	const reference = 'https://github.com/acme/svc/actions/runs/456';
 	const runId = await invokeTrigger(triggerId, secret, reference);
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
-	await expect(page.getByTestId('run-origin-kind')).toHaveText('trigger');
+	await expect(page.getByTestId('run-origin-kind')).toHaveText('Trigger');
 	await expect(page.getByTestId('run-origin-description')).toHaveText('(GitHub deploy hook)');
 	await expect(page.getByTestId('run-origin-reference')).toHaveAttribute('href', reference);
-	await expect(page.getByTestId('run-origin-principal')).toHaveText('asserted by ci-github');
+	// The principal is shown with its "asserted" tag beside it, never bare.
+	await expect(page.getByTestId('run-origin-principal')).toContainText('by ci-github');
+	await expect(page.getByTestId('run-origin-principal')).toContainText('asserted');
 	const link = page.getByTestId('run-origin-link');
 	await expect(link).toHaveText(triggerId);
 	await shot(page, 'screenshot-run-origin-trigger.png');
@@ -229,11 +232,12 @@ test('an Ork-Principal header in front of the browser is recorded and captioned'
 	try {
 		const runId = await submitFromDialog(page, 'INC-7');
 		const principal = page.getByTestId('run-origin-principal');
-		await expect(principal).toHaveText('asserted by e2e-operator');
-		await expect(principal).toHaveAttribute(
-			'title',
-			"Ork-Principal as asserted by the deployment's gateway; OrkStack records it and does not authenticate it."
-		);
+		await expect(principal).toContainText('by e2e-operator');
+		await expect(principal).toContainText('asserted');
+		// The caption moved from a native title to the one tooltip, and now reads
+		// "Asserted by your gateway, not verified by OrkStack" (same claim, shorter).
+		await principal.locator('[data-tip]').hover();
+		await expect(page.getByRole('tooltip')).toHaveText('Asserted by your gateway, not verified by OrkStack');
 		note(`dialog submit ${runId} behind Ork-Principal: e2e-operator`);
 		await shot(page, 'screenshot-run-origin-principal.png');
 	} finally {
@@ -260,7 +264,7 @@ test('the runs list filters by origin, the URL carries it, and reload keeps it',
 	await expect.poll(() => urlFilters(page)).toEqual([`origin.id=${triggerId}`, 'origin.kind=TRIGGER']);
 	await expect(page.getByTestId(`run-row-${triggerRun}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-${submitRun}`)).toHaveCount(0);
-	await expect(page.getByTestId(`run-row-origin-${triggerRun}`)).toHaveText(`trigger ${triggerId}`);
+	await expect(page.getByTestId(`run-row-origin-${triggerRun}`)).toHaveText(new RegExp(`^Trigger\\s*${triggerId}$`));
 	await expect(page.locator('[data-testid^="run-row-origin-"]')).toHaveCount(1);
 	await shot(page, 'screenshot-runs-filtered-by-trigger.png');
 
@@ -277,7 +281,7 @@ test('the runs list filters by origin, the URL carries it, and reload keeps it',
 	await page.getByTestId('run-filters-clear').click();
 	await expect(page.getByTestId(`run-row-${triggerRun}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-${submitRun}`)).toBeVisible();
-	await expect(page.getByTestId(`run-row-origin-${submitRun}`)).toHaveText('submit');
+	await expect(page.getByTestId(`run-row-origin-${submitRun}`)).toHaveText('Submit');
 	expect(urlFilters(page)).toEqual([]);
 
 	await page.goto(`${UI}/runs?ns=${NS}&filter=origin.kind%3DTRIGGER&filter=origin.id%3Dtrg-nothing-here`);
@@ -319,8 +323,9 @@ test('a run recorded without an origin reads unrecorded', async ({ page }) => {
 	await page.goto(`${UI}/runs/${legacyId}?ns=${NS}`);
 	const kind = page.getByTestId('run-origin-kind');
 	await expect(kind).toHaveText('unrecorded');
-	await expect(kind).toHaveAttribute('title', 'This run started before origins were recorded.');
-	await expect(page.getByTestId('run-origin')).not.toContainText('submit');
+	await kind.hover();
+	await expect(page.getByRole('tooltip')).toHaveText('This run started before origins were recorded.');
+	await expect(page.getByTestId('run-origin')).not.toContainText(/submit/i);
 	await shot(page, 'screenshot-run-origin-unrecorded.png');
 
 	await page.goto(`${UI}/runs?ns=${NS}`);

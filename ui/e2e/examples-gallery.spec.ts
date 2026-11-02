@@ -146,8 +146,7 @@ test('P0: fonts stay out of the stylesheet, and the two latin faces are preloade
 	const attr = (link: string, name: string) => new RegExp(`\\b${name}="([^"]*)"`).exec(link)?.[1] ?? '';
 	const fonts = links.filter((link) => attr(link, 'rel') === 'preload' && attr(link, 'as') === 'font');
 	expect(fonts.map((link) => /assets\/([a-z-]+)\./.exec(attr(link, 'href'))?.[1]).sort()).toEqual([
-		'archivo-narrow-latin-wght-normal',
-		'spline-sans-mono-latin-wght-normal'
+		'inter-latin-wght-normal'
 	]);
 	// A font preload without `crossorigin` is fetched a second time by the
 	// @font-face that uses it.
@@ -252,7 +251,7 @@ test('P2: a new example applies, plans and runs from the browser', async ({ page
 	// (ui/src/routes/apply/+page.svelte).
 	await page.waitForURL(/\/orkflows\/decide-and-route/, { timeout: 60_000 });
 	await expect(page.getByTestId('orkflow-name')).toContainText('decide-and-route');
-	await expect(page.getByTestId('orkflow-version')).toHaveText('v0.1.0');
+	await expect(page.getByTestId('orkflow-version')).toContainText('0.1.0');
 	note('P2 applied decide-and-route@0.1.0 from its card with no validation issue');
 
 	// Plan, with the decision supplied: a condition that reads a key under
@@ -274,7 +273,7 @@ test('P2: a new example applies, plans and runs from the browser', async ({ page
 	// The default input decides `direct`, so the run is the path planned.
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	await expect(page.getByTestId('task-report-status')).toHaveText(/succeeded/i);
 	await expect(page.getByTestId('task-direct-status')).toHaveText(/succeeded/i);
 	await expect(page.getByTestId('task-canary-status')).toHaveText(/skipped/i);

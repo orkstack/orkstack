@@ -277,7 +277,7 @@ test('6: unchecking Enforce makes the budget soft, and a submit is accepted and 
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
 	// The same bound awaitStatus gives the step-2 run.
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	note(`soft budget: ${page.url()} admitted and SUCCEEDED`);
 
 	await page.goto(`${UI_ORIGIN}/?ns=${NS}`);

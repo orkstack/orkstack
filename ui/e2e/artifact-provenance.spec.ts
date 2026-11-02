@@ -115,7 +115,7 @@ async function submitArchived(): Promise<string> {
 
 async function openProvenance(page: import('@playwright/test').Page, runId: string): Promise<void> {
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await page.getByTestId('task-inspect-toggle-completed').click();
 	await expect(page.getByTestId('task-artifacts-completed')).toBeVisible();
 	// On demand, like Inspect: before the toggle nothing has been asked and no
@@ -147,7 +147,7 @@ test('the provenance disclosure shows present bytes, a held reference, this run 
 	await expect(rows.first().getByTestId(`${panel}-this-run`)).toHaveText('this run');
 	await expect(rows.first()).toContainText(`${NAME}@0.1.0`);
 	await expect(rows.first()).toContainText('OUTPUT');
-	await expect(rows.first()).toContainText('SUCCEEDED');
+	await expect(rows.first()).toContainText('Succeeded');
 	await expect(page.getByTestId(`${panel}-error`)).toHaveCount(0);
 	await expect(page.getByTestId(`${panel}-unreadable`)).toHaveCount(0);
 

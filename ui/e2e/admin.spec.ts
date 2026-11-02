@@ -364,7 +364,7 @@ test('Admin is reachable from the nav, deep-linkable, and shows this replica\'s 
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=default`);
-	await page.locator('nav[aria-label="Primary"]').getByTestId('nav-admin').click();
+	await page.getByTestId('sidebar').getByTestId('nav-admin').click();
 	await expect(page).toHaveURL(/\/admin(\?|$)/);
 	await expect(page.getByTestId('admin-nav')).toBeVisible();
 	await expect(page.getByTestId('system-info')).toBeVisible();
@@ -538,7 +538,7 @@ test('a typed namespace form asks before leaving, keeps its fields when kept, an
 		dialogs.push(`${dialog.type()}: ${dialog.message()}`);
 		void dialog.dismiss();
 	});
-	const runsLink = page.locator('nav[aria-label="Primary"]').getByRole('link', { name: 'Runs', exact: true });
+	const runsLink = page.getByTestId('sidebar').getByTestId('nav-runs');
 	await runsLink.click();
 	await expect.poll(() => dialogs.length).toBe(1);
 	expect(dialogs[0]).toBe('confirm: Discard the namespace changes you have not saved?');
@@ -899,7 +899,7 @@ test('pool health is namespace-scoped, and reports live Orker counts for every p
 	const cpuCard = page.getByTestId('pool-card-cpu');
 	await expect(cpuCard).toBeVisible();
 	await expect(cpuCard.getByTestId('pool-orker-count-cpu')).toHaveText('0');
-	await expect(cpuCard.getByTestId('pool-no-orkers-cpu')).toContainText('no live Orkers');
+	await expect(cpuCard.getByTestId('pool-no-orkers-cpu')).toContainText(/no live Orkers/i);
 	// A zero is a MEASUREMENT, and must not be drawn as the amber
 	// "could not be asked" state the unreachable-cluster test proves.
 	await expect(cpuCard.getByTestId('pool-unavailable-cpu')).toHaveCount(0);

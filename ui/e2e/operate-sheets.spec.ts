@@ -29,12 +29,13 @@ import {
 // The Operate sheets (UI revamp, stage 4), against a real engine and Orker
 // on real Temporal and MinIO:
 //
-//   sheets   each of the twelve pages under /admin is one sheet: the strip
-//            on top with its own tab current, one h1 in the page's head, the
-//            scope said once as a NOTE, and the title block's SCOPE naming
-//            how far the page reaches;
-//   strip    at 390 px the strip scrolls inside its own frame — never the
-//            page — and the tab of the page you are on is brought into it;
+//   sheets   each of the twelve pages under /admin is one sheet: its link
+//            in the sidebar's Operate group current, one h1 in the page's
+//            head, the breadcrumb naming it, the scope said once as a NOTE,
+//            and the overview's index naming how far the page reaches;
+//   drawer   at 390 px the Operate group scrolls inside the sidebar drawer's
+//            own frame — never the page — and the page you are on is the
+//            current link in it;
 //   attention a held namespace is red attention in the register (the row
 //            on the red tint, the hold in red ink after its mark), and its
 //            budget reads as a figure;
@@ -79,23 +80,26 @@ const flow = () =>
 		''
 	].join('\n');
 
-/** Each Operate page: its strip id, path, h1, the testid that says it has rendered, and its SCOPE. */
-const SHEETS: { id: string; path: string; h1: string; ready: string; scope: string }[] = [
-	{ id: 'overview', path: '/admin', h1: 'Operate', ready: 'system-info', scope: 'Deployment-wide' },
-	{ id: 'namespaces', path: '/admin/namespaces', h1: 'Namespaces', ready: 'namespace-list', scope: 'Deployment-wide' },
-	{ id: 'pools', path: '/admin/pools', h1: 'Pools', ready: 'pool-list', scope: 'This namespace' },
-	{ id: 'releases', path: '/admin/releases', h1: 'Releases', ready: 'releases-scope', scope: 'Deployment-wide' },
-	{ id: 'activities', path: '/admin/activities', h1: 'Activities', ready: 'activity-list', scope: 'Deployment-wide' },
-	{ id: 'webhooks', path: '/admin/webhooks', h1: 'Webhooks', ready: 'webhook-list', scope: 'Deployment-wide' },
-	{ id: 'automation', path: '/admin/automation', h1: 'Automation', ready: 'automation-yaml', scope: 'This namespace' },
-	{ id: 'retention', path: '/admin/retention', h1: 'Maximum run retention', ready: 'retention-info', scope: 'Deployment-wide' },
-	{ id: 'usage', path: '/admin/usage', h1: 'Usage', ready: 'usage-table', scope: 'Deployment-wide' },
-	{ id: 'cache', path: '/admin/cache', h1: 'Cache', ready: 'cache-window', scope: 'This namespace' },
-	{ id: 'image-policy', path: '/admin/image-policy', h1: 'Image policy', ready: 'image-policy-info', scope: 'Deployment-wide' },
-	{ id: 'audit', path: '/admin/audit', h1: 'Audit', ready: 'audit-table', scope: 'All namespaces' }
+/**
+ * Each Operate page: its sidebar id, path, h1, the testid that says it has rendered, the
+ * breadcrumb's last crumb, and its scope (the overview index's Scope column).
+ */
+const SHEETS: { id: string; path: string; h1: string; ready: string; crumb: string; scope: string }[] = [
+	{ id: 'overview', path: '/admin', h1: 'Operate', ready: 'system-info', crumb: 'Overview', scope: 'Deployment-wide' },
+	{ id: 'namespaces', path: '/admin/namespaces', h1: 'Namespaces', ready: 'namespace-list', crumb: 'Namespaces', scope: 'Deployment-wide' },
+	{ id: 'pools', path: '/admin/pools', h1: 'Pools', ready: 'pool-list', crumb: 'Pools', scope: 'This namespace' },
+	{ id: 'releases', path: '/admin/releases', h1: 'Releases', ready: 'releases-scope', crumb: 'Releases', scope: 'Deployment-wide' },
+	{ id: 'activities', path: '/admin/activities', h1: 'Activities', ready: 'activity-list', crumb: 'Activities', scope: 'Deployment-wide' },
+	{ id: 'webhooks', path: '/admin/webhooks', h1: 'Webhooks', ready: 'webhook-list', crumb: 'Webhooks', scope: 'Deployment-wide' },
+	{ id: 'automation', path: '/admin/automation', h1: 'Automation', ready: 'automation-yaml', crumb: 'Automation', scope: 'This namespace' },
+	{ id: 'retention', path: '/admin/retention', h1: 'Maximum run retention', ready: 'retention-info', crumb: 'Retention', scope: 'Deployment-wide' },
+	{ id: 'usage', path: '/admin/usage', h1: 'Usage', ready: 'usage-table', crumb: 'Usage', scope: 'Deployment-wide' },
+	{ id: 'cache', path: '/admin/cache', h1: 'Cache', ready: 'cache-window', crumb: 'Cache', scope: 'This namespace' },
+	{ id: 'image-policy', path: '/admin/image-policy', h1: 'Image policy', ready: 'image-policy-info', crumb: 'Image policy', scope: 'Deployment-wide' },
+	{ id: 'audit', path: '/admin/audit', h1: 'Audit', ready: 'audit-table', crumb: 'Audit', scope: 'All namespaces' }
 ];
 
-/** The scope NOTE each page says its reach in (the strip's overview has none: it is an index). */
+/** The scope NOTE each page says its reach in (the overview has none: it is an index). */
 const SCOPE_NOTES: Record<string, string> = {
 	namespaces: 'namespaces-scope-caption',
 	pools: 'pools-scope-caption',
@@ -183,7 +187,7 @@ async function axe(page: Page, label: string): Promise<void> {
 }
 
 // What runs past the right edge, named, so a failure says where: only what
-// no scrolling frame of its own (a register, the strip) contains.
+// no scrolling frame of its own (a register, the sidebar drawer) contains.
 async function pastRightEdge(page: Page): Promise<string[]> {
 	return page.evaluate(() => {
 		if (document.documentElement.scrollWidth <= window.innerWidth) return [];
@@ -208,16 +212,17 @@ async function pastRightEdge(page: Page): Promise<string[]> {
 	});
 }
 
-test('sheets: every Operate page is one sheet — its tab current, one h1, its scope said once, SCOPE in the title block', async ({ page }) => {
+test('sheets: every Operate page is one sheet — its link current, one h1, its crumb, its scope said once and in the overview index', async ({ page }) => {
 	for (const sheet of SHEETS) {
 		await page.goto(url(sheet.path));
 		await expect(page.getByTestId(sheet.ready)).toBeVisible();
-		await expect(page.getByTestId(`admin-tab-${sheet.id}`)).toHaveAttribute('aria-current', 'page');
+		// The Operate group is the sidebar's: the page's own link is the one current link in it.
+		await expect(page.getByTestId(sheet.id === 'overview' ? 'nav-admin' : `admin-tab-${sheet.id}`)).toHaveAttribute('aria-current', 'page');
 		await expect(page.getByTestId('admin-nav').locator('[aria-current="page"]')).toHaveCount(1);
 		const h1 = page.locator('main h1');
 		await expect(h1).toHaveCount(1);
 		await expect(h1).toHaveText(sheet.h1);
-		// The strip is the sheet's first row: it comes before the page's head.
+		// The Operate group comes before the page's head.
 		const order = await page.evaluate(() => {
 			const strip = document.querySelector('[data-testid="admin-nav"]')!;
 			const head = document.querySelector('main h1')!;
@@ -229,45 +234,45 @@ test('sheets: every Operate page is one sheet — its tab current, one h1, its s
 			await expect(page.getByTestId(scopeNote)).toBeVisible();
 			await expect(page.locator('.note', { has: page.getByTestId(scopeNote) }).getByText('Note', { exact: true })).toBeVisible();
 		}
-		await expect(page.getByTestId('title-block-page')).toContainText(sheet.id === 'overview' ? 'Operate overview' : sheet.h1 === 'Maximum run retention' ? 'Retention' : sheet.h1);
-		await expect(page.getByTestId('title-block-scope')).toContainText(sheet.scope);
-		note(`sheet ${sheet.path}: h1 "${sheet.h1}", tab admin-tab-${sheet.id} current, SCOPE ${sheet.scope}${scopeNote ? `, NOTE ${scopeNote}` : ''}`);
+		// The breadcrumb names the page (the title block's PAGE cell is gone); Operate pages sit under "Operate".
+		await expect(page.getByTestId('breadcrumb-current')).toHaveText(sheet.crumb);
+		if (sheet.id !== 'overview') await expect(page.getByTestId('breadcrumb').getByRole('link', { name: 'Operate', exact: true })).toBeVisible();
+		note(`sheet ${sheet.path}: h1 "${sheet.h1}", link ${sheet.id === 'overview' ? 'nav-admin' : `admin-tab-${sheet.id}`} current, crumb ${sheet.crumb}${scopeNote ? `, NOTE ${scopeNote}` : ''}`);
 	}
-	// The overview indexes the other eleven, one link each, with what each governs and its reach.
+	// The overview indexes the other eleven, one link each, with what each governs and its reach
+	// (the title block's SCOPE cell is gone: the Scope column is where a page's reach is stated).
 	await page.goto(url('/admin'));
 	const rows = page.getByTestId('operate-index').locator('tbody tr');
 	await expect(rows).toHaveCount(11);
 	for (const row of await rows.all()) await expect(row.getByRole('link')).toHaveCount(1);
+	for (const sheet of SHEETS.filter((s) => s.id !== 'overview')) {
+		await expect(rows.filter({ has: page.getByTestId(`admin-card-${sheet.id}`) })).toContainText(sheet.scope);
+	}
 	await expect(page.getByTestId('admin-card-cache')).toHaveAttribute('href', '/admin/cache?ns=default');
 });
 
-test('strip: at 390 px it scrolls inside its own frame, never the page, and brings the current tab into view', async ({ page }) => {
-	await page.setViewportSize({ width: 390, height: 844 });
-	await page.goto(url('/admin/namespaces'));
-	await expect(page.getByTestId('namespace-list')).toBeAttached();
-	const strip = page.getByTestId('admin-nav');
-	const before = await strip.evaluate((el) => ({ scroll: el.scrollWidth, client: el.clientWidth, overflowX: getComputedStyle(el).overflowX }));
-	expect(before.scroll, 'the twelve tabs are wider than 390 px').toBeGreaterThan(before.client);
-	expect(before.overflowX).toBe('auto');
-	expect(await pastRightEdge(page), 'the page itself never scrolls sideways').toEqual([]);
-
-	// Scrolling the strip moves its tabs, not the page.
-	await strip.evaluate((el) => el.scrollTo({ left: el.scrollWidth }));
-	await expect(page.getByTestId('admin-tab-audit')).toBeInViewport();
-	expect(await page.evaluate(() => window.scrollX)).toBe(0);
-
-	// The page you are on is brought into the strip's frame.
+test('drawer: at 390 px the Operate group scrolls inside the sidebar drawer, never the page, and the current page is its current link', async ({ page }) => {
+	// A short phone screen, so the drawer's twelve Operate links outgrow it.
+	await page.setViewportSize({ width: 390, height: 500 });
 	await page.goto(url('/admin/audit'));
 	await expect(page.getByTestId('audit-scope')).toBeVisible();
-	const audit = await page.evaluate(() => {
-		const nav = document.querySelector('[data-testid="admin-nav"]')!.getBoundingClientRect();
-		const tab = document.querySelector('[data-testid="admin-tab-audit"]')!.getBoundingClientRect();
-		return { inside: tab.left >= nav.left - 0.5 && tab.right <= nav.right + 0.5, scrollLeft: document.querySelector('[data-testid="admin-nav"]')!.scrollLeft };
-	});
-	expect(audit.inside, `admin-tab-audit inside the strip (scrollLeft ${audit.scrollLeft})`).toBe(true);
-	expect(audit.scrollLeft).toBeGreaterThan(0);
-	await page.screenshot({ path: out('screenshot-strip-audit-390.png') });
-	note(`strip at 390 px: ${before.scroll} px of tabs in a ${before.client} px frame; on /admin/audit the strip scrolled ${audit.scrollLeft} px to show its tab; the page never scrolled sideways`);
+	expect(await pastRightEdge(page), 'the page itself never scrolls sideways').toEqual([]);
+	await page.getByTestId('menu-open').click();
+	const drawer = page.getByTestId('sidebar');
+	await expect(drawer).toBeVisible();
+	await expect(drawer).toBeInViewport({ ratio: 1 });
+	const before = await drawer.evaluate((el) => ({ scroll: el.scrollHeight, client: el.clientHeight, overflowY: getComputedStyle(el).overflowY }));
+	expect(before.scroll, 'the Operate links are taller than the screen').toBeGreaterThan(before.client);
+	expect(before.overflowY).toBe('auto');
+	await expect(page.getByTestId('admin-tab-audit')).toHaveAttribute('aria-current', 'page');
+
+	// Scrolling the drawer moves its links, not the page.
+	await drawer.evaluate((el) => el.scrollTo({ top: el.scrollHeight }));
+	await expect(page.getByTestId('admin-tab-audit')).toBeInViewport();
+	expect(await page.evaluate(() => window.scrollX)).toBe(0);
+	expect(await page.evaluate(() => window.scrollY)).toBe(0);
+	await page.screenshot({ path: out('screenshot-drawer-audit-390.png') });
+	note(`drawer at 390 px: ${before.scroll} px of sidebar in a ${before.client} px frame; scrolling it showed admin-tab-audit and the page never moved`);
 	await page.setViewportSize({ width: 1280, height: 720 });
 });
 
@@ -283,7 +288,7 @@ test('namespaces: a held namespace is red attention in the register, and its bud
 	expect(ground).toBe(redTint);
 	const budget = page.getByTestId(`namespace-budget-${HELD}`);
 	const face = await budget.evaluate((el) => ({ family: getComputedStyle(el).fontFamily, numeric: getComputedStyle(el).fontVariantNumeric }));
-	expect(face.family).toContain('Spline Sans Mono');
+	expect(face.family).toContain('JetBrains Mono');
 	expect(face.numeric).toContain('tabular-nums');
 	const accepting = page.getByTestId('namespace-row-default');
 	await expect(accepting).toHaveAttribute('data-held', 'false');
@@ -293,10 +298,11 @@ test('namespaces: a held namespace is red attention in the register, and its bud
 
 test('screens: every Operate page in both themes, at 1440 and 390 px, with axe', async ({ page }) => {
 	test.setTimeout(10 * 60_000);
-	// Open what each page's components draw only on request, so the screen shows them.
+	// Open what each page's components draw only on request (or confirm what they draw by default), so the screen shows them.
 	async function expand(id: string): Promise<void> {
 		if (id === 'pools') {
-			await page.getByTestId('pool-orkers-toggle-main').click();
+			// The Orkers are shown by default; the toggle only hides them.
+			await expect(page.getByTestId('pool-orkers-toggle-main')).toHaveAttribute('aria-expanded', 'true');
 			await expect(page.getByTestId('pool-orkers-main')).toBeVisible();
 			await expect(page.getByTestId('pool-orkers-loading-main')).toHaveCount(0);
 		}
@@ -321,7 +327,7 @@ test('screens: every Operate page in both themes, at 1440 and 390 px, with axe',
 		for (const sheet of SHEETS) {
 			await page.goto(url(sheet.path));
 			await expect(page.getByTestId(sheet.ready)).toBeAttached();
-			await expect(page.getByTestId('title-block')).toBeVisible();
+			await expect(page.getByTestId('breadcrumb')).toBeVisible();
 			expect(await pastRightEdge(page), `${sheet.path} at 390 px: nothing runs past the right edge`).toEqual([]);
 			await page.screenshot({ path: out(`screenshot-${sheet.id}-${theme}-390.png`), fullPage: true });
 		}

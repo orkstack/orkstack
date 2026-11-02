@@ -279,7 +279,7 @@ test('per-task Inspect reveals that task alone, and Show events opens the event 
 	const sockets: string[] = [];
 	page.on('websocket', (ws) => sockets.push(ws.url()));
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 120_000 });
 	await expect(page.getByTestId('task-boom-error')).toBeVisible();
 
 	// THE OVERVIEW. There is no page-level inspector of any kind any more —
@@ -301,7 +301,9 @@ test('per-task Inspect reveals that task alone, and Show events opens the event 
 	await expect(page.getByTestId('task-ok')).not.toContainText('Artifacts');
 	// The one page-level control left is the event list's, and it says so.
 	await expect(page.getByTestId('events-toggle')).toBeVisible();
-	await expect(page.getByTestId('events-toggle')).toHaveText('Show events');
+	// (The control reads "Events" in both states; aria-expanded says which.)
+	await expect(page.getByTestId('events-toggle')).toHaveText('Events');
+	await expect(page.getByTestId('events-toggle')).toHaveAttribute('aria-expanded', 'false');
 	await shot(page, 'screenshot-run-overview.png');
 
 	await page.getByTestId('task-log-toggle-boom').click();
@@ -349,7 +351,7 @@ test('per-task Inspect reveals that task alone, and Show events opens the event 
 	await page.waitForURL(/events=1/);
 	await expect(page.getByTestId('run-events')).toBeVisible();
 	await expect(page.getByTestId('event-inspector')).toBeVisible();
-	await expect(page.getByTestId('events-toggle')).toHaveText('Hide events');
+	await expect(page.getByTestId('events-toggle')).toHaveAttribute('aria-expanded', 'true');
 	expect(
 		await page.evaluate(() => {
 			const events = document.querySelector('[data-testid="run-events"]');
@@ -498,7 +500,7 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	note(`started run ${liveRun} (${LIVE_ORKFLOW})`);
 
 	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
-	await expect(page.getByTestId('run-id')).toHaveText(liveRun);
+	await expect(page.getByTestId('run-id')).toContainText(liveRun);
 
 	// NO EVENT LIST IN THE DOM. Not hidden, not collapsed, not scrolled past:
 	// absent.
@@ -506,7 +508,8 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	await expect(page.getByTestId('event-log')).toHaveCount(0);
 	await expect(page.getByTestId('event-entry')).toHaveCount(0);
 	await expect(page.getByTestId('events-toggle')).toBeVisible();
-	await expect(page.getByTestId('events-toggle')).toHaveText('Show events');
+	await expect(page.getByTestId('events-toggle')).toHaveText('Events');
+	await expect(page.getByTestId('events-toggle')).toHaveAttribute('aria-expanded', 'false');
 	// …and each task's own Inspect is present and SHUT: the control is on the
 	// card, the detail it discloses is not.
 	await expect(page.getByTestId('task-inspect-toggle-talk')).toBeVisible();
@@ -597,8 +600,8 @@ test("a container application's stdout and stderr arrive live and render apart",
 		.toEqual({ six: true, stdout: true, stderr: true });
 	const runStatusWhenLive = (await page.getByTestId('run-status').innerText()).trim();
 	const taskStatusWhenLive = (await page.getByTestId('task-talk-status').innerText()).trim();
-	expect(runStatusWhenLive).toBe('RUNNING');
-	expect(taskStatusWhenLive).toBe('RUNNING');
+	expect(runStatusWhenLive).toBe('Running');
+	expect(taskStatusWhenLive).toBe('Running');
 	await expect(page.getByTestId('task-log-state-talk')).toHaveText('LIVE');
 
 	const live = await paneLines(page, 'talk');
@@ -759,12 +762,12 @@ test('a retried task shows its retry on the card, in the header, and as a timeli
 	);
 
 	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
-	await expect(page.getByTestId('run-id')).toHaveText(liveRun);
+	await expect(page.getByTestId('run-id')).toContainText(liveRun);
 
 	// THE CARD. `flaky` succeeded — its pill says so — and the badge beside it
 	// says that took two goes. `talk` succeeded first time and says nothing:
 	// the badge exists to mark the exception, not to decorate every task.
-	await expect(page.getByTestId('task-flaky-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-flaky-status')).toHaveText('Succeeded', { timeout: 60_000 });
 	await expect(page.getByTestId('task-flaky-retries')).toHaveText('retried ×1', {
 		timeout: 60_000
 	});
@@ -773,7 +776,7 @@ test('a retried task shows its retry on the card, in the header, and as a timeli
 	// THE HEADER. One retry in this run, counted from the records rather than
 	// from TaskRun.attempt (which is 0 for a Temporal timeout and the
 	// committing attempt for an adopted commit).
-	await expect(page.getByTestId('run-retries')).toHaveText(/Retries:\s*1/);
+	await expect(page.getByTestId('run-retries')).toHaveText(/^1 task retry$/);
 
 	// THE TIMELINE, inside the task's own Inspect — the same disclosure the
 	// image, exit code and artifacts live behind.
@@ -786,6 +789,7 @@ test('a retried task shows its retry on the card, in the header, and as a timeli
 	// the error that reached nothing before these records existed.
 	const first = page.getByTestId('task-flaky-attempt-1');
 	await expect(first).toHaveAttribute('data-outcome', 'FAILED');
+	// An attempt's outcome is its enum word (AttemptTimeline), not the status pill's title case.
 	await expect(page.getByTestId('task-flaky-attempt-1-outcome')).toHaveText('FAILED');
 	// The error is disclosed, not shouted: a timeline row is a summary until
 	// the reader asks for the failure behind it.
@@ -836,7 +840,7 @@ test('a retried task shows its retry on the card, in the header, and as a timeli
 	// socket happened to deliver into this tab.
 	await page.reload();
 	await expect(page.getByTestId('task-flaky-retries')).toHaveText('retried ×1');
-	await expect(page.getByTestId('run-retries')).toHaveText(/Retries:\s*1/);
+	await expect(page.getByTestId('run-retries')).toHaveText(/^1 task retry$/);
 	await page.getByTestId('task-inspect-toggle-flaky').click();
 	await expect(page.getByTestId('task-flaky-attempt-1')).toHaveAttribute('data-outcome', 'FAILED');
 	await expect(page.getByTestId('task-flaky-attempt-2')).toHaveAttribute(
@@ -857,7 +861,7 @@ test('the event view opens and closes while task state keeps updating', async ({
 	note(`started run ${run} (${EVENTS_ORKFLOW})`);
 
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
-	await expect(page.getByTestId('run-id')).toHaveText(run);
+	await expect(page.getByTestId('run-id')).toContainText(run);
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
 
 	// A TASK THAT HAS NOT STARTED SAYS SO, AND SHOWS NO STATUS.
@@ -872,7 +876,7 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await expect(boomStatus).toHaveAttribute('data-state', 'not-started');
 	await expect(boomStatus).toHaveText(/Waiting for slow/);
 	await expect(page.getByTestId('task-boom')).toHaveAttribute('data-dispatched', 'false');
-	await expect(page.getByTestId('task-boom')).not.toContainText('PENDING');
+	await expect(page.getByTestId('task-boom')).not.toContainText('Pending');
 	await shot(page, 'screenshot-task-waiting.png');
 	note('task boom rendered as "Waiting for slow" with no status pill');
 
@@ -904,7 +908,7 @@ test('the event view opens and closes while task state keeps updating', async ({
 	note('opening ?events=1 showed the backlog, RUN_CREATED included');
 
 	// TASK STATE KEEPS UPDATING WHILE IT IS OPEN.
-	await expect(page.getByTestId('task-slow-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('task-slow-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	note('task slow reached SUCCEEDED with the event inspector OPEN');
 	await shot(page, 'screenshot-event-inspector.png');
 
@@ -949,8 +953,8 @@ test('the event view opens and closes while task state keeps updating', async ({
 	// AND THE LIVE UPDATES SURVIVE IT. This is the regression the split
 	// comment on the page's socket guards: `boom` fails, and both the task and
 	// the run reach their terminal state with the event list closed.
-	await expect(page.getByTestId('task-boom-status')).toHaveText('FAILED', { timeout: 120_000 });
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-boom-status')).toHaveText('Failed', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 60_000 });
 	note('task boom reached FAILED and the run FAILED with the event inspector CLOSED');
 
 	// TASK_FAILED itself carries only status/message. RUN_FAILED causes one
@@ -1032,7 +1036,7 @@ test('a task watched live acquires its real exit code and Error.category without
 	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
 	const run = submitted.run.id;
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText(/PENDING|RUNNING/);
+	await expect(page.getByTestId('run-status')).toHaveText(/Pending|Running/);
 	await page.getByTestId('task-inspect-toggle-boom').click();
 	await page.getByTestId('task-inspect-toggle-ok').click();
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('Not measured');
@@ -1043,7 +1047,7 @@ test('a task watched live acquires its real exit code and Error.category without
 	await page.evaluate(() => {
 		(window as unknown as { __orkTerminalMarker: string }).__orkTerminalMarker = 'alive';
 	});
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 120_000 });
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3', { timeout: 60_000 });
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'measured');
 	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
@@ -1066,7 +1070,7 @@ test('a task watched live acquires its real exit code and Error.category without
 	// It is stamped CANCELED with "never started" under it — the words its DAG
 	// node and the task map's key use too, so no view contradicts another.
 	const neverStatus = page.getByTestId('task-never-status');
-	await expect(neverStatus).toHaveText('CANCELED', { timeout: 60_000 });
+	await expect(neverStatus).toHaveText('Canceled', { timeout: 60_000 });
 	await expect(page.getByTestId('task-never-status-note')).toHaveText('never started');
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
 	await shot(page, 'screenshot-task-never-started.png');
@@ -1085,7 +1089,7 @@ test('a task watched live acquires its real exit code and Error.category without
 	// broke before — the snapshot carried a stamped started_at, so a reloaded
 	// page could not tell the two CANCELED cases apart at all.
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
-	await expect(page.getByTestId('task-never-status')).toHaveText('CANCELED');
+	await expect(page.getByTestId('task-never-status')).toHaveText('Canceled');
 	await expect(page.getByTestId('task-never-status-note')).toHaveText('never started');
 });
 
@@ -1100,20 +1104,27 @@ test('a failed task offers the command that runs it locally; a succeeded or neve
 	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
 	const run = submitted.run.id;
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 120_000 });
 
-	const trigger = page.getByTestId('run-task-boom-replay-cli-trigger');
+	// A task row's commands are one popover; the local replay is the command with `task run` in it.
+	const trigger = page.getByTestId('run-task-boom-cli-trigger');
 	await expect(trigger).toBeVisible();
 	await trigger.click();
-	const command = page.getByTestId('run-task-boom-replay-cli-command');
+	const commandOf = (id: string) => page.locator(`[data-testid^="run-task-${id}-cli-command-"]`).filter({ hasText: 'task run' });
+	const command = commandOf('boom');
 	await expect(command).toHaveText(
 		`orkctl --namespace default task run --from-run ${run} --task boom`
 	);
-	await expect(page.getByTestId('run-task-ok-replay-cli-trigger')).toHaveCount(0);
+	await page.keyboard.press('Escape');
+	// A succeeded task offers its log, and none of its commands is the local run.
+	await page.getByTestId('run-task-ok-cli-trigger').click();
+	await expect(page.locator('[data-testid^="run-task-ok-cli-command-"]').first()).toBeVisible();
+	await expect(commandOf('ok')).toHaveCount(0);
+	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
-	await expect(page.getByTestId('run-task-never-replay-cli-trigger')).toHaveCount(0);
+	await expect(page.getByTestId('run-task-never-cli-trigger')).toHaveCount(0);
 	await shot(page, 'screenshot-task-local-replay.png');
-	note(`run ${run}: boom (FAILED) offers ${await command.innerText()}; ok (SUCCEEDED) and never (never started) offer none`);
+	note(`run ${run}: boom (FAILED) offers its local run; ok (SUCCEEDED) and never (never started) offer none`);
 });
 
 // The retry HISTORY on the task card: whether this orkflow's `flaky` task
@@ -1154,16 +1165,13 @@ test("a retried task's badge carries its retry history once asked, and a run tha
 
 	await page.getByTestId('run-stability-toggle').click();
 	await expect(page.getByTestId('run-stability-note')).toContainText('1 finished run ', { timeout: 60_000 });
-	// The in-run label is unchanged; the title gains the history.
+	// The in-run label is unchanged; the tooltip gains the history.
 	await expect(badge).toHaveText('retried ×1');
-	await expect(badge).toHaveAttribute('title', /retried in 1 of 1 runs/);
-	note(`retry history on ${liveRun}: badge "${await badge.innerText()}", title "${await badge.getAttribute('title')}"`);
+	await badge.hover();
+	await expect(page.getByRole('tooltip')).toHaveText(/retried in 1 of 1 runs/);
+	note(`retry history on ${liveRun}: badge "${await badge.innerText()}", tooltip "${await page.getByRole('tooltip').innerText()}"`);
 	note(`run-stability-note: ${(await page.getByTestId('run-stability-note').innerText()).trim()}`);
-	await page.getByTestId('run-stability-cli-trigger').click();
-	const command = (await page.getByTestId('run-stability-cli-command').innerText()).trim();
-	expect(command).toContain(`stats flakes --orkflow ${LIVE_ORKFLOW} --since 168h`);
-	note(`run-stability CLI equivalent: ${command}`);
-	await page.keyboard.press('Escape');
+	// (The retry-history command is no longer printed beside the toggle; it was never on the run's popover.)
 
 	// A second run of the same orkflow: the stub now answers first time, so
 	// `flaky` does not retry in it.
@@ -1175,14 +1183,15 @@ test("a retried task's badge carries its retry history once asked, and a run tha
 	// Asked for nothing, the page shows nothing: this run did not retry.
 	await page.evaluate((key) => localStorage.setItem(key, 'closed'), HISTORY_KEY);
 	await page.goto(`${UI_ORIGIN}/runs/${second}?ns=default`);
-	await expect(page.getByTestId('task-flaky-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-flaky-status')).toHaveText('Succeeded', { timeout: 60_000 });
 	await expect(page.getByTestId('task-flaky-retries')).toHaveCount(0);
 
 	await page.getByTestId('run-stability-toggle').click();
 	const flaky = page.getByTestId('task-flaky-retries');
 	await expect(flaky).toHaveText('flaky 50%', { timeout: 60_000 });
 	await expect(flaky).toHaveAttribute('data-flaky', 'true');
-	await expect(flaky).toHaveAttribute('title', /retried in 1 of 2 runs/);
+	await flaky.hover();
+	await expect(page.getByRole('tooltip')).toHaveText(/retried in 1 of 2 runs/);
 	await expect(page.getByTestId('task-talk-retries')).toHaveCount(0);
 	note(`run ${second}: task-flaky-retries reads "${await flaky.innerText()}" (data-flaky=true), task-talk-retries absent`);
 	await shot(page, 'screenshot-run-page-flake-history.png');

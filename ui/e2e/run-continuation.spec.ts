@@ -242,7 +242,7 @@ test('a run that carries on into fresh histories reads as one run, live, to the 
 	// The page is open from the run's first moments, events inspector shown,
 	// so every state it reaches arrives on its live stream.
 	await page.goto(`${UI_ORIGIN}/runs/${runID}?ns=default&events=1`);
-	await expect(page.getByTestId('run-status')).toHaveText(/PENDING|RUNNING/, { timeout: 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText(/Pending|Running/, { timeout: 60_000 });
 	await expect(page.getByTestId('live-badge')).toHaveText('LIVE', { timeout: 60_000 });
 	expect(generations(runID).executions).toBe(1);
 	await shot(page, 'screenshot-before-switch.png');
@@ -251,7 +251,7 @@ test('a run that carries on into fresh histories reads as one run, live, to the 
 	// A hold: the engine logged it; the page still says RUNNING and LIVE, and
 	// InspectRun answers for the run while it holds.
 	await waitFor('the run to hold new dispatch', async () => holdLogged(runID), 8 * 60_000);
-	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+	await expect(page.getByTestId('run-status')).toHaveText('Running');
 	await expect(page.getByTestId('live-badge')).toHaveText('LIVE');
 	const inspected = await rpc<{ runStatus?: string; attempts?: unknown[]; computedAt?: string }>('RunService/InspectRun', {
 		runId: runID
@@ -275,7 +275,7 @@ test('a run that carries on into fresh histories reads as one run, live, to the 
 	note('after the hold: the run carried on; the page still LIVE');
 
 	// The end: SUCCEEDED live, every card SUCCEEDED, no banner, contiguous events.
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 10 * 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 10 * 60_000 });
 	await expect(page.getByTestId('task-summary')).toContainText('25/25 succeeded');
 	await expect(page.getByTestId('live-stopped')).toHaveCount(0);
 	await expect(page.getByTestId('event-log-offline')).toHaveCount(0);

@@ -228,7 +228,7 @@ test('4: a permitted secret runs, its sha256 is in the log pane and the token is
 	await expect(page.getByTestId('run-submit-loading')).toHaveCount(0);
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 
 	await page.getByTestId('task-log-toggle-fetch').click();
 	await expect

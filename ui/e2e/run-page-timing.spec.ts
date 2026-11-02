@@ -245,7 +245,7 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 	// The stimulus, not synchronization: this wait IS what is measured.
 	await new Promise((resolve) => setTimeout(resolve, STIMULUS_MS));
 	startOrker();
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 
 	// P2 — the bar: wait at least the stimulus, run shorter, drawn wider.
 	await expect(page.getByTestId('task-first-timing')).toBeVisible({ timeout: 30_000 });
@@ -275,11 +275,11 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 	await shot(page, 'timing-phases.png');
 
 	// P4 — the CLI that prints the same thing, and what it printed.
-	await page.getByTestId('run-task-first-timing-cli-trigger').click();
-	await expect(page.getByTestId('run-task-first-timing-cli-command')).toHaveText(
-		`orkctl --namespace default run timing ${run} --task first`
-	);
-	note(`P4 card CLI: ${await page.getByTestId('run-task-first-timing-cli-command').innerText()}`);
+	// (The row's commands are one popover now; the timing command is the one with `run timing` in it.)
+	await page.getByTestId('run-task-first-cli-trigger').click();
+	const timingCommand = page.locator('[data-testid^="run-task-first-cli-command-"]').filter({ hasText: 'run timing' });
+	await expect(timingCommand).toHaveText(`orkctl --namespace default run timing ${run} --task first`);
+	note(`P4 card CLI: ${await timingCommand.innerText()}`);
 	const cli = runTimingCLI(run, 'first');
 	expect(cli).toContain('first');
 	expect(cli).toContain('attempt 1  SUCCEEDED');
@@ -301,7 +301,7 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 	note(`submitted run ${run} (flaky)`);
 
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	await expect(page.getByTestId('task-flaky-timing')).toBeVisible({ timeout: 30_000 });
 
 	// P5 — two phase lines, attempt 1 ending in `exit` and attempt 2 in
@@ -340,7 +340,7 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 		if (request.url().endsWith('/orkstack.v1.RunService/GetRun')) runReads++;
 	});
 	await page.reload();
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED');
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded');
 	await expect(page.getByTestId('task-flaky-timing')).toBeVisible();
 	// The collapsed card's retry badge is the seed's: absent while it is pending.
 	await expect(page.getByTestId('task-flaky-retries')).toHaveCount(0);

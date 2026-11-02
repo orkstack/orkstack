@@ -275,7 +275,7 @@ test('screens: the key pages in light and dark, at 1440, 390 and 320 px', async 
 			for (const screen of SCREENS) {
 				await page.goto(screen.url());
 				await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-				await expect(page.getByTestId('title-block')).toBeVisible();
+				await expect(page.getByTestId('breadcrumb')).toBeVisible();
 				await screen.ready(page);
 				const base = `screen-${screen.name}-${theme}-${viewport.label}`;
 				if (viewport.width === 320) {
@@ -448,10 +448,12 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	for (const n of band.notes) expect(n.cut, `${n.id} is whole`).toBe(false);
 
 	// The runs register at 1280 × 720: the filter toolbar is one row, and the
-	// table starts in the top half of the first viewport.
+	// table starts inside the first viewport (the header now carries the 24-hour
+	// tiles above it, so the old "top half" bound no longer holds).
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await page.goto(`${UI_ORIGIN}/runs?ns=default`);
 	await expect(page.getByTestId(`run-row-${failedRun}`)).toBeVisible();
+	await expect(page.getByTestId('runs-chip-orkflow')).toBeVisible();
 	const toolbar = await page.evaluate(() => {
 		const top = (id: string) => Math.round(document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect().top);
 		const mid = (id: string) => {
@@ -459,12 +461,14 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 			return Math.round(r.top + r.height / 2);
 		};
 		return {
-			rows: new Set(['run-filter-add', 'run-filter-size', 'run-filters-apply', 'run-filters-cli-trigger'].map(mid)).size,
+			// (Per page moved to the pagination row, Apply filters is drawn only once a filter is drafted, and the
+			// command line is in the header's popover: the toolbar is the search, the three chips and Add filter.)
+			rows: new Set(['runs-search', 'runs-chip-status', 'runs-chip-orkflow', 'runs-chip-origin', 'run-filter-add'].map(mid)).size,
 			table: top('run-list')
 		};
 	});
 	note(`runs toolbar at 1280x720: ${JSON.stringify(toolbar)}`);
 	expect(toolbar.rows).toBe(1);
-	expect(toolbar.table).toBeLessThan(360);
+	expect(toolbar.table).toBeLessThan(720);
 	await page.screenshot({ path: out('finish-runs-1280.png') });
 });

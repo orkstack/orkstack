@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import AxeBuilder from '@axe-core/playwright';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	bin,
@@ -31,8 +31,9 @@ import { taskMapCellCenter } from './uiHelpers';
 // Temporal and MinIO:
 //
 //   DAG        a small run opens on its DAG on the grid: status drawn per
-//              node, exactly one <rect> per node, a failure handler dashed by
-//              ATTRIBUTE, a node link selecting its task (task=, the card);
+//              node, exactly one box (rect.dag-outline) per node, a failure
+//              handler dashed by ATTRIBUTE, a node link selecting its task
+//              (task=, the card);
 //   map        a run of more than 80 tasks opens on its task map, drawn only
 //              after the last card is attached; a click and the keyboard
 //              select a task and bring its card into view; F jumps to the
@@ -41,17 +42,18 @@ import { taskMapCellCenter } from './uiHelpers';
 //   bound      81 tasks: the DAG on request; 301: never laid out, the
 //              selected task's neighbourhood instead — on the run page and on
 //              the Orkflow page alike;
-//   aside      the versions table (THIS RUN, CURRENT, HEAD), the failure in its
-//              cloud, the failing image, the commands that reproduce it;
+//   aside      the versions table (THIS RUN, CURRENT, HEAD), the failure and
+//              the version it was on, the failing image, the commands that
+//              reproduce it (behind the header's terminal icon);
 //   degraded   no definition (GetOrkflow refused): a NOTE with the reason, the
 //              map in run order, the aside whole, every card; the versions
 //              listing refused: an error with Retry, then the table;
-//   live       the title block's STATUS turns RUNNING green → FAILED red with
+//   live       the header's status pill turns Running green → Failed red with
 //              no reload;
 //   palette    on a run page a task id selects the task; Cancel run… opens
 //              the confirmation and sends nothing;
 //   register   a run the list saw RUNNING that fails is held in place by the
-//              poll, on its new ground, its status still the 4th cell; held
+//              poll, on its new ground, its status pill still its own; held
 //              after a reload; cleared by opening it; a run that failed while
 //              the list was closed is held on the next visit; Mark all seen
 //              (button and palette) clears;
@@ -272,24 +274,26 @@ async function inViewport(page: Page, testid: string): Promise<boolean> {
 	return page.evaluate((id) => {
 		const card = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
 		const top = document.querySelector('header')!.getBoundingClientRect().bottom;
-		const bottom = document.querySelector('[data-testid="title-block"]')!.getBoundingClientRect().top;
+		const bottom = window.innerHeight;
 		return card.top >= top - 1 && card.bottom <= bottom + 1;
 	}, testid);
 }
 
-test('DAG: a small run opens on its DAG, drawn by status, one rect per node, the handler dashed by attribute', async ({ page }) => {
+test('DAG: a small run opens on its DAG, drawn by status, one box per node, the handler dashed by attribute', async ({ page }) => {
 	await page.goto(runUrl(sagaRun));
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED');
+	await expect(page.getByTestId('run-status')).toHaveText('Failed');
 	await expect(page.getByTestId('run-view-dag')).toHaveAttribute('aria-selected', 'true');
 	await expect(page.getByTestId('run-dag')).toBeVisible();
 	for (const id of ['validate', 'reserve-stock', 'charge', 'ship', 'refund', 'report']) {
-		await expect(page.getByTestId(`run-dag-node-${id}`).locator('rect')).toHaveCount(1);
+		// A node draws one box; its status mark is a path or circle, never a rect
+		// (the node also draws a focus-ring rect, which is not its box).
+		await expect(page.getByTestId(`run-dag-node-${id}`).locator('rect.dag-outline')).toHaveCount(1);
 	}
 	await expect(page.getByTestId('run-dag-node-charge')).toHaveAttribute('data-status', 'FAILED');
 	await expect(page.getByTestId('run-dag-node-validate')).toHaveAttribute('data-status', 'SUCCEEDED');
-	await expect(page.getByTestId('run-dag-node-refund').locator('rect')).toHaveAttribute('stroke-dasharray', '5 4');
+	await expect(page.getByTestId('run-dag-node-refund').locator('rect.dag-outline')).toHaveAttribute('stroke-dasharray', '5 4');
 	await expect(page.getByTestId('run-dag-edge-charge-refund')).toHaveAttribute('stroke-dasharray', '5 4');
-	await expect(page.getByTestId('run-dag-node-charge').locator('rect')).not.toHaveAttribute('stroke-dasharray', /.+/);
+	await expect(page.getByTestId('run-dag-node-charge').locator('rect.dag-outline')).not.toHaveAttribute('stroke-dasharray', /.+/);
 	// The Orkflow page's ids are its own.
 	await expect(page.getByTestId('orkflow-dag')).toHaveCount(0);
 	await page.screenshot({ path: out('screenshot-run-failed-dag-light.png') });
@@ -302,26 +306,37 @@ test('DAG: a small run opens on its DAG, drawn by status, one rect per node, the
 	await expect(page.getByTestId('run-dag-node-charge').locator('a')).toHaveAttribute('aria-current', 'true');
 });
 
-test('aside: versions with THIS RUN / CURRENT / HEAD, the failure in its cloud, the image, the reproduce commands', async ({ page }) => {
+test('aside: versions with THIS RUN / CURRENT / HEAD, the failure and its version, the image, the reproduce commands', async ({ page }) => {
 	await page.goto(runUrl(sagaRun));
 	await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
 	await expect(page.getByTestId('run-version-0.1.0-this')).toHaveText('This run');
 	await expect(page.getByTestId('run-version-0.2.0-current')).toBeVisible();
 	await expect(page.getByTestId('run-version-0.2.0-head')).toBeVisible();
 	await expect(page.getByTestId('run-version-0.1.0-current')).toHaveCount(0);
-	await expect(page.getByTestId('run-error-tag')).toHaveText('Version 0.1.0 · charge failed');
+	// The cloud's tag is the "Why it failed" card's sub-line now (it has no test id of its own),
+	// and the cloud's "attempt 1 of 1" is the failure's retry phrase.
+	await expect(page.getByTestId('run-why')).toContainText('Version 0.1.0 · charge failed');
 	await expect(page.getByTestId('run-error')).toBeVisible();
-	await expect(page.getByTestId('run-error-attempts')).toHaveText('attempt 1 of 1');
+	await expect(page.getByTestId('run-error-retry-state')).toHaveText(/not retr|retries exhausted/);
 	await expect(page.getByTestId('run-failed-image')).toContainText('activity-shell');
-	await expect(page.getByTestId('run-reproduce-get')).toHaveText(`orkctl --namespace default run get ${sagaRun} --json`);
-	await expect(page.getByTestId('run-reproduce-again')).toHaveText(`orkctl --namespace default run again ${sagaRun}`);
-	// The title block: what this page is, and never the run id.
-	await expect(page.getByTestId('title-block-orkflow')).toContainText(SAGA);
-	await expect(page.getByTestId('title-block-version')).toContainText('0.1.0');
-	await expect(page.getByTestId('title-block-status')).toContainText('FAILED');
-	await expect(page.getByTestId('title-block')).not.toContainText(sagaRun);
+	// The commands that reproduce the run are behind the header's terminal icon.
+	await page.getByTestId('run-inspect-cli-trigger').click();
+	const commands = page.locator('[data-testid^="run-inspect-cli-command-"]');
+	await expect(commands.filter({ hasText: 'run get' })).toHaveText(`orkctl --namespace default run get ${sagaRun} --json`);
+	await expect(commands.filter({ hasText: 'run again' })).toHaveText(`orkctl --namespace default run again ${sagaRun}`);
+	await page.keyboard.press('Escape');
+	// The header: what this page is, with the version a plate and the run id its own plate.
+	await expect(page.getByTestId('pinned-orkflow-link')).toHaveText(SAGA);
+	await expect(page.getByTestId('run-version')).toContainText('0.1.0');
+	await expect(page.getByTestId('run-status')).toHaveText('Failed');
+	await expect(page.getByTestId('breadcrumb')).not.toContainText(sagaRun);
+	// The definition digest no longer has a cell on the page; the run's JSON export carries it.
 	const digest = (await rpc<{ run: { orkflowDefinitionDigest: string } }>('RunService/GetRun', { runId: sagaRun })).run.orkflowDefinitionDigest;
-	await expect(page.getByTestId('title-block-digest')).toContainText(digest.split(':').pop()!.slice(0, 8));
+	const download = page.waitForEvent('download');
+	await page.getByTestId('export-run-json').click();
+	const exportPath = out(`${sagaRun}-export.json`);
+	await (await download).saveAs(exportPath);
+	expect(JSON.parse(readFileSync(exportPath, 'utf8')).orkflow.definitionDigest).toBe(digest);
 	await page.screenshot({ path: out('screenshot-run-aside-light.png') });
 
 	// One version that is this run's, the current and the head: its three
@@ -399,7 +414,7 @@ test('map: F jumps to the failed cell, and the legend counts every status presen
 	await expect(page.getByTestId('task-map-legend-succeeded')).toBeVisible();
 	await page.getByRole('listbox', { name: /Task map/ }).focus();
 	await page.keyboard.press('f');
-	await expect(page.getByTestId('task-map-readout')).toContainText('charge · FAILED');
+	await expect(page.getByTestId('task-map-readout')).toContainText('charge · Failed');
 	await page.keyboard.press('Enter');
 	await expect(page).toHaveURL(/task=charge/);
 	await expect(map).toHaveAttribute('data-selected', 'charge');
@@ -451,8 +466,12 @@ test('degraded: with no definition the map follows the run order, the DAG says w
 	await page.getByTestId('run-view-dag').click();
 	await expect(page.getByTestId('run-drawing-unavailable')).toContainText('held by run-sheet');
 	await expect(page.getByTestId('run-error')).toBeVisible();
-	await expect(page.getByTestId('run-reproduce-get')).toBeVisible();
-	await expect(page.getByTestId('title-block-digest')).not.toHaveText('—');
+	await page.getByTestId('run-inspect-cli-trigger').click();
+	await expect(page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: 'run get' })).toBeVisible();
+	await page.keyboard.press('Escape');
+	// The header still names the pinned version, known without the definition
+	// (the digest plate of the old title block is gone from the page).
+	await expect(page.getByTestId('run-version')).toContainText('0.1.0');
 	await expect(page.locator('[data-testid^="task-deep-link-"]')).toHaveCount(6);
 	await page.screenshot({ path: out('screenshot-run-no-definition-light.png') });
 });
@@ -475,7 +494,7 @@ test('degraded: a refused versions listing is an error with Retry, then the tabl
 
 test('palette: a task id selects the task; Cancel run… opens the confirmation and sends nothing', async ({ page }) => {
 	await page.goto(runUrl(sagaRun));
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED');
+	await expect(page.getByTestId('run-status')).toHaveText('Failed');
 	await openPalette(page);
 	await page.getByTestId('command-palette-input').fill('refund');
 	await expect(page.getByTestId('command-palette-option-task-refund')).toBeVisible();
@@ -492,7 +511,7 @@ test('palette: a task id selects the task; Cancel run… opens the confirmation 
 		if (r.url().includes('RunService/CancelRun')) cancels.push(r.url());
 	});
 	await page.goto(runUrl(liveRun));
-	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+	await expect(page.getByTestId('run-status')).toHaveText('Running');
 	await openPalette(page);
 	await page.getByTestId('command-palette-input').fill('cancel');
 	await page.getByTestId('command-palette-option-run-cancel').click();
@@ -503,22 +522,22 @@ test('palette: a task id selects the task; Cancel run… opens the confirmation 
 	note(`palette: task jump selected refund on ${sagaRun}; Cancel run… on ${liveRun} opened the confirmation and sent no CancelRun`);
 });
 
-test('live: the title block STATUS turns RUNNING green → FAILED red with no reload', async ({ page }) => {
+test('live: the header status pill turns Running green → Failed red with no reload', async ({ page }) => {
 	const liveRun = await submit(LIVE);
 	await running(liveRun);
 	await page.goto(runUrl(liveRun));
 	// A mark on this document: a reload would drop it. (A same-document URL
 	// update, as the page makes for its own state, keeps it.)
 	await page.evaluate(() => ((window as unknown as { __sameDocument?: boolean }).__sameDocument = true));
-	const value = page.getByTestId('title-block-status').locator('dd > span').first();
-	await expect(value).toContainText('RUNNING');
+	const value = page.getByTestId('run-status');
+	await expect(value).toHaveText('Running');
 	// The colour is asserted with a retrying matcher: the text and the class
 	// that colours it arrive in the same update, but a computed style read the
 	// instant the text matched has been seen, on a loaded host, to still carry
 	// the ink colour of the frame before.
 	await expect(value).toHaveCSS('color', await tokenColor(page, '--color-green'));
 	await page.screenshot({ path: out('screenshot-run-live-light.png') });
-	await expect(value).toContainText('FAILED', { timeout: 120_000 });
+	await expect(value).toHaveText('Failed', { timeout: 120_000 });
 	await expect(value).toHaveCSS('color', await tokenColor(page, '--color-red'));
 	expect(await page.evaluate(() => (window as unknown as { __sameDocument?: boolean }).__sameDocument)).toBe(true);
 	// It failed while watched: the cloud is there.
@@ -530,13 +549,13 @@ test('register: a run seen RUNNING that fails is held in place, survives a reloa
 	await running(liveRun);
 	await page.goto(`${UI_ORIGIN}/runs?ns=default`);
 	const row = page.getByTestId(`run-row-${liveRun}`);
-	await expect(row.locator('td').nth(3)).toHaveText('RUNNING');
+	await expect(page.getByTestId(`run-row-status-${liveRun}`)).toHaveText('Running');
 	await expect(row).not.toHaveAttribute('data-held', /.+/);
 	// The poll patches it in place: no reload, the row stays where it is.
 	await expect(row).toHaveAttribute('data-held', 'true', { timeout: 120_000 });
 	await expect(row).toHaveAttribute('data-held-from', 'RUNNING');
 	await expect(page.getByTestId(`run-row-held-${liveRun}`)).toHaveAttribute('aria-label', /it was running/);
-	expect((await row.locator('td:nth-child(4)').textContent())?.trim()).toBe('FAILED');
+	await expect(page.getByTestId(`run-row-status-${liveRun}`)).toHaveText('Failed');
 	expect(await row.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
 		await page.evaluate(() => {
 			const probe = document.createElement('span');
@@ -556,7 +575,7 @@ test('register: a run seen RUNNING that fails is held in place, survives a reloa
 	await expect(page.getByTestId(`run-row-${liveRun}`)).toHaveAttribute('data-held', 'true');
 
 	await page.getByTestId(`run-row-${liveRun}`).getByRole('link', { name: liveRun }).click();
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED');
+	await expect(page.getByTestId('run-status')).toHaveText('Failed');
 	await page.goto(`${UI_ORIGIN}/runs?ns=default`);
 	await expect(page.getByTestId(`run-row-${liveRun}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-${liveRun}`)).not.toHaveAttribute('data-held', /.+/);
@@ -598,8 +617,10 @@ test('compare: two runs side by side, FROM quiet and TO marked', async ({ page }
 	await page.goto(`${UI_ORIGIN}/runs/${sagaRun}/compare?ns=default&to=${sagaRun2}`);
 	await expect(page.getByTestId('run-diff-from')).toHaveText(sagaRun);
 	await expect(page.getByTestId('run-diff-to')).toHaveText(sagaRun2);
-	await expect(page.getByTestId('title-block-from')).toContainText('FAILED');
-	await expect(page.getByTestId('title-block')).not.toContainText(sagaRun);
+	// The facts strip names the two runs by their status, never their ids.
+	await expect(page.getByTestId('compare-fact-from')).toHaveText('Failed');
+	await expect(page.getByTestId('compare-fact-orkflow')).toContainText(SAGA);
+	await expect(page.getByTestId('breadcrumb')).not.toContainText(sagaRun);
 	await page.screenshot({ path: out('screenshot-compare-light.png'), fullPage: true });
 	await axe(page, 'compare (light)');
 });
@@ -634,7 +655,7 @@ test('screens: both themes, desktop and 390 px; axe on the run page in both view
 			['compare', `${UI_ORIGIN}/runs/${sagaRun}/compare?ns=default&to=${sagaRun2}`]
 		]) {
 			await page.goto(url);
-			await expect(page.getByTestId('title-block')).toBeVisible();
+			await expect(page.getByTestId('breadcrumb')).toBeVisible();
 			// What runs past the right edge, named, so a failure says where.
 			const past = await page.evaluate(() =>
 				document.documentElement.scrollWidth <= window.innerWidth
@@ -692,11 +713,11 @@ test('DOM per task card is recorded', async ({ page }) => {
 	note(`document listeners with every popover closed: ${JSON.stringify(closed)}`);
 	expect(closed.pointerdown ?? 0).toBeLessThan(20);
 	await page.getByTestId('run-inspect-cli-trigger').click();
-	await expect(page.getByTestId('run-inspect-cli-command')).toBeVisible();
+	await expect(page.getByTestId('run-inspect-cli-command-0')).toBeVisible();
 	const opened = await documentListeners(page);
 	expect(opened.pointerdown ?? 0).toBe((closed.pointerdown ?? 0) + 1);
 	await page.keyboard.press('Escape');
-	await expect(page.getByTestId('run-inspect-cli-command')).toHaveCount(0);
+	await expect(page.getByTestId('run-inspect-cli-command-0')).toHaveCount(0);
 	expect((await documentListeners(page)).pointerdown ?? 0).toBe(closed.pointerdown ?? 0);
 	record.documentListeners = closed;
 	const baseline = process.env.ORK_UI_BASELINE_BUILD;

@@ -220,12 +220,12 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	await shot(page, 'live-started.png');
 
 	// P3 — the card's CLI equivalent, and what the CLI prints for the same run.
-	await page.getByTestId('run-task-talk-inspect-cli-trigger').click();
-	await expect(page.getByTestId('run-task-talk-inspect-cli-command')).toHaveText(
-		`orkctl --namespace default run inspect ${run} --task talk`
-	);
-	note(`P3 card command: ${await page.getByTestId('run-task-talk-inspect-cli-command').innerText()}`);
-	await page.getByTestId('run-task-talk-inspect-cli-trigger').click();
+	// (The row's commands are one popover now; the inspect command is the one with `run inspect` in it.)
+	await page.getByTestId('run-task-talk-cli-trigger').click();
+	const inspectCommand = page.locator('[data-testid^="run-task-talk-cli-command-"]').filter({ hasText: 'run inspect' });
+	await expect(inspectCommand).toHaveText(`orkctl --namespace default run inspect ${run} --task talk`);
+	note(`P3 card command: ${await inspectCommand.innerText()}`);
+	await page.getByTestId('run-task-talk-cli-trigger').click();
 	const cliOut = runInspectCLI(run);
 	expect(cliOut).toContain('talk');
 	expect(cliOut).toContain('STARTED');
@@ -239,7 +239,7 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	await expect(live).toContainText('Cancelling');
 	note(`P4 task-talk-live before CANCELED: "${await live.innerText()}" (run-status ${await page.getByTestId('run-status').innerText()})`);
 	await shot(page, 'live-cancelling.png');
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 	await expect(page.getByTestId('task-talk-live')).toHaveCount(0);
 	note('P4 run CANCELED; no task-talk-live element remains');
 });
@@ -286,7 +286,7 @@ test('the live poll pauses while the page is hidden and resumes when shown', asy
 	note(`P5 shown again: an InspectRun request within ${Date.now() - shownAt} ms`);
 
 	await rpc('RunService/CancelRun', { runId: run });
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 });
 
 // F-ui-ux-7: a run whose event socket can never be served stops saying
@@ -326,6 +326,6 @@ test('a dead event socket ends in a stopped banner, and Retry resumes live updat
 	await shot(page, 'live-resumed.png');
 
 	await rpc('RunService/CancelRun', { runId: run });
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 	note(`P6 Retry resumed from ${opened[opened.length - 1]}; the CANCELED transition arrived on the resumed stream`);
 });

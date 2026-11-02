@@ -503,7 +503,7 @@ test('a task log follows live in the browser, in order, from the replica that st
 	note(`engine A started run ${run1} (${ORKFLOW}@0.1.0); engine B was not asked`);
 
 	await page.goto(`${UI_ORIGIN}/runs/${run1}?ns=${ALPHA}`);
-	await expect(page.getByTestId('run-id')).toHaveText(run1);
+	await expect(page.getByTestId('run-id')).toContainText(run1);
 
 	// The pane is collapsed until it is asked for: thirty tasks must not mean
 	// thirty sockets.
@@ -527,8 +527,8 @@ test('a task log follows live in the browser, in order, from the replica that st
 		`browser saw ${linesWhenLive.length} lines of task talk at B while the run read ` +
 			`${runStatusWhenLive} and the task read ${taskStatusWhenLive}`
 	);
-	expect(runStatusWhenLive).toBe('RUNNING');
-	expect(taskStatusWhenLive).toBe('RUNNING');
+	expect(runStatusWhenLive).toBe('Running');
+	expect(taskStatusWhenLive).toBe('Running');
 	await expect(page.getByTestId('task-log-state-talk')).toHaveText('LIVE');
 	await shot(page, 'screenshot-log-following.png');
 
@@ -567,7 +567,7 @@ test('a task log follows live in the browser, in order, from the replica that st
 	// the instant the output they were reading is completed. Measured on this
 	// tree before the fix: PAUSED scrollTop=500 -> FOLLOWING scrollTop=976.
 	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 180_000 });
-	await expect(page.getByTestId('task-talk-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-talk-status')).toHaveText('Succeeded', { timeout: 60_000 });
 	expect((await page.getByTestId('task-log-follow-talk').innerText()).trim()).toBe('PAUSED');
 	expect(await box.evaluate((el) => el.scrollTop)).toBe(parkedAt);
 	note(
@@ -763,7 +763,7 @@ test('a dropped log socket resumes from the last sequence, repeating and losing 
 	});
 
 	await page.goto(`${UI_ORIGIN}/runs/${run2}?ns=${ALPHA}`);
-	await expect(page.getByTestId('run-id')).toHaveText(run2);
+	await expect(page.getByTestId('run-id')).toContainText(run2);
 	await page.getByTestId('task-log-toggle-talk').click();
 
 	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 180_000 });

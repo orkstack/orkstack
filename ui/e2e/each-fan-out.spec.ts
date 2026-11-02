@@ -254,18 +254,18 @@ test('a fan-out card fills its item grid live', async ({ page }) => {
 	await expect(page.getByTestId('task-convert-item-0')).toHaveAttribute('data-status', /RUNNING|SUCCEEDED/, {
 		timeout: 120_000
 	});
-	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+	await expect(page.getByTestId('run-status')).toHaveText('Running');
 	await shot(page, 'screenshot-each-live.png');
 
 	for (let index = 0; index < 6; index++) {
 		await expect(page.getByTestId(`task-convert-item-${index}`)).toHaveAttribute(
 			'aria-label',
-			new RegExp(`^item ${index}, SUCCEEDED, attempt \\d$`),
+			new RegExp(`^item ${index}, Succeeded, attempt \\d$`),
 			{ timeout: 180_000 }
 		);
 	}
 	await expect(page.getByTestId('task-convert-each-summary')).toContainText('6 of 6 settled');
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	// One card for the fan-out, and its retry badge counts items.
 	await expect(page.getByTestId('task-convert-retries')).toHaveText('1 item retried');
 	note(`summary: ${await page.getByTestId('task-convert-each-summary').textContent()}`);
@@ -377,7 +377,7 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 	const run = submitted.run.id;
 	note(`submitted failing run ${run}`);
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 180_000 });
 	await expect(page.getByTestId('run-error')).toContainText('item 3 of 6 failed');
 	// The run's failure and the task's lead with the item's reason and keep
 	// the item sentence, with no word of the execution service's wrapper.
@@ -393,13 +393,13 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 
 	// Cell 3 is red: tinted with FAILED's own classes.
 	const cell = page.getByTestId('task-convert-item-3');
-	await expect(cell).toHaveAttribute('aria-label', /^item 3, FAILED, attempt 1$/);
+	await expect(cell).toHaveAttribute('aria-label', /^item 3, Failed, attempt 1$/);
 	await expect(cell).toHaveClass(/bg-failed-bg/);
 	// The cells after it never started, and say so.
 	for (const index of [4, 5]) {
 		await expect(page.getByTestId(`task-convert-item-${index}`)).toHaveAttribute(
 			'aria-label',
-			new RegExp(`^item ${index}, CANCELED \\(never started\\), attempt 0$`)
+			new RegExp(`^item ${index}, Canceled \\(never started\\), attempt 0$`)
 		);
 	}
 	note(`run error: ${(await page.getByTestId('run-error').first().textContent())?.trim()}`);

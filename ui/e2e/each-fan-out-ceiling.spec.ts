@@ -209,7 +209,7 @@ test('the run page and the item list at the gated size are interactive within 5 
 	};
 
 	await measure('live');
-	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+	await expect(page.getByTestId('run-status')).toHaveText('Running');
 
 	await rpc('RunService/CancelRun', { runId: run, reason: 'each-fan-out e2e: gated-size render measured' });
 	await waitFor(`run ${run} finished`, async () => {
@@ -217,7 +217,7 @@ test('the run page and the item list at the gated size are interactive within 5 
 		return answer.run?.status === 'STATUS_CANCELED';
 	});
 	await measure('finished');
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled');
 
 	// The task map, outside the timed span (UI revamp, stage 2): its section
 	// of the fan-out drew every item's cell after the two tasks' own.

@@ -122,7 +122,7 @@ test('P1 — the DAG marks joins and draws failure handlers dashed', async ({ pa
 	await expect(page.getByTestId('dag-node-rollback')).toHaveAttribute('data-join', 'any_failed');
 	await expect(page.getByTestId('dag-edge-deploy-rollback')).toHaveAttribute('data-join', 'any_failed');
 	await expect(page.getByTestId('dag-edge-deploy-rollback')).toHaveAttribute('stroke-dasharray', '5 4');
-	await expect(page.getByTestId('dag-node-rollback').locator('rect')).toHaveAttribute('stroke-dasharray', '5 4');
+	await expect(page.getByTestId('dag-node-rollback').locator('rect').first()).toHaveAttribute('stroke-dasharray', '5 4');
 	await expect(page.getByTestId('dag-node-deploy')).not.toHaveAttribute('data-join');
 	note('P1 verify: join none_failed; rollback: join any_failed, dashed node and edge');
 	await shot(page, 'screenshot-dag.png');
@@ -249,7 +249,7 @@ test('P5 — cancel a failing run', async ({ page }) => {
 	await page.getByTestId('cancel-run-accept').click();
 	await expect(page.getByTestId('run-status')).toHaveText(/failed/i, { timeout: 120_000 });
 	await expect(page.getByTestId('task-rollback-status')).toHaveText(/canceled/i);
-	await expect(page.getByTestId('task-escalate-status')).toHaveText('CANCELED');
+	await expect(page.getByTestId('task-escalate-status')).toHaveText('Canceled');
 	await expect(page.getByTestId('task-escalate-status-note')).toHaveText('never started');
 	await expect(banner).toHaveCount(0);
 	note(`P5 ${runId}: cancelled while failing; run FAILED, rollback CANCELED, escalate never started`);

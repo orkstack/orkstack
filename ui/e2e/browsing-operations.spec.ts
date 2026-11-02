@@ -136,13 +136,16 @@ function urlFilters(page: Page): string[] {
 
 /** The status pills of the rows on screen, in order. */
 async function rowStatuses(page: Page) {
-	return (await page.locator('tr[data-testid^="run-row-"] td:nth-child(4)').allTextContents()).map((text) => text.trim());
+	return (await page.locator('[data-testid^="run-row-status-"]').allTextContents()).map((text) => text.trim());
 }
 
-/** The CLI equivalent of the applied filters, read from its popover. */
+/**
+ * The CLI equivalent of the applied filters, read from the header's command
+ * popover (runs-cli): its first command is the filtered `run list`.
+ */
 async function cliCommand(page: Page): Promise<string> {
-	await page.getByTestId('run-filters-cli-trigger').click();
-	const text = await page.getByTestId('run-filters-cli-command').innerText();
+	await page.getByTestId('runs-cli-trigger').click();
+	const text = await page.getByTestId('runs-cli-command-0').innerText();
 	await page.keyboard.press('Escape');
 	return text.trim();
 }
@@ -266,7 +269,7 @@ test('R1: status in and not equals through the enum controls', async ({ page }) 
 	await page.getByTestId(`run-filter-value-${row}-FAILED`).check();
 	await page.getByTestId('run-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['status=FAILED,CANCELED']);
-	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('FAILED'));
+	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('Failed'));
 	expect(await cliCommand(page)).toBe(`orkctl -n ${NS} run list --filter status=FAILED,CANCELED`);
 	await page.screenshot({ path: out('screenshot-runs-status-in.png'), fullPage: true });
 
@@ -276,8 +279,8 @@ test('R1: status in and not equals through the enum controls', async ({ page }) 
 	const ne = await addListFilter(page, 'run', { field: 'status', op: OP.notEquals, select: 'SUCCEEDED' });
 	await page.getByTestId('run-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['status!=SUCCEEDED']);
-	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('FAILED'));
-	await expect(page.getByTestId(`run-filter-value-${ne}`)).toHaveText('SUCCEEDED');
+	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('Failed'));
+	await expect(page.getByTestId(`run-filter-value-${ne}`)).toHaveText('Succeeded');
 	await page.screenshot({ path: out('screenshot-runs-status-not-equals.png'), fullPage: true });
 });
 
@@ -290,9 +293,11 @@ test('R2: orkflow_name contains narrows, and an equals names the Orkflow in the 
 	await expect.poll(() => urlFilters(page)).toEqual(['orkflow_name~failing-']);
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(FAILED_RUNS);
 	// A contains is not one Orkflow: the header names none and Submit offers
-	// the picker.
+	// the picker. (The button no longer changes its words to "Browse Orkflows";
+	// what still tells the two apart is where it goes.)
 	await expect(page.getByTestId('runs-heading')).toHaveText('Runs');
-	await expect(page.getByTestId('runs-submit-run')).toHaveText('Browse Orkflows');
+	await expect(page.getByTestId('runs-submit-run')).toHaveText('Submit a run');
+	await expect(page.getByTestId('runs-submit-run')).toHaveAttribute('href', `/orkflows?ns=${NS}`);
 
 	await page.goto(`${UI}/runs?ns=${NS}&filter=orkflow_name%3D${FAILING}`);
 	await expect(page.getByTestId('runs-heading')).toContainText(`for ${FAILING}`);
@@ -327,25 +332,31 @@ test('R3: a created_at window through datetime-local, and its CLI equivalent in 
 	await expect(page.getByTestId('runs-empty')).toContainText('No runs match these filters');
 });
 
-test('R4: page size is a field of the filter form and applies with Apply filters', async ({ page }) => {
+test('R4: page size is the pagination row\'s Per page control and applies when chosen, keeping the filters', async ({ page }) => {
 	await page.goto(`${UI}/runs?ns=${NS}&filter=orkflow_name%3D${FLOW}`);
 	await expect(page.getByTestId('run-list')).toBeVisible();
 	await page.waitForLoadState('networkidle');
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS);
-	const before = page.url();
+	// It is no longer a field of the filter form: choosing a size navigates at once,
+	// with no Apply filters click.
+	await expect(page.getByRole('combobox', { name: 'Per page' })).toBeVisible();
 	await selectOption(page, 'run-filter-size', '10');
-	await expect(page.getByTestId('run-filter-size')).toHaveText('10');
-	expect(page.url()).toBe(before);
-	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS);
-	await page.getByTestId('run-filters-apply').click();
 	await expect(page).toHaveURL(/size=10/);
 	const applied = new URL(page.url());
 	expect(applied.searchParams.getAll('size')).toEqual(['10']);
 	expect(applied.searchParams.get('cursor')).toBeNull();
 	expect(applied.searchParams.getAll('filter')).toEqual([`orkflow_name=${FLOW}`]);
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(10);
+	await expect(page.getByTestId('run-filter-size')).toHaveText('10');
 	await expect(page.getByTestId('runs-page-status')).toHaveText('Page 1 · 10 runs');
 	await page.screenshot({ path: out('screenshot-runs-page-size.png'), fullPage: true });
+
+	// With no filter in force and none drafted, Apply filters is not drawn at all.
+	await page.goto(`${UI}/runs?ns=${NS}`);
+	await expect(page.getByTestId('run-list')).toBeVisible();
+	await expect(page.getByTestId('run-filters-apply')).toHaveCount(0);
+	await page.getByTestId('run-filter-add').click();
+	await expect(page.getByTestId('run-filters-apply')).toBeVisible();
 });
 
 test('R6: the dashboard and an Orkflow page link into the filtered runs list', async ({ page }) => {
