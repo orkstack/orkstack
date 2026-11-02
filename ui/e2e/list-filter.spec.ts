@@ -169,6 +169,35 @@ test('L1: two filters, canonical in the URL, survive a reload with their draft',
 	note('L1 reload: rows and the draft restored from the URL');
 });
 
+// Applying filters is a navigation that asks the router to keep the focus
+// and the scroll position (SvelteKit 3's `reset: false`); without it the
+// router moves the focus to the page and scrolls it to the top, and the
+// reader loses their place. A filter every row matches keeps the page as tall
+// as it was, so the scroll position is the reader's, not the browser's clamp.
+test('L8: applying filters keeps the focus on Apply and the page where it was', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 360 });
+	await page.goto(`${UI_ORIGIN}/orkflows?ns=${NS}&size=25`);
+	await expect.poll(() => orkflowRows(page)).toEqual([...PAY, ...SEARCH]);
+	await page.waitForLoadState('networkidle');
+	await addListFilter(page, 'orkflow', { field: 'name', op: OP.contains, value: '-0' });
+	const apply = page.getByTestId('orkflow-filters-apply');
+	await apply.focus();
+	await page.evaluate(() => window.scrollBy(0, 40));
+	const scrolled = await page.evaluate(() => window.scrollY);
+	expect(scrolled).toBeGreaterThan(0);
+	await page.keyboard.press('Enter');
+	await expect.poll(() => urlFilters(page)).toEqual(['name~-0']);
+	await expect.poll(() => orkflowRows(page)).toEqual([...PAY, ...SEARCH]);
+	// The router resets focus and scroll right after the address changes;
+	// two painted frames later it has done whatever it was going to do.
+	await page.evaluate(
+		() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done())))
+	);
+	expect(await page.evaluate(() => document.activeElement?.getAttribute('data-testid'))).toBe('orkflow-filters-apply');
+	expect(await page.evaluate(() => window.scrollY)).toBe(scrolled);
+	note(`L8 applied with the page at scrollY=${scrolled}: focus and scroll kept`);
+});
+
 test('L2: a created_at row through datetime-local sends the UTC instant', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=${NS}&size=25`);
 	await page.waitForLoadState('networkidle');
