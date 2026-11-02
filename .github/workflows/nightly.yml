@@ -19,8 +19,8 @@ on:
   workflow_dispatch:
     inputs:
       fuzz_budget:
-        description: the fuzz lane's whole time, shared by its Fuzz targets (105m; no more than 120m, because the lane's step is limited to 135m)
-        default: 105m
+        description: the fuzz lane's whole time, shared by its Fuzz targets (125m; no more than 125m, because the lane's step is limited to 140m)
+        default: 125m
 
 permissions:
   contents: read
@@ -42,7 +42,7 @@ jobs:
       base: main
       int_shards: 4
       ui_shards: 1
-      fuzz_budget: ${{ inputs.fuzz_budget || '105m' }}
+      fuzz_budget: ${{ inputs.fuzz_budget || '125m' }}
 
   vuln:
     # govulncheck (`make vuln`), which reports only advisories whose vulnerable
