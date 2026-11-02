@@ -112,7 +112,9 @@ func (p *ghParser) cmp() (ghValue, error) {
 		}
 		ln, lerr := strconv.ParseFloat(l.s, 64)
 		rn, rerr := strconv.ParseFloat(r.s, 64)
-		numeric := !l.isBool && !r.isBool && lerr == nil && rerr == nil
+		// Two strings compare as strings; a number literal on either side
+		// makes it a comparison of numbers, as GitHub coerces on a mismatch.
+		numeric := (l.isNum || r.isNum) && !l.isBool && !r.isBool && lerr == nil && rerr == nil
 		switch op {
 		case "<":
 			if !numeric {
@@ -235,6 +237,9 @@ func TestEvalGHExpr_EvaluatesTheGuardsConstructs(t *testing.T) {
 		{"0 || empty", false, false},
 		{"empty || 'x'", true, false},       // || yields its second operand
 		{"a.b && 0", false, false},          // && yields its second operand
+		{"n == '2.0'", false, false},        // two strings compare as strings
+		{"n == 2.0", true, false},           // a number literal makes it numeric
+		{"n < '3'", false, true},            // < between two strings is not one the guards use
 		{"contains(a.b, 'F')", false, true}, // a function the evaluator does not know
 		{"a.b == ", false, true},
 		{"(a.b == 'foo'", false, true},

@@ -230,9 +230,7 @@ func TestWorkflows_TheRunIsCancelledOnlyOnAFailingGateOfFastsOwn(t *testing.T) {
 // far), and returns what it wrote to the step's output.
 func runFastGates(t *testing.T, gates string) string {
 	t.Helper()
-	if _, err := exec.LookPath("bash"); err != nil {
-		t.Skip("bash is not installed")
-	}
+	requireTool(t, "bash")
 	job := loadWorkflow(t, "proof.yml").Jobs["fast"]
 	at := stepIndex(job.Steps, func(s wfStep) bool { return s.ID == fastGatesStep })
 	if at < 0 {

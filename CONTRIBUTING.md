@@ -16,7 +16,9 @@ Developing it needs:
   the UI until `make ui` builds the UI into it, in Docker;
 - **Bun**, the version `.github/workflows/proof.yml` pins, for the UI's dev
   server, checks and tests, and the site;
-- **make**, **git** and **curl**.
+- **make**, **git**, **curl**, **bash** and **jq**: the proof harness's own
+  tests run its shell functions and the workflows' jq checks, and fail
+  without them.
 
 ## The local development stack
 

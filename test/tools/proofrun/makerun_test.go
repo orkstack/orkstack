@@ -25,7 +25,7 @@ func runMake(t *testing.T, makefile, dir string, env []string, args ...string) m
 		makefile = filepath.Join(mustRepoRoot(), "Makefile")
 	}
 	cmd := exec.Command("make", append([]string{"--no-print-directory", "-f", makefile, "-C", dir}, args...)...)
-	for _, kv := range os.Environ() {
+	for _, kv := range withoutGitRepoEnv(os.Environ()) {
 		if k, _, _ := strings.Cut(kv, "="); k != "MAKEFLAGS" && k != "MFLAGS" && k != "MAKELEVEL" {
 			cmd.Env = append(cmd.Env, kv)
 		}
@@ -89,4 +89,24 @@ func stubTool(t *testing.T, dir, name, body string) {
 	if err := os.WriteFile(path, []byte("#!/bin/sh\n"+body), 0o755); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// gitRepoVars are the variables a git hook exports that point git at the
+// repository the hook runs in; a run of make, or a fixture's git, under such a
+// hook would read, commit and tag in that repository instead of its own.
+var gitRepoVars = map[string]bool{
+	"GIT_DIR": true, "GIT_WORK_TREE": true, "GIT_INDEX_FILE": true, "GIT_COMMON_DIR": true,
+	"GIT_OBJECT_DIRECTORY": true, "GIT_ALTERNATE_OBJECT_DIRECTORIES": true,
+}
+
+// withoutGitRepoEnv is env without gitRepoVars, so git finds its repository
+// from its working directory.
+func withoutGitRepoEnv(env []string) []string {
+	var kept []string
+	for _, kv := range env {
+		if k, _, _ := strings.Cut(kv, "="); !gitRepoVars[k] {
+			kept = append(kept, kv)
+		}
+	}
+	return kept
 }

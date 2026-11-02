@@ -392,9 +392,7 @@ func runJobRecords(t *testing.T, fixture string, builds bool, env ...string) map
 func runJobRecordsStep(t *testing.T, fixture string, builds bool, env ...string) string {
 	t.Helper()
 	for _, tool := range []string{"bash", "jq"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skip(tool + " is not installed")
-		}
+		requireTool(t, tool)
 	}
 	var script string
 	for _, s := range loadWorkflow(t, "proof.yml").Jobs["proof"].Steps {

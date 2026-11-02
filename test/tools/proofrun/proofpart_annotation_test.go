@@ -22,10 +22,7 @@ import (
 // function's standard output and exit status.
 func belowFloor(t *testing.T, part, github string, code int) (string, int) {
 	t.Helper()
-	bash, err := exec.LookPath("bash")
-	if err != nil {
-		t.Skip("bash is not installed")
-	}
+	bash := requireTool(t, "bash")
 	dir := t.TempDir()
 	pr := filepath.Join(dir, "proofrun")
 	script := "#!/bin/sh\nexit " + string(rune('0'+code)) + "\n"
