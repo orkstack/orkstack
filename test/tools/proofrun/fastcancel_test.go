@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -26,14 +27,63 @@ import (
 // repository, holds `actions: write` and asks GitHub to cancel. A forged
 // output could only cancel the run that forged it.
 
-// The ids and conditions the fast part and the cancel job are held to.
+// The ids the fast part and the cancel job are held to, and the output that
+// says a gate failed.
 const (
 	fastProofStep  = "fast"
 	fastGatesStep  = "gates"
-	fastGatesIf    = "failure() && steps.fast.outcome == 'failure'"
 	fastGateOutput = "${{ steps.gates.outputs.failed }}"
-	cancelJobIf    = "!cancelled() && needs.fast.result == 'failure' && needs.fast.outputs.failed_gate == 'true' && (" + proofGuard + ")"
 )
+
+// The terms the two conditions are ANDed from. A condition is held to having
+// each of them, not to being written one way: what decides is each term and
+// that no `||` loosens them (a term more narrows it, which the proof can
+// bear). The cancel job's condition also carries the proof guard, checked by
+// guardProblem as every job's is.
+var (
+	fastGatesIfTerms = []string{"failure()", "steps.fast.outcome == 'failure'"}
+	cancelJobIfTerms = []string{"!cancelled()", "needs.fast.result == 'failure'", "needs.fast.outputs.failed_gate == 'true'"}
+)
+
+// andTerms splits a condition into the terms it ANDs, at the `&&` outside
+// every parenthesis and quoted string.
+func andTerms(cond string) []string {
+	cond = normalizeIf(cond)
+	var terms []string
+	depth, quoted, from := 0, false, 0
+	for i := 0; i < len(cond); i++ {
+		switch c := cond[i]; {
+		case c == '\'':
+			quoted = !quoted
+		case quoted:
+		case c == '(':
+			depth++
+		case c == ')':
+			depth--
+		case c == '&' && depth == 0 && i+1 < len(cond) && cond[i+1] == '&':
+			terms = append(terms, strings.TrimSpace(cond[from:i]))
+			from = i + 2
+			i++
+		}
+	}
+	return append(terms, strings.TrimSpace(cond[from:]))
+}
+
+// ifProblems says which of the wanted terms a condition lacks, and whether it
+// has a top-level `||`, which would admit what its terms exclude.
+func ifProblems(who, cond string, want []string) []string {
+	var p []string
+	have := andTerms(cond)
+	for _, w := range want {
+		if !slices.Contains(have, w) {
+			p = append(p, fmt.Sprintf("%s runs under %q, which lacks the term %q", who, normalizeIf(cond), w))
+		}
+	}
+	if or, balanced := topLevelOr(normalizeIf(cond)); or || !balanced {
+		p = append(p, fmt.Sprintf("%s runs under %q, which has a top-level ||, or unbalanced parentheses", who, normalizeIf(cond)))
+	}
+	return p
+}
 
 func fastCancelProblems(w *wfFile) []string {
 	var p []string
@@ -77,12 +127,9 @@ func fastCancelProblems(w *wfFile) []string {
 	if gates != len(fast.Steps)-1 || upload < 0 || upload > gates {
 		p = append(p, "jobs.fast's gates step is not its last, after its upload")
 	}
-	if got := normalizeIf(g.If); got != fastGatesIf {
-		p = append(p, fmt.Sprintf("jobs.fast's gates step runs under %q, want %q: only the part step failing, never a setup step", got, fastGatesIf))
-	}
-	if !strings.Contains(g.Run, "gates.tsv") || !strings.Contains(g.Run, `\tfail\t'`) || !strings.Contains(g.Run, `failed=true`) || !strings.Contains(g.Run, `"$GITHUB_OUTPUT"`) {
-		p = append(p, "jobs.fast's gates step does not read the part's gates.tsv for a failing gate into its output")
-	}
+	// Only the part step failing, never a setup step. What the step writes is
+	// held by TestWorkflows_TheFastPartSaysAGateFailedOnlyWhenOneDid, which runs it.
+	p = append(p, ifProblems("jobs.fast's gates step", g.If, fastGatesIfTerms)...)
 	if fast.Outputs["failed_gate"] != fastGateOutput {
 		p = append(p, fmt.Sprintf("jobs.fast.outputs.failed_gate = %q, want %q", fast.Outputs["failed_gate"], fastGateOutput))
 	}
@@ -102,8 +149,9 @@ func fastCancelProblems(w *wfFile) []string {
 	if needs := cancel.needs(); len(needs) != 1 || needs[0] != "fast" {
 		p = append(p, fmt.Sprintf("jobs.cancel needs %v, want fast alone", needs))
 	}
-	if got := normalizeIf(cancel.If); got != cancelJobIf {
-		p = append(p, fmt.Sprintf("jobs.cancel runs under %q, want %q", got, cancelJobIf))
+	p = append(p, ifProblems("jobs.cancel", cancel.If, cancelJobIfTerms)...)
+	if why := guardProblem(cancel.If); why != "" {
+		p = append(p, "jobs.cancel's condition "+why)
 	}
 	if len(cancel.Permissions) != 1 || cancel.Permissions["actions"] != "write" {
 		p = append(p, fmt.Sprintf("jobs.cancel.permissions = %v, want actions: write alone", cancel.Permissions))
@@ -143,7 +191,13 @@ func TestWorkflows_TheRunIsCancelledOnlyOnAFailingGateOfFastsOwn(t *testing.T) {
 		}},
 		{"the gates read on a setup failure", func(w *wfFile) { gates(w).If = "${{ failure() }}" }},
 		{"the gates read on every outcome", func(w *wfFile) { gates(w).If = "${{ always() }}" }},
-		{"a failing gate never read", func(w *wfFile) { gates(w).Run = "echo \"failed=true\" >>\"$GITHUB_OUTPUT\"" }},
+		{"the gates read on a failure of the part or a setup step alike", func(w *wfFile) { gates(w).If = "failure() || steps.fast.outcome == 'failure'" }},
+		{"a cancel OR-ed with a dispatch", func(w *wfFile) {
+			w.Jobs["cancel"].If = strings.TrimSpace(w.Jobs["cancel"].If) + " || github.event_name == 'workflow_dispatch'"
+		}},
+		{"a cancel without the proof guard", func(w *wfFile) {
+			w.Jobs["cancel"].If = "!cancelled() && needs.fast.result == 'failure' && needs.fast.outputs.failed_gate == 'true'"
+		}},
 		{"the output not wired", func(w *wfFile) { delete(w.Jobs["fast"].Outputs, "failed_gate") }},
 		{"the part step renamed", func(w *wfFile) { partStep(w).ID = "part" }},
 		{"the part step continues on error", func(w *wfFile) { partStep(w).ContinueOnError = true }},
@@ -348,16 +402,18 @@ func (f *mergeFixture) writeAttempt1Parts() {
 // setup failure, whatever fast's own job ended as once its cancel reached it.
 func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 	soak := "2026-10-29T22:42:26.0000000Z proofrun: start github.com/orkstack/orkstack/internal/engine TestIntegration_SoakTasks"
+	// Each wanted reason is the fragments one reason says, wherever they fall
+	// in its sentence.
 	for _, c := range []struct {
 		name string
 		edit func(jobs []githubJob)
-		want []string
+		want [][]string
 	}{
-		{"as GitHub recorded it", nil, []string{
-			"gate unit failed",
-			"part integration:1 left no result (attempt 1, it was cancelled, and its job log names no test that was running); it is not rerun-eligible (only a lost, degraded or setup-failed attempt is): start a new run",
-			"part integration:2 left no result (attempt 1, it was cancelled, and its job log names no test that was running)",
-			"part ui-e2e:1 left no result (attempt 1, it was cancelled, and its job log names no test that was running)",
+		{"as GitHub recorded it", nil, [][]string{
+			{"gate unit failed"},
+			{"part integration:1", "left no result", "cancelled", "not rerun-eligible"},
+			{"part integration:2", "left no result", "cancelled"},
+			{"part ui-e2e:1", "left no result", "cancelled"},
 		}},
 		// What today's integration gate also prints to the job's log
 		// (proof-part.sh, PART_STREAM): the test that was running.
@@ -367,9 +423,9 @@ func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 					jobs[i].Log = soak + "\n" + jobs[i].Log
 				}
 			}
-		}, []string{
-			"gate unit failed",
-			"part integration:1 left no usable result at attempt 1 (a test was running when the job stopped: github.com/orkstack/orkstack/internal/engine.TestIntegration_SoakTasks); it is not rerun-eligible: start a new run",
+		}, [][]string{
+			{"gate unit failed"},
+			{"part integration:1", "no usable result", "a test was running", "github.com/orkstack/orkstack/internal/engine.TestIntegration_SoakTasks", "not rerun-eligible"},
 		}},
 		// Whatever GitHub records for fast's own job (a cancel by hand can
 		// reach it too), the part.json it left is its result.
@@ -380,7 +436,7 @@ func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 					jobs[i].Annotations = []string{"The run was canceled by @github-actions[bot].", "The operation was canceled."}
 				}
 			}
-		}, []string{"gate unit failed", "part integration:1 left no result (attempt 1, it was cancelled, and its job log names no test that was running)"}},
+		}, [][]string{{"gate unit failed"}, {"part integration:1", "left no result", "cancelled"}}},
 		// A cancel that comes before a shard has started (its plan or
 		// build still running) leaves it no record and no artifact.
 		{"a shard the cancel stopped before it started", func(jobs []githubJob) {
@@ -390,7 +446,7 @@ func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 					jobs[i].Conclusion, jobs[i].Steps, jobs[i].RunnerName, jobs[i].Log = "skipped", nil, "", ""
 				}
 			}
-		}, []string{"part ui-e2e:1 left no result: it is not rerun-eligible (only a lost, degraded or setup-failed attempt is); this run cannot become merge-eligible: start a new run"}},
+		}, [][]string{{"part ui-e2e:1", "left no result", "not rerun-eligible", "merge-eligible"}}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r, code := mergeCancelled(t, c.edit)
@@ -398,9 +454,9 @@ func TestMerge_ARunFastCancelledIsAFailingProofNeverRunAgain(t *testing.T) {
 			if code == 0 || r.Result != "fail" || r.MergeEligible {
 				t.Fatalf("code %d result %s eligible %v:\n%s", code, r.Result, r.MergeEligible, reasons)
 			}
-			for _, w := range c.want {
-				if !strings.Contains(reasons, w) {
-					t.Errorf("ineligible lacks %q:\n%s", w, reasons)
+			for _, frags := range c.want {
+				if !ineligibleSays(r.Ineligible, frags...) {
+					t.Errorf("ineligible has no reason saying %q:\n%s", frags, reasons)
 				}
 			}
 			for _, never := range []string{"lost its runner", "degraded runner", "failed in a setup step", "re-run that job alone"} {
@@ -450,15 +506,27 @@ func TestMerge_ARunFastCancelledStaysIneligibleAfterARerun(t *testing.T) {
 	if r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("a run cancelled on a fast failure became merge-eligible by a rerun: eligible %v reruns %+v", r.MergeEligible, r.Reruns)
 	}
-	for _, w := range []string{
-		"part fast was run again (attempt 2) after attempt 1 recorded its result (it left its part.json)",
-		"part integration:1 was run again (attempt 2) after attempt 1, which GitHub did not record as a lost runner",
-		"part ui-e2e:1 was run again (attempt 2) after attempt 1, which GitHub did not record as a lost runner",
+	for _, frags := range [][]string{
+		{"part fast", "run again", "attempt 2", "recorded its result"},
+		{"part integration:1", "run again", "attempt 2", "lost runner"},
+		{"part ui-e2e:1", "run again", "attempt 2", "lost runner"},
 	} {
-		if !strings.Contains(reasons, w) {
-			t.Errorf("ineligible lacks %q:\n%s", w, reasons)
+		if !ineligibleSays(r.Ineligible, frags...) {
+			t.Errorf("ineligible has no reason saying %q:\n%s", frags, reasons)
 		}
 	}
+}
+
+// ineligibleSays reports whether one reason of the proof holds every fragment.
+func ineligibleSays(reasons []string, frags ...string) bool {
+	return slices.ContainsFunc(reasons, func(reason string) bool {
+		for _, f := range frags {
+			if !strings.Contains(reason, f) {
+				return false
+			}
+		}
+		return true
+	})
 }
 
 // writeShardsAt writes every stack part of the fixture's plan as a passing
@@ -492,8 +560,11 @@ func TestRerunPlan_ARunFastCancelledIsNeverRunAgain(t *testing.T) {
 	if err := readJSON(filepath.Join("testdata", cancelledRun, "api-run.json"), &run); err != nil {
 		t.Fatal(err)
 	}
-	if run.Conclusion != "cancelled" || !strings.Contains(normalizeIf(loadWorkflow(t, proofRerunFile).Jobs["rerun"].If), "github.event.workflow_run.conclusion == 'failure'") {
-		t.Errorf("the recorded run concluded %q, and proof-rerun.yml's guard would answer it", run.Conclusion)
+	// The workflow that asks the planner does not start for this run: its
+	// guard, asked about the recorded run's conclusion, refuses.
+	if answered, err := evalGHExpr(normalizeIf(loadWorkflow(t, proofRerunFile).Jobs["rerun"].If),
+		rerunGuardContext(map[string]string{"github.event.workflow_run.conclusion": run.Conclusion})); err != nil || answered {
+		t.Errorf("proof-rerun.yml's guard answers a run that concluded %q (%v)", run.Conclusion, err)
 	}
 	logs := map[int64]string{}
 	var a githubAttempt

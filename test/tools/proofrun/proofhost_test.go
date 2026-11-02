@@ -357,9 +357,11 @@ func proofHostProblems(steps []wfStep) []string {
 		p = append(p, "the action has no `cosign image` step followed by a `fetch cosign image` step")
 	default:
 		l, f := steps[list], steps[pull]
-		if l.ID != "cosign-image" || !strings.Contains(l.Run, "grep -v '^#' deploy/cosign-image.txt") ||
-			!strings.Contains(l.Run, `docker image inspect "$image"`) || !strings.Contains(l.Run, `>>"$GITHUB_OUTPUT"`) {
-			p = append(p, "`cosign image` does not list deploy/cosign-image.txt's pin when the daemon lacks it")
+		// What the step lists, and when, is run by
+		// TestProofHost_TheCosignImageIsListedOnlyWhenTheDaemonLacksIt; here it
+		// is held to its id and to reading the repository's pin file.
+		if l.ID != "cosign-image" || !strings.Contains(l.Run, "deploy/cosign-image.txt") {
+			p = append(p, "`cosign image` does not list deploy/cosign-image.txt's pin")
 		}
 		if normalizeIf(l.If) != "inputs.cosign == 'true'" {
 			p = append(p, fmt.Sprintf("`cosign image` runs under %q, want only when cosign is asked for", l.If))
@@ -460,7 +462,7 @@ func TestProofHost_NothingLeavesTheRunnerExceptThroughProofFetch(t *testing.T) {
 		},
 		"the cosign image listed from elsewhere": func(s []wfStep) {
 			c := by(s, "cosign image")
-			c.Run = strings.Replace(c.Run, "deploy/cosign-image.txt", "/tmp/image.txt", 1)
+			c.Run = strings.ReplaceAll(c.Run, "deploy/cosign-image.txt", "/tmp/image.txt")
 		},
 		"the stack images pulled in the save step": func(s []wfStep) {
 			by(s, "Save the stack images").Run += "\ndocker pull --quiet \"$image\""
@@ -499,6 +501,66 @@ func TestProofHost_NothingLeavesTheRunnerExceptThroughProofFetch(t *testing.T) {
 		"a package installed from a mirror": func(s []wfStep) { by(s, "Disk").Run += "\nsudo apt-get install -y something" },
 	} {
 		t.Run(name, mut(name, change))
+	}
+}
+
+// The `cosign image` step lists the image deploy/cosign-image.txt pins, as its
+// output, only when the daemon lacks it, so that only then is it fetched; a pin
+// file that names no image fails the step. The step runs under bash, in a
+// checkout holding the repository's own pin file, with a docker that does or
+// does not have the image.
+func TestProofHost_TheCosignImageIsListedOnlyWhenTheDaemonLacksIt(t *testing.T) {
+	needBash(t)
+	steps := compositeSteps(t, "proof-host")
+	at := namedStepAt(steps, "cosign image")
+	if at < 0 {
+		t.Fatal("the proof-host action has no `cosign image` step")
+	}
+	script := steps[at].Run
+	pinFile := readRepoFileForPins(t, "deploy/cosign-image.txt")
+	var pin string
+	for _, line := range strings.Split(pinFile, "\n") {
+		if !strings.HasPrefix(line, "#") && strings.TrimSpace(line) != "" {
+			pin = strings.TrimSpace(line)
+			break
+		}
+	}
+	if pin == "" {
+		t.Fatal("deploy/cosign-image.txt names no image")
+	}
+	for _, c := range []struct {
+		name, pinFile  string
+		daemonHasIt    bool
+		wantOutput     string
+		wantStepFailed bool
+	}{
+		{"the daemon lacks the image", pinFile, false, "image=" + pin + "\n", false},
+		{"the daemon has the image", pinFile, true, "", false},
+		{"a pin file of comments alone", "# nothing\n", false, "", true},
+		{"a pin file whose first line is blank", "\n", false, "", true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir, bin := t.TempDir(), t.TempDir()
+			write(t, filepath.Join(dir, "deploy", "cosign-image.txt"), c.pinFile)
+			output := filepath.Join(dir, "github-output")
+			exit := "1"
+			if c.daemonHasIt {
+				exit = "0"
+			}
+			// `docker image inspect IMAGE` succeeds only for an image it has.
+			stubTool(t, bin, "docker", `[ "$1 $2" = "image inspect" ] && [ "$3" = "`+pin+`" ] && exit `+exit+"\nexit 1\n")
+			cmd := exec.Command("bash", "-c", script)
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GITHUB_OUTPUT="+output)
+			out, err := cmd.CombinedOutput()
+			if failed := err != nil; failed != c.wantStepFailed {
+				t.Fatalf("the step failed: %v (%v), want %v:\n%s", failed, err, c.wantStepFailed, out)
+			}
+			got, _ := os.ReadFile(output)
+			if string(got) != c.wantOutput {
+				t.Errorf("the step's output = %q, want %q", got, c.wantOutput)
+			}
+		})
 	}
 }
 

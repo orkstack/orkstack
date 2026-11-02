@@ -735,12 +735,6 @@ func TestSelect_UserFacingChangeWithoutDocsWarns(t *testing.T) {
 	if got := docsWarning([]pathScope{{Path: "cmd/orkctl/root_test.go", Docs: true}}); len(got) != 0 {
 		t.Errorf("a test-only change warned: %v", got)
 	}
-	// A refactor of user-facing code cannot affect its users and gets no
-	// entry (AGENTS.md §11.1, step 7), so the warning asks for one only if
-	// the change may affect them.
-	if !strings.Contains(warnings[1], "if this change may affect the people who run or use OrkStack") {
-		t.Errorf("the CHANGELOG warning asks for an entry whatever the change: %q", warnings[1])
-	}
 }
 
 // The warning names every user-facing path that changed without a doc

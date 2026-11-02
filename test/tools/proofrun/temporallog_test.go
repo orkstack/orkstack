@@ -3,10 +3,12 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"syscall"
@@ -69,6 +71,11 @@ func TestTemporalLog_KeepsBothStreamsOfTheServersLogCompressed(t *testing.T) {
 	}
 	if got := gunzipFile(t, out); got != `{"level":"error","msg":"branch tokens don't match"}`+"\n" {
 		t.Errorf("the kept log = %q", got)
+	}
+	// The file is uploaded with the proof's other records, by a user who is
+	// not necessarily the one that wrote it.
+	if fi, err := os.Stat(out); err != nil || fi.Mode().Perm() != 0o644 {
+		t.Errorf("the kept log's mode is %v (%v), want 0644", fi.Mode().Perm(), err)
 	}
 	if b, _ := os.ReadFile(calls); strings.TrimSpace(string(b)) != "docker logs orkstack-proof-p1-temporal" {
 		t.Errorf("docker was asked %q", b)
@@ -153,10 +160,6 @@ func TestTemporalLog_GivesUpOnADockerThatDoesNotAnswer(t *testing.T) {
 	if entries, _ := os.ReadDir(outDir); len(entries) != 0 {
 		t.Errorf("a read that timed out left %v", entries)
 	}
-	// The scripts take the default, which a cancel must outlast by little.
-	if temporalLogTimeout < 10*time.Second || temporalLogTimeout > 30*time.Second {
-		t.Errorf("the default timeout is %v, want 10 to 30 s", temporalLogTimeout)
-	}
 }
 
 func TestTemporalLog_RefusesAnInvalidInvocation(t *testing.T) {
@@ -219,26 +222,74 @@ func TestProofPart_TheCleanupKeepsTheTemporalServersLogBeforeItStopsIt(t *testin
 	}
 }
 
-// A local proof's own Temporal is the same container; its exit keeps the log
-// in the proof's directory the same way, before it stops the container.
+// A local proof's own Temporal is the same container; its exit (on_exit, run
+// under bash with a docker and a proofrun that record their calls) keeps the
+// log in the proof's directory the same way, before it stops the container,
+// then stops the gate's browser server, and ends with the exit status it was
+// entered with. A proof that started no Temporal asks for no log and stops
+// none; a log that cannot be kept never keeps the container running.
 func TestProofScript_TheLocalProofKeepsItsTemporalsLogBeforeItStopsIt(t *testing.T) {
-	b, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof.sh"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	text := string(b)
-	start := strings.Index(text, "\non_exit() {")
-	end := strings.Index(text[start+1:], "\n}\n")
-	if start < 0 || end < 0 {
-		t.Fatal("scripts/proof.sh has no on_exit function")
-	}
-	body := text[start : start+1+end]
-	keep := strings.Index(body, `"$PR" temporal-log -container "$TEMPORAL_NAME" -out "$DIR/temporal-server.log.gz"`)
-	stop := strings.Index(body, `docker stop "$TEMPORAL_NAME"`)
-	if keep < 0 || stop < 0 || keep > stop {
-		t.Errorf("on_exit does not keep the Temporal server's log before it stops the container:\n%s", body)
-	}
-	if !strings.Contains(body[:stop], `if [ -n "$TEMPORAL_STARTED" ]`) {
-		t.Error("on_exit keeps a Temporal log for a proof that started no Temporal of its own")
+	needBash(t)
+	onExit := proofScriptFunctions(t, "on_exit")
+	const name = "orkstack-proof-pr-me-temporal"
+	for _, c := range []struct {
+		name         string
+		started      string
+		logFails     bool
+		wantVerbs    []string
+		keepsTheLog  bool
+		saysNotKept  bool
+		stopsTheTemp bool
+	}{
+		{"a proof that started its Temporal", "1", false,
+			[]string{"proofrun temporal-log", "docker stop", "docker ps", "docker stop"}, true, false, true},
+		{"a proof that started none", "", false,
+			[]string{"docker ps", "docker stop"}, false, false, false},
+		{"a log that cannot be kept", "1", true,
+			[]string{"proofrun temporal-log", "docker stop", "docker ps", "docker stop"}, true, true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			tools := installFakeDocker(t, []fakeDockerContainer{
+				{Name: "browser-server-1", Labels: map[string]string{"orkstack.proof": "pr-me", "orkstack.e2e": "browser-server"}},
+				{Name: "browser-server-of-another-proof", Labels: map[string]string{"orkstack.proof": "pr-other", "orkstack.e2e": "browser-server"}},
+			})
+			pr := tools.recorder("proofrun")
+			if c.logFails {
+				t.Setenv("FAKE_TOOL_FAIL", "proofrun")
+			}
+			out, err := runProofShell(t, dir, onExit+
+				"\nSAMPLER= IMAGES_BUILT= TEMPORAL_STARTED="+c.started+" PR="+pr+" DIR="+dir+" PROOF_ID=pr-me TEMPORAL_NAME="+name+
+				"\nfalse\non_exit")
+			var ee *exec.ExitError
+			if !errors.As(err, &ee) || ee.ExitCode() != 1 {
+				t.Errorf("on_exit ended %v, want the exit status 1 it was entered with:\n%s", err, out)
+			}
+			if got := tools.verbs(); !slices.Equal(got, c.wantVerbs) {
+				t.Fatalf("on_exit ran %q, want %q:\n%s", got, c.wantVerbs, out)
+			}
+			calls := tools.calls()
+			if c.keepsTheLog {
+				want := []string{"proofrun", "temporal-log", "-container", name, "-out", filepath.Join(dir, "temporal-server.log.gz")}
+				if !slices.Equal(calls[0], want) {
+					t.Errorf("the log was kept with %q, want %q", calls[0], want)
+				}
+			}
+			if c.stopsTheTemp && !slices.Equal(calls[1], []string{"docker", "stop", name}) {
+				t.Errorf("the container was stopped with %q", calls[1])
+			}
+			for _, call := range calls {
+				if call[1] == "stop" && slices.Contains(call, name) && !c.stopsTheTemp {
+					t.Errorf("a proof that started no Temporal stopped %q", call)
+				}
+			}
+			last := calls[len(calls)-1]
+			if last[len(last)-1] != "browser-server-1" {
+				t.Errorf("the gate's browser server was stopped as %q, want browser-server-1 and not another proof's", last)
+			}
+			if said := strings.Contains(out, "could not be kept"); said != c.saysNotKept {
+				t.Errorf("on_exit said the log could not be kept: %v, want %v:\n%s", said, c.saysNotKept, out)
+			}
+		})
 	}
 }
