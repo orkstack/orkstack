@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -97,9 +99,19 @@ func TestProofScript_TheNightlyTierRunsTheRaceRepeatAndTheFuzzLaneAlone(t *testi
 	if len(gates) != 2 || !strings.HasPrefix(gates[0], "race-repeat\tpass\t") || !strings.HasPrefix(gates[1], "fuzz\tpass\t") {
 		t.Errorf("gates.tsv = %q, want race-repeat then fuzz, both passing", gates)
 	}
+	// With FUZZ_BUDGET unset the lane gets the script's own default, read from
+	// the copy that ran, so a change of the default needs no change here.
+	script, err := os.ReadFile(filepath.Join(r.root, "scripts", "proof.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := proofShBudget.FindSubmatch(script)
+	if m == nil {
+		t.Fatal(`scripts/proof.sh has no FUZZ_BUDGET="${FUZZ_BUDGET:-<budget>}" default`)
+	}
 	want := []string{
 		"unit -race -short -count 3 -out proof/lanes-pass " + racePackagesOfTheRepeat,
-		"fuzz -out proof/lanes-pass -budget 105m",
+		"fuzz -out proof/lanes-pass -budget " + string(m[1]),
 	}
 	if calls := r.proofrunCalls(); strings.Join(calls, "\n") != strings.Join(want, "\n") {
 		t.Errorf("proofrun was asked for\n%s\nwant\n%s", strings.Join(calls, "\n"), strings.Join(want, "\n"))
