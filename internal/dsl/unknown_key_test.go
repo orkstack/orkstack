@@ -355,7 +355,9 @@ func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 // aliases of an anchor of a thousand entries is a million visits
 // otherwise). The cost is the CPU time of the calling thread (threadCPU),
 // which a host loaded by other processes cannot move; the answer is the same
-// refusal a small document gets.
+// refusal a small document gets. It costs 7 to 12 ms (80 ms under the race
+// detector); walking the anchor at each alias costs over a second, ten times
+// the bound.
 func TestUnknownKey_ADocumentOfManyAliasesIsRefusedWithinACPUBound(t *testing.T) {
 	const n = 1000
 	var b strings.Builder
@@ -386,7 +388,7 @@ func TestUnknownKey_ADocumentOfManyAliasesIsRefusedWithinACPUBound(t *testing.T)
 		t.Fatalf("Compile = %v, want the unknown key bogus at line 4 named at the top level", err)
 	}
 	t.Logf("%d aliases of an anchor of %d entries: refused in %v of %s", n, n, cost, clock)
-	if bound := 250 * time.Millisecond * time.Duration(raceSlowdown); cost > bound {
+	if bound := 100 * time.Millisecond * time.Duration(raceSlowdown); cost > bound {
 		t.Errorf("refusing a document of %d aliases of an anchor of %d entries took %v of %s, want at most %v: "+
 			"an anchor is walked again at each of its aliases", n, n, cost, clock, bound)
 	}
