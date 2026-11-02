@@ -2,8 +2,10 @@ package dsl_test
 
 import (
 	"errors"
+	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/orkstack/orkstack/internal/dsl"
 )
@@ -139,6 +141,58 @@ func TestUnknownKey_NamesTheKeyWhereItStandsAndTheDocument(t *testing.T) {
 			wantPrefix:  `line 5: unknown key "feilds" in ops.get of the activity interface; allowed: `,
 			wantAllowed: "fields",
 		},
+		// Every other level an author writes keys at, once each: a level whose
+		// decoder refusal is not reworded (a nested type the walk cannot read)
+		// would show the decoder's own sentence here. A level added to a
+		// document adds a case.
+		{
+			name:        "a key of a task's await",
+			parse:       compile,
+			source:      orkflow + "tasks:\n  - id: a\n    await:\n      timout_seconds: 60\n",
+			wantField:   "tasks[0].await.timout_seconds",
+			wantPrefix:  `line 7: unknown key "timout_seconds" in tasks[0].await of the Orkflow; allowed: `,
+			wantAllowed: "timeout_seconds",
+		},
+		{
+			name:        "a key of a task's cache",
+			parse:       compile,
+			source:      orkflow + "tasks:\n  - id: a\n    uses: shell\n    cache:\n      enabled: true\n      ttl_second: 60\n",
+			wantField:   "tasks[0].cache.ttl_second",
+			wantPrefix:  `line 9: unknown key "ttl_second" in tasks[0].cache of the Orkflow; allowed: `,
+			wantAllowed: "ttl_seconds",
+		},
+		{
+			name:        "a key of a task's each",
+			parse:       compile,
+			source:      orkflow + "tasks:\n  - id: a\n    uses: shell\n    each:\n      over: x\n      max_item: 3\n",
+			wantField:   "tasks[0].each.max_item",
+			wantPrefix:  `line 9: unknown key "max_item" in tasks[0].each of the Orkflow; allowed: `,
+			wantAllowed: "max_items",
+		},
+		{
+			name:        "a key of a task's resources",
+			parse:       compile,
+			source:      orkflow + "tasks:\n  - id: a\n    uses: shell\n    resources:\n      mem: 1Gi\n",
+			wantField:   "tasks[0].resources.mem",
+			wantPrefix:  `line 8: unknown key "mem" in tasks[0].resources of the Orkflow; allowed: `,
+			wantAllowed: "memory",
+		},
+		{
+			name:        "a key of an interface value",
+			parse:       parseInterface,
+			source:      iface + "values:\n  a:\n    type: string\n    pattern: x\n",
+			wantField:   "values.a.pattern",
+			wantPrefix:  `line 6: unknown key "pattern" in values.a of the activity interface; allowed: `,
+			wantAllowed: "required",
+		},
+		{
+			name:        "a key of an op's field",
+			parse:       parseInterface,
+			source:      iface + "ops:\n  get:\n    fields:\n      a:\n        type: string\n        pattern: x\n",
+			wantField:   "ops.get.fields.a.pattern",
+			wantPrefix:  `line 8: unknown key "pattern" in ops.get.fields.a of the activity interface; allowed: `,
+			wantAllowed: "required",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -198,10 +252,13 @@ func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 		source    string
 		wantField string
 		// want is the whole refusal when wantAllowed is empty, and the
-		// sentence up to the allowed keys when it is not.
-		want        string
-		wantAllowed string
-		absent      string // what the refusal must not say
+		// sentence up to the allowed keys when it is not. A refusal that is
+		// the decoder's own, in its own words, is held to wantFragments
+		// instead: what it says about where and what, not how.
+		want          string
+		wantAllowed   string
+		wantFragments []string
+		absent        string // what the refusal must not say
 	}{
 		{
 			name: "an alias used as a key, resolving to an unknown name",
@@ -213,9 +270,10 @@ func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 			absent:      "abc",
 		},
 		{
-			name:   "a null key yaml.v3 ignores, beside a value of the wrong type",
-			source: orkflow + "tasks:\n  - id: a\n    uses: shell\n    ~: x\n    timeout_seconds: abc\n",
-			want:   "parse yaml: yaml: unmarshal errors:\n  line 8: cannot unmarshal !!str `abc` into int32",
+			name:          "a null key yaml.v3 ignores, beside a value of the wrong type",
+			source:        orkflow + "tasks:\n  - id: a\n    uses: shell\n    ~: x\n    timeout_seconds: abc\n",
+			wantFragments: []string{"line 8", "abc"},
+			absent:        "unknown key",
 		},
 		{
 			name: "an unknown key delivered by a merge",
@@ -251,8 +309,13 @@ func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 				t.Fatal("the document compiled")
 			}
 			message := err.Error()
-			if tc.wantAllowed == "" && message != tc.want {
+			if tc.wantAllowed == "" && tc.wantFragments == nil && message != tc.want {
 				t.Fatalf("error = %q\nwant %q", message, tc.want)
+			}
+			for _, fragment := range tc.wantFragments {
+				if !strings.Contains(message, fragment) {
+					t.Errorf("error %q does not say %q", message, fragment)
+				}
 			}
 			if tc.wantAllowed != "" {
 				rest, ok := strings.CutPrefix(message, tc.want)
@@ -282,5 +345,49 @@ func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 				t.Errorf("field = %q, want %q", validation.Field, tc.wantField)
 			}
 		})
+	}
+}
+
+// A document of many aliases of a large anchor is refused for its unknown key
+// at a cost that follows its size, not its aliases times the anchor: Compile
+// words the refusal by walking the document against its schema, and an anchor
+// reached through each of its aliases must be walked once (a thousand
+// aliases of an anchor of a thousand entries is a million visits
+// otherwise). The cost is the CPU time of the calling thread (threadCPU),
+// which a host loaded by other processes cannot move; the answer is the same
+// refusal a small document gets.
+func TestUnknownKey_ADocumentOfManyAliasesIsRefusedWithinACPUBound(t *testing.T) {
+	const n = 1000
+	var b strings.Builder
+	b.WriteString("apiVersion: orkstack/v1\nkind: Orkflow\nname: aliases\nbogus: 1\n")
+	b.WriteString("inputs:\n  s: &s {name: a, source: \"env:X\"}\n  t: &t\n    id: x\n    id: y\n    secrets:\n")
+	for range n {
+		b.WriteString("      - *s\n")
+	}
+	b.WriteString("tasks:\n")
+	for range n {
+		b.WriteString("  - *t\n")
+	}
+	source := []byte(b.String())
+
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	startCPU, cpu := threadCPU()
+	startWall := time.Now()
+	_, err := dsl.Compile(source)
+	cost, clock := time.Since(startWall), "wall clock"
+	if end, ok := threadCPU(); cpu && ok {
+		cost, clock = end-startCPU, "thread CPU time"
+	}
+
+	var validation *dsl.ValidationError
+	if !errors.As(err, &validation) || validation.Field != "bogus" ||
+		!strings.HasPrefix(err.Error(), `line 4: unknown key "bogus" at the top level of the Orkflow`) {
+		t.Fatalf("Compile = %v, want the unknown key bogus at line 4 named at the top level", err)
+	}
+	t.Logf("%d aliases of an anchor of %d entries: refused in %v of %s", n, n, cost, clock)
+	if bound := 250 * time.Millisecond * time.Duration(raceSlowdown); cost > bound {
+		t.Errorf("refusing a document of %d aliases of an anchor of %d entries took %v of %s, want at most %v: "+
+			"an anchor is walked again at each of its aliases", n, n, cost, clock, bound)
 	}
 }
