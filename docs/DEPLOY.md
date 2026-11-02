@@ -86,6 +86,12 @@ needs `ORK_S3_*` either way.
   wearing the same address.
 - **`ORK_HTTP_ADDR` is the one variable that must differ** when replicas share
   a host. On separate hosts it does not have to.
+- **One time zone database.** A stats series' day and hour boundaries are
+  drawn from the engine's zone database (`docs/STATS.md`, "A series"): the copy
+  linked into the release binaries, or the host's own zoneinfo, which Go reads
+  first when it has one. Replicas of one image agree; replicas on hosts whose
+  zone databases differ can draw a zone's boundaries differently wherever the
+  two versions disagree about its rules.
 - **No sticky sessions, no leader.** `GetRun`, `ListRuns`, `StreamEvents` and
   `/ws/runs/{id}` are answered from Temporal, so any replica serves any run —
   inside the namespace the request names. A run id addresses a run within a
