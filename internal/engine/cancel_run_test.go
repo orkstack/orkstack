@@ -3,6 +3,7 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -16,12 +17,64 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 )
 
+// cancelClock is the clock a CancelRun under test runs its retry on. Nothing
+// waits on it: a spacing is recorded and answered at once (or, held, never,
+// so the test ends the wait itself), and the retry budget ends when the test
+// says, as a deadline does, not after a stretch of wall clock.
+type cancelClock struct {
+	mu    sync.Mutex
+	waits []time.Duration
+	// hold makes a wait never fire; onWait, when set, runs as one begins.
+	hold   bool
+	onWait func()
+	spend  context.CancelCauseFunc
+}
+
+func (c *cancelClock) bound(parent context.Context, _ time.Duration) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancelCause(parent)
+	c.mu.Lock()
+	c.spend = cancel
+	c.mu.Unlock()
+	return ctx, func() { cancel(context.Canceled) }
+}
+
+func (c *cancelClock) wait(interval time.Duration) <-chan time.Time {
+	c.mu.Lock()
+	c.waits = append(c.waits, interval)
+	hold, onWait := c.hold, c.onWait
+	c.mu.Unlock()
+	if onWait != nil {
+		onWait()
+	}
+	if hold {
+		return nil
+	}
+	fired := make(chan time.Time, 1)
+	fired <- time.Time{}
+	return fired
+}
+
+// spendBudget ends the retry budget the way its deadline would.
+func (c *cancelClock) spendBudget() {
+	c.mu.Lock()
+	spend := c.spend
+	c.mu.Unlock()
+	spend(context.DeadlineExceeded)
+}
+
+func (c *cancelClock) spacings() []time.Duration {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]time.Duration(nil), c.waits...)
+}
+
 // cancelClient records the two ways CancelRun asks the cluster for a
 // cancellation: the SDK's CancelWorkflow, and the service's own request,
 // which answers with each of refusals in turn and then success.
 type cancelClient struct {
 	client.Client
 	service  *cancelService
+	clock    *cancelClock
 	canceled []string
 }
 
@@ -32,17 +85,34 @@ func (c *cancelClient) CancelWorkflow(_ context.Context, workflowID, _ string) e
 
 func (c *cancelClient) WorkflowService() workflowservice.WorkflowServiceClient { return c.service }
 
+// starter is a starter over the fake cluster, on the fake's clock.
+func (c *cancelClient) starter() *engine.TemporalStarter {
+	c.clock = &cancelClock{}
+	return engine.NewTemporalStarter(c, "").WithClusterIdentity("ork-main", "engine-a").
+		WithCancelClockForTest(c.clock.bound, c.clock.wait)
+}
+
 type cancelService struct {
 	workflowservice.WorkflowServiceClient
 	refusals []error
 	// endless, when set, is every answer once refusals are spent; hang, when
 	// set, makes the call after them wait out its context instead, answering
-	// as the SDK does for a call whose context ended.
+	// as the SDK does for a call whose context ended: its deadline, or its
+	// cancellation, by the cause.
 	endless  error
 	hang     bool
 	onCall   func()
 	requests []*workflowservice.RequestCancelWorkflowExecutionRequest
 }
+
+// runaway is how many requests a test tolerates before it ends the retry
+// itself, so a CancelRun that ignored its budget fails the test rather than
+// never returning.
+const runaway = 100
+
+// hangGuard is how long a hanging call waits for its context before the fake
+// gives up on it. It only bounds a failing test.
+const hangGuard = 10 * time.Second
 
 func (s *cancelService) RequestCancelWorkflowExecution(
 	ctx context.Context,
@@ -53,6 +123,9 @@ func (s *cancelService) RequestCancelWorkflowExecution(
 	if s.onCall != nil {
 		s.onCall()
 	}
+	if len(s.requests) > runaway {
+		return nil, errors.New("the retry went on past any budget")
+	}
 	if len(s.refusals) > 0 {
 		err := s.refusals[0]
 		s.refusals = s.refusals[1:]
@@ -62,21 +135,27 @@ func (s *cancelService) RequestCancelWorkflowExecution(
 		return nil, s.endless
 	}
 	if s.hang {
-		<-ctx.Done()
-		if errors.Is(ctx.Err(), context.Canceled) {
-			return nil, serviceerror.NewCanceled(ctx.Err().Error())
+		// A call that its context never ends is a CancelRun that lost its
+		// budget: fail it after a stretch no passing run waits for (this
+		// select only ever leaves by ctx.Done() when the test passes).
+		select {
+		case <-ctx.Done():
+		case <-time.After(hangGuard):
+			return nil, errors.New("the call was never ended by its context")
 		}
-		return nil, serviceerror.NewDeadlineExceeded(ctx.Err().Error())
+		if errors.Is(context.Cause(ctx), context.DeadlineExceeded) {
+			return nil, serviceerror.NewDeadlineExceeded(ctx.Err().Error())
+		}
+		return nil, serviceerror.NewCanceled(ctx.Err().Error())
 	}
 	return &workflowservice.RequestCancelWorkflowExecutionResponse{}, nil
 }
 
 // newCancelStarter is a starter over a fake cluster answering refusals in
-// turn, asking again 1 ms apart for at most 200 ms.
+// turn, on a clock that waits for nothing.
 func newCancelStarter(refusals ...error) (*engine.TemporalStarter, *cancelClient) {
 	fake := &cancelClient{service: &cancelService{refusals: refusals}}
-	return engine.NewTemporalStarter(fake, "").WithClusterIdentity("ork-main", "engine-a").
-		WithCancelRetryForTest(time.Millisecond, 200*time.Millisecond), fake
+	return fake.starter(), fake
 }
 
 // A principal travels in the cancellation request itself, on the namespace
@@ -136,31 +215,41 @@ func TestCancelRun_RefusesAPrincipalItCannotRecord(t *testing.T) {
 // A cluster that refuses for a moment — unavailable, rate-limiting, aborting
 // the call — is asked again under the one request id it dedupes on, until it
 // accepts or the budget is spent; any other refusal is the answer at once.
+// Between two tries the starter backs off, and stops backing off at a cap.
 func TestCancelRun_AsksAgainOnlyWhileTheRefusalIsTransient(t *testing.T) {
 	unavailable := serviceerror.NewUnavailable("frontend restarting")
 	tests := []struct {
 		name     string
 		refusals []error
 		endless  error
-		wantSent int // 0: more than one, however many the budget held
+		// spendOn is the call during which the retry budget ends, 0 for
+		// none: the cluster keeps refusing until it does.
+		spendOn  int
+		wantSent int
 		wantErr  bool
 	}{
-		{"unavailable twice, then accepted", []error{unavailable, unavailable}, nil, 3, false},
-		{"rate-limited, then accepted", []error{serviceerror.NewResourceExhausted(0, "busy")}, nil, 2, false},
-		{"aborted, then accepted", []error{serviceerror.NewAborted("try again")}, nil, 2, false},
-		{"unavailable until the budget is spent", nil, unavailable, 0, true},
-		{"not found is final", []error{serviceerror.NewNotFound("workflow execution already completed")}, nil, 1, true},
+		{name: "unavailable twice, then accepted", refusals: []error{unavailable, unavailable}, wantSent: 3},
+		{name: "rate-limited, then accepted", refusals: []error{serviceerror.NewResourceExhausted(0, "busy")}, wantSent: 2},
+		{name: "aborted, then accepted", refusals: []error{serviceerror.NewAborted("try again")}, wantSent: 2},
+		{name: "unavailable until the budget is spent", endless: unavailable, spendOn: 8, wantSent: 8, wantErr: true},
+		{name: "not found is final", refusals: []error{serviceerror.NewNotFound("workflow execution already completed")}, wantSent: 1, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			starter, fake := newCancelStarter(tt.refusals...)
 			fake.service.endless = tt.endless
+			if tt.spendOn > 0 {
+				fake.service.onCall = func() {
+					if len(fake.service.requests) == tt.spendOn {
+						fake.clock.spendBudget()
+					}
+				}
+			}
 			err := starter.CancelRun(context.Background(), "ork-1", engine.CancelRequest{Principal: "dana@acme"})
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("CancelRun = %v, want error %t", err, tt.wantErr)
 			}
-			sent := len(fake.service.requests)
-			if (tt.wantSent > 0 && sent != tt.wantSent) || (tt.wantSent == 0 && sent < 2) {
+			if sent := len(fake.service.requests); sent != tt.wantSent {
 				t.Fatalf("sent %d requests, want %d", sent, tt.wantSent)
 			}
 			for _, request := range fake.service.requests[1:] {
@@ -175,26 +264,58 @@ func TestCancelRun_AsksAgainOnlyWhileTheRefusalIsTransient(t *testing.T) {
 					t.Fatalf("a spent budget answered %v, want the cluster's last refusal", err)
 				}
 			}
+			requireBackoff(t, fake.clock.spacings(), tt.endless != nil)
 		})
+	}
+}
+
+// requireBackoff holds the spacings between tries to the shape the starter
+// promises: each waits, none shrinks, the second is longer than the first,
+// and — given enough tries to reach it — the spacing stops growing.
+func requireBackoff(t *testing.T, spacings []time.Duration, capped bool) {
+	t.Helper()
+	for i, spacing := range spacings {
+		if spacing <= 0 || (i > 0 && spacing < spacings[i-1]) {
+			t.Fatalf("spacings %v: try %d waits %s, want a positive wait no shorter than the one before", spacings, i, spacing)
+		}
+	}
+	if len(spacings) >= 2 && spacings[1] <= spacings[0] {
+		t.Fatalf("spacings %v: the second wait does not back off from the first", spacings)
+	}
+	if capped && (len(spacings) < 3 || spacings[len(spacings)-1] != spacings[len(spacings)-2]) {
+		t.Fatalf("spacings %v: want the spacing to stop growing at a cap", spacings)
 	}
 }
 
 // A caller that gives up while the starter waits to ask again is answered
 // that it gave up — not that the cluster was unavailable, which would tell
-// it to ask again.
+// it to ask again. The caller may give up during a call or while the starter
+// waits to ask again.
 func TestCancelRun_ACallerThatGivesUpIsToldSo(t *testing.T) {
-	fake := &cancelClient{service: &cancelService{endless: serviceerror.NewUnavailable("frontend restarting")}}
-	starter := engine.NewTemporalStarter(fake, "").WithClusterIdentity("ork-main", "engine-a").
-		WithCancelRetryForTest(time.Hour, time.Hour)
-	ctx, cancel := context.WithCancel(context.Background())
-	fake.service.onCall = cancel
-	err := starter.CancelRun(ctx, "ork-1", engine.CancelRequest{Principal: "dana@acme"})
-	var refused *serviceerror.Unavailable
-	if !errors.Is(err, context.Canceled) || errors.As(err, &refused) {
-		t.Fatalf("CancelRun = %v, want the caller's cancellation and not the cluster's refusal", err)
-	}
-	if len(fake.service.requests) != 1 {
-		t.Fatalf("sent %d requests after the caller gave up, want 1", len(fake.service.requests))
+	for _, tt := range []struct {
+		name string
+		// arm makes the caller give up at the point under test.
+		arm func(fake *cancelClient, giveUp context.CancelFunc)
+	}{
+		{"during a call", func(fake *cancelClient, giveUp context.CancelFunc) { fake.service.onCall = giveUp }},
+		{"while waiting to ask again", func(fake *cancelClient, giveUp context.CancelFunc) {
+			fake.clock.hold, fake.clock.onWait = true, giveUp
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &cancelClient{service: &cancelService{endless: serviceerror.NewUnavailable("frontend restarting")}}
+			starter := fake.starter()
+			ctx, giveUp := context.WithCancel(context.Background())
+			tt.arm(fake, giveUp)
+			err := starter.CancelRun(ctx, "ork-1", engine.CancelRequest{Principal: "dana@acme"})
+			var refused *serviceerror.Unavailable
+			if !errors.Is(err, context.Canceled) || errors.As(err, &refused) {
+				t.Fatalf("CancelRun = %v, want the caller's cancellation and not the cluster's refusal", err)
+			}
+			if len(fake.service.requests) != 1 {
+				t.Fatalf("sent %d requests after the caller gave up, want 1", len(fake.service.requests))
+			}
+		})
 	}
 }
 
@@ -205,6 +326,12 @@ func TestCancelRun_AnswersForACallThatOutlivesItsContext(t *testing.T) {
 	t.Run("the budget ends under a call", func(t *testing.T) {
 		starter, fake := newCancelStarter(serviceerror.NewUnavailable("frontend restarting"))
 		fake.service.hang = true
+		// The first call is refused; the budget ends while the second hangs.
+		fake.service.onCall = func() {
+			if len(fake.service.requests) == 2 {
+				fake.clock.spendBudget()
+			}
+		}
 		err := starter.CancelRun(context.Background(), "ork-1", engine.CancelRequest{Principal: "dana@acme"})
 		var refused *serviceerror.Unavailable
 		if !errors.As(err, &refused) {
@@ -213,8 +340,7 @@ func TestCancelRun_AnswersForACallThatOutlivesItsContext(t *testing.T) {
 	})
 	t.Run("the caller gives up during a call", func(t *testing.T) {
 		fake := &cancelClient{service: &cancelService{hang: true}}
-		starter := engine.NewTemporalStarter(fake, "").WithClusterIdentity("ork-main", "engine-a").
-			WithCancelRetryForTest(time.Millisecond, time.Hour)
+		starter := fake.starter()
 		ctx, cancel := context.WithCancel(context.Background())
 		fake.service.onCall = cancel
 		err := starter.CancelRun(ctx, "ork-1", engine.CancelRequest{Principal: "dana@acme"})

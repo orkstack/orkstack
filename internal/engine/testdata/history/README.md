@@ -636,7 +636,7 @@ refused policy and never got past `prepare`.
 - recorder: `TestIntegration_RecordRetryLongInitialHistories`
   (`e1_gates_integration_test.go`), as above.
 
-`TestReplay_TheReplayerComparesNoPriorityAndNoRetryPolicy` is the premise of
+`TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy` is the premise of
 both pairs: `run-pin-creation-timeout-legacy-v1.json`, recorded with no
 priority on any activity, replays clean against code that sends every task and
 creation request with a fairness key and another retry policy, and a renamed

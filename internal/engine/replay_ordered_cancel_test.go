@@ -3,6 +3,7 @@ package engine_test
 import (
 	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	enumspb "go.temporal.io/api/enums/v1"
@@ -123,6 +124,13 @@ func TestOrderedCancelHistory_CatchesTheCancelsReordered(t *testing.T) {
 	err := replayAs(t, altered, runID)
 	if err == nil {
 		t.Fatalf("%s replayed with its timer cancels swapped: it does not pin their order", orderedCancelFixture)
+	}
+	// The replayer's nondeterminism code (TMPRL1100) is what says the
+	// replayed commands disagree with the recorded ones. Any other failure
+	// (a fixture that does not load, a workflow that errors) is a different
+	// fault, and would let this test pass while seeing nothing of the order.
+	if !strings.Contains(err.Error(), "TMPRL1100") {
+		t.Fatalf("%s with its timer cancels swapped failed with %v, want the replayer's nondeterminism error (TMPRL1100)", orderedCancelFixture, err)
 	}
 	t.Logf("swapped timer cancels rejected by the replayer, as they must be: %v", err)
 }

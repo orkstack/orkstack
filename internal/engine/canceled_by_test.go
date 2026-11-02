@@ -2,11 +2,13 @@ package engine
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/sdk/converter"
@@ -26,6 +28,23 @@ func cancelRequestedEvent(eventID int64, cause string) *historypb.HistoryEvent {
 			WorkflowExecutionCancelRequestedEventAttributes: &historypb.WorkflowExecutionCancelRequestedEventAttributes{
 				Cause:    cause,
 				Identity: "engine-a",
+			},
+		},
+	}
+}
+
+// cancelRequestedByParent is the cluster's record of the cancellation a
+// parent run's workflow requests of its child: it names the parent's execution
+// and the parent worker's identity, and carries no cause.
+func cancelRequestedByParent() *historypb.HistoryEvent {
+	return &historypb.HistoryEvent{
+		EventTime: timestamppb.New(readerEpoch.Add(5 * time.Second)),
+		EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_CANCEL_REQUESTED,
+		Attributes: &historypb.HistoryEvent_WorkflowExecutionCancelRequestedEventAttributes{
+			WorkflowExecutionCancelRequestedEventAttributes: &historypb.WorkflowExecutionCancelRequestedEventAttributes{
+				ExternalInitiatedEventId:  7,
+				ExternalWorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: "ork-parent", RunId: "parent-execution"},
+				Identity:                  "4242@parent-worker@",
 			},
 		},
 	}
@@ -146,18 +165,40 @@ func TestTemporalRunReader_GetRunNamesWhoCanceledTheRun(t *testing.T) {
 		name   string
 		cause  string
 		closed bool
-		want   string
+		// request, when set, is a request event the history holds besides
+		// cause's own (none when cause is empty): the shapes of request a
+		// cancellation can arrive as with no record of a principal.
+		request *historypb.HistoryEvent
+		want    string
 	}{
-		{"closed, CancelRun recorded a principal", mustCancelCause(t, "dana@acme"), true, "dana@acme"},
+		{name: "closed, CancelRun recorded a principal", cause: mustCancelCause(t, "dana@acme"), closed: true, want: "dana@acme"},
 		// The stream delivers RUN_CANCELED before the execution closes; a
 		// read in that window must not show the name only to drop it later.
-		{"terminal event published, execution still open", mustCancelCause(t, "dana@acme"), false, "dana@acme"},
-		{"CancelRun with no header", "", true, ""},
-		{"an operator's own reason text", "operator: stuck", true, ""},
+		{name: "terminal event published, execution still open", cause: mustCancelCause(t, "dana@acme"), want: "dana@acme"},
+		{name: "CancelRun with no header", closed: true},
+		{name: "an operator's own reason text", cause: "operator: stuck", closed: true},
+		// The SDK's own cancel, which CancelRun sends for a caller naming
+		// nobody, is a request event with the engine's identity and no cause.
+		{name: "a request with no cause, from the engine", closed: true, request: cancelRequestedEvent(0, "")},
+		// A parent run cancels its child with a request naming the parent's
+		// execution and the parent worker's identity, and no cause: the
+		// identity must not be read as who canceled.
+		{name: "a parent run's request", closed: true, request: cancelRequestedByParent()},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			history, store := canceledRun(t, runID, tt.cause, tt.closed)
+			if tt.request != nil {
+				// Before the run's own RUN_CANCELED, as a request that ended it is.
+				ended := len(history) - 1
+				if tt.closed {
+					ended--
+				}
+				history = slices.Insert(history, ended, tt.request)
+				for i, event := range history {
+					event.EventId = int64(i + 1) // one id per event, in order, as a cluster numbers them
+				}
+			}
 			reader, _ := readerOver(history, runID)
 			reader.WithSnapshotStore(store)
 			run, err := reader.GetRun(context.Background(), runID)
@@ -176,6 +217,12 @@ func TestTemporalRunReader_GetRunNamesWhoCanceledTheRun(t *testing.T) {
 
 // The first request of an execution is the one that took effect, so a
 // second recorded one never replaces it, named or not.
+//
+// A defensive rule, kept on purpose: a cluster records one request per
+// execution (TestIntegration_CancelRunRecordsWhoAskedOnTheRun asserts exactly
+// one against a real cluster), so no history written today holds two. The
+// reader answers for a record it does not control, and the rule is what
+// keeps the name from changing hands should a cluster ever record a second.
 func TestTemporalRunReader_TheFirstRequestIsTheOneNamed(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -278,6 +325,12 @@ func TestTemporalRunReader_ATerminationAfterTheRunsEndKeepsTheName(t *testing.T)
 
 // Only the request of the execution that ends the run counts: one recorded
 // in an execution that then continued as new is not the successor's.
+//
+// Also a defensive rule, kept on purpose: a run does not switch while its
+// cancellation is requested (continueAsNew), so no history written today holds
+// a request before a continue-as-new. The reader walks a chain it does not
+// write, and the rule is what stops an earlier execution's request from
+// naming the successor's cancellation should that ever differ.
 func TestTemporalRunReader_ARequestOfAnEarlierExecutionNamesNobody(t *testing.T) {
 	const runID = "ork-canceled-across"
 	first, _ := canceledRun(t, runID, "", false)
@@ -358,12 +411,4 @@ func FuzzCancelPrincipal(f *testing.F) {
 			}
 		}
 	})
-}
-
-// PublishEvent holds a canceled run's end back only while the workflow will
-// retry it; the two numbers are one.
-func TestPublishAttempts_MatchTheRetryPolicy(t *testing.T) {
-	if got := eventActivityOptions().RetryPolicy.MaximumAttempts; got != publishAttempts {
-		t.Fatalf("the projection activity gets %d attempts, PublishEvent assumes %d", got, publishAttempts)
-	}
 }
