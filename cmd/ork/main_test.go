@@ -158,16 +158,9 @@ func TestWorkerOptions_KeepSharedQueueEngineFromExecutingOrkerActivities(t *test
 		t.Fatal("run worker must disable registration aliases")
 	}
 
-	// The run worker carries the engine's own interceptors, without which a
-	// pin's creation request would carry no fairness key.
-	if len(runOptions.Interceptors) == 0 || len(runOptions.Interceptors) != len(engine.RunWorkerInterceptors()) {
-		t.Fatalf("run worker interceptors = %#v, want engine.RunWorkerInterceptors()", runOptions.Interceptors)
-	}
-	for i, ic := range engine.RunWorkerInterceptors() {
-		if fmt.Sprintf("%T", runOptions.Interceptors[i]) != fmt.Sprintf("%T", ic) {
-			t.Fatalf("run worker interceptor %d = %T, want %T", i, runOptions.Interceptors[i], ic)
-		}
-	}
+	// That the run worker carries the interceptors a pin's creation request
+	// needs for its fairness key is held by what they do:
+	// TestRunWorkerOptions_CarryAPlansFairnessToItsPinsCreationRequest.
 
 	eventOptions := eventWorkerOptions(config{})
 	if !eventOptions.DisableWorkflowWorker {
