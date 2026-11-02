@@ -83,6 +83,13 @@ type Executions struct {
 	Durations []time.Duration
 }
 
+// ErrSeriesInconsistent reports a series that does not fit the scan it was
+// folded from: edges out of order, edges that do not span the window, or an
+// index entry outside them. None of it can come from a request — the API
+// validates and builds the edges — so it is a fault in this process or the
+// store, and an API answers it as one rather than as a store outage.
+var ErrSeriesInconsistent = errors.New("the stats series does not fit the archive scan")
+
 // ErrNoRunArchive reports a stats question asked of a process with no run
 // archive wired. It is not "nothing finished": it is "this process cannot
 // tell", and the two need opposite reactions — look at the runs, or configure
@@ -474,6 +481,11 @@ type RunTally struct {
 	ByStatus map[string]int64
 	// ByOrkflow counts each orkflow's finished and failed runs.
 	ByOrkflow map[string]OrkflowTally
+	// ByBucket counts the same runs by status again, one map per bucket of a
+	// series, in the order of the edges the tally was asked for. It is nil
+	// for a tally asked for no series (TallyRuns), and every map is empty for
+	// a bucket nothing finished in.
+	ByBucket []map[string]int64
 }
 
 // Archive index statuses, as a key spells them.
@@ -507,16 +519,77 @@ func TallyRunIndex(entries []artifacts.RunIndexEntry) RunTally {
 		ByOrkflow: map[string]OrkflowTally{},
 	}
 	for _, entry := range entries {
-		status := artifacts.NormalizeRunStatus(entry.Status)
-		tally.ByStatus[status]++
-		per := tally.ByOrkflow[entry.Orkflow]
-		per.Total++
-		if status == StatusKeyFailed {
-			per.Failed++
-		}
-		tally.ByOrkflow[entry.Orkflow] = per
+		tally.add(entry)
 	}
 	return tally
+}
+
+// add counts one index entry into the window half of a tally and returns the
+// status it counted it under.
+func (t *RunTally) add(entry artifacts.RunIndexEntry) string {
+	status := artifacts.NormalizeRunStatus(entry.Status)
+	t.ByStatus[status]++
+	per := t.ByOrkflow[entry.Orkflow]
+	per.Total++
+	if status == StatusKeyFailed {
+		per.Failed++
+	}
+	t.ByOrkflow[entry.Orkflow] = per
+	return status
+}
+
+// tallyRunIndexSeries folds index entries into a tally AND a series, in one
+// pass: every entry is counted in the window, as TallyRunIndex counts it, and
+// again in the one bucket its time falls in. edges are the series' bounds,
+// ascending — bucket i is [edges[i], edges[i+1]) — so the buckets tile
+// [edges[0], edges[len-1]) and their counts sum to the window's exactly.
+//
+// An entry outside the edges is an error, not a run left out. The archive's
+// scan bounds every entry to the window (artifacts.RunQuery.Matches), so one
+// outside it is a store that answered loosely, and dropping it would draw a
+// series that no longer adds up to the totals printed beside it.
+func tallyRunIndexSeries(entries []artifacts.RunIndexEntry, edges []time.Time) (RunTally, error) {
+	if len(edges) < 2 {
+		return RunTally{}, fmt.Errorf("engine: a series needs at least two edges, got %d: %w",
+			len(edges), ErrSeriesInconsistent)
+	}
+	for i := 1; i < len(edges); i++ {
+		if !edges[i].After(edges[i-1]) {
+			return RunTally{}, fmt.Errorf("engine: series edge %d (%s) is not after edge %d (%s): %w",
+				i, edges[i].Format(time.RFC3339Nano), i-1, edges[i-1].Format(time.RFC3339Nano),
+				ErrSeriesInconsistent)
+		}
+	}
+	tally := TallyRunIndex(nil)
+	tally.ByBucket = make([]map[string]int64, len(edges)-1)
+	for i := range tally.ByBucket {
+		tally.ByBucket[i] = map[string]int64{}
+	}
+	for _, entry := range entries {
+		bucket, ok := BucketOf(edges, entry.Time)
+		if !ok {
+			return RunTally{}, fmt.Errorf(
+				"engine: the archive index returned run %s created at %s, outside the window "+
+					"[%s, %s) it was asked for: %w", entry.RunID, entry.Time.Format(time.RFC3339Nano),
+				edges[0].Format(time.RFC3339Nano), edges[len(edges)-1].Format(time.RFC3339Nano),
+				ErrSeriesInconsistent)
+		}
+		status := tally.add(entry)
+		tally.ByBucket[bucket][status]++
+	}
+	return tally, nil
+}
+
+// BucketOf is the index of the bucket of edges that holds at — the i with
+// edges[i] <= at < edges[i+1] — and false when at is outside them all. edges
+// must be ascending.
+func BucketOf(edges []time.Time, at time.Time) (int, bool) {
+	if len(edges) < 2 || at.Before(edges[0]) || !at.Before(edges[len(edges)-1]) {
+		return 0, false
+	}
+	// The first edge after at closes at's bucket.
+	closing := sort.Search(len(edges), func(i int) bool { return edges[i].After(at) })
+	return closing - 1, true
 }
 
 // TallyRuns counts the archived runs a query matches, reading INDEX KEYS ONLY.
@@ -546,6 +619,32 @@ func (a *RunArchiver) TallyRuns(ctx context.Context, q ArchiveQuery) (RunTally, 
 		return RunTally{}, err
 	}
 	return TallyRunIndex(entries), nil
+}
+
+// TallyRunSeries is TallyRuns with a series: the same keys-only scan, folded
+// once into the window's tally and into one tally per bucket of edges
+// (tallyRunIndexSeries). The query's window must be the edges' span; it is
+// passed separately so the scan is bounded by the same instants the buckets
+// tile, and an edge list that does not span it is refused before any read.
+func (a *RunArchiver) TallyRunSeries(ctx context.Context, q ArchiveQuery, edges []time.Time) (RunTally, error) {
+	if a == nil {
+		return RunTally{}, ErrNoRunArchive
+	}
+	if len(edges) < 2 || !edges[0].Equal(q.Since) || !edges[len(edges)-1].Equal(q.Until) {
+		return RunTally{}, fmt.Errorf("engine: a series must span exactly the window it tallies: %w",
+			ErrSeriesInconsistent)
+	}
+	entries, err := a.archive.ListRuns(ctx, artifacts.RunQuery{
+		Namespace: q.Namespace,
+		Orkflow:   q.OrkflowName,
+		Status:    archiveStatus(q.Status),
+		Since:     q.Since,
+		Until:     q.Until,
+	})
+	if err != nil {
+		return RunTally{}, err
+	}
+	return tallyRunIndexSeries(entries, edges)
 }
 
 // ListRunIndex is the failure breakdown's population: every FAILED index row
