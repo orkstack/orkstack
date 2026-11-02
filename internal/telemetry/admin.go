@@ -63,11 +63,21 @@ var defaultAdminBounds = adminBounds{
 	maxHeaderBytes:    adminMaxHeaderBytes,
 }
 
-// newAdminServer serves handler within bounds. Like the API listener it sets
-// no ReadTimeout and no WriteTimeout: a CPU profile or a trace is written
-// only once the seconds it was asked for have passed, and either deadline
-// would cut it.
+// newAdminServer serves handler within bounds, a bound left zero being the
+// listener's default, never unbounded. Like the API listener it sets no
+// ReadTimeout and no WriteTimeout: a CPU profile or a trace is written only
+// once the seconds it was asked for have passed, and either deadline would
+// cut it.
 func newAdminServer(handler http.Handler, bounds adminBounds) *http.Server {
+	if bounds.readHeaderTimeout == 0 {
+		bounds.readHeaderTimeout = defaultAdminBounds.readHeaderTimeout
+	}
+	if bounds.idleTimeout == 0 {
+		bounds.idleTimeout = defaultAdminBounds.idleTimeout
+	}
+	if bounds.maxHeaderBytes == 0 {
+		bounds.maxHeaderBytes = defaultAdminBounds.maxHeaderBytes
+	}
 	return &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: bounds.readHeaderTimeout,

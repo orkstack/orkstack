@@ -162,7 +162,8 @@ func TestStartAdmin_ClosesASlowHeaderAndAnIdleConnection(t *testing.T) {
 		t.Fatalf("startAdmin: %v", err)
 	}
 	defer func() { _ = stop(context.Background()) }()
-	dial := func() net.Conn {
+	dial := func(t *testing.T) net.Conn {
+		t.Helper()
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
 			t.Fatalf("dial %s: %v", addr, err)
@@ -173,7 +174,7 @@ func TestStartAdmin_ClosesASlowHeaderAndAnIdleConnection(t *testing.T) {
 
 	t.Run("a request whose headers never end", func(t *testing.T) {
 		start := time.Now()
-		conn := dial()
+		conn := dial(t)
 		if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\nX-Slow: ", HealthzPath, addr); err != nil {
 			t.Fatal(err)
 		}
@@ -181,7 +182,7 @@ func TestStartAdmin_ClosesASlowHeaderAndAnIdleConnection(t *testing.T) {
 	})
 
 	t.Run("a keep-alive connection left idle", func(t *testing.T) {
-		conn := dial()
+		conn := dial(t)
 		sent := time.Now()
 		if _, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: %s\r\n\r\n", HealthzPath, addr); err != nil {
 			t.Fatal(err)
@@ -217,6 +218,13 @@ func TestAdminServer_RunsWithEveryBoundSetAndNoWholeRequestDeadline(t *testing.T
 	server := newAdminServer(http.NotFoundHandler(), bounds)
 	if server.ReadTimeout != 0 || server.WriteTimeout != 0 {
 		t.Errorf("ReadTimeout = %s, WriteTimeout = %s; want neither", server.ReadTimeout, server.WriteTimeout)
+	}
+	// A bound left zero is the default, so no caller's slip unbounds the
+	// listener.
+	unset := newAdminServer(http.NotFoundHandler(), adminBounds{})
+	if unset.ReadHeaderTimeout <= 0 || unset.IdleTimeout <= 0 || unset.MaxHeaderBytes <= 0 {
+		t.Errorf("with no bounds given: ReadHeaderTimeout = %s, IdleTimeout = %s, MaxHeaderBytes = %d; want every bound set",
+			unset.ReadHeaderTimeout, unset.IdleTimeout, unset.MaxHeaderBytes)
 	}
 }
 
