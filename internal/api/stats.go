@@ -77,6 +77,15 @@ type RunIndexTallier interface {
 	TallyRuns(ctx context.Context, q engine.ArchiveQuery) (engine.RunTally, error)
 }
 
+// RunIndexSeriesTallier is the same keys-only scan folded into a series as
+// well, for a GetStats that names a bucket_width: one pass over the same keys,
+// counted into the window and into the one bucket each key's time falls in,
+// never one tally per bucket. It is asked for only when a series is, on
+// RunIndexTallier's terms: a seam a read needs is asserted, never assumed.
+type RunIndexSeriesTallier interface {
+	TallyRunSeries(ctx context.Context, q engine.ArchiveQuery, edges []time.Time) (engine.RunTally, error)
+}
+
 // RunIndexLister is the archive's keys-only listing: the index rows a
 // query matches, every field read out of the KEY. It is how the failure
 // breakdown learns WHICH runs failed before it reads any of them.
@@ -135,10 +144,28 @@ type statsKey struct {
 	lookbackSet bool
 }
 
+// statsCacheKey is GetStats' key: the window as sent, and the series as
+// sent. A series is part of the question — a day series and an hour series,
+// or one day series drawn in two zones, are different answers — so a key
+// without it would hand one caller another's buckets. The timezone is keyed
+// as sent too: "" and "UTC" are two keys for one answer, which costs one
+// recompute and can never cross two answers.
+type statsCacheKey struct {
+	statsKey
+	bucketWidth orkstackv1.StatsBucketWidth
+	timezone    string
+	bucketCount int32
+}
+
 // statsKeyFor is the key of one request, in one place, so the lookup and the
 // store can never disagree about what was asked.
-func statsKeyFor(namespace string, req *orkstackv1.GetStatsRequest) statsKey {
-	return windowKeyFor(namespace, req.GetSince(), req.GetUntil(), req.GetLookback())
+func statsKeyFor(namespace string, req *orkstackv1.GetStatsRequest) statsCacheKey {
+	return statsCacheKey{
+		statsKey:    windowKeyFor(namespace, req.GetSince(), req.GetUntil(), req.GetLookback()),
+		bucketWidth: req.GetBucketWidth(),
+		timezone:    req.GetTimezone(),
+		bucketCount: req.GetBucketCount(),
+	}
 }
 
 // windowKeyFor is the namespace-and-window half of a key, as sent. Both the
@@ -183,7 +210,7 @@ type StatsHandler struct {
 	ttl time.Duration
 
 	mu    sync.Mutex
-	cache map[statsKey]statsEntry
+	cache map[statsCacheKey]statsEntry
 	// breakdowns is GetFailureBreakdown's cache, under the same mu, TTL and
 	// bound: one whole answer per question, never a merge.
 	breakdowns map[breakdownKey]breakdownEntry
@@ -199,7 +226,7 @@ func NewStatsHandler(svc *Service, ttl time.Duration) *StatsHandler {
 	return &StatsHandler{
 		svc:        svc,
 		ttl:        ttl,
-		cache:      map[statsKey]statsEntry{},
+		cache:      map[statsCacheKey]statsEntry{},
 		breakdowns: map[breakdownKey]breakdownEntry{},
 		flakes:     map[flakeKey]flakeEntry{},
 		cacheStats: map[cacheStatsKey]cacheStatsEntry{},
@@ -222,13 +249,12 @@ func (h *StatsHandler) GetStats(
 	if err != nil {
 		return nil, err
 	}
-	// The window is resolved — and therefore VALIDATED — before the cache is
-	// consulted, for the same reason. A cache that answered first would let a
-	// refused window collect the previous caller's numbers: the two requests
-	// differ in a field the answer does not carry, and one of them is not a
-	// question.
-	window, err := h.windowOf(ns.GetName(),
-		req.Msg.GetSince(), req.Msg.GetUntil(), req.Msg.GetLookback())
+	// The window and the series are resolved — and therefore VALIDATED —
+	// before the cache is consulted, for the same reason. A cache that
+	// answered first would let a refused window collect the previous caller's
+	// numbers: the two requests differ in a field the answer does not carry,
+	// and one of them is not a question.
+	window, series, err := h.resolveStats(ns.GetName(), req.Msg)
 	if err != nil {
 		return nil, err
 	}
@@ -236,7 +262,7 @@ func (h *StatsHandler) GetStats(
 	if cached, ok := h.lookup(key); ok {
 		return connect.NewResponse(cached), nil
 	}
-	computed, err := h.compute(ctx, ns, window)
+	computed, err := h.compute(ctx, ns, window, series)
 	if err != nil {
 		return nil, err
 	}
@@ -299,6 +325,7 @@ func (h *StatsHandler) compute(
 	ctx context.Context,
 	ns *orkstackv1.Namespace,
 	window engine.StatsWindow,
+	series *statsSeries,
 ) (*orkstackv1.GetStatsResponse, error) {
 	binding, err := h.svc.binding(ns.GetName())
 	if err != nil {
@@ -309,28 +336,9 @@ func (h *StatsHandler) compute(
 			"this engine has no read model wired, so live runs could only be counted "+
 				"from its own memory — which would make every replica answer differently"))
 	}
-	// The seam is asked for, not assumed. An archive that cannot tally is an
-	// engine that cannot count a finished run, and a stats answer over live
-	// runs alone is not one.
-	tallier, ok := h.svc.archive.(RunIndexTallier)
-	if !ok || h.svc.archive == nil {
-		return nil, errNoArchive()
-	}
-
-	tally, err := tallier.TallyRuns(ctx, engine.ArchiveQuery{
-		Namespace: window.Namespace,
-		Since:     window.Since,
-		Until:     window.Until,
-	})
-	switch {
-	// A tallier that exists as a type but holds no store answers this rather
-	// than a total of zero. The two render identically and mean the opposite,
-	// and zero is the one a reader believes.
-	case errors.Is(err, engine.ErrNoRunArchive):
-		return nil, errNoArchive()
-	case err != nil:
-		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("count finished runs in namespace %q: %w", window.Namespace, err))
+	tally, err := h.tally(ctx, window, series)
+	if err != nil {
+		return nil, err
 	}
 	executions, err := binding.Reader.Executions(ctx, window)
 	if err != nil {
@@ -366,7 +374,72 @@ func (h *StatsHandler) compute(
 		response.P95Duration = durationpb.New(
 			engine.PercentileDuration(executions.Durations, 95))
 	}
+	if series != nil {
+		buckets, err := seriesBuckets(series, tally, executions.Running)
+		if err != nil {
+			return nil, err
+		}
+		response.Buckets = buckets
+		response.BucketWidth = series.width
+		response.Timezone = series.zoneName
+	}
 	return response, nil
+}
+
+// tally counts the window's finished runs from the archive index, and, for
+// a series, cuts the same count into its buckets.
+//
+// ONE scan either way. A series is the same keys folded into buckets as
+// they are counted into the window, so the buckets' finished counts sum to
+// the window's by construction rather than by two reads agreeing.
+func (h *StatsHandler) tally(
+	ctx context.Context,
+	window engine.StatsWindow,
+	series *statsSeries,
+) (engine.RunTally, error) {
+	// The seam is asked for, not assumed. An archive that cannot tally is an
+	// engine that cannot count a finished run, and a stats answer over live
+	// runs alone is not one.
+	tallier, ok := h.svc.archive.(RunIndexTallier)
+	if !ok || h.svc.archive == nil {
+		return engine.RunTally{}, errNoArchive()
+	}
+	query := engine.ArchiveQuery{
+		Namespace: window.Namespace,
+		Since:     window.Since,
+		Until:     window.Until,
+	}
+	var (
+		tally engine.RunTally
+		err   error
+	)
+	if series != nil {
+		seriesTallier, ok := h.svc.archive.(RunIndexSeriesTallier)
+		if !ok {
+			return engine.RunTally{}, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"this engine's run archive cannot count finished runs by bucket, so it "+
+					"cannot answer a series; ask for the window's totals alone, without a series"))
+		}
+		tally, err = seriesTallier.TallyRunSeries(ctx, query, series.edges)
+	} else {
+		tally, err = tallier.TallyRuns(ctx, query)
+	}
+	switch {
+	// A tallier that exists as a type but holds no store answers this rather
+	// than a total of zero. The two render identically and mean the opposite,
+	// and zero is the one a reader believes.
+	case errors.Is(err, engine.ErrNoRunArchive):
+		return engine.RunTally{}, errNoArchive()
+	// A series that does not fit its own scan is this process's fault, not
+	// the store's: retrying would draw the same wrong bars.
+	case errors.Is(err, engine.ErrSeriesInconsistent):
+		return engine.RunTally{}, seriesFault(fmt.Errorf("count finished runs in namespace %q by bucket: %w",
+			window.Namespace, err))
+	case err != nil:
+		return engine.RunTally{}, connect.NewError(connect.CodeUnavailable,
+			fmt.Errorf("count finished runs in namespace %q: %w", window.Namespace, err))
+	}
+	return tally, nil
 }
 
 // pools is the same report ListPools gives, degrading the same way.
@@ -482,7 +555,7 @@ func durationCoverageSince(since, now time.Time) time.Time {
 }
 
 // lookup returns a cached answer, or reports that there is none.
-func (h *StatsHandler) lookup(key statsKey) (*orkstackv1.GetStatsResponse, bool) {
+func (h *StatsHandler) lookup(key statsCacheKey) (*orkstackv1.GetStatsResponse, bool) {
 	if h.ttl <= 0 {
 		return nil, false
 	}
@@ -503,7 +576,7 @@ func (h *StatsHandler) lookup(key statsKey) (*orkstackv1.GetStatsResponse, bool)
 // back verbatim or not at all. It never merges a fresh half into a stale one,
 // which is the only way a cache could ever produce a set of numbers no
 // computation ever produced.
-func (h *StatsHandler) store(key statsKey, response *orkstackv1.GetStatsResponse) {
+func (h *StatsHandler) store(key statsCacheKey, response *orkstackv1.GetStatsResponse) {
 	if h.ttl <= 0 {
 		return
 	}

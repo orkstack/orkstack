@@ -122,7 +122,21 @@ type seededRun struct {
 // newStatsFixture wires a service the way `ork` does: a durable archive, a
 // cluster-backed reader, a namespace registry, and NOTHING answering from
 // process memory.
-func newStatsFixture(t *testing.T, at time.Time, namespaces ...string) *statsFixture {
+func newStatsFixture(t testing.TB, at time.Time, namespaces ...string) *statsFixture {
+	t.Helper()
+	return newStatsFixtureOver(t, at, nil, namespaces...)
+}
+
+// newStatsFixtureOver is newStatsFixture with the archive's store wrapped,
+// for a test about a store that behaves differently from a well-behaved one.
+// The wrapper sees every read and write the production archiver makes; a nil
+// wrap is the store as it is.
+func newStatsFixtureOver(
+	t testing.TB,
+	at time.Time,
+	wrap func(artifacts.RunArchive) artifacts.RunArchive,
+	namespaces ...string,
+) *statsFixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
 	if err != nil {
@@ -137,7 +151,10 @@ func newStatsFixture(t *testing.T, at time.Time, namespaces ...string) *statsFix
 	clock := newStatsClock(at)
 	reader := &fakeReader{executions: map[string]engine.Executions{}}
 	runs := engine.NewRunStore()
-	archive := bodyReadPanics{inner: store}
+	var archive artifacts.RunArchive = bodyReadPanics{inner: store}
+	if wrap != nil {
+		archive = wrap(archive)
+	}
 	svc := api.NewService(api.Config{
 		Reader:     reader,
 		Runs:       runs,

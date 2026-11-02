@@ -44,12 +44,20 @@ func NewID() (string, error) {
 // reads "Local" as the zone of whatever machine it runs on, so a schedule
 // created with it would fire at a different instant on each host that read it.
 func ValidTimezone(name string) error {
+	_, err := LoadTimezone(name)
+	return err
+}
+
+// LoadTimezone is ValidTimezone that also returns the zone, so a caller that
+// needs both loads the zone database once. Every OrkStack field that names a
+// zone is read through it — a schedule's spec.timezone and a stats series'
+// timezone — so the two can never accept different names.
+func LoadTimezone(name string) (*time.Location, error) {
 	if name == "" {
-		return errors.New("is empty")
+		return nil, errors.New("is empty")
 	}
 	if name == "Local" {
-		return errors.New(`"Local" is the zone of the machine that reads it, not a zone of the IANA database`)
+		return nil, errors.New(`"Local" is the zone of the machine that reads it, not a zone of the IANA database`)
 	}
-	_, err := time.LoadLocation(name)
-	return err
+	return time.LoadLocation(name)
 }
