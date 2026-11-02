@@ -13,12 +13,15 @@ import (
 
 	"connectrpc.com/connect"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/workflowservice/v1"
+	"go.temporal.io/sdk/client"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -138,6 +141,11 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 	// ---- every finished run is in the archive before anything is read ------
 	awaitArchived(ctx, t, artifactCfg, alpha, 4)
 	awaitArchived(ctx, t, artifactCfg, beta, 2)
+	// ...and closed in the cluster's index, which the durations half of the
+	// answer reads. The archive holding a run says nothing about whether the
+	// index has caught up with its close: a reading taken between the two
+	// sampled no duration on one replica and four on the other.
+	awaitClosedInIndex(ctx, t, temporalClient, 6)
 
 	// The slow run has to be genuinely live, or "runs currently running" is a
 	// claim about nothing.
@@ -276,6 +284,28 @@ func awaitArchived(
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("namespace %s has %d archived runs, want %d", namespace, last, want)
+}
+
+// awaitClosedInIndex waits until the cluster's index of executions lists at
+// least want closed runs in this test's partition, asking the cluster
+// directly rather than the surface under test.
+func awaitClosedInIndex(ctx context.Context, t *testing.T, c client.Client, want int64) {
+	t.Helper()
+	query := fmt.Sprintf("WorkflowType = %q AND ExecutionStatus != %q", engine.RunWorkflowType, "Running")
+	deadline := time.Now().Add(2 * time.Minute)
+	var last int64
+	for time.Now().Before(deadline) {
+		counted, err := c.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{Query: query})
+		if err != nil {
+			t.Fatalf("count the closed runs in the cluster's index: %v", err)
+		}
+		last = counted.GetCount()
+		if last >= want {
+			return
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("the cluster's index lists %d closed runs, want %d", last, want)
 }
 
 func assertStatsCounts(
