@@ -71,9 +71,12 @@ test('with the default inputs a file the build does not read leaves the hash alo
 		mkdirSync(`${repo}/ui/src`, { recursive: true });
 		writeFileSync(`${repo}/ui/src/app.txt`, 'one');
 		const before = buildInputsHash(`${repo}/ui`);
-		mkdirSync(`${repo}/ui/e2e`, { recursive: true });
-		writeFileSync(`${repo}/ui/e2e/some.spec.ts`, 'two');
-		writeFileSync(`${repo}/ui/README.md`, 'three');
+		// The build's own output and the installed packages most of all: a hash
+		// over them would change with every build and every install.
+		for (const file of ['e2e/some.spec.ts', 'README.md', 'build/index.html', 'node_modules/pkg/index.js']) {
+			mkdirSync(`${repo}/ui/${file.slice(0, file.lastIndexOf('/') + 1)}`, { recursive: true });
+			writeFileSync(`${repo}/ui/${file}`, file);
+		}
 		expect(buildInputsHash(`${repo}/ui`)).toBe(before);
 	} finally {
 		rmSync(repo, { recursive: true, force: true });
