@@ -204,10 +204,6 @@
 		}
 	}
 	.btn:disabled,
-	.btn-quiet[aria-disabled='true'] {
-		background-color: transparent;
-		border-color: transparent;
-	}
 	.btn[aria-disabled='true'] {
 		background-color: var(--color-surface-2);
 		border-color: var(--color-line-2);
@@ -215,6 +211,10 @@
 		box-shadow: none;
 		cursor: not-allowed;
 		transform: none;
+	}
+	.btn-quiet[aria-disabled='true'] {
+		background-color: transparent;
+		border-color: transparent;
 	}
 	.btn-primary {
 		border-color: var(--color-accent-edge);
