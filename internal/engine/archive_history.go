@@ -103,6 +103,9 @@ func (r *TemporalRunReader) loadRecordForArchive(ctx context.Context, runID stri
 		return nil
 	}
 	for i, uri := range []string{projection.snapshotURI, projection.priorSnapshotURI} {
+		if uri == "" {
+			continue
+		}
 		run, err := r.readSnapshotAt(ctx, runID, uri, projection)
 		if err == nil {
 			projection.run = mergeRunSnapshot(projection.run, run)
@@ -156,6 +159,10 @@ func settleRunForArchive(projection *runProjection, st *scanState, status orksta
 			Message:  st.recordLoss,
 			Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
 		}
+		return
+	}
+	if run.Error.Details != "" {
+		run.Error.Details += "; " + st.recordLoss
 		return
 	}
 	run.Error.Details = st.recordLoss

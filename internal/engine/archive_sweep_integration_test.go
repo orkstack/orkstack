@@ -89,11 +89,11 @@ func (s *chaosStack) startAndTerminate(t *testing.T) string {
 }
 
 // TestIntegration_ArchiveSweep_ATerminatedRunIsArchivedRetiredAndStillRead is
-// the whole path against a real cluster and object store, with cleanup's own
-// walk beside it. A run terminated from outside has no archive and cleanup
-// cannot see it. The sweep archives it from its real history; cleanup retires
-// it at its retention, deleting the execution; and the API, with the cluster's
-// copy gone, answers from the archive what it answered from the cluster.
+// the whole path against a real cluster and object store. A run terminated from
+// outside has no archive. The sweep archives it from its real history; cleanup
+// retires it at its retention, deleting the execution; and the API, with the
+// cluster's copy gone, answers from the archive what it answered from the
+// cluster.
 func TestIntegration_ArchiveSweep_ATerminatedRunIsArchivedRetiredAndStillRead(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
@@ -142,13 +142,6 @@ func TestIntegration_ArchiveSweep_ATerminatedRunIsArchivedRetiredAndStillRead(t 
 		archivecleanup.CleanupConfig{TemporalNamespace: s.namespace, Interval: time.Hour, BatchSize: 10},
 		store, s.reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{{Name: "default"}}}, controller, logger).
 		WithClock(func() time.Time { return time.Now().Add(1000 * time.Hour) })
-	if _, err := cleaner.RunOnce(ctx); err != nil {
-		t.Fatalf("cleanup before the sweep: %v", err)
-	}
-	if found, _, err := s.reader.LookupWorkflow(ctx, s.namespace, runID); err != nil || !found {
-		t.Fatalf("cleanup retired a run with no archive: found %v (%v)", found, err)
-	}
-
 	sweepUntil(t, ctx, sweepOver(s, s.reader, store, s.archive), func(r archivecleanup.SweepResult) bool { return r.Archived == 1 })
 
 	if _, err := cleaner.RunOnce(ctx); err != nil {

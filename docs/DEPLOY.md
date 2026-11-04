@@ -1262,8 +1262,12 @@ is complete and two replicas converge. From then on the run is an ordinary
 archived run: listed, retired at its namespace's run retention, readable from
 any replica after the cluster lets it go. Its cost is one `HEAD` per finished
 run the cluster holds, on every replica, every pass: at one run a second and the
-default 96 hours in the cluster, about 350,000 an hour per replica, and raising
-`ORK_CLEANUP_INTERVAL` lowers it. What cannot be recovered is said:
+default 96 hours in the cluster, about 350,000 an hour per replica. Raising
+`ORK_CLEANUP_INTERVAL` lowers that, but two intervals must stay well below the
+time a run has in the cluster: a run waits out one interval and then the next
+pass, and one deleted before a pass looks at it leaves nothing to report. Each
+pass logs an error when two intervals reach that time. What cannot be recovered
+is said:
 
 - events lost from an earlier part of a long run, and numbers the run never
   published, are `gap` lines (`docs/STORAGE.md`);
@@ -1303,7 +1307,9 @@ set.
 An archive write that stops short, on all three attempts of the run's own
 publish, leaves no body, because the body is its last write. The run reads as
 not archived and the sweep finishes it. Cleanup never retires a run the cluster
-still holds until its body is there.
+still holds until its body is there. A release before this wrote the body first,
+so a write of that time that stopped short keeps its body: the run reads by id,
+and the sweep does not repair it, so it is not listed and not retired.
 
 **Workload artifact bytes are not reclaimed automatically.** The archive
 records which objects each run references, and `DeleteUnreferencedObjects`

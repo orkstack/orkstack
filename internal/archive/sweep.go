@@ -44,6 +44,10 @@ type Sweeper struct {
 	observer SweepObserver
 	logger   *slog.Logger
 	now      func() time.Time
+	// questionBudget and runBudget are sweepQuestionBudget and sweepRunBudget;
+	// a test shortens them.
+	questionBudget time.Duration
+	runBudget      time.Duration
 }
 
 // FinishedRunLister is the cluster's index of finished runs
@@ -100,12 +104,20 @@ type SweepResult struct {
 	// ListFailed says the cluster's index could not be read to its end, so the
 	// numbers above are only what was reached.
 	ListFailed bool
+	// IntervalTooLong says two cleanup intervals reach the cluster's retention:
+	// a run can close, wait out the interval a pass leaves it alone for and the
+	// pass after that, and be gone before the sweep ever looks at it.
+	IntervalTooLong bool
 }
 
 const (
 	// sweepRunBudget bounds one run's archive: a read of its history and its
 	// objects, and the write. A run that overruns it is tried on the next pass.
 	sweepRunBudget = 5 * time.Minute
+	// sweepQuestionBudget bounds one question to the store or the cluster that
+	// the pass's report waits on, so a store that stalls rather than refuses
+	// still ends the pass, and the pass says so.
+	sweepQuestionBudget = 30 * time.Second
 	// sweepRunsNamed is how many at-risk runs one pass's log line names, the
 	// nearest to expiry first; the rest are counted.
 	sweepRunsNamed = 10
@@ -135,6 +147,7 @@ func NewSweeper(
 	return &Sweeper{
 		config: config, runs: runs, bodies: bodies, history: history, cluster: cluster,
 		observer: observer, logger: logger, now: time.Now,
+		questionBudget: sweepQuestionBudget, runBudget: sweepRunBudget,
 	}
 }
 
@@ -213,6 +226,12 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 			}
 		}
 	}
+	retention := s.clusterRetention(ctx)
+	if retention > 0 && 2*s.config.Interval >= retention {
+		result.IntervalTooLong = true
+		s.logger.Error("the cleanup interval leaves the archive sweep no time: a run can be deleted before a pass looks at it",
+			"interval", s.config.Interval, "cluster_retention", retention)
+	}
 	walkErr := s.runs.EachFinishedRun(ctx, s.now().Add(-s.config.Interval), s.config.BatchSize,
 		func(runID string, closedAt time.Time) error {
 			if err := ctx.Err(); err != nil {
@@ -223,7 +242,9 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 				risk(runID, closedAt)
 				return nil
 			}
-			has, err := s.bodies.HasRun(ctx, runID)
+			askCtx, cancel := context.WithTimeout(ctx, s.questionBudget)
+			has, err := s.bodies.HasRun(askCtx, runID)
+			cancel()
 			if err != nil {
 				storeErr = fmt.Errorf("archive sweep: object storage did not answer for run %q: %w", runID, err)
 				note(storeErr)
@@ -242,7 +263,7 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 		result.ListFailed = true
 		note(fmt.Errorf("archive sweep: list finished runs: %w", walkErr))
 	}
-	s.reportRisk(ctx, &result, atRisk)
+	s.reportRisk(&result, atRisk, retention)
 	if s.observer != nil {
 		s.observer.ObserveSweep(ctx, result)
 	}
@@ -258,7 +279,7 @@ func (s *Sweeper) archive(
 	note func(error),
 	risk func(string, time.Time),
 ) {
-	runCtx, cancel := context.WithTimeout(ctx, sweepRunBudget)
+	runCtx, cancel := context.WithTimeout(ctx, s.runBudget)
 	defer cancel()
 	err := s.history.ArchiveFromHistory(runCtx, runID)
 	switch {
@@ -279,16 +300,25 @@ func (s *Sweeper) archive(
 	}
 }
 
-// reportRisk dates the pass's unconfirmed runs and says so: the error line an
-// operator's alert reads, every pass for as long as it holds.
-func (s *Sweeper) reportRisk(ctx context.Context, result *SweepResult, atRisk []atRiskRun) {
-	if result.Unconfirmed == 0 {
-		return
-	}
-	retention, err := s.cluster.NamespaceRetention(ctx, s.config.TemporalNamespace)
+// clusterRetention reads the cluster's retention now, zero when it cannot. It
+// only dates the risk and checks the interval against it, so a failure is
+// logged and the pass goes on.
+func (s *Sweeper) clusterRetention(ctx context.Context) time.Duration {
+	askCtx, cancel := context.WithTimeout(ctx, s.questionBudget)
+	defer cancel()
+	retention, err := s.cluster.NamespaceRetention(askCtx, s.config.TemporalNamespace)
 	if err != nil {
 		s.logger.Warn("archive sweep could not read the cluster's retention to date the risk", "error", err)
-		retention = 0
+		return 0
+	}
+	return retention
+}
+
+// reportRisk dates the pass's unconfirmed runs and says so: the error line an
+// operator's alert reads, every pass for as long as it holds.
+func (s *Sweeper) reportRisk(result *SweepResult, atRisk []atRiskRun, retention time.Duration) {
+	if result.Unconfirmed == 0 {
+		return
 	}
 	named := make([]string, 0, len(atRisk))
 	for _, run := range atRisk {

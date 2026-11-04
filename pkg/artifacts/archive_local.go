@@ -121,9 +121,9 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 			return fmt.Errorf("artifacts: local archive run %q: write object reference: %w", rec.RunID, err)
 		}
 	}
-	// The origin row goes before the run-index row so the run index stays the
-	// last key published, which is what lets cleanup see every other record
-	// of a run before it sees the run.
+	// The origin row goes before the run-index row, which is what lets cleanup
+	// see every record but the body before it sees the run. It checks for the
+	// body itself before it retires one.
 	if hasOrigin {
 		if err := a.writeAtomic(originKey, nil); err != nil {
 			return fmt.Errorf("artifacts: local archive run %q: write origin index: %w", rec.RunID, err)

@@ -798,8 +798,8 @@ export type GetArtifactProvenanceResponse = Message<"orkstack.v1.GetArtifactProv
 
   /**
    * references_unreadable counts markers whose run body is not in the
-   * archive (the crash window between the marker writes and the index
-   * publish, docs/STORAGE.md). Such a marker's namespace cannot be known, so
+   * archive (an archive write that stopped short of its body, which a later
+   * write finishes, docs/STORAGE.md). Such a marker's namespace cannot be known, so
    * it is counted here and listed nowhere. A body that fails to read for
    * any other reason fails the call.
    *

@@ -315,6 +315,35 @@ func TestArchiveFromHistory_StatesWhatItCouldNotRecover(t *testing.T) {
 	}
 }
 
+// TestArchiveFromHistory_KeepsWhatTheRunsErrorAlreadySaid: a run whose error has
+// details of its own, such as the failing task, keeps them beside the loss.
+func TestArchiveFromHistory_KeepsWhatTheRunsErrorAlreadySaid(t *testing.T) {
+	ctx := context.Background()
+	const runID = "ork-record-stale"
+	events, store := helloRunEndingWith(t, runID, terminatedClose())
+	uri := snapshotURIFor(runID, 2)
+	run := &orkstackv1.Run{}
+	if err := proto.Unmarshal(store.objects[uri], run); err != nil {
+		t.Fatal(err)
+	}
+	run.Error = &orkstackv1.Error{Code: "RUN_FAILED", Message: "exit 1", Details: `task "work"`}
+	store.objects[uri] = mustMarshalRun(t, run)
+	delete(store.objects, snapshotURIFor(runID, 3))
+	reader, _ := readerOver(events, runID)
+	reader = reader.WithSnapshotStore(store)
+	archiver := newLocalArchiver(t)
+	if err := NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID); err != nil {
+		t.Fatalf("ArchiveFromHistory: %v", err)
+	}
+	got, err := archiver.LoadRun(ctx, runID)
+	if err != nil {
+		t.Fatalf("LoadRun: %v", err)
+	}
+	if details := got.GetError().GetDetails(); !strings.Contains(details, `task "work"`) || !strings.Contains(details, "as of an earlier event") {
+		t.Fatalf("details = %q, want both what it said and what was lost", details)
+	}
+}
+
 // TestArchiveFromHistory_AnOverlayThatIsGoneIsLost: the newest record of a
 // large run is an overlay. One that is gone can never be assembled, so it is
 // lost as any other record is, and the one before it is used.

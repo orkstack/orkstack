@@ -116,7 +116,7 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return fmt.Errorf("artifacts: s3 archive run %q: %w", rec.RunID, err)
 	}
 	// The origin row is one more zero-byte key, written before the run-index
-	// row so the run index stays the last thing published.
+	// row so the run index is published after every record but the body.
 	if hasOrigin {
 		if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(a.bucket), Key: aws.String(originKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),

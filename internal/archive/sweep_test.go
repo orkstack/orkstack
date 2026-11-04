@@ -63,12 +63,19 @@ type fakeStore struct {
 	bodies   map[string]bool
 	hasErr   error
 	hasCalls int
+	// stalls makes HasRun wait until its context ends, as a store that accepts
+	// the request and never answers does.
+	stalls   bool
 	writeErr map[string]error
 	written  []string
 }
 
-func (f *fakeStore) HasRun(_ context.Context, runID string) (bool, error) {
+func (f *fakeStore) HasRun(ctx context.Context, runID string) (bool, error) {
 	f.hasCalls++
+	if f.stalls {
+		<-ctx.Done()
+		return false, ctx.Err()
+	}
 	if f.hasErr != nil {
 		return false, f.hasErr
 	}
@@ -187,6 +194,56 @@ func TestSweeper_AStoreThatIsDownIsSaidAndHealsOnTheNextPass(t *testing.T) {
 	}
 	if last := f.observed.results[len(f.observed.results)-1]; last.Unconfirmed != 0 {
 		t.Fatalf("observed %+v, want the risk cleared", last)
+	}
+}
+
+// TestSweeper_AStoreThatStallsStillEndsThePass: a store that accepts a request
+// and never answers must not hold the pass, because the pass's report is what
+// says the runs are at risk. The context passed in here has no deadline.
+func TestSweeper_AStoreThatStallsStillEndsThePass(t *testing.T) {
+	f := newSweepFixture()
+	f.sweeper.questionBudget = time.Millisecond
+	f.runs.add("ork-1", 2*time.Hour)
+	f.runs.add("ork-2", 3*time.Hour)
+	f.store.stalls = true
+
+	done := make(chan SweepResult, 1)
+	go func() {
+		result, _ := f.sweeper.RunOnce(context.Background())
+		done <- result
+	}()
+	select {
+	case result := <-done:
+		if result.Unconfirmed != 2 || f.store.hasCalls != 1 || result.EarliestExpiry.IsZero() {
+			t.Fatalf("result = %+v after %d questions, want 2 unconfirmed and dated after one", result, f.store.hasCalls)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("a store that stalls held the pass")
+	}
+}
+
+// TestSweeper_SaysWhenItsIntervalLeavesNoTime: a run waits out one interval and
+// then the next pass, so two intervals at or past the cluster's retention can
+// let a run go before a pass looks at it. Nothing else would ever report that
+// run: it leaves the listing unseen.
+func TestSweeper_SaysWhenItsIntervalLeavesNoTime(t *testing.T) {
+	for _, tc := range []struct {
+		interval time.Duration
+		tooLong  bool
+	}{
+		{interval: time.Hour},
+		{interval: 47 * time.Hour},
+		{interval: 48 * time.Hour, tooLong: true},
+		{interval: 100 * time.Hour, tooLong: true},
+	} {
+		t.Run(tc.interval.String(), func(t *testing.T) {
+			f := newSweepFixture()
+			f.sweeper.config.Interval = tc.interval
+			result, err := f.sweeper.RunOnce(context.Background())
+			if err != nil || result.IntervalTooLong != tc.tooLong {
+				t.Fatalf("result = %+v (%v), want IntervalTooLong %v under a retention of %s", result, err, tc.tooLong, sweepTTL)
+			}
+		})
 	}
 }
 

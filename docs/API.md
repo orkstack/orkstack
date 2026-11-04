@@ -1138,7 +1138,7 @@ in runs_evidence_missing instead.
 | `own_reference` | [`ReferenceState`](#referencestate) |  |
 | `released_at` | `google.protobuf.Timestamp` | released_at is set only with REFERENCE_STATE_RELEASED. |
 | `references` | repeated [`ArtifactReference`](#artifactreference) | references is every marker on this object whose run is in the calling namespace, newest run_created_at first. It includes the addressed run when own_reference is HELD. Runs of other namespaces are omitted and not counted. |
-| `references_unreadable` | `int64` | references_unreadable counts markers whose run body is not in the archive (the crash window between the marker writes and the index publish, docs/STORAGE.md). Such a marker's namespace cannot be known, so it is counted here and listed nowhere. A body that fails to read for any other reason fails the call. |
+| `references_unreadable` | `int64` | references_unreadable counts markers whose run body is not in the archive (an archive write that stopped short of its body, which a later write finishes, docs/STORAGE.md). Such a marker's namespace cannot be known, so it is counted here and listed nowhere. A body that fails to read for any other reason fails the call. |
 | `computed_at` | `google.protobuf.Timestamp` |  |
 
 ### GetCacheStatsRequest

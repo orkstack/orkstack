@@ -581,8 +581,9 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 	out := make([]*orkstackv1.Run, 0, len(entries))
 	for i, run := range runs {
 		if errs[i] != nil {
-			// An index key whose body is missing is the crash window between
-			// the two writes, not a query failure: skip it.
+			// An index key whose body is missing is an archive write that
+			// stopped short, not a query failure: skip it. The sweep finishes
+			// it.
 			if errors.Is(errs[i], artifacts.ErrNotFound) {
 				continue
 			}
