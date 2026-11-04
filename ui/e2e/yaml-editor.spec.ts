@@ -205,7 +205,7 @@ test('the editor in both themes: findings, colours and the list (screenshots)', 
 				key: [of('.cm-line .syntax-key'), token('--color-syntax-key')],
 				string: [of('.cm-line .syntax-string'), token('--color-syntax-string')],
 				template: [of('.cm-line .syntax-template'), token('--color-syntax-template')],
-				ground: [getComputedStyle(document.querySelector('.cm-editor')!).backgroundColor, token('--color-paper')],
+				ground: [getComputedStyle(document.querySelector('.cm-editor')!).backgroundColor, token('--color-surface')],
 				gutter: [getComputedStyle(document.querySelector('.cm-gutters')!).backgroundColor, token('--color-paper-sunken')],
 				mark: [getComputedStyle(document.querySelector('.cm-lint-marker-error')!).backgroundColor, token('--color-red')]
 			};

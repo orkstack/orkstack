@@ -400,7 +400,7 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 	await page.getByTestId('run-inspect-cli-trigger').click();
 	const taskCommands = page.locator('[data-testid^="run-inspect-cli-command-"]');
 	await expect(taskCommands.filter({ hasText: 'run logs' }).first()).toContainText(`--task validate`);
-	await expect(taskCommands.filter({ hasText: 'run timing' })).toContainText(`--task validate`);
+	await expect(taskCommands.filter({ hasText: 'run timing' }).filter({ hasText: '--task validate' })).toBeVisible();
 	await expect(page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: 'run get' })).toHaveText(
 		`orkctl --namespace default run get ${failedRun} --json`
 	);
