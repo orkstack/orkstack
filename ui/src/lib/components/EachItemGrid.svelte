@@ -8,7 +8,6 @@
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import { eachCounts, eachSummary, isCachedItem, itemAriaLabel, itemLabel, type ItemView } from '#lib/each.ts';
 	import { statusClassWord } from '#lib/statusMarks.ts';
-	import { statusLabel } from '#lib/status.ts';
 
 	interface Props {
 		taskId: string;
@@ -25,6 +24,12 @@
 
 	let { taskId, each, spec, items, selected, onSelect, waitingOf }: Props = $props();
 
+	// Past a few hundred items a cell is only its index, and the grid is skipped off screen.
+	const compact = $derived(items.length > 200);
+	function cellLabel(item: ItemView): string {
+		const words = itemAriaLabel(item);
+		return item.status === Status.RUNNING && waitingOf?.(item.index) ? `${words}, waiting for capacity` : words;
+	}
 	const summary = $derived(items.length > 0 ? eachCounts(items, waitingOf) : eachSummary(each?.expanded ?? false, items, spec));
 
 	let grid = $state<HTMLDivElement | undefined>();
@@ -73,22 +78,21 @@
 	</p>
 	{#if items.length > 0}
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-		<div bind:this={grid} role="group" aria-label="Items of {taskId}" class="items-grid" data-testid="task-{taskId}-item-grid" onkeydown={onGridKey} onfocusin={(e) => { const at = (e.target as HTMLElement).dataset.item; if (at !== undefined) cursor = Number(at); }}>
+		<div bind:this={grid} role="group" aria-label="Items of {taskId}" class="items-grid" class:compact data-testid="task-{taskId}-item-grid" onkeydown={onGridKey} onfocusin={(e) => { const at = (e.target as HTMLElement).dataset.item; if (at !== undefined) cursor = Number(at); }}>
 			{#each items as item (item.index)}
-				{@const waiting = item.status === Status.RUNNING && waitingOf?.(item.index)}
 				<button
 					type="button"
 					data-item={item.index}
 					data-testid="task-{taskId}-item-{item.index}"
 					data-status={Status[item.status ?? Status.UNSPECIFIED]}
 					data-cached={isCachedItem(item) ? 'true' : undefined}
-					aria-label={itemAriaLabel(item)}
+					aria-label={cellLabel(item)}
 					aria-pressed={selected === item.index}
 					tabindex={tabStop === item.index ? 0 : -1}
-					data-tip={itemAriaLabel(item)}
+					data-tip={compact ? undefined : cellLabel(item)}
 					onclick={() => onSelect(selected === item.index ? undefined : item.index)}
-					class="item is-{waiting ? 'wait' : statusClassWord(item.status)}"
-				><span class="sr">{waiting ? 'Waiting for capacity' : statusLabel(item.status)}: </span><span class="ix">{itemLabel(taskId, item.index)}</span>{#if isCachedItem(item)}<span class="cached" aria-hidden="true"></span>{/if}</button>
+					class="item is-{item.status === Status.RUNNING && waitingOf?.(item.index) ? 'wait' : statusClassWord(item.status)}"
+				>{compact ? item.index : itemLabel(taskId, item.index)}</button>
 			{/each}
 		</div>
 	{/if}
@@ -126,7 +130,12 @@
 		border: 1px solid var(--line);
 		border-radius: var(--r-sm);
 		background: var(--surface);
-		font-size: 13.5px;
+		overflow: hidden;
+		color: var(--ink-3);
+		font-family: var(--font-code);
+		font-size: 12.5px;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 		cursor: pointer;
 		min-width: 0;
 	}
@@ -146,13 +155,31 @@
 	.item:hover {
 		border-color: var(--line-strong);
 	}
-	.ix {
-		overflow: hidden;
-		color: var(--ink-3);
-		font-family: var(--font-code);
-		font-size: 12.5px;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+	.compact {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px;
+		content-visibility: auto;
+		contain-intrinsic-size: auto 800px;
+	}
+	.compact .item {
+		height: 28px;
+		padding: 0 6px;
+		gap: 4px;
+	}
+	.compact .item::before {
+		width: 6px;
+		height: 6px;
+	}
+	.item[data-cached]::after {
+		content: '';
+		position: absolute;
+		top: 4px;
+		right: 4px;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		box-shadow: inset 0 0 0 1.5px var(--ok-mark);
 	}
 	.is-succeeded::before {
 		border: 0;

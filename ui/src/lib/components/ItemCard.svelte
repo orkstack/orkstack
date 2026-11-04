@@ -166,7 +166,7 @@
 			<dd>{formatDuration(started, finishedAt)}</dd>
 		{:else if !terminal && live?.attemptStartedAt}
 			<dt>Running for</dt>
-			<dd data-testid="{prefix}-running-for"><span class="sr">Running for </span>{formatDuration(live.attemptStartedAt, { seconds: BigInt(Math.floor(liveNowMs / 1000)), nanos: (liveNowMs % 1000) * 1e6 })}</dd>
+			<dd data-testid="{prefix}-running-for"><span class="sr">{'Running for '}</span>{formatDuration(live.attemptStartedAt, { seconds: BigInt(Math.floor(liveNowMs / 1000)), nanos: (liveNowMs % 1000) * 1e6 })}</dd>
 		{/if}
 		{#if timing?.preContract && timing.total.kind === 'value'}
 			<dt>Total</dt>

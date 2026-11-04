@@ -103,7 +103,6 @@
 			<p class="rail-sub">line {settled.line}{#if headKeys.length} · <span data-testid="editor-docs-set">{settled.set.filter((k) => headKeys.includes(k)).length} of {headKeys.length} set</span>{/if}</p>
 		{:else}
 			<p class="rail-title"><span>Activity docs</span></p>
-			<p class="rail-sub">Place the caret in a task to see what its activity takes.</p>
 		{/if}
 		<button
 			type="button"
@@ -191,6 +190,8 @@
 					{/if}
 				{/if}
 			{/await}
+		{:else}
+			<p class="rail-note" data-testid="editor-docs-empty">Place the caret in a task to see what its activity takes.</p>
 		{/if}
 	</div>
 </aside>

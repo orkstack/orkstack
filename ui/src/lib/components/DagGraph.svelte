@@ -282,26 +282,25 @@
 				data-testid={run ? `run-dag-node-${node.task.id}` : `dag-node-${node.task.id}`}
 				data-join={joinAttr(node.task.join)}
 				data-status={state ? Status[state.status ?? Status.UNSPECIFIED] : undefined}
-				class="dag-node {word ? `is-${word}` : ''} {state?.neverStarted ? 'is-never' : ''} {pending ? 'is-pend' : ''} {selected === node.task.id
+				class="dag-node {run ? 'dag-hit' : ''} {word ? `is-${word}` : ''} {state?.neverStarted ? 'is-never' : ''} {pending ? 'is-pend' : ''} {selected === node.task.id
 					? 'is-selected'
 					: ''} {lit && !lit.has(node.task.id) ? 'is-dim' : ''}"
+				{...run
+					? {
+							role: 'button',
+							tabindex: 0,
+							'aria-label': nodeName(node.task, state),
+							'aria-pressed': selected === node.task.id,
+							onclick: (e: MouseEvent) => select(e, node.task.id),
+							onkeydown: (e: KeyboardEvent) => selectByKey(e, node.task.id)
+						}
+					: {}}
 			>
 				{#if joinAttr(node.task.join)}
 					<title>{joinTitle(node.task.join, node.task.needs)}</title>
 				{/if}
 				{#if run}
-					<!-- svelte-ignore a11y_click_events_have_key_events -->
-					<g
-						class="dag-hit"
-						role="button"
-						tabindex="0"
-						aria-label={nodeName(node.task, state)}
-						aria-pressed={selected === node.task.id}
-						onclick={(e) => select(e, node.task.id)}
-						onkeydown={(e) => selectByKey(e, node.task.id)}
-					>
-						{@render body(node, state)}
-					</g>
+					{@render body(node, state)}
 				{:else}
 					<a href={hrefOf(node.task.id)} class="dag-hit" aria-label={nodeName(node.task, state)} onclick={(e) => select(e, node.task.id)}>
 						{@render body(node, state)}
