@@ -1,4 +1,20 @@
 // A cpu and memory amount in the run page's words: "1 cpu · 2 GiB".
+/**
+ * formatBytes renders a byte count exactly as the CLI does: whole bytes below
+ * 1 KiB, then KiB, MiB and GiB with one decimal. Zero prints `0 B` — a live
+ * container that has written nothing is a fact, not an absence.
+ */
+export function formatBytes(n: bigint | number): string {
+	const value = typeof n === 'bigint' ? Number(n) : n;
+	if (value < 1024) return `${value} B`;
+	let scaled = value / 1024;
+	for (const suffix of ['KiB', 'MiB']) {
+		if (scaled < 1024) return `${scaled.toFixed(1)} ${suffix}`;
+		scaled /= 1024;
+	}
+	return `${scaled.toFixed(1)} GiB`;
+}
+
 import type { ResourceQuantity, ResourceRequest } from './gen/orkstack/v1/activity_pb';
 
 function gib(bytes: bigint): string {

@@ -5,14 +5,11 @@
 	import { onDestroy, tick, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import AwaitPanel from '#lib/components/AwaitPanel.svelte';
-	import ChildRunPanel from '#lib/components/ChildRunPanel.svelte';
 	import { childLabel, childrenListHref } from '#lib/compose.ts';
 	import ItemCard from '#lib/components/ItemCard.svelte';
 	import Popover from '#lib/components/Popover.svelte';
 	import SeenBefore from '#lib/components/SeenBefore.svelte';
 	import SinceLastRun from '#lib/components/SinceLastRun.svelte';
-	import TaskInspect from '#lib/components/TaskInspect.svelte';
 	import TaskTimeline from '#lib/components/TaskTimeline.svelte';
 	import WaitsFor from '#lib/components/WaitsFor.svelte';
 	import { taskTimelineBars, timelineAxis } from '#lib/taskTimeline.ts';
@@ -23,9 +20,6 @@
 	import { attemptPhases, phaseGroups } from '#lib/timing.ts';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
-	import EventInspector from '#lib/components/EventInspector.svelte';
-	import RunEvidenceDialog from '#lib/components/RunEvidenceDialog.svelte';
-	import RunSubmitPanel from '#lib/components/RunSubmitPanel.svelte';
 	import StatusPill from '#lib/components/StatusPill.svelte';
 	import TaskLogPane from '#lib/components/TaskLogPane.svelte';
 	import EachItemGrid from '#lib/components/EachItemGrid.svelte';
@@ -2264,14 +2258,16 @@ ED — clears it.
 			-->
 			{#if eventsOpen}
 				<section id="run-events" aria-label="Run events" data-testid="run-events">
-					<EventInspector
-						events={buffer.events}
-						dropped={buffer.dropped}
-						total={buffer.total}
-						{streamBroken}
-						runId={run.id}
-						cap={EVENT_BUFFER_CAP}
-					/>
+					{#await import('#lib/components/EventInspector.svelte') then { default: EventInspector }}
+						<EventInspector
+							events={buffer.events}
+							dropped={buffer.dropped}
+							total={buffer.total}
+							{streamBroken}
+							runId={run.id}
+							cap={EVENT_BUFFER_CAP}
+						/>
+					{/await}
 				</section>
 			{/if}
 			<section class="card tasks" aria-labelledby="run-tasks-heading">
@@ -2462,20 +2458,24 @@ ED — clears it.
 								resolved it — and resolves it.
 							-->
 							<div class="xpand">
-								<AwaitPanel
-									runId={run.id}
-									namespace={data.namespace}
-									task={{ id: task.id, status: task.status, await: task.await, error: task.error, startedAt: task.startedAt }}
-									spec={def?.await}
-									runTerminal={isTerminal(runStatus)}
-									now={currentTimestamp}
-									origin={page.url.origin}
-								/>
+								{#await import('#lib/components/AwaitPanel.svelte') then { default: AwaitPanel }}
+									<AwaitPanel
+										runId={run.id}
+										namespace={data.namespace}
+										task={{ id: task.id, status: task.status, await: task.await, error: task.error, startedAt: task.startedAt }}
+										spec={def?.await}
+										runTerminal={isTerminal(runStatus)}
+										now={currentTimestamp}
+										origin={page.url.origin}
+									/>
+								{/await}
 							</div>
 						{:else if composed && (!isTerminal(task.status) || task.id === activeTask)}
 							<!-- A composed task starts a child run: its panel names the pinned child and rolls its tasks up live. -->
 							<div class="xpand">
-								<ChildRunPanel runId={run.id} namespace={data.namespace} taskId={task.id} child={task.child} status={task.status} />
+								{#await import('#lib/components/ChildRunPanel.svelte') then { default: ChildRunPanel }}
+									<ChildRunPanel runId={run.id} namespace={data.namespace} taskId={task.id} child={task.child} status={task.status} />
+								{/await}
 							</div>
 						{:else if fanOut && (expandAll || task.id === activeTask || !isTerminal(task.status) || task.status === Status.FAILED)}
 							<EachItemGrid
@@ -2708,23 +2708,25 @@ ED — clears it.
 							<button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{activeView.id}" aria-expanded={inspectOpen} onclick={() => (inspectOpen = !inspectOpen)}>{inspectOpen ? 'Hide inspect' : 'Inspect'}</button>
 						</div>
 						{#if inspectOpen && timing}
-							<TaskInspect
-								runId={run.id}
-								namespace={data.namespace}
-								task={activeView}
-								{def}
-								isAwait={task_isAwait(activeView)}
-								isComposed={task_isComposed(activeView)}
-								attempts={facts}
-								{attemptsSeeded}
-								{attemptsError}
-								{timing}
-								artifacts={(artifactsByTask.get(activeView.id) ?? []).filter((record) => record.item === undefined)}
-								downloading={downloadingArtifact}
-								onDownload={(record) => void downloadArtifact(record)}
-								onViewLogs={(attempt) => viewTaskAttemptLogs(activeView!.id, attempt)}
-								onCopyValues={() => void copy(payloadJson(activeView!.output), 'Task values copied', `task-values-${activeView!.id}`)}
-							/>
+							{#await import('#lib/components/TaskInspect.svelte') then { default: TaskInspect }}
+								<TaskInspect
+									runId={run.id}
+									namespace={data.namespace}
+									task={activeView}
+									{def}
+									isAwait={task_isAwait(activeView)}
+									isComposed={task_isComposed(activeView)}
+									attempts={facts}
+									{attemptsSeeded}
+									{attemptsError}
+									{timing}
+									artifacts={(artifactsByTask.get(activeView.id) ?? []).filter((record) => record.item === undefined)}
+									downloading={downloadingArtifact}
+									onDownload={(record) => void downloadArtifact(record)}
+									onViewLogs={(attempt) => viewTaskAttemptLogs(activeView!.id, attempt)}
+									onCopyValues={() => void copy(payloadJson(activeView!.output), 'Task values copied', `task-values-${activeView!.id}`)}
+								/>
+							{/await}
 						{/if}
 					{/if}
 				</ItemCard>
@@ -2794,6 +2796,10 @@ ED — clears it.
 			onclose={() => (runAgainDialogOpen = false)}
 		>
 			{#snippet body()}
+				<!-- Most visits never submit: the form's code loads when it opens. -->
+				{#await import('#lib/components/RunSubmitPanel.svelte')}
+					<p class="text-sm text-ink-3" data-testid="run-submit-loading">Loading the form…</p>
+				{:then { default: RunSubmitPanel }}
 				<RunSubmitPanel
 					namespace={data.namespace}
 					orkflowName={run.orkflowName}
@@ -2808,12 +2814,15 @@ ED — clears it.
 						void goto(withNamespace(`/runs/${newRunId}`, data.namespace));
 					}}
 				/>
+				{/await}
 			{/snippet}
 		</Dialog>
 	{/if}
 
 	{#if evidenceDialogOpen}
-		<RunEvidenceDialog runId={run.id} namespace={data.namespace} onclose={() => (evidenceDialogOpen = false)} />
+		{#await import('#lib/components/RunEvidenceDialog.svelte') then { default: RunEvidenceDialog }}
+			<RunEvidenceDialog runId={run.id} namespace={data.namespace} onclose={() => (evidenceDialogOpen = false)} />
+		{/await}
 	{/if}
 	{#if compareDialogOpen}
 		<Dialog

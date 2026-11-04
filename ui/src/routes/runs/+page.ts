@@ -1,5 +1,4 @@
 import { errorMessage } from '#lib/client.ts';
-import { orkflowClient } from '#lib/clients/orkflows.ts';
 import { runClient } from '#lib/clients/runs.ts';
 import { statsClient } from '#lib/clients/stats.ts';
 import { namespaceFrom } from '#lib/namespace.ts';
@@ -38,8 +37,9 @@ export const load: PageLoad = async ({ fetch, url }) => {
 	const latestFailure = runClient(fetch)
 		.listRuns({ namespace, pageSize: 1, filters: [filterOf('status', FilterOperator.EQUALS, ['FAILED'])] })
 		.then((res) => res.runs[0] ?? null);
-	const orkflowNames = orkflowClient(fetch)
-		.listOrkflows({ namespace, pageSize: 200 })
+	// The Orkflow chip's names: read after the page has drawn, with a client of its own.
+	const orkflowNames = import('#lib/clients/orkflows.ts')
+		.then(({ orkflowClient }) => orkflowClient(fetch).listOrkflows({ namespace, pageSize: 200 }))
 		.then((res) => [...new Set(res.orkflows.map((o) => o.name))].sort());
 	// Every streamed read is caught where it is made: a refused stats call
 	// leaves its card saying so, never an unhandled rejection.

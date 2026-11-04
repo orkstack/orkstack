@@ -16,12 +16,11 @@
 	import { shellQuote } from '#lib/runDetail.ts';
 	import { ListPoolsRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
 	import PoolOrkers from '#lib/components/PoolOrkers.svelte';
-	import PoolsUsage from '#lib/components/PoolsUsage.svelte';
 	import ScopeNote from '#lib/components/ScopeNote.svelte';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
-	import { formatBytes } from '#lib/live.ts';
+	import { formatBytes } from '#lib/resources.ts';
 	import type { Pool } from '#lib/gen/orkstack/v1/namespace_pb.ts';
 	import { namespaceLabel } from '#lib/namespace.ts';
 	import type { PageProps } from './$types';
@@ -178,7 +177,10 @@
 			</li>
 		{/each}
 	</ul>
-	<PoolsUsage namespace={data.namespace} />
+	<!-- What was reserved reads after the pools have drawn, with its own client. -->
+	{#await import('#lib/components/PoolsUsage.svelte') then { default: PoolsUsage }}
+		<PoolsUsage namespace={data.namespace} />
+	{/await}
 	{#each data.pools as pool (pool.name)}
 		{#if shown(pool.name) && !pool.unavailableReason}
 			<section class="card mt-4 p-4" aria-label="Orkers of pool {pool.name}">

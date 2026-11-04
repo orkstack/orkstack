@@ -76,11 +76,13 @@
 						</div>
 					{/each}
 				</div>
-				<table class="sr">
-					<caption>cpu-hours reserved by Orkflow, last 7 days</caption>
-					<thead><tr><th scope="col">Orkflow</th><th scope="col">cpu-hours</th></tr></thead>
-					<tbody>{#each rows as row (row.name)}<tr><th scope="row">{row.name}</th><td>{fmtHours(row.h)}</td></tr>{/each}</tbody>
-				</table>
+				<div class="sr">
+					<table>
+						<caption>cpu-hours reserved by Orkflow, last 7 days</caption>
+						<thead><tr><th scope="col">Orkflow</th><th scope="col">cpu-hours</th></tr></thead>
+						<tbody>{#each rows as row (row.name)}<tr><th scope="row">{row.name}</th><td>{fmtHours(row.h)}</td></tr>{/each}</tbody>
+					</table>
+				</div>
 			{/if}
 			<figcaption>Reservation multiplied by how long an Orker held it; not measured use.</figcaption>
 		</figure>

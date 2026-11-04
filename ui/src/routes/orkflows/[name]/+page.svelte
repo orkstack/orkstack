@@ -14,7 +14,6 @@
 	import OrkflowTriggers from '#lib/components/OrkflowTriggers.svelte';
 	import OrkflowVersions from '#lib/components/OrkflowVersions.svelte';
 	import OrkflowCallers from '#lib/components/OrkflowCallers.svelte';
-	import RunSubmitPanel from '#lib/components/RunSubmitPanel.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
 	import FactsStrip from '#lib/components/FactsStrip.svelte';
 	import Icon from '#lib/components/Icon.svelte';
@@ -464,6 +463,10 @@
 		onclose={() => (submitDialogOpen = false)}
 	>
 		{#snippet body()}
+			<!-- Most visits never submit: the form's code loads when it opens. -->
+			{#await import('#lib/components/RunSubmitPanel.svelte')}
+				<p class="text-sm text-ink-3" data-testid="run-submit-loading">Loading the form…</p>
+			{:then { default: RunSubmitPanel }}
 			<RunSubmitPanel
 				namespace={data.namespace}
 				orkflowName={submitName}
@@ -475,6 +478,7 @@
 					void goto(withNamespace(`/runs/${runId}`, data.namespace));
 				}}
 			/>
+			{/await}
 		{/snippet}
 	</Dialog>
 {/if}
