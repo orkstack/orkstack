@@ -28,6 +28,8 @@ export interface TimelineInput {
 	attempts: readonly TimelineAttempt[];
 	/** The last attempt failed: its bar says so. */
 	failed?: boolean;
+	/** A running fan-out: when the latest of its items finished. */
+	doneUntil?: number | null;
 }
 
 export interface Timeline {
@@ -36,13 +38,16 @@ export interface Timeline {
 	words: string;
 }
 
+/** The share of a run's timeline a wait must fill to be drawn. */
+const MIN_WAIT = 0.01;
+
 const seconds = (ms: number) => {
 	const stamp = (t: number) => ({ seconds: BigInt(Math.floor(t / 1000)), nanos: (t % 1000) * 1e6 });
 	return formatDuration(stamp(0), stamp(Math.max(ms, 0)));
 };
 
 export function taskTimelineBars(input: TimelineInput): Timeline {
-	const { run, scheduled, started, finished, running, now, attempts, failed = false } = input;
+	const { run, scheduled, started, finished, running, now, attempts, failed = false, doneUntil = null } = input;
 	const none = { bars: [], words: '' };
 	if (run.start === null || run.end === null || run.end <= run.start) return none;
 	const span = run.end - run.start;
@@ -51,7 +56,10 @@ export function taskTimelineBars(input: TimelineInput): Timeline {
 	const words: string[] = [];
 	const push = (kind: BarKind, from: number, to: number) => {
 		if (to < from) return;
-		bars.push({ kind, left: at(from), width: Math.max(at(to) - at(from), 0) });
+		const width = Math.max(at(to) - at(from), 0);
+		// A wait too short to see on this scale is no bar: the words still say it.
+		if (kind === 'wait' && width < MIN_WAIT) return;
+		bars.push({ kind, left: at(from), width });
 	};
 	const from = scheduled ?? started;
 	if (from === null) return none;
@@ -97,7 +105,13 @@ export function taskTimelineBars(input: TimelineInput): Timeline {
 	}
 	if (end !== null) {
 		const kind: BarKind = running ? 'running' : failed ? 'failed' : 'ran';
-		push(kind, begun, end);
+		// A running fan-out: what its items have finished, then what is still going.
+		if (running && doneUntil !== null && doneUntil > begun && doneUntil < end) {
+			push('ran', begun, doneUntil);
+			push('running', doneUntil, end);
+		} else {
+			push(kind, begun, end);
+		}
 		words.push(`${running ? 'has run' : failed ? 'failed after' : 'ran'} ${seconds(end - begun)}`);
 	}
 	return { bars, words: words.join(', ') };

@@ -357,10 +357,9 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 	await expect(page.getByTestId('run-header').getByTestId('run-lasted')).toBeVisible();
 	await expect(page.getByTestId('task-summary')).toHaveText(/succeeded/);
 	await expect(page.locator('aside').getByTestId('task-summary')).toHaveCount(0);
-	// An empty input and no aggregated output are one NOTE.
-	await expect(page.getByTestId('run-values-note')).toContainText('no input values');
-	await expect(page.getByTestId('run-values-note')).toContainText('without aggregated output values');
-	await expect(page.locator('pre[data-testid="run-input"], pre[data-testid="run-output"]')).toHaveCount(0);
+	// A finished run that took no input and gave no output has no card for them.
+	await expect(page.getByTestId('run-inputs')).toHaveCount(0);
+	await expect(page.getByTestId('run-why')).toBeVisible();
 
 	// The graph card holds its drawing: the drawing sits inside the frame, and
 	// the frame is not a page of empty paper around it.

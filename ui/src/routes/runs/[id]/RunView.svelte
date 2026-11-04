@@ -1888,6 +1888,17 @@
 	const timelineSpan = $derived({ start: timestampMs(startedAt ?? run?.startedAt ?? run?.createdAt), end: timelineEnd });
 	const axis = $derived(timelineSpan.start !== null && timelineSpan.end !== null ? timelineAxis(timelineSpan.end - timelineSpan.start) : []);
 	const spanWords = $derived(timelineSpan.start !== null && timelineSpan.end !== null ? formatDuration(startedAt ?? run?.startedAt ?? run?.createdAt, { seconds: BigInt(Math.floor(timelineSpan.end / 1000)), nanos: 0 }) : '');
+	const ROW_CHUNK = 200;
+	function latestItemEnd(items: TaskView['items']): number | null {
+		let latest: number | null = null;
+		for (const item of items) {
+			const end = timestampMs(item.run?.finishedAt);
+			if (end !== null && (latest === null || end > latest)) latest = end;
+		}
+		return latest;
+	}
+	// The key says "waited" only when a bar shows one. A long list is not scanned for it.
+	const anyWait = $derived(tasks.length > ROW_CHUNK || tasks.some((task) => barsOf(task).bars.some((bar) => bar.kind === 'wait')));
 	function barsOf(task: TaskView) {
 		const rows = attemptsByTask.get(task.id) ?? [];
 		return taskTimelineBars({
@@ -1899,6 +1910,7 @@
 			running: task.status === Status.RUNNING,
 			now: timelineEnd ?? wallNow,
 			failed: task.status === Status.FAILED,
+			doneUntil: task.status === Status.RUNNING && task.items.length > 0 ? latestItemEnd(task.items) : null,
 			attempts: rows.map((row) => ({
 				attempt: row.attempt,
 				failed: row.outcome === AttemptOutcome.FAILED,
@@ -2013,7 +2025,6 @@
 		observer.observe(el);
 		return () => observer.disconnect();
 	};
-	const ROW_CHUNK = 200;
 	const rowChunks = $derived.by(() => {
 		if (tasks.length <= ROW_CHUNK) return null;
 		const chunks: TaskView[][] = [];
@@ -2461,7 +2472,7 @@
 					<h2 id="run-tasks-heading">Tasks</h2>
 					{#if spanWords}<span class="card-sub">timeline from run start, 0 to {spanWords}</span>{/if}
 					<span class="tlkey" aria-hidden="true"
-						><span><i class="k-r"></i>ran</span>{#if !isTerminal(runStatus)}<span><i class="k-run"></i>running</span>{/if}<span><i class="k-w"></i>waited</span>{#if runRetries > 0 || runStatus === Status.FAILED}<span><i class="k-c"></i>failed attempt</span>{/if}</span
+						><span><i class="k-r"></i>ran</span>{#if !isTerminal(runStatus)}<span><i class="k-run"></i>running</span>{/if}{#if anyWait}<span><i class="k-w"></i>waited</span>{/if}{#if runRetries > 0 || runStatus === Status.FAILED}<span><i class="k-c"></i>failed attempt</span>{/if}</span
 					>
 					<div class="card-end">
 						{#if hasFanOut}
@@ -2964,7 +2975,7 @@
 				<section class="card" aria-labelledby="run-image-heading" data-testid="run-image">
 					<div class="card-head"><h2 id="run-image-heading">Image of {activeView.id}</h2></div>
 					<div class="pad">
-						<span class="break-all text-ink-3">{image?.reference}</span>
+						<span class="break-all text-ink-3">{activityByTask.get(activeView.id)?.reference || image?.reference}</span>
 						{#if image?.indexDigest}<Plate key="sha256" value={shortDigestWords(image.indexDigest)} tip={image.indexDigest} copy={image.indexDigest} copyLabel="Copy digest" small />{/if}
 						<span class="text-ink-3">Resolved from its tag at dispatch; every attempt so far ran this digest.</span>
 					</div>

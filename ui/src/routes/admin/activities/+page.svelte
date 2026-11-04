@@ -193,7 +193,7 @@
 						</td>
 						<td role="cell" data-label="Ops" class="font-mono text-sm text-ink-2">
 							{#if activity.interface && Object.keys(activity.interface.ops).length > 0}
-								<span class="flex flex-wrap gap-1">{#each Object.keys(activity.interface.ops).sort() as op (op)}<code class="chip" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</code>{/each}</span>
+								<span class="flex flex-wrap gap-1">{#each Object.keys(activity.interface.ops).sort() as op (op)}<code class="opchip" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</code>{/each}</span>
 							{:else}
 								<span class="text-ink-3">—</span>
 							{/if}
@@ -361,7 +361,22 @@
 </section>
 
 <style>
-	.chip {
+	/* The catalog's columns: an image's many ops read best on two lines. */
+	@media (min-width: 641px) {
+		.acts :global(thead th:nth-child(1)) {
+			width: 24%;
+		}
+		.acts :global(thead th:nth-child(2)) {
+			width: 23%;
+		}
+		.acts :global(thead th:nth-child(3)) {
+			width: 16%;
+		}
+		.acts :global(thead th:nth-child(4)) {
+			width: 27%;
+		}
+	}
+	.opchip {
 		padding: 2px 6px;
 		border: 1px solid var(--line);
 		border-radius: 4px;

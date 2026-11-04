@@ -363,6 +363,7 @@
 
 <svelte:head><title>Runs — OrkStack</title></svelte:head>
 
+{#snippet nsFact()}<b class="font-semibold text-ink">{ns}</b>{/snippet}
 {#snippet weekRuns()}
 	{#await data.insights.week}<span class="text-ink-3">…</span>{:then week}{#if week.value}{@const c = week.value.runsByStatus}<span data-testid="runs-week-count"
 				>{Number((c.succeeded ?? 0n) + (c.failed ?? 0n) + (c.canceled ?? 0n) + (c.running ?? 0n))} runs</span
@@ -376,7 +377,7 @@
 			<div class="fline">
 				<FactsStrip
 					facts={[
-						{ label: 'Namespace', value: ns, testid: 'runs-fact-namespace' },
+						{ label: 'Namespace', value: nsFact, testid: 'runs-fact-namespace' },
 						{ label: 'Last 7 days', value: weekRuns }
 					] satisfies Fact[]}
 				/>

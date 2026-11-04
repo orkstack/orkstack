@@ -431,21 +431,15 @@
 	.dag-node.is-awaiting .dag-outline {
 		stroke: var(--await);
 	}
-	/* Outside the selection, and a task that never started: greyed, not
-	   faded, so its words keep 4.5:1. */
-	.dag-node.is-dim .dag-outline,
-	.dag-node.is-never .dag-outline {
+	/* Outside the selection: greyed, not faded, so its words keep 4.5:1. */
+	.dag-node.is-dim .dag-outline {
 		fill: var(--dim-fill);
 		stroke: var(--dim-line);
 		stroke-width: 1.25;
 	}
-	.dag-node.is-dim .dag-id,
-	.dag-node.is-never .dag-id {
+	.dag-node.is-dim .dag-id {
 		fill: var(--ink-2);
 		font-weight: var(--font-weight-medium);
-	}
-	.dag-node.is-dim :global(.dag-icon) {
-		opacity: var(--opacity-faded);
 	}
 
 	/* The status marks (statusMarks.svgMark). */

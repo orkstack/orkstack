@@ -276,8 +276,7 @@
 	}
 	.pkey li {
 		display: grid;
-		grid-template-columns: auto auto;
-		justify-content: space-between;
+		grid-template-columns: minmax(0, 1fr) auto;
 		gap: 0 12px;
 	}
 	.pkey li span {
@@ -293,6 +292,7 @@
 		border-radius: 2px;
 	}
 	.pkey li b {
+		text-align: right;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
 	}

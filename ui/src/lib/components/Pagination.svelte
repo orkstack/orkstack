@@ -93,7 +93,7 @@
 	</div>
 	<div class="flex items-center gap-2">
 		{#if showFirst}<a data-testid="{testid}-first" href={firstHref} class={BUTTON}>First page</a>{/if}
-		<a data-testid="{testid}-previous" aria-disabled={!previousHref} href={previousHref} class="{BUTTON}{previousHref ? '' : DISABLED}"><Icon name="chev-left" />{previousLabel}</a>
-		<a data-testid="{testid}-next" aria-disabled={!nextHref} href={nextHref} onclick={() => onnext?.()} class="{BUTTON}{nextHref ? '' : DISABLED}">{nextLabel}<Icon name="chev-right" /></a>
+		<a data-testid="{testid}-previous" aria-disabled={!previousHref} href={previousHref} class="{BUTTON}{previousHref ? '' : DISABLED}">{previousLabel}</a>
+		<a data-testid="{testid}-next" aria-disabled={!nextHref} href={nextHref} onclick={() => onnext?.()} class="{BUTTON}{nextHref ? '' : DISABLED}">{nextLabel}</a>
 	</div>
 </div>

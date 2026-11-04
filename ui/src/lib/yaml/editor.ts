@@ -262,7 +262,7 @@ const SQUARE = 'calc(var(--spacing) * 2)';
 const theme = EditorView.theme({
 	'&': {
 		color: 'var(--color-ink)',
-		backgroundColor: 'var(--color-paper)',
+		backgroundColor: 'var(--color-surface)',
 		fontSize: 'var(--text-sm)',
 		border: 'var(--rule-hair) solid var(--color-rule-strong)',
 		borderRadius: 'var(--radius-sm)'

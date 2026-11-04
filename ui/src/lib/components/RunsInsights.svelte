@@ -168,7 +168,7 @@
 				<p class="big">{fmtDuration(week.p95Duration)}<small>95th percentile</small></p>
 			</div>
 			<div class="dstrip">
-				<svg class="bar" height="36" aria-hidden="true"
+				<svg class="bar" height="36" aria-hidden="true" style:overflow="visible"
 					>{#each ticks as t (t.s)}<line class="gl" x1="{lp(t.s * 1000)}%" x2="{lp(t.s * 1000)}%" y1="4" y2="32" />{/each}<rect
 						x="{lp(p50)}%"
 						y="14"

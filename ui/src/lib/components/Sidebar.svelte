@@ -126,6 +126,9 @@
 		font-size: 12.5px;
 		font-variant-numeric: tabular-nums;
 	}
+	.nav[aria-current='page'][data-n]::after {
+		color: var(--side-active-ink-2);
+	}
 	.nav:hover {
 		background: var(--side-hover);
 		color: var(--side-strong);

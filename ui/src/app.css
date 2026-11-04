@@ -1188,7 +1188,7 @@
 	}
 	/* The graph's ground: a dotted field that scrolls with what is drawn. */
 	.drafting-grid {
-		background-color: var(--color-surface-2);
+		background-color: var(--color-surface);
 		background-image: radial-gradient(var(--color-line-2) var(--rule-hair), transparent var(--rule-hair));
 		background-size: calc(var(--spacing) * 4) calc(var(--spacing) * 4);
 		background-attachment: local;
