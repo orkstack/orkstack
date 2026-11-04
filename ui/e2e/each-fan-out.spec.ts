@@ -387,13 +387,13 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 	note(`submitted failing run ${run}`);
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 180_000 });
-	await expect(page.getByTestId('run-error')).toContainText('item 3 of 6 failed');
+	await expect(page.getByTestId('run-error')).toContainText('Item 3 of 6 failed');
 	// The run's failure and the task's lead with the item's reason and keep
 	// the item sentence, with no word of the execution service's wrapper.
 	await expect(page.getByTestId('run-error-reason')).toContainText('CONTAINER_EXIT_NONZERO');
 	await expect(page.getByTestId('run-error-message')).toHaveText('Item 3 of 6 failed: the container of convert exited 1');
 	await expect(page.getByTestId('task-convert-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
-	await expect(page.getByTestId('task-convert-error-message')).toHaveText('Item 3 of 6 failed: the container exited 1');
+	await expect(page.getByTestId('task-convert-error-message')).toHaveText('Item 3 of 6 failed: the container of convert exited 1');
 	for (const id of ['run-error', 'task-convert-error']) {
 		for (const word of ['activity error', 'scheduledEventID', 'identity:', '(type:']) {
 			await expect(page.getByTestId(id)).not.toContainText(word);

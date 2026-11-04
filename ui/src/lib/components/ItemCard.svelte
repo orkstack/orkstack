@@ -262,7 +262,7 @@
 		color: var(--ink-3);
 	}
 	.insp-sec :global(.kv) {
-		padding: 0 16px;
+		padding: 0;
 	}
 	.insp-line {
 		margin: 0;

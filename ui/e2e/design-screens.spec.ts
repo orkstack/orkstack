@@ -424,8 +424,7 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	for (const n of band.notes) expect(n.cut, `${n.id} is whole`).toBe(false);
 
 	// The runs register at 1280 × 720: the filter toolbar is one row, and the
-	// table starts inside the first viewport (the header now carries the 24-hour
-	// tiles above it, so the old "top half" bound no longer holds).
+	// table follows the 24-hour tiles and the week's charts.
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await page.goto(`${UI_ORIGIN}/runs?ns=default`);
 	await expect(page.getByTestId(`run-row-${failedRun}`)).toBeVisible();
@@ -445,6 +444,10 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	});
 	note(`runs toolbar at 1280x720: ${JSON.stringify(toolbar)}`);
 	expect(toolbar.rows).toBe(1);
-	expect(toolbar.table).toBeLessThan(720);
+	// The design sets the last 7 days above the list, so the list starts below
+	// them. It still fits the card: the page never scrolls it sideways.
+	expect(toolbar.table).toBeLessThan(1300);
+	const list = page.getByTestId('run-list');
+	expect(await list.evaluate((el) => el.parentElement!.scrollWidth <= el.parentElement!.clientWidth + 1)).toBe(true);
 	await page.screenshot({ path: out('finish-runs-1280.png') });
 });

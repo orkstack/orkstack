@@ -339,7 +339,7 @@ test('below 900 px the sidebar is a drawer: Escape closes it and focus returns t
 	// Regression: the drawer could not be closed from the keyboard, or left focus nowhere.
 	await page.setViewportSize({ width: 800, height: 900 });
 	await page.goto(at('/runs'));
-	const menu = page.getByRole('button', { name: 'Menu' });
+	const menu = page.getByRole('button', { name: 'Menu', exact: true });
 	const side = page.getByRole('navigation', { name: 'Main' });
 	await expect(side.getByRole('link', { name: /^Runs/ })).toBeHidden();
 	await expect(menu).toHaveAttribute('aria-expanded', 'false');

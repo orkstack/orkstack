@@ -43,6 +43,10 @@
 		flat?: boolean;
 		/** Something else on the page announces this failure. */
 		silent?: boolean;
+		/** Words of the sentence to set bold: the task it names. */
+		emphasis?: string;
+		/** What the surrounding card says next, as the sentence's continuation. */
+		then?: string;
 		/**
 		 * A run that ended without failing (an operator's cancel) says why in
 		 * ink, as a NOTE: red is for failure and attention only.
@@ -50,7 +54,7 @@
 		tone?: 'failure' | 'note';
 	}
 
-	let { error, testid, compact = false, tries, bare = false, flat = false, silent = false, tone = 'failure' }: Props = $props();
+	let { error, testid, compact = false, tries, bare = false, flat = false, silent = false, tone = 'failure', emphasis, then }: Props = $props();
 
 	// The sentence without the execution service's wrapper, and the reason
 	// code it led with. A run's RUN_FAILED wraps its task's reason: the panel
@@ -61,6 +65,7 @@
 
 	const retryNote = $derived(retryPhrase(tries));
 	const sentence = $derived(flat || bare ? humanFailure(plain.text) : plain.text);
+	const at = $derived(emphasis ? sentence.indexOf(emphasis) : -1);
 	// In a task's reason row an exit is already said by its attempt line.
 	const onlyAnExit = $derived(flat && /the container exited \d+$/.test(plain.text));
 
@@ -142,8 +147,8 @@
 	{/if}
 
 	{#if plain.text}
-		<p class="{onlyAnExit ? 'sr' : flat ? 'mt-1 text-dense text-ink-2' : 'mt-1.5 text-ink'} max-w-prose break-words whitespace-pre-wrap" data-testid="{testid}-message">
-			{sentence}
+		<p class="{onlyAnExit ? 'sr' : flat ? 'mt-1 text-dense text-ink-2' : 'mt-1.5 text-ink'} max-w-prose break-words whitespace-pre-wrap">
+			<span data-testid="{testid}-message">{#if emphasis && at >= 0}{sentence.slice(0, at)}<b class="font-semibold">{emphasis}</b>{sentence.slice(at + emphasis.length)}{:else}{sentence}{/if}</span>{#if then}{sentence.endsWith('.') ? ' ' : '. '}{then}{/if}
 		</p>
 	{/if}
 

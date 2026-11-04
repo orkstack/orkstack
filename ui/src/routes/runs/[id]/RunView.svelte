@@ -2581,6 +2581,7 @@
 										</span>
 									{/if}
 								</p>
+<div class="xbody">
 								{#if !composed && !isAwait && !fanOut}
 									{#snippet wokerWord()}<span class="font-mono text-xs">{task.orkerId || lastAttempt?.orkerId || '—'}</span>{/snippet}
 									{#snippet imagePlate()}<span data-testid={task.id === failedTask?.id ? 'run-failed-image' : undefined}><span class="sr">{pinnedOrReference(image)}</span>{#if digest}<Plate key="sha256" value={shortDigestWords(digest)} tip={digest} copy={digest} copyLabel="Copy digest" small />{:else}<span class="font-mono text-xs break-all">{pinnedOrReference(image) || '—'}</span>{/if}</span>{/snippet}
@@ -2607,6 +2608,7 @@
 										<span class="pkey-in" aria-hidden="true">{#each groups as group (group.key)}<span><i class="ph-{group.key}"></i>{group.label.toLowerCase()} {(group.ms / 1000).toFixed(1)}s</span>{/each}</span>
 									</div>
 								{/if}
+</div>
 								{#if !composed && !isAwait && !fanOut && (task.id === failedTask?.id || task.id === activeTask)}
 									<TaskLogPane
 										runId={run.id}
@@ -2786,7 +2788,7 @@
 						{#if runStatus === Status.FAILED}
 							{#if runError}
 								<!-- The banner announces a failure with a task to blame; only a run with none is announced here. -->
-								<FailurePanel error={runError} testid="run-error" bare compact silent={!!failedTask} tries={failedTask ? triesOf(failedTask) : undefined} />
+								<FailurePanel error={runError} testid="run-error" bare compact silent={!!failedTask} tries={failedTask ? triesOf(failedTask) : undefined} emphasis={failedTask?.id} then={failedTask && firstStderr?.taskId === failedTask.id ? 'Its first stderr line says why:' : undefined} />
 							{:else}
 								{@const plain = plainFailure(runErrorMessage)}
 								<div data-testid="run-error" role="alert" class="text-dense text-ink">
@@ -2795,7 +2797,6 @@
 								</div>
 							{/if}
 							{#if failedTask && firstStderr?.taskId === failedTask.id}
-								<div>Its first stderr line says why:</div>
 								<code class="why-line" data-testid="run-why-stderr">{firstStderr.text}</code>
 							{/if}
 							{#if failedTask}
@@ -3373,6 +3374,22 @@
 		background: var(--surface-2);
 		min-width: 0;
 	}
+	.xbody {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 10px;
+		padding: 0 16px;
+		min-width: 0;
+	}
+	@media (max-width: 640px) {
+		.xbody {
+			padding: 0;
+		}
+	}
+	[data-run-log] {
+		overflow: hidden;
+		border-radius: 0 0 var(--r) var(--r);
+	}
 	.xhead {
 		margin: 0;
 		display: flex;
@@ -3456,7 +3473,7 @@
 	.kv-stack :global(dd) {
 		padding: 2px 16px 9px;
 		text-align: left;
-		overflow-wrap: anywhere;
+		overflow-wrap: normal;
 	}
 	.valbox {
 		max-height: 224px;

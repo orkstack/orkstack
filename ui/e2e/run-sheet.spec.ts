@@ -330,7 +330,9 @@ test('aside: versions with THIS RUN / CURRENT / HEAD, the failure, the image, th
 	// The "Why it failed" card names the failure; its retry phrase is the failure's.
 	await expect(page.getByTestId('run-why')).toContainText('charge');
 	await expect(page.getByTestId('run-error')).toBeVisible();
-	await expect(page.getByTestId('run-error-retry-state')).toHaveText(/not retr|retries exhausted/);
+	// `charge` declares no retry policy and ran once: it exhausted nothing, and its attempt line says why.
+	await expect(page.getByTestId('run-error-retry-state')).toHaveCount(0);
+	await expect(page.getByTestId('task-charge-failure')).toContainText('no retry policy');
 	await expect(page.getByTestId('run-failed-image')).toContainText('activity-shell');
 	// The commands that reproduce the run are behind the header's terminal icon.
 	await page.getByTestId('run-inspect-cli-trigger').click();

@@ -266,9 +266,11 @@ test('running: a RUNNING task is drawn in the running green, its dot and its map
 			{ label: '390', width: 390, height: 844 }
 		]) {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height });
-			await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default&task=long`);
+			await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
 			await expect(page.getByTestId('run-dag-node-long')).toHaveAttribute('data-status', 'RUNNING');
-			expect((await runningNode(page, 'long')).stroke).toBe(await tokenColor(page, '--color-green'));
+			await page.getByTestId('run-dag-clear').click();
+			const running = await tokenColor(page, '--color-green');
+			await expect.poll(async () => (await runningNode(page, 'long')).stroke).toBe(running);
 			await page.screenshot({ path: out(`running-dag-${theme}-${viewport.label}.png`) });
 			await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 			await expect(page.getByTestId('task-map-legend-running')).toBeVisible();
@@ -319,13 +321,15 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 
 	// Retries: the run's card and the task's panel say the same, and neither says a
 	// bare "retryable".
-	// `charge` declares no retry policy, so it was tried once and its budget
-	// ran out; the run's own wrapper (never retryable itself) is not quoted.
-	await expect(page.getByTestId('task-charge-error-retry-state')).toHaveText('retries exhausted');
-	await expect(page.getByTestId('run-error-retry-state')).toHaveText('retries exhausted');
+	// `charge` declares no retry policy and was tried once, so it exhausted
+	// nothing: its attempt line says "no retry policy", and neither panel claims
+	// a budget ran out.
+	await expect(page.getByTestId('task-charge-failure')).toContainText('no retry policy');
+	await expect(page.getByTestId('task-charge-error-retry-state')).toHaveCount(0);
+	await expect(page.getByTestId('run-error-retry-state')).toHaveCount(0);
 	await expect(page.locator('[data-testid$="-retryable"]')).toHaveCount(0);
 	await expect(page.getByTestId('run-error')).not.toContainText('not retryable');
-	note('retries: the run\'s card and the task panel both say "retries exhausted"');
+	note('retries: a task with no retry policy says so, and no panel claims its retries ran out');
 
 	// Never started: CANCELED, "never started", in the row, on the node and in
 	// the map's key — and no faded node is struck through.

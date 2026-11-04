@@ -1122,7 +1122,7 @@ test('the activity catalog is global and resolved, and an Orker outage is report
 	for (const name of names) {
 		await expect(page.getByTestId(`activity-reference-${name}`)).toContainText(`activity-${name}`);
 		// Resolved at APPLY time, so the page shows a digest and not a tag.
-		await expect(page.getByTestId(`activity-digest-${name}`)).toContainText('sha256:');
+		await expect(page.getByTestId(`activity-digest-${name}`)).toHaveAttribute('data-digest', /^sha256:/);
 		await expect(page.getByTestId(`activity-digest-unresolved-${name}`)).toHaveCount(0);
 	}
 

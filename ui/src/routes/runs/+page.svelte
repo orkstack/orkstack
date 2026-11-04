@@ -676,9 +676,6 @@
 	.reason code {
 		font-size: 12.5px;
 	}
-	.runs-table td.wf {
-		white-space: nowrap;
-	}
 	@media (max-width: 1099px) {
 		.ph {
 			grid-template-columns: minmax(0, 1fr);
@@ -690,8 +687,8 @@
 		}
 	}
 	/* On a phone each row is a card, and the whole card is one link. */
-	/* One line, and a link whose middle is the link: a wrapped id's is the gap between its lines. */
-	.runs-table th.rid :global(a) {
+	/* One line with its mark, and a link whose middle is the link: a wrapped id's is the gap between its lines. */
+	.runs-table th.rid {
 		white-space: nowrap;
 	}
 	@media (max-width: 640px) {

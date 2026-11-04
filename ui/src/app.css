@@ -388,21 +388,27 @@
 	/* A key and value list inside a card. */
 	.kv {
 		display: grid;
-		grid-template-columns: minmax(0, auto) minmax(0, 1fr);
-		gap: calc(var(--spacing) * 1.5) calc(var(--spacing) * 4);
+		grid-template-columns: auto minmax(0, 1fr);
 		margin: 0;
-		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 4);
-		font-size: var(--text-dense);
+		font-size: var(--text-base);
 	}
 	.kv dt {
+		padding: calc(var(--spacing) * 2.25) calc(var(--spacing) * 4);
 		color: var(--color-ink-3);
-		font-weight: var(--font-weight-medium);
+		border-bottom: var(--rule-hair) solid var(--color-line);
 	}
 	.kv dd {
 		margin: 0;
 		min-width: 0;
+		padding: calc(var(--spacing) * 2.25) calc(var(--spacing) * 4) calc(var(--spacing) * 2.25) 0;
+		text-align: right;
 		overflow-wrap: anywhere;
 		font-variant-numeric: tabular-nums;
+		border-bottom: var(--rule-hair) solid var(--color-line);
+	}
+	.kv dt:nth-last-child(2),
+	.kv dd:last-child {
+		border-bottom: 0;
 	}
 
 	/* ---- Page header ------------------------------------------------- */

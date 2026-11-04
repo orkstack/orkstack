@@ -533,7 +533,7 @@
 				{/if}
 				<div class="logend">
 					{#if !embedded}
-						<span class="num text-ink-3" data-testid="task-log-count-{taskId}">{lines.length} lines</span>
+						<span class="num text-ink-3" data-testid="task-log-count-{taskId}">{lines.length} {lines.length === 1 ? 'line' : 'lines'}</span>
 						<label class="search h-7.5">
 							<span class="sr">Search loaded lines</span>
 							<svg viewBox="0 0 16 16" aria-hidden="true" class="size-3.5 shrink-0"><use href="#i-search" /></svg>
