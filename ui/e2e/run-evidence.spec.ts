@@ -299,8 +299,10 @@ test('P4 a live run offers no Evidence until it finishes', async ({ page }) => {
 	// A bundle is for a finished run: the button says so, and does nothing yet.
 	await expect(page.getByTestId('run-evidence')).toHaveAttribute('aria-disabled', 'true');
 	await expect(page.getByTestId('run-evidence')).toHaveAccessibleDescription('A bundle is for a finished run');
-	await page.getByTestId('run-evidence').click();
+	await page.getByTestId('run-evidence').focus();
+	await page.keyboard.press('Enter');
 	await expect(page.getByTestId('run-evidence-dialog')).toHaveCount(0);
+	await expect(page.getByTestId('run-status')).toHaveText('Running');
 	await shot(page, 'screenshot-run-evidence-live.png');
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await expect(page.getByTestId('run-evidence')).not.toHaveAttribute('aria-disabled', 'true');

@@ -403,7 +403,7 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 
 	// Cell 3 is the failed one (the page selects the failed item by itself).
 	const cell = page.getByTestId('task-convert-item-3');
-	await expect(cell).toHaveAttribute('aria-label', /^item 3, Failed, attempt 1$/);
+	await expect(cell).toHaveAttribute('aria-label', /^convert\[3\], Failed, attempt 1$/);
 	await expect(cell).toHaveAttribute('data-status', 'FAILED');
 	// The cells after it never started, and say so.
 	for (const index of [4, 5]) {

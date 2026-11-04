@@ -245,7 +245,8 @@ test('a slow client navigation shows the progress bar until the destination load
 	await expect(page.getByTestId('nav-progress')).toHaveCount(0);
 	await page.route('**/orkstack.v1.RunService/GetRun', async (route) => {
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
-		await route.continue();
+		// The list's own read of a row may be given up as the page leaves it.
+		await route.continue().catch(() => {});
 	});
 	await page.getByTestId(`run-row-${runId}`).getByRole('link', { name: runId }).click();
 	await expect(page.getByTestId('nav-progress')).toBeVisible();

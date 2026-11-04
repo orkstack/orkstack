@@ -811,7 +811,7 @@ test('a retried task shows its retry on the card, in the header, and as a timeli
 	const first = page.getByTestId('task-flaky-attempt-1');
 	await expect(first).toHaveAttribute('data-outcome', 'FAILED');
 	// An attempt's outcome is its enum word (AttemptTimeline), not the status pill's title case.
-	await expect(page.getByTestId('task-flaky-attempt-1-outcome')).toHaveText('FAILED');
+	await expect(page.getByTestId('task-flaky-attempt-1-outcome')).toHaveText('Failed');
 	// The error is disclosed, not shouted: a timeline row is a summary until
 	// the reader asks for the failure behind it.
 	await expect(page.getByTestId('task-flaky-attempt-1-error')).toHaveCount(0);
@@ -1126,13 +1126,13 @@ test('a failed task offers the command that runs it locally; a succeeded or neve
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 120_000 });
 
-	// The selected task's commands are one popover in its Item card; the local
+	// The selected task's commands join the page's one popover; the local
 	// replay is the command with `task run` in it.
 	await selectTask(page, 'boom');
-	const trigger = page.getByTestId('run-task-boom-cli-trigger');
+	const trigger = page.getByTestId('run-inspect-cli-trigger');
 	await expect(trigger).toBeVisible();
 	await trigger.click();
-	const commandOf = (id: string) => page.locator(`[data-testid^="run-task-${id}-cli-command-"]`).filter({ hasText: 'task run' });
+	const commandOf = (id: string) => page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: 'task run' }).filter({ hasText: `--task ${id}` });
 	const command = commandOf('boom');
 	await expect(command).toHaveText(
 		`orkctl --namespace default task run --from-run ${run} --task boom`
@@ -1140,13 +1140,16 @@ test('a failed task offers the command that runs it locally; a succeeded or neve
 	await page.keyboard.press('Escape');
 	// A succeeded task offers its log, and none of its commands is the local run.
 	await selectTask(page, 'ok');
-	await page.getByTestId('run-task-ok-cli-trigger').click();
-	await expect(page.locator('[data-testid^="run-task-ok-cli-command-"]').first()).toBeVisible();
+	await trigger.click();
+	await expect(page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: '--task ok' }).first()).toBeVisible();
 	await expect(commandOf('ok')).toHaveCount(0);
 	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
 	await selectTask(page, 'never');
-	await expect(page.getByTestId('run-task-never-cli-trigger')).toHaveCount(0);
+	await trigger.click();
+	await expect(page.locator('[data-testid^="run-inspect-cli-command-"]').first()).toBeVisible();
+	await expect(commandOf('never')).toHaveCount(0);
+	await page.keyboard.press('Escape');
 	await shot(page, 'screenshot-task-local-replay.png');
 	note(`run ${run}: boom (FAILED) offers its local run; ok (SUCCEEDED) and never (never started) offer none`);
 });

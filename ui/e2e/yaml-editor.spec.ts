@@ -241,11 +241,17 @@ test('Tab indents, Escape then Tab leaves the editor, and completion offers the 
 	await page.keyboard.press('Escape');
 	await expect(page.locator('.cm-schema-doc')).toHaveCount(0);
 	// Escape, then Tab: the keyboard leaves the editor for the next control,
-	// Import YAML, whose label shows the focus.
+	// the footer's Shortcuts, then Import YAML, whose label shows the focus.
 	await page.keyboard.press('Escape');
 	await page.keyboard.press('Tab');
 	await expect(editor).not.toBeFocused();
 	expect(await page.evaluate(() => document.activeElement?.closest('.cm-editor') === null)).toBe(true);
+	await expect(page.getByTestId('apply-yaml-shortcuts')).toBeFocused();
+	await page.keyboard.press('Enter');
+	await expect(page.getByRole('dialog', { name: 'Editor shortcuts' })).toContainText('Go to the next problem');
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('apply-yaml-shortcuts')).toBeFocused();
+	await page.keyboard.press('Tab');
 	await expect(page.getByTestId('apply-import')).toBeFocused();
 	const outline = await page.getByTestId('apply-import').evaluate((input) => getComputedStyle(input.closest('label')!).outlineStyle);
 	expect(outline).toBe('solid');

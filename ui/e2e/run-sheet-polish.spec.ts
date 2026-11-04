@@ -291,7 +291,7 @@ test('running: a RUNNING task is drawn in the running green, its dot moves, its 
 	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 	// DAG order: warm, long, after — `long` is the second cell.
-	await expect.poll(async () => near(await mapPixel(page, 1), rgb(green), 3), { timeout: 5_000 }).toBe(true);
+	await expect.poll(async () => near((await mapPixel(page, 1)).slice(0, 3), rgb(green), 3), { timeout: 5_000 }).toBe(true);
 
 	// Reduced motion: nothing moves. The stamp's dot has no animation and
 	// the map's cell is drawn whole, in the green.
@@ -398,12 +398,10 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 	await inspectTask(page, 'validate');
 	await expect(page.getByTestId('task-values-validate')).toHaveText('{"exitCode": 0}');
 	expect(await page.getByTestId('task-values-validate').evaluate((el) => el.tagName)).toBe('CODE');
-	await page.getByTestId('run-task-validate-cli-trigger').click();
-	const taskCommands = page.locator('[data-testid^="run-task-validate-cli-command-"]');
-	await expect(taskCommands.filter({ hasText: 'run logs' })).toContainText(`--task validate`);
-	await expect(taskCommands.filter({ hasText: 'run timing' })).toContainText(`--task validate`);
-	await page.keyboard.press('Escape');
 	await page.getByTestId('run-inspect-cli-trigger').click();
+	const taskCommands = page.locator('[data-testid^="run-inspect-cli-command-"]');
+	await expect(taskCommands.filter({ hasText: 'run logs' }).first()).toContainText(`--task validate`);
+	await expect(taskCommands.filter({ hasText: 'run timing' })).toContainText(`--task validate`);
 	await expect(page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: 'run get' })).toHaveText(
 		`orkctl --namespace default run get ${failedRun} --json`
 	);

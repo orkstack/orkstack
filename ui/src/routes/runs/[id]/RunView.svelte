@@ -1762,7 +1762,8 @@
 	// while the page is visible. Off the path that draws the page.
 	$effect(() => {
 		const id = data.run?.id;
-		const status = statusLabel(runStatus);
+		// By its enum name, as the list keeps it: the word can change with the design.
+		const status = Status[runStatus] ?? 'UNSPECIFIED';
 		const orkflow = data.run?.orkflowName ?? '';
 		const namespace = namespaceLabel(data.namespace);
 		if (!id) return;
