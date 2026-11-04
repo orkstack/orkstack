@@ -197,7 +197,7 @@ test("a composed task's line keeps its version whole and lets the name give way"
 	expect(fitDagRef('release-block', '0.1.0')).toBe('orkflow relea…@0.1.0');
 	expect(fitDagRef('release-block', '0.1.0')).toHaveLength(DAG_LINE_CHARS);
 	// A cached node gives "cached " of its room to the tag.
-	expect(fitDagRef('release-block', '0.1.0', DAG_LINE_CHARS - 2)).toBe('orkflow rele…@0.1.0');
+	expect(fitDagRef('release-block', '0.1.0', DAG_LINE_CHARS - 2)).toBe('orkflow rel…@0.1.0');
 	// A version too long for any of the name to show is cut like any line.
 	expect(fitDagRef('a', '2026.10.22-rc.1+build.7')).toHaveLength(DAG_LINE_CHARS);
 });

@@ -115,7 +115,11 @@ version's own, and its text is the release's notes on GitHub, word for word.
   with the last day's counts, which filter the list, and the last 7 days'
   outcomes, durations, most failing Orkflows, failures by reason and flakiest
   tasks. A run page shows its progress, who started it and, for a cancel, who
-  asked (always marked asserted, never verified). Updates can be paused and
+  asked (always marked asserted, never verified); its tasks on a timeline,
+  a failed task with its reason and stderr, one log and one card that follow the
+  task you select, whether it failed the same way before and what changed since
+  the last run. Task map and graph sit side by side instead of behind tabs, and
+  the `view=` parameter is gone. Updates can be paused and
   resumed without losing any. Command lines sit behind the terminal icon on
   each page. Destructive actions (Cancel run…, Cordon…) ask for a reason in a
   dialog, and a cordon needs one. The Orkflow editor keeps its problems in the

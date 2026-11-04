@@ -137,7 +137,7 @@
 	import { commandId, type Command } from '#lib/palette/commands.ts';
 	import { match } from '#lib/palette/rank.ts';
 	import { setTitleBlock } from '#lib/sheet.svelte.ts';
-	import { mapGeometry, scrollToCard, twoFrames, type MapTask } from '#lib/taskMap.ts';
+	import { mapGeometry, mapSectionsOf, scrollToCard, twoFrames, type MapTask } from '#lib/taskMap.ts';
 	import AttemptTimeline from '#lib/components/AttemptTimeline.svelte';
 	import type { PageProps } from './$types';
 
@@ -1597,10 +1597,12 @@
 	}
 	// The map's sections as its frame is sized by: every task, then each
 	// fan-out's items (the same sections the map builds, #lib/taskMap.ts).
-	const mapSections = $derived([
-		{ count: tasks.length, labelled: false },
-		...tasks.filter((t) => isFanOut(t.id) && t.items.length > 0).map((t) => ({ count: t.items.length, labelled: true }))
-	]);
+	const mapSections = $derived(
+		mapSectionsOf(
+			tasks.map((t) => ({ id: t.id, needs: taskDefs.get(t.id)?.needs ?? [], itemCount: isFanOut(t.id) ? t.items.length : 0 })),
+			data.orkflow !== null
+		)
+	);
 	let legend = $state.raw(new Map<Status, number>());
 	// Of each status the map's key counts, the cells that never started.
 	const legendNever = $derived.by(() => {
@@ -2227,7 +2229,7 @@ ED — clears it.
 			hrefOf={(id) => taskHref(id, 0)}
 			onselect={toggleNode}
 			neighbourhoodWhenLarge
-			direction={dagDirectionParam(page.url)}
+			direction={page.url.searchParams.has('dag') ? dagDirectionParam(page.url) : 'LR'}
 			iconOf={(id) => activityByTask.get(id)?.icon}
 		>
 			{#snippet actions()}

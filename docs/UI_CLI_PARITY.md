@@ -758,11 +758,15 @@ lower bound, the pool an attempt waits on or that every Orker of it is full,
 the next retry, a requested cancellation). `--watch` polls (default 5 s, at least 1 s) until the run is
 terminal and exits with the run's code (0 succeeded, 2 failed, 3 canceled);
 under `--watch`, `--json` prints one compact response per line. UI: a running
-card polls the same read every 5 s while the page is visible and shows
-`Running for …`, a live line (`Waiting for an orker · …`, `Waiting for
-capacity · every orker of pool … is full (reserved 1/1 cpu) · …`, `Phase run · 412.0
-MiB logged · heartbeat 3s ago`, `… — STALE`, `Attempt 3 scheduled for …`,
-`Cancelling · phase …`, `Phase unavailable · <reason>`) and the Orker.
+page polls the same read every 5 s while it is visible. The selected task's
+Item card shows `Running for …`, its Now section (phase, container, bytes
+logged, the timeout as a lower bound, the heartbeat's age), a live line when
+there is more to say (`Waiting for capacity · …`, `Waiting for capacity · every
+Orker of pool … is full (reserved 1/1 cpu) · …`, `… — STALE`, `Attempt 3
+scheduled for …`, `Cancelling · phase …`, `Phase unavailable · <reason>`) and
+the Orker. A task or item waiting for room reads `Waiting for capacity` on its
+row, and the page opens with one note naming the first such task and its pool,
+where the CLI says `waiting for an orker` or `waiting for capacity`.
 
 The run page's live updates come from the run's event socket, which resumes
 from the last event it applied after a dropped connection. Six reconnects in

@@ -78,6 +78,7 @@
 		{ id: 'overview', label: 'Overview' },
 		{ id: 'versions', label: 'Versions' },
 		{ id: 'edit', label: 'Edit' },
+		{ id: 'runs', label: 'Runs' },
 		{ id: 'schedules', label: 'Schedules' },
 		{ id: 'triggers', label: 'Triggers' }
 	];
@@ -184,10 +185,6 @@
 		{/if}
 	{/snippet}
 	{#snippet actions()}
-		<a
-			href={listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters(wf?.name ?? data.name, '', '', '') })}
-			class="btn btn-quiet">View runs</a
-		>
 		{#if wf}
 			<!-- One orange action per screen: on the Edit tab it is Apply version. -->
 			<button type="button" data-testid="orkflow-submit-run" onclick={() => (submitDialogOpen = true)} class="btn {data.tab === 'edit' ? '' : 'btn-primary'}"
@@ -200,7 +197,7 @@
 <nav class="tabs mb-5" aria-label="Orkflow views">
 	{#each tabs as tab (tab.id)}
 		<a
-			href={tabHref(tab.id)}
+			href={tab.id === 'runs' ? listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters(wf?.name ?? data.name, '', '', '') }) : tabHref(tab.id)}
 			data-testid="tab-{tab.id}"
 			aria-current={data.tab === tab.id ? 'page' : undefined}
 			class="tab"

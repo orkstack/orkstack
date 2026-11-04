@@ -11,7 +11,7 @@
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ListFilter from '#lib/components/ListFilter.svelte';
-	import { listHref } from '#lib/browsing.ts';
+	import { listHref, runWindowFilters } from '#lib/browsing.ts';
 	import { filterFlags, type FieldFilter } from '#lib/listFilter.ts';
 	import { shellQuote } from '#lib/runDetail.ts';
 	import { ListPoolsRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
@@ -90,7 +90,21 @@
 		if (pool.unavailableReason) return { word: 'Unknown', tone: 'plain' };
 		if (pool.liveOrkerCount === 0) return { word: 'No Orkers', tone: 'fail' };
 		if (load && load.orkers > 0 && load.cordoned === load.orkers) return { word: 'Cordoned', tone: 'wait' };
+		if (load && isFull(load)) return { word: 'Full', tone: 'wait' };
+		if (load && load.cordoned > 0) return { word: `${load.cordoned} cordoned`, tone: 'wait' };
 		return { word: 'Ready', tone: 'ok' };
+	}
+	/** Every Orker has reserved all it declared, in a dimension their capacity bounds. */
+	function isFull(load: PoolLoad): boolean {
+		const at = (d: { reserved: number; capacity: number }) => d.capacity > 0 && d.reserved >= d.capacity;
+		return load.orkers > 0 && (at(load.cpu) || at(load.memory));
+	}
+	function fullPools(pools: Pool[], orkers: Orker[]): { name: string; dimension: string }[] {
+		return pools.flatMap((pool) => {
+			const load = loadOf(pool.name, orkers);
+			if (pool.unavailableReason || !isFull(load)) return [];
+			return [{ name: pool.name, dimension: load.cpu.capacity > 0 && load.cpu.reserved >= load.cpu.capacity ? 'cpu' : 'memory' }];
+		});
 	}
 	const cpuWords = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 	const share = (r: number, c: number) => (c > 0 ? Math.min(1, r / c) : 0);
@@ -141,6 +155,18 @@
 	<!-- A card per pool: its state in words, its live Orkers, and how much of
 		what they declared is reserved now. A pool no Orker serves says so; one
 		the cluster could not answer for has no number at all. -->
+	{#await data.orkers then inv}
+		{@const full = inv.error ? [] : fullPools(data.pools, inv.orkers)}
+		{#if full.length}
+			<!-- The capacity note: what a full pool means for what is sent to it. -->
+			<div class="capline mb-4" role="status" data-testid="pools-capacity-note">
+				<span class="mark-wait" aria-hidden="true"></span>
+				<b class="font-semibold text-wait">{full.length === 1 ? `Pool ${full[0].name} is full` : `${full.length} pools are full`}</b>
+				<span class="min-w-0 text-ink-2">{full.length === 1 ? `every Orker has reserved its whole ${full[0].dimension}.` : `${full.map((p) => p.name).join(', ')}: every Orker has reserved all it declared.`} A task sent there starts when an Orker frees room or another Orker joins.</span>
+				<a class="ml-auto font-semibold whitespace-nowrap" data-testid="pools-capacity-runs" href={listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters('', 'RUNNING', '', '') })}>View running runs</a>
+			</div>
+		{/if}
+	{/await}
 	<ul class="poolgrid" data-testid="pool-list">
 		{#each data.pools as pool (pool.name)}
 			<li class="card flex flex-col" id="pool-{pool.name}" data-testid="pool-card-{pool.name}">

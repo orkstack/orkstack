@@ -820,7 +820,7 @@ with that container's cap reserved, and frees it once a later reap removes it.
 **Seeing a pool at its capacity.** A task no Orker has started is `RUNNING`,
 waiting in its pool. When every Orker of that pool that takes new tasks
 declares a capacity, runs a task and has no room for another within it, the run
-page captions the task `Waiting for capacity · every orker of pool <pool> is
+page captions the task `Waiting for capacity · every Orker of pool <pool> is
 full (reserved 4/4 cpu) · 2m 10s`, and `orkctl run inspect` prints
 `<task>: waiting for capacity for 2m10s (scheduled …): every orker of pool
 <pool> is full (reserved 4/4 cpu)`. The figures are summed over those Orkers,
@@ -828,7 +828,8 @@ for each dimension their capacity bounds. Otherwise — an Orker of the pool wit
 room but every slot taken, one declaring no capacity, one running nothing (what
 it reserves is then its own polls, which take the next task), a pinned member,
 a retry waiting out its backoff, an attempt waiting less than two seconds —
-they keep `Waiting for an orker`. No room means the
+the run page says only `Waiting for capacity · 2m 10s` and `orkctl run inspect`
+keeps `waiting for an orker`. No room means the
 per-task cap no longer fits beside `RESERVED`, so a pool can read full with
 less than its capacity reserved: an Orker with a 2-cpu cap and 3 of 4 cpus
 reserved takes nothing more.

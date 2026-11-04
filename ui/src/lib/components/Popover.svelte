@@ -49,7 +49,11 @@
 	// `document`.
 	function stopEscapeHere(event: KeyboardEvent): void {
 		if (event.key !== 'Escape' || !open) return;
+		// Both: stopPropagation keeps it from the document's listeners, and
+		// preventDefault keeps it from a native <dialog> around this panel, which
+		// answers Escape by closing unless the keydown was cancelled.
 		event.stopPropagation();
+		event.preventDefault();
 		onOpenChange(false);
 	}
 

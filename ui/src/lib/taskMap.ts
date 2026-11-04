@@ -41,10 +41,15 @@ export interface MapCell {
 export interface Segment {
 	start: number;
 	count: number;
-	/** A fan-out's section carries a label band above its first row. */
+	/** A fan-out's section, or a stage of a small run, carries a label band above its first row. */
 	labelled: boolean;
 	taskId?: string;
+	/** A stage's words: the tasks that can run at that point. */
+	label?: string;
 }
+
+/** Up to this many tasks the map reads row by row, each stage named. */
+export const STAGE_ROWS_MAX = 40;
 
 export interface MapModel {
 	order: 'dag' | 'run';
@@ -66,12 +71,15 @@ const cellKey = (taskId: string, item?: number) => (item === undefined ? taskId 
 export function buildModel(
 	tasks: readonly MapTask[],
 	definition: boolean,
-	layerOrder: (t: readonly Needs[]) => { layer: Int32Array; order: Int32Array } = defaultLayerOrder
+	layerOrder: (t: readonly Needs[]) => { layer: Int32Array; order: Int32Array } = defaultLayerOrder,
+	stages = false
 ): MapModel {
 	let ordered: readonly MapTask[] = tasks;
+	let layers: number[] | null = null;
 	if (definition) {
-		const { order } = layerOrder(tasks.map((t) => ({ id: t.id, needs: t.needs ?? [] })));
+		const { layer, order } = layerOrder(tasks.map((t) => ({ id: t.id, needs: t.needs ?? [] })));
 		ordered = Array.from(order, (i) => tasks[i]);
+		if (stages) layers = Array.from(order, (i) => layer[i]);
 	}
 	const cells: MapCell[] = [];
 	const kinds: number[] = [];
@@ -79,7 +87,16 @@ export function buildModel(
 		cells.push({ taskId: t.id });
 		kinds.push(t.items !== undefined ? KIND_STACK : KIND_TASK);
 	}
-	const segments: Segment[] = [{ start: 0, count: ordered.length, labelled: false }];
+	const segments: Segment[] = [];
+	if (layers) {
+		for (let i = 0; i < ordered.length; i++) {
+			const last = segments[segments.length - 1];
+			if (last && layers[i] === layers[i - 1]) {
+				last.count++;
+				last.label += `, ${ordered[i].id}`;
+			} else segments.push({ start: i, count: 1, labelled: true, label: ordered[i].id });
+		}
+	} else segments.push({ start: 0, count: ordered.length, labelled: false });
 	for (const t of ordered) {
 		if (!t.items || t.items.length === 0) continue;
 		const start = cells.length;
@@ -98,6 +115,22 @@ export function buildModel(
 		segments,
 		indexOf: (taskId, item) => index.get(cellKey(taskId, item)) ?? -1
 	};
+}
+
+/** The sections a run's map lays out, for sizing its box before it has drawn. */
+export function mapSectionsOf(
+	tasks: readonly { id: string; needs?: readonly string[]; itemCount: number }[],
+	definition: boolean
+): { count: number; labelled: boolean }[] {
+	const out: { count: number; labelled: boolean }[] = [];
+	if (definition && tasks.length <= STAGE_ROWS_MAX) {
+		const { layer } = defaultLayerOrder(tasks.map((t) => ({ id: t.id, needs: t.needs ?? [] })));
+		const perLayer = new Map<number, number>();
+		for (const l of layer) perLayer.set(l, (perLayer.get(l) ?? 0) + 1);
+		for (const count of perLayer.values()) out.push({ count, labelled: true });
+	} else out.push({ count: tasks.length, labelled: false });
+	for (const t of tasks) if (t.itemCount > 0) out.push({ count: t.itemCount, labelled: true });
+	return out;
 }
 
 // Worst first: what a person looking at a fan-out's one cell most needs to see.

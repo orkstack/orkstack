@@ -21,6 +21,7 @@
 	import { layerOrder } from '#lib/dag.ts';
 	import {
 		LABEL_H,
+		STAGE_ROWS_MAX,
 		browserIdle,
 		buildModel,
 		cellAt,
@@ -122,7 +123,7 @@
 	function rebuild(): void {
 		const tasks = untrack(source);
 		builtFor = structureOf(tasks);
-		model = buildModel(tasks, untrack(() => definition), layerOrder);
+		model = buildModel(tasks, untrack(() => definition), layerOrder, tasks.length <= STAGE_ROWS_MAX);
 		statuses = new Uint8Array(model.cells.length);
 		fillStatuses(model, tasks, statuses);
 		counts = countStatuses(statuses, model.kinds);
@@ -323,16 +324,17 @@
 	});
 	const taskCount = $derived.by(() => {
 		void built;
-		return model ? model.segments[0].count : 0;
+		return model ? model.segments.reduce((sum, s) => (s.taskId === undefined ? sum + s.count : sum), 0) : 0;
 	});
 	const sections = $derived.by(() => {
 		const g = geometry;
 		if (!g || !model) return [];
-		return model.segments.slice(1).map((s, k) => {
+		return model.segments.flatMap((s, k) => {
+			if (!s.labelled) return [];
 			let failed = 0;
 			for (let i = s.start; i < s.start + s.count; i++) if (statuses[i] === Status.FAILED) failed++;
 			void counts;
-			return { taskId: s.taskId ?? '', count: s.count, failed, y: g.segments[k + 1].y - LABEL_H };
+			return [{ taskId: s.taskId ?? '', label: s.label ?? '', key: k, count: s.count, failed, y: g.segments[k].y - LABEL_H }];
 		});
 	});
 	const fmt = new Intl.NumberFormat('en-US');
@@ -365,13 +367,13 @@
 			style:height={geometry ? `${geometry.height}px` : undefined}
 		>
 			<canvas bind:this={canvas} data-testid="task-map-canvas" aria-hidden="true" class="block"></canvas>
-			{#each sections as s (s.taskId)}
+			{#each sections as s (s.key)}
 				<div
-					data-testid="task-map-section-{s.taskId}"
-					class="caps absolute left-0 whitespace-nowrap text-ink-muted"
+					data-testid={s.taskId ? `task-map-section-${s.taskId}` : `task-map-stage-${s.key}`}
+					class="absolute left-0 w-full truncate text-sm text-ink-2"
 					style:top="{s.y}px"
 				>
-					{s.taskId} · {fmt.format(s.count)} items{#if s.failed} · <span class="text-red">{fmt.format(s.failed)} failed</span>{/if}
+					{#if s.taskId}{s.taskId} · {fmt.format(s.count)} items{#if s.failed} · <span class="text-fail">{fmt.format(s.failed)} failed</span>{/if}{:else}{s.label}{/if}
 				</div>
 			{/each}
 			{#if selectedRect}

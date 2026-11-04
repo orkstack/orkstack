@@ -145,36 +145,36 @@
 		{@const orker = data.orker}
 		<!-- The Orker's facts in the title block's anatomy. -->
 		<dl
-			class="grid grid-cols-2 border-t-(length:--rule-frame) border-b border-ink text-sm sm:grid-cols-4"
+			class="fstrip card p-4"
 			data-testid="orker-card"
 		>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Orker</dt>
-				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-id">{orker.orkerId || '—'}</dd>
+			<div class="min-w-0">
+				<dt>Orker</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-id">{orker.orkerId || '—'}</dd>
 			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Pool</dt>
-				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-pool">{orker.pool || '—'}</dd>
+			<div class="min-w-0">
+				<dt>Pool</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-pool">{orker.pool || '—'}</dd>
 			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Runtime</dt>
-				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-runtime">{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}</dd>
+			<div class="min-w-0">
+				<dt>Runtime</dt>
+				<dd class="break-words" data-testid="orker-runtime">{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}</dd>
 			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Build</dt>
-				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-build">{orker.buildId || 'unversioned'}</dd>
+			<div class="min-w-0">
+				<dt>Build</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-build">{orker.buildId || 'unversioned'}</dd>
 			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Security profile</dt>
-				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
+			<div class="min-w-0">
+				<dt>Security profile</dt>
+				<dd class="break-words" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
 			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Max concurrent</dt>
-				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-max-concurrent">{String(orker.maxConcurrent)}</dd>
+			<div class="min-w-0">
+				<dt>Max concurrent</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-max-concurrent">{String(orker.maxConcurrent)}</dd>
 			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Rootless</dt>
-				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-rootless">{orker.rootless ? 'yes' : 'no'}</dd>
+			<div class="min-w-0">
+				<dt>Rootless</dt>
+				<dd class="break-words" data-testid="orker-rootless">{orker.rootless ? 'yes' : 'no'}</dd>
 			</div>
 		</dl>
 	{/if}
@@ -325,19 +325,19 @@
 			data-testid="activity-inspect-result"
 		>
 			<dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
-				<dt class="caps text-ink-muted">Activity</dt>
+				<dt>Activity</dt>
 				<dd class="text-ink" data-testid="activity-inspect-activity">
 					{inspected.name ? `${inspected.name} (catalog)` : `${inspected.reference} (reference)`}
 				</dd>
-				<dt class="caps text-ink-muted">Reference</dt>
+				<dt>Reference</dt>
 				<dd class="font-mono break-all text-ink-secondary">{inspected.reference}</dd>
-				<dt class="caps text-ink-muted">Pinned</dt>
+				<dt>Pinned</dt>
 				<dd class="font-mono break-all text-ink" data-testid="activity-inspect-pinned">{pinnedReference(inspected)}</dd>
-				<dt class="caps text-ink-muted">Media type</dt>
+				<dt>Media type</dt>
 				<dd class="font-mono text-ink-secondary">{inspected.mediaType || '-'}</dd>
-				<dt class="caps text-ink-muted">Platforms</dt>
+				<dt>Platforms</dt>
 				<dd class="text-ink-secondary">{inspected.platforms.length > 0 ? inspected.platforms.join(', ') : '-'}</dd>
-				<dt class="caps text-ink-muted">Resolved</dt>
+				<dt>Resolved</dt>
 				<dd class="text-ink-secondary">{fmtTimestamp(inspected.resolvedAt)}</dd>
 			</dl>
 			<ActivityInterface info={inspected} />

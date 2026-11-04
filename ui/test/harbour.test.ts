@@ -281,5 +281,5 @@ test('failure handlers keep to a lane of their own, under the tasks they follow'
 	const task = (id: string, needs: string[], join = 0) => ({ id, needs, join }) as never;
 	const layout = layoutDag([task('a', []), task('h', ['a'], JoinPolicy.ANY_FAILED), task('b', ['a'])]);
 	const y = (id: string) => layout.nodes.find((n) => n.task.id === id)!.y;
-	expect(y('h')).toBeGreaterThan(y('b'));
+	expect(y('h') > y('b')).toBe(true);
 });
