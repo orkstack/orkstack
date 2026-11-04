@@ -1,13 +1,19 @@
 {
-	"$comment": "The docs site's pages. A page under site/content/ is written for the site and cites the repository docs it summarises: its See also links them on GitHub, and scripts/sync-docs.mjs checks that each link names a file and heading that exist. The generated references (orkctl, configuration, error reasons, API, changelog) are ported from the repository as they are.",
+	"$comment": "The docs site's ten sections, in the order a reader meets OrkStack. A page under site/content/ is written for the site and cites the repository docs it summarises: its See also links them on GitHub, and scripts/sync-docs.mjs checks that each link names a file and heading that exist. The generated references (orkctl, configuration, error reasons, API, changelog) are ported from the repository as they are. A group's featured routes are its three links on the docs home. A page's aliases are its old routes, which redirect to it. A hidden group's pages are built but left out of the sidebar.",
 	"groups": [
 		{
-			"label": "Start here",
+			"label": "Get started",
+			"description": "From nothing to your first run, on your own machine.",
+			"featured": [
+				"docs/get-started/run-locally",
+				"docs/get-started/first-orkflow",
+				"docs/get-started/first-activity"
+			],
 			"pages": [
 				{
 					"route": "docs",
 					"title": "OrkStack documentation",
-					"description": "What OrkStack is, and where to go next: a first run, a task to get done, or a key to look up.",
+					"description": "Write an Orkflow in YAML, run it, and read what it produced. Find your way: get started, build, run, operate, deploy and configure.",
 					"parts": [
 						{
 							"source": "site/content/overview.md"
@@ -15,310 +21,723 @@
 					]
 				},
 				{
-					"route": "docs/tutorials/first-orkflow",
+					"route": "docs/get-started/run-locally",
+					"title": "Run it locally",
+					"description": "Start the whole OrkStack stack on your machine with one command, open the UI and stop it again.",
+					"parts": [
+						{
+							"source": "site/content/tutorials/run-locally.md"
+						}
+					]
+				},
+				{
+					"route": "docs/get-started/first-orkflow",
 					"title": "Your first Orkflow",
 					"description": "Clone OrkStack, start it with Docker, and apply, run and inspect an Orkflow, in about ten minutes.",
 					"parts": [
 						{
 							"source": "site/content/tutorials/first-orkflow.md"
 						}
+					],
+					"aliases": [
+						"docs/tutorials/first-orkflow"
 					]
 				},
 				{
-					"route": "docs/tutorials/first-activity",
+					"route": "docs/get-started/first-activity",
 					"title": "Your first activity image",
-					"description": "Turn a shell script into an activity image and run it as a task of an Orkflow.",
+					"description": "Turn a small shell script into an image, push it to the quickstart's registry, and run it as a task of an Orkflow.",
 					"parts": [
 						{
 							"source": "site/content/tutorials/first-activity.md"
 						}
+					],
+					"aliases": [
+						"docs/tutorials/first-activity"
 					]
 				},
 				{
-					"route": "docs/examples",
-					"title": "Examples",
-					"description": "Every example Orkflow, what it shows and what it needs to run.",
+					"route": "docs/get-started/core-ideas",
+					"title": "Core ideas",
+					"description": "The few words you need: Orkflow, task, activity, run, Orker, pool, artifact.",
 					"parts": [
 						{
-							"source": "site/content/examples.md"
+							"source": "site/content/concepts/core-ideas.md"
 						}
-					],
-					"examples": "docs/examples"
+					]
 				}
 			]
 		},
 		{
-			"label": "How-to: authoring",
+			"label": "Build Orkflows",
+			"description": "One task per page: inputs, files, retries, fan-out, approvals, failure handlers, caching, composition.",
+			"featured": [
+				"docs/build/fan-out",
+				"docs/build/await",
+				"docs/build/handle-failure"
+			],
 			"pages": [
 				{
-					"route": "docs/how-to/inputs-and-outputs",
-					"title": "Take inputs and return outputs",
+					"route": "docs/build/inputs-and-outputs",
+					"title": "Inputs and outputs",
 					"description": "Declare a run's inputs, pass them at submit, and return named outputs.",
 					"parts": [
 						{
 							"source": "site/content/how-to/inputs-and-outputs.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/inputs-and-outputs"
 					]
 				},
 				{
-					"route": "docs/how-to/pass-files",
+					"route": "docs/build/pass-files",
 					"title": "Pass files between tasks",
 					"description": "Write artifacts in one task and read them in the next.",
 					"parts": [
 						{
 							"source": "site/content/how-to/pass-files.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/pass-files"
 					]
 				},
 				{
-					"route": "docs/how-to/retries-and-timeouts",
-					"title": "Add retries and timeouts",
+					"route": "docs/build/retries-and-timeouts",
+					"title": "Retries and timeouts",
 					"description": "Retry a failing task with backoff, and bound how long it may run.",
 					"parts": [
 						{
 							"source": "site/content/how-to/retries-and-timeouts.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/retries-and-timeouts"
 					]
 				},
 				{
-					"route": "docs/how-to/conditions",
+					"route": "docs/build/conditions",
 					"title": "Run a task conditionally",
 					"description": "Skip or run a task based on an input or an earlier task's output.",
 					"parts": [
 						{
 							"source": "site/content/how-to/conditions.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/conditions"
 					]
 				},
 				{
-					"route": "docs/how-to/fan-out",
+					"route": "docs/build/fan-out",
 					"title": "Fan out over a list",
 					"description": "Run one task once per element of an array, read every item's results, and see what happens when one fails.",
 					"parts": [
 						{
 							"source": "site/content/how-to/fan-out.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/fan-out"
 					]
 				},
 				{
-					"route": "docs/how-to/await",
-					"title": "Wait for an approval or a system",
+					"route": "docs/build/await",
+					"title": "Wait for an approval",
 					"description": "Pause a run until a person or another system resolves a task, or a deadline passes.",
 					"parts": [
 						{
 							"source": "site/content/how-to/await.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/await"
 					]
 				},
 				{
-					"route": "docs/how-to/handle-failure",
+					"route": "docs/build/handle-failure",
 					"title": "Handle failure",
 					"description": "Run clean-up and compensation tasks when something fails.",
 					"parts": [
 						{
 							"source": "site/content/how-to/handle-failure.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/handle-failure"
 					]
 				},
 				{
-					"route": "docs/how-to/cache",
+					"route": "docs/build/cache",
 					"title": "Reuse results with a cache",
 					"description": "Skip a task whose identical earlier result can be reused.",
 					"parts": [
 						{
 							"source": "site/content/how-to/cache.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/cache"
 					]
 				},
 				{
-					"route": "docs/how-to/compose",
-					"title": "Call one Orkflow from another",
+					"route": "docs/build/compose",
+					"title": "Compose Orkflows",
 					"description": "Run another Orkflow as a task and use its outputs.",
 					"parts": [
 						{
 							"source": "site/content/how-to/compose.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/compose"
 					]
 				},
 				{
-					"route": "docs/how-to/secrets-and-env",
-					"title": "Use secrets and environment",
+					"route": "docs/build/secrets-and-env",
+					"title": "Secrets and environment",
 					"description": "Give a task secret files and environment variables.",
 					"parts": [
 						{
 							"source": "site/content/how-to/secrets-and-env.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/secrets-and-env"
 					]
 				},
 				{
-					"route": "docs/how-to/pools-and-pins",
+					"route": "docs/build/choose-where-tasks-run",
 					"title": "Choose where tasks run",
 					"description": "Send tasks to a pool of Orkers, and keep a group of tasks on one Orker.",
 					"parts": [
 						{
 							"source": "site/content/how-to/pools-and-pins.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/pools-and-pins"
 					]
 				}
 			]
 		},
 		{
-			"label": "How-to: activities",
+			"label": "Activities",
+			"description": "The six first-party activities, and how to make any image an activity.",
+			"featured": [
+				"docs/activities/first-party",
+				"docs/activities/build-an-image",
+				"docs/activities/declare-an-interface"
+			],
 			"pages": [
 				{
-					"route": "docs/how-to/build-an-activity-image",
+					"route": "docs/activities/first-party",
+					"title": "The first-party activities",
+					"description": "Run shell scripts, HTTP calls, file, JSON, git and template operations without building an image.",
+					"parts": [
+						{
+							"source": "site/content/how-to/first-party-activities.md"
+						}
+					],
+					"aliases": [
+						"docs/how-to/first-party-activities"
+					]
+				},
+				{
+					"route": "docs/activities/build-an-image",
 					"title": "Build an activity image",
 					"description": "Package your own program as an image OrkStack can run as a task.",
 					"parts": [
 						{
 							"source": "site/content/how-to/build-an-activity-image.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/build-an-activity-image"
 					]
 				},
 				{
-					"route": "docs/how-to/test-an-activity-image",
+					"route": "docs/activities/test-an-image",
 					"title": "Test an activity image",
 					"description": "Check an image against the activity contract, and run one task locally.",
 					"parts": [
 						{
 							"source": "site/content/how-to/test-an-activity-image.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/test-an-activity-image"
 					]
 				},
 				{
-					"route": "docs/how-to/first-party-activities",
-					"title": "Use the first-party activities",
-					"description": "Run shell scripts, HTTP calls, file, JSON, git and template operations without building an image.",
+					"route": "docs/activities/declare-an-interface",
+					"title": "Declare an interface",
+					"description": "Say what your image takes in its with: block, so the editor can check and suggest it, and give it an icon and a description.",
 					"parts": [
 						{
-							"source": "site/content/how-to/first-party-activities.md"
+							"source": "site/content/how-to/declare-an-interface.md"
 						}
 					]
 				}
 			]
 		},
 		{
-			"label": "How-to: starting runs",
+			"label": "Run and observe",
+			"description": "Start runs by hand, on a schedule, over HTTP or by webhook events; watch them, find why one failed, compare runs, read the numbers.",
+			"featured": [
+				"docs/run/why-a-run-failed",
+				"docs/run/webhooks",
+				"docs/run/stats-and-usage"
+			],
 			"pages": [
 				{
-					"route": "docs/how-to/schedules",
-					"title": "Run on a schedule",
-					"description": "Start runs on a cron or interval schedule, backfill, and fire by hand.",
+					"route": "docs/run/start-runs",
+					"title": "Start runs",
+					"description": "Submit a run from the UI or orkctl, pass its inputs, plan it first, run it again, and cancel it.",
 					"parts": [
 						{
-							"source": "site/content/how-to/schedules.md"
+							"source": "site/content/how-to/start-runs.md"
 						}
 					]
 				},
 				{
-					"route": "docs/how-to/triggers",
-					"title": "Start runs over HTTP",
-					"description": "Let another system start a run with a plain HTTP request.",
+					"route": "docs/run/schedules-and-triggers",
+					"title": "Schedules and triggers",
+					"description": "Start runs on a cron or interval schedule, backfill, fire by hand, or let another system start one with a plain HTTP request.",
 					"parts": [
 						{
-							"source": "site/content/how-to/triggers.md"
+							"source": "site/content/how-to/schedules-and-triggers.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/schedules",
+						"docs/how-to/triggers"
 					]
 				},
 				{
-					"route": "docs/how-to/webhooks",
-					"title": "Get run events",
+					"route": "docs/run/webhooks",
+					"title": "Webhooks",
 					"description": "Receive signed HTTP notifications when runs and tasks change state.",
 					"parts": [
 						{
 							"source": "site/content/how-to/webhooks.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/webhooks"
 					]
 				},
 				{
-					"route": "docs/how-to/automation",
-					"title": "Manage a namespace as code",
-					"description": "Declare a namespace's settings, schedules, triggers and webhooks in one YAML file.",
+					"route": "docs/run/watch-a-run",
+					"title": "Watch a run",
+					"description": "Follow a run live: its graph, its tasks and items, their logs, and what is holding a task up.",
 					"parts": [
 						{
-							"source": "site/content/how-to/automation.md"
+							"source": "site/content/how-to/watch-a-run.md"
+						}
+					],
+					"aliases": [
+						"docs/how-to/inspect-a-run"
+					]
+				},
+				{
+					"route": "docs/run/why-a-run-failed",
+					"title": "Find why a run failed",
+					"description": "Go from a red run to its cause: the reason, the failed attempt, its stderr, and what changed.",
+					"parts": [
+						{
+							"source": "site/content/how-to/why-a-run-failed.md"
+						}
+					]
+				},
+				{
+					"route": "docs/run/compare-runs",
+					"title": "Compare two runs",
+					"description": "See what differs between two runs: version, inputs, images and task outcomes.",
+					"parts": [
+						{
+							"source": "site/content/how-to/compare-runs.md"
+						}
+					]
+				},
+				{
+					"route": "docs/run/evidence",
+					"title": "Evidence bundles",
+					"description": "Export a run's record as one verifiable file, and check it offline.",
+					"parts": [
+						{
+							"source": "site/content/how-to/evidence.md"
+						}
+					]
+				},
+				{
+					"route": "docs/run/stats-and-usage",
+					"title": "Stats and usage",
+					"description": "Read outcomes, durations, failures, flaky tasks, cache hit rates and reserved usage.",
+					"parts": [
+						{
+							"source": "site/content/how-to/stats-and-usage.md"
 						}
 					]
 				}
 			]
 		},
 		{
-			"label": "How-to: operating",
+			"label": "Operate",
+			"description": "Namespaces as code with automation documents, pools and Orkers, releases, image policy, retention, telemetry, audit.",
+			"featured": [
+				"docs/operate/automation",
+				"docs/operate/cordon-and-drain",
+				"docs/operate/roll-out-a-release"
+			],
 			"pages": [
 				{
-					"route": "docs/how-to/deploy",
-					"title": "Deploy OrkStack",
-					"description": "What a deployment runs, and the settings to decide first.",
+					"route": "docs/operate/automation",
+					"title": "Automation documents",
+					"description": "Declare a namespace's settings, schedules, triggers and webhooks in one YAML file.",
 					"parts": [
 						{
-							"source": "site/content/how-to/deploy.md"
+							"source": "site/content/how-to/automation.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/automation"
 					]
 				},
 				{
-					"route": "docs/how-to/run-on-kubernetes",
-					"title": "Run Orkers on Kubernetes",
-					"description": "Run each Orker in a Kubernetes pod with a Docker engine of its own.",
-					"parts": [
-						{
-							"source": "site/content/how-to/run-on-kubernetes.md"
-						}
-					]
-				},
-				{
-					"route": "docs/how-to/namespaces",
-					"title": "Configure namespaces",
+					"route": "docs/operate/namespaces",
+					"title": "Namespaces, holds and budgets",
 					"description": "Set retention, admission, budgets and policies for a namespace.",
 					"parts": [
 						{
 							"source": "site/content/how-to/namespaces.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/namespaces"
 					]
 				},
 				{
-					"route": "docs/how-to/roll-out-a-release",
+					"route": "docs/operate/pools-and-orkers",
+					"title": "Pools, Orkers and pins",
+					"description": "Run a pool of Orkers: size them, declare capacity, host pins, and see who is serving what.",
+					"parts": [
+						{
+							"source": "site/content/how-to/pools-and-orkers.md"
+						}
+					]
+				},
+				{
+					"route": "docs/operate/cordon-and-drain",
+					"title": "Cordon and drain an Orker",
+					"description": "Take an Orker out of service without disturbing what it is running.",
+					"parts": [
+						{
+							"source": "site/content/how-to/cordon-and-drain.md"
+						}
+					]
+				},
+				{
+					"route": "docs/operate/roll-out-a-release",
 					"title": "Roll out a release",
 					"description": "Move a deployment to a new OrkStack release without disturbing running runs.",
 					"parts": [
 						{
 							"source": "site/content/how-to/roll-out-a-release.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/roll-out-a-release"
 					]
 				},
 				{
-					"route": "docs/how-to/observe",
-					"title": "Observe OrkStack",
+					"route": "docs/operate/image-policy",
+					"title": "Image policy",
+					"description": "Require digests, limit registries and verify cosign signatures, for the deployment or one namespace.",
+					"parts": [
+						{
+							"source": "site/content/how-to/image-policy.md"
+						}
+					]
+				},
+				{
+					"route": "docs/operate/retention",
+					"title": "Retention",
+					"description": "Decide how long finished runs stay readable, and what reclaims their data.",
+					"parts": [
+						{
+							"source": "site/content/how-to/retention.md"
+						}
+					]
+				},
+				{
+					"route": "docs/operate/telemetry",
+					"title": "Telemetry",
 					"description": "Export metrics, logs and traces with OpenTelemetry.",
 					"parts": [
 						{
 							"source": "site/content/how-to/observe.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/observe"
 					]
 				},
 				{
-					"route": "docs/how-to/inspect-a-run",
-					"title": "Inspect a run",
-					"description": "Read a run's logs, timing, attempts and artifacts, compare runs, and export evidence.",
+					"route": "docs/operate/audit",
+					"title": "Audit",
+					"description": "Read who changed what: the immutable records of control-plane writes.",
 					"parts": [
 						{
-							"source": "site/content/how-to/inspect-a-run.md"
+							"source": "site/content/how-to/audit.md"
 						}
 					]
 				},
 				{
-					"route": "docs/how-to/troubleshoot",
+					"route": "docs/operate/troubleshoot",
 					"title": "Troubleshoot",
 					"description": "Common symptoms, their causes and their fixes.",
 					"parts": [
 						{
 							"source": "site/content/how-to/troubleshoot.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/troubleshoot"
+					]
+				}
+			]
+		},
+		{
+			"label": "Deploy",
+			"description": "What runs where, what it needs, and how to run it in production.",
+			"featured": [
+				"docs/deploy/architecture",
+				"docs/deploy/kubernetes",
+				"docs/deploy/security"
+			],
+			"pages": [
+				{
+					"route": "docs/deploy/architecture",
+					"title": "Architecture",
+					"description": "What a deployment runs, where its state lives, and how the parts scale.",
+					"parts": [
+						{
+							"source": "site/content/how-to/architecture.md"
+						}
+					],
+					"aliases": [
+						"docs/how-to/deploy"
+					]
+				},
+				{
+					"route": "docs/deploy/requirements",
+					"title": "Requirements",
+					"description": "What OrkStack needs from you, and the checklist to go through before production.",
+					"parts": [
+						{
+							"source": "site/content/how-to/requirements.md"
+						}
+					]
+				},
+				{
+					"route": "docs/deploy/published-images",
+					"title": "Run the published images",
+					"description": "Start ork and orker in production from the published images: what each needs, with a worked example.",
+					"parts": [
+						{
+							"source": "site/content/how-to/published-images.md"
+						}
+					]
+				},
+				{
+					"route": "docs/deploy/kubernetes",
+					"title": "Production on Kubernetes",
+					"description": "Run each Orker in a Kubernetes pod with a Docker engine of its own.",
+					"parts": [
+						{
+							"source": "site/content/how-to/run-on-kubernetes.md"
+						}
+					],
+					"aliases": [
+						"docs/how-to/run-on-kubernetes"
+					]
+				},
+				{
+					"route": "docs/deploy/object-storage",
+					"title": "Object storage",
+					"description": "Point OrkStack at an S3-compatible bucket, and what it keeps there.",
+					"parts": [
+						{
+							"source": "site/content/how-to/object-storage.md"
+						}
+					]
+				},
+				{
+					"route": "docs/deploy/temporal",
+					"title": "Temporal",
+					"description": "Connect OrkStack to a Temporal cluster, and the cluster settings that matter.",
+					"parts": [
+						{
+							"source": "site/content/how-to/temporal.md"
+						}
+					]
+				},
+				{
+					"route": "docs/deploy/upgrades",
+					"title": "Upgrades",
+					"description": "Move to a new version: what changes, what to do first, and how to go back.",
+					"parts": [
+						{
+							"source": "site/content/how-to/upgrades.md"
+						}
+					]
+				},
+				{
+					"route": "docs/deploy/security",
+					"title": "Security model",
+					"description": "What a task can and cannot reach, and who holds which credential.",
+					"parts": [
+						{
+							"source": "site/content/concepts/security.md"
+						}
+					],
+					"aliases": [
+						"docs/concepts/security"
+					]
+				}
+			]
+		},
+		{
+			"label": "Configuration",
+			"description": "Every setting with its environment variable, default, what it applies to, and the details.",
+			"featured": [
+				"docs/configuration",
+				"docs/configuration/engine",
+				"docs/configuration/orker"
+			],
+			"pages": [
+				{
+					"route": "docs/configuration",
+					"title": "All settings",
+					"description": "Every setting of ork and orker: its key, environment variable, default, what it applies to, what it accepts, when it is checked, and the details.",
+					"parts": [
+						{
+							"source": "site/content/configuration/all-settings.md"
+						}
+					],
+					"tableOfContents": {
+						"minHeadingLevel": 2,
+						"maxHeadingLevel": 2
+					},
+					"generatedNote": true,
+					"aliases": [
+						"docs/reference/configuration"
+					]
+				},
+				{
+					"route": "docs/configuration/engine",
+					"title": "Engine settings",
+					"description": "The settings of ork: the API listener, limits, run history, and what to decide first.",
+					"parts": [
+						{
+							"source": "site/content/configuration/engine.md"
+						}
+					]
+				},
+				{
+					"route": "docs/configuration/orker",
+					"title": "Orker settings",
+					"description": "The settings of orker: container runtime, resources, capacity, secrets, logs, and what to decide first.",
+					"parts": [
+						{
+							"source": "site/content/configuration/orker.md"
+						}
+					]
+				},
+				{
+					"route": "docs/configuration/storage",
+					"title": "Storage settings",
+					"description": "Where artifacts, the run archive and task logs live, and how to reach them.",
+					"parts": [
+						{
+							"source": "site/content/configuration/storage.md"
+						}
+					]
+				},
+				{
+					"route": "docs/configuration/telemetry",
+					"title": "Telemetry settings",
+					"description": "Process logs, the admin listener, exporters and sampling.",
+					"parts": [
+						{
+							"source": "site/content/configuration/telemetry.md"
+						}
+					]
+				},
+				{
+					"route": "docs/configuration/details",
+					"title": "Setting details",
+					"description": "The longer rules behind the settings: sizing an Orker, declaring capacity, what a pool must share, task logs, retention cleanup and versioning.",
+					"parts": [
+						{
+							"source": "docs/DEPLOY.md",
+							"include": [
+								"### Sizing an Orker's task ceiling",
+								"### Declaring an Orker's capacity",
+								"### Every Orker of a pool has the same settings",
+								"### Pin hosting is a pool-wide setting",
+								"### Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them",
+								"### Pins on a versioned deployment",
+								"### The bucket stops being optional at the second replica",
+								"### Live task logs: where they are, what bounds them, how long they stay",
+								"### Retention cleanup and bucket lifecycle rules",
+								"### Versioning is off until you set a build id",
+								"### …and the first versioned release needs one call on the cluster"
+							],
+							"promote": 1
+						}
+					],
+					"generatedNote": true
+				}
+			]
+		},
+		{
+			"label": "Examples",
+			"description": "Every example Orkflow: what it shows, its YAML, and how to run it.",
+			"featured": [
+				"docs/examples/config-from-git",
+				"docs/examples/order-saga",
+				"docs/examples/each-fan-out"
+			],
+			"pages": [
+				{
+					"route": "docs/examples",
+					"title": "Example gallery",
+					"description": "Every example Orkflow, what it shows and what it needs to run.",
+					"parts": [
+						{
+							"source": "site/content/examples.md"
+						}
+					],
+					"examples": "docs/examples",
+					"featuredExamples": [
+						"config-from-git",
+						"order-saga",
+						"each-fan-out"
 					]
 				}
 			]
 		},
 		{
 			"label": "Reference",
+			"description": "orkctl, configuration, error reasons, API and changelog are generated from the source, so they are always current; Orkflow keys, templates and limits are written guides.",
+			"featured": [
+				"docs/reference/cli",
+				"docs/reference/reasons",
+				"docs/reference/json"
+			],
 			"pages": [
 				{
 					"route": "docs/reference/orkflow-keys",
@@ -341,12 +760,12 @@
 					]
 				},
 				{
-					"route": "docs/reference/activity-contract",
-					"title": "Activity contract",
-					"description": "The files, exit codes and signals between OrkStack and an activity container.",
+					"route": "docs/reference/json",
+					"title": "JSON values",
+					"description": "How a run's input, a task's values and its output are written, and how YAML in an authored document becomes JSON.",
 					"parts": [
 						{
-							"source": "site/content/reference/activity-contract.md"
+							"source": "site/content/reference/json-values.md"
 						}
 					]
 				},
@@ -361,6 +780,16 @@
 					]
 				},
 				{
+					"route": "docs/reference/activity-contract",
+					"title": "Activity contract",
+					"description": "The files, exit codes and signals between OrkStack and an activity container.",
+					"parts": [
+						{
+							"source": "site/content/reference/activity-contract.md"
+						}
+					]
+				},
+				{
 					"route": "docs/reference/cli",
 					"title": "orkctl",
 					"description": "Every orkctl command and flag, generated from the CLI's own command tree.",
@@ -368,35 +797,8 @@
 						{
 							"source": "docs/CLI.md"
 						}
-					]
-				},
-				{
-					"route": "docs/reference/configuration",
-					"title": "Configuration",
-					"description": "Every setting of ork and orker: its key, its environment variable and its default.",
-					"parts": [
-						{
-							"source": "docs/DEPLOY.md",
-							"include": [
-								"## 1. Configuration"
-							]
-						},
-						{
-							"append": "deploy/orkstack.defaults.yaml",
-							"lang": "yaml",
-							"heading": "Every key and its default"
-						}
-					]
-				},
-				{
-					"route": "docs/reference/reasons",
-					"title": "Error reasons",
-					"description": "Every failure reason a client can see, what it means and what to do.",
-					"parts": [
-						{
-							"source": "docs/REASONS.md"
-						}
-					]
+					],
+					"generatedNote": true
 				},
 				{
 					"route": "docs/reference/api",
@@ -406,7 +808,19 @@
 						{
 							"source": "docs/API.md"
 						}
-					]
+					],
+					"generatedNote": true
+				},
+				{
+					"route": "docs/reference/reasons",
+					"title": "Error reasons",
+					"description": "Every failure reason a client can see, what it means and what to do.",
+					"parts": [
+						{
+							"source": "docs/REASONS.md"
+						}
+					],
+					"generatedNote": true
 				},
 				{
 					"route": "docs/reference/limits",
@@ -426,12 +840,19 @@
 						{
 							"source": "CHANGELOG.md"
 						}
-					]
+					],
+					"generatedNote": true
 				}
 			]
 		},
 		{
 			"label": "Concepts",
+			"description": "Short explanations: how OrkStack works, durability, versions, the words it uses.",
+			"featured": [
+				"docs/concepts/how-it-works",
+				"docs/concepts/durability",
+				"docs/concepts/glossary"
+			],
 			"pages": [
 				{
 					"route": "docs/concepts/how-it-works",
@@ -494,16 +915,6 @@
 					]
 				},
 				{
-					"route": "docs/concepts/security",
-					"title": "Security model",
-					"description": "What a task can and cannot reach, and who holds which credential.",
-					"parts": [
-						{
-							"source": "site/content/concepts/security.md"
-						}
-					]
-				},
-				{
 					"route": "docs/concepts/proven",
 					"title": "How OrkStack is proven",
 					"description": "What is tested before a change merges, and why the evidence can be believed.",
@@ -526,7 +937,8 @@
 			]
 		},
 		{
-			"label": "Contributing",
+			"label": "Contribute",
+			"hidden": true,
 			"pages": [
 				{
 					"route": "docs/contributing",
@@ -539,13 +951,16 @@
 					]
 				},
 				{
-					"route": "docs/how-to/read-ci",
+					"route": "docs/contributing/read-ci",
 					"title": "Read a red CI run",
 					"description": "Find out why a check is red, and whether to fix it or run one job again.",
 					"parts": [
 						{
 							"source": "site/content/how-to/read-ci.md"
 						}
+					],
+					"aliases": [
+						"docs/how-to/read-ci"
 					]
 				}
 			]

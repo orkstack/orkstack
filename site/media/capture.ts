@@ -9,7 +9,7 @@
 // examples/ and nothing else.
 //
 // A screenshot is shown at exactly its own size, so it is never resampled
-// (ThemeShot.astro, sync-docs.mjs): each is captured twice per theme, at one
+// (Shot.astro, sync-docs.mjs): each is captured twice per theme, at one
 // and at two device pixels per CSS pixel, and saved losslessly, and a page
 // serves the pair as a srcset. Two viewports, matched to where the site shows
 // them:

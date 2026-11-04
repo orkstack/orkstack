@@ -52,5 +52,5 @@ Look up a word that OrkStack uses in its interface and its docs. The words are i
 
 ## See also
 
-- [AGENTS.md, Orkflow execution model](https://github.com/orkstack/orkstack/blob/main/AGENTS.md#7-orkflow-execution-model): the repository's vocabulary, in section 7.
+- [docs/DSL.md, "Tasks"](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#tasks): the task keys that the glossary's words name.
 - [docs/DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md): the keys that Orkflow terms map to.

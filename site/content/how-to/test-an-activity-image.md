@@ -28,7 +28,7 @@ The test needs a pushed image, because it runs the digest the registry returns. 
 
 A `SKIP` is not a pass. The `--json` output lists each check with its status.
 
-The report also shows the `with:` interface the image declares in its `org.orkstack.activity.interface` label: declared, none, or malformed. The label is optional, so the test shows it and never fails over it. [Declare the interface](/docs/how-to/build-an-activity-image/#declare-the-interface) explains how.
+The report also shows the `with:` interface the image declares in its `org.orkstack.activity.interface` label: declared, none, or malformed. The label is optional, so the test shows it and never fails over it. [Declare the interface](/docs/activities/build-an-image/#declare-the-interface) explains how.
 
 <!-- site-media: cli-activity-test -->
 
@@ -87,4 +87,4 @@ A local run is a new activity with its own idempotency key. It never reuses the 
 - [OCI Activity Contract, section 10.3](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#103-the-contract-test-suite): the six checks, in full
 - [OCI Activity Contract, section 10.4](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#104-running-one-task-locally): running one task locally
 - [Activity images and the `op` convention](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#activity-images-and-the-op-convention): the `op` shape the test expects
-- [Build an activity image](/docs/how-to/build-an-activity-image/): the image this page tests
+- [Build an activity image](/docs/activities/build-an-image/): the image this page tests

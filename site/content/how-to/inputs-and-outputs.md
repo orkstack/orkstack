@@ -63,7 +63,7 @@ outputs:
 ```
 
 - When every task has finished, the engine renders each template once. The rendered map is the run's output.
-- A composing Orkflow receives the same map. See [Run one Orkflow inside another](/docs/how-to/compose/).
+- A composing Orkflow receives the same map. See [Run one Orkflow inside another](/docs/build/compose/).
 - Every value is a string.
 - A name is lowercase letters, digits and underscores. It starts with a letter, and it is at most 128 bytes.
 - A template can read any task of the Orkflow. A task that did not succeed has no output, so guard the read: `{{ with index .tasks "sign" }}{{ .output.value }}{{ end }}`.
@@ -81,7 +81,7 @@ The run ends `FAILED`, even when every task succeeded.
 ## Limits
 
 - An input over 256 KiB is refused at submit with `INPUT_TOO_LARGE`. The limit counts the JSON the run is submitted with, so quotes and line breaks count twice.
-- For large data, pass a URL or an object key, not the bytes. To pass files between tasks, see [Pass files between tasks](/docs/how-to/pass-files/).
+- For large data, pass a URL or an object key, not the bytes. To pass files between tasks, see [Pass files between tasks](/docs/build/pass-files/).
 
 ## See also
 

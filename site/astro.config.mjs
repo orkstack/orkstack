@@ -5,7 +5,7 @@ import { readFileSync, existsSync } from 'node:fs';
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLinksValidator from 'starlight-links-validator';
-import { SITE, BASE, REPO } from './site.config.mjs';
+import { SITE, BASE, BASE_PATH } from './site.config.mjs';
 import { repoRoot, readTokens, codeTheme } from './scripts/tokens.mjs';
 import { templateInjection } from './src/lib/template-grammar.mjs';
 
@@ -20,51 +20,62 @@ if (!existsSync(examplesFile)) throw new Error('src/styles/generated/examples.js
 const examples = JSON.parse(readFileSync(examplesFile, 'utf8'));
 
 /**
- * @typedef {{ route: string, title: string, examples?: string }} ManifestPage
- * @typedef {{ label: string, pages: Array<ManifestPage | ManifestGroup> }} ManifestGroup
+ * @typedef {{ route: string, title: string, examples?: string, aliases?: string[] }} ManifestPage
+ * @typedef {{ label: string, hidden?: boolean, pages: ManifestPage[] }} ManifestGroup
  */
 
 /**
- * The sidebar, in the manifest's order.
- * @param {Array<ManifestPage | ManifestGroup>} pages
+ * The sidebar, in the manifest's order. Examples list every example file after
+ * the gallery, the featured ones first (sync-docs.mjs orders them).
+ * @param {ManifestPage[]} pages
  * @returns {any[]}
  */
 function sidebarItems(pages) {
 	return pages.flatMap((p) => {
-		if ('pages' in p) return [{ label: p.label, collapsed: true, items: sidebarItems(p.pages) }];
 		const item = { label: p.title, slug: p.route };
 		if (!p.examples) return [item];
-		return [
-			item,
-			{
-				label: 'Example files',
-				collapsed: true,
-				items: examples.map((/** @type {{ title: string, route: string }} */ e) => ({ label: e.title, slug: e.route })),
-			},
-		];
+		return [item, ...examples.map((/** @type {{ title: string, route: string }} */ e) => ({ label: e.title, slug: e.route }))];
 	});
 }
+
+/** A page's old routes keep working: each redirects to where the page is now. */
+const redirects = Object.fromEntries(
+	manifest.groups.flatMap((/** @type {ManifestGroup} */ g) =>
+		g.pages.flatMap((p) => (p.aliases ?? []).map((a) => [`/${a}`, `${BASE_PATH}/${p.route}/`])),
+	),
+);
 
 export default defineConfig({
 	site: SITE,
 	base: BASE,
 	trailingSlash: 'always',
 	devToolbar: { enabled: false },
+	redirects,
 	integrations: [
 		starlight({
 			title: 'OrkStack',
 			description:
 				'A thin, Temporal-backed durable execution platform: Orkflows in YAML, every task an OCI container.',
-			social: [{ icon: 'github', label: 'GitHub', href: REPO }],
+			favicon: '/favicon.svg',
+			head: [
+				{ tag: 'meta', attrs: { property: 'og:image', content: `${SITE}${BASE_PATH}/og.png` } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: `${SITE}${BASE_PATH}/og.png` } },
+			],
 			customCss: ['./src/styles/site.css', './src/styles/starlight.css'],
 			components: {
+				PageFrame: './src/components/starlight/PageFrame.astro',
 				Header: './src/components/starlight/Header.astro',
 				SiteTitle: './src/components/starlight/SiteTitle.astro',
 				ThemeProvider: './src/components/starlight/ThemeProvider.astro',
 				ThemeSelect: './src/components/starlight/ThemeSelect.astro',
+				PageTitle: './src/components/starlight/PageTitle.astro',
 				Footer: './src/components/starlight/Footer.astro',
+				MobileMenuToggle: './src/components/starlight/MobileMenuToggle.astro',
+				MobileMenuFooter: './src/components/starlight/MobileMenuFooter.astro',
 			},
-			sidebar: manifest.groups.map((/** @type {ManifestGroup} */ g) => ({ label: g.label, items: sidebarItems(g.pages) })),
+			sidebar: manifest.groups
+				.filter((/** @type {ManifestGroup} */ g) => !g.hidden)
+				.map((/** @type {ManifestGroup} */ g) => ({ label: g.label, collapsed: true, items: sidebarItems(g.pages) })),
 			expressiveCode: {
 				// Two themes generated from tokens.css; the page's data-theme
 				// picks one.
@@ -76,46 +87,55 @@ export default defineConfig({
 				// on, Expressive Code would shift them, and the docs would no
 				// longer match the UI or the landing page's listing.
 				minSyntaxHighlightingColorContrast: 0,
+				// A code block is a plain card: a title when it has one, and no
+				// window dots on a command.
+				defaultProps: { frame: 'code' },
 				// Languages the repository's docs fence that Shiki does not ship:
 				// Go templates read as plain text, Alloy's river as HCL, its parent.
 				// The template injection colours {{ … }} in YAML as the UI does.
 				shiki: { langAlias: { gotemplate: 'txt', river: 'hcl' }, langs: [templateInjection] },
 				styleOverrides: {
-					borderRadius: 'var(--radius-sm)',
+					borderRadius: 'var(--r)',
 					borderWidth: 'var(--rule-hair)',
-					borderColor: 'var(--color-rule)',
+					borderColor: 'var(--line)',
 					codeFontFamily: 'var(--font-mono)',
-					codeFontSize: 'var(--text-base)',
-					codeLineHeight: 'var(--text-base--line-height)',
+					codeFontSize: 'var(--text-sm)',
+					codeLineHeight: '1.7',
 					uiFontFamily: 'var(--font-sans)',
 					uiFontSize: 'var(--text-sm)',
 					frames: {
 						shadowColor: 'transparent',
-						frameBoxShadowCssValue: 'none',
-						editorActiveTabIndicatorTopColor: 'var(--color-ink)',
-						editorActiveTabBackground: 'var(--color-paper-sunken)',
-						editorTabBarBackground: 'var(--color-paper)',
-						editorTabBarBorderBottomColor: 'var(--color-rule)',
-						terminalTitlebarBackground: 'var(--color-paper)',
-						terminalTitlebarBorderBottomColor: 'var(--color-rule)',
-						terminalTitlebarForeground: 'var(--color-ink-muted)',
-						terminalTitlebarDotsForeground: 'var(--color-rule-strong)',
-						terminalBackground: 'var(--color-paper-sunken)',
-						inlineButtonForeground: 'var(--color-ink-secondary)',
-						inlineButtonBorder: 'var(--color-rule-strong)',
-						tooltipSuccessBackground: 'var(--color-ink)',
-						tooltipSuccessForeground: 'var(--color-on-ink)',
+						frameBoxShadowCssValue: 'var(--shadow)',
+						editorActiveTabIndicatorTopColor: 'transparent',
+						editorActiveTabForeground: 'var(--ink-3)',
+						editorActiveTabBackground: 'var(--surface-2)',
+						editorActiveTabBorderColor: 'var(--line)',
+						editorTabBarBackground: 'var(--surface-2)',
+						editorTabBarBorderBottomColor: 'var(--line)',
+						editorBackground: 'var(--surface)',
+						terminalTitlebarBackground: 'var(--surface-2)',
+						terminalTitlebarBorderBottomColor: 'var(--line)',
+						terminalTitlebarForeground: 'var(--ink-3)',
+						terminalTitlebarDotsForeground: 'var(--line-strong)',
+						terminalBackground: 'var(--surface)',
+						inlineButtonForeground: 'var(--ink-2)',
+						inlineButtonBorder: 'var(--line-strong)',
+						tooltipSuccessBackground: 'var(--ink)',
+						tooltipSuccessForeground: 'var(--surface)',
 					},
 				},
 			},
-			editLink: { baseUrl: `${REPO}/edit/main/` },
+			editLink: { baseUrl: `https://github.com/orkstack/orkstack/edit/main/` },
 			lastUpdated: false,
 			credits: false,
-			plugins: [starlightLinksValidator({
+			plugins: [
+				starlightLinksValidator({
 					errorOnFallbackPages: false,
 					errorOnInvalidHashes: true,
 					// The docs name the local stack's own addresses (localhost:8080 …).
 					errorOnLocalLinks: false,
+					// The landing page is no docs page; scripts/check-links.mjs covers it.
+					exclude: [`${BASE_PATH}/`],
 				}),
 			],
 		}),

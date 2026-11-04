@@ -1,0 +1,10 @@
+---
+// The foot of the narrow screens' menu: the repository, which the header has
+// no room for there.
+import Icon from '../shared/Icon.astro';
+import { REPO } from '../../../site.config.mjs';
+---
+
+<div class="sl-menu-foot">
+	<a class="btn" href={REPO}><Icon name="github" />GitHub</a>
+</div>

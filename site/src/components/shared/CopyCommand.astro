@@ -1,0 +1,53 @@
+---
+// A plate holding a command, with a copy button once a script can use it. The
+// button shows a check for a moment, and a live region says the same.
+import Icon from './Icon.astro';
+
+interface Props {
+	label: string;
+	command: string;
+	class?: string;
+}
+const { label, command, class: className } = Astro.props;
+---
+
+<span class:list={['plate', className]} data-copy-plate>
+	<span class="k">{label}</span>
+	<span class="v">{command}</span>
+	<button type="button" aria-label="Copy command" data-tip="Copy command" data-copy={command} hidden>
+		<Icon name="copy" class="to-copy" />
+		<Icon name="apply" class="copied" />
+	</button>
+	<span class="sr-only" role="status" data-copy-status></span>
+</span>
+
+<script>
+	const SHOWN_MS = 2000;
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+		if (!navigator.clipboard) continue;
+		button.hidden = false;
+		const status = button.parentElement?.querySelector('[data-copy-status]');
+		let reset: ReturnType<typeof setTimeout>;
+		const say = (words: string) => {
+			clearTimeout(reset);
+			// Cleared first, so saying the same words twice is still announced.
+			if (status) status.textContent = '';
+			requestAnimationFrame(() => {
+				if (status) status.textContent = words;
+			});
+			reset = setTimeout(() => {
+				if (status) status.textContent = '';
+				button.classList.remove('done');
+			}, SHOWN_MS);
+		};
+		button.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(button.dataset.copy ?? '');
+				button.classList.add('done');
+				say('Copied');
+			} catch {
+				say('Could not copy');
+			}
+		});
+	}
+</script>

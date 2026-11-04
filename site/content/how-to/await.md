@@ -78,7 +78,7 @@ Set `callback: true` to let a system outside OrkStack resolve the task. Submitti
 | `AWAIT_REJECTED` | ActivityFailed | The run fails. |
 | `AWAIT_TIMED_OUT` | TimedOut | The run fails. |
 
-An await has no retries. Its failure handlers run as they do for any task. An approval can have a handler with `join: any_failed` that tells the requester. See [Handle a failed run](/docs/how-to/handle-failure/).
+An await has no retries. Its failure handlers run as they do for any task. An approval can have a handler with `join: any_failed` that tells the requester. See [Handle a failed run](/docs/build/handle-failure/).
 
 ## Limits
 

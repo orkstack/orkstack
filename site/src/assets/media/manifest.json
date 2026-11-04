@@ -1,5 +1,5 @@
 {
-	"$comment": "Written by make site-media (site/media/). Do not edit.",
+	"$comment": "Written by make site-media (site/media/). Do not edit. tour-* and video-* are interim crops of the frozen design until make site-media records the real UI; video-* gain mp4, mp4Dark and captions then.",
 	"sourceCommit": "906036278462df6a0dc4b742c95de6a328ef9d84",
 	"orkflows": [
 		"examples/each-fan-out.ork.yaml",
@@ -157,6 +157,60 @@
 			"light2x": "ui-await-light-2x.webp",
 			"dark": "ui-await-dark.webp",
 			"dark2x": "ui-await-dark-2x.webp"
+		},
+		"tour-run": {
+			"alt": "The run page of config-from-git: a capacity note, the graph with the selected task, the task timeline and the task map",
+			"caption": "A running run; one item waits for room.",
+			"width": 1152,
+			"height": 409,
+			"light": "tour-run-light.webp",
+			"dark": "tour-run-dark.webp"
+		},
+		"tour-failed": {
+			"alt": "The failed run page of order-saga: the failure line, the graph with its failure handlers, and the cards Why it failed and How it failed",
+			"caption": "A failed run, with its failure handlers.",
+			"width": 1152,
+			"height": 601,
+			"light": "tour-failed-light.webp",
+			"dark": "tour-failed-dark.webp"
+		},
+		"tour-editor": {
+			"alt": "The Orkflow editor with a problem underlined and the template activity's keys in a side panel",
+			"caption": "The editor beside the template activity's keys.",
+			"width": 1152,
+			"height": 615,
+			"light": "tour-editor-light.webp",
+			"dark": "tour-editor-dark.webp"
+		},
+		"video-task-waits": {
+			"title": "A task waits for room, then runs",
+			"alt": "A task waits for room, then runs",
+			"caption": "A full pool holds one item back; it starts the moment an Orker has room.",
+			"duration": "0:45",
+			"width": 1280,
+			"height": 800,
+			"poster": "video-task-waits-light.webp",
+			"posterDark": "video-task-waits-dark.webp"
+		},
+		"video-yaml-to-run": {
+			"title": "From YAML to a running Orkflow",
+			"alt": "From YAML to a running Orkflow",
+			"caption": "Write, plan, apply and run, then watch the graph fill in.",
+			"duration": "0:55",
+			"width": 1280,
+			"height": 800,
+			"poster": "video-yaml-to-run-light.webp",
+			"posterDark": "video-yaml-to-run-dark.webp"
+		},
+		"video-why-failed": {
+			"title": "Find why a run failed",
+			"alt": "Find why a run failed",
+			"caption": "Open the failed task, read its stderr and how it failed, then run it again.",
+			"duration": "0:40",
+			"width": 1280,
+			"height": 800,
+			"poster": "video-why-failed-light.webp",
+			"posterDark": "video-why-failed-dark.webp"
 		}
 	},
 	"vhsImage": "ghcr.io/charmbracelet/vhs:v0.12.1@sha256:ea49a6a1c529be83153e88321892b5585964418f0b9055e8c1e0d732194234a3"

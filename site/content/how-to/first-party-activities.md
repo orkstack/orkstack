@@ -119,7 +119,7 @@ The token is a file. The image never puts it in an argument, a URL or a log.
 | `git` | `clone` by a full commit id, for a public repository. Never `resolve`. |
 | `template` | Yes, unless the template calls a function that reads the clock, randomness, the network or undeclared files. |
 
-A task that mounts a secret is never cached. See [Cache](/docs/how-to/cache/).
+A task that mounts a secret is never cached. See [Cache](/docs/build/cache/).
 
 ## When a task fails
 
@@ -143,4 +143,4 @@ condition: '{{ eq .tasks.notify.output.status 200.0 }}'
 - [Activity images and the `op` convention](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#first-party-reference-images): the shared conventions and the six images
 - [Network and caching of the first-party images](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#network-and-caching-of-the-first-party-images): the full caching rules
 - [First-party activities reference](/docs/reference/first-party-activities/): every key, default and output
-- [Pass files](/docs/how-to/pass-files/) and [Conditions](/docs/how-to/conditions/): moving files and data between tasks
+- [Pass files](/docs/build/pass-files/) and [Conditions](/docs/build/conditions/): moving files and data between tasks

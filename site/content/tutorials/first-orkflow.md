@@ -9,6 +9,10 @@ Clone OrkStack and start it with Docker, then apply an Orkflow, run it, and read
 
 Nothing else is needed: no toolchain and no database. The compose file builds the whole stack in containers and starts Temporal, an S3-compatible object store, the engine, which serves the UI, and an Orker.
 
+This path is checked on Linux with Docker Engine, on amd64. Docker Desktop on macOS and Windows, and arm64, are not checked yet.
+
+If you did [Run it locally](/docs/get-started/run-locally/) and this is the same terminal, skip to step 4. In a new terminal, repeat step 3, then go to step 4. If you did not, start at step 1. The alias from step 3 lasts only for one terminal window.
+
 ## 1. Clone the repository
 
 ```bash
@@ -81,7 +85,54 @@ The run page shows each task's attempts, timing, logs and artifacts:
 
 <!-- site-media: ui-run-finished -->
 
-## 7. Stop the stack
+## 7. Write your own
+
+Save this Orkflow as `greet.ork.yaml`, in the clone's folder. It is the example from [Core ideas](/docs/get-started/core-ideas/):
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+name: greet
+version: "0.1.0"
+
+inputs:
+  who:
+    type: string
+    default: world
+
+tasks:
+  - id: hello
+    uses: shell
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo hello {{ sh .inputs.who }}
+
+  - id: goodbye
+    uses: shell
+    needs:
+      - hello
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo goodbye {{ sh .inputs.who }}
+```
+
+The `orkctl` alias reads the clone's folder, so the file must be saved there. Then apply it, run it with one input, and read the log of its first task:
+
+```bash
+orkctl apply greet.ork.yaml
+orkctl run submit greet --input who=Ada --watch
+orkctl run logs <run-id> --task hello
+```
+
+Use the run ID that `run submit` prints in place of `<run-id>`. The log of `hello` reads `hello Ada`. Leave out `--input who=Ada` to use the default, `world`. `goodbye` runs after `hello` because it names it in `needs:`.
+
+## 8. Stop the stack
 
 ```bash
 docker compose down
@@ -91,8 +142,8 @@ This stops the stack and keeps the object store's data. To delete the stored dat
 
 ## Next
 
-- [Your first activity image](/docs/tutorials/first-activity/): build a container and run it as a task.
-- [Fan out over a list](/docs/how-to/fan-out/): every rule behind the fan-out in this tutorial.
+- [Your first activity image](/docs/get-started/first-activity/): build a container and run it as a task.
+- [Fan out over a list](/docs/build/fan-out/): every rule behind the fan-out in this tutorial.
 - [Examples](/docs/examples/): the other example Orkflows, and what each one needs.
 
 ## See also

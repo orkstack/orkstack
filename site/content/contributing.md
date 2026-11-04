@@ -46,6 +46,19 @@ of input OrkStack does not control also gets a fuzz target; `make check` runs
 its seeds, and `go test -list '^Fuzz' ./...` lists them all (see "Fuzzing" in
 [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).
 
+## How changes are proven
+
+Each change goes through the same checks, at different scopes:
+
+| Check | When it runs | Counts as merge evidence |
+|---|---|---|
+| Feature proof (`make proof-feature`) | On a branch, for the tests that cover the change | No |
+| Full proof (`make proof`, or CI's `proof` check) | Before a change lands on `main`: every test against a real cluster and object store, and the unit tests under the race detector | Yes |
+| Nightly proof | Every day on `main`, on GitHub: the largest scale and soak tests, the busiest packages' unit tests raced three times over, and every fuzz target for a bounded time | No |
+| Pre-release proof (`make proof-release`) | Before a release tag, on the exact commit | Required for a release |
+
+A change is done only after a full proof passes on the exact tree that lands. The reference is [docs/PROVEN.md](https://github.com/orkstack/orkstack/blob/main/docs/PROVEN.md#the-proof-tiers), and [What is proven](/docs/concepts/proven/) explains the results for users.
+
 ## Record the change
 
 A change that may affect users adds its entry under `[Unreleased]` in the

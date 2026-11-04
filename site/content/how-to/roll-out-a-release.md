@@ -42,13 +42,19 @@ orkctl release wait "$NEW" --timeout 2h
 
 New runs go back to the old release at once. Runs already on the new release finish there. Keep the new processes running until its `release wait` exits `0`.
 
+The rollback command names the current release and asks first. In a script, add `--yes`:
+
+```bash
+orkctl release rollback "$OLD" --yes
+```
+
 ## Releases that add features
 
 An older release cannot run every Orkflow construct. Apply a document that uses a new construct only after the release that added it is current. Constructs such as `await:`, `each:`, `join:` and `cache:` behave differently on an older release. Before you roll back past a construct, stop applying documents that use it.
 
 ## Turning versioning on for a running system
 
-Versioning on a system that already runs unversioned work is a separate procedure. Drain first: hold each namespace, let running runs finish, then promote the first versioned release. The full procedure is in the deployment manual.
+Versioning on a system that already runs unversioned work is a separate procedure. Drain first: hold each namespace, let running runs finish, then promote the first versioned release. The full procedure is in [Upgrades, Turn versioning on](/docs/deploy/upgrades/#turn-versioning-on).
 
 ## Limits
 

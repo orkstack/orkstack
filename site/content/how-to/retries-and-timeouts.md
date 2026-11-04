@@ -81,7 +81,7 @@ Activities run at least once. A retry can repeat an effect outside OrkStack, suc
 
 When the last attempt fails, the task fails with its error, and the run fails with it. Read every attempt with `orkctl run attempts <run-id>`.
 
-A failing run still runs its failure handlers. See [Handle a failed run](/docs/how-to/handle-failure/).
+A failing run still runs its failure handlers. See [Handle a failed run](/docs/build/handle-failure/).
 
 ## See also
 

@@ -1,14 +1,19 @@
 ---
 import Landing from '../layouts/Landing.astro';
 import Hero from '../components/landing/Hero.astro';
-import Model from '../components/landing/Model.astro';
-import Example from '../components/landing/Example.astro';
-import Features from '../components/landing/Features.astro';
-import Reel from '../components/landing/Reel.astro';
-import Durable from '../components/landing/Durable.astro';
-import Limits from '../components/landing/Limits.astro';
+import Tour from '../components/landing/Tour.astro';
+import CoreFeatures from '../components/landing/CoreFeatures.astro';
+import Watch from '../components/landing/Watch.astro';
+import FilesInOut from '../components/landing/FilesInOut.astro';
 import Quickstart from '../components/landing/Quickstart.astro';
-import Status from '../components/landing/Status.astro';
+
+const facts = [
+	{ k: 'Runs on', v: 'A Temporal cluster' },
+	{ k: 'Activities', v: 'Any OCI image' },
+	{ k: 'Storage', v: 'S3-compatible' },
+	{ k: 'Database', v: 'None of its own' },
+	{ k: 'License', v: 'MIT' },
+];
 ---
 
 <Landing
@@ -16,12 +21,21 @@ import Status from '../components/landing/Status.astro';
 	description="Author Orkflows in YAML and run any OCI image as a durable step on a fleet of generic workers, on Temporal and S3-compatible storage. MIT licensed."
 >
 	<Hero />
-	<Model />
-	<Example />
-	<Features />
-	<Reel />
-	<Durable />
-	<Limits />
-	<Quickstart />
-	<Status />
+	<div class="wrapw">
+		<dl class="card facts-band">
+			{
+				facts.map((f) => (
+					<div>
+						<dt>{f.k}</dt>
+						<dd>{f.v}</dd>
+					</div>
+				))
+			}
+		</dl>
+		<Tour />
+		<CoreFeatures />
+		<Watch />
+		<FilesInOut />
+		<Quickstart />
+	</div>
 </Landing>

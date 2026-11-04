@@ -38,10 +38,10 @@ Each failure ends with a reason code and a plain-language message. The [reason c
 
 ## Caching is your call
 
-A cached task reuses a stored result for an identical run of it. You turn that on with `cache:`, and you assert that reuse is safe. OrkStack cannot check that assertion. [Cache a task](/docs/how-to/cache/) shows how to decide.
+A cached task reuses a stored result for an identical run of it. You turn that on with `cache:`, and you assert that reuse is safe. OrkStack cannot check that assertion. [Cache a task](/docs/build/cache/) shows how to decide.
 
 ## See also
 
-- [AGENTS.md, Durability, retries, and completion commits](https://github.com/orkstack/orkstack/blob/main/AGENTS.md#4-durability-retries-and-completion-commits): the guarantees this page describes.
+- [docs/OCI_ACTIVITY_CONTRACT.md, "5.1 What a commit means and does not mean"](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#51-what-a-commit-means-and-does-not-mean): what a commit promises, and what it does not.
 - [docs/OCI_ACTIVITY_CONTRACT.md, Durable commit protocol](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#5-durable-commit-protocol): the commit key and the order of its steps.
 - [docs/OCI_ACTIVITY_CONTRACT.md, Failure categories](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#8-failure-categories-and-error-handling): each category, and its reason codes.
