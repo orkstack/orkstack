@@ -217,6 +217,7 @@ func TestStoreOutageWaits_OnlyWhenNoOrkerOfThePoolTakesNewTasks(t *testing.T) {
 		{"one Orker", fleetOf(outage("gpu-1", early)), 1, early},
 		{"the earliest since of several", fleetOf(outage("gpu-1", late), outage("gpu-2", early)), 2, early},
 		{"beside an operator's cordon", fleetOf(outage("gpu-1", early), operator), 1, early},
+		{"an Orker an operator cordoned as well does not resume by itself", fleetOf(editedOrker(outage("gpu-1", early), func(o *orkstackv1.DescribeOrkerResult) { o.CordonReason = "patching" })), 0, time.Time{}},
 		{"a sibling still takes tasks", fleetOf(outage("gpu-1", early), currentOrker("gpu-2", "gpu", 0)), 0, time.Time{}},
 		{"an operator's cordon alone", fleetOf(operator), 0, time.Time{}},
 		{"no Orker", fleetOf(), 0, time.Time{}},

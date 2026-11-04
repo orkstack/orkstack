@@ -429,7 +429,8 @@ reached by is not answered here, and the other way round.
   answer is none it asks the Orker inventory — the presence channel, and each
   Orker on its own control channel, the read `orkctl orker list` makes — and
   refuses the submission only when no uncordoned Orker of the pool answers
-  there either, naming the pool, the tasks and the fix:
+  there either (one waiting out a store outage counts as uncordoned; see "When
+  object storage goes away"), naming the pool, the tasks and the fix:
 
   ```
   pool "gpu" (namespace "payments", tasks: settle) has no live Orkers, so nothing
@@ -810,7 +811,8 @@ overshoot is bounded by `ORK_ORKER_MAX_PINS` × what one pin runs at once: leave
 that much headroom on a pin host. A hard bound for pins is not provided.
 
 **The cap is a pool-wide setting**, as pin hosting is. A submit asks every
-uncordoned Orker of a task's pool for its cap, on its own channel, and refuses
+uncordoned Orker of a task's pool (counting one that is only waiting out a store
+outage) for its cap, on its own channel, and refuses
 a task that declares a request above every one of them
 (`RESOURCES_UNSATISFIABLE`), before a run id exists. That read costs a submit
 whose tasks declare `resources:` one describe per live Orker of the deployment,
@@ -3065,9 +3067,13 @@ has only such Orkers refuses a submit `has no live Orkers`, as ever.
 While a task waits on such a pool, `orkctl run inspect` prints `waiting for
 object storage` with the pool and since when, and the run page says the same in
 place of `Waiting for capacity`. That wait is said only when no Orker of the
-pool takes new tasks and every live Orker answered when asked; otherwise it
-reads as any other wait for an Orker. A pinned task never reads it: it is
-covered by the pin's own wait, above.
+pool takes new tasks, at least one is cordoned for the outage alone, and every
+live Orker answered when asked; otherwise it reads as any other wait for an
+Orker. So a pool whose only Orkers an operator has cordoned too does not say it:
+those would not resume when the store answers. A pinned task never reads it: it
+is covered by the pin's own wait, above. A waiting run has no deadline of its
+own, because a task's `timeout_seconds` starts with its container, so if the store
+never returns, cancel the runs you no longer want.
 
 A release is a different decision. `orkctl release` counts such an Orker as
 cordoned, so a ramp or promote that needs it reports `POOL_NOT_SERVED`, naming

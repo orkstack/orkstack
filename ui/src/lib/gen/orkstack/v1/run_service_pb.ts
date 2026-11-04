@@ -1057,7 +1057,7 @@ export type LiveAttempt = Message<"orkstack.v1.LiveAttempt"> & {
    * store_outage_wait is set when this attempt is waiting out an object
    * storage outage: it has been SCHEDULED, with no next_attempt_at, for at
    * least two seconds, its task is not pinned, at least one Orker of its pool
-   * has cordoned itself because the store does not answer, and no Orker of the
+   * is cordoned only because the store does not answer it, and no Orker of the
    * pool takes new tasks. Derived on read like capacity_wait, and unset for the
    * same reasons. The attempt has used nothing while it waits, and starts once
    * the store answers.
@@ -1091,7 +1091,7 @@ export type StoreOutageWait = Message<"orkstack.v1.StoreOutageWait"> & {
   pool: string;
 
   /**
-   * orkers is how many Orkers of the pool hold that cordon.
+   * orkers is how many Orkers of the pool are cordoned for that reason alone.
    *
    * @generated from field: int32 orkers = 2;
    */

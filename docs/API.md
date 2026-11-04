@@ -1815,7 +1815,7 @@ answer is the TaskAttempt record the Orker writes.
 | `orker_id` | `string` | orker_id is the Orker that sent the heartbeat, as it names itself (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id carry. Empty when the beat came from an Orker built before the detail carried it. |
 | `item` | optional `int32` | item is set when the pending activity is one item of a fan-out (read off the scheduled ExecuteTaskInput.each.index). |
 | `capacity_wait` | [`CapacityWait`](#capacitywait) | capacity_wait is set when this attempt is waiting for capacity: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, and every Orker of its pool that takes new tasks declares a capacity, runs a task, and has no room for another task within it. Derived on read from the Orker inventory ListOrkers reports, in a reading at most five seconds old that one engine replica shares among every caller. Unset otherwise — including when the inventory could not be read in time, when any live Orker did not answer (it could serve this pool, with room), when one of the pool's Orkers declares no capacity, runs nothing (what it reserves is then its own polls, which take the next task), or has room but every task slot (max_concurrent) taken. The attempt is then waiting for an Orker, as it always was. |
-| `store_outage_wait` | [`StoreOutageWait`](#storeoutagewait) | store_outage_wait is set when this attempt is waiting out an object storage outage: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, at least one Orker of its pool has cordoned itself because the store does not answer, and no Orker of the pool takes new tasks. Derived on read like capacity_wait, and unset for the same reasons. The attempt has used nothing while it waits, and starts once the store answers. |
+| `store_outage_wait` | [`StoreOutageWait`](#storeoutagewait) | store_outage_wait is set when this attempt is waiting out an object storage outage: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, at least one Orker of its pool is cordoned only because the store does not answer it, and no Orker of the pool takes new tasks. Derived on read like capacity_wait, and unset for the same reasons. The attempt has used nothing while it waits, and starts once the store answers. |
 
 ### Namespace
 
@@ -2601,7 +2601,7 @@ reading of the inventory at most five seconds old, never a record.
 | Field | Type | Description |
 |---|---|---|
 | `pool` | `string` | pool is the pool the attempt waits on, as TaskRun.pool spells it. |
-| `orkers` | `int32` | orkers is how many Orkers of the pool hold that cordon. |
+| `orkers` | `int32` | orkers is how many Orkers of the pool are cordoned for that reason alone. |
 | `since` | `google.protobuf.Timestamp` | since is when the first of them cordoned itself. |
 
 ### StreamEventsRequest

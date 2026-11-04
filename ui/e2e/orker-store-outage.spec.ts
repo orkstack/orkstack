@@ -276,6 +276,7 @@ test('A run sent during the outage is accepted and says it waits for object stor
 	const live = page.getByTestId('task-wait-store-live');
 	await expect(live).toHaveAttribute('data-live', 'store-outage');
 	await expect(live).toContainText('Waiting for object storage');
+	await expect(page.getByTestId('task-wait-store-card-status')).toHaveText('Waiting for object storage');
 	await expect(page.getByTestId('run-waits-store-outage')).toContainText('uses no attempt');
 	await shot(page, 'run-waiting-for-object-storage.png');
 

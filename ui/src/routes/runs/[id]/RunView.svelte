@@ -2901,6 +2901,7 @@
 					panelTestid={current ? panel : 'item-card'}
 					status={current ? (liveNow?.state === LiveAttemptState.STARTED && !isTerminal(current.status) ? Status.RUNNING : current.status) : activeView.status}
 					waiting={waitingFor(liveNow)}
+					waitingFor={liveNow?.storeOutageWait ? 'Waiting for object storage' : undefined}
 					attempts={facts}
 					attempt={current ? current.attempt : activeView.attempt}
 					orkerId={current ? (itemRun?.orkerId ?? '') : activeView.orkerId}

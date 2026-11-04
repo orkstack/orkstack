@@ -749,7 +749,11 @@ what they reserve against what they admit within, summed. It is derived from
 the Orker inventory, read only when such an attempt waits and shared by the
 engine replica's callers, at most once every five seconds
 ([DEPLOY.md](DEPLOY.md), "Declaring an Orker's capacity"); both clients then
-say the attempt is waiting for capacity rather than for an Orker.
+say the attempt is waiting for capacity rather than for an Orker. An attempt on
+a pool no Orker of which takes new tasks, with at least one cordoned only because
+object storage does not answer it, carries `store_outage_wait` from the same
+read instead, and both clients say it is waiting for object storage
+([DEPLOY.md](DEPLOY.md), "When object storage goes away").
 
 CLI: `run inspect RUN [--task TASK] [--item N] [--watch] [--interval D]`
 prints `STATE`, `PHASE`, `ORKER`, `CONTAINER`, `LOGGED`, `RUNNING`,
@@ -766,7 +770,9 @@ Orker of pool … is full (reserved 1/1 cpu) · …`, `… — STALE`, `Attempt 
 scheduled for …`, `Cancelling · phase …`, `Phase unavailable · <reason>`) and
 the Orker. A task or item waiting for room reads `Waiting for capacity` on its
 row, and the page opens with one note naming the first such task and its pool,
-where the CLI says `waiting for an orker` or `waiting for capacity`.
+where the CLI says `waiting for an orker` or `waiting for capacity`. A task or
+item waiting out a store outage reads `Waiting for object storage` in each of
+those places, and the CLI says `waiting for object storage`.
 
 The run page's live updates come from the run's event socket, which resumes
 from the last event it applied after a dropped connection. Six reconnects in
