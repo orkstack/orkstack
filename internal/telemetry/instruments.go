@@ -290,6 +290,15 @@ type EngineInstruments struct {
 	// ContinuationReadAttempts records the attempt each successful bootstrap
 	// read succeeded on, labelled ork.namespace.
 	ContinuationReadAttempts metric.Int64Histogram
+	// ArchiveSweepRuns counts what the archive sweep did with finished runs
+	// that had no archive, labelled outcome=archived|failed|expired.
+	ArchiveSweepRuns metric.Int64Counter
+	// ArchiveSweepUnconfirmed is how many finished runs the last sweep could
+	// not confirm have an archive.
+	ArchiveSweepUnconfirmed metric.Int64Gauge
+	// ArchiveSweepEarliestExpiry is how many seconds were left until the first
+	// of them expires, at the last sweep that counted any and could date them.
+	ArchiveSweepEarliestExpiry metric.Float64Gauge
 	// Cardinality is the label policy EngineObserver applies through
 	// RunAttrs above.
 	Cardinality Cardinality
@@ -383,18 +392,39 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	sweepRuns, err := meter.Int64Counter("ork.archive.sweep.runs",
+		metric.WithDescription("Finished runs with no archive the archive sweep came to, by outcome."),
+		metric.WithUnit("{run}"))
+	if err != nil {
+		return nil, err
+	}
+	sweepUnconfirmed, err := meter.Int64Gauge("ork.archive.sweep.unconfirmed",
+		metric.WithDescription("Finished runs the last archive sweep could not confirm have an archive."),
+		metric.WithUnit("{run}"))
+	if err != nil {
+		return nil, err
+	}
+	sweepExpiry, err := meter.Float64Gauge("ork.archive.sweep.earliest_expiry",
+		metric.WithDescription("Seconds left until the first run the archive sweep could not confirm archived expires."),
+		metric.WithUnit("s"))
+	if err != nil {
+		return nil, err
+	}
 	return &EngineInstruments{
-		Continuations:            continuations,
-		ContinuationStateBytes:   stateBytes,
-		ContinuationDuration:     continuationDuration,
-		ContinuationHoldDuration: holdDuration,
-		ContinuationReadAttempts: readAttempts,
-		Runs:                     runs,
-		RunDuration:              runDuration,
-		Tasks:                    tasks,
-		TaskDuration:             taskDuration,
-		TaskAttempts:             taskAttempts,
-		RunsRefused:              runsRefused,
-		Cardinality:              highCard,
+		ArchiveSweepRuns:           sweepRuns,
+		ArchiveSweepUnconfirmed:    sweepUnconfirmed,
+		ArchiveSweepEarliestExpiry: sweepExpiry,
+		Continuations:              continuations,
+		ContinuationStateBytes:     stateBytes,
+		ContinuationDuration:       continuationDuration,
+		ContinuationHoldDuration:   holdDuration,
+		ContinuationReadAttempts:   readAttempts,
+		Runs:                       runs,
+		RunDuration:                runDuration,
+		Tasks:                      tasks,
+		TaskDuration:               taskDuration,
+		TaskAttempts:               taskAttempts,
+		RunsRefused:                runsRefused,
+		Cardinality:                highCard,
 	}, nil
 }

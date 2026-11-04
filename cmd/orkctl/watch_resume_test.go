@@ -50,10 +50,12 @@ func resumeEvent(seq int64) *orkstackv1.Event {
 // the call open after sending until the client goes away; one that resets
 // resets the connection under the call first.
 type scriptedStream struct {
-	send  []int64
-	end   error
-	stall bool
-	reset bool
+	send []int64
+	// events are sent after send, as they are.
+	events []*orkstackv1.Event
+	end    error
+	stall  bool
+	reset  bool
 }
 
 // resumingRuns answers StreamEvents from a script, one entry per call (the
@@ -82,6 +84,11 @@ func (s *resumingRuns) StreamEvents(
 	answer := s.script[min(call, len(s.script)-1)]
 	for _, seq := range answer.send {
 		if err := stream.Send(resumeEvent(seq)); err != nil {
+			return err
+		}
+	}
+	for _, event := range answer.events {
+		if err := stream.Send(event); err != nil {
 			return err
 		}
 	}
@@ -338,6 +345,44 @@ func TestRunWatch_OtherStreamErrorsAreNotResumed(t *testing.T) {
 			}
 			if lines := resumeLines(outcome.stderr); len(lines) != 0 {
 				t.Fatalf("resume lines = %v, want none", lines)
+			}
+		})
+	}
+}
+
+// TestRunWatch_ShowsAGapAndReachesTheRunsEnd: numbers the run never published
+// are said, in the human table and the JSON document alike, and the watch goes
+// on to the run's end and exits with its outcome.
+func TestRunWatch_ShowsAGapAndReachesTheRunsEnd(t *testing.T) {
+	for _, mode := range []string{"human", "json"} {
+		t.Run(mode, func(t *testing.T) {
+			var args []string
+			if mode == "json" {
+				args = []string{"--json"}
+			}
+			outcome := watchAgainst(t, &resumingRuns{script: []scriptedStream{{events: []*orkstackv1.Event{
+				resumeEvent(1), resumeEvent(2),
+				{RunId: resumeRunID, Sequence: 4, Type: orkstackv1.EventType_EVENT_TYPE_STREAM_GAP,
+					Message: "events 3–4 of this run were never published"},
+				resumeEvent(5),
+			}}}}, args...)
+			outcome.requireExit(t, exitOK)
+			if mode == "json" {
+				requireSequences(t, jsonSequences(t, outcome.stdout), 1, 2, 4, 5)
+				if !strings.Contains(outcome.stdout, `"STREAM_GAP"`) {
+					t.Fatalf("the document does not say STREAM_GAP:\n%s", outcome.stdout)
+				}
+			} else {
+				requireSequences(t, printedSequences(t, outcome.stdout), 1, 2, 4, 5)
+				if !strings.Contains(outcome.stdout, "STREAM_GAP") || !strings.Contains(outcome.stdout, "finished with status") {
+					t.Fatalf("stdout does not show the gap and the run's end:\n%s", outcome.stdout)
+				}
+			}
+			if !strings.Contains(outcome.stdout, "events 3–4 of this run were never published") {
+				t.Fatalf("stdout does not name the numbers:\n%s", outcome.stdout)
+			}
+			if resumes := resumeLines(outcome.stderr); len(resumes) != 0 {
+				t.Fatalf("the watch resumed over a gap: %q", resumes)
 			}
 		})
 	}

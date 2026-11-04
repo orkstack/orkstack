@@ -67,7 +67,7 @@ type archiveLine struct {
 // EventGap is a range of a run's event sequence its stream does not hold,
 // for one of two causes: lost from object storage before the run was
 // archived (an earlier generation's event segment that was missing or failed
-// verification), or never published (numbers below the run's first event,
+// verification), or never published (numbers the run used without an event,
 // Unpublished). First and Last are inclusive.
 type EventGap struct {
 	First  int64  `json:"first"`
@@ -76,7 +76,7 @@ type EventGap struct {
 }
 
 // UnpublishedEventsReason is the reason of a gap whose numbers the run never
-// published (unpublishedStart), and what tells it from a loss: every other
+// published (noteSkipped), and what tells it from a loss: every other
 // gap's reason says how its events were lost. internal/evidence carries the
 // same text, for the bundle's notice.
 const UnpublishedEventsReason = "the run's history holds no event under these numbers"
@@ -120,28 +120,21 @@ func (e *ArchivedEventsLostError) Error() string {
 
 func (e *ArchivedEventsLostError) Unwrap() error { return ErrArchivedEventsLost }
 
-// ErrEventsUnpublished reports a live read of a run's stream over numbers the
-// run never published.
-var ErrEventsUnpublished = errors.New("events of the run were never published")
-
-// UnpublishedEventsError names the numbers below a run's first published
-// event that a live read of its stream asked for: the gap its archive records
-// (unpublishedStart). It wraps ErrEventsUnpublished.
-type UnpublishedEventsError struct {
-	RunID string
-	Gaps  []EventGap
-}
-
-func (e *UnpublishedEventsError) Error() string {
-	ranges := make([]string, 0, len(e.Gaps))
-	for _, gap := range e.Gaps {
-		ranges = append(ranges, fmt.Sprintf("%d–%d", gap.First, gap.Last))
+// StreamGapEvent is what a live read of a run's stream serves for numbers the
+// run used without publishing an event: a STREAM_GAP event numbered with the
+// last of them, naming them all. No history, bus or archive holds it; a resume
+// past its number does not see it again. at is when the event after them
+// happened, or the last event before them when none follows yet.
+func StreamGapEvent(runID string, first, last int64, at *timestamppb.Timestamp) *orkstackv1.Event {
+	return &orkstackv1.Event{
+		RunId:    runID,
+		Sequence: last,
+		Type:     orkstackv1.EventType_EVENT_TYPE_STREAM_GAP,
+		Message: fmt.Sprintf("events %d–%d of this run were never published (%s)",
+			first, last, UnpublishedEventsReason),
+		Timestamp: at,
 	}
-	return fmt.Sprintf("events %s of run %s were never published (%s)", strings.Join(ranges, ", "), e.RunID,
-		UnpublishedEventsReason)
 }
-
-func (e *UnpublishedEventsError) Unwrap() error { return ErrEventsUnpublished }
 
 // MarshalRunArchive renders a run and its events as the archive body, with
 // one gap line per gap in the events, placed after the events that precede

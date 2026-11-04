@@ -1827,6 +1827,11 @@ ends the watch with that error. After
 6 resumes in a row that deliver no event, watch gives up with the
 engine's error.
 
+Numbers the run used without publishing an event are printed as a
+STREAM_GAP event naming them, and watch goes on to the run's end. A run
+read from its archive ends the watch at such a gap with an error naming
+them; --from-sequence past the gap reads on.
+
 The run is addressed inside the namespace this command acts in; a run of
 another namespace is not found here.
 

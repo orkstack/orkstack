@@ -1792,16 +1792,18 @@ run's own. When it stops before its first task, it publishes `RUN_CREATED` at
 1 and the terminal event at 2. What object storage refuses changes that:
 
 - `RUN_CREATED` refused (twice; once, for a run an earlier release recorded):
-  the terminal event is published alone, at 2. A read of the run's stream from
-  its start fails `DataLoss`, naming 1 as never published, live and from its
-  archive alike; a read from 1 serves the terminal event.
+  the terminal event is published alone, at 2. A live read of the run's stream
+  from its start serves a `STREAM_GAP` event naming 1 as never published, then
+  the terminal event; a read of its archive from its start fails `DataLoss`
+  naming the same number; a read from 1 serves the terminal event.
 - The terminal event refused: the stream holds `RUN_CREATED`, and the run's
   close is read as its terminal event, at 2, with its code.
 - Both refused: the run publishes nothing, and its close is read as its one
   event, at 1, with its code.
 
-A run that publishes no terminal event, as in the last two, has no archive,
-so it can no longer be read once it is retired.
+A run that publishes no terminal event, as in the last two, is archived from
+its history by the archive sweep (`docs/DEPLOY.md` §1, "The archive sweep"), so
+it can still be read once it is retired.
 
 Codes that belong to one construct — pins (`PIN_HOST_LOST`,
 `PIN_UNAVAILABLE`, `PIN_TIMEOUT`, …), joins (`CONDITION_FAILED`), awaits,

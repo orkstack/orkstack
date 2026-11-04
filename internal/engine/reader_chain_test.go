@@ -46,6 +46,9 @@ type chainSpec struct {
 	// closeWith, when set, closes the current generation with this event
 	// instead (finish publishes nothing then).
 	closeWith *historypb.HistoryEvent
+	// skip holds numbers the run used without publishing an event. Each
+	// counts toward its generation's count.
+	skip map[int64]bool
 }
 
 type chainFixture struct {
@@ -113,6 +116,9 @@ func newChain(t *testing.T, spec chainSpec) *chainFixture {
 		var published []*orkstackv1.Event
 		for i := 0; i < count; i++ {
 			sequence++
+			if spec.skip[sequence] {
+				continue
+			}
 			event := &orkstackv1.Event{
 				RunId: f.runID, Sequence: sequence, Type: chainEventType(sequence),
 				Status:    orkstackv1.Status_STATUS_RUNNING,
@@ -150,7 +156,7 @@ func newChain(t *testing.T, spec chainSpec) *chainFixture {
 		f.store.put(obj.GetUri(), data)
 		f.segments = append(f.segments, &orkstackv1.EventSegmentRef{Generation: int64(generation),
 			ExecutionId: chainExecution(generation), FirstSequence: first, LastSequence: sequence,
-			EventCount: int64(count), Object: obj})
+			EventCount: int64(len(published)), Object: obj})
 		snapData, snapObj := gzipObjectForTest(t, f.state, chainNamespace, f.runID, int64(generation), artifacts.ContinuationKindSnapshot)
 		f.store.put(snapObj.GetUri(), snapData)
 		cpData, cpObj := checkpointObjectForTest(t, checkpointPartsForTest(f.state, 2), chainNamespace, f.runID, int64(generation))

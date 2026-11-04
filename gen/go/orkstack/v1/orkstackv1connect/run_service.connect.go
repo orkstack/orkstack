@@ -79,14 +79,15 @@ type RunServiceClient interface {
 	// continues after that event, so a client that passes the last sequence it
 	// received sees nothing repeated and nothing skipped, from any replica. A
 	// stream that ends Unavailable is resumed that way; `orkctl run watch` and
-	// the UI's run page do it, a bounded number of times in a row. A stream
-	// that reaches a gap in the run's events ends DataLoss, after the events
-	// before it, naming the range and its cause: numbers the run never
-	// published (a run whose definition could not be used, its RUN_CREATED
-	// refused by object storage), read live or from the archive; or events
-	// lost from object storage before the run was archived, read from the
-	// archive, since a live read that meets lost events ends Unavailable.
-	// Resuming past a DataLoss gap's last number serves what follows it.
+	// the UI's run page do it, a bounded number of times in a row. Numbers the
+	// run never published (an event whose record object storage refused) read
+	// two ways. Read live, the stream serves a STREAM_GAP event naming them and
+	// goes on to the run's terminal event. Read from the archive, they are a gap
+	// in the run's events, as are events lost from object storage before the run
+	// was archived: the stream ends DataLoss, after the events before the gap,
+	// naming the range and its cause. A live read that meets lost events ends
+	// Unavailable. Resuming past a DataLoss gap's last number serves what
+	// follows it.
 	StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest]) (*connect.ServerStreamForClient[v1.Event], error)
 	// StreamTaskLogs server-streams one task attempt's output: every chunk
 	// already written, in order, then each new one as it lands.
@@ -395,14 +396,15 @@ type RunServiceHandler interface {
 	// continues after that event, so a client that passes the last sequence it
 	// received sees nothing repeated and nothing skipped, from any replica. A
 	// stream that ends Unavailable is resumed that way; `orkctl run watch` and
-	// the UI's run page do it, a bounded number of times in a row. A stream
-	// that reaches a gap in the run's events ends DataLoss, after the events
-	// before it, naming the range and its cause: numbers the run never
-	// published (a run whose definition could not be used, its RUN_CREATED
-	// refused by object storage), read live or from the archive; or events
-	// lost from object storage before the run was archived, read from the
-	// archive, since a live read that meets lost events ends Unavailable.
-	// Resuming past a DataLoss gap's last number serves what follows it.
+	// the UI's run page do it, a bounded number of times in a row. Numbers the
+	// run never published (an event whose record object storage refused) read
+	// two ways. Read live, the stream serves a STREAM_GAP event naming them and
+	// goes on to the run's terminal event. Read from the archive, they are a gap
+	// in the run's events, as are events lost from object storage before the run
+	// was archived: the stream ends DataLoss, after the events before the gap,
+	// naming the range and its cause. A live read that meets lost events ends
+	// Unavailable. Resuming past a DataLoss gap's last number serves what
+	// follows it.
 	StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest], *connect.ServerStream[v1.Event]) error
 	// StreamTaskLogs server-streams one task attempt's output: every chunk
 	// already written, in order, then each new one as it lands.

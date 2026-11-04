@@ -266,6 +266,8 @@ func (f *fakeArchive) DeleteRunArtifacts(_ context.Context, _, id string) (artif
 func (f *fakeArchive) DeleteUnreferencedObjects(context.Context, []string) (artifacts.CleanupResult, error) {
 	return artifacts.CleanupResult{}, nil
 }
+func (f *fakeArchive) HasRun(context.Context, string) (bool, error) { return false, nil }
+
 func (f *fakeArchive) MarkArtifactsCleaned(_ context.Context, id string, at time.Time) error {
 	if err := f.markErr[id]; err != nil {
 		return err

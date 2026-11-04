@@ -1531,7 +1531,7 @@ internal/orker/        Orker runtime and OCI activity dispatch; the runtime file
 internal/task/         Temporal namespace, pool routing, and deployment identity
 internal/config/       Configuration file schema and loader
 internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation
-internal/archive/      Run retirement and the cluster retention controller
+internal/archive/      Run retirement, the archive sweep and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables

@@ -88,6 +88,10 @@ func (c *countingBodies) DeleteUnreferencedObjects(ctx context.Context, objectID
 	return c.inner.DeleteUnreferencedObjects(ctx, objectIDs)
 }
 
+func (c *countingBodies) HasRun(ctx context.Context, runID string) (bool, error) {
+	return c.inner.HasRun(ctx, runID)
+}
+
 func (c *countingBodies) MarkArtifactsCleaned(ctx context.Context, runID string, at time.Time) error {
 	return c.inner.MarkArtifactsCleaned(ctx, runID, at)
 }

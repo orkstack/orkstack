@@ -244,6 +244,9 @@ type RunArchive interface {
 	// GetRun returns the JSONL body archived for runID. A run that was never
 	// archived returns an error matching ErrNotFound.
 	GetRun(ctx context.Context, runID string) ([]byte, error)
+	// HasRun reports whether runID has an archive body, without reading it. A
+	// failure to answer is an error, never false.
+	HasRun(ctx context.Context, runID string) (bool, error)
 	// ListRuns scans the index and returns matching entries, newest first. A
 	// query that sets KeyOrder instead returns one resumable page in
 	// index-key order, so an implementation must honour both orderings.

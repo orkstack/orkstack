@@ -433,12 +433,12 @@ var runCreatedFirstGateDisabledForTest atomic.Bool
 // stays burned and endBeforeStart goes on to its terminal event at 2, under
 // a key of its own: never at 1, where a late write of a failed RUN_CREATED
 // attempt could replace it with a run that never ended. Its stream then
-// starts at 2, and the reader says so (unpublishedStart): a read from 0
-// fails naming 1 as never published, live and from the archive, which
-// records 1 as a gap. Were the terminal write refused as well, the reader
-// numbers the execution's close from 1 and nothing archives it, as for any
-// run that publishes no terminal event. ectx is endBeforeStart's
-// disconnected context.
+// starts at 2, and the reader says so (noteSkipped): a live read from 0
+// serves a STREAM_GAP naming 1 as never published, and the archive records 1
+// as a gap. Were the terminal write refused as well, the reader numbers the
+// execution's close from 1 and the archive sweep archives it from its history,
+// as it does any run that publishes no terminal event. ectx is
+// endBeforeStart's disconnected context.
 func (s *runState) emitRunCreatedFirst(ectx workflow.Context, code, message string) {
 	created := fmt.Sprintf("run created for orkflow %s@%s", s.wf.GetName(), s.wf.GetVersion())
 	sequence := s.eventSeq

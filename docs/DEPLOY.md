@@ -657,9 +657,9 @@ then the variable it becomes.
 | `engine.limits.floor_throughput_bytes_per_sec` | `ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC` | `10 MiB/s` | `ork` | the denominator of that derivation. Only read when `ORK_TRANSFER_BUDGET_SECONDS` is unset |
 | `storage.backend` | `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts, the run archive and task logs live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables active per-namespace run retention: retires each finished run at its own namespace's run retention and reclaims its run-scoped logs and completion commits. Default-off because it deletes durable data; when off, every run is kept for the deployment maximum plus `ORK_CLEANUP_RETENTION_BUFFER` regardless of any namespace's own value |
-| `engine.cleanup.interval` | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts |
-| `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
-| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval) |
+| `engine.cleanup.interval` | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts. Also the archive sweep's interval, and how long a run has been closed before the sweep looks at it, with cleanup on or off ("The archive sweep", below) |
+| `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run. The maximum plus this margin is also how long a run with no archive survives an object-storage outage ("The archive sweep", below) |
+| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval). Also the archive sweep's listing page size |
 | `storage.dir` | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3-compatible endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
@@ -1244,10 +1244,62 @@ again, so a run a drain passed before it was due is examined once it is.
 Cleanup **fails closed**: if the retention policy or any namespace's own value
 is unreadable, that iteration deletes nothing; an archived run the cluster
 reports as STILL RUNNING is refused rather than retired (deleting would
-terminate it, and archiving happens only after a terminal event, so it is a
-defect to surface); per-run storage failures are logged and retried by a later
+terminate it, and a run is archived only at its end, so it is a defect to
+surface); per-run storage failures are logged and retried by a later
 pass; a repeated pass is a no-op because the `artifacts_cleaned` sidecar
 records what was done.
+
+**The archive sweep** runs on every `ork` replica whether or not cleanup is
+enabled, because it only writes and the cluster's own retention fires either
+way. A run's terminal publish writes its archive, so a run terminated from
+outside the workflow runs nothing that could, and a run whose ending object
+storage refused has that write refused too. Each pass lists the runs the
+cluster holds that closed at least `ORK_CLEANUP_INTERVAL` ago, asks the archive
+whether each has a body (one `HEAD` per run), and builds any missing archive
+from the run's history, the same body a run's own write leaves: the run a live
+`GetRun` answers, and its whole stream. It stores nothing, so any replica's pass
+is complete and two replicas converge. From then on the run is an ordinary
+archived run: listed, retired at its namespace's run retention, readable from
+any replica after the cluster lets it go. What cannot be recovered is said:
+
+- events lost from an earlier part of a long run, and numbers the run never
+  published, are `gap` lines (`docs/STORAGE.md`);
+- a record of the run's tasks that is gone or does not decode is replaced by the
+  one before it, and the run's `Error.details` says its tasks are shown as of an
+  earlier event; when that one cannot be read either, the run's name, input and
+  outcome come from its history, its tasks are not shown, and `Error.details`
+  says so. A run with no error of its own gets `RUN_RECORD_INCOMPLETE`
+  (`docs/REASONS.md`), and keeps its status: a run that succeeded still reads
+  `SUCCEEDED`.
+
+A read that fails in a way that may heal, such as object storage not answering,
+writes nothing and is tried on the next pass: an archive is immutable, so an
+outage's holes must not be written into one.
+
+**What it cannot do.** The cluster fixes a run's deletion when the run closes,
+as its close plus the cluster's retention at that moment, and nothing a client
+does postpones it afterwards: raising the retention moves only runs that close
+later. (Read in the source of Temporal server 1.32.0, which the
+`temporalio/temporal:1.9.1` image this repository pins bundles:
+`GenerateDeleteHistoryEventTask` and `executeDeleteHistoryEventTask`. It has not
+been tested against a running cluster.) So a
+finished run with no archive is **lost** if object storage is down at every pass
+from a cleanup interval after its close until that deletion: by default 95 hours
+of the 96 the maximum run retention and `ORK_CLEANUP_RETENTION_BUFFER` add up
+to. Nothing is left to say it existed. A run that already has its archive is
+not at risk, and neither is a run that has not finished. While the risk stands,
+every pass logs an error naming the runs nearest to expiry and when the first of
+them expires, and sets `ork.archive.sweep.unconfirmed` and
+`ork.archive.sweep.earliest_expiry` (§7, "Lifecycle metrics"); alert on the
+first. While object storage is down the pass cannot tell an archived run from
+one that is not, so it counts every finished run it holds, and its figures are
+an upper bound. A longer outage than you can afford calls for a larger
+`ORK_CLEANUP_RETENTION_BUFFER`, which helps only the runs that close after it is
+set.
+
+An archive body whose write stopped before its index rows, on all three
+attempts of the run's own publish, counts as an archive to the sweep: the run
+stays readable by id, but is not listed and is not retired.
 
 **Workload artifact bytes are not reclaimed automatically.** The archive
 records which objects each run references, and `DeleteUnreferencedObjects`
@@ -1924,9 +1976,9 @@ floor; every release from 0.1.0 contains it:
   generation before any side effect — the run fails, and every reader of this
   release or later reports `RUN_STATE_UNSUPPORTED` ("this run was carried
   forward by a newer release and an older release could not carry it on; roll
-  the engines forward") — but it publishes no terminal event, so the run has
-  no archive body and becomes unreadable once the cluster's retention expires
-  it;
+  the engines forward") — but it publishes no terminal event, so its archive
+  comes from the archive sweep (§1), and under a release older than the sweep
+  it has none and becomes unreadable once the cluster's retention expires it;
 - once any run's archive records a gap in its events (a `gap` line,
   `docs/STORAGE.md`), a rollback below it is forbidden permanently: an older
   release refuses the unknown archive line, so every read of that run fails.
@@ -3868,23 +3920,21 @@ passed by reference, cannot be used ends in its first generation with
 refuses `RUN_CREATED`'s snapshot, it is written again under the same number,
 so a store that is back for that write leaves both events. When that write
 fails too, the number stays unused and the terminal event is still written at
-2, under a key of its own. Its stream then starts at 2, and both reads say so
-alike: a read of the stream from its start fails `DataLoss`, naming 1 as never
-published, with nothing sent, live and from the archive, which records 1 as a
-gap line (`docs/STORAGE.md`), and the run page's socket closes with a
-shortened form of the same sentence; a read from 1 serves the terminal event.
-Before this, the terminal event was written at 2 the same way, and the stream
-silently began there. The reader recognises the gap from the history alone, so
-a run recorded before the gate, which wrote the terminal event after a single
-refused write, is read and archived the same way. Only these first numbers are
-recognised: a number a run consumes later without an event — an event whose
-snapshot is refused mid-run — is not recorded as a gap. When `RUN_CREATED` is
-written and the terminal write fails, the stream holds `RUN_CREATED` and the
-run's close is read as its terminal event, at 2. When the terminal write fails
-as well as both of `RUN_CREATED`'s, the run publishes nothing and its close is
-read as its one event, at 1. In both of those it publishes no terminal event,
-so, like every run that publishes none, it has no archive body and becomes
-unreadable once the cluster's retention expires it. It records the
+2, under a key of its own. Its stream then starts at 2, and every read says so.
+A live read from its start serves a `STREAM_GAP` event naming 1 and then the
+terminal event; the archive records 1 as a gap line (`docs/STORAGE.md`), and a
+read of the archive from its start fails `DataLoss` naming it, with nothing
+sent, and the run page's socket closes with a shortened form of the same
+sentence; a read from 1 serves the terminal event. Before this, the terminal
+event was written at 2 the same way, and the stream silently began there. The
+reader recognises the gap from the history alone, so a run recorded before the
+gate, which wrote the terminal event after a single refused write, is read and
+archived the same way. When `RUN_CREATED` is written and the terminal write
+fails, the stream holds `RUN_CREATED` and the run's close is read as its
+terminal event, at 2. When the terminal write fails as well as both of
+`RUN_CREATED`'s, the run publishes nothing and its close is read as its one
+event, at 1. In both of those it publishes no terminal event, so, like every run
+that publishes none, its archive comes from the archive sweep (§1). It records the
 `run-created-first` version, asked lazily where `RUN_CREATED`'s write first
 fails: an ending whose writes take records no marker. A history recorded
 before the gate replays its `DefaultVersion` branch, which wrote the terminal
@@ -3894,6 +3944,22 @@ event next; version 1 is the new path. The fixtures
 `run-created-first-legacy-v1.json` (recorded with the gate off) guard it with
 command, behaviour, reader and negative tests
 (`internal/engine/testdata/history/README.md`).
+
+**A number a run uses without an event is recorded wherever it falls.** When
+object storage refuses an event's snapshot, the number stays used and no event
+is published under it; the run's next event takes the next number. The workflow
+is unchanged: the reader finds such numbers from the history alone, at the start
+of the stream, inside an earlier part's event segment or at its end, so runs
+recorded before this are read the same way. A live read of the stream serves a
+`STREAM_GAP` event at the last of them, naming them all, and goes on to the
+run's terminal event: `StreamEvents`, the run page's socket and `orkctl run
+watch` agree, and a resume past that number does not see it again. `STREAM_GAP`
+belongs to the read, and the run's archive holds no such event. It records the
+numbers as a `gap` line with the reason `the run's history holds no event under
+these numbers`, and a read of the archive over them ends `DataLoss`, as it does
+over any gap, after the events below it; a resume past them serves what follows.
+An archive written before this holds no line for such a number, and its stream
+skips it silently.
 
 **A pin's creation timeout is a versioned change.** A run's plan carries
 `engine.pin_creation_timeout` in whole seconds, pinned at submit and copied
@@ -4223,6 +4289,9 @@ policy names one — they can land on a different sink than the process default
 | `ork.run.continuation.duration` | `ork.namespace`, `phase` | engine, seconds a switch's write (`write`) or a whole restore (`restore`) took |
 | `ork.run.continuation.hold.duration` | `ork.namespace` | engine, seconds a run held new tasks before it carried on (0 when it found a moment with nothing running on its own) |
 | `ork.run.continuation.read.attempts` | `ork.namespace` | engine, the attempt each successful read of a saved state succeeded on |
+| `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), or `expired` (the cluster had already let it go: the run is lost) |
+| `ork.archive.sweep.unconfirmed` | — | engine, each pass: finished runs it could not confirm have an archive. **Alert on this above zero.** While object storage is down it counts every finished run the pass did not reach, archived or not |
+| `ork.archive.sweep.earliest_expiry` | — | engine, each pass that counted any and could date them: seconds left until the first of those runs expires. Read it only while `ork.archive.sweep.unconfirmed` is above zero |
 
 (The rows above omit `ork.namespace` even though every run and task metric
 carries it; `ork.runs.refused` names it explicitly. `ork.cache.outcome` —

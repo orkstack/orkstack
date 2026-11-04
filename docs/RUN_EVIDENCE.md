@@ -147,10 +147,12 @@ A run that carries on into a fresh history reads the events of its earlier
 histories from immutable event segments in object storage. When one of them
 was missing or altered by the time the run was archived, the archive records
 the range it lost as a `gap` line in `run.jsonl` (`docs/STORAGE.md`) rather than
-leaving the run unarchived. So it does for a run whose definition could not be
-used and whose `RUN_CREATED` object storage refused: its stream starts at its
-terminal event, at 2, and 1 is recorded as never published, with the reason
-`the run's history holds no event under these numbers` (`docs/DEPLOY.md` §6).
+leaving the run unarchived. So it does for numbers the run used without
+publishing an event, because object storage refused that event's record: they
+are recorded as never published, with the reason `the run's history holds no
+event under these numbers` (`docs/DEPLOY.md` §6). A run whose definition could
+not be used and whose `RUN_CREATED` was refused is one: its stream starts at its
+terminal event, at 2, and 1 is recorded.
 The bundle of such a run is written with `schema_version: 2` and one more
 key:
 
@@ -224,16 +226,12 @@ a workload artifact named `commit.json` collides with nothing.
    it; another namespace's run is NotFound. Nothing is read before that check.
 2. It must be finished (`FailedPrecondition` naming its status otherwise) and
    archived (`FailedPrecondition` "finished but not yet archived; retry
-   shortly" in the moment between its terminal event and the archive write).
-   A run that published no terminal event — its ending could not be written
-   to object storage, or it was terminated — is never archived, since only
-   that event archives a run; its export says so (`FailedPrecondition`, "has
-   no archive and will never have one"), and it can be read only until it is
-   retired (`docs/DEPLOY.md` §6). That answer covers only a run that never
-   published its terminal event. A run that published it, but whose archive
-   write then failed on each of its three attempts, has no archive either,
-   and its export keeps answering "retry shortly", though no archive is
-   coming.
+   shortly"). That is the moment between its terminal event and the archive
+   write, for a run that archives itself. A run that could not — its ending
+   could not be written to object storage, or it was terminated — is archived
+   from its history by the archive sweep, within about two cleanup intervals of
+   its end and once object storage answers (`docs/DEPLOY.md` §1, "The archive
+   sweep"), and its export can be retried then.
 3. Every member is resolved from the **archived** run snapshot, never from a
    coordinate the caller supplied.
 4. The definition is read by the run's name and version and attested by

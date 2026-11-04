@@ -140,6 +140,24 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	return nil
 }
 
+// HasRun reports whether runID has an archive body.
+func (a *LocalRunArchive) HasRun(ctx context.Context, runID string) (bool, error) {
+	key, err := RunArchiveKey(runID)
+	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if _, err := a.root.Stat(key); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("artifacts: local archive has %q: %w", runID, err)
+	}
+	return true, nil
+}
+
 // GetRun returns the archived JSONL body for runID.
 func (a *LocalRunArchive) GetRun(ctx context.Context, runID string) ([]byte, error) {
 	key, err := RunArchiveKey(runID)

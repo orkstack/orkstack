@@ -78,3 +78,25 @@ func (o *EngineObserver) defaultInstruments() *EngineInstruments {
 	}
 	return inst
 }
+
+// RecordArchiveSweep records one pass of the archive sweep: what became of the
+// finished runs it came to, and how many it could not confirm have an archive.
+// secondsToExpiry is recorded only when dated says the pass could date them; a
+// reader takes it as current only while the unconfirmed count is above zero.
+func (o *EngineObserver) RecordArchiveSweep(ctx context.Context, archived, failed, expired, unconfirmed int64,
+	secondsToExpiry float64, dated bool,
+) {
+	inst := o.defaultInstruments()
+	if inst == nil {
+		return
+	}
+	for outcome, count := range map[string]int64{"archived": archived, "failed": failed, "expired": expired} {
+		if count > 0 {
+			inst.ArchiveSweepRuns.Add(ctx, count, metric.WithAttributes(attribute.String(AttrOutcome, outcome)))
+		}
+	}
+	inst.ArchiveSweepUnconfirmed.Record(ctx, unconfirmed)
+	if dated {
+		inst.ArchiveSweepEarliestExpiry.Record(ctx, secondsToExpiry)
+	}
+}

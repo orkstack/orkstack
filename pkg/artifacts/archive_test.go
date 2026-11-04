@@ -362,6 +362,26 @@ func TestLocalRunArchive_GetMissingRunIsNotFound(t *testing.T) {
 	}
 }
 
+func TestLocalRunArchive_HasRunReportsTheBody(t *testing.T) {
+	ctx := context.Background()
+	archive := newLocalArchive(t)
+	if has, err := archive.HasRun(ctx, "ork-hello-1"); err != nil || has {
+		t.Fatalf("HasRun before the write = %v (%v), want false", has, err)
+	}
+	if err := archive.PutRun(ctx, artifacts.RunRecord{RunID: "ork-hello-1", Orkflow: "hello-ork", Status: "succeeded",
+		Time: day(t, "2026-08-10T10:00:00Z"), JSONL: []byte("{}\n")}); err != nil {
+		t.Fatal(err)
+	}
+	if has, err := archive.HasRun(ctx, "ork-hello-1"); err != nil || !has {
+		t.Fatalf("HasRun after the write = %v (%v), want true", has, err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+	if has, err := archive.HasRun(canceled, "ork-hello-1"); err == nil || has {
+		t.Fatalf("HasRun with no answer = %v (%v), want an error, never false", has, err)
+	}
+}
+
 // TestRunArchive_ListFiltersByOrkflowStatusAndDateRange is the query API the
 // CLI's `run list` rides on: name, status and a time window, newest first.
 func TestRunArchive_ListFiltersByOrkflowStatusAndDateRange(t *testing.T) {

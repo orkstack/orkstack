@@ -636,6 +636,19 @@ func (a *S3RunArchive) finishList(q RunQuery, entries []RunIndexEntry) []RunInde
 // the page boundary. Tests assert on it; nothing in the running system reads it.
 func (a *S3RunArchive) IndexKeysScanned() int64 { return a.indexKeysScanned.Load() }
 
+// HasRun reports whether runID has an archive body, with one HEAD.
+func (a *S3RunArchive) HasRun(ctx context.Context, runID string) (bool, error) {
+	key, err := RunArchiveKey(runID)
+	if err != nil {
+		return false, err
+	}
+	exists, err := a.exists(ctx, key)
+	if err != nil {
+		return false, fmt.Errorf("artifacts: s3 archive has %q: %w", runID, err)
+	}
+	return exists, nil
+}
+
 func (a *S3RunArchive) exists(ctx context.Context, key string) (bool, error) {
 	_, err := a.client.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(a.bucket),

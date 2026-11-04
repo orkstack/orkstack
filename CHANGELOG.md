@@ -390,26 +390,37 @@ version's own, and its text is the release's notes on GitHub, word for word.
   refused its `RUN_CREATED`. `RUN_CREATED` is now written again under the same
   number, so a store that is back for that write leaves both events, from 1.
   When it is refused again, the terminal event is still published at 2, and
-  the missing 1 is said, not skipped: a read of the run's stream from its
-  start now fails `DataLoss`, naming 1 as never published, live and from its
-  archive, which records it as a gap line; a read from 1 serves the terminal
-  event; and the run's evidence bundle is `schema_version` 2, with the gap in
-  `event_gaps`, as every bundle of a gapped archive already was. A run a
-  release before this left the same way, after one refused write, is read the
-  same way (`docs/DEPLOY.md` §6, "An ending before start writes `RUN_CREATED`
-  first").
+  the missing 1 is said, not skipped, as any number a run never published now
+  is (below). A run a release before this left the same way, after one refused
+  write, is read the same way (`docs/DEPLOY.md` §6, "An ending before start
+  writes `RUN_CREATED` first").
+- Numbers a run used without publishing an event, because object storage
+  refused that event's record, are now said wherever they fall in its stream.
+  A live read serves a new `STREAM_GAP` event naming them, and goes on to the
+  run's terminal event: `StreamEvents`, the run page's socket and `orkctl run
+  watch` agree. The run's archive records them as a gap line, and a read of the
+  archive over them ends `DataLoss`, naming them, after the events below; a read
+  past them serves what follows. The run's evidence bundle is `schema_version`
+  2, with the gap in `event_gaps`, as every bundle of a gapped archive already
+  was. Check any client that switches on event types: `STREAM_GAP` changes no
+  run or task (`docs/DEPLOY.md` §6).
+- A finished run that did not archive itself now gets an archive. A run
+  terminated from outside, or whose ending object storage refused, used to
+  disappear when the cluster's retention expired it. A new archive sweep, on
+  every `ork` replica and with `ORK_CLEANUP_ENABLED` on or off, writes its
+  archive from its history once it has been closed for `ORK_CLEANUP_INTERVAL`,
+  with an explicit gap or a stated loss (`RUN_RECORD_INCOMPLETE`) for what cannot
+  be recovered. Such a run is then listed, retired at its retention and readable
+  afterwards like any other. It is still lost if object storage is down at every
+  pass until the cluster deletes it, and nothing can postpone that: alert on the
+  new metric `ork.archive.sweep.unconfirmed` (`docs/DEPLOY.md` §1, "The archive
+  sweep").
 - A gap in a run's events is named for its cause wherever it is reported —
   the `DataLoss` error, the evidence bundle's notice, and `orkctl run evidence
   verify`, whose rows are now labelled `event gaps` rather than `events lost`:
   events "lost from object storage before the run was archived", or "never
   published". The run page's socket (`/ws/runs/{id}`) now closes with that
   sentence, shortened to fit a close frame, instead of "event stream failed".
-- `ExportRunEvidence` of a finished run that published no terminal event
-  (its ending could not be written to object storage, or it was terminated)
-  now says the run has no archive and never will, instead of asking to retry.
-  It does not cover every run left without an archive: one that published its
-  terminal event, but whose archive write then failed on every attempt, still
-  gets "retry shortly" (`docs/RUN_EVIDENCE.md`, "The export, step by step").
 
 ### Security
 
