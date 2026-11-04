@@ -366,28 +366,48 @@ func withOverlayURI(t *testing.T, events []*historypb.HistoryEvent, sequence int
 	return out
 }
 
+// storeDownAt is a store that does not answer for one object and is whole
+// otherwise, so the record before it could be read.
+type storeDownAt struct {
+	*countingSnapshotStore
+	uri string
+	err error
+}
+
+func (s storeDownAt) ReadSnapshot(ctx context.Context, uri string) ([]byte, error) {
+	if uri == s.uri {
+		return nil, s.err
+	}
+	return s.countingSnapshotStore.ReadSnapshot(ctx, uri)
+}
+
 // TestArchiveFromHistory_AStoreThatIsDownWritesNothing: a read that may heal
-// never decides that a record is lost. The archive is immutable, so writing
-// one during an outage would keep the outage's holes for good; the call fails
-// and the next pass tries again.
+// never decides that a record is lost, even when the record before it could be
+// read. The archive is immutable, so writing one during an outage would keep
+// the outage's holes for good; the call fails and the next pass tries again.
 func TestArchiveFromHistory_AStoreThatIsDownWritesNothing(t *testing.T) {
 	const runID = "ork-store-down"
 	down := errors.New("object storage is down")
+	overlayKey, err := artifacts.RunSnapshotOverlayKey("default", runID, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, tc := range []struct {
 		name    string
 		overlay bool
+		downAt  string
 	}{
-		{name: "a full record"},
-		{name: "an overlay", overlay: true},
+		{name: "a full record", downAt: snapshotURIFor(runID, 3)},
+		{name: "an overlay", overlay: true, downAt: "s3://test/" + overlayKey},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
-			events, _ := helloRunEndingWith(t, runID, terminatedClose())
+			events, store := helloRunEndingWith(t, runID, terminatedClose())
 			if tc.overlay {
 				events = withOverlayURI(t, events, 3, runID)
 			}
 			reader, _ := readerOver(events, runID)
-			reader = reader.WithSnapshotStore(&failingSnapshotStore{err: down})
+			reader = reader.WithSnapshotStore(storeDownAt{countingSnapshotStore: store, uri: tc.downAt, err: down})
 			archiver := newLocalArchiver(t)
 			if err := NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID); err == nil ||
 				errors.Is(err, artifacts.ErrNotFound) {
