@@ -31,6 +31,8 @@ ORK_S3_SECRET_KEY=replace-me
 ORK_S3_PATH_STYLE=false
 ORK_ADMIN_ADDR=127.0.0.1:9464
 ORK_DEPLOYMENT_NAME=orkstack
+# Every name with a dot that clients or a gateway use to reach the engine.
+ORK_ALLOWED_HOSTS=ork.internal
 # Setting ORK_BUILD_ID turns versioning on. Leave it out to run unversioned.
 ORK_BUILD_ID=0.1.0
 ```
@@ -53,7 +55,7 @@ services:
       retries: 3
 ```
 
-Put a gateway in front of `ork`. The engine serves plain HTTP and does not authenticate callers.
+Put a gateway in front of `ork`. The engine serves plain HTTP and does not authenticate callers. List every name with a dot that reaches it in `ORK_ALLOWED_HOSTS`: any other such `Host` is refused `403` ([`engine.allowed_hosts`](/docs/configuration/#engine-allowed-hosts)).
 
 Create the bucket named by `ORK_S3_BUCKET` before the first start. No OrkStack process creates it. The Temporal namespace named by `ORK_TEMPORAL_NAMESPACE` is provisioned at boot, so you do not create it.
 

@@ -73,6 +73,10 @@ chmod +x orkctl
 
 The check line should read `orkctl-linux-amd64.tar.gz: OK`. For another system, pick its archive name from the releases page. Windows archives are `.zip` files. Move `orkctl` onto your `PATH`, or run it as `./orkctl`. It reaches the stack at `http://localhost:8080` by default.
 
+In a window with the alias, the alias wins over the binary. Run `unalias orkctl` there, or call `./orkctl`.
+
+The newest release's `orkctl` may be older than your clone. To match them, clone that release's tag: `git clone --branch vX.Y.Z https://github.com/orkstack/orkstack.git`.
+
 ## Next
 
 - [Your first Orkflow](/docs/get-started/first-orkflow/): read the run's results, one item at a time, and plan a run before it starts.

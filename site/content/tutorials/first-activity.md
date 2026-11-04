@@ -105,10 +105,10 @@ The log reads `hello Ada from my own image`. Leave out `--input who=Ada` and the
 
 The output is the task's `values.json`. Open the run in the UI. Its run page shows each task's values, and the `greet` task's `values.json` holds the greeting, `{"greeting":"hello Ada"}`.
 
-**If you installed orkctl.** The alias cannot write files, so save the output with the installed binary. [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains how to install it.
+**If you installed orkctl.** The alias cannot write files, so save the output with the installed binary, called as `./orkctl` because the alias wins over it. [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains how to install it.
 
 ```bash
-orkctl run artifact download <run-id> --task greet --kind values --name values.json --output greeting.json
+./orkctl run artifact download <run-id> --task greet --kind values --name values.json --output greeting.json
 cat greeting.json
 ```
 
