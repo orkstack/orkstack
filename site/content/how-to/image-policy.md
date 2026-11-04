@@ -7,11 +7,14 @@ Choose which images this deployment may run, and which cosign keys a namespace m
 ```bash
 orkctl admin image-policy set --require-digest \
   --allowed-registry ghcr.io/acme/ \
+  --allowed-registry ghcr.io/orkstack/ \
   --signing-key release=cosign.pub
 
 orkctl admin image-policy get
 orkctl namespace update prod-payments --require-signed-by cosign:release
 ```
+
+The second `--allowed-registry` keeps OrkStack's own activities allowed. The default catalog runs `shell`, `http` and the other first-party activities from `ghcr.io/orkstack/`. Leave that prefix out and the engine refuses the list, because it would exclude them. Each `--allowed-registry` replaces the whole list, so name every registry your images come from.
 
 Until an operator writes a policy, every deployment permits every image. An empty policy is the default.
 

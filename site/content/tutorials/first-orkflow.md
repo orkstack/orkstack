@@ -11,7 +11,7 @@ Nothing else is needed: no toolchain and no database. The compose file builds th
 
 This path is checked on Linux with Docker Engine, on amd64. Docker Desktop on macOS and Windows, and arm64, are not checked yet.
 
-If you did [Run it locally](/docs/get-started/run-locally/), the stack is up. Skip to step 3 in a new terminal, otherwise skip to step 4, Apply the Orkflow. The alias from step 3 lasts only for one terminal window.
+If you did [Run it locally](/docs/get-started/run-locally/) and this is the same terminal, skip to step 4. In a new terminal, repeat step 3, then go to step 4. If you did not, start at step 1. The alias from step 3 lasts only for one terminal window.
 
 ## 1. Clone the repository
 

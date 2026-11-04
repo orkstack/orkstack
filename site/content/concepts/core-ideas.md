@@ -61,7 +61,9 @@ Two more words come up in the docs. An **awaited task** waits for someone outsid
 
 A task runs at least once. If the Orker running it goes away, the task is retried. Its result is written to object storage before the run counts it as done, so a retry that finds that result returns it and does not run the container again.
 
-Run state is kept by Temporal, which keeps runs durable. A run is not lost when an OrkStack process restarts. It carries on, or it fails with a reason that says why.
+Run state is kept by Temporal. A run is not lost when an OrkStack process restarts. It carries on, or it fails with a reason that says why.
+
+The quickstart's development Temporal keeps run history in memory. Stopping that stack forgets its runs. The Orkflows and artifacts stay in the object store, which `docker compose down` keeps. A production Temporal cluster keeps run history on its own durable storage. [Run it locally](/docs/get-started/run-locally/) covers the quickstart's stack.
 
 ## Next
 

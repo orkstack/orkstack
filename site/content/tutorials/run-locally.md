@@ -60,7 +60,18 @@ Some commands write a file, or need Docker. They need the installed binary:
 - `orkctl run evidence export --output` and `orkctl run artifact download --output`, which write a file;
 - `orkctl task run` and `orkctl activity build`, which need Docker.
 
-To install the binary, build it with Go (`make build` writes `bin/orkctl`), or take it from a release's archives.
+To install the binary, download it from a release. You need no Go for this. Open the [releases page](https://github.com/orkstack/orkstack/releases) to see the archives. On Linux with an amd64 processor, this downloads the archive, checks it, and unpacks the binary:
+
+```bash
+curl -LO https://github.com/orkstack/orkstack/releases/latest/download/orkctl-linux-amd64.tar.gz
+curl -LO https://github.com/orkstack/orkstack/releases/latest/download/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf orkctl-linux-amd64.tar.gz orkctl
+chmod +x orkctl
+./orkctl version
+```
+
+The check line should read `orkctl-linux-amd64.tar.gz: OK`. For another system, pick its archive name from the releases page. Windows archives are `.zip` files. Move `orkctl` onto your `PATH`, or run it as `./orkctl`. It reaches the stack at `http://localhost:8080` by default.
 
 ## Next
 

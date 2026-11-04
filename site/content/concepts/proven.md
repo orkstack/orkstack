@@ -1,51 +1,40 @@
 # How OrkStack is proven
 
-Learn what the test suite covers, how each change is checked before it lands, and why you can trust a result. Read this before you trust OrkStack with work that matters.
+Learn what is tested, how a change is checked before it lands, and what is still open. Read this before you trust OrkStack with work that matters.
 
-The repository calls its checks **proofs**.
+OrkStack is not yet called production-ready. The repository keeps that label until every required failure and recovery case is proven. Some cases are still open, and they are listed below.
 
-## What the tests cover
+## What is tested
 
-Each failure case below needs a test beyond the unit tests, or it is listed as a known gap. Where a test exists, it ends in a correct stored state, or in an explicit failure with a reason.
+Each case below has tests that run against a real Temporal cluster and a real S3-compatible object store. Where a test exists, the run ends in a correct stored state, or in a failure with a reason.
 
-| Scenario | What the tests check |
-|---|---|
-| An Orker is lost during a task | At each step: while the container runs, after it exits, during the upload, and after the commit is written. A committed result is not run again. |
-| Outages | An Orker restarts. Object storage or Temporal is unreachable for a while. The run ends in a correct state. |
-| A container misbehaves | Exit `1`, exit `0` without `values.json`, malformed JSON, oversized outputs, a timeout, a cancel, a `SIGTERM` the container ignores, a missing input, and an image that cannot be pulled. Each one ends with a reason. |
-| Pins | Every task of a pin lands on one Orker. A lost pin host fails the run, and the pin is not reopened elsewhere. |
-| Release rollouts | A rollout while a pin is open, or while a run carries on. |
-| Failure handlers | They run to their own outcomes, and the run ends `FAILED` with its original reason. |
-| Runs that carry on | A run carries on with work in flight, and with saved state that is corrupted or missing. It ends with an explicit reason. |
+- **An Orker is lost during a task.** This is tested at each step: while the container runs, after it exits, during the upload, and after the commit is written. A committed result is not run again.
+- **Restarts and outages.** An Orker restarts, object storage is unreachable for a while, or Temporal is unreachable for a while.
+- **A container misbehaves.** It exits `1`, exits `0` without `values.json`, writes malformed or oversized output, times out, is cancelled, ignores `SIGTERM`, is missing an input, or its image cannot be pulled. Each one ends with a reason.
+- **Pins.** Every task of a pin runs on one Orker. If that host is lost, the run fails with a reason, and the pin is not moved to another Orker.
+- **Release rollouts** while a pin is open, or while a run carries on.
+- **Failure handlers** run to their own outcomes. The run still ends `FAILED` with its original reason.
+- **Runs that carry on.** A run keeps one run ID and one event stream while its work is in flight, and when its saved state is damaged or missing. It ends in a correct state, or in an explicit failure.
 
-## How changes are checked
+## How a change is checked
 
-Each change runs through the same checks, at different scopes.
+A change lands only after a full proof passes on the exact tree that lands. The full proof runs every test against a real cluster and object store, and the unit tests under the race detector. A result belongs to one exact tree.
 
-| Check | When it runs | Counts as merge evidence |
-|---|---|---|
-| Feature proof | On a branch, for the tests that cover the change | No |
-| Full proof | Before a change lands on `main`: every test against a real cluster and object store, and the unit tests under the race detector | Yes |
-| Nightly proof | On `main`: the largest scale and soak tests, the busiest packages' unit tests raced three times over, and every fuzz target for a bounded time | No |
-| Pre-release proof | Before a release tag, on the exact commit | Required for a release |
+Two rules keep the results honest. A test that skips does not pass. And every test the binaries report must have a recorded result, so none goes missing. A failing test is not rerun until it passes. A known flaky test is quarantined, with an owner, a reason and a review date. It still runs, and its failure still counts.
 
-A change is done only after a full proof passes on the exact tree that lands.
+The scale and soak tests run every night on `main`, not on each change. The checks from a branch to a release are listed in [Contribute](/docs/contributing/).
 
-## Why you can trust a result
+## What is still a known gap
 
-A result is bound to one exact tree. A test that skips does not pass. Every test the binaries report must have a recorded outcome, so none goes missing.
+- **A tag that moves between two attempts** of one task has no end-to-end test yet.
+- **The GitHub rule that requires the full proof** before a pull request lands is not switched on yet. Until it is, a maintainer runs the local merge check before `main` moves.
+- **Some timing budgets** are checked only on the reference host. On a smaller CI runner, a miss of one is recorded as a known gap, not as a failure. It is not a pass.
 
-A failing test is not rerun to make it pass. A known flake is quarantined, with an owner, a reason and a review date. It still runs, and its failure is recorded as a failure.
-
-A test that checks something did not happen also checks that the system kept making progress in the same window. A slow host cannot make it pass.
-
-## What is not yet proven
-
-Some claims have no end-to-end test yet. The repository lists each one as a known gap, so you can see what is still open.
+Until every required case is proven, OrkStack is not called production-ready. Read the gaps before you rely on a case.
 
 ## See also
 
 - [docs/PROVEN.md, What is proven](https://github.com/orkstack/orkstack/blob/main/docs/PROVEN.md#what-is-proven): the scenarios, and the map from each one to its tests.
-- [docs/PROVEN.md, The proof tiers](https://github.com/orkstack/orkstack/blob/main/docs/PROVEN.md#the-proof-tiers): what each tier runs.
+- [docs/PROVEN.md, The proof tiers](https://github.com/orkstack/orkstack/blob/main/docs/PROVEN.md#the-proof-tiers): what each check runs.
 - [docs/PROVEN.md, Why the evidence can be believed](https://github.com/orkstack/orkstack/blob/main/docs/PROVEN.md#why-the-evidence-can-be-believed): binding, skips, quarantine and verdicts.
 - [docs/PROOFS.md, Known gaps](https://github.com/orkstack/orkstack/blob/main/docs/PROOFS.md#12-known-gaps): every claim with no end-to-end test.

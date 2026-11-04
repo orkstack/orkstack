@@ -4,31 +4,44 @@
 // adds neither a landmark nor a stop.
 
 /** The name of the section a table is in: the heading above it, nearest first. */
-function nameOf(region: HTMLElement): string {
+function sectionOf(region: HTMLElement): string {
 	for (let el = region.previousElementSibling; el; el = el.previousElementSibling) {
+		// An entry's own heading names that entry, not the section the table is in.
+		if (el.matches('.not-content')) continue;
 		const heading = el.matches('h2, h3, h4') ? el : el.querySelector('h2, h3, h4');
 		const text = heading?.textContent?.trim();
-		if (text) return `Table: ${text}`;
+		if (text) return text;
 	}
-	return 'Table';
+	return '';
 }
 
 export function wireScrollingTables(doc: Document): void {
 	const regions = [...doc.querySelectorAll<HTMLElement>('.table-wrap')];
 	if (regions.length === 0) return;
 	const update = () => {
+		const scrolling = regions.filter((r) => r.scrollWidth > r.clientWidth);
 		for (const region of regions) {
-			if (region.scrollWidth > region.clientWidth) {
-				region.tabIndex = 0;
-				region.setAttribute('role', 'region');
-				region.setAttribute('aria-label', nameOf(region));
-			} else {
-				region.removeAttribute('tabindex');
-				region.removeAttribute('role');
-				region.removeAttribute('aria-label');
-			}
+			if (scrolling.includes(region)) continue;
+			region.removeAttribute('tabindex');
+			region.removeAttribute('role');
+			region.removeAttribute('aria-label');
 		}
+		// Named after its section, and numbered when a section holds several, so
+		// no two regions of a page share a name.
+		const sections = scrolling.map(sectionOf);
+		const seen = new Map<string, number>();
+		scrolling.forEach((region, i) => {
+			const section = sections[i];
+			const of = sections.filter((s) => s === section).length;
+			const nth = (seen.get(section) ?? 0) + 1;
+			seen.set(section, nth);
+			region.tabIndex = 0;
+			region.setAttribute('role', 'region');
+			region.setAttribute('aria-label', `Table${section ? `: ${section}` : ''}${of > 1 ? ` (${nth} of ${of})` : ''}`);
+		});
 	};
 	update();
-	new ResizeObserver(update).observe(doc.documentElement);
+	const observer = new ResizeObserver(update);
+	observer.observe(doc.documentElement);
+	for (const region of regions) observer.observe(region);
 }

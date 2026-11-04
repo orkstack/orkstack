@@ -648,9 +648,13 @@ pre.showcase-code {
 	}
 }
 @media (max-width: 640px) {
-	.feature h3 a,
-	.steps a {
+	.feature h3 a {
 		display: inline-flex;
+		align-items: center;
+		min-height: 40px;
+	}
+	.steps a {
+		display: flex;
 		align-items: center;
 		min-height: 40px;
 	}

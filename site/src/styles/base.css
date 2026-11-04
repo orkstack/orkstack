@@ -390,6 +390,7 @@ body {
 	font-size: 0.90625rem;
 }
 .site-head nav a {
+	padding-block: 3px;
 	color: var(--side-ink);
 	font-weight: 500;
 	text-decoration: none;
@@ -483,6 +484,7 @@ body {
 	gap: 6px 20px;
 }
 .foot-site a {
+	padding-block: 3px;
 	color: var(--ink-2);
 	text-decoration: none;
 }

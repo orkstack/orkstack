@@ -100,7 +100,7 @@
 body {
 	font-feature-settings: 'cv11', 'ss03';
 }
-:is(.sl-markdown-content, .sidebar-content, .right-sidebar) :focus-visible {
+:where(.sl-markdown-content, .sidebar-content, .right-sidebar) :focus-visible {
 	outline: var(--rule-frame) solid var(--focus);
 	outline-offset: var(--rule-frame);
 }
@@ -361,8 +361,13 @@ body:has(#starlight__sidebar:popover-open) {
 	font-size: var(--text-sm);
 }
 .crumb a {
+	padding-block: 1px;
 	color: var(--ink-3);
 	text-decoration: none;
+}
+.meta a {
+	display: inline-block;
+	padding-block: 1px;
 }
 .crumb a:hover {
 	color: var(--ink);
@@ -856,13 +861,29 @@ body:has(#starlight__sidebar:popover-open) .foot-site {
 	site-search > button,
 	.gens .gen,
 	.crumb a,
-	.meta a {
+	.meta a,
+	.ia-card h3 a,
+	.ia-card li a,
+	.setting summary {
 		min-height: 40px;
 	}
 	.crumb a,
-	.meta a {
+	.meta a,
+	.ia-card h3 a,
+	.ia-card li a {
 		display: inline-flex;
 		align-items: center;
+	}
+	.setting summary {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.setting summary::before {
+		content: '▸';
+	}
+	.setting details[open] summary::before {
+		content: '▾';
 	}
 }
 /* The dark theme's current page is a close fill: an edge marks it in both. */

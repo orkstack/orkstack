@@ -55,6 +55,24 @@ services:
 
 Put a gateway in front of `ork`. The engine serves plain HTTP and does not authenticate callers.
 
+Create the bucket named by `ORK_S3_BUCKET` before the first start. No OrkStack process creates it. The Temporal namespace named by `ORK_TEMPORAL_NAMESPACE` is provisioned at boot, so you do not create it.
+
+## Run orkctl against this deployment
+
+The `orkctl` image runs the command line against your engine. Set `ORK_SERVER` to the engine's address, and put the command after the image name. This example promotes release `0.1.0`, so it changes which release takes new runs:
+
+```bash
+docker run --rm -it -e ORK_SERVER=http://ork.internal:8080 ghcr.io/orkstack/orkctl:0.1.0 release promote 0.1.0
+```
+
+The `-it` flags give the command a terminal, so it can ask you to confirm. A script has no terminal. Add `--yes` there, after the command:
+
+```bash
+docker run --rm -e ORK_SERVER=http://ork.internal:8080 ghcr.io/orkstack/orkctl:0.1.0 release promote 0.1.0 --yes
+```
+
+The image's working directory is `/work`. To apply a file, mount its folder there, for example with `-v "$PWD:/work:ro"`, and pass the file's name.
+
 ## An Orker
 
 `orker.env` has the same Temporal, storage, admin and release lines as `ork.env`. Each Orker sets its own `ORK_ORKER_ID` in the Compose file. Run one service per Orker:
