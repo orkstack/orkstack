@@ -240,17 +240,17 @@ test('a run of each shape draws every task once on its DAG and its task map', as
 	for (const [shape, id] of runs) {
 		const spec = DAG_STRESS[shape];
 		for (const dag of ['lr', 'tb'] as const) {
-			await page.goto(`${UI_ORIGIN}/runs/${id}?ns=default&view=dag&dag=${dag}`);
+			await page.goto(`${UI_ORIGIN}/runs/${id}?ns=default&dag=${dag}`);
 			await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', dag.toUpperCase());
 			const boxes = await drawnBoxes(page, 'run-dag');
 			expect(boxes.map((b) => b.id).sort(), shape).toEqual(spec.map((t) => t.id).sort());
 			expect(overlapping(boxes), shape).toEqual([]);
 			await page.getByTestId('run-drawing').screenshot({ path: out(`run-${shape}-${dag}.png`) });
 		}
-		await page.getByTestId('run-view-map').click();
+		// The map is always on the page, in a card beside the tasks.
 		await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 		await expect(page.getByTestId('task-map')).toHaveAttribute('data-cells', String(spec.length));
-		await page.getByTestId('run-drawing').screenshot({ path: out(`run-${shape}-map.png`) });
+		await page.getByTestId('run-map-card').screenshot({ path: out(`run-${shape}-map.png`) });
 		note(`${shape}: run ${id} drawn whole on its DAG (both ways) and its ${spec.length}-cell map`);
 	}
 });

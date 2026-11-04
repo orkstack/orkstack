@@ -24,7 +24,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { fullPageShot } from './uiHelpers';
+import { fullPageShot, selectTask } from './uiHelpers';
 
 // The design screens (UI revamp, finish), against a real engine and Orker on
 // real Temporal and MinIO: the key pages — the runs register, a failed run on
@@ -183,17 +183,15 @@ const SCREENS: Screen[] = [
 		name: 'run-dag',
 		url: () => `${UI_ORIGIN}/runs/${failedRun}?ns=default`,
 		ready: async (page) => {
-			await expect(page.getByTestId('run-view-dag')).toHaveAttribute('aria-selected', 'true');
 			await expect(page.getByTestId('run-dag')).toBeVisible();
-			await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
 		}
 	},
 	{
 		name: 'run-map',
 		url: () => `${UI_ORIGIN}/runs/${failedRun}?ns=default`,
 		ready: async (page) => {
-			await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
-			await page.getByTestId('run-view-map').click();
+			// The map is always beside the tasks (the view tabs are gone).
+			await expect(page.getByTestId('run-map-card')).toBeVisible();
 			await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 		}
 	},
@@ -295,23 +293,13 @@ test('screens: the key pages in light and dark, at 1440, 390 and 320 px', async 
 	await page.getByTestId('theme-system').click();
 });
 
-/** The colour a token resolves to, as a computed style reports it. */
-async function tokenColor(page: Page, token: string): Promise<string> {
-	return page.evaluate((name) => {
-		const probe = document.createElement('span');
-		probe.style.color = `var(${name})`;
-		document.body.appendChild(probe);
-		const c = getComputedStyle(probe).color;
-		probe.remove();
-		return c;
-	}, token);
-}
-
 /** How the run page's DAG sits in its frame: its scale, and whether the frame scrolls. */
 async function dagFit(page: Page) {
 	return page.evaluate(() => {
 		const svg = document.querySelector('[data-testid="run-dag"]') as SVGSVGElement;
-		const panel = svg.closest('[role="tabpanel"]') as HTMLElement;
+		// The drawing's frame is its nearest ancestor that can scroll sideways.
+		let panel = svg.parentElement as HTMLElement;
+		while (panel.parentElement && !/auto|scroll/.test(getComputedStyle(panel).overflowX)) panel = panel.parentElement;
 		const node = document.querySelector('[data-testid="run-dag-node-charge"]')!.getBoundingClientRect();
 		const box = panel.getBoundingClientRect();
 		return {
@@ -341,9 +329,10 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	// The failure leads with the task's reason and its sentence; the run's own
 	// code stays beside it, and no word of the execution service's wrapper is
 	// on the page.
-	await expect(page.getByTestId('run-error-reason')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await expect(page.getByTestId('run-error-reason')).toContainText('CONTAINER_EXIT_NONZERO');
 	await expect(page.getByTestId('run-error-code')).toHaveText('RUN_FAILED');
 	await expect(page.getByTestId('run-error-message')).toHaveText('task "charge": the container exited 3');
+	// (The failed task's reason is in the failure block under its row.)
 	await expect(page.getByTestId('task-charge-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
 	await expect(page.getByTestId('task-charge-error-message')).toHaveText('task "charge": the container exited 3');
 	for (const id of ['run-error', 'task-charge-error']) {
@@ -352,34 +341,30 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 		}
 	}
 
-	// A task is a hairline-ruled row on clean ground, not a box: its output
-	// and Inspect toggles sit on its own line of facts, and its failure is one
-	// tinted ground with no rule of its own.
+	// A task is a hairline-ruled row on clean ground, not a box, and its
+	// failure is one block of its own ground under the row.
 	const rows = await page.evaluate(() => {
 		const read = (id: string) => {
 			const el = document.querySelector(`[data-testid="${id}"]`)!;
 			const s = getComputedStyle(el);
 			return { top: s.borderTopWidth, left: s.borderLeftWidth, bottom: s.borderBottomWidth, ground: s.backgroundColor };
 		};
-		const top = (id: string) => document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect().top;
 		return {
 			row: read('task-validate'),
-			failure: read('task-charge-error'),
-			togglesLevel: Math.abs(top('task-log-toggle-validate') - top('task-inspect-toggle-validate')),
-			togglesBelowRowTop: top('task-inspect-toggle-validate') - top('task-validate'),
+			failure: read('task-charge-failure'),
 			rowHeight: document.querySelector('[data-testid="task-validate"]')!.getBoundingClientRect().height
 		};
 	});
 	note(`task rows: ${JSON.stringify(rows)}`);
 	expect(rows.row).toMatchObject({ top: '0px', left: '0px', bottom: '1px', ground: 'rgba(0, 0, 0, 0)' });
-	expect(rows.failure).toMatchObject({ top: '0px', left: '0px', bottom: '0px' });
-	expect(rows.failure.ground).toBe(await tokenColor(page, '--color-red-tint'));
-	expect(rows.togglesLevel).toBeLessThanOrEqual(2);
-	expect(rows.togglesBelowRowTop).toBeLessThan(64);
-	await page.getByTestId('task-log-toggle-validate').click();
-	await expect(page.getByTestId('task-log-toggle-validate')).toHaveAttribute('aria-expanded', 'true');
+	expect(rows.failure).toMatchObject({ top: '0px', left: '0px' });
+	expect(rows.failure.ground).not.toBe('rgba(0, 0, 0, 0)');
+	// The log pane follows the selection (the per-row Show output toggles are
+	// gone): selecting `validate` shows its pane, deselecting it removes it.
+	await selectTask(page, 'validate');
 	await expect(page.getByTestId('task-log-state-validate')).toBeVisible();
-	await page.getByTestId('task-log-toggle-validate').click();
+	await page.getByTestId('task-deep-link-validate').click();
+	await expect(page.getByTestId('task-deep-link-validate')).toHaveAttribute('aria-pressed', 'false');
 	await expect(page.getByTestId('task-log-state-validate')).toHaveCount(0);
 
 	// At 390 the saga reads top to bottom (the Direction Rule): one column

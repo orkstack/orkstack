@@ -187,14 +187,16 @@ test('the run page and the item list at the gated size are interactive within 5 
 	const last = GATED_ITEMS - 1;
 	const measure = async (phase: string) => {
 		const started = Date.now();
-		await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+		// A fan-out that has finished (here: canceled) opens its item grid when it
+		// is the selection, so the link names it; live, the grid is open anyway.
+		await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&task=spread`);
 		await expect(page.getByTestId('run-status')).toBeVisible({ timeout: 30_000 });
 		const pageReady = Date.now() - started;
 		const cell = page.getByTestId(`task-spread-item-${last}`);
 		await expect(cell).toBeVisible({ timeout: 30_000 });
 		await cell.click();
 		await expect(cell).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
-		await expect(page.getByTestId('task-spread-item-panel-label')).toHaveText(`spread[${last}]`, {
+		await expect(page.getByTestId('task-spread-item-panel-label')).toContainText(`spread[${last}]`, {
 			timeout: 30_000
 		});
 		const listReady = Date.now() - started;
@@ -221,7 +223,7 @@ test('the run page and the item list at the gated size are interactive within 5 
 
 	// The task map, outside the timed span (UI revamp, stage 2): its section
 	// of the fan-out drew every item's cell after the two tasks' own.
-	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&view=map`);
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	const map = page.getByTestId('task-map');
 	await expect(map).toHaveAttribute('data-painted', 'true', { timeout: 30_000 });
 	await expect(map).toHaveAttribute('data-cells', String(2 + GATED_ITEMS));

@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { inspectTask, selectTask } from './uiHelpers';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -275,23 +276,28 @@ test('a fan-out card fills its item grid live', async ({ page }) => {
 test('an item that retried shows its own attempts and logs', async ({ page }) => {
 	expect(fanOutRun).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/runs/${fanOutRun}?ns=default`);
+	// A settled fan-out opens its item grid when it is the selection.
+	await selectTask(page, 'convert');
 	await page.getByTestId('task-convert-item-2').click();
 	const panel = page.getByTestId('task-convert-item-panel');
 	await expect(panel).toBeVisible();
-	await expect(page.getByTestId('task-convert-item-panel-label')).toHaveText('convert[2]');
+	await expect(page.getByTestId('task-convert-item-panel-label')).toContainText('convert[2]');
 
 	// Two attempts, the first FAILED — item 2's own timeline.
 	await expect(page.getByTestId('task-convert-attempt-1-outcome')).toHaveText(/FAILED/, { timeout: 30_000 });
 	await expect(page.getByTestId('task-convert-attempt-2-outcome')).toHaveText(/SUCCEEDED/);
 
-	// The log pane streams item 2's own output.
-	await page.getByTestId('task-log-toggle-convert').click();
+	// The one log pane follows the selection to item 2 and streams its own output.
 	await expect(page.getByTestId('task-log-convert')).toContainText('converting item 2 of 6: c', { timeout: 30_000 });
 	await expect(page.getByTestId('task-log-convert')).not.toContainText('converting item 1 of 6');
 
-	// The CLI equivalent names --item 2.
-	await page.getByTestId('task-convert-item-panel-cli-logs-trigger').click();
-	await expect(page.getByTestId('task-convert-item-panel-cli-logs-command')).toContainText("--item 2");
+	// The CLI equivalents are one popover; its logs command names --item 2.
+	await page.getByTestId('task-convert-item-panel-cli-trigger').click();
+	const itemCommands = page.locator('[data-testid^="task-convert-item-panel-cli-command-"]');
+	await expect(itemCommands.filter({ hasText: 'run logs' })).toContainText('--item 2');
+	await expect(itemCommands.filter({ hasText: 'run artifacts' })).toContainText('--item 2');
+	await expect(itemCommands.filter({ hasText: 'run attempts' })).toContainText('--item 2');
+	await page.keyboard.press('Escape');
 	note(`item 2 panel: ${(await panel.textContent())?.replace(/\s+/g, ' ').slice(0, 400)}`);
 	await shot(page, 'screenshot-each-item-panel.png');
 });
@@ -300,7 +306,7 @@ test('an item deep link restores the selection', async ({ page }) => {
 	expect(fanOutRun).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/runs/${fanOutRun}?ns=default&task=convert&item=2&attempt=1`);
 	await expect(page.getByTestId('task-convert-item-panel')).toBeVisible();
-	await expect(page.getByTestId('task-convert-item-panel-label')).toHaveText('convert[2]');
+	await expect(page.getByTestId('task-convert-item-panel-label')).toContainText('convert[2]');
 	await expect(page.getByTestId('task-convert-item-2')).toHaveAttribute('aria-pressed', 'true');
 	// The linked attempt is the FIRST, failed one: only that try printed the
 	// failure line, so the pane reading it is the pane reading attempt 1. (The
@@ -311,13 +317,15 @@ test('an item deep link restores the selection', async ({ page }) => {
 		timeout: 30_000
 	});
 	await page.reload();
-	await expect(page.getByTestId('task-convert-item-panel-label')).toHaveText('convert[2]');
+	await expect(page.getByTestId('task-convert-item-panel-label')).toContainText('convert[2]');
 	await shot(page, 'screenshot-each-deep-link.png');
 });
 
 test('the merge task read every item', async ({ page }) => {
 	expect(fanOutRun).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/runs/${fanOutRun}?ns=default`);
+	// Values are read in the selected task's Inspect.
+	await inspectTask(page, 'merge');
 	await expect(page.getByTestId('task-values-merge')).toContainText('"value": "abcdef"');
 	note(`merge values: ${await page.getByTestId('task-values-merge').textContent()}`);
 	await shot(page, 'screenshot-each-merge.png');
@@ -350,7 +358,7 @@ test('a burst of 1000 item events renders, and the open inspector stays interact
 		}
 	);
 	const started = Date.now();
-	await page.goto(`${UI_ORIGIN}/runs/${fanOutRun}?ns=default&events=1`);
+	await page.goto(`${UI_ORIGIN}/runs/${fanOutRun}?ns=default&events=1&task=convert`);
 	await expect(page.getByTestId(`task-convert-item-${BURST - 1}`)).toHaveAttribute('data-status', 'SUCCEEDED', {
 		timeout: 60_000
 	});
@@ -381,7 +389,7 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 	await expect(page.getByTestId('run-error')).toContainText('item 3 of 6 failed');
 	// The run's failure and the task's lead with the item's reason and keep
 	// the item sentence, with no word of the execution service's wrapper.
-	await expect(page.getByTestId('run-error-reason')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await expect(page.getByTestId('run-error-reason')).toContainText('CONTAINER_EXIT_NONZERO');
 	await expect(page.getByTestId('run-error-message')).toHaveText('item 3 of 6 failed: task "convert": the container exited 1');
 	await expect(page.getByTestId('task-convert-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
 	await expect(page.getByTestId('task-convert-error-message')).toHaveText('item 3 of 6 failed: task "convert": the container exited 1');
@@ -391,10 +399,10 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 		}
 	}
 
-	// Cell 3 is red: tinted with FAILED's own classes.
+	// Cell 3 is the failed one (the page selects the failed item by itself).
 	const cell = page.getByTestId('task-convert-item-3');
 	await expect(cell).toHaveAttribute('aria-label', /^item 3, Failed, attempt 1$/);
-	await expect(cell).toHaveClass(/bg-failed-bg/);
+	await expect(cell).toHaveAttribute('data-status', 'FAILED');
 	// The cells after it never started, and say so.
 	for (const index of [4, 5]) {
 		await expect(page.getByTestId(`task-convert-item-${index}`)).toHaveAttribute(

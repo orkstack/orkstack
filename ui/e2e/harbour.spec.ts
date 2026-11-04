@@ -26,6 +26,7 @@ import {
 	waitForEngine
 } from './harness';
 import { editorReady } from './yaml';
+import { selectTask } from './uiHelpers';
 
 // Harbour's own behaviour, against a real engine, Orker, Temporal and object
 // store (brief §12): every dialog (Jump, Cancel run…, Cordon…) and the
@@ -229,6 +230,8 @@ test('a hovered tooltip stays while the pointer crosses onto it, the next tip fo
 test('a fan-out item is selected by its own button, and only that one is pressed', async ({ page }) => {
 	// Regression: selecting an item left another pressed, or the item was a div no keyboard could reach.
 	await page.goto(at(`/runs/${fanRun}`));
+	// A settled fan-out opens its item grid when it is the selection.
+	await selectTask(page, 'convert');
 	const first = page.getByTestId('task-convert-item-0');
 	const second = page.getByTestId('task-convert-item-1');
 	await second.focus();

@@ -1,3 +1,4 @@
+import { selectTask } from './uiHelpers';
 import { expect, test, type Page } from './test';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -230,7 +231,7 @@ test('4: a permitted secret runs, its sha256 is in the log pane and the token is
 	await page.waitForURL(/\/runs\/ork-/);
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 
-	await page.getByTestId('task-log-toggle-fetch').click();
+	await selectTask(page, 'fetch');
 	await expect
 		.poll(
 			async () =>

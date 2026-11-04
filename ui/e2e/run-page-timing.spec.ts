@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { inspectTask, selectTask } from './uiHelpers';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
@@ -249,6 +250,8 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 
 	// P2 — the bar: wait at least the stimulus, run shorter, drawn wider.
 	await expect(page.getByTestId('task-first-timing')).toBeVisible({ timeout: 30_000 });
+	// The wait/run facts are the selected task's, in the Item card.
+	await selectTask(page, 'first');
 	const waitMs = msOf(await page.getByTestId('task-first-wait').getAttribute('data-ms'));
 	const runMs = msOf(await page.getByTestId('task-first-run').getAttribute('data-ms'));
 	expect(waitMs).toBeGreaterThanOrEqual(STIMULUS_MS);
@@ -264,7 +267,7 @@ test('a task that waited for an Orker shows since-scheduled, then its wait/run s
 	await shot(page, 'timing-bar.png');
 
 	// P3 — every phase of attempt 1, the Orker's own record.
-	await page.getByTestId('task-inspect-toggle-first').click();
+	await inspectTask(page, 'first');
 	const phases = page.getByTestId('attempt-first-1-phases');
 	await expect(phases).toBeVisible({ timeout: 30_000 });
 	const phaseText = await phases.innerText();
@@ -306,7 +309,7 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 
 	// P5 — two phase lines, attempt 1 ending in `exit` and attempt 2 in
 	// `commit`, and the wait for an Orker stated off attempt 1's own record.
-	await page.getByTestId('task-inspect-toggle-flaky').click();
+	await inspectTask(page, 'flaky');
 	const first = page.getByTestId('attempt-flaky-1-phases');
 	const second = page.getByTestId('attempt-flaky-2-phases');
 	await expect(first).toBeVisible({ timeout: 30_000 });
@@ -352,7 +355,7 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 	await page.waitForLoadState('networkidle');
 	expect(seedAsked).toBe(1);
 	note(`P5 one seed read across ${runReads} loader answers`);
-	await page.getByTestId('task-inspect-toggle-flaky').click();
+	await inspectTask(page, 'flaky');
 	await expect(page.getByTestId('task-flaky-attempts')).toBeVisible();
 	await expect(page.getByTestId('attempt-flaky-2-phases')).toBeVisible({ timeout: 30_000 });
 	await shot(page, 'timing-after-seed.png');

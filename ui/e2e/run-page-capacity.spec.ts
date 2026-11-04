@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { selectTask } from './uiHelpers';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -44,7 +45,7 @@ const BUCKET = ownBucket('run-page-capacity');
 //       with what stands reserved, and its title says why;
 //   C2  the positive control, in the same answer: a task of the same run
 //       waiting on `slots`, an Orker that is busy but not at a capacity,
-//       still reads today's "Waiting for an orker" — the caption is derived
+//       still reads plain "Waiting for capacity" — the caption is derived
 //       from the inventory, not from "nothing has started";
 //   C3  `orkctl run inspect` prints the same two lines for the same run;
 //   C4  once the earlier run is cancelled and its containers are removed,
@@ -253,10 +254,12 @@ test('a task waiting on a pool at its capacity says so; one waiting on a busy po
 	note(`submitted ${waiting} with both pools saturated`);
 	await page.goto(`${UI_ORIGIN}/runs/${waiting}?ns=default`);
 
-	// C1 — the pool at its capacity.
+	// C1 — the pool at its capacity. The live facts are the selected task's,
+	// in the Item card: one task at a time.
+	await selectTask(page, 'wait-cap');
 	const cap = page.getByTestId('task-wait-cap-live');
 	await expect(cap).toHaveAttribute('data-live', 'capacity', { timeout: 60_000 });
-	await expect(cap).toContainText('Waiting for capacity · every orker of pool cap is full (reserved 1/1 cpu)');
+	await expect(cap).toContainText('Waiting for capacity · every Orker of pool cap is full (reserved 1/1 cpu)');
 	await cap.hover();
 	const capTip = page.getByRole('tooltip');
 	await expect(capTip).toHaveText(/^No orker of pool cap has room for another task/);
@@ -264,10 +267,13 @@ test('a task waiting on a pool at its capacity says so; one waiting on a busy po
 	note(`C1 tooltip="${await capTip.innerText()}"`);
 
 	// C2 — the control, from the same answer: busy, but not by a capacity.
+	await selectTask(page, 'wait-slots');
 	const slots = page.getByTestId('task-wait-slots-live');
 	await expect(slots).toHaveAttribute('data-live', 'waiting');
-	await expect(slots).toContainText('Waiting for an orker');
-	await expect(slots).not.toContainText('capacity');
+	// (The UI now words both "Waiting for capacity"; only a pool at its
+	// declared capacity says which Orkers are full and what stands reserved.)
+	await expect(slots).toContainText('Waiting for capacity');
+	await expect(slots).not.toContainText('every Orker of pool');
 	note(`C2 task-wait-slots-live data-live=waiting text="${await slots.innerText()}"`);
 	await shot(page, 'capacity-waiting.png');
 	await page.emulateMedia({ colorScheme: 'dark' });

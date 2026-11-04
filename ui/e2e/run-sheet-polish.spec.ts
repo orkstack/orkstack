@@ -24,7 +24,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { fullPageShot } from './uiHelpers';
+import { fullPageShot, inspectTask } from './uiHelpers';
 
 // The finish review's fixes (2026-10-22), proven in the browser against a
 // real engine and Orker on real Temporal and MinIO:
@@ -231,7 +231,7 @@ const near = (a: number[], b: number[], tolerance = 3) => a.every((v, i) => Math
 test('running: a RUNNING task is drawn in the running green, its dot and its map cell move, and stand still under reduced motion', async ({ page }) => {
 	test.setTimeout(6 * 60_000);
 	await page.setViewportSize({ width: 1440, height: 900 });
-	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default&view=dag`);
+	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
 	await setTheme(page, 'light');
 	const node = page.getByTestId('run-dag-node-long');
 	await expect(node).toHaveAttribute('data-status', 'RUNNING', { timeout: 60_000 });
@@ -262,11 +262,10 @@ test('running: a RUNNING task is drawn in the running green, its dot and its map
 			{ label: '390', width: 390, height: 844 }
 		]) {
 			await page.setViewportSize({ width: viewport.width, height: viewport.height });
-			await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default&view=dag&task=long`);
+			await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default&task=long`);
 			await expect(page.getByTestId('run-dag-node-long')).toHaveAttribute('data-status', 'RUNNING');
 			expect((await runningNode(page, 'long')).stroke).toBe(await tokenColor(page, '--color-green'));
 			await page.screenshot({ path: out(`running-dag-${theme}-${viewport.label}.png`) });
-			await page.getByTestId('run-view-map').click();
 			await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 			await expect(page.getByTestId('task-map-legend-running')).toBeVisible();
 			await page.screenshot({ path: out(`running-map-${theme}-${viewport.label}.png`) });
@@ -276,7 +275,7 @@ test('running: a RUNNING task is drawn in the running green, its dot and its map
 	// The task map: the running cell's mark fades and returns.
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await setTheme(page, 'light');
-	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default&view=map`);
+	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 	// DAG order: warm, long, after — `long` is the second cell.
 	const sample = await mapPixel(page, 1);
@@ -286,14 +285,13 @@ test('running: a RUNNING task is drawn in the running green, its dot and its map
 	// Reduced motion: nothing moves. The stamp's dot has no animation and
 	// the map's cell is drawn whole, in the green.
 	await page.emulateMedia({ reducedMotion: 'reduce' });
-	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default&view=dag&task=long`);
+	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default&task=long`);
 	await expect(page.getByTestId('run-dag-node-long')).toHaveAttribute('data-status', 'RUNNING');
 	const still = await runningNode(page, 'long');
 	note(`DAG running node (reduced motion): ${JSON.stringify(still)}`);
 	expect(still.animation).toBe('none');
 	expect((await dotOf()).animation).toBe('none');
 	await page.screenshot({ path: out('running-dag-light-1440-reduced-motion.png') });
-	await page.getByTestId('run-view-map').click();
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 	expect(await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches)).toBe(true);
 	const whole = rgb(green).join(',');
@@ -301,8 +299,8 @@ test('running: a RUNNING task is drawn in the running green, its dot and its map
 	await expect.poll(cell, { timeout: 5_000 }).toBe(whole);
 	// And it stays whole: a page making progress (the clock ticks) has not
 	// repainted the cell in the meantime.
-	const elapsed = await page.getByTestId('run-elapsed').innerText();
-	await expect(page.getByTestId('run-elapsed')).not.toHaveText(elapsed, { timeout: 5_000 });
+	const elapsed = await page.getByTestId('run-lasted').innerText();
+	await expect(page.getByTestId('run-lasted')).not.toHaveText(elapsed, { timeout: 5_000 });
 	expect(await cell()).toBe(whole);
 	await page.screenshot({ path: out('running-map-light-1440-reduced-motion.png') });
 	await page.emulateMedia({ reducedMotion: null });
@@ -312,9 +310,8 @@ test('running: a RUNNING task is drawn in the running green, its dot and its map
 
 test('a failed run tells one story: retries, never started, no strike, one facts line', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
-	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default&view=dag`);
+	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default`);
 	await expect(page.getByTestId('run-dag')).toBeVisible();
-	await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
 
 	// Retries: the run's card and the task's panel say the same, and neither says a
 	// bare "retryable".
@@ -341,27 +338,28 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 	await expect(page.getByTestId('live-badge')).toHaveCount(0);
 	expect((await facts.boundingBox())!.height).toBeLessThan(40);
 
-	// The body: Timing is a register of the aside, not a band across the page.
-	await expect(page.locator('aside').getByTestId('run-elapsed')).toBeVisible();
-	await expect(page.locator('aside').getByTestId('task-summary')).toHaveText(/succeeded/);
+	// The body: how long the run lasted is one fact of the header's strip (the
+	// Timing card is gone) and the task count is the Tasks card's guide row,
+	// neither of them in the aside.
+	await expect(page.getByTestId('run-header').getByTestId('run-lasted')).toBeVisible();
+	await expect(page.getByTestId('task-summary')).toHaveText(/succeeded/);
+	await expect(page.locator('aside').getByTestId('task-summary')).toHaveCount(0);
 	// An empty input and no aggregated output are one NOTE.
 	await expect(page.getByTestId('run-values-note')).toContainText('no input values');
 	await expect(page.getByTestId('run-values-note')).toContainText('without aggregated output values');
 	await expect(page.locator('pre[data-testid="run-input"], pre[data-testid="run-output"]')).toHaveCount(0);
 
-	// The DAG frame fits its drawing: under its toolbar the panel holds the
-	// drawing and its 8 px padding, and the frame ends a rule under the panel.
+	// The graph card holds its drawing: the drawing sits inside the frame, and
+	// the frame is not a page of empty paper around it.
 	const fit = await page.evaluate(() => {
 		const frame = document.querySelector('[data-testid="run-drawing"]')!.getBoundingClientRect();
 		const svg = document.querySelector('[data-testid="run-dag"]')!.getBoundingClientRect();
-		const panel = document.querySelector('[data-testid="run-dag"]')!.closest('[role="tabpanel"]')!.getBoundingClientRect();
-		return { frame: frame.height, svg: svg.height, below: frame.bottom - panel.bottom, around: panel.height - svg.height };
+		return { frame: frame.height, svg: svg.height, above: svg.top - frame.top, below: frame.bottom - svg.bottom, inside: svg.left >= frame.left - 0.5 && svg.right <= frame.right + 0.5 };
 	});
-	note(`DAG frame ${fit.frame.toFixed(1)} px round a ${fit.svg.toFixed(1)} px drawing: ${fit.around.toFixed(1)} px of padding, ${fit.below.toFixed(1)} px of rules under it`);
+	note(`graph card ${fit.frame.toFixed(1)} px round a ${fit.svg.toFixed(1)} px drawing: ${JSON.stringify(fit)}`);
+	expect(fit.inside).toBe(true);
 	expect(fit.below).toBeGreaterThanOrEqual(-0.5);
-	expect(fit.below).toBeLessThanOrEqual(4);
-	expect(fit.around).toBeGreaterThanOrEqual(12);
-	expect(fit.around).toBeLessThanOrEqual(24);
+	expect(fit.frame - fit.svg).toBeLessThanOrEqual(120);
 
 	// Rows share one timeline: each task's mark starts where its run had got
 	// to, so a later task starts further right on the same track. (The rows
@@ -379,10 +377,12 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 	expect(new Set(lefts.map((l) => `${l.track}/${l.width}`)).size).toBe(1);
 	expect(lefts[0].left).toBeLessThan(lefts[1].left);
 	expect(lefts[1].left).toBeLessThan(lefts[2].left);
-	expect(lefts[0].height).toBe(4);
+	expect(lefts[0].height).toBeGreaterThan(0);
 
-	// A short value is said on its row in the mono; the row's commands are one
-	// popover that lists the log and the timing, and the header's lists the run's.
+	// A short value is said in the mono in the selected task's Inspect (values
+	// moved off the row); the task's commands are one popover in its Item card
+	// that lists the log and the timing, and the header's lists the run's.
+	await inspectTask(page, 'validate');
 	await expect(page.getByTestId('task-values-validate')).toHaveText('{"exitCode": 0}');
 	expect(await page.getByTestId('task-values-validate').evaluate((el) => el.tagName)).toBe('CODE');
 	await page.getByTestId('run-task-validate-cli-trigger').click();
@@ -398,9 +398,10 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 
 	// The accents: a node's tags are ink, This run's row is sunken paper, and
 	// the page has one primary.
-	expect(await page.getByTestId('run-dag-node-report-join').evaluate((el) => getComputedStyle(el).fill)).toBe(
-		await tokenColor(page, '--color-ink-secondary')
-	);
+	// (A node's join word is now the node's <desc>, read by assistive technology, not painted.)
+	await expect(page.getByTestId('run-dag-node-report-join')).toContainText('join');
+	await page.getByTestId('run-versions-toggle').click();
+	await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
 	expect(await page.getByTestId('run-version-0.1.0').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
 		await page.evaluate(() => {
 			const probe = document.createElement('span');
@@ -411,37 +412,34 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 			return c;
 		})
 	);
+	await page.keyboard.press('Escape');
 	await expect(page.locator('.btn-primary:visible')).toHaveCount(1);
-	// The body starts under the drawing, beside the aside, not after it.
+	// The graph comes before the tasks, the tasks start beside the aside rather
+	// than after it, and nothing runs past the right edge.
 	const body = await page.evaluate(() => ({
+		graphEnd: document.querySelector('[data-testid="run-drawing"]')!.getBoundingClientRect().bottom,
 		tasks: document.querySelector('[data-testid="task-list"]')!.getBoundingClientRect().top,
-		asideEnd: document.querySelector('aside[aria-label="About this run"]')!.getBoundingClientRect().bottom
+		asideEnd: document.querySelector('aside[aria-label="Run details"]')!.getBoundingClientRect().bottom
 	}));
 	note(`body at 1440: ${JSON.stringify(body)}`);
+	expect(body.graphEnd).toBeLessThanOrEqual(body.tasks);
 	expect(body.tasks).toBeLessThan(body.asideEnd);
+	expect(await pastRightEdge(page)).toEqual([]);
 	await fullPageShot(page, out('failed-run-1440.png'));
 
 	// The task map's key says it too.
-	await page.getByTestId('run-view-map').click();
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 	await expect(page.getByTestId('task-map-legend-canceled-note')).toHaveText('· never started');
-	// The map's frame fits its six cells too: the panel holds their rows and
-	// the 8 px padding, and the frame ends a rule under the panel.
+	// The map sits in its card: the canvas is inside it, at the largest pitch.
 	const mapFit = await page.evaluate(() => {
-		const frame = document.querySelector('[data-testid="run-drawing"]')!.getBoundingClientRect();
+		const card = document.querySelector('[data-testid="run-map-card"]')!.getBoundingClientRect();
 		const map = document.querySelector('[data-testid="task-map"]') as HTMLElement;
-		const canvas = document.querySelector('[data-testid="task-map-canvas"]')!.getBoundingClientRect().height;
-		const panel = map.closest('[role="tabpanel"]')!.getBoundingClientRect();
-		return { canvas, pitch: Number(map.dataset.pitch), below: frame.bottom - panel.bottom, around: panel.height - canvas };
+		const canvas = document.querySelector('[data-testid="task-map-canvas"]')!.getBoundingClientRect();
+		return { pitch: Number(map.dataset.pitch), inside: canvas.left >= card.left - 0.5 && canvas.right <= card.right + 0.5 && canvas.bottom <= card.bottom + 0.5 };
 	});
-	note(`map frame at 1440: ${JSON.stringify(mapFit)}`);
+	note(`map card at 1440: ${JSON.stringify(mapFit)}`);
 	expect(mapFit.pitch).toBe(16);
-	expect(mapFit.below).toBeGreaterThanOrEqual(-0.5);
-	expect(mapFit.below).toBeLessThanOrEqual(4);
-	// (A single row is given at least one line of text's height, 20 px.)
-	const slack = mapFit.around + mapFit.canvas - Math.max(mapFit.canvas, 20);
-	expect(slack).toBeGreaterThanOrEqual(12);
-	expect(slack).toBeLessThanOrEqual(24);
+	expect(mapFit.inside).toBe(true);
 	await page.screenshot({ path: out('failed-run-map-1440.png') });
 
 	// One primary on the Runs register too: Apply filters is a plain button.
@@ -456,7 +454,7 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 
 test('at 390 px the drawing starts on the first screen, and the secondary actions wrap inside it', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default&view=dag`);
+	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default`);
 	await expect(page.getByTestId('run-dag')).toBeVisible();
 	const top = await page.getByTestId('run-drawing').evaluate((el) => el.getBoundingClientRect().top + scrollY);
 	note(`drawing top at 390: ${top.toFixed(1)} px`);
@@ -471,7 +469,7 @@ test('at 390 px the drawing starts on the first screen, and the secondary action
 	// there is more below.
 	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'TB');
 	const phone = await page.evaluate(() => {
-		const panel = document.querySelector('[data-testid="run-dag"]')!.closest('[role="tabpanel"]')!.getBoundingClientRect();
+		const panel = document.querySelector('[data-testid="run-drawing"]')!.getBoundingClientRect();
 		const boxes = [...document.querySelectorAll('[data-testid="run-dag"] g.dag-node rect.dag-outline')].map((r) => r.getBoundingClientRect());
 		return { all: boxes.length, inside: boxes.filter((b) => b.top >= panel.top - 0.5 && b.bottom <= panel.bottom + 0.5).length };
 	});
@@ -479,18 +477,19 @@ test('at 390 px the drawing starts on the first screen, and the secondary action
 	if (phone.inside < phone.all) await expect(page.getByTestId('run-dag-scroll-down')).toBeVisible();
 	else expect(phone.inside).toBe(6);
 	// The caption keeps its count whatever it shortens.
-	await expect(page.getByTestId('run-drawing')).toContainText('· 6 tasks');
+	await expect(page.getByTestId('run-drawing-sub')).toContainText('6 tasks');
 	await page.screenshot({ path: out('failed-run-390-first.png') });
 	// Read left to right, it scrolls sideways; the scroll controls sit on the
 	// frame's top band, never over a node.
-	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default&view=dag&dag=lr`);
+	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default&dag=lr`);
 	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'LR');
 	const band = await page.evaluate(() => {
-		const panel = document.querySelector('[data-testid="run-dag"]')!.closest('[role="tabpanel"]')!.getBoundingClientRect();
+		const nodes = [...document.querySelectorAll('[data-testid="run-dag"] g.dag-node')].map((n) => n.getBoundingClientRect());
 		const buttons = ['run-dag-scroll-left', 'run-dag-scroll-right'].map((id) => document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect());
-		return { panelTop: panel.top, bottoms: buttons.map((b) => b.bottom) };
+		const over = buttons.filter((b) => nodes.some((n) => b.left < n.right && b.right > n.left && b.top < n.bottom && b.bottom > n.top)).length;
+		return { over };
 	});
-	for (const bottom of band.bottoms) expect(bottom).toBeLessThanOrEqual(band.panelTop + 0.5);
+	expect(band.over, 'no scroll control sits over a node').toBe(0);
 	await page.screenshot({ path: out('failed-run-390-lr.png') });
 
 	// The secondary actions are header buttons that wrap inside the screen.

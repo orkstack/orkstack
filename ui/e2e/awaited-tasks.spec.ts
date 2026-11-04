@@ -1,3 +1,4 @@
+import { inspectTask, selectTask } from './uiHelpers';
 import { expect, test, type Page } from './test';
 import { mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -174,6 +175,10 @@ async function submitWithCallback(page: Page): Promise<{ runId: string; token: s
 
 async function waitAwaiting(page: Page) {
 	await expect(page.getByTestId('task-approval-status')).toHaveText('Awaiting', { timeout: 120_000 });
+	// The page selects the awaiting task by itself; choosing it keeps its panel
+	// (resolution, outcome) on screen after the await ends, when nothing is
+	// left for the page to choose.
+	await selectTask(page, 'approval');
 }
 
 test('submitting a run with a callback await shows each callback once', async ({ page }) => {
@@ -213,6 +218,7 @@ test('an awaiting task shows its deadline and resolves from the run page', async
 	await expect(page.getByTestId('task-approval-status')).toHaveText('Succeeded', { timeout: 60_000 });
 	await expect(page.getByTestId('task-approval-await-state')).toHaveText(/^Completed via api/);
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
+	await inspectTask(page, 'apply');
 	await expect(page.getByTestId('task-values-apply')).toContainText('e2e-operator', { timeout: 60_000 });
 	note(`resolve from the page ${runId}: approval SUCCEEDED via api, apply read approver e2e-operator`);
 	await shot(page, 'screenshot-resolved.png');
@@ -267,9 +273,9 @@ test('a link clicked as the run resolves still navigates', async ({ page, reques
 	// navigation's read, so holding that one RPC holds the navigation without
 	// touching anything the run page re-reads. The `clicked` flag is a second
 	// guard: a read made before the click is continued untouched.
-	await expect(
-		page.locator('[data-testid="run-versions"][data-loaded="true"], [data-testid="run-versions-error"]')
-	).toBeVisible();
+	// (The versions list is read only when the header's Versions popover is
+	// opened, so there is no read of the run page's own to wait out.)
+	await expect(page.getByTestId('run-dag')).toBeVisible();
 	let clicked = false;
 	let held!: () => void;
 	const navigationHeld = new Promise<void>((resolve) => (held = resolve));
@@ -318,10 +324,8 @@ test('a same-page link loading as the run ends still shows its final values', as
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: GATES, namespace: NS });
 	const runId = submitted.run.id;
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
-	await expect(page.getByTestId('task-first-status')).toHaveText('AWAITING', { timeout: 120_000 });
-	await expect(
-		page.locator('[data-testid="run-versions"][data-loaded="true"], [data-testid="run-versions-error"]')
-	).toBeVisible();
+	await expect(page.getByTestId('task-first-status')).toHaveText('Awaiting', { timeout: 120_000 });
+	await expect(page.getByTestId('run-dag')).toBeVisible();
 
 	let armed = false;
 	let landed = false;
@@ -355,11 +359,11 @@ test('a same-page link loading as the run ends still shows its final values', as
 
 		// The run ends while the navigation is loading. The second approval's
 		// status comes from the event stream, which nothing holds.
-		await expect(page.getByTestId('task-second-status')).toHaveText('AWAITING', { timeout: 60_000 });
+		await expect(page.getByTestId('task-second-status')).toHaveText('Awaiting', { timeout: 60_000 });
 		await rpc('RunService/ResolveAwait', {
 			runId, namespace: NS, taskId: 'second', valuesJson: '{"approver": "ci-bot"}'
 		});
-		await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+		await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 
 		// The navigation lands on the snapshot it read before the run ended.
 		for (const release of held.slice(0, navigationReads)) release();
@@ -370,7 +374,8 @@ test('a same-page link loading as the run ends still shows its final values', as
 		armed = false;
 		for (const release of held.slice(navigationReads)) release();
 
-		await expect(page.getByTestId('task-second-status')).toHaveText('SUCCEEDED');
+		await expect(page.getByTestId('task-second-status')).toHaveText('Succeeded');
+		await inspectTask(page, 'second');
 		await expect(page.getByTestId('task-values-second')).toContainText('ci-bot', { timeout: 60_000 });
 		note(`same-page link while ${runId} ended: ${navigationReads} reads held until the navigation landed, final values shown`);
 		await shot(page, 'screenshot-same-page-link-as-run-ends.png');

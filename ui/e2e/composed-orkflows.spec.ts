@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { selectTask } from './uiHelpers';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -162,6 +163,9 @@ test('a composed task links to its child run and rolls up its tasks live', async
 	});
 	page.on('websocket', (socket) => childSockets.push(socket.url()));
 	const runId = await submit('composed-release');
+	// A short window keeps the child panel below the fold whatever the page
+	// above the task list grows to: the graph, the facts and the cards.
+	await page.setViewportSize({ width: 1280, height: 400 });
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
 	await expect(page.getByTestId('task-release-child')).toBeAttached();
 	await expect(page.getByTestId('task-release-child-orkflow')).toHaveText('release-block@0.1.0');
@@ -228,7 +232,7 @@ test('declared outputs are the run output and a downstream task read them', asyn
 	const output = (await page.getByTestId('run-output').textContent()) ?? '';
 	const digest = /"digest": "(sha256:[0-9a-f]{64})"/.exec(output)?.[1] ?? '';
 	expect(digest).not.toBe('');
-	await page.getByTestId('task-log-toggle-announce').click();
+	await selectTask(page, 'announce');
 	await expect(page.getByTestId('task-log-announce')).toContainText(`released ${digest} at https://registry.example/records/${digest}`, {
 		timeout: 60_000
 	});

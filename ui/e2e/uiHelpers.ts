@@ -157,3 +157,30 @@ export async function fullPageShot(page: Page, path: string): Promise<void> {
 		await style.evaluate((el) => el.remove());
 	}
 }
+
+/**
+ * Select task `id` on the run page, as a person does: press its name in the
+ * task list. The name is a toggle (aria-pressed), so it is pressed only when
+ * the task is not already selected — pressing a selected, explicitly chosen
+ * task would clear the selection. A task the page auto-selected (the failed
+ * one, else the first running or awaiting) reads aria-pressed true already.
+ */
+export async function selectTask(page: Page, id: string): Promise<void> {
+	const link = page.getByTestId(`task-deep-link-${id}`);
+	await expect(link).toBeVisible();
+	if ((await link.getAttribute('aria-pressed')) !== 'true') await link.click();
+	await expect(link).toHaveAttribute('aria-pressed', 'true');
+}
+
+/**
+ * Select task `id` and open its Inspect disclosure in the Item card. The
+ * disclosure is one boolean that survives a change of selection, so it is
+ * pressed only when it is not already expanded.
+ */
+export async function inspectTask(page: Page, id: string): Promise<void> {
+	await selectTask(page, id);
+	const toggle = page.getByTestId(`task-inspect-toggle-${id}`);
+	await expect(toggle).toBeVisible();
+	if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+}

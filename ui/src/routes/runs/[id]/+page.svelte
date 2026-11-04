@@ -1937,7 +1937,8 @@
 
 	let versionsOpen = $state(false);
 	let inputsAsJson = $state(false);
-	let inspectOpen = $state(false);
+	// Which tasks have their Inspect open: a disclosure of one task, never in the address.
+	let inspectOpenByTask = $state<Record<string, boolean>>({});
 	const inputEntries = $derived.by(() => {
 		const raw = run?.input?.data;
 		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
@@ -1959,18 +1960,11 @@
 		const g = mapGeometry(mapSections, mapWidth - 16, MAP_MAX_HEIGHT - 16);
 		return g.scroll > 0 ? MAP_MAX_HEIGHT : Math.max(g.height + 16, 36);
 	});
-	// The selected task's commands: the Item card's terminal icon.
-	const activeCli = $derived.by(() => {
-		const task = activeView;
-		if (!run || !task) return [];
-		const fanned = task_isFanOut(task);
-		const item = fanned ? activeItem : undefined;
+	// A task's commands, behind its terminal icon.
+	function taskCliOf(task: TaskView) {
+		if (!run) return [];
 		const canLog = task_isContainer(task) && !neverStarted(task);
-		const rows = attemptsByTask.get(attemptsKey(task.id, item)) ?? [];
-		if (item !== undefined) {
-			const words = ['logs', 'artifacts', 'attempts'];
-			return words.map((command) => ({ label: `This item's ${command}`, command: itemCli({ namespace: data.namespace, runId: run.id, taskId: task.id, item, command }) }));
-		}
+		const rows = attemptsByTask.get(task.id) ?? [];
 		return [
 			...(canLog ? [{ label: 'Its log', command: runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])]) }] : []),
 			...(canLog && task.status === Status.FAILED ? [{ label: 'Run it here, on your machine', command: taskRunCommand(data.namespace, run.id, task.id) }] : []),
@@ -1978,6 +1972,17 @@
 			...(task.status === Status.RUNNING ? [{ label: 'What it is doing', command: runCommand(data.namespace, ['run', 'inspect', run.id, '--task', task.id]) }] : []),
 			...(task.scheduledAt || task.startedAt ? [{ label: 'Where its time went', command: runCommand(data.namespace, ['run', 'timing', run.id, '--task', task.id]) }] : [])
 		];
+	}
+	// The selected task's or item's commands: the Item card's terminal icon.
+	const activeCli = $derived.by(() => {
+		const task = activeView;
+		if (!run || !task) return [];
+		const item = task_isFanOut(task) ? activeItem : undefined;
+		if (item !== undefined) {
+			const words = ['logs', 'artifacts', 'attempts'];
+			return words.map((command) => ({ label: `This item's ${command}`, command: itemCli({ namespace: data.namespace, runId: run.id, taskId: task.id, item, command }) }));
+		}
+		return taskCliOf(task);
 	});
 
 	const runCli = $derived(
@@ -2403,6 +2408,12 @@ ED — clears it.
 										task.exitCode !== undefined ? `exit code ${task.exitCode}` : '',
 										def && !def.retry ? 'no retry policy' : ''
 									].filter(Boolean).join(' · ')}</span>
+									{#if !composed && !isAwait && !fanOut}
+										<span class="xhead-end">
+											<button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{task.id}" aria-expanded={inspectOpenByTask[task.id] ?? false} onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}>{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}</button>
+											<CliPopover testid="run-task-{task.id}-cli" title="Command line: task {task.id}" commands={taskCliOf(task)} />
+										</span>
+									{/if}
 								</p>
 								{#if !composed && !isAwait && !fanOut}
 									{#snippet wokerWord()}<span class="font-mono text-xs">{task.orkerId || lastAttempt?.orkerId || '—'}</span>{/snippet}
@@ -2448,6 +2459,27 @@ ED — clears it.
 										embedded
 										label={task.id}
 									/>
+								{/if}
+								{#if !composed && !isAwait && !fanOut && inspectOpenByTask[task.id]}
+									{#await import('#lib/components/TaskInspect.svelte') then { default: TaskInspect }}
+										<TaskInspect
+											runId={run.id}
+											namespace={data.namespace}
+											{task}
+											{def}
+											isAwait={false}
+											isComposed={false}
+											attempts={taskAttempts}
+											{attemptsSeeded}
+											{attemptsError}
+											{timing}
+											artifacts={(artifactsByTask.get(task.id) ?? []).filter((record) => record.item === undefined)}
+											downloading={downloadingArtifact}
+											onDownload={(record) => void downloadArtifact(record)}
+											onViewLogs={(attempt) => viewTaskAttemptLogs(task.id, attempt)}
+											onCopyValues={() => void copy(payloadJson(task.output), 'Task values copied', `task-values-${task.id}`)}
+										/>
+									{/await}
 								{/if}
 							</div>
 						{/if}
@@ -2705,9 +2737,9 @@ ED — clears it.
 						{/if}
 					{:else if !fanned}
 						<div class="insp-more">
-							<button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{activeView.id}" aria-expanded={inspectOpen} onclick={() => (inspectOpen = !inspectOpen)}>{inspectOpen ? 'Hide inspect' : 'Inspect'}</button>
+							<button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{activeView.id}" aria-expanded={inspectOpenByTask[activeView.id] ?? false} onclick={() => (inspectOpenByTask[activeView!.id] = !inspectOpenByTask[activeView!.id])}>{inspectOpenByTask[activeView.id] ? 'Hide inspect' : 'Inspect'}</button>
 						</div>
-						{#if inspectOpen && timing}
+						{#if inspectOpenByTask[activeView.id] && timing}
 							{#await import('#lib/components/TaskInspect.svelte') then { default: TaskInspect }}
 								<TaskInspect
 									runId={run.id}
@@ -3129,6 +3161,12 @@ ED — clears it.
 		align-items: center;
 		gap: 4px 12px;
 		font-size: 13px;
+	}
+	.xhead-end {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		margin-left: auto;
 	}
 	.phline {
 		display: flex;

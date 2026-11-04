@@ -113,7 +113,7 @@
 		<h2 id="item-card-heading" data-testid="{prefix}-label">{title}</h2>
 		<div class="card-end">
 			{#if waiting}
-				<span class="stamp pill-wait" data-testid="{prefix}-status"><span class="mark-wait" aria-hidden="true"></span>Waiting for capacity</span>
+				<span class="stamp pill-wait" data-testid="{prefix}-card-status"><span class="mark-wait" aria-hidden="true"></span>Waiting for capacity</span>
 			{:else}
 				<StatusPill {status} testid="{prefix}-card-status" />
 			{/if}

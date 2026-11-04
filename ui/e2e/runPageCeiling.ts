@@ -27,7 +27,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { taskMapCellCenter } from './uiHelpers';
+import { inspectTask, taskMapCellCenter } from './uiHelpers';
 
 // The run detail page at a task ceiling (spec E7, the run-page case of T7),
 // shared by two spec files: run-page-ceiling.spec.ts at the deployment's
@@ -210,7 +210,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		await last.scrollIntoViewIfNeeded({ timeout: 60_000 });
 		await expect(last).toBeVisible();
 		const cards = Date.now() - started;
-		await page.getByTestId(`task-inspect-toggle-t${tasks - 1}`).click();
+		await inspectTask(page, `t${tasks - 1}`);
 		await expect(page.getByTestId(`task-t${tasks - 1}-inspect`)).toBeVisible({ timeout: 60_000 });
 		const elapsed = Date.now() - started;
 		expect(await page.getByTestId('task-list').locator('[data-testid^="task-deep-link-"]').count()).toBe(tasks);

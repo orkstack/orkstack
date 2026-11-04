@@ -215,10 +215,13 @@ test('P4 — a failing run, watched live', async ({ page }) => {
 	await expect(page.getByTestId('run-error')).toBeVisible();
 	await expect(page.getByTestId('run-status')).toHaveText(/running/i);
 	await expect(page.getByTestId('task-deploy')).not.toContainText('run failing after task');
-	await expect(page.getByTestId('task-escalate-status')).toHaveText('Waiting for rollback');
-	await expect(page.getByTestId('task-rollback-join')).toHaveText('join any_failed');
+	await expect(page.getByTestId('task-escalate-status')).toHaveText('Pending');
+	await expect(page.getByTestId('task-escalate-status-note')).toHaveText('Waiting for rollback');
+	await expect(page.getByTestId('task-rollback-join')).toContainText('failure handler, any need failed');
 	await expect(page.getByTestId('task-smoke-status')).toHaveText(/canceled/i);
-	await expect(page.getByTestId('task-announce')).toContainText(
+	// A never-started task's reason is the note's tip, not repeated on its row.
+	await expect(page.getByTestId('task-announce-status-note')).toHaveAttribute(
+		'data-tip',
 		'the run is failing (task "deploy" failed) and this task is not a failure handler'
 	);
 	await shot(page, 'screenshot-failing-before.png');
@@ -233,7 +236,9 @@ test('P4 — a failing run, watched live', async ({ page }) => {
 	await expect(banner).toHaveCount(0, { timeout: 120_000 });
 	await expect(page.getByTestId('run-status')).toHaveText(/failed/i);
 	await expect(page.getByTestId('run-error')).toBeVisible();
-	await expect(page.getByTestId('task-announce')).toContainText(
+	// A never-started task's reason is the note's tip, not repeated on its row.
+	await expect(page.getByTestId('task-announce-status-note')).toHaveAttribute(
+		'data-tip',
 		'the run is failing (task "deploy" failed) and this task is not a failure handler'
 	);
 	note(`P4 ${runId}: banner shown live, cleared on RUN_FAILED; event frames the page received:\n${frames()}`);

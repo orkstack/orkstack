@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { inspectTask, selectTask } from './uiHelpers';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
@@ -271,7 +272,7 @@ async function paneLines(
 		);
 }
 
-test('per-task Inspect reveals that task alone, and Show events opens the event list above the tasks', async ({
+test('Inspect reveals the selected task alone, and Show events opens the event list above the tasks', async ({
 	page
 }) => {
 	const submitted = await submit(LIVE_FAILURE_ORKFLOW);
@@ -306,42 +307,58 @@ test('per-task Inspect reveals that task alone, and Show events opens the event 
 	await expect(page.getByTestId('events-toggle')).toHaveAttribute('aria-expanded', 'false');
 	await shot(page, 'screenshot-run-overview.png');
 
-	await page.getByTestId('task-log-toggle-boom').click();
+	// THE FAILED TASK IS THE SELECTION. With no choice made the page selects the
+	// failed task, and a failed container task's log is embedded under its row
+	// rather than in the log column.
+	await expect(page.getByTestId('task-deep-link-boom')).toHaveAttribute('aria-pressed', 'true');
 	await expect(page.getByTestId('task-log-state-boom')).toHaveText('ENDED');
-	const socketCount = sockets.length;
 
-	// PER TASK, IN THAT TASK'S OWN CARD. `ok`'s Inspect reveals what `ok` ran
-	// and what `ok` produced, inside `ok`'s card — the same disclosure shape
-	// as its "Show output", not a separate section elsewhere on the page.
-	await page.getByTestId('task-inspect-toggle-ok').click();
-	await expect(page.getByTestId('task-ok').getByTestId('task-ok-inspect')).toBeVisible();
+	// PER TASK, IN THE ITEM CARD. Selecting `ok` and pressing Inspect reveals
+	// what `ok` ran and what `ok` produced, in the card of the selected task
+	// (it replaced the per-row Inspect), not a separate section elsewhere.
+	await inspectTask(page, 'ok');
+	await expect(page.getByTestId('task-log-state-ok')).toHaveText('ENDED');
+	const socketCount = sockets.length;
+	const card = page.getByTestId('item-card');
+	await expect(card.getByTestId('task-ok-inspect')).toBeVisible();
 	await expect(page.getByTestId('task-ok-image')).toContainText('@sha256:');
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
 	await expect(page.getByTestId('task-ok-commit')).toContainText('commit.json');
-	const artifactsOk = page.getByTestId('task-ok').getByTestId('task-artifacts-ok');
+	const artifactsOk = card.getByTestId('task-artifacts-ok');
 	await expect(artifactsOk).toBeVisible();
 	await expect(artifactsOk).toContainText('VALUES');
 	await expect(artifactsOk).toContainText('STDOUT');
 	await expect(artifactsOk).toContainText('STDERR');
 	await expect(artifactsOk).toContainText('Metadata');
-	// SCOPED: one task's disclosure is one task's. `boom`'s stayed shut.
+	// SCOPED: the card is the selected task's alone. `boom` has no card of its
+	// own while it is not selected, and none even when it is (a failed
+	// container task says its details, and opens its Inspect, under its row).
 	await expect(page.getByTestId('task-boom-inspect')).toHaveCount(0);
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveCount(0);
-	// And it is LOCAL state, not URL state — a per-card disclosure, like
-	// "Show output", is not something anybody sends to somebody else.
+	// And it is LOCAL state, not URL state — a disclosure, like the log pane,
+	// is not something anybody sends to somebody else.
 	await expect(page).not.toHaveURL(/inspect=1|events=1/);
 
-	// The sibling opens on its own, and nothing already on screen moves.
-	await page.getByTestId('task-inspect-toggle-boom').click();
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
+	// The failed sibling keeps its details under its own row, and nothing
+	// already on screen moves.
+	await expect(page.getByTestId('task-boom-failure')).toContainText('exit code 3');
 	await expect(page.getByTestId('task-log-boom')).toBeVisible();
+	// Regression: a failed task has no Item card, and its Inspect must still be
+	// reachable: what it ran, every try and its artifacts open under its row.
+	await page.getByTestId('task-inspect-toggle-boom').click();
+	const failedInspect = page.getByTestId('task-boom-failure').getByTestId('task-boom-inspect');
+	await expect(failedInspect).toBeVisible();
+	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
+	await expect(failedInspect.getByTestId('task-artifacts-boom')).toContainText('STDERR');
+	await page.getByTestId('task-inspect-toggle-boom').click();
+	await expect(page.getByTestId('task-boom-inspect')).toHaveCount(0);
 	await expect(page.getByTestId('task-boom-error')).toBeVisible();
 	expect(sockets).toHaveLength(socketCount);
 
-	// INDEPENDENT: closing one leaves the other open.
+	// Closing the disclosure leaves the failure under `boom`'s row alone.
 	await page.getByTestId('task-inspect-toggle-ok').click();
 	await expect(page.getByTestId('task-ok-inspect')).toHaveCount(0);
-	await expect(page.getByTestId('task-boom-inspect')).toBeVisible();
+	await expect(page.getByTestId('task-boom-failure')).toBeVisible();
 	await shot(page, 'screenshot-task-inspect.png');
 
 	// SHOW EVENTS is the page-level control, and what it opens renders ABOVE
@@ -377,6 +394,7 @@ test('per-task Inspect reveals that task alone, and Show events opens the event 
 	await page.reload();
 	await expect(page.getByTestId('event-inspector')).toBeVisible();
 	await expect(page.getByTestId('task-boom-inspect')).toHaveCount(0);
+	await expect(page.getByTestId('task-ok-inspect')).toHaveCount(0);
 	await page.getByTestId('events-toggle').click();
 	await expect(page).not.toHaveURL(/events=1/);
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
@@ -384,7 +402,7 @@ test('per-task Inspect reveals that task alone, and Show events opens the event 
 
 	await page.setViewportSize({ width: 390, height: 844 });
 	await shot(page, 'screenshot-run-overview-mobile.png');
-	await page.getByTestId('task-inspect-toggle-ok').click();
+	await inspectTask(page, 'ok');
 	await expect(page.getByTestId('task-ok-image')).toBeVisible();
 	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 	await shot(page, 'screenshot-task-inspect-mobile.png');
@@ -510,9 +528,11 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	await expect(page.getByTestId('events-toggle')).toBeVisible();
 	await expect(page.getByTestId('events-toggle')).toHaveText('Events');
 	await expect(page.getByTestId('events-toggle')).toHaveAttribute('aria-expanded', 'false');
-	// …and each task's own Inspect is present and SHUT: the control is on the
-	// card, the detail it discloses is not.
+	// …and the selected task's Inspect is present and SHUT: the control is on
+	// the Item card, the detail it discloses is not.
+	await selectTask(page, 'talk');
 	await expect(page.getByTestId('task-inspect-toggle-talk')).toBeVisible();
+	await expect(page.getByTestId('task-inspect-toggle-talk')).toHaveAttribute('aria-expanded', 'false');
 	await expect(page.getByTestId('task-talk-inspect')).toHaveCount(0);
 	note(
 		'the run page loaded with no event list in the DOM, a "Show events" control, and a ' +
@@ -520,12 +540,10 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	);
 	await shot(page, 'screenshot-run-page-loaded.png');
 
-	// SCOPED: a pane per task, opened one at a time, holding one task's output
-	// and nobody else's.
-	await expect(page.getByTestId('task-log-talk')).toHaveCount(0);
+	// SCOPED: one pane, following the selection, holding one task's output
+	// and nobody else's. (Regression kept from the per-row toggles, which let
+	// two panes be open at once: now selecting a task replaces the pane.)
 	await expect(page.getByTestId('task-log-flaky')).toHaveCount(0);
-
-	await page.getByTestId('task-log-toggle-talk').click();
 	// Poll for the LINE THIS TEST ASSERTS ON, not for a non-empty pane. Under
 	// the OCI Activity Contract a task's stream carries the workload's bytes
 	// and nothing else, so a pane is empty until the application writes — but
@@ -542,8 +560,11 @@ test('the page loads with task panes and no event list, and each task keeps its 
 		)
 		.toBe(true);
 	await expect(page.getByTestId('task-log-flaky')).toHaveCount(0);
+	const talkTexts = (await paneLines(page, 'talk')).map((l) => l.text);
 
-	await page.getByTestId('task-log-toggle-flaky').click();
+	await selectTask(page, 'flaky');
+	// Selecting the sibling replaces the pane: talk's is gone, not stacked.
+	await expect(page.getByTestId('task-log-talk')).toHaveCount(0);
 	// The same shape on the sibling: activity-http announces the request it is
 	// about to make before it makes it, so this is the first line either way.
 	await expect
@@ -553,7 +574,6 @@ test('the page loads with task panes and no event list, and each task keeps its 
 		)
 		.toBe(true);
 
-	const talkTexts = (await paneLines(page, 'talk')).map((l) => l.text);
 	const flakyTexts = (await paneLines(page, 'flaky')).map((l) => l.text);
 	// Each pane holds its own task's stream: the lines that task's own
 	// workload wrote, and nothing from the other. (`[ork] ` notices are the
@@ -565,7 +585,7 @@ test('the page loads with task panes and no event list, and each task keeps its 
 	// The scoping, said as a property: neither pane holds a line of the other.
 	expect(talkTexts.filter((t) => flakyTexts.includes(t))).toEqual([]);
 	note(
-		`two panes open at once: talk holds ${talkTexts.length} of its own lines and flaky ` +
+		`one pane at a time: talk held ${talkTexts.length} of its own lines and flaky ` +
 			`${flakyTexts.length} of its own, with nothing in common`
 	);
 });
@@ -577,7 +597,7 @@ test("a container application's stdout and stderr arrive live and render apart",
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
-	await page.getByTestId('task-log-toggle-talk').click();
+	await selectTask(page, 'talk');
 
 	// LIVE: lines are on screen while the run itself still reads RUNNING, so
 	// nothing here came from an artifact published at the end. The poll carries
@@ -673,7 +693,7 @@ test('a retried task offers its attempts, and attempt 1 still reads back', async
 	);
 
 	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
-	await page.getByTestId('task-log-toggle-flaky').click();
+	await selectTask(page, 'flaky');
 
 	// The selector appears because the task retried, and it offers `latest`
 	// plus every try by number.
@@ -778,9 +798,9 @@ test('a retried task shows its retry on the card, in the header, and as a timeli
 	// committing attempt for an adopted commit).
 	await expect(page.getByTestId('run-retries')).toHaveText(/^1 task retry$/);
 
-	// THE TIMELINE, inside the task's own Inspect — the same disclosure the
+	// THE TIMELINE, inside the selected task's Inspect — the same disclosure the
 	// image, exit code and artifacts live behind.
-	await page.getByTestId('task-inspect-toggle-flaky').click();
+	await inspectTask(page, 'flaky');
 	const timeline = page.getByTestId('task-flaky-attempts');
 	await expect(timeline).toBeVisible();
 	await expect(timeline).toContainText('Attempts (2)');
@@ -841,7 +861,7 @@ test('a retried task shows its retry on the card, in the header, and as a timeli
 	await page.reload();
 	await expect(page.getByTestId('task-flaky-retries')).toHaveText('retried ×1');
 	await expect(page.getByTestId('run-retries')).toHaveText(/^1 task retry$/);
-	await page.getByTestId('task-inspect-toggle-flaky').click();
+	await inspectTask(page, 'flaky');
 	await expect(page.getByTestId('task-flaky-attempt-1')).toHaveAttribute('data-outcome', 'FAILED');
 	await expect(page.getByTestId('task-flaky-attempt-2')).toHaveAttribute(
 		'data-outcome',
@@ -874,17 +894,17 @@ test('the event view opens and closes while task state keeps updating', async ({
 	// proof: the pill appears the moment the task is really dispatched.
 	const boomStatus = page.getByTestId('task-boom-status');
 	await expect(boomStatus).toHaveAttribute('data-state', 'not-started');
-	await expect(boomStatus).toHaveText(/Waiting for slow/);
+	await expect(boomStatus).toHaveText('Pending');
+	await expect(page.getByTestId('task-boom-status-note')).toHaveText(/Waiting for slow/);
 	await expect(page.getByTestId('task-boom')).toHaveAttribute('data-dispatched', 'false');
-	await expect(page.getByTestId('task-boom')).not.toContainText('Pending');
 	await shot(page, 'screenshot-task-waiting.png');
 	note('task boom rendered as "Waiting for slow" with no status pill');
 
-	await page.getByTestId('task-inspect-toggle-boom').click();
+	await inspectTask(page, 'boom');
 	// A generated proto3 int32 reads as 0 even before an attempt finishes. The
 	// page must not draw that absence as a successful measurement. Read it from
-	// boom's OWN card — that is the only place this fact is rendered now.
-	const boomExitCode = page.getByTestId('task-boom').getByTestId('task-boom-exit-code');
+	// the Item card of boom, the selected task — where this fact is rendered.
+	const boomExitCode = page.getByTestId('item-card').getByTestId('task-boom-exit-code');
 	await expect(boomExitCode).toHaveText('Not measured');
 	await expect(boomExitCode).toHaveAttribute('data-state', 'unknown');
 
@@ -960,13 +980,14 @@ test('the event view opens and closes while task state keeps updating', async ({
 	// TASK_FAILED itself carries only status/message. RUN_FAILED causes one
 	// terminal GetRun re-read (not a poll and not a reload), after which the
 	// task card has the Orker's actual attempt facts and structured category.
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3', { timeout: 60_000 });
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'measured');
-	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	// A failed container task has no Item card: its exit code, category and
+	// reason are read from the failure block under its own row.
+	await expect(page.getByTestId('task-boom-failure')).toContainText('exit code 3', { timeout: 60_000 });
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed', { ignoreCase: true });
 	await expect(page.getByTestId('task-boom-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
 	// A genuine successful exit 0 is still a measurement, not "unknown" — read
 	// from the succeeded task's own Inspect, opened here for the first time.
-	await page.getByTestId('task-inspect-toggle-slow').click();
+	await inspectTask(page, 'slow');
 	await expect(page.getByTestId('task-slow-exit-code')).toHaveText('0');
 	await expect(page.getByTestId('task-slow-exit-code')).toHaveAttribute('data-state', 'measured');
 	note('live terminal refresh rendered boom exit 3 / Activity failed and slow exit 0 without reload');
@@ -1018,15 +1039,14 @@ test('the event view opens and closes while task state keeps updating', async ({
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&events=1`);
 	await expect(page.getByTestId('event-inspector')).toBeVisible();
 	note('a fresh load of ?events=1 opens the inspector: the URL is the state');
-	await page.getByTestId('task-inspect-toggle-boom').click();
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
-	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	// The failed task is the page's own selection; its failure block says the
+	// exit code and category.
+	await expect(page.getByTestId('task-boom-failure')).toContainText('exit code 3');
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed', { ignoreCase: true });
 	await page.reload();
-	// The per-task disclosure is component state and a reload discards it, so
-	// it is asked for again — the FACT behind it is what has to survive.
-	await page.getByTestId('task-inspect-toggle-boom').click();
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
-	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	// The FACT has to survive a reload; nothing needs asking for again.
+	await expect(page.getByTestId('task-boom-failure')).toContainText('exit code 3');
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed', { ignoreCase: true });
 	note('a reload of the finished run kept exit 3 and the Activity failed category');
 });
 
@@ -1037,8 +1057,7 @@ test('a task watched live acquires its real exit code and Error.category without
 	const run = submitted.run.id;
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-status')).toHaveText(/Pending|Running/);
-	await page.getByTestId('task-inspect-toggle-boom').click();
-	await page.getByTestId('task-inspect-toggle-ok').click();
+	await inspectTask(page, 'boom');
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('Not measured');
 	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'unknown');
 
@@ -1048,10 +1067,11 @@ test('a task watched live acquires its real exit code and Error.category without
 		(window as unknown as { __orkTerminalMarker: string }).__orkTerminalMarker = 'alive';
 	});
 	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 120_000 });
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3', { timeout: 60_000 });
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveAttribute('data-state', 'measured');
-	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	// The failed task has no Item card; its failure block carries the facts.
+	await expect(page.getByTestId('task-boom-failure')).toContainText('exit code 3', { timeout: 60_000 });
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed', { ignoreCase: true });
 	await expect(page.getByTestId('task-boom-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await inspectTask(page, 'ok');
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveAttribute('data-state', 'measured');
 	expect(
@@ -1077,13 +1097,12 @@ test('a task watched live acquires its real exit code and Error.category without
 	note('task never: stamped CANCELED with "never started" under it');
 
 	await page.reload();
-	// Both disclosures are re-opened: a reload keeps the URL's state and not a
+	// The disclosure is re-opened: a reload keeps the URL's state and not the
 	// card's, and what is being checked here is the reloaded FACTS.
-	await page.getByTestId('task-inspect-toggle-boom').click();
-	await page.getByTestId('task-inspect-toggle-ok').click();
+	await inspectTask(page, 'ok');
 	await expect(page.getByTestId('task-ok-exit-code')).toHaveText('0');
-	await expect(page.getByTestId('task-boom-exit-code')).toHaveText('3');
-	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed');
+	await expect(page.getByTestId('task-boom-failure')).toContainText('exit code 3');
+	await expect(page.getByTestId('task-boom-error-category')).toHaveText('Activity failed', { ignoreCase: true });
 	// THE SNAPSHOT PATH, not just the live one: a reload re-reads GetRun, and
 	// the "never started" rendering has to survive it. That is the read that
 	// broke before — the snapshot carried a stamped started_at, so a reloaded
@@ -1106,7 +1125,9 @@ test('a failed task offers the command that runs it locally; a succeeded or neve
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 120_000 });
 
-	// A task row's commands are one popover; the local replay is the command with `task run` in it.
+	// The selected task's commands are one popover in its Item card; the local
+	// replay is the command with `task run` in it.
+	await selectTask(page, 'boom');
 	const trigger = page.getByTestId('run-task-boom-cli-trigger');
 	await expect(trigger).toBeVisible();
 	await trigger.click();
@@ -1117,11 +1138,13 @@ test('a failed task offers the command that runs it locally; a succeeded or neve
 	);
 	await page.keyboard.press('Escape');
 	// A succeeded task offers its log, and none of its commands is the local run.
+	await selectTask(page, 'ok');
 	await page.getByTestId('run-task-ok-cli-trigger').click();
 	await expect(page.locator('[data-testid^="run-task-ok-cli-command-"]').first()).toBeVisible();
 	await expect(commandOf('ok')).toHaveCount(0);
 	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');
+	await selectTask(page, 'never');
 	await expect(page.getByTestId('run-task-never-cli-trigger')).toHaveCount(0);
 	await shot(page, 'screenshot-task-local-replay.png');
 	note(`run ${run}: boom (FAILED) offers its local run; ok (SUCCEEDED) and never (never started) offer none`);

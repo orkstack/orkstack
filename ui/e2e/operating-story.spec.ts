@@ -1,3 +1,4 @@
+import { selectTask } from './uiHelpers';
 import { expect, test, type Page } from './test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -320,7 +321,7 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	await page.evaluate(() => {
 		(window as unknown as { __orkLiveMarker: string }).__orkLiveMarker = 'alive';
 	});
-	await page.getByTestId('task-log-toggle-talk').click();
+	await selectTask(page, 'talk');
 	const logPane = page.getByTestId('task-log-talk');
 	const logLines = logPane.getByTestId('task-log-line');
 	const appLines = logLines.filter({ hasText: /^story (?:stdout|stderr) line \d+$/ });
