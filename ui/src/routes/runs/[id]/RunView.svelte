@@ -109,6 +109,8 @@
 		originLinkPath,
 		originReferenceURL
 	} from '#lib/origin.ts';
+	import { stampClass } from '#lib/statusMarks.ts';
+	import { SvelteSet } from 'svelte/reactivity';
 	import { fmtTimestamp, isTerminal, isTerminalEventType, keepsEventMessage, statusLabel, taskDispatched } from '#lib/status.ts';
 	import { statusMark } from '#lib/statusMarks.ts';
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '#lib/activity.ts';
@@ -269,9 +271,23 @@
 	const taskDefs = $derived(
 		new Map((data.orkflow?.tasks ?? []).map((t) => [t.id, t]))
 	);
+	// The artifact list as last read: a new read keeps the old list until it lands.
+	let artifacts = $state.raw<RunArtifact[]>([]);
+	let artifactsError = $state<string | null>(null);
+	$effect(() => {
+		let current = true;
+		void data.artifactsRead.then((read) => {
+			if (!current) return;
+			artifacts = read.artifacts;
+			artifactsError = read.error;
+		});
+		return () => {
+			current = false;
+		};
+	});
 	const artifactsByTask = $derived.by(() => {
 		const grouped = new Map<string, RunArtifact[]>();
-		for (const record of data.artifacts) {
+		for (const record of artifacts) {
 			const records = grouped.get(record.taskId) ?? [];
 			records.push(record);
 			grouped.set(record.taskId, records);
@@ -311,21 +327,43 @@
 	// is replaced wholesale and a deeply reactive proxy per event is what made
 	// a chatty run's page heavy.
 	let buffer = $state.raw(emptyEventBuffer());
-	let tasks = $state<TaskView[]>(untrack(seedTasks));
-	// taskById indexes `tasks` by id, so an event, a card or a derived value
+	// $state.raw, and a task's view is replaced rather than edited: at thousands
+	// of tasks a deeply reactive proxy per task, with a signal per field a row
+	// reads, was most of what opening the page cost. A row re-renders only when
+	// its own task is a new object; what a log pane subscribes by is its own
+	// derived coordinates, so a replaced task never touches its socket.
+	let tasks = $state.raw<TaskView[]>(untrack(seedTasks));
+	// While a batch of changes is being made, the list they are made to.
+	let tasksDraft: TaskView[] | null = null;
+	// taskAt indexes `tasks` by id, so an event, a card or a derived value
 	// finds its task in one lookup instead of a scan of every card: at the
 	// task ceiling (thousands of tasks) a scan per event — and one per task
 	// inside the failing-handlers banner — kept a live page busy for tens of
-	// seconds. It holds the same reactive objects `tasks` does; `tasks` is
-	// only ever seeded and pushed to, so a length that moved is the one
-	// change that rebuilds it.
-	const taskById = new Map<string, TaskView>();
+	// seconds. A task keeps its place, and tasks are only ever added at the
+	// end, so a length that moved is the one change that rebuilds it.
+	const taskAt = new Map<string, number>();
 	function findTask(id: string): TaskView | undefined {
-		if (taskById.size !== tasks.length) {
-			taskById.clear();
-			for (const task of tasks) taskById.set(task.id, task);
+		const list = tasksDraft ?? tasks;
+		if (taskAt.size !== list.length) {
+			taskAt.clear();
+			list.forEach((task, at) => taskAt.set(task.id, at));
 		}
-		return taskById.get(id);
+		const at = taskAt.get(id);
+		return at === undefined ? undefined : list[at];
+	}
+	// Many changes, one new list: a batch of events or a whole snapshot.
+	function batchTasks(change: () => void): void {
+		if (tasksDraft) return change();
+		untrack(() => {
+			const draft = [...tasks];
+			tasksDraft = draft;
+			try {
+				change();
+			} finally {
+				tasksDraft = null;
+				if (draft.length !== tasks.length || draft.some((task, at) => task !== tasks[at])) tasks = draft;
+			}
+		});
 	}
 	// The tasks the loaded snapshot already holds as finished. Their attempts
 	// arrive with the whole run's timeline read after the page renders, so a
@@ -614,12 +652,14 @@
 				if (list) list.push(attempt);
 				else byTask.set(attempt.taskId, [attempt]);
 			}
-			for (const [taskId, attempts] of byTask) {
-				const task = findTask(taskId);
-				if (!task) continue;
-				const items = applyLiveItems(task.items, attempts);
-				if (items !== task.items) upsertTask(taskId, { items });
-			}
+			batchTasks(() => {
+				for (const [taskId, attempts] of byTask) {
+					const task = findTask(taskId);
+					if (!task) continue;
+					const items = applyLiveItems(task.items, attempts);
+					if (items !== task.items) upsertTask(taskId, { items });
+				}
+			});
 			const computed = res.computedAt;
 			liveReceivedAtMs = Date.now();
 			liveComputedAtMs = computed
@@ -719,6 +759,9 @@
 
 	function mergeTerminalFacts() {
 		mapRevision++;
+		batchTasks(mergeTerminalRows);
+	}
+	function mergeTerminalRows() {
 		for (const tr of data.run?.taskRuns ?? []) {
 			const existing = findTask(tr.taskId);
 			upsertTask(tr.taskId, {
@@ -807,32 +850,16 @@
 		})();
 	}
 
-	// Patch the view IN PLACE. Replacing `tasks[idx]` carries the same data,
-	// but a keyed `{#each}` hands each item to its block as ONE value: replace
-	// it and every reader of `task.id` is invalidated, including the props
-	// that carry a log pane's subscription coordinates. Measured: a task
-	// turning SUCCEEDED tore that pane's socket down and replayed the whole
-	// attempt from its first chunk, emptying the pane under a reader who had
-	// scrolled up. A field-by-field patch touches only the fields that moved.
+	// A patch that moves nothing changes nothing: replayed events arrive by the
+	// thousand on a page opened on a finished run, and none may re-render a row.
 	function upsertTask(taskId: string, patch: Partial<TaskView>) {
-		const existing = findTask(taskId);
-		if (existing) {
-			Object.assign(existing, patch);
-			return;
-		}
-		tasks.push({
-			id: taskId,
-			activity: '',
-			status: Status.PENDING,
-			attempt: 0,
-			message: '',
-			artifacts: [],
-			systemArtifacts: [],
-			pool: '',
-			pin: '',
-			orkerId: '',
-			items: [],
-			...patch
+		batchTasks(() => {
+			const existing = findTask(taskId);
+			if (existing && (Object.keys(patch) as (keyof TaskView)[]).every((key) => patch[key] === existing[key])) return;
+			const list = tasksDraft!;
+			list[existing ? taskAt.get(taskId)! : list.length] = existing
+				? { ...existing, ...patch }
+				: { id: taskId, activity: '', status: Status.PENDING, attempt: 0, message: '', artifacts: [], systemArtifacts: [], pool: '', pin: '', orkerId: '', items: [], ...patch };
 		});
 	}
 
@@ -890,6 +917,9 @@
 	function applyEvents(events: Event[]) {
 		mapRevision++;
 		buffer = appendEvents(buffer, events);
+		batchTasks(() => applyEventsToTasks(events));
+	}
+	function applyEventsToTasks(events: Event[]) {
 		// AN ITEM'S EVENT MOVES THAT ITEM'S CELL AND NOTHING ELSE. It is a
 		// TASK_LOG carrying `item`; the task's own status is the node's, and
 		// is never set from one of its items.
@@ -1906,7 +1936,18 @@
 		const composed = task.child !== undefined || def?.orkflow !== undefined;
 		const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt);
 		const never = neverStarted(task);
+		const waiting = !dispatched && !never && task.status !== Status.SKIPPED;
 		return {
+			pill:
+				task.status === Status.RUNNING && waitingFor(liveByTask.get(task.id))
+					? { cls: 'stamp pill-wait', mark: 'mark-wait', word: 'Waiting for capacity' }
+					: waiting
+						? { cls: 'stamp pill-outline text-ink-2', mark: '', word: 'Pending' }
+						: {
+								cls: stampClass(task.status),
+								mark: task.status === Status.RUNNING ? 'mark-dot' : task.status === Status.AWAITING ? 'mark-diamond' : '',
+								word: statusLabel(task.status)
+							},
 			def,
 			isAwait,
 			composed,
@@ -1916,7 +1957,7 @@
 			accent: pinAccent(task.pin),
 			cached: def?.cache !== undefined,
 			// A task of a live run that no Orker has seen yet.
-			waiting: !dispatched && !never && task.status !== Status.SKIPPED,
+			waiting,
 			word: composed && task.child ? childLabel(task.child) : isAwait ? 'awaited task' : imageWord(task.id)
 		};
 	}
@@ -1950,6 +1991,22 @@
 		const declared = declaredSprites.get(activityByTask.get(id)?.icon);
 		return declared ? `#${declared}` : '#i-a-default';
 	}
+	// A <use> costs a row a shadow tree of its own, on screen or not, and again each
+	// time its icon changes: a long list's rows draw theirs from when their chunk
+	// first comes near the screen.
+	const litChunks = new SvelteSet<number>();
+	const lightChunk = (chunk: number) => (el: HTMLElement) => {
+		const observer = new IntersectionObserver(
+			([entry]) => {
+				if (!entry.isIntersecting) return;
+				litChunks.add(chunk);
+				observer.disconnect();
+			},
+			{ rootMargin: '800px' }
+		);
+		observer.observe(el);
+		return () => observer.disconnect();
+	};
 	const ROW_CHUNK = 200;
 	const rowChunks = $derived.by(() => {
 		if (tasks.length <= ROW_CHUNK) return null;
@@ -2082,6 +2139,15 @@
 	const MAP_MAX_HEIGHT = 320;
 	// TaskMap's own padding on each side of the box, 8 px.
 	const MAP_PADDING = 16;
+	// Observed, not bound: a bound width is read during the render, which lays out
+	// the whole page in the middle of drawing it.
+	let mapBox = $state<HTMLDivElement | undefined>();
+	$effect(() => {
+		if (!mapBox || typeof ResizeObserver === 'undefined') return;
+		const observer = new ResizeObserver(([entry]) => (mapWidth = entry.contentRect.width));
+		observer.observe(mapBox);
+		return () => observer.disconnect();
+	});
 	const mapBoxHeight = $derived.by(() => {
 		if (mapWidth <= 0) return 60;
 		const g = mapGeometry(mapSections, mapWidth - MAP_PADDING, MAP_MAX_HEIGHT - MAP_PADDING);
@@ -2406,8 +2472,8 @@
 						<span>Showing all</span>
 					</div>
 				{/if}
-				{#if data.artifactsError}
-					<p data-testid="artifacts-unavailable" class="tasks-note">Artifact metadata is unavailable: {data.artifactsError}. Downloads require the engine's recorded-artifact read API and are never linked directly to storage URIs.</p>
+				{#if artifactsError}
+					<p data-testid="artifacts-unavailable" class="tasks-note">Artifact metadata is unavailable: {artifactsError}. Downloads require the engine's recorded-artifact read API and are never linked directly to storage URIs.</p>
 				{/if}
 				<!--
 					The attempt store is not the run: a deployment that has none, or
@@ -2429,8 +2495,8 @@
 					{#snippet rowExtras(task: TaskView, kind: RowKind, line: ReturnType<typeof barsOf>)}
 						{#if task.child?.runId}{' · '}child run <a class="font-mono" data-testid="task-{task.id}-child-run" href={withNamespace(`/runs/${encodeURIComponent(task.child.runId)}`, data.namespace)}>{shortRunId(task.child.runId)}</a>{/if}
 						{#if kind.fanOut}<span>{' · '}{fanOutWords(task)}</span>{/if}
-						{#if task.join && joinWords(task.join)}<span data-testid="task-{task.id}-join" data-tip={joinTitle(task.join, kind.def?.needs ?? [])}>{' · '}{joinWords(task.join)}</span>{/if}
-						{#if task.pin}<span data-testid="task-{task.id}-pin">{' · '}<i class="pin-dot" style="background-color:var(--color-{kind.accent}-line)"></i>Pin {task.pin}</span>{/if}
+						{#if task.join && joinWords(task.join)}{' · '}<span data-testid="task-{task.id}-join" data-tip={joinTitle(task.join, kind.def?.needs ?? [])}>{joinWords(task.join)}</span>{/if}
+						{#if task.pin}{' · '}<span data-testid="task-{task.id}-pin"><i class="pin-dot" style="background-color:var(--color-{kind.accent}-line)"></i>Pin {task.pin}</span>{/if}
 						{#if task.message && !task.error && !kind.never}<span class="break-words">{' · '}{task.message}</span>{/if}
 						{#if task.status === Status.RUNNING}
 							{@const live = liveByTask.get(task.id)}
@@ -2439,7 +2505,7 @@
 						{#if kind.fanOut}
 							<!-- A fan-out retries per item: the mark counts the items that took more than one try. -->
 							{@const retried = retriedItemsLabel(task.items)}
-							{#if retried}<span data-testid="task-{task.id}-retries" data-tip="These items were retried. Open an item for the outcome and error of every attempt.">{' · '}{retried}</span>{/if}
+							{#if retried}{' · '}<span data-testid="task-{task.id}-retries" data-tip="These items were retried. Open an item for the outcome and error of every attempt.">{retried}</span>{/if}
 						{:else}
 							<RetryBadge attempts={attemptsByTask.get(task.id) ?? NO_ATTEMPTS} terminal={isTerminal(task.status)} testid="task-{task.id}-retries" history={flakesByTask.get(task.id)} historyWindow={HISTORY_WINDOW} />
 							<CacheBadge cache={task.cache} declared={kind.cached} succeeded={task.status === Status.SUCCEEDED && task.factsRead === true} namespace={data.namespace} testid="task-{task.id}-cache" />
@@ -2456,7 +2522,7 @@
 						is an inline style because the token is chosen at run time, and the
 						words `Pin <name>` say the same thing.
 					-->
-					{#snippet taskRows(list: TaskView[])}
+					{#snippet taskRows(list: TaskView[], lit: boolean)}
 						{#each list as task (task.id)}
 							{@const kind = rowKind(task)}
 							{@const line = barsOf(task)}
@@ -2468,32 +2534,22 @@
 								data-dispatched={kind.dispatched}
 								data-pin={task.pin || undefined}
 								data-pin-accent={kind.accent}
-							>
-								<span class="tname-col">
-									<button type="button" class="tname" aria-pressed="false" data-testid="task-deep-link-{task.id}" onclick={() => toggleRow(task.id)}
-										><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="size-4 shrink-0 text-ink-3"><use href={iconHref(task.id, kind)} /></svg>{task.id}</button
-									>
-									<small class="tsub">
-										<span class={kind.composed ? 'break-all' : undefined}>{kind.word}</span>
-										{#if task.orkerId}<span class="nw" data-testid="task-{task.id}-orker">{' · '}<span class="sr">{'Orker '}</span>{task.orkerId}</span>{/if}
-										{#if kind.never || kind.waiting}{' · '}<span data-testid="task-{task.id}-status-note" data-tip={kind.never ? task.message || undefined : undefined}>{kind.never ? 'never started' : notStartedCaption(task)}</span>{/if}
-										{#if rowHasExtras(task, kind)}{@render rowExtras(task, kind, line)}{/if}
-									</small>
-								</span>
-								<span class="tl" role={line.bars.length ? 'img' : undefined} aria-label={line.bars.length ? line.words : undefined} data-testid="task-{task.id}-timing"
+								><span class="tname-col"
+									><button type="button" class="tname" aria-pressed="false" data-testid="task-deep-link-{task.id}" onclick={() => toggleRow(task.id)}
+										><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="rico"><use href={lit ? iconHref(task.id, kind) : undefined} /></svg>{task.id}</button
+									><small class="tsub"
+										>{kind.word}{#if task.orkerId}<span class="nw" data-testid="task-{task.id}-orker">{' · '}<span class="sr">{'Orker '}</span>{task.orkerId}</span>{/if}{#if kind.never || kind.waiting}{' · '}<span data-testid="task-{task.id}-status-note" data-tip={kind.never ? task.message || undefined : undefined}>{kind.never ? 'never started' : notStartedCaption(task)}</span>{/if}{#if rowHasExtras(task, kind)}{@render rowExtras(task, kind, line)}{/if}</small
+									></span
+								><span class="tl" role={line.bars.length ? 'img' : undefined} aria-label={line.bars.length ? line.words : undefined} data-testid="task-{task.id}-timing"
 									>{#each line.bars as bar, i (i)}<i class="tl-{bar.kind}" data-testid="task-{task.id}-{bar.kind === 'wait' ? 'wait' : 'run'}-segment" style:left="{bar.left * 100}%" style:width="{bar.width * 100}%"></i>{/each}</span
-								>
-								<span class="stc">
-									{#if task.status === Status.RUNNING && waitingFor(liveByTask.get(task.id))}
-										<span class="stamp pill-wait" data-testid="task-{task.id}-status"><span class="mark-wait" aria-hidden="true"></span>Waiting for capacity</span>
-									{:else if kind.waiting}
-										<span data-testid="task-{task.id}-status" data-state="not-started" class="stamp pill-outline text-ink-2">Pending</span>
-									{:else}
-										<StatusPill status={task.status} testid="task-{task.id}-status" />
-									{/if}
-									<span class="num tdur" data-testid="task-{task.id}-elapsed"><span class="sr">{task.status === Status.RUNNING ? 'Since scheduled ' : task.status === Status.AWAITING ? 'Awaited ' : ''}</span>{rowDuration(task)}</span>
-								</span>
-							</div>
+								><span class="stc"
+									><span data-testid="task-{task.id}-status" data-state={kind.waiting ? 'not-started' : undefined} class={kind.pill.cls}
+										>{#if kind.pill.mark}<span class={kind.pill.mark} aria-hidden="true"></span>{/if}{kind.pill.word}</span
+									><span class="num tdur" data-testid="task-{task.id}-elapsed"
+										>{#if task.status === Status.RUNNING || task.status === Status.AWAITING}<span class="sr">{task.status === Status.AWAITING ? 'Awaited ' : 'Since scheduled '}</span>{/if}{rowDuration(task)}</span
+									></span
+								></div
+							>
 							{#if task.status === Status.FAILED || kind.isAwait || kind.composed || kind.fanOut}
 								{@const def = kind.def}
 								{@const isAwait = kind.isAwait}
@@ -2636,9 +2692,9 @@
 					<div data-testid="task-list">
 						{#if rowChunks}
 							<!-- Cut into chunks a long list's layout can skip whole, not row by row. -->
-							{#each rowChunks as chunk, c (c)}<div class="rows-chunk">{@render taskRows(chunk)}</div>{/each}
+							{#each rowChunks as chunk, c (c)}<div class="rows-chunk" {@attach lightChunk(c)}>{@render taskRows(chunk, litChunks.has(c))}</div>{/each}
 						{:else}
-							{@render taskRows(tasks)}
+							{@render taskRows(tasks, true)}
 						{/if}
 					</div>
 				<!-- THE LOG: one pane, in the column, that follows the selection. -->
@@ -2777,7 +2833,7 @@
 			{/if}
 			<section class="card" aria-labelledby="run-map-heading" data-testid="run-map-card">
 				<div class="card-head"><h2 id="run-map-heading">Task map</h2><span class="card-sub">every task and item, in the order they can run</span></div>
-				<div class="tmap" style:height="{mapBoxHeight}px" bind:clientWidth={mapWidth}>
+				<div class="tmap" style:height="{mapBoxHeight}px" bind:this={mapBox}>
 					<TaskMap
 						bind:this={taskMap}
 						source={mapSource}
@@ -3207,6 +3263,12 @@
 	}
 	.tl-axis span.first {
 		transform: none;
+	}
+	.rico {
+		flex: none;
+		width: 16px;
+		height: 16px;
+		color: var(--ink-3);
 	}
 	.rows-chunk {
 		content-visibility: auto;

@@ -76,14 +76,28 @@
 		return `/orkflows/${data.name}?${params.toString()}`;
 	}
 
-	const tabs = [
+	let counts = $state.raw<{ triggers?: number; schedules?: number }>({});
+	let countsFor = '';
+	$effect(() => {
+		// Another Orkflow's numbers are never this one's, even for a moment.
+		if (countsFor !== data.name) counts = {};
+		countsFor = data.name;
+		let current = true;
+		void data.counts.then((answer) => {
+			if (current) counts = answer;
+		});
+		return () => {
+			current = false;
+		};
+	});
+	const tabs = $derived<{ id: string; label: string; count?: number }[]>([
 		{ id: 'overview', label: 'Overview' },
-		{ id: 'versions', label: 'Versions' },
+		{ id: 'versions', label: 'Versions', count: data.versionsError ? undefined : data.versions.length },
 		{ id: 'edit', label: 'Edit' },
 		{ id: 'runs', label: 'Runs' },
-		{ id: 'schedules', label: 'Schedules' },
-		{ id: 'triggers', label: 'Triggers' }
-	];
+		{ id: 'schedules', label: 'Schedules', count: counts.schedules },
+		{ id: 'triggers', label: 'Triggers', count: counts.triggers }
+	]);
 
 	// Submitting is a dialog on this page rather than a trip to a page that
 	// would ask again which orkflow it is looking at. The coordinates are read
@@ -206,7 +220,7 @@
 			aria-current={data.tab === tab.id ? 'page' : undefined}
 			class="tab"
 		>
-			{tab.label}
+			{tab.label}{#if tab.count !== undefined}<span class="tab-n">{tab.count}</span>{/if}
 		</a>
 	{/each}
 </nav>
@@ -490,6 +504,11 @@
 {/if}
 
 <style>
+	.tab-n {
+		margin-left: 6px;
+		font-weight: 500;
+		color: var(--ink-3);
+	}
 	.tabs {
 		display: inline-flex;
 		max-width: 100%;

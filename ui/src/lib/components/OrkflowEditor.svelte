@@ -106,6 +106,8 @@
 	);
 
 	let applying = $state(false);
+	// The version this draft would store, as its own top-level line says: only ever a label.
+	const draftVersion = $derived(/^version:[ \t]*["']?([^\s"'#]+)/m.exec(yaml)?.[1] ?? '');
 	let validating = $state(false);
 	let reloading = $state(false);
 	let applyError = $state('');
@@ -342,7 +344,7 @@
 					}}
 					class="btn btn-primary"
 				>
-					<Icon name="apply" />{applying ? 'Applying…' : 'Apply version'}
+					<Icon name="apply" />{applying ? 'Applying…' : `Apply version ${draftVersion}`.trim()}
 				</button>
 				<CliPopover
 					testid="editor-cli"

@@ -690,6 +690,10 @@
 		}
 	}
 	/* On a phone each row is a card, and the whole card is one link. */
+	/* One line, and a link whose middle is the link: a wrapped id's is the gap between its lines. */
+	.runs-table th.rid :global(a) {
+		white-space: nowrap;
+	}
 	@media (max-width: 640px) {
 		.runs-table thead {
 			display: none;

@@ -20,6 +20,8 @@ const fixture = `${import.meta.dir}/fixtures/testid-baseline.txt`;
 
 /** Shape → why it may be gone (and the spec change that goes with it). */
 const ALLOWED_REMOVALS: Record<string, string> = {
+	// A run's row draws its status itself, at thousands of rows: the same id, on its own span.
+	'prop task-{}-status': 'the row draws its status itself',
 	'prop activity-inspect-cli':
 		"Inspect a reference's command joined the Activities header's popover, activities-cli: one per screen (admin.spec.ts).",
 	'id task-{}-item-panel':

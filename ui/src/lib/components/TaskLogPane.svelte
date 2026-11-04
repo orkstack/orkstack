@@ -649,7 +649,7 @@
 									? 'logline-err text-log-err'
 									: 'text-log-ink'}"
 						>
-							{#if line.stream === 'stderr' && !line.notice}<span class="sr">stderr: </span>{/if}{line.text}
+							{#if line.stream === 'stderr' && !line.notice}<span class="sr">{'stderr: '}</span>{/if}{line.text}
 						</div>
 					{/each}
 				{/if}

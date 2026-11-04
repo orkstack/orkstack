@@ -151,7 +151,8 @@
 		observer.observe(el);
 		const drawing = el.querySelector('svg');
 		if (drawing) observer.observe(drawing);
-		measure();
+		// The observer answers for what it was just given, once the page has laid
+		// out: measuring here would make the browser lay it out in mid-render.
 		return () => observer.disconnect();
 	});
 

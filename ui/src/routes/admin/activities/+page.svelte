@@ -19,6 +19,7 @@
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ActivityIcon from '#lib/components/ActivityIcon.svelte';
+	import Icon from '#lib/components/Icon.svelte';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import Plate from '#lib/components/Plate.svelte';
 	import DocText from '#lib/components/DocText.svelte';
@@ -48,6 +49,8 @@
 
 	// Which catalog rows have their interface disclosed. Keyed by name, which
 	// the catalog guarantees unique.
+	// The icons this catalog declares, for the page's key: the rest draw the default.
+	const declaredKinds = $derived(data.activities.filter((activity) => activity.icon && !activity.iconError));
 	let disclosed = $state<Record<string, boolean>>({});
 
 	// Inspect a reference: InspectActivity resolves one reference on demand,
@@ -114,73 +117,10 @@
 	/>
 </header>
 
-<!--
-	ORKER STATUS. Presented the way the Pools page presents liveness: an
-	unanswered probe is its OWN state, never drawn as a zero or an absence.
-	DescribeOrker is dispatched onto the default pool's own channel (§6.5), so
-	"no answer" means no Orker is serving that pool right now — which is
-	fixed by starting one, not by asking again.
--->
-<section class="mb-10" data-testid="orker-section" aria-labelledby="orker-heading">
-	<h2 id="orker-heading" class="mb-2 text-md font-semibold text-ink">Orker</h2>
-	{#if data.orkerError}
-		<div
-			class="border border-red px-4 py-3 text-sm"
-			data-testid="orker-unavailable"
-		>
-			<p class="severity-warning font-semibold">No Orker answered the default pool.</p>
-			<p class="mt-1 break-words text-ink-secondary">{data.orkerError}</p>
-			<p class="mt-1 text-xs text-ink-secondary">
-				Nothing was measured. Start an Orker for this deployment's default pool — this is not a
-				report that zero Orkers are healthy.
-			</p>
-		</div>
-	{:else if !data.orker}
-		<p class="text-sm text-ink-muted" data-testid="orker-empty">
-			The probe returned no Orker description.
-		</p>
-	{:else}
-		{@const orker = data.orker}
-		<!-- The Orker's facts in the title block's anatomy. -->
-		<dl
-			class="fstrip card p-4"
-			data-testid="orker-card"
-		>
-			<div class="min-w-0">
-				<dt>Orker</dt>
-				<dd class="font-mono text-sm break-words" data-testid="orker-id">{orker.orkerId || '—'}</dd>
-			</div>
-			<div class="min-w-0">
-				<dt>Pool</dt>
-				<dd class="font-mono text-sm break-words" data-testid="orker-pool">{orker.pool || '—'}</dd>
-			</div>
-			<div class="min-w-0">
-				<dt>Runtime</dt>
-				<dd class="break-words" data-testid="orker-runtime">{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}</dd>
-			</div>
-			<div class="min-w-0">
-				<dt>Build</dt>
-				<dd class="font-mono text-sm break-words" data-testid="orker-build">{orker.buildId || 'unversioned'}</dd>
-			</div>
-			<div class="min-w-0">
-				<dt>Security profile</dt>
-				<dd class="break-words" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
-			</div>
-			<div class="min-w-0">
-				<dt>Max concurrent</dt>
-				<dd class="font-mono text-sm break-words" data-testid="orker-max-concurrent">{String(orker.maxConcurrent)}</dd>
-			</div>
-			<div class="min-w-0">
-				<dt>Rootless</dt>
-				<dd class="break-words" data-testid="orker-rootless">{orker.rootless ? 'yes' : 'no'}</dd>
-			</div>
-		</dl>
-	{/if}
-</section>
 
 
 
-<h2 class="mb-2 text-md font-heading text-ink">Catalog</h2>
+<h2 class="sr">Catalog</h2>
 
 <ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} cli={false} />
 
@@ -268,7 +208,7 @@
 									data-testid="activity-interface-{activity.name}"
 									onclick={() => (disclosed[activity.name] = !disclosed[activity.name])}
 								>
-									<span class="sr">Declared: </span>{interfaceSummary(activity)}
+									{#if activity.interface && !activity.interfaceError}<span class="tag">Declared</span>{' '}{/if}{interfaceSummary(activity) === 'none' ? 'None declared' : interfaceSummary(activity)}
 								</button>
 							{:else}
 								<span class="text-ink-3" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
@@ -287,6 +227,17 @@
 		</table>
 	</div>
 {/if}
+
+<section class="card kinds mt-4" aria-labelledby="kinds-heading" data-testid="activity-kinds">
+	<h2 id="kinds-heading" class="kinds-h">Task kinds</h2>
+	<div class="kinds-key">
+		<span><Icon name="a-default" class="size-4 text-ink-3" />default</span>
+		{#each declaredKinds as activity (activity.name)}<span><ActivityIcon icon={activity.icon} class="size-4 text-ink-3" />{activity.name}</span>{/each}
+		<span><Icon name="a-orkflow" class="size-4 text-ink-3" />composed task</span>
+		<span><Icon name="a-await" class="size-4 text-ink-3" />awaited task</span>
+	</div>
+	<p class="kinds-note">An image that declares no icon or summary shows the default icon and no summary.</p>
+</section>
 
 <!--
 	INSPECT A REFERENCE. Any reference `uses:` would accept — a catalog name or
@@ -345,7 +296,98 @@
 	{/if}
 </section>
 
+<!--
+	ORKER STATUS. Presented the way the Pools page presents liveness: an
+	unanswered probe is its OWN state, never drawn as a zero or an absence.
+	DescribeOrker is dispatched onto the default pool's own channel (§6.5), so
+	"no answer" means no Orker is serving that pool right now — which is
+	fixed by starting one, not by asking again.
+-->
+<section class="mt-10" data-testid="orker-section" aria-labelledby="orker-heading">
+	<h2 id="orker-heading" class="mb-2 text-md font-semibold text-ink">Orker</h2>
+	{#if data.orkerError}
+		<div
+			class="border border-red px-4 py-3 text-sm"
+			data-testid="orker-unavailable"
+		>
+			<p class="severity-warning font-semibold">No Orker answered the default pool.</p>
+			<p class="mt-1 break-words text-ink-secondary">{data.orkerError}</p>
+			<p class="mt-1 text-xs text-ink-secondary">
+				Nothing was measured. Start an Orker for this deployment's default pool — this is not a
+				report that zero Orkers are healthy.
+			</p>
+		</div>
+	{:else if !data.orker}
+		<p class="text-sm text-ink-muted" data-testid="orker-empty">
+			The probe returned no Orker description.
+		</p>
+	{:else}
+		{@const orker = data.orker}
+		<!-- The Orker's facts in the title block's anatomy. -->
+		<dl
+			class="fstrip card p-4"
+			data-testid="orker-card"
+		>
+			<div class="min-w-0">
+				<dt>Orker</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-id">{orker.orkerId || '—'}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Pool</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-pool">{orker.pool || '—'}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Runtime</dt>
+				<dd class="break-words" data-testid="orker-runtime">{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Build</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-build">{orker.buildId || 'unversioned'}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Security profile</dt>
+				<dd class="break-words" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Max concurrent</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-max-concurrent">{String(orker.maxConcurrent)}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Rootless</dt>
+				<dd class="break-words" data-testid="orker-rootless">{orker.rootless ? 'yes' : 'no'}</dd>
+			</div>
+		</dl>
+	{/if}
+</section>
+
 <style>
+	.kinds {
+		display: grid;
+		gap: 10px;
+		padding: 14px 16px;
+	}
+	.kinds-h {
+		margin: 0;
+		font-size: 15px;
+		font-weight: 650;
+	}
+	.kinds-key {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 14px;
+		font-size: 13px;
+		color: var(--ink-2);
+	}
+	.kinds-key span {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.kinds-note {
+		margin: 0;
+		font-size: 13px;
+		color: var(--ink-3);
+	}
 	@media (max-width: 640px) {
 		.acts thead {
 			display: none;

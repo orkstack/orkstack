@@ -300,8 +300,8 @@
 	});
 	let readoutSize = $state({ w: 0, h: 0 });
 	$effect(() => {
-		void readoutText;
-		if (readoutEl) readoutSize = { w: readoutEl.offsetWidth, h: readoutEl.offsetHeight };
+		// Only a readout that says something: measuring an empty one would lay the page out in mid-render.
+		if (readoutEl && readoutText) readoutSize = { w: readoutEl.offsetWidth, h: readoutEl.offsetHeight };
 	});
 	const PAD = 8;
 	const readoutAt = $derived.by(() => {

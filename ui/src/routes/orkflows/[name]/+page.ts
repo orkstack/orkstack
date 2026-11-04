@@ -77,6 +77,20 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			: Promise.resolve({ schedules: [] as Schedule[], error: null as string | null })
 	]);
 
+	// The tabs' counts never hold the page up, and a read that fails draws no count.
+	const counts = Promise.all([
+		tab === 'triggers'
+			? triggerList.error ? undefined : triggerList.triggers.length
+			: triggerClient(fetch)
+					.listTriggers({ namespace, filters: [filterOf('orkflow_name', FilterOperator.EQUALS, [name])] })
+					.then((res) => res.triggers.length, () => undefined),
+		tab === 'schedules'
+			? scheduleList.error ? undefined : scheduleList.schedules.length
+			: scheduleClient(fetch)
+					.listSchedules({ namespace, filters: [filterOf('orkflow_name', FilterOperator.EQUALS, [name])] })
+					.then((res) => res.schedules.length, () => undefined)
+	]).then(([triggers, schedules]) => ({ triggers, schedules }));
+
 	// The editor is seeded from the SELECTED version — `?version=` when the URL
 	// names one, and the head when it does not.
 	//
@@ -122,6 +136,7 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 		version,
 		namespace,
 		tab,
+		counts,
 		orkflow: detail.orkflow,
 		orkflowError: detail.error,
 		versions: catalog.versions,
