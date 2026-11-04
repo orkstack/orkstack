@@ -104,9 +104,9 @@
 		// pool of nothing else counts zero live Orkers, and it is not an empty pool.
 		if (load && load.orkers > 0 && load.storeOutages === load.orkers) return { word: 'Object storage unreachable', tone: 'fail' };
 		if (pool.liveOrkerCount === 0) return { word: 'No Orkers', tone: 'fail' };
+		if (load && load.storeOutages > 0) return { word: `${load.storeOutages} cannot reach object storage`, tone: 'fail' };
 		if (load && load.orkers > 0 && load.cordoned === load.orkers) return { word: 'Cordoned', tone: 'wait' };
 		if (load && isFull(load)) return { word: 'Full', tone: 'wait' };
-		if (load && load.storeOutages > 0) return { word: `${load.storeOutages} cannot reach object storage`, tone: 'fail' };
 		if (load && load.operatorCordons > 0) return { word: `${load.operatorCordons} cordoned`, tone: 'wait' };
 		return { word: 'Ready', tone: 'ok' };
 	}

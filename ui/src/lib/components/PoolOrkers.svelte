@@ -107,19 +107,23 @@
 		uncordonBusy = orker.orkerId;
 		actionError = '';
 		notice = '';
+		let cleared = false;
 		try {
 			const res = await activityClient(fetch).cordonOrker({ orkerId: orker.orkerId, cordoned: false });
 			notice = res.orker?.storeOutage
-				? `Cleared the operator's cordon on ${orker.orkerId}. It stays cordoned because ${STORE_OUTAGE_LABEL}.`
+				? `Cleared the operator's cordon on ${orker.orkerId}. It stays cordoned because it cannot reach object storage.`
 				: `Uncordoned ${orker.orkerId}.`;
+			cleared = true;
 		} catch (err) {
 			actionError = `Uncordon ${orker.orkerId}: ${errorMessage(err)}`;
 		} finally {
 			uncordonBusy = '';
 			await load();
 			// The button that had focus is gone: Cordon… stands in its place.
-			await tick();
-			document.querySelector<HTMLElement>(`[data-testid="orker-cordon-${orker.orkerId}"]`)?.focus();
+			if (cleared) {
+				await tick();
+				document.querySelector<HTMLElement>(`[data-testid="orker-cordon-${orker.orkerId}"]`)?.focus();
+			}
 		}
 	}
 

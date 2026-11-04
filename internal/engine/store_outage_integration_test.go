@@ -35,7 +35,7 @@ const storeOutagePollDrain = 75 * time.Second
 // storeOutageWatchConfig is the shipped watch at a test's cadence.
 func storeOutageWatchConfig() orker.StoreWatchConfig {
 	return orker.StoreWatchConfig{
-		Enabled: true, Interval: time.Second, Timeout: time.Second,
+		Enabled: true, Interval: time.Second, Timeout: 500 * time.Millisecond,
 		FailureThreshold: 3, RecoveryThreshold: 2,
 	}
 }

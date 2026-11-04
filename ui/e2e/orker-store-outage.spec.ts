@@ -176,7 +176,7 @@ test.beforeAll(async () => {
 			ORK_S3_ENDPOINT: `http://127.0.0.1:${proxyPort}`,
 			ORK_ORKER_ID: ORKER,
 			ORK_ORKER_STORE_CHECK_INTERVAL: '1s',
-			ORK_ORKER_STORE_CHECK_TIMEOUT: '1s',
+			ORK_ORKER_STORE_CHECK_TIMEOUT: '500ms',
 			ORK_ORKER_STORE_CHECK_FAILURES: '2',
 			ORK_ORKER_STORE_CHECK_RECOVERIES: '2'
 		})
@@ -244,7 +244,7 @@ test('An operator\'s cordon beside an outage shows both, and Uncordon clears onl
 	await expect(page.getByTestId(`orker-reason-${ORKER}`)).toHaveCount(0);
 	await expect(page.getByTestId(`orker-uncordon-${ORKER}`)).toHaveCount(0);
 	await expect(page.getByTestId(`orker-cordon-${ORKER}`)).toBeFocused();
-	await expect(page.getByTestId('pool-orkers-notice-main')).toContainText('It stays cordoned because object storage unreachable');
+	await expect(page.getByTestId('pool-orkers-notice-main')).toContainText('It stays cordoned because it cannot reach object storage');
 	note("Uncordon cleared the operator's cordon and left the outage");
 });
 

@@ -577,7 +577,10 @@ func orkerServesEvidence(row *orkstackv1.Orker) string {
 	if row.GetBuildId() == "" {
 		text = row.GetOrkerId() + ", started without ORK_BUILD_ID, serves it"
 	}
-	if row.GetCordoned() {
+	switch {
+	case row.GetStoreOutage() != nil:
+		text += " (cordoned: object storage unreachable)"
+	case row.GetCordoned():
 		text += " (cordoned)"
 	}
 	return text
