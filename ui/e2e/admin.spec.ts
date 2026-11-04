@@ -364,7 +364,7 @@ test('Admin is reachable from the nav, deep-linkable, and shows this replica\'s 
 	page
 }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=default`);
-	await page.locator('nav[aria-label="Primary"]').getByTestId('nav-admin').click();
+	await page.getByTestId('sidebar').getByTestId('nav-admin').click();
 	await expect(page).toHaveURL(/\/admin(\?|$)/);
 	await expect(page.getByTestId('admin-nav')).toBeVisible();
 	await expect(page.getByTestId('system-info')).toBeVisible();
@@ -538,7 +538,7 @@ test('a typed namespace form asks before leaving, keeps its fields when kept, an
 		dialogs.push(`${dialog.type()}: ${dialog.message()}`);
 		void dialog.dismiss();
 	});
-	const runsLink = page.locator('nav[aria-label="Primary"]').getByRole('link', { name: 'Runs', exact: true });
+	const runsLink = page.getByTestId('sidebar').getByTestId('nav-runs');
 	await runsLink.click();
 	await expect.poll(() => dialogs.length).toBe(1);
 	expect(dialogs[0]).toBe('confirm: Discard the namespace changes you have not saved?');
@@ -885,7 +885,7 @@ test('pool health is namespace-scoped, and reports live Orker counts for every p
 
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${OPS_NS}`);
 	await expect(page.getByTestId('pools-scope-caption')).toContainText(OPS_NS);
-	await expect(page.getByTestId('pools-scope-caption')).toContainText('honours the namespace');
+	await expect(page.getByTestId('pools-scope-caption')).toContainText('Where a task of namespace');
 
 	// main: a live Orker really is polling for it, and it is the default.
 	const mainCard = page.getByTestId('pool-card-main');
@@ -899,7 +899,7 @@ test('pool health is namespace-scoped, and reports live Orker counts for every p
 	const cpuCard = page.getByTestId('pool-card-cpu');
 	await expect(cpuCard).toBeVisible();
 	await expect(cpuCard.getByTestId('pool-orker-count-cpu')).toHaveText('0');
-	await expect(cpuCard.getByTestId('pool-no-orkers-cpu')).toContainText('no live Orkers');
+	await expect(cpuCard.getByTestId('pool-no-orkers-cpu')).toContainText(/no live Orkers/i);
 	// A zero is a MEASUREMENT, and must not be drawn as the amber
 	// "could not be asked" state the unreachable-cluster test proves.
 	await expect(cpuCard.getByTestId('pool-unavailable-cpu')).toHaveCount(0);
@@ -1047,10 +1047,10 @@ test("the Activities page shows each first-party image's declared interface, and
 	await expect(result.getByTestId('activity-interface-row-untar-member')).toContainText('required');
 
 	// The CLI equivalent is the same question, asked of `orkctl`.
-	await page.getByTestId('activity-inspect-cli-trigger').click();
-	await expect(page.getByTestId('activity-inspect-cli-command')).toHaveText('orkctl activity inspect file');
+	await page.getByTestId('activities-cli-trigger').click();
+	await expect(page.getByRole('dialog', { name: /command line/i }).getByText('orkctl activity inspect file')).toBeVisible();
 	await shot(page, 'screenshot-admin-activities-interface.png');
-	await page.getByTestId('activity-inspect-cli-trigger').click();
+	await page.keyboard.press('Escape');
 
 	// A reference `uses:` would refuse is refused here too, in the server's
 	// own words — never a silently empty result.
@@ -1108,7 +1108,7 @@ test('the activity catalog is global and resolved, and an Orker outage is report
 
 	await page.goto(`${UI_ORIGIN}/admin/activities?ns=${OPS_NS}`);
 	await expect(page.getByTestId('activities-scope-caption')).toContainText(
-		'deployment-wide, not scoped'
+		'Deployment-wide: the same whichever namespace is selected'
 	);
 
 	// The catalog, in the RESPONSE's own order — §2.3 makes that order
@@ -1122,7 +1122,7 @@ test('the activity catalog is global and resolved, and an Orker outage is report
 	for (const name of names) {
 		await expect(page.getByTestId(`activity-reference-${name}`)).toContainText(`activity-${name}`);
 		// Resolved at APPLY time, so the page shows a digest and not a tag.
-		await expect(page.getByTestId(`activity-digest-${name}`)).toContainText('sha256:');
+		await expect(page.getByTestId(`activity-digest-${name}`)).toHaveAttribute('data-digest', /^sha256:/);
 		await expect(page.getByTestId(`activity-digest-unresolved-${name}`)).toHaveCount(0);
 	}
 

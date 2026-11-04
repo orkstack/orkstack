@@ -1,9 +1,13 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { dagDirectionParam } from '#lib/dag.ts';
 	import { rememberRecent } from '#lib/palette/recent.ts';
 	import DrawingFrame from '#lib/components/DrawingFrame.svelte';
+	import { activityClient } from '#lib/clients/activities.ts';
+	import { loadActivities } from '#lib/activityMeta.ts';
+	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import OrkflowEditor from '#lib/components/OrkflowEditor.svelte';
@@ -11,8 +15,11 @@
 	import OrkflowTriggers from '#lib/components/OrkflowTriggers.svelte';
 	import OrkflowVersions from '#lib/components/OrkflowVersions.svelte';
 	import OrkflowCallers from '#lib/components/OrkflowCallers.svelte';
-	import RunSubmitPanel from '#lib/components/RunSubmitPanel.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import FactsStrip from '#lib/components/FactsStrip.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+	import Plate from '#lib/components/Plate.svelte';
+	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { registerProvider } from '#lib/palette/context.ts';
 	import { orkflowPageCommands } from '#lib/palette/orkflowPage.ts';
 	import { setTitleBlock } from '#lib/sheet.svelte.ts';
@@ -25,6 +32,21 @@
 
 	let { data }: PageProps = $props();
 	const wf = $derived(data.orkflow);
+	// The Edit tab's actions live in the page header and act on the editor's state.
+	let editorActions = $state<Snippet | undefined>(undefined);
+	// What each task's image declares: drawn on the graph once it is known, the default until then.
+	let activityByTask = $state.raw(new Map<string, ActivityInfo>());
+	$effect(() => {
+		const tasks = wf?.tasks;
+		if (!tasks?.length) return;
+		let live = true;
+		void loadActivities(tasks, activityClient(fetch)).then((answer) => {
+			if (live) activityByTask = answer;
+		});
+		return () => {
+			live = false;
+		};
+	});
 
 	// The palette's RECENT group: this browser remembers the Orkflow's name.
 	$effect(() => {
@@ -54,13 +76,28 @@
 		return `/orkflows/${data.name}?${params.toString()}`;
 	}
 
-	const tabs = [
+	let counts = $state.raw<{ triggers?: number; schedules?: number }>({});
+	let countsFor = '';
+	$effect(() => {
+		// Another Orkflow's numbers are never this one's, even for a moment.
+		if (countsFor !== data.name) counts = {};
+		countsFor = data.name;
+		let current = true;
+		void data.counts.then((answer) => {
+			if (current) counts = answer;
+		});
+		return () => {
+			current = false;
+		};
+	});
+	const tabs = $derived<{ id: string; label: string; count?: number }[]>([
 		{ id: 'overview', label: 'Overview' },
-		{ id: 'versions', label: 'Versions' },
-		{ id: 'triggers', label: 'Triggers' },
-		{ id: 'schedules', label: 'Schedules' },
-		{ id: 'edit', label: 'Edit' }
-	];
+		{ id: 'versions', label: 'Versions', count: data.versionsError ? undefined : data.versions.length },
+		{ id: 'edit', label: 'Edit' },
+		{ id: 'runs', label: 'Runs' },
+		{ id: 'schedules', label: 'Schedules', count: counts.schedules },
+		{ id: 'triggers', label: 'Triggers', count: counts.triggers }
+	]);
 
 	// Submitting is a dialog on this page rather than a trip to a page that
 	// would ask again which orkflow it is looking at. The coordinates are read
@@ -153,38 +190,37 @@
 
 <svelte:head><title>{data.name} — OrkStack</title></svelte:head>
 
-<SheetHeader title={wf?.name ?? data.name} testid="orkflow-name">
+<SheetHeader title={wf?.name ?? data.name} testid="orkflow-name" actionsFirst>
 	{#snippet meta()}
 		{#if wf}
-			<p class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-				<span class="figure font-semibold text-ink" data-testid="orkflow-version">v{wf.version}</span>
-				<span class="text-xs text-ink-muted">Applied {fmtTimestamp(wf.createdAt)}</span>
-			</p>
-			{#if wf.description}<p class="mt-1 max-w-prose">{wf.description}</p>{/if}
+			{#snippet version()}<span data-testid="orkflow-version"><Plate key="version" value={wf.version} /></span>{/snippet}
+			{#snippet digest()}{#if wf.definitionDigest}<Plate key="digest" value={wf.definitionDigest.replace(/^sha256:/, '').slice(0, 12).replace(/(.{4})(?=.)/g, '$1 ')} tip={wf.definitionDigest} />{:else}—{/if}{/snippet}
+			{#snippet appliedAt()}<TimeAgo at={wf.createdAt} />{/snippet}
+			<FactsStrip facts={[{ label: 'Current', value: version }, { label: 'Definition', value: digest }, { label: 'Applied', value: appliedAt }]} />
+			{#if wf.description && data.tab !== 'edit'}<p class="mt-2 max-w-prose">{wf.description}</p>{/if}
 		{/if}
 	{/snippet}
 	{#snippet actions()}
-		<a
-			href={listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters(wf?.name ?? data.name, '', '', '') })}
-			class="btn">View runs</a
-		>
-		{#if wf}
-			<button type="button" data-testid="orkflow-submit-run" onclick={() => (submitDialogOpen = true)} class="btn btn-primary">
-				Submit a run
-			</button>
+		{#if data.tab === 'edit' && editorActions}
+			<!-- The Edit tab's one orange action is Apply version, with Validate and its command line. -->
+			{@render editorActions()}
+		{:else if wf}
+			<button type="button" data-testid="orkflow-submit-run" onclick={() => (submitDialogOpen = true)} class="btn btn-primary"
+				><Icon name="play" />Submit a run</button
+			>
 		{/if}
 	{/snippet}
 </SheetHeader>
 
-<nav class="mb-6 flex gap-1 overflow-x-auto border-b border-rule" aria-label="Orkflow views">
+<nav class="tabs mb-5" aria-label="Orkflow views">
 	{#each tabs as tab (tab.id)}
 		<a
-			href={tabHref(tab.id)}
+			href={tab.id === 'runs' ? listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters(wf?.name ?? data.name, '', '', '') }) : tabHref(tab.id)}
 			data-testid="tab-{tab.id}"
 			aria-current={data.tab === tab.id ? 'page' : undefined}
-			class="caps -mb-px shrink-0 border-b-2 border-transparent px-3 py-2.5 text-ink-muted transition-colors hover:text-ink current:border-blue current:text-ink"
+			class="tab"
 		>
-			{tab.label}
+			{tab.label}{#if tab.count !== undefined}{' '}<span class="tab-n">{tab.count}</span>{/if}
 		</a>
 	{/each}
 </nav>
@@ -217,6 +253,7 @@
 					tasks={wf.tasks}
 					orkflowLabel="{wf.name}@{wf.version}"
 					direction={dagDirectionParam(page.url)}
+					iconOf={(id) => activityByTask.get(id)?.icon}
 				/>
 			</section>
 			<aside class="min-w-0" aria-labelledby="orkflow-sheet-versions-heading">
@@ -322,7 +359,7 @@
 										<!-- The child's definition digest: what this version pins it as. -->
 										<span
 											class="font-mono text-xs text-ink-secondary"
-											title={task.orkflow.definitionDigest}
+											data-tip={task.orkflow.definitionDigest}
 											data-digest={task.orkflow.definitionDigest}
 											data-testid="task-child-digest-{task.id}"
 											>{shortDigest(task.orkflow.definitionDigest) || '—'}</span
@@ -330,7 +367,7 @@
 									{:else if task.image?.indexDigest}
 										<span
 											class="font-mono text-xs text-ink-secondary"
-											title={task.image.indexDigest}
+											data-tip={task.image.indexDigest}
 											data-digest={task.image.indexDigest}
 											data-testid="task-image-digest-{task.id}"
 											>{shortDigest(task.image.indexDigest)}</span
@@ -339,7 +376,7 @@
 										<span
 											class="text-xs text-ink-muted"
 											data-testid="task-image-unpinned-{task.id}"
-											title="this task's image was not resolved to a digest">unpinned</span
+											data-tip="this task's image was not resolved to a digest">unpinned</span
 										>
 									{/if}
 								</td>
@@ -426,6 +463,7 @@
 	/>
 {:else}
 	<OrkflowEditor
+		onactions={(snippet) => (editorActions = snippet)}
 		name={data.name}
 		namespace={data.namespace}
 		sourceYaml={data.editYaml}
@@ -445,6 +483,10 @@
 		onclose={() => (submitDialogOpen = false)}
 	>
 		{#snippet body()}
+			<!-- Most visits never submit: the form's code loads when it opens. -->
+			{#await import('#lib/components/RunSubmitPanel.svelte')}
+				<p class="text-sm text-ink-3" data-testid="run-submit-loading">Loading the form…</p>
+			{:then { default: RunSubmitPanel }}
 			<RunSubmitPanel
 				namespace={data.namespace}
 				orkflowName={submitName}
@@ -456,6 +498,63 @@
 					void goto(withNamespace(`/runs/${runId}`, data.namespace));
 				}}
 			/>
+			{/await}
 		{/snippet}
 	</Dialog>
 {/if}
+
+<style>
+	.tab-n {
+		margin-left: 6px;
+		font-weight: 500;
+		color: var(--ink-3);
+	}
+	.tabs {
+		display: inline-flex;
+		max-width: 100%;
+		gap: 2px;
+		padding: 3px;
+		overflow-x: auto;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		background: var(--surface-2);
+		scrollbar-width: none;
+	}
+	.tab {
+		display: inline-flex;
+		align-items: center;
+		height: 28px;
+		padding: 0 12px;
+		border-radius: 6px;
+		color: var(--ink-2);
+		font-size: 13.5px;
+		font-weight: 600;
+		text-decoration: none;
+		white-space: nowrap;
+	}
+	.tab:hover {
+		color: var(--ink);
+	}
+	.tab[aria-current='page'] {
+		background: var(--surface);
+		color: var(--navy-text);
+		font-weight: 700;
+		box-shadow:
+			0 0 0 1px var(--line-2),
+			var(--shadow),
+			inset 0 -2px 0 var(--navy-text);
+	}
+	.tab:focus-visible {
+		outline-offset: -2px;
+	}
+	@media (max-width: 640px) {
+		.tab {
+			min-height: 40px;
+		}
+	}
+	@media (forced-colors: active) {
+		.tab[aria-current='page'] {
+			outline: 2px solid Highlight;
+		}
+	}
+</style>

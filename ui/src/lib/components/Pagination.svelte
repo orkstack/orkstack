@@ -46,6 +46,9 @@
 		 * this component does not know what page size is.
 		 */
 		children?: Snippet;
+		/** The words of the two page buttons (a list newest first says Newer and Older). */
+		previousLabel?: string;
+		nextLabel?: string;
 	}
 
 	let {
@@ -57,15 +60,17 @@
 		nextHref = undefined,
 		firstHref = undefined,
 		onnext = undefined,
-		children = undefined
+		children = undefined,
+		previousLabel = 'Previous',
+		nextLabel = 'Next'
 	}: Props = $props();
 
 	// The app's quiet button (the `.btn` primitive): a disabled direction is
 	// an <a> with no href, so it is not a link at all, plus the
 	// `aria-disabled` and `pointer-events-none opacity-50` every disabled
 	// control here wears.
-	const BUTTON = 'btn';
-	const DISABLED = ' pointer-events-none opacity-50';
+	const BUTTON = 'btn btn-sm';
+	const DISABLED = ' pointer-events-none';
 
 	// Page 1 that is also the last page says nothing about pages: there are
 	// none to move between, so the count is the whole truth.
@@ -81,14 +86,14 @@
 </script>
 
 
-<div class="mt-4 flex items-center justify-between gap-3" data-testid="{testid}-pagination">
-	<div class="flex items-center gap-3">
+<div class="mt-4 flex flex-wrap items-center justify-between gap-3" data-testid="{testid}-pagination">
+	<div class="flex flex-wrap items-center gap-3">
 		{@render children?.()}
-		<span class="figure text-sm text-ink-muted" data-testid="{testid}-page-status">{status}</span>
+		<span class="num text-sm text-ink-3" data-testid="{testid}-page-status">{status}</span>
 	</div>
 	<div class="flex items-center gap-2">
 		{#if showFirst}<a data-testid="{testid}-first" href={firstHref} class={BUTTON}>First page</a>{/if}
-		<a data-testid="{testid}-previous" aria-disabled={!previousHref} href={previousHref} class="{BUTTON}{previousHref ? '' : DISABLED}"><Icon name="chevronLeft" />Previous</a>
-		<a data-testid="{testid}-next" aria-disabled={!nextHref} href={nextHref} onclick={() => onnext?.()} class="{BUTTON}{nextHref ? '' : DISABLED}">Next<Icon name="chevronRight" /></a>
+		<a data-testid="{testid}-previous" aria-disabled={!previousHref} href={previousHref} class="{BUTTON}{previousHref ? '' : DISABLED}">{previousLabel}</a>
+		<a data-testid="{testid}-next" aria-disabled={!nextHref} href={nextHref} onclick={() => onnext?.()} class="{BUTTON}{nextHref ? '' : DISABLED}">{nextLabel}</a>
 	</div>
 </div>

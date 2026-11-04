@@ -24,7 +24,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { fullPageShot } from './uiHelpers';
+import { fullPageShot, selectTask } from './uiHelpers';
 
 // The design screens (UI revamp, finish), against a real engine and Orker on
 // real Temporal and MinIO: the key pages — the runs register, a failed run on
@@ -183,17 +183,15 @@ const SCREENS: Screen[] = [
 		name: 'run-dag',
 		url: () => `${UI_ORIGIN}/runs/${failedRun}?ns=default`,
 		ready: async (page) => {
-			await expect(page.getByTestId('run-view-dag')).toHaveAttribute('aria-selected', 'true');
 			await expect(page.getByTestId('run-dag')).toBeVisible();
-			await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
 		}
 	},
 	{
 		name: 'run-map',
 		url: () => `${UI_ORIGIN}/runs/${failedRun}?ns=default`,
 		ready: async (page) => {
-			await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
-			await page.getByTestId('run-view-map').click();
+			// The map is always beside the tasks (the view tabs are gone).
+			await expect(page.getByTestId('run-map-card')).toBeVisible();
 			await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 		}
 	},
@@ -275,7 +273,7 @@ test('screens: the key pages in light and dark, at 1440, 390 and 320 px', async 
 			for (const screen of SCREENS) {
 				await page.goto(screen.url());
 				await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
-				await expect(page.getByTestId('title-block')).toBeVisible();
+				await expect(page.getByTestId('breadcrumb')).toBeVisible();
 				await screen.ready(page);
 				const base = `screen-${screen.name}-${theme}-${viewport.label}`;
 				if (viewport.width === 320) {
@@ -295,23 +293,13 @@ test('screens: the key pages in light and dark, at 1440, 390 and 320 px', async 
 	await page.getByTestId('theme-system').click();
 });
 
-/** The colour a token resolves to, as a computed style reports it. */
-async function tokenColor(page: Page, token: string): Promise<string> {
-	return page.evaluate((name) => {
-		const probe = document.createElement('span');
-		probe.style.color = `var(${name})`;
-		document.body.appendChild(probe);
-		const c = getComputedStyle(probe).color;
-		probe.remove();
-		return c;
-	}, token);
-}
-
 /** How the run page's DAG sits in its frame: its scale, and whether the frame scrolls. */
 async function dagFit(page: Page) {
 	return page.evaluate(() => {
 		const svg = document.querySelector('[data-testid="run-dag"]') as SVGSVGElement;
-		const panel = svg.closest('[role="tabpanel"]') as HTMLElement;
+		// The drawing's frame is its nearest ancestor that can scroll sideways.
+		let panel = svg.parentElement as HTMLElement;
+		while (panel.parentElement && !/auto|scroll/.test(getComputedStyle(panel).overflowX)) panel = panel.parentElement;
 		const node = document.querySelector('[data-testid="run-dag-node-charge"]')!.getBoundingClientRect();
 		const box = panel.getBoundingClientRect();
 		return {
@@ -341,68 +329,56 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	// The failure leads with the task's reason and its sentence; the run's own
 	// code stays beside it, and no word of the execution service's wrapper is
 	// on the page.
-	await expect(page.getByTestId('run-error-reason')).toHaveText('CONTAINER_EXIT_NONZERO');
+	await expect(page.getByTestId('run-error-reason')).toContainText('CONTAINER_EXIT_NONZERO');
 	await expect(page.getByTestId('run-error-code')).toHaveText('RUN_FAILED');
-	await expect(page.getByTestId('run-error-message')).toHaveText('task "charge": the container exited 3');
+	await expect(page.getByTestId('run-error-message')).toHaveText('The container of charge exited 3');
+	// (The failed task's reason is in the failure block under its row.)
 	await expect(page.getByTestId('task-charge-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
-	await expect(page.getByTestId('task-charge-error-message')).toHaveText('task "charge": the container exited 3');
+	await expect(page.getByTestId('task-charge-error-message')).toHaveText('The container of charge exited 3');
 	for (const id of ['run-error', 'task-charge-error']) {
 		for (const word of ['activity error', 'scheduledEventID', 'startedEventID', 'identity:', 'ExecuteTask', '(type:']) {
 			await expect(page.getByTestId(id)).not.toContainText(word);
 		}
 	}
 
-	// A task is a hairline-ruled row on clean ground, not a box: its output
-	// and Inspect toggles sit on its own line of facts, and its failure is one
-	// tinted ground with no rule of its own.
+	// A task is a hairline-ruled row on clean ground, not a box, and its
+	// failure is one block of its own ground under the row.
 	const rows = await page.evaluate(() => {
 		const read = (id: string) => {
 			const el = document.querySelector(`[data-testid="${id}"]`)!;
 			const s = getComputedStyle(el);
 			return { top: s.borderTopWidth, left: s.borderLeftWidth, bottom: s.borderBottomWidth, ground: s.backgroundColor };
 		};
-		const top = (id: string) => document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect().top;
 		return {
 			row: read('task-validate'),
-			failure: read('task-charge-error'),
-			togglesLevel: Math.abs(top('task-log-toggle-validate') - top('task-inspect-toggle-validate')),
-			togglesBelowRowTop: top('task-inspect-toggle-validate') - top('task-validate'),
+			failure: read('task-charge-failure'),
 			rowHeight: document.querySelector('[data-testid="task-validate"]')!.getBoundingClientRect().height
 		};
 	});
 	note(`task rows: ${JSON.stringify(rows)}`);
 	expect(rows.row).toMatchObject({ top: '0px', left: '0px', bottom: '1px', ground: 'rgba(0, 0, 0, 0)' });
-	expect(rows.failure).toMatchObject({ top: '0px', left: '0px', bottom: '0px' });
-	expect(rows.failure.ground).toBe(await tokenColor(page, '--color-red-tint'));
-	expect(rows.togglesLevel).toBeLessThanOrEqual(2);
-	expect(rows.togglesBelowRowTop).toBeLessThan(64);
-	await page.getByTestId('task-log-toggle-validate').click();
-	await expect(page.getByTestId('task-log-toggle-validate')).toHaveAttribute('aria-expanded', 'true');
+	expect(rows.failure).toMatchObject({ top: '0px', left: '0px' });
+	expect(rows.failure.ground).not.toBe('rgba(0, 0, 0, 0)');
+	// The log pane follows the selection (the per-row Show output toggles are
+	// gone): selecting `validate` shows its pane, deselecting it removes it.
+	await selectTask(page, 'validate');
 	await expect(page.getByTestId('task-log-state-validate')).toBeVisible();
-	await page.getByTestId('task-log-toggle-validate').click();
+	await page.getByTestId('task-deep-link-validate').click();
+	await expect(page.getByTestId('task-deep-link-validate')).toHaveAttribute('aria-pressed', 'false');
 	await expect(page.getByTestId('task-log-state-validate')).toHaveCount(0);
 
-	// At 390 the saga reads top to bottom (the Direction Rule): one column
-	// that needs no sideways scrolling, the failed task in view.
+	// At 390 a run's graph still reads left to right: it scrolls in its
+	// frame, the frame says so with a control, and the failed task is the
+	// one in view.
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default`);
-	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'TB');
-	await expect.poll(async () => (await dagFit(page)).failedInView).toBe(true);
-	const column = await dagFit(page);
-	note(`DAG at 390 (auto, top to bottom): ${JSON.stringify(column)}`);
-	expect(column.scrolls).toBe(false);
-	expect(column.scale).toBeGreaterThanOrEqual(0.6 - 0.001);
-	await page.screenshot({ path: out('finish-run-dag-390-auto.png') });
-	// Asked to read left to right, it scrolls in its frame: the frame says
-	// so with a control, and the failed task is the one in view.
-	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default&dag=lr`);
 	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'LR');
 	await expect.poll(async () => (await dagFit(page)).failedInView).toBe(true);
 	const narrow = await dagFit(page);
-	note(`DAG at 390 (dag=lr): ${JSON.stringify(narrow)}`);
+	note(`DAG at 390: ${JSON.stringify(narrow)}`);
 	expect(narrow.scrolls).toBe(true);
 	expect(narrow.scale).toBeGreaterThanOrEqual(0.6 - 0.001);
-	await expect(page.getByTestId('run-dag-scroll-left').or(page.getByTestId('run-dag-scroll-right')).first()).toBeVisible();
+	await expect(page.getByTestId('run-drawing').getByRole('region')).toHaveAttribute('tabindex', '0');
 	await page.screenshot({ path: out('finish-run-dag-390.png') });
 
 	// The registers reflow below 640 px: nothing scrolls sideways, and a run's
@@ -448,10 +424,11 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	for (const n of band.notes) expect(n.cut, `${n.id} is whole`).toBe(false);
 
 	// The runs register at 1280 × 720: the filter toolbar is one row, and the
-	// table starts in the top half of the first viewport.
+	// table follows the 24-hour tiles and the week's charts.
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await page.goto(`${UI_ORIGIN}/runs?ns=default`);
 	await expect(page.getByTestId(`run-row-${failedRun}`)).toBeVisible();
+	await expect(page.getByTestId('runs-chip-orkflow')).toBeVisible();
 	const toolbar = await page.evaluate(() => {
 		const top = (id: string) => Math.round(document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect().top);
 		const mid = (id: string) => {
@@ -459,12 +436,18 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 			return Math.round(r.top + r.height / 2);
 		};
 		return {
-			rows: new Set(['run-filter-add', 'run-filter-size', 'run-filters-apply', 'run-filters-cli-trigger'].map(mid)).size,
+			// (Per page moved to the pagination row, Apply filters is drawn only once a filter is drafted, and the
+			// command line is in the header's popover: the toolbar is the search, the three chips and Add filter.)
+			rows: new Set(['runs-search', 'runs-chip-status', 'runs-chip-orkflow', 'runs-chip-origin', 'run-filter-add'].map(mid)).size,
 			table: top('run-list')
 		};
 	});
 	note(`runs toolbar at 1280x720: ${JSON.stringify(toolbar)}`);
 	expect(toolbar.rows).toBe(1);
-	expect(toolbar.table).toBeLessThan(360);
+	// The design sets the last 7 days above the list, so the list starts below
+	// them. It still fits the card: the page never scrolls it sideways.
+	expect(toolbar.table).toBeLessThan(1300);
+	const list = page.getByTestId('run-list');
+	expect(await list.evaluate((el) => el.parentElement!.scrollWidth <= el.parentElement!.clientWidth + 1)).toBe(true);
 	await page.screenshot({ path: out('finish-runs-1280.png') });
 });

@@ -183,7 +183,7 @@
 							aria-expanded={expanded.includes(d.id)}
 							onclick={() => toggle(d.id)}
 						>
-							<td class="figure text-xs whitespace-nowrap text-ink-secondary" title={instantMs(d.createdAt)}>{fmtTimestamp(d.createdAt)}</td>
+							<td class="figure text-xs whitespace-nowrap text-ink-secondary" data-tip={instantMs(d.createdAt)}>{fmtTimestamp(d.createdAt)}</td>
 							<td class="font-mono text-xs">{d.webhookId}</td>
 							<td class="font-mono text-xs" data-testid="delivery-event-{d.id}">{eventName(d.event)}</td>
 							<td class="font-mono text-xs">

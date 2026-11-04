@@ -75,7 +75,7 @@ A failed need's output files are listed in `inputs.artifacts`, with `producer` s
 
 - A handler with no `retry:` makes one attempt. If the Orker running it is lost, the handler fails. Give a compensation a `retry:`, and make it safe to run twice.
 - A task that the run stopped while it ran reads `CANCELED`, not `FAILED`. `any_failed` does not start for it. When that matters, use `all_done` and read the status in `task.json`.
-- To let a failure pass without failing the run, have the task write the outcome as a value. A later `condition:` reads that value. See [Run a task only when a condition holds](/docs/how-to/conditions/).
+- To let a failure pass without failing the run, have the task write the outcome as a value. A later `condition:` reads that value. See [Run a task only when a condition holds](/docs/build/conditions/).
 
 ## Limits
 

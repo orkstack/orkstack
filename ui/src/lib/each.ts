@@ -8,6 +8,7 @@ import type { Event, TaskRun } from './gen/orkstack/v1/run_pb';
 import type { EachSpec } from './gen/orkstack/v1/orkflow_pb';
 import type { PlanTask } from './gen/orkstack/v1/orkflow_service_pb';
 import { runCommand } from './runDetail';
+import { isTerminal as isTerminalStatus } from './status';
 import { isTerminal, statusLabel } from './status';
 
 /** One item's cell and panel facts: a TaskRun of the item, plus its index. */
@@ -94,6 +95,50 @@ export function eachSummary(expanded: boolean, items: ItemView[], spec?: EachSpe
 }
 
 /** isCachedItem is true for an item whose result was reused (a cache hit). */
+/** A grid's line while its fan-out has items: its counts by state, the words of the marks. */
+export function eachCounts(items: ItemView[], waiting: (item: number) => boolean = () => false): string {
+	const n = { succeeded: 0, failed: 0, running: 0, waiting: 0, canceled: 0, skipped: 0, pending: 0 };
+	for (const item of items) {
+		if (item.status === Status.RUNNING && waiting(item.index)) n.waiting++;
+		else if (item.status === Status.SUCCEEDED) n.succeeded++;
+		else if (item.status === Status.FAILED) n.failed++;
+		else if (item.status === Status.RUNNING) n.running++;
+		else if (item.status === Status.CANCELED) n.canceled++;
+		else if (item.status === Status.SKIPPED) n.skipped++;
+		else n.pending++;
+	}
+	const parts: string[] = [];
+	if (n.succeeded) parts.push(`${n.succeeded} succeeded`);
+	if (n.failed) parts.push(`${n.failed} failed`);
+	if (n.running) parts.push(`${n.running} running`);
+	if (n.waiting) parts.push(`${n.waiting} waiting for capacity`);
+	if (n.pending) parts.push(`${n.pending} pending`);
+	if (n.canceled) parts.push(`${n.canceled} canceled`);
+	if (n.skipped) parts.push(`${n.skipped} skipped`);
+	const retried = items.filter((i) => i.attempt > 1).length;
+	if (retried) parts.push(`${retried} retried`);
+	const cached = cachedItems(items);
+	if (cached) parts.push(`${cached} cached`);
+	return parts.join(' · ');
+}
+
+/**
+ * What the live read adds to a fan-out's items: an item with an attempt in the
+ * cluster is under way, though no event has said so. An item that has ended
+ * stays as it ended. The same array when nothing moved.
+ */
+export function applyLiveItems(items: ItemView[], attempts: readonly { item?: number; attempt: number }[]): ItemView[] {
+	const live = new Map(attempts.flatMap((a) => (a.item === undefined ? [] : [[a.item, a.attempt] as const])));
+	let moved = false;
+	const next = items.map((item) => {
+		const attempt = live.get(item.index);
+		if (attempt === undefined || item.status === Status.RUNNING || isTerminalStatus(item.status)) return item;
+		moved = true;
+		return { ...item, status: Status.RUNNING, attempt };
+	});
+	return moved ? next : items;
+}
+
 export function isCachedItem(item: ItemView): boolean {
 	return item.run?.cache?.outcome === CacheOutcome.HIT;
 }
@@ -201,7 +246,7 @@ export function itemStatusText(item: ItemView): string {
 	return label;
 }
 
-/** itemAriaLabel is a cell's accessible name: "item 97, SUCCEEDED, attempt 2". */
+/** itemAriaLabel is a cell's accessible name: "item 97, Succeeded, attempt 2". */
 export function itemAriaLabel(item: ItemView): string {
 	return `item ${item.index}, ${itemStatusText(item)}, attempt ${item.attempt}${isCachedItem(item) ? ', cached' : ''}`;
 }

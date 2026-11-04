@@ -30,16 +30,17 @@ import { fillYaml } from './yaml';
 // The authoring sheets (UI revamp, stage 3), against a real engine and Orker
 // on real Temporal and MinIO:
 //
-//   dashboard  the count band is a summary line, not a hero: every figure at
-//              most the title block's value size, in ink (ink-muted when it
-//              could not be answered), the band no taller than the title
-//              block, and the first register inside the first viewport at
-//              1280 × 720; a namespace where nothing finished says
-//              `unavailable` rather than a number;
+//   dashboard  the count band is a summary line, not a hero: every figure
+//              smaller than the page heading, in ink (ink-muted when it
+//              could not be answered), the band one row at 1280, and the
+//              first register inside the first viewport at 1280 × 720; a
+//              namespace where nothing finished says `unavailable` rather
+//              than a number;
 //   orkflows   the register: exactly one link in every row (the NAME);
 //   orkflow    the DAG on the grid beside the versions it has, current and
-//              head marked, the title block naming what is shown; exactly
-//              one "View runs" link, in the header's actions; every tab;
+//              head marked, the header naming what is shown (its version and
+//              definition plates); its runs a tab, not a link in the
+//              header's actions; every tab;
 //   palette    on an Orkflow page, Submit a run… opens the page's own dialog
 //              and sends nothing; a task id jumps to its row;
 //   apply      validation issues carry .severity-error / .severity-warning;
@@ -199,28 +200,27 @@ async function pastRightEdge(page: Page): Promise<string[]> {
 
 const FIGURES = ['stat-running', 'stat-succeeded', 'stat-failed', 'stat-canceled', 'stat-success-rate', 'stat-p50', 'stat-p95'];
 
-/** Every figure of the band: its size, its colour and whether it was answered; the band's and the title block's heights. */
+/** Every figure of the band: its size, its colour and whether it was answered; how many rows the band has, the heading's size and where the first register starts. */
 async function band(page: Page) {
 	return page.evaluate((ids) => {
-		const value = document.querySelector('[data-testid="title-block"] dd')!;
 		const figures = ids.map((id) => {
 			const el = document.querySelector(`[data-testid="${id}"]`)!;
 			const style = getComputedStyle(el);
 			return { id, size: parseFloat(style.fontSize), color: style.color, unavailable: el.getAttribute('data-unavailable') === 'true' };
 		});
+		const cells = [...document.querySelectorAll('[data-testid="dashboard-counts"] > *')];
 		return {
 			figures,
-			valueSize: parseFloat(getComputedStyle(value).fontSize),
 			bandHeight: document.querySelector('[data-testid="dashboard-counts"]')!.getBoundingClientRect().height,
-			blockHeight: document.querySelector('[data-testid="title-block"]')!.getBoundingClientRect().height,
+			bandRows: new Set(cells.map((el) => Math.round(el.getBoundingClientRect().top))).size,
 			h1Size: parseFloat(getComputedStyle(document.querySelector('[data-testid="dashboard-heading"]')!).fontSize),
 			registerTop: document.getElementById('dashboard-running-heading')!.getBoundingClientRect().top,
-			blockTop: document.querySelector('[data-testid="title-block"]')!.getBoundingClientRect().top
+			viewport: window.innerHeight
 		};
 	}, FIGURES);
 }
 
-test('dashboard: the count band is a summary line in ink, no taller than the title block, the first register in view', async ({ page }) => {
+test('dashboard: the count band is a summary line in ink, one row, the first register in view', async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await page.goto(`${UI_ORIGIN}/?ns=default`);
 	await expect(page.getByTestId('stat-succeeded')).not.toHaveText('0', { timeout: 60_000 });
@@ -229,18 +229,20 @@ test('dashboard: the count band is a summary line in ink, no taller than the tit
 	const b = await band(page);
 	note(`band at 1280x720: ${JSON.stringify(b)}`);
 	for (const f of b.figures) {
-		expect(f.size, `${f.id} is no larger than a title-block value`).toBeLessThanOrEqual(b.valueSize);
+		// (The title block's value size is gone; the figure is held under the page's own heading.)
+		expect(f.size, `${f.id} is smaller than the page heading`).toBeLessThan(b.h1Size);
 		expect(f.unavailable, `${f.id} answered`).toBe(false);
 		expect(f.color, `${f.id} is ink`).toBe(ink);
 	}
-	expect(b.h1Size).toBeGreaterThan(b.valueSize);
-	expect(b.bandHeight).toBeLessThanOrEqual(b.blockHeight);
-	// The first register starts in the first viewport, above the title block.
-	expect(b.registerTop).toBeLessThan(b.blockTop);
+	// A summary line: every cell on one row at this width.
+	expect(b.bandRows).toBe(1);
+	// The first register starts in the first viewport (the old bound was the bottom title block).
+	expect(b.registerTop).toBeLessThan(b.viewport);
 	// A status count carries its drawn mark beside its label, not a coloured number.
-	await expect(page.getByTestId('stat-failed').locator('xpath=..').locator('.mark-cross')).toHaveCount(1);
-	await expect(page.getByTestId('title-block-page')).toContainText('Dashboard');
-	await expect(page.getByTestId('title-block-window')).toContainText('last 24h');
+	await expect(page.getByTestId('stat-failed').locator('xpath=..').locator('.mark-tri')).toHaveCount(1);
+	// The page is named in the breadcrumb, and the window in force is the pressed preset.
+	await expect(page.getByTestId('breadcrumb-current')).toHaveText('Overview');
+	await expect(page.getByTestId('dashboard-window-24h')).toHaveAttribute('aria-current', 'page');
 	await page.screenshot({ path: out('screenshot-dashboard-light-1280.png') });
 });
 
@@ -257,7 +259,7 @@ test('dashboard: a namespace where nothing finished says unavailable, in the mut
 	await expect(page.getByTestId('stat-succeeded')).toHaveText('0');
 	await expect(page.getByTestId('stat-succeeded')).toHaveAttribute('data-unavailable', 'false');
 	const b = await band(page);
-	expect(b.bandHeight).toBeLessThanOrEqual(b.blockHeight);
+	expect(b.bandRows).toBe(1);
 	await page.screenshot({ path: out('screenshot-dashboard-unavailable.png') });
 	await axe(page, 'dashboard, nothing finished (light)');
 });
@@ -279,12 +281,12 @@ test('orkflows: a register of NAME, VERSION, DIGEST, TASKS, APPLIED, LABELS with
 	note(`orkflows register: ${count} rows, one link each`);
 });
 
-test('orkflow sheet: the DAG beside its versions, the title block, one View runs in the header', async ({ page }) => {
+test('orkflow sheet: the DAG beside its versions, the header facts, its runs a tab', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto(sagaUrl());
 	await expect(page.getByTestId('orkflow-dag')).toBeVisible();
 	for (const id of ['validate', 'reserve-stock', 'charge', 'ship', 'refund']) {
-		await expect(page.getByTestId(`dag-node-${id}`).locator('rect')).toHaveCount(1);
+		await expect(page.getByTestId(`dag-node-${id}`).locator('rect.dag-outline')).toHaveCount(1);
 	}
 	await expect(page.getByTestId('orkflow-sheet-versions')).toBeVisible();
 	await expect(page.getByTestId('orkflow-sheet-version-0.2.0-shown')).toBeVisible();
@@ -299,25 +301,26 @@ test('orkflow sheet: the DAG beside its versions, the title block, one View runs
 	]);
 	expect(aside!.x).toBeGreaterThan(frame!.x + frame!.width - 1);
 	const hex = sagaDigest.slice(sagaDigest.indexOf(':') + 1);
-	await expect(page.getByTestId('title-block-orkflow')).toContainText(SAGA);
-	await expect(page.getByTestId('title-block-version')).toContainText('0.2.0');
-	await expect(page.getByTestId('title-block-digest')).toContainText(hex.slice(0, 8));
-	await expect(page.getByTestId('title-block-namespace')).toContainText('default');
-	await expect(page.getByTestId('title-block-status')).toContainText('current · head');
+	// The header names what is shown: the Orkflow, its version plate, its definition plate (the digest's
+	// first 12 hex characters), and the namespace in the breadcrumb. "current · head" is the aside's marks above.
+	await expect(page.getByTestId('orkflow-name')).toHaveText(SAGA);
+	await expect(page.getByTestId('orkflow-version')).toContainText('0.2.0');
+	await expect(page.locator('main header')).toContainText(hex.slice(0, 4));
+	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText('default');
+	await expect(page.getByTestId('breadcrumb-current')).toHaveText(SAGA);
 
-	// Exactly one link whose name contains "View runs", and it is in the header's actions.
-	await expect(page.getByRole('link', { name: /View runs/ })).toHaveCount(1);
-	await expect(page.locator('main header').getByRole('link', { name: /View runs/ })).toHaveCount(1);
+	// An Orkflow's runs are one of its tabs, and the way to its filtered list.
+	await expect(page.getByTestId('tab-runs')).toHaveAttribute('href', /\/runs\?/);
 	await expect(page.locator('main header').getByTestId('orkflow-submit-run')).toBeVisible();
 	await page.screenshot({ path: out('screenshot-orkflow-overview-light-1440.png') });
 
 	// An older version: shown, neither current nor head.
 	await page.locator('[data-testid="orkflow-sheet-version-0.1.0"] a').click();
 	await expect(page).toHaveURL(/version=0\.1\.0/);
-	await expect(page.getByTestId('orkflow-version')).toHaveText('v0.1.0');
+	await expect(page.getByTestId('orkflow-version')).toContainText('0.1.0');
 	await expect(page.getByTestId('orkflow-sheet-version-0.1.0-shown')).toBeVisible();
-	await expect(page.getByTestId('title-block-version')).toContainText('0.1.0');
-	await expect(page.getByTestId('title-block-status')).toContainText('—');
+	await expect(page.getByTestId('orkflow-sheet-version-0.1.0-current')).toHaveCount(0);
+	await expect(page.getByTestId('orkflow-sheet-version-0.1.0-head')).toHaveCount(0);
 });
 
 test('orkflow sheet: every tab renders, with axe', async ({ page }) => {
@@ -333,7 +336,7 @@ test('orkflow sheet: every tab renders, with axe', async ({ page }) => {
 		await expect(page.getByTestId(ready)).toBeVisible();
 		await expect(page.getByTestId(`tab-${tab}`)).toHaveAttribute('aria-current', 'page');
 		if (tab === 'versions') await expect(page.getByTestId('callers-table').or(page.getByTestId('callers-empty'))).toBeVisible();
-		await expect(page.getByRole('link', { name: /View runs/ })).toHaveCount(1);
+		await expect(page.getByTestId('tab-runs')).toBeVisible();
 		await page.screenshot({ path: out(`screenshot-orkflow-${tab}-light-1280.png`), fullPage: true });
 		await axe(page, `Orkflow page, ${tab} (light)`);
 	}
@@ -432,7 +435,7 @@ test('screens: both themes, desktop and 390 px, with axe', async ({ page }) => {
 		for (const [label, url, ready] of pages) {
 			await page.goto(url);
 			await expect(page.getByTestId(ready)).toBeAttached();
-			await expect(page.getByTestId('title-block')).toBeVisible();
+			await expect(page.getByTestId('breadcrumb')).toBeVisible();
 			expect(await pastRightEdge(page), `${label} at 390 px: nothing runs past the right edge`).toEqual([]);
 			await page.screenshot({ path: out(`screenshot-${label}-${theme}-390.png`), fullPage: true });
 		}

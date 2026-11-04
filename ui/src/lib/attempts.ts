@@ -52,6 +52,12 @@ export function attemptOutcomeLabel(outcome: AttemptOutcome | undefined): string
 	return OUTCOME_LABEL[outcome ?? AttemptOutcome.UNSPECIFIED];
 }
 
+/** The same outcome as the page says it, in the status's own words. */
+export function attemptOutcomeWord(outcome: AttemptOutcome | undefined): string {
+	const label = attemptOutcomeLabel(outcome);
+	return label[0] + label.slice(1).toLowerCase();
+}
+
 export function attemptOutcomeClasses(outcome: AttemptOutcome | undefined): string {
 	return OUTCOME_CLASSES[outcome ?? AttemptOutcome.UNSPECIFIED];
 }

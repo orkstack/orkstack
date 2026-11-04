@@ -201,7 +201,7 @@ test('a cached fan-out item is marked in the summary and its label', () => {
 	});
 	const items = [item(0, true), item(1, true), item(2, false)];
 	expect(eachSummary(true, items)).toBe('3 of 3 settled — 3 succeeded · 2 cached');
-	expect(itemAriaLabel(items[0])).toBe('item 0, SUCCEEDED, attempt 1, cached');
-	expect(itemAriaLabel(items[2])).toBe('item 2, SUCCEEDED, attempt 1');
+	expect(itemAriaLabel(items[0])).toBe('item 0, Succeeded, attempt 1, cached');
+	expect(itemAriaLabel(items[2])).toBe('item 2, Succeeded, attempt 1');
 	expect(isCachedItem(items[1])).toBe(true);
 });

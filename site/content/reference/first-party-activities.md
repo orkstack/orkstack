@@ -150,4 +150,4 @@ Renders one template file into one text artifact, with gomplate 5.3.1.
 - [activity-json README](https://github.com/orkstack/orkstack/blob/main/images/activity-json/README.md): the full `json` contract
 - [activity-git README](https://github.com/orkstack/orkstack/blob/main/images/activity-git/README.md): the full `git` contract
 - [activity-template README](https://github.com/orkstack/orkstack/blob/main/images/activity-template/README.md): the full `template` contract
-- [Use the first-party activities](/docs/how-to/first-party-activities/): how to use them in a task
+- [Use the first-party activities](/docs/activities/first-party/): how to use them in a task

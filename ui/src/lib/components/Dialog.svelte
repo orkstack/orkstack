@@ -1,18 +1,12 @@
 <script lang="ts">
-	// The modal shell: a scrim, a panel, a title, a way out.
+	// The modal shell: a native modal <dialog> (showModal), so the page behind
+	// is inert, Tab stays inside and the browser answers Escape; a header with
+	// a glyph, a title and a way out; whatever the caller renders as its body.
 	//
-	// It is the same scrim, radius, shadow and motion ConfirmDialog already
-	// uses, because two modals that arrive differently read as two different
-	// applications. What it is NOT is a confirmation: ConfirmDialog exists for
-	// the question with two answers and keeps its own accept/cancel footer,
-	// error line and busy state. This one holds whatever the caller renders.
-	//
-	// Like ConfirmDialog, it does not toggle itself — the caller renders it
-	// inside `{#if}` and owns the state that decides. A component that hid
-	// itself would need the caller to keep a second copy of the same fact.
-	import type { Snippet } from 'svelte';
-	import { dismissOnOutsideOrEscape } from '#lib/dismiss.ts';
-	import { focusTrap } from '#lib/focusTrap.ts';
+	// It does not toggle itself — the caller renders it inside `{#if}` and
+	// owns the state that decides. Focus returns to whatever opened it.
+	import { onMount, type Snippet } from 'svelte';
+	import type { IconName } from '#lib/icons.ts';
 	import Icon from './Icon.svelte';
 
 	interface Props {
@@ -22,47 +16,56 @@
 		body: Snippet;
 		/** Wider than ConfirmDialog's question when the body is a form. */
 		widthClass?: string;
+		/** The glyph in the header. */
+		glyph?: IconName;
 	}
 
-	let { title, testid, onclose, body, widthClass = 'max-w-lg' }: Props = $props();
+	let { title, testid, onclose, body, widthClass = 'max-w-lg', glyph = 'info' }: Props = $props();
 
-	// The panel takes the focus when it opens (focusTrap). Two reasons, both
-	// about the keyboard: Tab starts inside the dialog rather than continuing
-	// down the page behind it, and Escape is answered by THIS dialog rather
-	// than by whatever the reader's focus was left on when it opened. The trap
-	// then keeps Tab inside and hands the focus back to the opener on close.
+	let dialog = $state<HTMLDialogElement>();
+	onMount(() => {
+		const opener = document.activeElement as HTMLElement | null;
+		dialog?.showModal();
+		return () => {
+			if (opener?.isConnected) opener.focus();
+			else document.getElementById('content')?.focus();
+		};
+	});
+
+	function cancel(event: Event): void {
+		event.preventDefault();
+		onclose();
+	}
+
+	// Only a press that started AND ended on the backdrop closes: a text
+	// selection released over it never discards the form.
+	let downOnBackdrop = false;
+	function backdrop(event: MouseEvent): void {
+		if (event.target === dialog && downOnBackdrop) onclose();
+		downOnBackdrop = false;
+	}
 </script>
 
-<div class="fixed inset-0 z-50 flex items-center justify-center bg-scrim p-4">
-	<div
-		data-testid={testid}
-		data-overlay
-		role="dialog"
-		aria-modal="true"
-		aria-label={title}
-		tabindex="-1"
-		use:dismissOnOutsideOrEscape={onclose}
-		use:focusTrap={{ focusContainer: true }}
-		class="flex max-h-[85vh] w-full {widthClass} flex-col rounded-md border-(length:--rule-region) border-ink bg-sheet p-6 text-ink shadow-overlay animate-overlay-in focus:outline-none motion-reduce:animate-none"
-	>
-		<div class="flex shrink-0 items-start justify-between gap-4 border-b border-rule pb-3">
-			<h2 class="text-lg font-semibold text-ink">{title}</h2>
-			<button
-				type="button"
-				data-testid="{testid}-close"
-				aria-label="Close"
-				onclick={() => onclose()}
-				class="btn btn-icon -mt-1 -mr-2"
-			>
-				<Icon name="close" />
-			</button>
-		</div>
-		<!--
-			The panel's own scroll, not the page's: a fixed, centered overlay has
-			no other way to reach content taller than the viewport (a short
-			window, or a form whose advanced options and CLI popover are both
-			open). shrink-0 above keeps the header pinned while this scrolls.
-		-->
-		<div class="mt-3 overflow-y-auto text-sm text-ink-secondary">{@render body()}</div>
-	</div>
-</div>
+<dialog
+	bind:this={dialog}
+	data-testid={testid}
+	data-overlay
+	aria-label={title}
+	oncancel={cancel}
+	onpointerdown={(e) => (downOnBackdrop = e.target === dialog)}
+	onclick={backdrop}
+	class="m-auto flex max-h-[85vh] w-[calc(100%-2rem)] {widthClass} flex-col overflow-hidden rounded-md border border-line-2 bg-surface p-0 text-ink shadow-overlay"
+>
+	<header class="flex shrink-0 items-center gap-2.5 border-b border-line px-4.5 py-3">
+		<Icon name={glyph} class="size-4 text-ink-2" />
+		<h2 class="min-w-0 flex-1 text-md font-heading text-ink">{title}</h2>
+		<button type="button" data-testid="{testid}-close" aria-label="Close" onclick={() => onclose()} class="btn btn-quiet btn-icon btn-sm -mr-1.5">
+			<Icon name="close" />
+		</button>
+	</header>
+	<!--
+		The panel's own scroll, not the page's: a dialog has no other way to
+		reach content taller than the viewport.
+	-->
+	<div class="scroll-panel overflow-y-auto px-4.5 py-4 text-dense text-ink-2">{@render body()}</div>
+</dialog>

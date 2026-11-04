@@ -1,0 +1,26 @@
+---
+// The page's title, under a breadcrumb naming the section it belongs to.
+// id="_top" is the anchor Starlight's contents link to.
+import type { StarlightRouteData } from '@astrojs/starlight/route-data';
+import { route } from '../../../site.config.mjs';
+
+const { entry, sidebar } = Astro.locals.starlightRoute;
+type Entry = StarlightRouteData['sidebar'][number];
+const holdsCurrent = (e: Entry): boolean => (e.type === 'link' ? e.isCurrent : e.entries.some(holdsCurrent));
+const firstLink = (e: Entry): string | undefined => (e.type === 'link' ? e.href : e.entries.map(firstLink).find(Boolean));
+const group = sidebar.find((e) => e.type === 'group' && holdsCurrent(e));
+const home = entry.id === 'docs';
+---
+
+<nav class="crumb" aria-label="Breadcrumb">
+	<a href={route('docs')} aria-current={home ? 'page' : undefined}>Docs</a>
+	{
+		group && !home && (
+			<>
+				<span aria-hidden="true">/</span>
+				<a href={firstLink(group)}>{group.label}</a>
+			</>
+		)
+	}
+</nav>
+<h1 id="_top">{entry.data.title}</h1>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { taskAt } from './taskAt';
 	// The editor itself, loaded only when a page shows one (YamlField.svelte
 	// imports it on mount). It owns the CodeMirror view and nothing else: the
 	// value is the page's (bound), the engine checks and the findings list are
@@ -79,7 +80,16 @@
 		lintTimer = setTimeout(refresh, LINT_DELAY_MS);
 	}
 
+	let caretTimer: ReturnType<typeof setTimeout> | null = null;
 	function onchange(update: ViewUpdate) {
+		if (update.selectionSet || update.docChanged) {
+			session.cursor = update.state.selection.main.head;
+			// Parsing the document is not free on a large Orkflow: read the
+			// caret's task once the caret rests, never per keystroke.
+			if (caretTimer !== null) clearTimeout(caretTimer);
+			const doc = update.state.doc;
+			caretTimer = setTimeout(() => (session.caretTask = taskAt(doc.toString(), session.cursor)), 300);
+		}
 		if (!update.docChanged) return;
 		const next = documentText(update.state.doc, separator);
 		if (next !== value) {
@@ -120,6 +130,7 @@
 		refresh();
 		return () => {
 			if (lintTimer !== null) clearTimeout(lintTimer);
+			if (caretTimer !== null) clearTimeout(caretTimer);
 			session.jump = null;
 			view?.destroy();
 			view = null;

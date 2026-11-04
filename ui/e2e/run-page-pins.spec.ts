@@ -245,7 +245,7 @@ test('a pinned task states its pin and its orker, and one pin means one orker', 
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	// The run must SUCCEED: `read` cats a file `write` left in /orkstack/shared,
 	// so a green run is itself evidence the two shared one host's disk.
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	await shot(page, 'screenshot-run-pins.png');
 
 	// 1. Each member of `build` says which pin it is in, in the author's own
@@ -259,7 +259,8 @@ test('a pinned task states its pin and its orker, and one pin means one orker', 
 	//    put the members on different hosts fails here.
 	const writeOrker = await page.getByTestId('task-write-orker').textContent();
 	const readOrker = await page.getByTestId('task-read-orker').textContent();
-	expect(writeOrker?.trim()).toMatch(/^Orker \S+/);
+	// (The row's sub-line leads each fact with a dot: `· Orker <id>`.)
+	expect(writeOrker?.trim()).toMatch(/Orker \S+/);
 	expect(readOrker?.trim()).toBe(writeOrker?.trim());
 	note(`pin build held on ${writeOrker?.trim()}`);
 
@@ -267,7 +268,7 @@ test('a pinned task states its pin and its orker, and one pin means one orker', 
 	//    populated for every task that reached one, so its presence is not
 	//    evidence of a pin and its absence would mean the task never arrived.
 	await expect(page.getByTestId('task-checksum-pin')).toHaveCount(0);
-	await expect(page.getByTestId('task-checksum-orker')).toHaveText(/^Orker \S+/);
+	await expect(page.getByTestId('task-checksum-orker')).toHaveText(/Orker \S+/);
 	await expect(page.getByTestId('task-checksum')).not.toContainText('Pin ');
 
 	// 4. GROUPING. The members of one pin carry one accent; the task in the

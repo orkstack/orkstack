@@ -374,9 +374,9 @@
 					type="button"
 					data-testid="versions-delete"
 					disabled={reloading || deleteSafety !== 'safe'}
-					title={deleteSafetyReason || 'Permanently delete this Orkflow and every version'}
+					data-tip={deleteSafetyReason || 'Permanently delete this Orkflow and every version'}
 					onclick={askToDelete}
-					class="btn border-red text-red-strong hover:bg-red-tint"
+					class="btn"
 				>
 					Delete Orkflow
 				</button>
@@ -413,14 +413,14 @@
 								<span
 									data-testid="version-current-{version.version}"
 									class="stamp ml-2 border-blue text-blue"
-									title="runs when no version is named">current</span
+									data-tip="runs when no version is named">current</span
 								>
 							{/if}
 							{#if version.version === headVersion}
 								<span
 									data-testid="version-head-{version.version}"
 									class="stamp ml-2 border-rule-strong text-ink-secondary"
-									title="the most recently applied version — what an edit is derived from"
+									data-tip="the most recently applied version — what an edit is derived from"
 									>head</span
 								>
 							{/if}
@@ -428,7 +428,7 @@
 								<span
 									data-testid="version-interface-{version.version}"
 									class="ml-2 {verdictChipClass(version.interfaceVerdict)}"
-									title="declared interface against {resolved}, the version runs execute now"
+									data-tip="declared interface against {resolved}, the version runs execute now"
 									>{verdictWord(version.interfaceVerdict)}</span
 								>
 							{/if}
@@ -464,7 +464,7 @@
 								<a
 									href={editHref(version.version)}
 									data-testid="version-edit-{version.version}"
-									title="edit this version's source and apply it as a new version"
+									data-tip="edit this version's source and apply it as a new version"
 									class="btn btn-sm"
 								>
 									Edit

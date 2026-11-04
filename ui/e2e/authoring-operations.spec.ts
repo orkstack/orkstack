@@ -108,7 +108,7 @@ test('version-pinned submit, typed inputs, CLI, and run-again retain author inte
 	// version the page shows, and the dialog it opens pins that same version,
 	// so the definition being filled in is the one the reader is looking at.
 	await page.goto(`${UI}/orkflows/${FLOW}?ns=${NS}&version=1.0.0`);
-	await expect(page.getByTestId('orkflow-version')).toHaveText('v1.0.0');
+	await expect(page.getByTestId('orkflow-version')).toContainText('1.0.0');
 	await page.getByTestId('orkflow-submit-run').click();
 	await expect(page.getByTestId('orkflow-submit-dialog')).toBeVisible();
 	await expect(page.getByTestId('run-submit-version-mode')).toContainText(
@@ -183,12 +183,12 @@ test('apply validates without writing, imports and exports exact YAML, and guard
 	// dialog.
 	await Promise.all([
 		page.waitForEvent('dialog').then((dialog) => dialog.dismiss()),
-		page.getByRole('link', { name: 'Orkflows' }).click()
+		page.getByTestId('nav-orkflows').click()
 	]);
 	await expect(page).toHaveURL(/\/apply/);
 	await Promise.all([
 		page.waitForEvent('dialog').then((dialog) => dialog.accept()),
-		page.getByRole('link', { name: 'Orkflows' }).click()
+		page.getByTestId('nav-orkflows').click()
 	]);
 	await expect(page).toHaveURL(/\/orkflows/);
 	await shot(page, 'screenshot-dirty-draft-guard.png');

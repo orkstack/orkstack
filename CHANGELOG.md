@@ -108,6 +108,26 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Changed
 
+- The documentation site moved to ten sections, from Get started to Concepts,
+  so its pages have new addresses. An old address redirects to the page's new
+  one, so there is nothing to do.
+- The web UI has a new look, Harbour: a light sidebar with the namespace
+  switch, Runs, Orkflows, Apply and the Operate pages; Inter and JetBrains
+  Mono; and the OrkStack mark. Statuses read Running, Succeeded, Failed and
+  Canceled, each with its own mark as well as its colour. The Runs page opens
+  with the last day's counts, which filter the list, and the last 7 days'
+  outcomes, durations, most failing Orkflows, failures by reason and flakiest
+  tasks. A run page shows its progress, who started it and, for a cancel, who
+  asked (always marked asserted, never verified); its tasks on a timeline,
+  a failed task with its reason and stderr, one log and one card that follow the
+  task you select, whether it failed the same way before and what changed since
+  the last run. Task map and graph sit side by side instead of behind tabs, and
+  the `view=` parameter is gone. Updates can be paused and
+  resumed without losing any. Command lines sit behind the terminal icon on
+  each page. Destructive actions (Cancel run…, Cordon…) ask for a reason in a
+  dialog, and a cordon needs one. The Orkflow editor keeps its problems in the
+  editor card and shows the docs of the activity under the caret beside the
+  code. Nothing to do: links and the API are unchanged.
 - **BREAKING:** An Orker's secret floor never admits the Orker's own sources,
   whatever `ORK_ORKER_SECRET_ALLOW` says, empty or not: its OrkStack and
   telemetry settings (`env:ORK_*`, `env:OTEL_*`), its proxy settings, the
@@ -283,6 +303,21 @@ version's own, and its text is the release's notes on GitHub, word for word.
   `orkctl activity inspect` and the API) now shows every control or format
   character it quotes as an escape, such as `\u001b`, and is cut at 512
   bytes, so an image cannot write to an operator's terminal through it.
+- A registry's own text in a resolution error or a signature check's
+  refusal — the body of a manifest or config read it refused, a
+  `Docker-Content-Digest` that does not match, the `Content-Type` of a
+  signature object or referrers index, or a host it named that a request
+  then failed to reach — is escaped and cut at 512 bytes the same way, in
+  the API's error and in every `orkctl` command that prints it.
+- `orkctl --json` of the commands that print an API answer through its
+  shared encoder (`run get`, `run list`, `activity inspect` and `activity
+  list` among them) writes DEL, every C1 control and every format character
+  (bidirectional controls, zero-width and tag characters) as a `\u` escape,
+  as it already did the other controls. The output decodes to the same
+  values; a platform or media type a registry sent can no longer drive the
+  terminal it is printed to. The `--json` of `run logs -f`, `run inspect
+  --watch`, `activity test`, `webhook`, `run timing`, `config`, `version`
+  and evidence output is written by other encoders and is not rewritten.
 
 ### Fixed
 

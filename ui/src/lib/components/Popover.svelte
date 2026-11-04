@@ -49,7 +49,11 @@
 	// `document`.
 	function stopEscapeHere(event: KeyboardEvent): void {
 		if (event.key !== 'Escape' || !open) return;
+		// Both: stopPropagation keeps it from the document's listeners, and
+		// preventDefault keeps it from a native <dialog> around this panel, which
+		// answers Escape by closing unless the keydown was cancelled.
 		event.stopPropagation();
+		event.preventDefault();
 		onOpenChange(false);
 	}
 
@@ -80,9 +84,20 @@
 		const node = root;
 		const outside = dismissOnOutsideOrEscape(node, dismiss);
 		node.addEventListener('keydown', stopEscapeHere);
+		// Focus leaving the trigger and its panel closes it, as Escape does.
+		// Checked a frame later: a copy that falls back to a hidden textarea
+		// moves the focus away for a moment and back.
+		const leave = () => {
+			requestAnimationFrame(() => {
+				const now = document.activeElement;
+				if (now && now !== document.body && !node.contains(now)) dismiss();
+			});
+		};
+		node.addEventListener('focusout', leave);
 		return () => {
 			outside.destroy();
 			node.removeEventListener('keydown', stopEscapeHere);
+			node.removeEventListener('focusout', leave);
 		};
 	});
 </script>
@@ -95,7 +110,7 @@
 			data-testid={testid}
 			data-overlay
 			style:translate={shift ? `${shift}px 0` : undefined}
-			class="absolute z-10 mt-1 rounded-md border border-ink bg-sheet p-3 text-ink shadow-overlay animate-overlay-in motion-reduce:animate-none {align ===
+			class="absolute z-30 mt-1.5 rounded-md border border-line-2 bg-surface p-3.5 text-ink shadow-overlay animate-overlay-in motion-reduce:animate-none {align ===
 			'end'
 				? 'right-0'
 				: 'left-0'}"

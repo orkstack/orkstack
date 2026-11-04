@@ -53,7 +53,7 @@ When you cancel a run, OrkStack sends `SIGTERM` to the container. It waits 30 se
 
 The container gets no OrkStack, Temporal or storage credentials, and the platform adds no `ORK_` environment variables. Its environment is the image's own, plus the task's `env:`, plus what the container runtime adds, such as the hostname. Its root filesystem is read-only.
 
-Values that must stay secret belong in `secrets:`, which the Orker resolves and mounts as files. See [Security](/docs/concepts/security/) for the full boundary.
+Values that must stay secret belong in `secrets:`, which the Orker resolves and mounts as files. See [Security](/docs/deploy/security/) for the full boundary.
 
 ## See also
 

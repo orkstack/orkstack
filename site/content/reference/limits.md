@@ -6,7 +6,7 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 
 | Limit | Value | Setting |
 |---|---|---|
-| Workflow start payload: a run's input, its definition and its plan | 256 KiB each | Fixed |
+| Run start payload: a run's input, its definition and its plan | 256 KiB each | Fixed |
 | Definition too large for a start | Sent by reference when over 256 KiB. Its copy in the run is at most 2 MiB, compressed | `ORK_DEFINITION_BY_REFERENCE` (on) |
 | `values.json` of one task | 256 KiB | `ORK_VALUES_MAX_BYTES` |
 | Artifacts per attempt | 256 | `ORK_ARTIFACT_MAX_COUNT` |
@@ -22,7 +22,7 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 | Hold reason | 512 bytes | Fixed |
 | Names: namespaces, Orkflows, task ids and pools | 200 bytes, `^[a-z][a-z0-9-]*$` | Fixed |
 
-## Workflow shape
+## Run shape
 
 | Limit | Value | Setting |
 |---|---|---|
@@ -92,4 +92,4 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 - [LIMITATIONS.md, “Not built yet”](https://github.com/orkstack/orkstack/blob/main/docs/LIMITATIONS.md#not-built-yet): the full list
 - [DEPLOY.md, “The API listener's bounds”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-api-listeners-bounds): the request bounds, and why none of them cuts a stream
 - [DEPLOY.md, “Task ceiling and the flat-stage bound”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#task-ceiling-and-the-flat-stage-bound): how the task ceiling is derived
-- Settings: [Configuration](/docs/reference/configuration/), [Orkflow keys](/docs/reference/orkflow-keys/)
+- Settings: [Configuration](/docs/configuration/), [Orkflow keys](/docs/reference/orkflow-keys/)

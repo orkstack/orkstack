@@ -21,6 +21,7 @@
 	import { layerOrder } from '#lib/dag.ts';
 	import {
 		LABEL_H,
+		STAGE_ROWS_MAX,
 		browserIdle,
 		buildModel,
 		cellAt,
@@ -33,7 +34,6 @@
 		readColors,
 		readoutPosition,
 		rectOf,
-		runningPulse,
 		scrollForCursor,
 		type MapColors,
 		type MapGeometry,
@@ -82,7 +82,7 @@
 		void built;
 		if (!model || width <= 0) return null;
 		return mapGeometry(
-			model.segments.map((s) => ({ count: s.count, labelled: s.labelled })),
+			model.segments.map((s) => ({ count: s.count, labelled: s.labelled, side: s.side })),
 			width,
 			height
 		);
@@ -122,7 +122,7 @@
 	function rebuild(): void {
 		const tasks = untrack(source);
 		builtFor = structureOf(tasks);
-		model = buildModel(tasks, untrack(() => definition), layerOrder);
+		model = buildModel(tasks, untrack(() => definition), layerOrder, tasks.length <= STAGE_ROWS_MAX);
 		statuses = new Uint8Array(model.cells.length);
 		fillStatuses(model, tasks, statuses);
 		counts = countStatuses(statuses, model.kinds);
@@ -161,12 +161,12 @@
 	});
 
 	// ---- Paint ----
-	function paint(only?: number[], runningAlpha = 1): void {
+	function paint(only?: number[]): void {
 		const g = geometry;
 		if (!canvas || !g || !model) return;
 		colors ??= readColors();
 		const dpr = globalThis.devicePixelRatio || 1;
-		const w = g.columns * g.pitch;
+		const w = g.x0 + g.columns * g.pitch;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
 		if (!only) {
@@ -176,50 +176,9 @@
 			canvas.style.height = `${g.height}px`;
 		}
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-		paintCells(ctx, g, statuses, model.kinds, colors, only, runningAlpha);
+		paintCells(ctx, g, statuses, model.kinds, colors, only);
 		if (!only) painted = true;
 	}
-
-	// ---- Running cells breathe ----
-	// While any cell is RUNNING, its mark fades and returns every 2.4 s, as a
-	// running DAG node's ground does: only those cells are repainted, at most
-	// fifteen times a second (a hidden page gets no frames at all). Under
-	// reduced motion the loop never runs and the mark stays whole.
-	let reducedMotion = $state(false);
-	$effect(() => {
-		if (typeof matchMedia !== 'function') return;
-		const query = matchMedia('(prefers-reduced-motion: reduce)');
-		reducedMotion = query.matches;
-		const change = () => (reducedMotion = query.matches);
-		query.addEventListener('change', change);
-		return () => query.removeEventListener('change', change);
-	});
-	$effect(() => {
-		if (!painted || reducedMotion || (counts.get(Status.RUNNING) ?? 0) === 0) return;
-		if (typeof requestAnimationFrame !== 'function') return;
-		const runningCells = () => {
-			const out: number[] = [];
-			for (let i = 0; i < statuses.length; i++) if (statuses[i] === Status.RUNNING) out.push(i);
-			return out;
-		};
-		let pulse = 0;
-		let last = 0;
-		let faded = false;
-		const tick = (t: number) => {
-			pulse = requestAnimationFrame(tick);
-			if (t - last < 66) return;
-			last = t;
-			paint(runningCells(), runningPulse(t));
-			faded = true;
-		};
-		pulse = requestAnimationFrame(tick);
-		// Stopping — reduced motion asked for, no cell running, the map gone —
-		// leaves the cells whole, never half faded.
-		return () => {
-			cancelAnimationFrame(pulse);
-			if (faded) paint(runningCells());
-		};
-	});
 
 	// A full paint whenever the geometry changes (first build, resize).
 	$effect(() => {
@@ -299,8 +258,8 @@
 	});
 	let readoutSize = $state({ w: 0, h: 0 });
 	$effect(() => {
-		void readoutText;
-		if (readoutEl) readoutSize = { w: readoutEl.offsetWidth, h: readoutEl.offsetHeight };
+		// Only a readout that says something: measuring an empty one would lay the page out in mid-render.
+		if (readoutEl && readoutText) readoutSize = { w: readoutEl.offsetWidth, h: readoutEl.offsetHeight };
 	});
 	const PAD = 8;
 	const readoutAt = $derived.by(() => {
@@ -312,6 +271,10 @@
 	});
 
 	const cursorRect = $derived(geometry && model && model.cells.length ? rectOf(geometry, Math.min(cursor, model.cells.length - 1)) : null);
+	const selectedRound = $derived.by(() => {
+		void counts;
+		return selectedIndex >= 0 && statuses[selectedIndex] === Status.RUNNING;
+	});
 	const selectedRect = $derived(geometry && selectedIndex >= 0 ? rectOf(geometry, selectedIndex) : null);
 
 	const summary = $derived(model ? mapSummary(counts, model.cells.length, model.order) : '');
@@ -323,16 +286,17 @@
 	});
 	const taskCount = $derived.by(() => {
 		void built;
-		return model ? model.segments[0].count : 0;
+		return model ? new Set(model.cells.map((c) => c.taskId)).size : 0;
 	});
 	const sections = $derived.by(() => {
 		const g = geometry;
 		if (!g || !model) return [];
-		return model.segments.slice(1).map((s, k) => {
+		return model.segments.flatMap((s, k) => {
+			if (!s.labelled && s.side === undefined) return [];
 			let failed = 0;
 			for (let i = s.start; i < s.start + s.count; i++) if (statuses[i] === Status.FAILED) failed++;
 			void counts;
-			return { taskId: s.taskId ?? '', count: s.count, failed, y: g.segments[k + 1].y - LABEL_H };
+			return [{ taskId: s.taskId ?? '', label: s.label ?? '', side: s.side !== undefined, rowHeight: Math.max(g.segments[k].rows * g.pitch, (s.side ?? 0) * 16), key: k, count: s.count, failed, y: g.segments[k].y - (s.side === undefined ? LABEL_H : 0) }];
 		});
 	});
 	const fmt = new Intl.NumberFormat('en-US');
@@ -345,6 +309,8 @@
 	data-cells={model ? model.cells.length : undefined}
 	data-columns={geometry?.columns}
 	data-pitch={geometry?.pitch}
+	data-x0={geometry?.x0}
+	data-rows={geometry?.x0 ? geometry.segments.map((s) => `${s.start}:${s.y}`).join(',') : undefined}
 	data-selected={selectedAttr || undefined}
 	data-order={model?.order}
 	data-painted={painted ? 'true' : undefined}
@@ -361,27 +327,31 @@
 		{/if}
 		<div
 			class="relative"
-			style:width={geometry ? `${geometry.columns * geometry.pitch}px` : undefined}
+			style:width={geometry ? `${geometry.x0 + geometry.columns * geometry.pitch}px` : undefined}
 			style:height={geometry ? `${geometry.height}px` : undefined}
 		>
 			<canvas bind:this={canvas} data-testid="task-map-canvas" aria-hidden="true" class="block"></canvas>
-			{#each sections as s (s.taskId)}
+			{#each sections as s (s.key)}
 				<div
-					data-testid="task-map-section-{s.taskId}"
-					class="caps absolute left-0 whitespace-nowrap text-ink-muted"
+					data-testid={s.taskId ? `task-map-section-${s.taskId}` : `task-map-stage-${s.key}`}
+					class={s.side ? 'map-side absolute left-0 text-dense text-ink-2' : 'absolute left-0 w-full truncate text-sm text-ink-2'}
 					style:top="{s.y}px"
+					style:max-height={s.side ? `${s.rowHeight}px` : undefined}
+					data-tip={s.side ? s.label : undefined}
 				>
-					{s.taskId} · {fmt.format(s.count)} items{#if s.failed} · <span class="text-red">{fmt.format(s.failed)} failed</span>{/if}
+					{#if s.side}{s.label}{#if s.taskId}<span class="sr"> · {fmt.format(s.count)} items{#if s.failed} · {fmt.format(s.failed)} failed{/if}</span>{/if}{:else if s.taskId}{s.taskId} · {fmt.format(s.count)} items{#if s.failed} · <span class="text-fail">{fmt.format(s.failed)} failed</span>{/if}{:else}{s.label}{/if}
 				</div>
 			{/each}
 			{#if selectedRect}
+				<!-- The selection follows the cell's shape, a pixel clear of it. -->
 				<div
 					aria-hidden="true"
-					class="pointer-events-none absolute border-2 border-ink"
-					style:left="{selectedRect.x - 2}px"
-					style:top="{selectedRect.y - 2}px"
-					style:width="{selectedRect.w + 4}px"
-					style:height="{selectedRect.h + 4}px"
+					class="map-sel pointer-events-none absolute"
+					class:round={selectedRound}
+					style:left="{selectedRect.x - 3}px"
+					style:top="{selectedRect.y - 3}px"
+					style:width="{selectedRect.w + 6}px"
+					style:height="{selectedRect.h + 6}px"
 				></div>
 			{/if}
 			{#if focused && cursorRect}
@@ -439,3 +409,20 @@
 		{readoutText}
 	</div>
 </div>
+
+<style>
+	.map-sel {
+		border: 2px solid var(--select);
+		border-radius: 6px;
+	}
+	.map-sel.round {
+		border-radius: 50%;
+	}
+	/* A small run's rows: the label in a column beside its cells. */
+	.map-side {
+		width: 100px;
+		line-height: 16px;
+		overflow: hidden;
+		overflow-wrap: anywhere;
+	}
+</style>

@@ -1,344 +1,653 @@
 /*
- * OrkStack design tokens — every value the UI is drawn with, in one file.
+ * OrkStack design tokens: Harbour. Every value the UI and the site are drawn
+ * with, in one file.
  *
- * The world is an engineering drawing office: drafting paper for the ground,
- * a deep blue-black ink, ONE drafting blue for selection, links and waiting,
- * ONE survey green for work running now, and ONE revision-cloud red reserved
- * for failure and attention.
- * Hairline rules divide rows; heavier rules divide regions. Dark is
- * ink-toned paper with pale rules, never a cyan-on-navy blueprint.
+ * A calm slate ground, white cards and harbour navy for the brand, the active
+ * page and every selection; ONE container orange for the single action that
+ * starts or commits work on a screen's own object, and for the mark; status
+ * hues only where a status is drawn, each with its own shape as well
+ * (circle running, square succeeded, triangle failed, ring waiting, diamond
+ * awaiting, slashed square canceled, outlined square pending). Dark is a
+ * navy-tinted, low-glare night chart with no pure white text.
  *
  * Plain, portable CSS on purpose: no @import, no url(), no Tailwind
  * at-rules, and no selector but :root, :root[data-theme='light'],
- * :root[data-theme='dark'] and @keyframes (ui/test/tokens.test.ts,
+ * :root[data-theme='dark'], the system dark setting's
+ * :root:not([data-theme='light']) and @keyframes (ui/test/tokens.test.ts,
  * "portability"), so anything — the app through app.css and
  * tailwind-tokens.css, the Astro site, a plain HTML page — can import it.
  *
- * Three blocks, in this order:
- *   1. :root — theme-invariant: type, radii, spacing, rules, motion, and the
- *      aliases that point at a theme colour by var();
- *   2. :root, :root[data-theme='light'] — light colours and shadows;
- *   3. :root[data-theme='dark'] — the SAME names, dark values.
- * Two blocks rather than light-dark(): the page always carries a resolved
- * data-theme before its first paint (app.html), and a spec reads token
- * strings by name and expects light and dark to differ.
+ * Four blocks, in this order:
+ *   1. :root — theme-invariant: faces, type, radii, spacing, rules, motion,
+ *      and every alias that points at a theme colour by var() (the
+ *      --color-* names Tailwind and the site read);
+ *   2. :root, :root[data-theme='light'] — the light roles and shadows;
+ *   3. the system dark setting, unless light was chosen — the dark roles;
+ *   4. :root[data-theme='dark'] — the SAME dark roles, for an explicit choice.
+ * The app paints a resolved data-theme before its first frame (app.html), so
+ * block 3 is what a page without that script (the site, a plain page) uses.
  *
- * Contrast floors are not promises here; ui/test/tokenContrast.test.ts
- * checks every text token on every ground, in both themes.
+ * Every text pair reaches 4.5:1 and every non-text part 3:1 in its theme;
+ * ui/test/tokenContrast.test.ts holds the pairs to that, in both themes.
  */
 
 /* ------------------------------------------------------------------ */
 /* 1. Theme-invariant                                                  */
 /* ------------------------------------------------------------------ */
 :root {
-	/* Fonts: a narrow humanist sans for labels and prose; a mono for ids,
-	   digests, logs, figures and commands — never as a costume. Both are
-	   self-hosted variable faces (@fontsource-variable, imported by app.css). */
-	--font-sans:
-		'Archivo Narrow Variable', 'Arial Narrow', 'Roboto Condensed', ui-sans-serif, system-ui,
-		sans-serif;
-	--font-mono:
-		'Spline Sans Mono Variable', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+	/* Faces: Inter for the interface, JetBrains Mono for code, ids, digests,
+	   logs and plates. Both are self-hosted variable faces
+	   (@fontsource-variable 5.3.0, imported by app.css). */
+	--font-ui: 'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+	--font-code: 'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+	--font-sans: var(--font-ui);
+	--font-mono: var(--font-code);
 
-	/* Type scale (rem, with its own line height). 2xs is the tracked-caps
-	   size of table heads and title-block labels. */
-	--text-2xs: 0.6875rem;
+	/* Type scale (rem, each with its own line height):
+	     2xs    12    labels and dt
+	     xs     12.5  inline code, tooltips, small plates
+	     sm     13    secondary text, plates
+	     dense  13.5  dense text: tables, chips, buttons
+	     base   14    body
+	     md     15    card headings
+	     lg     18
+	     xl     24/32 the page's h1
+	     figure 26    a tile's count
+	     2xl    28    hero */
+	--text-2xs: 0.75rem;
 	--text-2xs--line-height: 1rem;
-	--text-xs: 0.75rem;
-	--text-xs--line-height: 1rem;
+	--text-xs: 0.78125rem;
+	--text-xs--line-height: 1.125rem;
 	--text-sm: 0.8125rem;
 	--text-sm--line-height: 1.25rem;
+	--text-dense: 0.84375rem;
+	--text-dense--line-height: 1.3125rem;
 	--text-base: 0.875rem;
-	--text-base--line-height: 1.375rem;
+	--text-base--line-height: 1.3125rem;
 	--text-md: 0.9375rem;
-	--text-md--line-height: 1.5rem;
+	--text-md--line-height: 1.375rem;
 	--text-lg: 1.125rem;
 	--text-lg--line-height: 1.5rem;
-	--text-xl: 1.375rem;
-	--text-xl--line-height: 1.75rem;
+	--text-xl: 1.5rem;
+	--text-xl--line-height: 2rem;
+	--text-figure: 1.625rem;
+	--text-figure--line-height: 1.875rem;
 	--text-2xl: 1.75rem;
 	--text-2xl--line-height: 2.125rem;
+	/* Code inside prose: a touch smaller than the words around it. */
+	--text-code: 0.89em;
 
 	--font-weight-normal: 400;
-	/* Body text sits a touch above regular so the narrow strokes hold on paper. */
-	--font-weight-body: 450;
+	--font-weight-body: 400;
 	--font-weight-medium: 500;
 	--font-weight-semibold: 600;
+	--font-weight-heading: 650;
 	--font-weight-bold: 700;
 
-	--tracking-tight: -0.01em;
+	--tracking-tight: -0.018em;
+	--tracking-figure: -0.02em;
 	--tracking-normal: 0em;
-	--tracking-caps: 0.12em;
+	--tracking-caps: 0.06em;
 
 	--leading-none: 1;
 	--leading-tight: 1.2;
-	--leading-normal: 1.45;
+	--leading-normal: 1.5;
 
 	/* Where a link's underline sits below the baseline. */
-	--underline-offset: 0.18em;
+	--underline-offset: 0.2em;
 	/* A control that cannot be used right now. */
 	--opacity-disabled: 0.5;
+	/* Context outside a selection in the graph. */
+	--opacity-faded: 0.6;
 
-	/* Radii: drawings are square-cornered; a radius is a softened corner,
-	   never a pill (full is for dots only). */
+	/* Radii: cards and panels, and the small one for controls. Pills and
+	   dots are full. */
+	--r: 10px;
+	--r-sm: 6px;
 	--radius-none: 0;
-	--radius-xs: 1px;
-	--radius-sm: 2px;
-	--radius-md: 3px;
+	--radius-xs: 4px;
+	--radius-sm: var(--r-sm);
+	--radius-md: var(--r);
 	--radius-full: 9999px;
 	--radius-cloud: 18px;
 
-	/* Spacing: the base unit every p-*, gap-*, h-* multiplies, and the named
-	   layout measures of the shell. */
+	/* Spacing: Tailwind's step, and the layout measures of the shell. */
 	--spacing: 0.25rem;
 	--spacing-gutter: 1rem;
-	--spacing-sheet: 1.5rem;
-	--spacing-bar: 2.75rem;
-	--spacing-titleblock: 4rem;
-	--spacing-aside: 22.5rem;
+	--spacing-sheet: 1.75rem;
+	--spacing-bar: 3.5rem;
+	--spacing-side: 15.5rem;
+	--spacing-titleblock: 1rem;
+	--spacing-aside: 21.25rem;
+	--spacing-content: 92.5rem;
 	--spacing-drawing: clamp(15rem, 42vh, 30rem);
-	/* Below 640 px a DAG's frame may grow taller: a phone has the height a
-	   drawing needs and not the width, and a frame cut mid-box hides tasks. */
+	/* A tall drawing: enough for a deep graph, never taller than the
+	   viewport needs to keep its own scroll. */
 	--spacing-drawing-tall: clamp(15rem, 65svh, 40rem);
+	/* A log pane is bounded so the page never becomes one long log. */
+	--spacing-log: min(60dvh, 30rem);
+	/* A tooltip's widest line, never wider than the viewport allows. */
+	--spacing-tip: min(18.75rem, calc(100vw - 1.5rem));
 
-	/* Rule widths: hairline between rows, region between areas, frame
-	   around a drawing and above the title block. */
+	/* Rules: hairlines between rows and regions, the focus ring, the
+	   alarm edge of a banner. */
 	--rule-hair: 1px;
-	--rule-region: 1.5px;
+	--rule-region: 1px;
 	--rule-frame: 2px;
-	/* A failed node's outline on the DAG: the drawing's heaviest line. */
 	--rule-alarm: 3px;
 
-	/* The drafting grid behind the DAG, and nowhere else: an 8 px minor grid
-	   under a 40 px major one. */
+	/* The graph's dotted ground. */
 	--grid-pitch-minor: 8px;
 	--grid-pitch-major: 40px;
 
-	/* A task the run never started, drawn faded on the DAG. */
-	--opacity-faded: 0.45;
-
-	/* Motion: exponential ease-out from an already-visible default. */
-	--ease-out: cubic-bezier(0.16, 1, 0.3, 1);
-	--ease-linear: linear;
-	/* The one symmetric curve: a pulse that breathes, not one that snaps. */
+	/* Motion: instant feedback, a fast state change, a calm entrance. */
+	--dur-instant: 80ms;
+	--dur-fast: 180ms;
+	--dur-normal: 320ms;
+	--ease-in: cubic-bezier(.22, 1, .36, 1);
+	--ease-out: cubic-bezier(.4, 0, .2, 1);
 	--ease-in-out: cubic-bezier(0.45, 0, 0.55, 1);
-	--duration-fast: 120ms;
-	--duration-base: 200ms;
+	--ease-linear: linear;
+	--duration-fast: var(--dur-fast);
+	--duration-base: var(--dur-normal);
 	--duration-draw: 600ms;
-	--animate-live-dot: live-dot 1.6s var(--ease-out) infinite;
-	/* A running DAG node's ground, fading between the green tint and paper. */
+	--animate-live-dot: live-dot 1.6s var(--ease-in-out) 3;
+	--animate-live-ring: live-ring 2.4s var(--ease-out) infinite;
 	--animate-live-fill: live-fill 2.4s var(--ease-in-out) infinite;
-	/* The same breath for a running HTML cell (a fan-out item's button). */
 	--animate-live-ground: live-ground 2.4s var(--ease-in-out) infinite;
 	--animate-nav-progress: nav-progress 1.2s var(--ease-out) infinite;
-	--animate-overlay-in: overlay-in var(--duration-fast) var(--ease-out) both;
+	--animate-overlay-in: overlay-in var(--dur-fast) var(--ease-in) both;
 	--animate-cloud-draw: cloud-draw var(--duration-draw) var(--ease-out) both;
 
-	/* Status — the drawing convention is line type and fill; only the three
-	   accents carry hue (green: running now; blue: waiting on the outside
-	   world; red: failed). Every status also differs by its drawn mark and
-	   its word. */
-	--color-pending-bg: var(--color-paper);
-	--color-pending-fg: var(--color-ink-secondary);
-	--color-pending-border: var(--color-rule-strong);
-	--color-pending-solid: var(--color-ink-muted);
+	/* The colour names Tailwind utilities and the site read: each points at
+	   a Harbour role, so it follows the theme. */
+	--color-bg: var(--bg);
+	--color-surface: var(--surface);
+	--color-surface-2: var(--surface-2);
+	--color-surface-3: var(--surface-3);
+	--color-hover: var(--hover);
+	--color-scrim: var(--scrim);
+	--color-ink: var(--ink);
+	--color-ink-2: var(--ink-2);
+	--color-ink-3: var(--ink-3);
+	--color-line: var(--line);
+	--color-line-2: var(--line-2);
+	--color-line-strong: var(--line-strong);
+	--color-navy: var(--navy);
+	--color-navy-tint: var(--navy-tint);
+	--color-navy-text: var(--navy-text);
+	--color-meter: var(--meter);
+	--color-accent: var(--accent);
+	--color-accent-hover: var(--accent-hover);
+	--color-accent-edge: var(--accent-edge);
+	--color-on-accent: var(--on-accent);
+	--color-link: var(--link);
+	--color-focus: var(--focus);
+	--color-select: var(--select);
+	--color-run: var(--run);
+	--color-run-tint: var(--run-tint);
+	--color-ok: var(--ok);
+	--color-ok-mark: var(--ok-mark);
+	--color-ok-tint: var(--ok-tint);
+	--color-fail: var(--fail);
+	--color-fail-mark: var(--fail-mark);
+	--color-fail-tint: var(--fail-tint);
+	--color-wait: var(--wait);
+	--color-wait-mark: var(--wait-mark);
+	--color-wait-fill: var(--wait-fill);
+	--color-wait-tint: var(--wait-tint);
+	--color-await: var(--await);
+	--color-await-tint: var(--await-tint);
+	--color-cancel: var(--cancel);
+	--color-cancel-tint: var(--cancel-tint);
+	--color-pend-mark: var(--pend-mark);
+	--color-act: var(--act);
+	--color-act-ink: var(--act-ink);
+	--color-act-ink-2: var(--act-ink-2);
+	--color-dim-fill: var(--dim-fill);
+	--color-dim-line: var(--dim-line);
+	--color-destroy-bg: var(--destroy-bg);
+	--color-destroy-ink: var(--destroy-ink);
+	--color-destroy-hover: var(--destroy-hover);
+	--color-log-bg: var(--log-bg);
+	--color-log-ink: var(--log-ink);
+	--color-log-ink-2: var(--log-ink-2);
+	--color-log-err: var(--log-err);
+	--color-side: var(--side);
+	--color-side-line: var(--side-line);
+	--color-side-ink: var(--side-ink);
+	--color-side-ink-2: var(--side-ink-2);
+	--color-side-strong: var(--side-strong);
+	--color-side-hover: var(--side-hover);
+	--color-side-active: var(--side-active);
+	--color-side-active-ink: var(--side-active-ink);
+	--color-side-active-ink-2: var(--side-active-ink-2);
+	--color-side-field: var(--side-field);
+	--color-side-field-line: var(--side-field-line);
+	--color-viz-cancel: var(--viz-cancel);
+	--color-mark-base: var(--mark-base);
+	--color-mark-line: var(--mark-line);
 
-	--color-running-bg: var(--color-green-tint);
-	--color-running-fg: var(--color-green-strong);
-	--color-running-border: var(--color-green);
-	--color-running-solid: var(--color-green);
+	/* The drawing office's names, kept as aliases of the Harbour roles so a
+	   page not yet redrawn, and the site, draw in Harbour. */
+	--color-paper: var(--bg);
+	--color-paper-sunken: var(--surface-2);
+	--color-sheet: var(--surface);
+	--color-ink-secondary: var(--ink-2);
+	--color-ink-muted: var(--ink-3);
+	--color-ink-placeholder: var(--ink-3);
+	--color-on-ink: var(--bg);
+	--color-mark: var(--line-strong);
+	--color-rule: var(--line);
+	--color-rule-faint: var(--line);
+	--color-rule-strong: var(--line-strong);
+	--color-grid: var(--line);
+	--color-grid-major: var(--line-2);
+	--color-blue: var(--link);
+	--color-blue-strong: var(--navy-text);
+	--color-blue-tint: var(--navy-tint);
+	--color-green: var(--run);
+	--color-green-strong: var(--run);
+	--color-green-tint: var(--run-tint);
+	--color-red: var(--fail);
+	--color-red-strong: var(--fail);
+	--color-red-tint: var(--fail-tint);
+	/* One permanent alias: run-page-pins.spec.ts reads it by name. */
+	--color-fg: var(--ink);
 
-	--color-awaiting-bg: var(--color-blue-tint);
-	--color-awaiting-fg: var(--color-blue-strong);
-	--color-awaiting-border: var(--color-blue);
-	--color-awaiting-solid: var(--color-blue);
+	/* Status: a tint for the pill's ground, the word's colour, the mark's
+	   edge and the mark's fill. Every status also differs by its drawn mark
+	   and its word, never by hue alone. */
+	--color-pending-bg: var(--surface);
+	--color-pending-fg: var(--ink-3);
+	--color-pending-border: var(--pend-mark);
+	--color-pending-solid: var(--pend-mark);
 
-	--color-succeeded-bg: var(--color-paper-sunken);
-	--color-succeeded-fg: var(--color-ink);
-	--color-succeeded-border: var(--color-mark);
-	--color-succeeded-solid: var(--color-mark);
+	--color-running-bg: var(--run-tint);
+	--color-running-fg: var(--run);
+	--color-running-border: var(--run);
+	--color-running-solid: var(--run);
 
-	--color-failed-bg: var(--color-red-tint);
-	--color-failed-fg: var(--color-red);
-	--color-failed-border: var(--color-red);
-	--color-failed-solid: var(--color-red);
+	--color-awaiting-bg: var(--await-tint);
+	--color-awaiting-fg: var(--await);
+	--color-awaiting-border: var(--await);
+	--color-awaiting-solid: var(--await);
 
-	--color-canceled-bg: var(--color-paper-sunken);
-	--color-canceled-fg: var(--color-ink-secondary);
-	--color-canceled-border: var(--color-ink-muted);
-	--color-canceled-solid: var(--color-ink-muted);
+	--color-succeeded-bg: var(--ok-tint);
+	--color-succeeded-fg: var(--ok);
+	--color-succeeded-border: var(--ok-mark);
+	--color-succeeded-solid: var(--ok-mark);
 
-	--color-skipped-bg: var(--color-paper);
-	--color-skipped-fg: var(--color-ink-muted);
-	--color-skipped-border: var(--color-rule-strong);
-	--color-skipped-solid: var(--color-rule-strong);
+	--color-failed-bg: var(--fail-tint);
+	--color-failed-fg: var(--fail);
+	--color-failed-border: var(--fail-mark);
+	--color-failed-solid: var(--fail-mark);
 
-	--color-unspecified-bg: var(--color-paper);
-	--color-unspecified-fg: var(--color-ink-muted);
-	--color-unspecified-border: var(--color-rule-strong);
-	--color-unspecified-solid: var(--color-rule-strong);
+	--color-canceled-bg: var(--cancel-tint);
+	--color-canceled-fg: var(--cancel);
+	--color-canceled-border: var(--cancel);
+	--color-canceled-solid: var(--cancel);
 
-	/* --color-fg is the one permanent alias: run-page-pins.spec.ts reads it
-	   by name, and it has always meant "the ink". */
-	--color-fg: var(--color-ink);
+	--color-skipped-bg: var(--surface-2);
+	--color-skipped-fg: var(--ink-3);
+	--color-skipped-border: var(--line-2);
+	--color-skipped-solid: var(--pend-mark);
 
-	/* Syntax — the colours of an authored document (the YAML editor, the
-	   read-only YAML views, and every code block on the site). Keys are the
-	   ink, set at weight; comments and punctuation the muted ink. The values
-	   take the syntax pencils of each theme below. Never status, never
-	   decoration, never outside code. */
-	--color-syntax-key: var(--color-ink);
-	--color-syntax-comment: var(--color-ink-muted);
-	--color-syntax-punctuation: var(--color-ink-muted);
+	--color-unspecified-bg: var(--surface-2);
+	--color-unspecified-fg: var(--ink-3);
+	--color-unspecified-border: var(--line-2);
+	--color-unspecified-solid: var(--pend-mark);
+
+	/* Syntax: the editor, YAML and JSON views. */
+	--color-syntax-key: var(--syn-key);
+	--color-syntax-string: var(--syn-str);
+	--color-syntax-number: var(--syn-num);
+	--color-syntax-literal: var(--syn-lit);
+	--color-syntax-template: var(--syn-tpl);
+	--color-syntax-comment: var(--syn-com);
+	--color-syntax-meta: var(--syn-com);
+	--color-syntax-punctuation: var(--ink-3);
+
+	/* Shadows: a card's, and a popover's or dialog's. */
+	--shadow-card: var(--shadow);
+	--shadow-overlay: var(--shadow-lg);
+	--shadow-lift: var(--shadow);
 }
 
 /* ------------------------------------------------------------------ */
-/* 2. Light: drafting paper, blue-black ink                            */
+/* 2. Light                                                            */
 /* ------------------------------------------------------------------ */
 :root,
 :root[data-theme='light'] {
+	--bg: #F6F8FA;
+	--surface: #FFFFFF;
+	--surface-2: #F1F4F7;
+	--surface-3: #E4E9EE;
+	--hover: #F1F4F7;
+	--ink: #0E1C28;
+	--ink-2: #3A4C5C;
+	--ink-3: #4D5F70;
+	--line: #E1E6EC;
+	--line-2: #CBD3DC;
+	--line-strong: #74879A;
+	--navy: #0F2B3D;
+	--navy-tint: #E5EDF4;
+	--navy-text: #163A52;
+	--meter: #2B4A63;
+	--accent: #DA8757;
+	--accent-hover: #E29463;
+	--accent-edge: #9F5021;
+	--on-accent: #0E1C28;
+	--focus: #163A52;
+	--link: #163A52;
+	--select: #0E1C28;
+	--run: #1A62C4;
+	--run-tint: #E8F0FC;
+	--ok: #1D7442;
+	--ok-mark: #2E8B57;
+	--ok-tint: #E6F4EB;
+	--fail: #B42F27;
+	--fail-mark: #D13B30;
+	--fail-tint: #FBE9E7;
+	--wait: #855400;
+	--wait-mark: #A87300;
+	--wait-fill: #E3A21A;
+	--wait-tint: #FCF3DD;
+	--await: #6B45BF;
+	--await-tint: #F0EBFB;
+	--cancel: #4D5F70;
+	--cancel-tint: #EDF0F3;
+	--pend-mark: #788797;
+	--act: #0F2B3D;
+	--act-ink: #FFFFFF;
+	--act-ink-2: #C3D2DE;
+	--dim-fill: #F1F4F7;
+	--dim-line: #CBD3DC;
+	--hero: #0F2B3D;
+	--hero-2: #1B4058;
+	--hero-ink: #FFFFFF;
+	--hero-ink-2: #B9CCDB;
+	--hero-line: #22465E;
+	--syn-key: #0E1C28;
+	--syn-str: #0B6B66;
+	--syn-num: #A23B5B;
+	--syn-lit: #56650F;
+	--syn-tpl: #7A2F7F;
+	--syn-com: #566878;
+	--log-bg: #0F1B26;
+	--log-ink: #DCE5EC;
+	--log-ink-2: #93A6B7;
+	--shadow: 0 1px 2px rgb(15 43 61 / 0.06), 0 1px 3px rgb(15 43 61 / 0.04);
+	--shadow-lg: 0 28px 56px -28px rgb(15 43 61 / 0.38), 0 2px 8px -2px rgb(15 43 61 / 0.08);
+	--side: #FBFCFD;
+	--side-line: #E1E6EC;
+	--side-ink: #2C3E4E;
+	--side-ink-2: #4D5F70;
+	--side-strong: #0E1C28;
+	--side-hover: #EEF2F6;
+	--side-active: #0F2B3D;
+	--side-active-ink: #FFFFFF;
+	--side-active-ink-2: #C3D2DE;
+	--side-bar: #0F2B3D;
+	--side-field: #FFFFFF;
+	--side-field-line: #8193A4;
+	--side-focus: #163A52;
+	--mark-base: #1B4058;
+	--mark-line: #FFFFFF;
+	--mark-ring: #0F2B3D;
+	--mark-s: #DA8757;
+	--mark-under: #74879A;
+	--viz-cancel: #4D5F70;
+	--destroy-bg: #0F2B3D;
+	--destroy-ink: #FFFFFF;
+	--destroy-hover: #1B4058;
+	--sb-track: #EEF2F6;
+	--sb-thumb: #6A7D8F;
+	--sb-thumb-hover: #4E6070;
+	--sb-log-track: var(--log-bg);
+	--sb-log-thumb: #6B8091;
+	--sb-log-thumb-hover: #93A6B7;
+	--scrim: rgb(14 28 40 / 0.42);
+	--log-err: #F27A70;
+	--color-pin-a-line: #3F63A8;
+	--color-pin-a-fill: #F1F4FA;
+	--color-pin-b-line: #7552A0;
+	--color-pin-b-fill: #F5F2FA;
+	--color-pin-c-line: #24736D;
+	--color-pin-c-fill: #EEF6F5;
+	--color-pin-d-line: #8A5E14;
+	--color-pin-d-fill: #F9F4EA;
+	--color-pin-e-line: #556A80;
+	--color-pin-e-fill: #F1F4F7;
+	--color-pin-f-line: #646A26;
+	--color-pin-f-fill: #F4F6EC;
 	color-scheme: light;
-
-	/* Grounds */
-	--color-paper: #fbfbf8;
-	--color-paper-sunken: #f3f3ee;
-	--color-sheet: #fefefc;
-	--color-hover: #eff0ee;
-	--color-scrim: rgb(20 33 61 / 0.42);
-
-	/* Ink */
-	--color-ink: #14213d;
-	--color-ink-secondary: #3a4661;
-	--color-ink-muted: #5d6a85;
-	--color-ink-placeholder: #5d6a85;
-	--color-on-ink: #fbfbf8;
-	/* The filled mark of a finished task: lighter than the ink so a map of
-	   thousands of them is not a black field, still 3:1 on every ground. */
-	--color-mark: #6b7690;
-
-	/* Rules */
-	--color-rule: rgb(20 33 61 / 0.16);
-	--color-rule-faint: rgb(20 33 61 / 0.09);
-	--color-rule-strong: rgb(20 33 61 / 0.62);
-
-	/* The DAG canvas's grid, and nowhere else */
-	--color-grid: #e6e9ef;
-	--color-grid-major: #c8cfdc;
-
-	/* Drafting blue */
-	--color-blue: #2b59c3;
-	--color-blue-strong: #1f4596;
-	--color-blue-tint: #e8ecf5;
-
-	/* Survey green: work running now, and nothing else */
-	--color-green: #2b7a4b;
-	--color-green-strong: #1d5e39;
-	--color-green-tint: #e5f2e8;
-
-	/* Revision-cloud red */
-	--color-red: #c2362b;
-	--color-red-strong: #9e2a21;
-	--color-red-tint: #fde9e6;
-
-	--color-focus: #2b59c3;
-
-	/* Pins: identity, never status — six coloured-pencil hues, each line
-	   at least 3:1 on paper and on its own fill. The pin's name is always
-	   written beside it. */
-	--color-pin-a-line: #4a6bb0;
-	--color-pin-a-fill: #f3f5f9;
-	--color-pin-b-line: #7c5aa3;
-	--color-pin-b-fill: #f6f3f9;
-	--color-pin-c-line: #2c7a74;
-	--color-pin-c-fill: #f1f7f5;
-	--color-pin-d-line: #94661c;
-	--color-pin-d-fill: #f9f5ec;
-	--color-pin-e-line: #586c82;
-	--color-pin-e-fill: #f3f4f6;
-	--color-pin-f-line: #6a6f2e;
-	--color-pin-f-fill: #f5f6ee;
-
-	/* Syntax pencils: the pin pencils taken down to text weight, at least
-	   5:1 on every ground code is drawn on. Strings teal, numbers ochre,
-	   true/false/null olive, {{ templates }} violet, anchors, aliases and
-	   tags slate. Blue, green and red never colour code. */
-	--color-syntax-string: #006b65;
-	--color-syntax-number: #824f00;
-	--color-syntax-literal: #5e6115;
-	--color-syntax-template: #6d4697;
-	--color-syntax-meta: #425f7d;
-
-	/* Shadows: overlays only, ink-tinted, an offset and a soft blur. */
-	--shadow-overlay: 0 8px 24px -6px rgb(20 33 61 / 0.22), 0 2px 6px -2px rgb(20 33 61 / 0.12);
-	--shadow-lift: 0 -6px 14px -10px rgb(20 33 61 / 0.32);
 }
 
 /* ------------------------------------------------------------------ */
-/* 3. Dark: ink-toned paper, pale rules                                */
+/* 3. Dark, by the system setting (unless light was chosen)            */
+/* ------------------------------------------------------------------ */
+@media (prefers-color-scheme: dark) {
+	:root:not([data-theme='light']) {
+		--bg: #0B141C;
+		--surface: #111D27;
+		--surface-2: #0E1922;
+		--surface-3: #1A2834;
+		--hover: #15232F;
+		--ink: #E2E9EF;
+		--ink-2: #B2C0CB;
+		--ink-3: #8C9DAA;
+		--line: #1F2F3D;
+		--line-2: #2C3E4E;
+		--line-strong: #687D8F;
+		--navy: #11293C;
+		--navy-tint: #172C3D;
+		--navy-text: #B9CCDB;
+		--meter: #7E9CB4;
+		--accent: #E39967;
+		--accent-hover: #EBA879;
+		--accent-edge: #E39967;
+		--on-accent: #0B141C;
+		--focus: #B9CCDB;
+		--link: #B9CCDB;
+		--select: #E2E9EF;
+		--run: #6EA8F2;
+		--run-tint: #132A44;
+		--ok: #5DBF82;
+		--ok-mark: #5DBF82;
+		--ok-tint: #12301F;
+		--fail: #F27A70;
+		--fail-mark: #F27A70;
+		--fail-tint: #3A1A18;
+		--wait: #E4B04E;
+		--wait-mark: #E4B04E;
+		--wait-fill: #E4B04E;
+		--wait-tint: #33270F;
+		--await: #AE93F2;
+		--await-tint: #261E3D;
+		--cancel: #8C9DAA;
+		--cancel-tint: #1A2834;
+		--pend-mark: #64798B;
+		--act: #1C3A52;
+		--act-ink: #E2E9EF;
+		--act-ink-2: #A9BDCC;
+		--dim-fill: #0B141C;
+		--dim-line: #1F2F3D;
+		--hero: #11293C;
+		--hero-2: #1A3A52;
+		--hero-ink: #E2E9EF;
+		--hero-ink-2: #B2C4D2;
+		--hero-line: #234862;
+		--syn-key: #E2E9EF;
+		--syn-str: #7CCFC6;
+		--syn-num: #F08AA8;
+		--syn-lit: #B9C97A;
+		--syn-tpl: #D19BD6;
+		--syn-com: #8C9DAA;
+		--log-bg: #08111A;
+		--log-ink: #D3DDE5;
+		--log-ink-2: #8799A8;
+		--shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+		--shadow-lg: 0 28px 56px -24px rgb(0 0 0 / 0.75);
+		--side: #0D1720;
+		--side-line: #1F2F3D;
+		--side-ink: #B2C0CB;
+		--side-ink-2: #8C9DAA;
+		--side-strong: #E2E9EF;
+		--side-hover: #15232F;
+		--side-active: #1C3A52;
+		--side-active-ink: #E2E9EF;
+		--side-active-ink-2: #A9BDCC;
+		--side-bar: #8FB3D3;
+		--side-field: #111D27;
+		--side-field-line: #64798B;
+		--side-focus: #B9CCDB;
+		--mark-base: #A9BDCC;
+		--mark-line: #0B141C;
+		--mark-ring: #DCE5EC;
+		--mark-s: #E39967;
+		--mark-under: #8FA4B4;
+		--viz-cancel: #64798B;
+		--destroy-bg: #E2E9EF;
+		--destroy-ink: #0B141C;
+		--destroy-hover: #F2F6F9;
+		--sb-track: #0E1922;
+		--sb-thumb: #6B8091;
+		--sb-thumb-hover: #94A8B8;
+		--sb-log-track: var(--log-bg);
+		--sb-log-thumb: #6B8091;
+		--sb-log-thumb-hover: #93A6B7;
+		--scrim: rgb(3 7 11 / 0.66);
+		--log-err: #F27A70;
+		--color-pin-a-line: #8CA8E0;
+		--color-pin-a-fill: #152338;
+		--color-pin-b-line: #B49BDA;
+		--color-pin-b-fill: #211B33;
+		--color-pin-c-line: #74C2BA;
+		--color-pin-c-fill: #112A29;
+		--color-pin-d-line: #D9AE62;
+		--color-pin-d-fill: #2B2213;
+		--color-pin-e-line: #A5B6C6;
+		--color-pin-e-fill: #18242F;
+		--color-pin-f-line: #BCC37A;
+		--color-pin-f-fill: #22261A;
+		color-scheme: dark;
+	}
+}
+
+/* ------------------------------------------------------------------ */
+/* 4. Dark, chosen                                                     */
 /* ------------------------------------------------------------------ */
 :root[data-theme='dark'] {
+	--bg: #0B141C;
+	--surface: #111D27;
+	--surface-2: #0E1922;
+	--surface-3: #1A2834;
+	--hover: #15232F;
+	--ink: #E2E9EF;
+	--ink-2: #B2C0CB;
+	--ink-3: #8C9DAA;
+	--line: #1F2F3D;
+	--line-2: #2C3E4E;
+	--line-strong: #687D8F;
+	--navy: #11293C;
+	--navy-tint: #172C3D;
+	--navy-text: #B9CCDB;
+	--meter: #7E9CB4;
+	--accent: #E39967;
+	--accent-hover: #EBA879;
+	--accent-edge: #E39967;
+	--on-accent: #0B141C;
+	--focus: #B9CCDB;
+	--link: #B9CCDB;
+	--select: #E2E9EF;
+	--run: #6EA8F2;
+	--run-tint: #132A44;
+	--ok: #5DBF82;
+	--ok-mark: #5DBF82;
+	--ok-tint: #12301F;
+	--fail: #F27A70;
+	--fail-mark: #F27A70;
+	--fail-tint: #3A1A18;
+	--wait: #E4B04E;
+	--wait-mark: #E4B04E;
+	--wait-fill: #E4B04E;
+	--wait-tint: #33270F;
+	--await: #AE93F2;
+	--await-tint: #261E3D;
+	--cancel: #8C9DAA;
+	--cancel-tint: #1A2834;
+	--pend-mark: #64798B;
+	--act: #1C3A52;
+	--act-ink: #E2E9EF;
+	--act-ink-2: #A9BDCC;
+	--dim-fill: #0B141C;
+	--dim-line: #1F2F3D;
+	--hero: #11293C;
+	--hero-2: #1A3A52;
+	--hero-ink: #E2E9EF;
+	--hero-ink-2: #B2C4D2;
+	--hero-line: #234862;
+	--syn-key: #E2E9EF;
+	--syn-str: #7CCFC6;
+	--syn-num: #F08AA8;
+	--syn-lit: #B9C97A;
+	--syn-tpl: #D19BD6;
+	--syn-com: #8C9DAA;
+	--log-bg: #08111A;
+	--log-ink: #D3DDE5;
+	--log-ink-2: #8799A8;
+	--shadow: 0 1px 2px rgb(0 0 0 / 0.35);
+	--shadow-lg: 0 28px 56px -24px rgb(0 0 0 / 0.75);
+	--side: #0D1720;
+	--side-line: #1F2F3D;
+	--side-ink: #B2C0CB;
+	--side-ink-2: #8C9DAA;
+	--side-strong: #E2E9EF;
+	--side-hover: #15232F;
+	--side-active: #1C3A52;
+	--side-active-ink: #E2E9EF;
+	--side-active-ink-2: #A9BDCC;
+	--side-bar: #8FB3D3;
+	--side-field: #111D27;
+	--side-field-line: #64798B;
+	--side-focus: #B9CCDB;
+	--mark-base: #A9BDCC;
+	--mark-line: #0B141C;
+	--mark-ring: #DCE5EC;
+	--mark-s: #E39967;
+	--mark-under: #8FA4B4;
+	--viz-cancel: #64798B;
+	--destroy-bg: #E2E9EF;
+	--destroy-ink: #0B141C;
+	--destroy-hover: #F2F6F9;
+	--sb-track: #0E1922;
+	--sb-thumb: #6B8091;
+	--sb-thumb-hover: #94A8B8;
+	--sb-log-track: var(--log-bg);
+	--sb-log-thumb: #6B8091;
+	--sb-log-thumb-hover: #93A6B7;
+	--scrim: rgb(3 7 11 / 0.66);
+	--log-err: #F27A70;
+	--color-pin-a-line: #8CA8E0;
+	--color-pin-a-fill: #152338;
+	--color-pin-b-line: #B49BDA;
+	--color-pin-b-fill: #211B33;
+	--color-pin-c-line: #74C2BA;
+	--color-pin-c-fill: #112A29;
+	--color-pin-d-line: #D9AE62;
+	--color-pin-d-fill: #2B2213;
+	--color-pin-e-line: #A5B6C6;
+	--color-pin-e-fill: #18242F;
+	--color-pin-f-line: #BCC37A;
+	--color-pin-f-fill: #22261A;
 	color-scheme: dark;
-
-	--color-paper: #13161c;
-	--color-paper-sunken: #0f1217;
-	--color-sheet: #1a1e26;
-	--color-hover: #1d222b;
-	--color-scrim: rgb(5 6 9 / 0.6);
-
-	--color-ink: #e7e5dc;
-	--color-ink-secondary: #c3c2ba;
-	--color-ink-muted: #9ba0ab;
-	--color-ink-placeholder: #9ba0ab;
-	--color-on-ink: #13161c;
-	--color-mark: #8f95a2;
-
-	--color-rule: rgb(231 229 220 / 0.14);
-	--color-rule-faint: rgb(231 229 220 / 0.08);
-	--color-rule-strong: rgb(231 229 220 / 0.5);
-
-	--color-grid: rgb(231 229 220 / 0.06);
-	--color-grid-major: rgb(231 229 220 / 0.11);
-
-	--color-blue: #86a4ec;
-	--color-blue-strong: #a9c0f5;
-	--color-blue-tint: #1c2741;
-
-	--color-green: #7cc795;
-	--color-green-strong: #a5dcb5;
-	--color-green-tint: #16281e;
-
-	--color-red: #ef7b6e;
-	--color-red-strong: #f6a196;
-	--color-red-tint: #3a1f1d;
-
-	--color-focus: #86a4ec;
-
-	--color-pin-a-line: #8fa6dc;
-	--color-pin-a-fill: #191e2a;
-	--color-pin-b-line: #b49bd4;
-	--color-pin-b-fill: #1d1a26;
-	--color-pin-c-line: #74b8ae;
-	--color-pin-c-fill: #152020;
-	--color-pin-d-line: #d0a466;
-	--color-pin-d-fill: #211c15;
-	--color-pin-e-line: #9aabbf;
-	--color-pin-e-fill: #191c21;
-	--color-pin-f-line: #b0b47c;
-	--color-pin-f-fill: #1c1e16;
-
-	--color-syntax-string: #81c3bc;
-	--color-syntax-number: #d8aa79;
-	--color-syntax-literal: #b5ba81;
-	--color-syntax-template: #c2a4ea;
-	--color-syntax-meta: #9eb7d2;
-
-	--shadow-overlay: 0 10px 28px -6px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.45);
-	--shadow-lift: 0 -6px 16px -10px rgb(0 0 0 / 0.7);
 }
 
 /* ------------------------------------------------------------------ */
 /* Keyframes                                                           */
 /* ------------------------------------------------------------------ */
+/* A running status mark breathes three times, then rests. */
 @keyframes live-dot {
 	0%,
 	100% {
@@ -349,25 +658,36 @@
 	}
 }
 
-/* The ground of a running node: from its green tint to paper and back. The
-   tint is the resting state, so a paused or reduced-motion page shows it. */
+/* The live control's quiet pulse ring. */
+@keyframes live-ring {
+	0% {
+		transform: scale(1);
+		opacity: 0.55;
+	}
+	70%,
+	100% {
+		transform: scale(2.4);
+		opacity: 0;
+	}
+}
+
 @keyframes live-fill {
 	0%,
 	100% {
-		fill: var(--color-green-tint);
+		fill: var(--run-tint);
 	}
 	50% {
-		fill: var(--color-paper);
+		fill: var(--surface);
 	}
 }
 
 @keyframes live-ground {
 	0%,
 	100% {
-		background-color: var(--color-green-tint);
+		background-color: var(--run-tint);
 	}
 	50% {
-		background-color: var(--color-paper);
+		background-color: var(--surface);
 	}
 }
 
@@ -383,7 +703,7 @@
 @keyframes overlay-in {
 	from {
 		opacity: 0;
-		transform: translateY(3px) scale(0.985);
+		transform: translateY(4px) scale(0.985);
 	}
 	to {
 		opacity: 1;
@@ -391,8 +711,6 @@
 	}
 }
 
-/* The cloud's outline is drawn with pathLength="1", so one dash of length 1
-   offset by 1 is the undrawn outline. */
 @keyframes cloud-draw {
 	from {
 		stroke-dashoffset: 1;

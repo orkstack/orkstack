@@ -227,9 +227,13 @@ test('L3: Admin → Pools, is_default = true leaves the default pool', async ({ 
 	await expect.poll(() => urlFilters(page)).toEqual(['is_default=true']);
 	await expect(page.getByTestId('pool-card-main')).toBeVisible();
 	await expect(page.getByTestId('pool-card-gpu')).toHaveCount(0);
-	const cli = await cliCommand(page, 'pools');
+	// Pools has no filters popover of its own now: the header's terminal icon lists the
+	// pool command, carrying the applied --filter flags, as the Runs page's does.
+	await page.getByTestId('pools-cli-trigger').click();
+	const cli = (await page.getByTestId('pools-cli-command-0').innerText()).trim();
+	await page.keyboard.press('Escape');
 	expect(cli).toBe(`orkctl -n ${NS} pool list --filter is_default=true`);
-	note(`L3 is_default=true: only main; CLI equivalent: ${cli}`);
+	note(`L3 is_default=true: only main; header command: ${cli}`);
 	await page.screenshot({ path: out('screenshot-pools-default.png'), fullPage: true });
 });
 
@@ -294,15 +298,15 @@ test('L7: Copy without a Clipboard API falls back, then says to copy by hand', a
 	await expect(page.getByTestId('pool-card-gpu')).toBeVisible();
 	await page.waitForLoadState('networkidle');
 
-	await page.getByTestId('pools-filters-cli-trigger').click();
-	await page.getByTestId('pools-filters-cli-copy').click();
-	await expect(page.getByTestId('pools-filters-cli-copied')).toHaveText('Copied');
+	await page.getByTestId('pools-cli-trigger').click();
+	await page.getByTestId('pools-cli-copy-0').click();
+	await expect(page.getByTestId('pools-cli-status')).toHaveText(/^Copied/);
 	expect(await page.evaluate(() => (window as unknown as { __execCalls: string[] }).__execCalls)).toEqual(['copy']);
 
 	await page.evaluate(() => ((window as unknown as { __execResult: boolean }).__execResult = false));
-	await page.getByTestId('pools-filters-cli-copy').click();
-	await expect(page.getByTestId('pools-filters-cli-copied')).toContainText('copy it by hand');
-	const command = (await page.getByTestId('pools-filters-cli-command').innerText()).trim();
+	await page.getByTestId('pools-cli-copy-0').click();
+	await expect(page.getByTestId('pools-cli-status')).toContainText('copy it by hand');
+	const command = (await page.getByTestId('pools-cli-command-0').innerText()).trim();
 	expect((await page.evaluate(() => window.getSelection()?.toString() ?? '')).trim()).toBe(command);
 	note(`L7 no clipboard: fallback copied, then manual with "${command}" selected`);
 	await page.screenshot({ path: out('screenshot-copy-manual.png'), fullPage: true });

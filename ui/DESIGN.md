@@ -1,490 +1,356 @@
 ---
 name: OrkStack
-description: The OrkStack UI, drawn as an engineering drawing office. Every Orkflow is a controlled drawing with a version, a digest and a title block.
+description: The OrkStack UI, drawn as Harbour. A calm slate ground, white cards, harbour navy for the brand and every selection, one container orange for the one action that starts or commits work.
 colors:
-  paper: "#fbfbf8"
-  paper-sunken: "#f3f3ee"
-  sheet: "#fefefc"
-  hover: "#eff0ee"
-  scrim: "rgb(20 33 61 / 0.42)"
-  ink: "#14213d"
-  ink-secondary: "#3a4661"
-  ink-muted: "#5d6a85"
-  ink-placeholder: "#5d6a85"
-  on-ink: "#fbfbf8"
-  mark: "#6b7690"
-  rule: "rgb(20 33 61 / 0.16)"
-  rule-faint: "rgb(20 33 61 / 0.09)"
-  rule-strong: "rgb(20 33 61 / 0.62)"
-  grid: "#e6e9ef"
-  grid-major: "#c8cfdc"
-  blue: "#2b59c3"
-  blue-strong: "#1f4596"
-  blue-tint: "#e8ecf5"
-  green: "#2b7a4b"
-  green-strong: "#1d5e39"
-  green-tint: "#e5f2e8"
-  red: "#c2362b"
-  red-strong: "#9e2a21"
-  red-tint: "#fde9e6"
-  focus: "#2b59c3"
-  paper-dark: "#13161c"
-  paper-sunken-dark: "#0f1217"
-  sheet-dark: "#1a1e26"
-  hover-dark: "#1d222b"
-  scrim-dark: "rgb(5 6 9 / 0.6)"
-  ink-dark: "#e7e5dc"
-  ink-secondary-dark: "#c3c2ba"
-  ink-muted-dark: "#9ba0ab"
-  ink-placeholder-dark: "#9ba0ab"
-  on-ink-dark: "#13161c"
-  mark-dark: "#8f95a2"
-  rule-dark: "rgb(231 229 220 / 0.14)"
-  rule-faint-dark: "rgb(231 229 220 / 0.08)"
-  rule-strong-dark: "rgb(231 229 220 / 0.5)"
-  grid-dark: "rgb(231 229 220 / 0.06)"
-  grid-major-dark: "rgb(231 229 220 / 0.11)"
-  blue-dark: "#86a4ec"
-  blue-strong-dark: "#a9c0f5"
-  blue-tint-dark: "#1c2741"
-  green-dark: "#7cc795"
-  green-strong-dark: "#a5dcb5"
-  green-tint-dark: "#16281e"
-  red-dark: "#ef7b6e"
-  red-strong-dark: "#f6a196"
-  red-tint-dark: "#3a1f1d"
-  focus-dark: "#86a4ec"
+  bg: "#F6F8FA"
+  surface: "#FFFFFF"
+  surface-2: "#F1F4F7"
+  surface-3: "#E4E9EE"
+  hover: "#F1F4F7"
+  scrim: "rgb(14 28 40 / 0.42)"
+  ink: "#0E1C28"
+  ink-2: "#3A4C5C"
+  ink-3: "#4D5F70"
+  line: "#E1E6EC"
+  line-2: "#CBD3DC"
+  line-strong: "#74879A"
+  navy: "#0F2B3D"
+  navy-tint: "#E5EDF4"
+  navy-text: "#163A52"
+  meter: "#2B4A63"
+  accent: "#DA8757"
+  accent-hover: "#E29463"
+  accent-edge: "#9F5021"
+  on-accent: "#0E1C28"
+  focus: "#163A52"
+  run: "#1A62C4"
+  run-tint: "#E8F0FC"
+  ok: "#1D7442"
+  ok-mark: "#2E8B57"
+  ok-tint: "#E6F4EB"
+  fail: "#B42F27"
+  fail-mark: "#D13B30"
+  fail-tint: "#FBE9E7"
+  wait: "#855400"
+  wait-mark: "#A87300"
+  wait-tint: "#FCF3DD"
+  await: "#6B45BF"
+  await-tint: "#F0EBFB"
+  cancel: "#4D5F70"
+  pend-mark: "#788797"
+  destroy-bg: "#0F2B3D"
+  destroy-ink: "#FFFFFF"
+  log-bg: "#0F1B26"
+  log-ink: "#DCE5EC"
+  side: "#FBFCFD"
+  side-active: "#0F2B3D"
+  sb-thumb: "#6A7D8F"
+  bg-dark: "#0B141C"
+  surface-dark: "#111D27"
+  surface-2-dark: "#0E1922"
+  surface-3-dark: "#1A2834"
+  hover-dark: "#15232F"
+  scrim-dark: "rgb(3 7 11 / 0.66)"
+  ink-dark: "#E2E9EF"
+  ink-2-dark: "#B2C0CB"
+  ink-3-dark: "#8C9DAA"
+  line-dark: "#1F2F3D"
+  line-2-dark: "#2C3E4E"
+  line-strong-dark: "#687D8F"
+  navy-dark: "#11293C"
+  navy-tint-dark: "#172C3D"
+  navy-text-dark: "#B9CCDB"
+  meter-dark: "#7E9CB4"
+  accent-dark: "#E39967"
+  accent-hover-dark: "#EBA879"
+  accent-edge-dark: "#E39967"
+  on-accent-dark: "#0B141C"
+  focus-dark: "#B9CCDB"
+  run-dark: "#6EA8F2"
+  run-tint-dark: "#132A44"
+  ok-dark: "#5DBF82"
+  ok-tint-dark: "#12301F"
+  fail-dark: "#F27A70"
+  fail-tint-dark: "#3A1A18"
+  wait-dark: "#E4B04E"
+  wait-tint-dark: "#33270F"
+  await-dark: "#AE93F2"
+  await-tint-dark: "#261E3D"
+  cancel-dark: "#8C9DAA"
+  pend-mark-dark: "#64798B"
+  destroy-bg-dark: "#E2E9EF"
+  destroy-ink-dark: "#0B141C"
+  log-bg-dark: "#08111A"
+  log-ink-dark: "#D3DDE5"
+  side-dark: "#0D1720"
+  side-active-dark: "#1C3A52"
+  sb-thumb-dark: "#6B8091"
 typography:
   headline:
-    fontFamily: "Archivo Narrow Variable, Arial Narrow, Roboto Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.375rem"
-    fontWeight: 600
-    lineHeight: "1.75rem"
-    letterSpacing: "-0.01em"
-  title:
-    fontFamily: "Archivo Narrow Variable, Arial Narrow, Roboto Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "1.125rem"
-    fontWeight: 600
-    lineHeight: "1.5rem"
-  subtitle:
-    fontFamily: "Archivo Narrow Variable, Arial Narrow, Roboto Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.9375rem"
-    fontWeight: 600
-    lineHeight: "1.5rem"
-  body:
-    fontFamily: "Archivo Narrow Variable, Arial Narrow, Roboto Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.875rem"
-    fontWeight: 450
-    lineHeight: "1.375rem"
-  body-sm:
-    fontFamily: "Archivo Narrow Variable, Arial Narrow, Roboto Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.8125rem"
-    fontWeight: 450
-    lineHeight: "1.25rem"
-  control:
-    fontFamily: "Archivo Narrow Variable, Arial Narrow, Roboto Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.8125rem"
-    fontWeight: 600
-    lineHeight: "1.25rem"
-  caption:
-    fontFamily: "Archivo Narrow Variable, Arial Narrow, Roboto Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.75rem"
-    fontWeight: 450
-    lineHeight: "1rem"
-  label:
-    fontFamily: "Archivo Narrow Variable, Arial Narrow, Roboto Condensed, ui-sans-serif, system-ui, sans-serif"
-    fontSize: "0.6875rem"
-    fontWeight: 600
-    lineHeight: "1rem"
-    letterSpacing: "0.12em"
+    fontFamily: "Inter Variable, Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif"
+    fontSize: "1.5rem"
+    fontWeight: 700
+    lineHeight: "2rem"
+    letterSpacing: "-0.018em"
   figure:
-    fontFamily: "Spline Sans Mono Variable, ui-monospace, SF Mono, Menlo, Consolas, monospace"
+    fontFamily: "Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "1.625rem"
+    fontWeight: 650
+    lineHeight: "1.875rem"
+    letterSpacing: "-0.02em"
+  title:
+    fontFamily: "Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.9375rem"
+    fontWeight: 650
+    lineHeight: "1.375rem"
+  body:
+    fontFamily: "Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.875rem"
+    fontWeight: 400
+    lineHeight: "1.3125rem"
+  body-dense:
+    fontFamily: "Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.84375rem"
+    fontWeight: 400
+    lineHeight: "1.3125rem"
+  label:
+    fontFamily: "Inter Variable, Inter, ui-sans-serif, system-ui, sans-serif"
+    fontSize: "0.75rem"
+    fontWeight: 600
+    lineHeight: "1rem"
+  code:
+    fontFamily: "JetBrains Mono Variable, JetBrains Mono, ui-monospace, SF Mono, Menlo, Consolas, monospace"
     fontSize: "0.8125rem"
-    fontWeight: 450
+    fontWeight: 400
     lineHeight: "1.25rem"
-    fontFeature: "tnum"
 rounded:
-  none: "0"
-  xs: "1px"
-  sm: "2px"
-  md: "3px"
-  cloud: "18px"
+  xs: "4px"
+  sm: "6px"
+  md: "10px"
   full: "9999px"
 spacing:
-  unit: "0.25rem"
+  step: "0.25rem"
   gutter: "1rem"
-  sheet: "1.5rem"
-  bar: "2.75rem"
-  titleblock: "4rem"
-  aside: "22.5rem"
-  drawing: "clamp(15rem, 42vh, 30rem)"
+  sheet: "1.75rem"
+  bar: "3.5rem"
+  side: "15.5rem"
+  aside: "21.25rem"
+  content: "92.5rem"
 components:
   button:
-    backgroundColor: "{colors.paper}"
+    backgroundColor: "{colors.surface}"
     textColor: "{colors.ink}"
-    typography: "{typography.control}"
     rounded: "{rounded.sm}"
-    height: "36px"
+    height: "34px"
     padding: "0 14px"
-  button-hover:
-    backgroundColor: "{colors.hover}"
   button-primary:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.on-ink}"
-    typography: "{typography.control}"
+    backgroundColor: "{colors.accent}"
+    textColor: "{colors.on-accent}"
     rounded: "{rounded.sm}"
-    height: "36px"
-    padding: "0 14px"
+    height: "34px"
   button-primary-hover:
-    backgroundColor: "{colors.ink-secondary}"
-  button-danger:
-    backgroundColor: "{colors.red}"
-    textColor: "{colors.on-ink}"
-    typography: "{typography.control}"
+    backgroundColor: "{colors.accent-hover}"
+  button-destroy:
+    backgroundColor: "{colors.destroy-bg}"
+    textColor: "{colors.destroy-ink}"
     rounded: "{rounded.sm}"
-    height: "36px"
-    padding: "0 14px"
-  button-danger-hover:
-    backgroundColor: "{colors.red-strong}"
-  button-sm:
-    typography: "{typography.caption}"
-    height: "28px"
-    padding: "0 10px"
-  button-icon:
-    textColor: "{colors.ink-secondary}"
-    size: "32px"
-    padding: "0"
-  field:
-    backgroundColor: "{colors.paper}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.sm}"
-    height: "36px"
-    padding: "0 12px"
-  top-bar:
-    backgroundColor: "{colors.paper}"
-    textColor: "{colors.ink}"
-    height: "44px"
-  title-block:
-    backgroundColor: "{colors.paper}"
-    textColor: "{colors.ink}"
-    height: "64px"
-  title-block-label:
-    textColor: "{colors.ink-muted}"
-    typography: "{typography.label}"
-  title-block-value:
-    textColor: "{colors.ink}"
-    typography: "{typography.title}"
-  register-head:
-    backgroundColor: "{colors.paper-sunken}"
-    textColor: "{colors.ink-muted}"
-    typography: "{typography.label}"
-    padding: "8px 12px"
-  register-cell:
-    textColor: "{colors.ink}"
-    typography: "{typography.body-sm}"
-    padding: "8px 12px"
-  stamp-pending:
-    backgroundColor: "{colors.paper}"
-    textColor: "{colors.ink-secondary}"
-    typography: "{typography.label}"
-    rounded: "{rounded.sm}"
-    padding: "0 6px"
-  stamp-running:
-    backgroundColor: "{colors.green-tint}"
-    textColor: "{colors.green-strong}"
-    typography: "{typography.label}"
-    rounded: "{rounded.sm}"
-    padding: "0 6px"
-  stamp-awaiting:
-    backgroundColor: "{colors.blue-tint}"
-    textColor: "{colors.blue-strong}"
-    typography: "{typography.label}"
-    rounded: "{rounded.sm}"
-    padding: "0 6px"
-  stamp-succeeded:
-    backgroundColor: "{colors.paper-sunken}"
-    textColor: "{colors.ink}"
-    typography: "{typography.label}"
-    rounded: "{rounded.sm}"
-    padding: "0 6px"
-  stamp-failed:
-    backgroundColor: "{colors.red-tint}"
-    textColor: "{colors.red}"
-    typography: "{typography.label}"
-    rounded: "{rounded.sm}"
-    padding: "0 6px"
-  stamp-canceled:
-    backgroundColor: "{colors.paper-sunken}"
-    textColor: "{colors.ink-secondary}"
-    typography: "{typography.label}"
-    rounded: "{rounded.sm}"
-    padding: "0 6px"
-  stamp-skipped:
-    backgroundColor: "{colors.paper}"
-    textColor: "{colors.ink-muted}"
-    typography: "{typography.label}"
-    rounded: "{rounded.sm}"
-    padding: "0 6px"
-  note:
-    backgroundColor: "{colors.paper-sunken}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.sm}"
-    padding: "8px 12px"
-  failure-panel:
-    backgroundColor: "{colors.red-tint}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-sm}"
-    rounded: "{rounded.sm}"
-    padding: "8px 12px"
-  revision-cloud:
-    textColor: "{colors.ink}"
-    rounded: "{rounded.cloud}"
-    padding: "16px 20px"
-  overlay:
-    backgroundColor: "{colors.sheet}"
-    textColor: "{colors.ink}"
+  card:
+    backgroundColor: "{colors.surface}"
     rounded: "{rounded.md}"
-    padding: "24px"
-  palette-option-active:
-    backgroundColor: "{colors.blue-tint}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-sm}"
-    padding: "8px 12px"
-  kbd:
-    textColor: "{colors.ink-muted}"
+  stamp:
+    rounded: "{rounded.full}"
+    height: "24px"
     typography: "{typography.label}"
-    rounded: "{rounded.xs}"
-    padding: "0 4px"
+  plate:
+    backgroundColor: "{colors.surface}"
+    rounded: "{rounded.sm}"
+    typography: "{typography.code}"
+  tooltip:
+    backgroundColor: "{colors.ink}"
+    textColor: "{colors.surface}"
+    rounded: "{rounded.sm}"
 ---
 
 # Design System: OrkStack
 
-`ui/src/tokens.css` is the one source of every value below; this file records what shipped and the rules for using it. The frontmatter mirrors `tokens.css`. If the two ever differ, `tokens.css` wins and this file is stale. Light values carry the plain key; the dark value of the same token carries the `-dark` suffix (in CSS both are one name, switched by `:root[data-theme]`).
+This file records the design system the UI ships: Harbour. Every value is defined in `ui/src/tokens.css`; if this file and `tokens.css` ever differ, **`tokens.css` wins** and this file is stale. `ui/src/tailwind-tokens.css` registers the token names with Tailwind and removes Tailwind's own palette, scale, radii and shadows, so no class can reach a value outside `tokens.css`. `ui/src/app.css` holds the primitives and writes no value of its own. The site (`site/`) imports `tokens.css` as it is.
 
 ## Overview
 
-**Creative North Star: "The Drawing Office"**
+**Creative North Star: "The Harbour Chart"**
 
-Every Orkflow is a controlled drawing: a sheet with a version, a digest and a title block that always says what you are looking at. The ground is drafting paper, the text is a blue-black ink, and hue is rationed. One drafting blue marks selection, links and waiting on the outside world. One survey green marks work running now. One revision-cloud red marks failure and attention, and nothing else. Hairline rules divide rows and heavier rules divide regions, so structure comes from line weight rather than from boxes, cards or fills.
+A calm, legible working surface for operators who need to see what ran, what failed and what to do next. A slate ground carries white cards; harbour navy marks the brand, the active page and every selection; one container orange appears only on the single action that starts or commits work on the screen's own object. Status hues appear only where a status is drawn, and every status also has its own shape and word. Dark is a navy-tinted, low-glare night chart with no pure white text.
 
-The density is a working engineer's: 14 px body text in a narrow sans, 13 px registers, tracked 11 px caps for every label, and a mono for anything a person copies or compares (ids, digests, durations, commands, logs). Every page has the same three bands: a 44 px top bar, the page content, and a 64 px title block stuck to the bottom edge that states the page's facts the way a drawing's title block does. On a run, the content is a drawing frame (the DAG on a drafting grid, or the task map) beside an aside holding the version register, the revision cloud with the reason when the run failed, and the run's timing register.
-
-Dark mode is the same drawing on ink-toned paper with pale rules. It is never a cyan-on-navy blueprint. The system rejects the category default of a grey sidebar console with a strip of stat cards: navigation is two modes in a top bar, and counts are a ruled band of title-block cells, never hero numbers.
+Density is moderate: 14 px body, 13.5 px in tables and controls, tabular numerals for every count, time and duration. Identifiers sit in plates; facts sit in strips; the command line lives only behind a shell icon.
 
 **Key Characteristics:**
-- Drafting paper and blue-black ink; three accent hues, each with one job.
-- Line weight carries structure: 1 px hairline, 1.5 px region, 2 px frame, 3 px alarm.
-- Square corners (2 px at most on controls); a radius is a softened corner, never a pill.
-- Tracked caps for labels, mono for figures, narrow sans for everything else.
-- Status is told by a drawn mark and its word, and only secondarily by colour.
-- Flat at rest; shadows belong to overlays alone.
-- One authored moment: the revision cloud drawing itself in when a watched run fails; and one state that breathes: work running now.
+- One action colour (orange), one brand colour (navy), status colours for status only.
+- Status is a mark shape plus a word plus a hue, never hue alone.
+- Flat cards with a hairline border and a barely-there shadow.
+- Inter for the interface, JetBrains Mono for ids, digests, logs and plates.
+- Every text pair 4.5:1 and every non-text part 3:1, in both themes (`ui/test/tokenContrast.test.ts`).
 
 ## Colors
 
-A warm off-white paper and a deep blue-black ink, with one blue, one green and one red that are never used decoratively.
+Cool slate neutrals, a deep harbour navy, one warm orange, and a closed set of status hues. Each role below is `light / dark`.
 
 ### Primary
-- **Drafting Blue** (`blue`): selection, links, the current mode's 2 px underline, the focus ring (`focus` is the same value), work waiting on the outside world (the AWAITING stamp's ring, an awaiting DAG node's outline), the caret and the native accent colour. `blue-strong` is its text-on-tint form (AWAITING ink, the selected window button); `blue-tint` is the ground of a selected palette option, a selected Select option, an awaiting stamp and the diff register's new value.
-- **Survey Green** (`green`): work running now, and nothing else. The RUNNING stamp's dot, a running DAG node's outline and breathing ground, a running cell of the task map and of a fan-out's item grid, the LIVE badge while the page receives a run's events, and RUNNING in the title block. `green-strong` is its text-on-tint form (RUNNING ink); `green-tint` is the ground of a running stamp, node and item. It is a survey green, warmer than the teal pin (c) and never confused with SUCCEEDED, which is ink.
+- **Harbour Navy** (`--navy` #0F2B3D / #11293C; `--navy-text` #163A52 / #B9CCDB; `--navy-tint` #E5EDF4 / #172C3D): the brand, the sidebar's active pill (`--side-active`), tags, the retry mark, the live dot, links and the focus ring (`--link` = `--focus` = navy-text). `--meter` (#2B4A63 / #7E9CB4) is the progress ring's running and succeeded stroke.
 
 ### Secondary
-- **Revision-Cloud Red** (`red`): failure and attention only. A FAILED stamp and mark, a failed DAG node's 3 px outline and text, the revision cloud's outline, the held-run delta, the danger button, a namespace hold. `red-strong` is red text on a tint and the hover of the danger button; `red-tint` is the ground of a task's failure panel, a FAILED stamp and a held FAILED row.
+- **Container Orange** (`--accent` #DA8757 / #E39967, hover #E29463 / #EBA879, edge #9F5021 / #E39967): the primary button and the Strata mark's S (`--mark-s`). Its label is dark ink (`--on-accent` #0E1C28 / #0B141C, 6.2:1 and 8.0:1), never white.
 
 ### Neutral
-- **Drafting Paper** (`paper`): the page ground and the ground of every control, so a button reads as drawn on the sheet rather than raised from it.
-- **Sunken Paper** (`paper-sunken`): register heads, NOTE grounds, SUCCEEDED and CANCELED stamps, a held finished row.
-- **Sheet** (`sheet`): the ground of overlays only (dialogs, the palette, popovers, Select listboxes), one step lighter than paper in light mode and one step lifted in dark.
-- **Hover Wash** (`hover`): the hover ground of rows, buttons and options.
-- **Blue-Black Ink** (`ink`): text, frame and region rules, the primary button's fill, the DAG's outlines and edges. `ink-secondary` is supporting text and the primary button's hover; `ink-muted` is labels, captions and inactive navigation; `ink-placeholder` equals `ink-muted` so placeholders keep 4.5:1. `on-ink` is text on an ink or red fill.
-- **Finished Mark** (`mark`): the filled square of a SUCCEEDED task, lighter than ink so a task map of thousands of finished cells is not a black field, and still 3:1 on every ground.
-- **Rules** (`rule`, `rule-faint`, `rule-strong`): ink at 16 %, 9 % and 62 % alpha. `rule` is the hairline between rows; `rule-faint` is the quietest line, for detail nested inside a task (attempt rows, provenance entries, the timing bar); `rule-strong` is a control's outline and the PENDING/SKIPPED stamp border, at 3:1.
-- **Drafting Grid** (`grid`, `grid-major`): the 8 px minor and 40 px major lines behind the DAG, and nowhere else.
-- **Scrim** (`scrim`): ink at 42 % (black at 60 % in dark) behind a modal and the menu drawer.
-
-### Pins
-Six coloured-pencil pairs (`--color-pin-a-line` / `-fill` through `pin-f`: blue, violet, teal, ochre, slate, olive, each with a dark twin in `tokens.css`). A pin's member task rows carry its 1 px line all round and its fill. They are identity, never status: the pin's name is always written beside it, and each line is at least 3:1 on paper and on its own fill. They are runtime tokens (read with `var()`), not Tailwind utilities.
-
-### Syntax
-The colours of an authored document, and of nothing else: the YAML editor, the read-only YAML views (the automation export, a version diff) and every code block on the site, which reads the same tokens. Keys are the ink at semibold (`--color-syntax-key`, an alias of `ink`); comments the muted ink, oblique, and punctuation the muted ink (`--color-syntax-comment`, `--color-syntax-punctuation`). The values take five syntax pencils, the pin pencils taken down to text weight: strings teal (`--color-syntax-string`), numbers ochre (`--color-syntax-number`), `true`/`false`/`null` olive (`--color-syntax-literal`), a `{{ … }}` template violet (`--color-syntax-template`), anchors, aliases and tags slate (`--color-syntax-meta`), each with a dark twin. Every syntax colour reads at 4.5:1 on each ground code is drawn on (paper, sunken paper, sheet, the hover wash and the blue tint of a selection or an added diff line), checked by `ui/test/tokenContrast.test.ts`. They are runtime tokens (app.css's `.syntax-*` and the editor's theme read them), not Tailwind utilities. One classifier assigns them everywhere (`ui/src/lib/yaml/highlight.ts`), so a key looks the same in the editor, a diff and the docs.
+- **Ground and surfaces**: `--bg` #F6F8FA / #0B141C; `--surface` #FFFFFF / #111D27 (cards, fields, buttons); `--surface-2` #F1F4F7 / #0E1922 (plate keys, disabled, pill-plain); `--surface-3` #E4E9EE / #1A2834; `--hover` #F1F4F7 / #15232F.
+- **Ink**: `--ink` #0E1C28 / #E2E9EF; `--ink-2` #3A4C5C / #B2C0CB (secondary, quiet buttons); `--ink-3` #4D5F70 / #8C9DAA (labels, dt, placeholders, captions).
+- **Lines**: `--line` #E1E6EC / #1F2F3D (card borders, row rules); `--line-2` #CBD3DC / #2C3E4E (button borders); `--line-strong` #74879A / #687D8F (field borders, hover borders, the live control).
+- **Sidebar** (`--side-*`): its own ground (#FBFCFD / #0D1720), inks and field; the active item is navy with white ink (dark: #1C3A52 with #E2E9EF).
+- **Log pane** (`--log-*`): always dark, #0F1B26 / #08111A ground, #DCE5EC / #D3DDE5 ink, `--log-err` #F27A70.
+- **Scrollbars** (`--sb-*`): track #EEF2F6 / #0E1922, thumb #6A7D8F / #6B8091, hover #4E6070 / #94A8B8; logs have their own (`--sb-log-*`).
+- **Scrim**: rgb(14 28 40 / 0.42) / rgb(3 7 11 / 0.66) behind every modal.
 
 ### Status
-Status tokens (`--color-{status}-bg / -fg / -border / -solid`) are aliases of the colours above, never new hues: PENDING is paper with a strong rule; RUNNING is green-strong on green-tint with a green border and mark; AWAITING is blue-strong on blue-tint; SUCCEEDED is ink on sunken paper with the `mark` fill; FAILED is red on red-tint; CANCELED is ink-secondary on sunken paper; SKIPPED and UNSPECIFIED are ink-muted on paper with a dashed or dotted border.
+Each status has a word colour, a mark colour and a tint (pill ground). Light / dark:
+- **Running** `--run` #1A62C4 / #6EA8F2, tint #E8F0FC / #132A44; mark: filled circle.
+- **Succeeded** `--ok` #1D7442 / #5DBF82, mark #2E8B57, tint #E6F4EB / #12301F; mark: filled square.
+- **Failed** `--fail` #B42F27 / #F27A70, mark #D13B30, tint #FBE9E7 / #3A1A18; mark: triangle.
+- **Waiting for capacity** `--wait` #855400 / #E4B04E, mark #A87300, fill #E3A21A, tint #FCF3DD / #33270F; mark: ring.
+- **Awaiting** `--await` #6B45BF / #AE93F2, tint #F0EBFB / #261E3D; mark: diamond.
+- **Canceled** `--cancel` #4D5F70 / #8C9DAA; mark: slashed square.
+- **Pending / Skipped** `--pend-mark` #788797 / #64798B; outlined pill, outlined or dotted square.
 
-### Aliases
-`--color-fg` is the one permanent alias, of `ink`: `run-page-pins.spec.ts` reads it by name, and it has always meant the ink. Every legacy name from before this design was deleted; no other alias may be added, except a role that names which ink a family draws with: the status tokens above, and the syntax roles `--color-syntax-key`, `-comment` and `-punctuation` (Syntax).
+The `--color-*` names Tailwind and the site read (`--color-running-bg`, `--color-failed-solid`, and so on) are aliases of these roles. Pins have six fixed accents (`--color-pin-a…f-line/-fill`); the editor and JSON views use `--syn-*`.
 
 ### Named Rules
-**The Three Accents Rule.** Blue means selected, linked or waiting on the outside world. Green means running now. Red means failed or needs attention. None is ever used for emphasis, branding or decoration, and a canceled run's reason is an ink NOTE, not red. (Until 2026-10-22 this was the Two Accents Rule, with RUNNING in blue. It became three because blue then meant both "selected" and "running" — a selected running node was a blue ring round a blue outline — and because the person who runs these Orkflows reads running work as green. A fourth accent needs the same kind of case, written here.) Code takes no accent: its colours are the syntax pencils (Syntax), a family of their own like the pins, added on 2026-10-28 because authors asked for an Orkflow's keys, values and templates to be told apart at a glance; red appears in code only as a finding's mark.
+**The One Action Colour Rule.** Orange appears on at most one button per screen: the action that creates work or commits a change on the screen's own object (Submit a run, Run again, Apply version). The object decides, never the state. Nothing on Pools or Activities is orange.
 
-**The One File Rule.** Every colour, in both themes, is declared in `ui/src/tokens.css`. No component, route or stylesheet declares a raw colour; Tailwind's own palette is reset away, so `bg-red-500`, `text-white` or `shadow-md` emit nothing. `ui/test/tokens.test.ts` enforces it on the sources and on the compiled CSS.
+**The Red Is Status Rule.** Red, green, blue, amber and violet describe a status and nothing else. No button, border or banner action takes a status hue.
 
-**The Contrast Floor Rule.** Every text token reads at 4.5:1 on every ground, and focus, strong rules, status marks and pin lines reach 3:1, in both themes. `ui/test/tokenContrast.test.ts` checks every pair; a new token joins that test before it ships.
+**The Shape Before Hue Rule.** Every status carries its mark and its word; colour is the third signal, never the only one (WCAG 1.4.1).
 
 ## Typography
 
-**Body Font:** Archivo Narrow Variable (with Arial Narrow, Roboto Condensed, the system sans)
-**Label/Mono Font:** Spline Sans Mono Variable (with ui-monospace, SF Mono, Menlo, Consolas)
+**Interface Font:** Inter Variable (fallback `ui-sans-serif, system-ui, -apple-system, 'Segoe UI'`)
+**Code Font:** JetBrains Mono Variable (fallback `ui-monospace, 'SF Mono', Menlo, Consolas`)
 
-**Character:** A narrow humanist sans, the face of a drawing's lettering, that fits a lot on a line without going small. A plain mono sits beside it for things that are compared character by character. Both are self-hosted variable faces from `@fontsource-variable` (weights 400–700 and 300–700); only the two Latin files are preloaded, 18.7 KB and 36.5 KB.
+Both are self-hosted `@fontsource-variable` 5.3.0, imported by `app.css`. Inter carries every word of the interface; JetBrains Mono carries run ids, digests, versions, image references, logs, YAML and plate values.
 
 ### Hierarchy
-- **Headline** (600, 22 px / 28 px, −0.01em): the page title in `SheetHeader`, one per page; a run id or digest title is set in the mono and breaks anywhere.
-- **Title** (600, 18 px / 24 px): title-block values and count-band figures; the largest type a value ever gets.
-- **Subtitle** (600, 15 px / 24 px): section heads within a page ("Running now"); 15 px is also the prose size where a paragraph needs room.
-- **Body** (450, 14 px / 22 px): the default text of `<body>`. Weight 450 rather than 400 so the narrow strokes hold on paper.
-- **Body small** (450, 13 px / 20 px): registers, fields, task rows. The most-used size in the app.
-- **Control** (600, 13 px / 20 px): button labels.
-- **Caption** (450, 12 px / 16 px): timestamps, secondary facts, small buttons.
-- **Label** (600, 11 px / 16 px, 0.12em, uppercase): table heads, title-block labels, field labels, section caps, status stamps, sheet tabs, the wordmark. The `.caps` primitive.
-- **Figure** (mono, tabular figures, inherits the size it sits in): ids, digests, counts, durations, versions, commands. The `.figure` primitive.
-
-Paragraphs that explain are held to `max-w-prose` (65ch).
+- **Page h1** (700, 24/32 px, −0.018em, `.page-h1`): one per page, `text-wrap: balance`.
+- **Figure** (650, 26/30 px, −0.02em): a tile's count.
+- **Card heading** (650, 15/22 px): `.card-head h2/h3`.
+- **Body** (400, 14/21 px): the default.
+- **Dense** (13.5/21 px): tables, chips, buttons, key/value lists.
+- **Secondary** (13/20 px): plates, card subtitles, small buttons, table heads.
+- **Label** (600, 12/16 px): dt, facts-strip labels, the asserted tag.
+- **Inline code** (0.89em; 12.5 px in tooltips and small plates).
 
 ### Named Rules
-**The Mono Is Data Rule.** The mono marks text a person copies, compares or reads in a terminal: ids, digests, durations, commands, logs. It is never a "technical" costume for headings or labels.
+**The Sentence Case Rule.** Labels, table heads and headings are sentence case at weight 600. Harbour never sets tracked capitals.
 
-**The No Hero Number Rule.** No figure is set above 18 px. A count is a fact in a title-block cell, not a display.
-
-**Notes on faces.** No italic file is loaded; the rare emphasis (an unavailable count) renders a synthetic oblique, accepted. Cyrillic and Greek text falls back to the system sans and mono, since only the Latin subsets are declared for preload and the others load only when their characters appear.
+**The Tabular Figures Rule.** Every count, time, duration and percentage uses `font-variant-numeric: tabular-nums`; ids and digests use the code face.
 
 ## Layout
 
-The page is a vertical stack of three bands. The **top bar** is 44 px (`--spacing-bar`), sticky, with a 1.5 px ink rule under it. The **content** is centred, at most 1440 px wide, with a 16 px gutter below 640 px and a 24 px sheet margin from 640 px up, and 24 px above and below. The **title block** is 64 px (`--spacing-titleblock`), sticky at the bottom with a 2 px ink rule above it. `scroll-padding` on `<html>` equals both, so a focused control is never hidden under either (WCAG 2.4.11).
+A fixed light sidebar (248 px, `--spacing-side`) beside a sticky top bar (56 px, `--spacing-bar`) and a content column capped at 1480 px (`--spacing-content`) with 28 px sheet padding (`--spacing-sheet`) and 16 px gutters. Below 900 px the sidebar becomes a drawer opened from the top bar's menu button. Spacing is Tailwind's 4 px step (`--spacing`). The editor uses layout C: the YAML editor beside a 340 px docs rail (`--spacing-aside`). A log pane is bounded at `min(60dvh, 30rem)`; the graph card at `clamp(15rem, 42vh, 30rem)` (tall: `clamp(15rem, 65svh, 40rem)`).
 
-A page opens with its `SheetHeader`: the headline and a line of facts at the left, the page's one primary action at the top right, a hairline under it and 24 px below. A run's line of facts is one line — `orkflow@version · origin submit · [STATUS]`, the origin in words, never a stamp — and says LIVE only while the run is; a finished run's status already says it ended. Below 1024 px a run's secondary actions (Evidence, Compare, Export JSON, Show events, retry history, the copied command) fold into one **More** disclosure beside Run again, and below 640 px its id is drawn short in the middle (`ork-…873153`), the whole id staying the heading for assistive technology; together they start the drawing within 220 px of the top at 390 px. Regions within a page start with a 1.5 px ink rule (`.region`). Registers (tables) are the main content of list pages.
-
-The run page sets a **drawing frame** beside an **aside** of 360 px (`--spacing-aside`) with a 24 px gap from 1280 px (`xl`) up, and the run's body (its values NOTE, events and task list) flows in the drawing's column under the frame, the aside beside it; below 1280 px the aside follows the drawing and the body follows the aside. The frame is its content plus the 32 px patch and 16 px padding, up to `--spacing-drawing` (clamp(240 px, 42 vh, 480 px)): `min(var(--spacing-drawing), content + 48px)`, so a small run is not a page of empty grid or empty map. The DAG's height is its drawing's own (CSS, from its aspect); the task map's is computed from the frame's width with the map's own geometry, once the frame is laid out and before its first paint, so nothing below the frame moves. Below 640 px the frame may grow to `--spacing-drawing-tall` (clamp(240 px, 65 svh, 640 px)): a phone has the height a drawing needs and not the width. A drawing that still does not fit says so on the frame's top band, with a pair of scroll controls for each way it overflows (up/down, left/right; the one with nothing more to show `aria-disabled`), never over a node. The caption shortens the Orkflow's name, never its version or task count. The run's timing (Created, Started, Finished, Elapsed, Tasks) is a register in the aside, never a second band across the page, and a run with no input or no aggregated output says so in one NOTE rather than an empty box. The frame's view tabs (DAG, Task map) and caption sit on a 32 px paper patch at its top left. Inside, the task map picks the largest cell pitch of 16, 14, 12, 10 or 8 px (cell = pitch − 2, gap 2) whose rows fit; at 4,000 tasks it fits whole at 1440 × 900 and scrolls inside the frame (never the page) at 1280 × 720. The DAG draws 190 × 58 nodes with 56 px between layers and 34 px between rows, scaled down to the frame's width but never below 0.6; up to 80 tasks it is drawn, up to 300 on request, and beyond that the run page draws only the selected task's neighbourhood.
-
-The DAG is a layered drawing (`#lib/dag.ts` layoutDag), the same Orkflow always drawn the same way: each task one layer past its deepest need; an edge that skips layers gets a 12 px lane in every layer it passes, so no edge ever runs through a box; the order within each layer is chosen by barycentre sweeps from declaration order to cross as few edges as it can (a shape that can be drawn without crossings is); and between two layers each edge runs on a track of its own split or join, the gap widening (to 216 px at most) to keep tracks 8 px apart. **The Direction Rule.** A DAG reads left to right unless top to bottom clearly costs its reader less in the frame it is drawn in (`chooseDagDirection`, decided once the frame is laid out and before it paints): the frames of drawing to scroll through, a frame of sideways scrolling counting as two downward, divided by the square of the scale it is drawn at (at 0.6 an id is 8 px); left to right wins a tie and anything within a tenth. So wide parallel stages — the common shape — read left to right everywhere, as a flow sheet does; a long chain reads top to bottom, one full-size column; and on a phone a small or medium DAG turns top to bottom, where a 190 px column fits. Task ids stay horizontal text either way. `?dag=lr` and `?dag=tb` override it for a reader and a shared link. `test/dagStress.ts` holds the shapes both directions are held to (decided 2026-10-22).
-
-The spacing unit is 4 px (`--spacing`); every padding, gap and height is a multiple of it. Typical rhythms: 8 × 12 px register cells, 8 px between the groups of a filter toolbar, 24 px between regions, 40 px after a dashboard section.
-
-Breakpoints, containers, aspect ratios and blurs keep Tailwind's defaults (sm 640, md 768, lg 1024, xl 1280, 2xl 1536 px), because they are not identity and media queries cannot read `var()`. Responsive behaviour:
-- Below 1024 px the top bar drops Build's three page links, the namespace picker and the appearance switch into a **Menu** drawer (a right-hand dialog 320 px wide); below 640 px the mode links go too.
-- Below 640 px the title block keeps its first cell and STATUS (or its second cell) and folds the rest into a "Page details" disclosure.
-- Below 640 px a stacked register (`.register-stacked`) turns each row into a two-column grid of its cells, so nothing hides behind a sideways scroll; every register of the dashboard is one, and a bare figure in it says what it counts ("1 failed", "of 2 finished"). A register of many facts (Admin → Namespaces, `.register-pairs`) stacks into two equal columns, each fact under its head's words (the cell's `data-label`), the name on its own line and the actions on the last. A row's actions sit beside its name at every width, so a register's sideways scroll never takes them out of reach.
-- The dashboard's count band is seven cells in one ruled row from 1024 px up, and below that a 12-column grid: four status cells of three columns over three figure cells of four; below 400 px the four status cells are a 2 × 2 grid. A label never breaks inside a word.
-- Below 640 px a run id in a register is drawn short in the middle (`ork-…873153`), its whole id kept for assistive technology and on hover, and the title block's first cell wraps to two lines at 13 px rather than losing its end.
-
-### Named Rules
-**The Three Bands Rule.** Every page has the top bar, the content and the title block, and nothing else is fixed to the viewport except an open overlay.
-
-**The Grid Behind the DAG Rule.** The drafting grid appears only behind the DAG. Lists, logs, registers and the task map sit on clean paper.
+Responsive rules, all in components: the facts strip goes to two columns with no rules below 640 px and one below 360 px; below 640 px the Activities register stacks into labelled rows and a pool's Orkers stay one row each in a table that scrolls in its own frame; buttons and chips reach a 40 px minimum on phones; everything reflows at 320 px. `scroll-padding-top` keeps a focused control clear of the sticky bar.
 
 ## Elevation & Depth
 
-The system is flat. Depth comes from line weight and from paper tones (sunken paper for heads and notes, sheet for overlays), not from shadows. Two shadows exist, both ink-tinted in light mode and black in dark, and neither is used at rest on page content.
+Flat with a whisper. Depth comes from tonal layers (bg, surface, surface-2) and hairlines; shadows are small and structural.
 
 ### Shadow Vocabulary
-- **Overlay** (`--shadow-overlay`: `0 8px 24px -6px rgb(20 33 61 / 0.22), 0 2px 6px -2px rgb(20 33 61 / 0.12)`; dark `0 10px 28px -6px rgb(0 0 0 / 0.6), 0 2px 6px -2px rgb(0 0 0 / 0.45)`): dialogs, the command palette, popovers, Select listboxes, the menu drawer and the title block's "Page details" panel.
-- **Lift** (`--shadow-lift`: `0 -6px 14px -10px rgb(20 33 61 / 0.32)`; dark `0 -6px 16px -10px rgb(0 0 0 / 0.7)`): the title block's top edge, only while page content runs on beneath it (an IntersectionObserver on a sentinel at the end of `<main>`).
+- **Card** (`--shadow`: `0 1px 2px rgb(15 43 61 / 0.06), 0 1px 3px rgb(15 43 61 / 0.04)`; dark `0 1px 2px rgb(0 0 0 / 0.35)`): cards and neutral buttons at rest.
+- **Overlay** (`--shadow-lg`: `0 28px 56px -28px rgb(15 43 61 / 0.38), 0 2px 8px -2px rgb(15 43 61 / 0.08)`; dark `0 28px 56px -24px rgb(0 0 0 / 0.75)`): popovers, dialogs and the tooltip.
 
 ### Named Rules
-**The Overlays Only Rule.** A shadow means "this floats above the sheet". Cards, rows, buttons and panels never carry one.
+**The Two Shadows Rule.** There are exactly two shadows, card and overlay. Hover changes a border or ground, never a shadow.
 
 ## Shapes
 
-Drawings are square-cornered. Controls, stamps, notes and failure panels take a 2 px corner (`rounded.sm`); overlays take 3 px (`rounded.md`); a `<kbd>` takes 1 px. The full radius exists only for the RUNNING dot and the AWAITING ring. The 18 px `rounded.cloud` is the revision cloud's first-paint form: a dashed 2 px red outline, replaced once the box is measured by a scalloped SVG outline (an arc about every 14 px, 1.5 px red, inset 7 px).
+Gently rounded: 10 px (`--r`) for cards, tiles, banners, popovers; 6 px (`--r-sm`) for buttons, fields, plates and the tooltip; 4 px for keyboard keys; full for pills, chips, tags, the live control and dots. Borders are 1 px hairlines; the focus ring is 2 px with a 2 px offset; a failing banner has a 3 px left alarm edge (`--rule-alarm`).
 
-Rules have four weights, each with one job: **hairline** 1 px (`--rule-hair`) between rows and around controls; **region** 1.5 px (`--rule-region`) around a drawing frame, under the top bar and register heads, above regions, and on every DAG outline and edge (non-scaling, so a scaled drawing keeps its weight); **frame** 2 px (`--rule-frame`) above the title block and as the focus outline with its 2 px offset; **alarm** 3 px (`--rule-alarm`) on a failed DAG node only.
+Icons are one family (`ui/src/lib/icons.ts`): a 16-unit grid, 1.4 stroke, round caps and joins, `currentColor`, drawn once as `<symbol>`s by `IconSprite` and referenced by `Icon` with `<use>`. An icon is always decoration beside a word or an accessible name.
 
-Status marks are drawn shapes, 8 px square, in CSS on the stamp itself (no extra element, because a run page holds thousands): SUCCEEDED a filled square, FAILED a red square crossed in paper, CANCELED an outline struck once, SKIPPED a hatched square with a dashed outline, PENDING a hollow square, UNSPECIFIED a dotted outline, RUNNING a filled green dot that pulses, AWAITING a blue ring. The same shapes are drawn as SVG on DAG nodes and on the task map's canvas. Under forced colours every mark keeps a CanvasText border.
-
-The **revision delta** is a small drawn triangle: the drawing's mark for "changed". It sits before a held run's id (red) and before a changed value in the compare register (blue).
+The mark is **Strata**: three bars joined by round turns inside a ring, a dot where each end meets the ring (`Mark.svelte`); ring `--mark-ring` (#0F2B3D / #DCE5EC), S `--mark-s` (orange in both themes).
 
 ## Components
 
-The world's nouns (sheet, title block, drawing, revision cloud, revision delta, superseded) name components and devices in code and in this file. None of them is printed on any surface: the UI says "Page summary", "Page details", "DAG", "Task map", "version", never "sheet", "drawing" or "revision".
-
 ### Buttons
-Quiet and drawn, not raised.
-- **Shape:** 2 px corner, 36 px tall, 14 px inline padding, 13 px semibold, a 1 px `rule-strong` outline on paper.
-- **Primary:** ink fill, `on-ink` text; hover moves to `ink-secondary`. One per page, at the top right of the `SheetHeader`; a list's Apply filters is a default button. Where the primary opens a form (Admin → Namespaces' Create namespace), the form is a disclosure under the header and, while it is open, its own submit is the primary.
-- **More:** a page's secondary actions folded into one disclosure (`MoreMenu`) where its header has no room; its items are ordinary buttons and links, each doing exactly what the button it stands for does.
-- **Danger:** red fill, `on-ink` text, hover `red-strong`. Destructive confirmations only.
-- **Danger outline:** a red outline and `red-strong` text on paper, hover `red-tint`: the button that opens a destructive or holding confirmation (Cancel run, Hold…), never the act itself.
-- **Hover / Focus:** hover changes the ground to `hover` over 120 ms ease-out; focus is the global 2 px focus-colour outline at 2 px offset.
-- **Small:** 28 px, 10 px padding, 12 px. **Icon:** 32 px square (above the 24 px target floor), transparent, `ink-secondary`, ink on hover. **Disabled:** 50 % opacity, no pointer events.
-- **Disclosure:** a chevron drawn in CSS on the button itself (no element per task row), turned down when expanded.
+- **Shape:** 34 px high (30 px `.btn-sm`), 6 px radius, 13.5 px semibold, with a transparent `::after` giving a 40 px hit area.
+- **Neutral `.btn`:** surface ground, `--line-2` border, card shadow; hover takes `--hover` and `--line-strong`; active scales to 0.98 unless reduced motion.
+- **Primary `.btn-primary`:** orange ground, orange-edge border, dark ink label. See the One Action Colour Rule.
+- **Quiet `.btn-quiet`:** no border, no ground, `--ink-2`; hover takes `--hover`.
+- **Destroy `.btn-destroy`:** solid ink (navy with white in light, near-white with dark ink in dark). Only the confirm inside a reason dialog, never a trigger on a page.
+- **Icon `.btn-icon`:** square, `--ink-2`, named by `aria-label`; only terminal, copy and More.
+- **Disabled:** surface-2, line-2, ink-3, no shadow; `aria-disabled` with its reason visible and wired by `aria-describedby`.
+- **Icons on buttons:** 16 px, leading, only on actions that start or commit a change (play, check, ban, pause, and their confirms).
 
-### Status stamps
-- **Style:** a 1 px frame in the status border colour, the status ground, 11 px tracked caps in the status ink, 6 px inline padding, and the drawn mark 6 px before the word. The text is exactly the status word.
-- **Variants:** the eight statuses above. Failure categories reuse the stamp in red and ink treatments: ACTIVITY_FAILED red on red-tint, INFRASTRUCTURE_ERROR red-strong on paper, CONTRACT_VIOLATION on-ink on a red-strong fill, TIMED_OUT and CANCELLED in ink tones. Version marks in the aside are stamps too: "This run" in ink on a row of sunken paper (whatever the run's status: the status is said once, by the run), "Current" in blue, "Head" in `rule-strong`.
-- **Never started:** a task the run ended before it reached an Orker is stamped with its lifecycle status (CANCELED, as the wire says) with "never started" under it — on its row, as its DAG node's line, in the map's readout and in the map's key ("CANCELED 1 · never started"). No view says something else about it.
+### Status pills `.stamp`
+24 px (20 px `.stamp-sm`) full pills: mark, word, then tint ground and word colour. The mark is CSS on the pill itself (`.mark-dot`, `.mark-square`, `.mark-tri`, `.mark-ring`, `.mark-diamond`, `.mark-strike`, `.mark-hollow`, `.mark-dotted`), because a run page holds thousands. Pending and Skipped are outlined (`.pill-outline`). A running dot breathes three times then rests. `.pill-plain` is a markless label; `.tag` is a navy-tint count or kind.
 
-### Registers
-The table is the main surface of most pages.
-- **Head:** 11 px tracked caps in `ink-muted` on sunken paper, a 1.5 px ink rule beneath, 8 × 12 px padding.
-- **Rows:** 13 px, a 1 px `rule` hairline under each, 8 × 12 px padding, `hover` wash on hover. Ids and timestamps in the mono.
-- **Held rows:** a run whose status changed since it was last seen keeps its new status's ground (red-tint for FAILED, sunken paper otherwise) and a red revision delta before its id until opened; hover underlines the id instead of replacing the ground.
-- **Duration:** the runs register's DURATION is submission to finish; the run page's Elapsed is start to finish, so the two can differ by the run's wait before it started.
-- **Task rows:** a run's task rows share one timeline. A task's mark is 4 px tall, `mark` for its run and `rule-strong` for its wait for an Orker, placed at (its start − the run's start) ÷ the run's elapsed and as wide as its duration ÷ that, on a hairline of fixed width, so the rows read together as when each task ran. A value of at most 64 characters is said on its row in the mono (`Values {"exitCode": 0}`); a longer one keeps its block. Each command a row offers is a button that names it in the mono (`run logs`, `run timing`, `task run`), never a row of identical prompts.
-- **Commands:** every CLI equivalent quotes only the tokens a shell would read as syntax (`orkctl --namespace default run get ork-1 --json`; `--filter 'action^namespace.'`), and a command written out on the page breaks only at spaces.
+### Plates `.plate`
+A key cell (surface-2, ink-3, semibold) and a mono value, 6 px radius: the one way a run id, version or digest is set. A run id has full and short forms and a copy button; a version never copies and looks the same on every page. `.plate-sm` in rows.
 
-### Inputs / Fields
-- **Style:** 1 px `rule-strong` outline, 2 px corner, paper ground, ink text, 36 px tall with 12 px padding; placeholder in `ink-placeholder` at full opacity.
-- **Label:** 11 px tracked caps in `ink-secondary` above the control, 6 px gap, with an optional hint in 12 px plain case on the same line.
-- **Focus:** the global 2 px focus outline. **Select** is a custom combobox with the same trigger as a field and a listbox on `sheet` with the overlay shadow; the selected option is semibold on blue-tint.
-- The run input editor is the typed JSON editor; there is no YAML input mode. The YAML editor (below) holds an authored document, not input.
+### Facts strip `.fstrip`
+A `<dl>` of 12 px labels over 14 px tabular values, separated by vertical rules; on the run, failed run, Runs and editor headers. Principals always carry the **asserted tag** (`.atag`, `Asserted`/`Principal`): "asserted by your gateway, not verified by OrkStack".
 
-### YAML editor
-An authored document's field: the Apply page, an Orkflow's Edit tab and Admin → Automation's document. It is a field first: the 1 px `rule-strong` outline, 2 px corner and paper ground of every field, the global 2 px focus outline, the mono at 13 px, and a sunken gutter of line numbers in the muted ink behind a `rule` hairline. The current line takes the hover wash while the editor has focus. Text is coloured with the syntax tokens (Syntax).
-- **Findings:** an error is underlined with a red wave, a warning with a red dotted line, and marked in an 8 px gutter column with the severity marks of Notes and Holds (filled square for an error, outlined for a warning). Hovering the underline shows the finding in a popup; hovering a key shows the schema's description of it, its type and the words it takes.
-- **Under the field:** one line says what is known about the document, the engine's words: "Checking with the engine…", "The engine refuses this document: 2 problems.", "The engine finds no problems in this document.", or why it could not check. Only the engine says a document has no problems, and its sentence also says what the check did not cover (validation is not the apply). Beside it, in the muted ink, the keys: Tab indents; Escape, then Tab within two seconds, leaves the editor (Ctrl-M lets Tab leave until pressed again); Ctrl-Space suggests keys; Ctrl-Shift-Space explains the key on the caret's line; F8 goes to the next problem. The visible line is the editor's description; a separate live region speaks only when a check settles (the engine's answer, or why it could not answer) or a key is explained, never while typing.
-- **Problems list:** in the place the Validate results always had, under a caps heading (a real heading, a level below the page's): the engine's issues first ("Validation results", worded as the engine wrote them), then the editor's own ("Editor checks · YAML syntax and the generated schema"). Each row is its line:column in the mono, a 24 px target named by its own text, which moves the cursor there, the severity word in red-strong caps, and the sentence after its severity mark; a key named in a sentence is set in the mono.
-- **Popups:** completion, hover and lint popups take the overlay treatment (sheet ground, 1 px ink frame, 3 px corner, overlay shadow); the active completion is ink on the blue tint. CodeMirror's own colours are all replaced by tokens.
-- **Weight:** the page holds a plain textarea from its first paint; the editor's code (CodeMirror, the YAML parser, the validator and the two schemas) is loaded on mount and takes the textarea's place, value, test id and focus.
+### Progress ring `.pring`
+20 px (16 px in rows) with the percentage beside it; counts in the tooltip and sr text. Basis (`lib/progress.ts`): ended tasks plus fan-out items over all of them, Skipped and Canceled counting as ended. Stroke `--meter` while running or succeeded, `--fail-mark` when failed, `--ink-3` when canceled.
+
+### Retry mark `.retry`
+A 22 px navy circular arrow with the count (10 px bold) inside; drawn only for two or more attempts.
+
+### Live control `.livectl`
+One full pill: a state chip (`role="status"`) and a toggle. Live: navy dot with a 2.4 s pulse ring, "Live", "Pause updates". Paused: hollow dot, "Paused", "Resume updates", the pill grey on surface-2. The toggle's name is its visible label; no `aria-pressed`. On Runs, the run page and the log pane.
+
+### Chips, tiles and registers
+- **Chip `.chip`:** 34 px full pill, surface, `--ink-2` label with a semibold value and a trailing chevron; a listbox trigger.
+- **Tile `.tile`:** 10 px card with a label and a figure; filters a list (`aria-pressed`, selected border `--select`).
+- **Register `.register`:** the table. 13 px semibold ink-3 heads, 14 px rows, row hover `--hover`, hairline rules; stacks below 640 px.
+
+### Cards and banners
+- **Card `.card`:** surface, 1 px `--line`, 10 px radius, card shadow; `.card-head` is 52 px minimum with a 15 px heading and actions at the end (`.card-end`).
+- **Banner `.alert`:** a card-like row with an icon cell; `.alert-fail` adds the 3 px fail-mark left edge. `.capline` is the waiting-for-capacity line with a wait-mark border.
+
+### Inputs
+`.field` and `.search`: surface, 1 px `--line-strong`, 6 px radius; `.search` shows the 2 px focus ring on `:focus-within`. Labels 13 px semibold `--ink-2`, hints 13 px `--ink-3`.
 
 ### Navigation
-- **Top bar:** the wordmark (a title-block-corner SVG mark and "ORKSTACK" in tracked caps), then two modes, **Build** and **Operate**, in caps. The current mode is ink with a 2 px blue underline; Build's three daily pages (Runs, Orkflows, Apply) follow it in 13 px, the current one ink, semibold and underlined. At the right: the namespace picker under a "NAMESPACE" caps label, the palette button ("Jump to…" with ⌘K or Ctrl K in a `<kbd>`), and the appearance switch (system, light, dark as three pressed buttons; the pressed one is ink-filled).
-- **Departure from the sketch:** the chosen sketch's top bar held only Build and Operate. The shipped bar keeps Build's three pages visible in Operate too, because the primary-navigation contract the specs hold requires them on every page, and because the daily pages stay one click away from any admin page.
-- **Operate tabs:** the admin pages are a row of caps tabs under a 1.5 px ink rule, the current one ink with a 2 px blue underline; the row scrolls sideways when narrow.
-- **Command palette:** Ctrl/Cmd+K anywhere, including from inside a text field. A native `<dialog>` on `sheet`, 640 px wide at most, 3 px corner, 1.5 px ink frame, overlay shadow. Results are grouped under caps heads; the active option is semibold on blue-tint with an "Enter" `<kbd>`.
-
-### Title Block (signature)
-The persistent 64 px band along the bottom of every page. Cells stack an 11 px caps label in `ink-muted` over an 18 px semibold value, divided by 1 px ink rules; the first cell is twice the width of the rest. STATUS writes its word after its drawn mark, red for FAILED, green for RUNNING, blue for AWAITING, ink otherwise. Below 640 px the first cell wraps to two lines at 13 px rather than losing its end. Digests can be copied from their cell. It never shows a run id: the id is the page's headline. The chosen sketch's static frame used 92 px; the shipped block is 64 px because it is sticky on every page, and at 1280 × 720 the bar and a 92 px block would take 19 % of the viewport for chrome where 64 px takes 15 %, the sketch's own share at 1440 × 900. The difference is cell padding, not type.
-
-### Drawing Frame and Task Map (signature)
-A 1.5 px ink frame of fixed height with a paper patch at its top left holding the view tabs (caps, the selected one ink with a 2 px blue underline) and a mono caption ("order-saga @ 0.4.2 · 6 tasks"). The DAG view sits on the drafting grid: nodes are paper boxes with a 1.5 px ink outline, the task id in 13 px semibold sans and a second line in the 11 px mono, orthogonal ink edges with arrowheads, a 2 px blue ring for the selected node, a 3 px red outline and red text for a failed one, a blue outline for awaiting, and 45 % opacity, never a strike, for a task the run never started (its line reads "never started"). A running node is a soft green box: a green outline round a ground that breathes from `green-tint` to paper and back every 2.4 s, resting on the tint under reduced motion. A node's tags (`each ≤ n`, `join …`, `cached`, a composed Orkflow) are `ink-secondary`, never an accent; every line fits its node (a composed task's name gives way before its pinned version, the whole reference in its title). Where the drawing is wider than the frame at 0.6 scale, a pair of scroll buttons sits on the frame's top band, beside the tabs and never over a node, the one with nothing more to show disabled. The task map is one canvas, one cell per task or fan-out item, drawn with the status marks; a running cell's mark breathes with the DAG's 2.4 s (only those cells are repainted, at most 15 times a second, never while the page is hidden or under reduced motion). A legend under the frame lists each status present with its mark and count.
-
-### Revision Cloud (signature)
-The run's failure, once per page, in the aside. A scalloped 1.5 px red outline around a caps tag in `red-strong` ("VERSION 0.4.2 · charge failed"), the reason code in the mono, the plain explanation in ink, the attempt line and the reproducing command. Task and item failures never get a cloud: they use the compact failure panel, red ink on a red-tint ground with a 2 px corner and no rule, the code after a filled mark. Clouds everywhere would stop meaning anything.
-
-### Notes and Holds
-- **NOTE:** a caveat that is not an alarm. Sunken paper, 1 px `rule` outline, 2 px corner, 8 × 12 px padding, a "NOTE" caps label in `ink-muted` beside the sentence. Operate pages state their scope with one under the header.
-- **Severity:** errors and warnings are `red-strong` text after a drawn 8 px square, filled for an error and outlined for a warning, always with the word.
-- **Hold banner:** a namespace on hold is the one full-width red element: 1 px red border on red-tint, the reason, and the CLI command that releases it.
+**Sidebar:** brand, namespace switch, Runs (with a count of runs going now), Orkflows and Apply, then an Operate group; the OrkStack plate and the appearance switch at its foot. The active page is a navy pill (`aria-current`). **Top bar:** menu button below 900 px, breadcrumb, and Jump (Ctrl K / ⌘K, a native modal search over pages and recent runs).
 
 ### Overlays
-A popover hangs from its trigger's edge but never past the viewport's: opened near the other edge (a header's actions wrapped to the left on a phone), it moves back inside, 8 px clear. Dialogs, popovers and listboxes share one treatment: `sheet` ground, ink frame (1.5 px for dialogs and the palette, 1 px for popovers and listboxes), 3 px corner, overlay shadow, and the `overlay-in` entrance (120 ms, 3 px rise and 0.985 scale, ease-out). The dialog's body scrolls inside the panel; its title sits over a hairline.
+- **Tooltip `.tt`:** the one tooltip (`lib/tooltip.ts`), for any `data-tip`; no native `title`. Ink ground, surface text, 12.5 px, 6 px radius, overlay shadow, max 300 px; 300 ms hover delay, instant on keyboard focus; 8 px below, flips above, clamped 12 px inside the viewport. Its nine rules: a 10 px bridge over the gap; timers cleared before set, hide after 200 ms; opening one closes the last and releases its `aria-describedby`; hover-opened closes on pointer-out, focus-opened on blur; joins `aria-describedby` only when it adds words; Escape closes only the tip first; any click closes it; a relative time (`TimeAgo`) is a tab stop carrying its exact instant as tip and sr text; a dismissed tip re-arms only after the pointer leaves.
+- **Dialogs:** native modals (`Dialog`, `ConfirmDialog`) with a glyph in the header; focus returns to the opener. A destructive confirm names the safe choice on the back button, which takes focus first.
+- **CLI popover:** behind the terminal icon only (`CliPopover`), listing the screen's `orkctl` commands with Copy; closes on Escape and focus-out.
+- **Popover `.pop`:** surface, line-2 border, 10 px radius, overlay shadow; enters with a 180 ms rise unless reduced motion.
+
+### Signature: graph card and nodes
+`DrawingFrame` holds `DagGraph` over a dotted ground (8 px minor, 40 px major pitch). The graph scrolls horizontally and centres the selected node on load (the failed one on a failed run). A node is `role="button"`, `aria-pressed`, with an activity icon and its own focus ring outside the box. Activity icons come from `icons.ts` (`a-*`) or from an image's declared icon, rendered through the closed allowlist in `lib/activityIcon.ts`; anything unknown draws the default icon, never a partial one.
+
+### Signature: the run page
+One task selection, held by a row's name, its graph node, a task map cell and the Jump dialog. With no choice made it is the failed task, else the first one running or awaiting; Clear selection stands until the next choice. The graph greys what is outside the selection. The Tasks card draws every task on the run's own axis (hatched waited, green ran, blue running, a hollow red bar a failed attempt), a fan-out's items under its row, and one log pane that follows the selection. A failed task opens under its row with its attempt, strip, reason, phases and stderr. The Item card follows the selection and announces it: while it runs only what the live read knows (attempts, Orker, pool, the request, the wait to start, Now from the heartbeat), once it has ended what the attempt record adds (reserved, phases, image digest), and before it starts the request alone; Inspect holds the definition, the attempts, the artifacts and the values. Side cards on a failed run: Why it failed, How it failed, Seen before, Since the last success, Task map. On any other: Task map, What X waits for, Item, Since the last run, Image, Inputs.
 
 ### Motion
-Motion is state feedback, never decoration, and all of it is in `tokens.css`. Ease-out is `cubic-bezier(0.16, 1, 0.3, 1)`; the one symmetric curve, `--ease-in-out` (`cubic-bezier(0.45, 0, 0.55, 1)`), is for a breath. Durations are 120 ms (hover, colour, overlay entrance), 200 ms (base), 600 ms (the cloud) and 2.4 s (a running ground's breath). Five animations exist: the RUNNING dot's 1.6 s pulse, the running ground's 2.4 s breath (`live-fill` on a DAG node, `live-ground` on a fan-out item, the same curve painted on the task map's canvas), the 2 px navigation progress bar under the top edge, the overlay entrance, and the cloud drawing itself in once when a run turns FAILED while someone is watching it (on load it is simply there). Under `prefers-reduced-motion` the dot, the breath and the cloud stop — a running node rests on its green tint, a running map cell is drawn whole — and the progress bar falls back to a pulse. No animation library is used.
+80 ms instant feedback, 180 ms state change, 320 ms entrance; `--ease-in` cubic-bezier(.22,1,.36,1), `--ease-out` cubic-bezier(.4,0,.2,1). Under reduced motion: no pulse, no transforms.
 
-## Do's and Don'ts
+## Named Rules
 
-### Do:
-- **Do** take every colour, size, radius, shadow and duration from `ui/src/tokens.css`, by its token name, in both themes.
-- **Do** colour code with the syntax tokens only, through `ui/src/lib/yaml/highlight.ts`.
-- **Do** tell status by its drawn mark and its word first; colour is the third channel (WCAG 1.4.1).
-- **Do** divide rows with the 1 px `rule` hairline and regions with the 1.5 px ink rule, instead of boxing content in cards.
-- **Do** put the page's one ink-filled primary button at the top right of its `SheetHeader`.
-- **Do** set labels in the 11 px tracked caps and ids, digests, durations and commands in the mono with tabular figures.
-- **Do** design light and dark together; the dark theme is ink-toned paper (`#13161c`) with pale rules.
-- **Do** keep every control at least 24 px and every focus outline the 2 px focus colour at a 2 px offset.
-- **Do** write the product's words on every surface: version, origin, pool, pin, "asserted by" for a principal; "Orkflow" is a name and is always capitalised (lowercase only where it is the DSL's or the CLI's own word: `orkflow:name@version`, `orkctl orkflow …`, a cache scope).
+**The One Action Colour Rule.** At most one orange button per screen, on the action that creates work or commits a change on the screen's own object.
 
-### Don't:
-- **Don't** use blue, green or red for emphasis, branding or decoration; a canceled run's reason is an ink NOTE.
-- **Don't** colour code with blue, green or red; red in code is a finding's mark and nothing else.
-- **Don't** draw a revision cloud for anything but the run's own failure, and never more than one per page.
-- **Don't** put the drafting grid behind anything but the DAG.
-- **Don't** add shadows to page content; they belong to overlays and the title block's lift.
-- **Don't** round anything into a pill, or past 3 px, except the RUNNING dot, the AWAITING ring and the cloud's first paint.
-- **Don't** set a figure above 18 px or build a strip of stat cards; counts are a ruled band of title-block cells.
-- **Don't** print the world's device names (sheet, drawing, title block, revision) or any internal mechanism word (queue, session, generation, checkpoint) on a surface.
-- **Don't** make it a cyan-on-navy blueprint, a grey sidebar console, or a dashboard of cards.
-- **Don't** add a raster, an icon font, a web-font CDN or an animation library; the mark, icons and cloud are SVG and the faces are self-hosted.
+**The No Hue For Destruction Rule.** A destructive trigger is neutral, ends in an ellipsis and carries its glyph ("Cancel run…" with ban, "Cordon…" with pause), set apart by a divider (`.act-gap`). It opens a reason dialog whose confirm is solid ink (`--destroy-*`) with the same glyph.
+
+**The Icons Earn Their Place Rule.** Leading icons only on actions that start or commit a change; icon-only buttons only for terminal, copy and More; one 16-unit, 1.4-stroke family everywhere.
+
+**The Shell Icon Rule.** No `orkctl` text on an app screen; every screen's commands live in its CLI popover.
+
+**The Plate Rule.** Run ids, versions and digests are always plates, identical on every page.
+
+**The One Tooltip Rule.** One shared tooltip element obeys the nine rules above; no native `title`.
+
+**The Scrollbar Rule.** Every scrolling panel draws `--sb-*` thin scrollbars under `forced-colors: none`, with `scrollbar-gutter: stable` on the page; forced colours get the system's.
+
+**The Words Rule.** Run states are Running, Succeeded, Failed, Canceled; tasks add Pending, Skipped, Waiting for capacity, Awaiting. Fan-out items are named by index (`render[10]`).
+
+**The Both Themes Rule.** Every pair holds 4.5:1 for text and 3:1 for non-text in light and dark, held by `tokenContrast.test.ts`; no value lives outside `tokens.css`.

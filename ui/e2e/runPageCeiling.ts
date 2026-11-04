@@ -27,7 +27,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { taskMapCellCenter } from './uiHelpers';
+import { inspectTask, taskMapCellCenter } from './uiHelpers';
 
 // The run detail page at a task ceiling (spec E7, the run-page case of T7),
 // shared by two spec files: run-page-ceiling.spec.ts at the deployment's
@@ -210,7 +210,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		await last.scrollIntoViewIfNeeded({ timeout: 60_000 });
 		await expect(last).toBeVisible();
 		const cards = Date.now() - started;
-		await page.getByTestId(`task-inspect-toggle-t${tasks - 1}`).click();
+		await inspectTask(page, `t${tasks - 1}`);
 		await expect(page.getByTestId(`task-t${tasks - 1}-inspect`)).toBeVisible({ timeout: 60_000 });
 		const elapsed = Date.now() - started;
 		expect(await page.getByTestId('task-list').locator('[data-testid^="task-deep-link-"]').count()).toBe(tasks);
@@ -226,12 +226,12 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 	}
 
 	// cardInViewport: the card's box ends inside the viewport, below the bar and
-	// above the title block.
+	// above the viewport's bottom edge (the bottom title block is gone).
 	async function cardInViewport(page: Page, testid: string): Promise<boolean> {
 		return page.evaluate((id) => {
 			const card = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
 			const top = document.querySelector('header')!.getBoundingClientRect().bottom;
-			const bottom = document.querySelector('[data-testid="title-block"]')!.getBoundingClientRect().top;
+			const bottom = window.innerHeight;
 			return card.top >= top - 1 && card.bottom <= bottom + 1;
 		}, testid);
 	}
@@ -269,7 +269,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		);
 
 		const live = await measureRunPage(page, run, GATED_TASKS, 'live');
-		await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+		await expect(page.getByTestId('run-status')).toHaveText('Running');
 		for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'live', false);
 
 		await rpc('RunService/CancelRun', { runId: run, reason: `${c.name} e2e: gated-size render measured` });
@@ -294,7 +294,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 			GETRUN_POLL_FINISHED_MS
 		);
 		const finished = await measureRunPage(page, run, GATED_TASKS, 'finished');
-		await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
+		await expect(page.getByTestId('run-status')).toHaveText('Canceled');
 		for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'finished', false);
 		const medians = { opens: 1 + EXTRA_OPENS, live: medianOf('live'), finished: medianOf('finished') };
 		writeFileSync(outPath('medians.json'), JSON.stringify(medians, null, 2) + '\n');
@@ -307,7 +307,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		// The task map at the ceiling, outside the timed span (UI revamp, stage
 		// 2): the run opens on its map, which drew every task's cell; from the
 		// top of the page, selecting the middle and the last cell selects that
-		// task and lands its card between the bar and the title block — where the
+		// task and lands its card between the bar and the bottom of the viewport — where the
 		// card-height estimate behind the scroll is most wrong.
 		await page.evaluate(() => window.scrollTo(0, 0));
 		const map = page.getByTestId('task-map');

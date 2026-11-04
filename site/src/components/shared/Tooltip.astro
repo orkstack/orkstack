@@ -1,0 +1,13 @@
+---
+// The one tooltip: the UI's own (ui/src/lib/tooltip.ts), the shared element
+// every `data-tip` control shows its words in. A page renders exactly one.
+---
+
+<div id="tt" class="tt" role="tooltip" popover="manual"></div>
+
+<script>
+	import { installTooltips } from '../../styles/generated/tooltip';
+
+	const tip = document.getElementById('tt');
+	if (tip) installTooltips(document, tip);
+</script>

@@ -149,6 +149,46 @@ func TestReadLabels_AReasonQuotesNothingATerminalWouldObey(t *testing.T) {
 	}
 }
 
+// TestSafeReason_ReadsNoFurtherThanItsBound: a reason of 4 MiB — the most
+// a registry's error body may be — costs what its first 512 bytes do, not
+// a piece per character of the whole.
+func TestSafeReason_ReadsNoFurtherThanItsBound(t *testing.T) {
+	for _, body := range []string{strings.Repeat("x", 4<<20), strings.Repeat("\x1b", 4<<20)} {
+		var got string
+		allocs := testing.AllocsPerRun(1, func() { got = SafeReason(body) })
+		if allocs > 2000 {
+			t.Fatalf("SafeReason of %d bytes made %.0f allocations: it read past its bound", len(body), allocs)
+		}
+		if len(got) > maxReasonBytes || !strings.HasSuffix(got, "…") {
+			t.Fatalf("SafeReason of %d bytes is %d bytes ending %q", len(body), len(got), got[len(got)-8:])
+		}
+	}
+}
+
+// TestResolveError_EscapesWhatItWraps: a resolution error's message shows
+// the error it wraps escaped and cut — a network or parse error can quote a
+// host a registry named — while errors.Unwrap still reaches that error.
+func TestResolveError_EscapesWhatItWraps(t *testing.T) {
+	wrapped := errors.New("dial tcp: lookup \u009b31m\u202eevil.test\x1b]0;x\x07: no such host " + strings.Repeat("x", 2048))
+	err := &ResolveError{Reference: "registry.test/a:1", Code: ReasonImageResolveUnavailable,
+		Detail: "the registry's token endpoint could not be reached", Err: wrapped}
+	message := err.Error()
+	for _, r := range message {
+		if unicode.IsControl(r) || unicode.Is(unicode.Cf, r) {
+			t.Fatalf("the message holds %U raw:\n%q", r, message)
+		}
+	}
+	if !strings.Contains(message, `lookup \u009b31m\u202eevil.test\u001b]0;x\u0007`) {
+		t.Fatalf("the message shows no escaped form of what it wraps:\n%s", message)
+	}
+	if strings.Contains(message, strings.Repeat("x", 600)) {
+		t.Fatalf("the message holds what it wraps uncut (%d bytes)", len(message))
+	}
+	if !errors.Is(err, wrapped) {
+		t.Fatal("errors.Is no longer reaches the wrapped error")
+	}
+}
+
 func TestSafeReason(t *testing.T) {
 	for in, want := range map[string]string{
 		"a\u2028b\u2029c":           `a\u2028b\u2029c`,

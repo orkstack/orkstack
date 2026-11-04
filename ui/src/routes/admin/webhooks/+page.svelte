@@ -68,13 +68,13 @@
 			<input id="webhook-url" data-testid="webhook-url" bind:value={url} required placeholder="https://example.com/hooks/orkstack" class={inputClass} />
 		</div>
 		<div class="grid gap-4 sm:grid-cols-3">
-			<div><label class="field-label" for="webhook-namespace">Namespace <span class="field-hint">empty means every</span></label><input id="webhook-namespace" data-testid="webhook-namespace" bind:value={namespace} pattern={SCOPE_SLUG_PATTERN} maxlength={200} title={slugTitle} placeholder="analytics" class={inputClass} /></div>
-			<div><label class="field-label" for="webhook-orkflow">Orkflow <span class="field-hint">empty means every</span></label><input id="webhook-orkflow" data-testid="webhook-orkflow" bind:value={orkflowName} pattern={SCOPE_SLUG_PATTERN} maxlength={200} title={slugTitle} placeholder="nightly-etl" class={inputClass} /></div>
-			<div><label class="field-label" for="webhook-task">Task <span class="field-hint">empty means every</span></label><input id="webhook-task" data-testid="webhook-task" bind:value={taskId} pattern={SCOPE_SLUG_PATTERN} maxlength={200} title={slugTitle} placeholder="extract" class={inputClass} /></div>
+			<div><label class="field-label" for="webhook-namespace">Namespace <span class="field-hint">empty means every</span></label><input id="webhook-namespace" data-testid="webhook-namespace" bind:value={namespace} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} placeholder="analytics" class={inputClass} /></div>
+			<div><label class="field-label" for="webhook-orkflow">Orkflow <span class="field-hint">empty means every</span></label><input id="webhook-orkflow" data-testid="webhook-orkflow" bind:value={orkflowName} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} placeholder="nightly-etl" class={inputClass} /></div>
+			<div><label class="field-label" for="webhook-task">Task <span class="field-hint">empty means every</span></label><input id="webhook-task" data-testid="webhook-task" bind:value={taskId} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} placeholder="extract" class={inputClass} /></div>
 		</div>
 		<div>
 			<label class="field-label" for="webhook-name">Name <span class="field-hint">(optional — how an automation document refers to it)</span></label>
-			<input id="webhook-name" data-testid="webhook-name" bind:value={hookName} disabled={!namespace.trim()} pattern={SCOPE_SLUG_PATTERN} maxlength={200} title={slugTitle} placeholder="etl-loader" class="{inputClass} disabled:opacity-50" />
+			<input id="webhook-name" data-testid="webhook-name" bind:value={hookName} disabled={!namespace.trim()} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} placeholder="etl-loader" class="{inputClass} disabled:opacity-50" />
 			{#if !namespace.trim()}<p class="mt-1 text-xs text-ink-muted" data-testid="webhook-name-hint">a name needs a namespace scope</p>{/if}
 		</div>
 		<fieldset class="border-y border-rule py-3">
@@ -117,7 +117,7 @@
 						<td class="whitespace-nowrap">
 							<a data-testid="webhook-deliveries-{webhook.id}" href={deliveriesHref(data.coordinates, { filters: webhookDeliveriesFilters(webhook.id), cursor: '', page: 1 }, 'deliveries')} class="link mr-3 text-sm font-semibold">Deliveries</a>
 							<button type="button" data-testid="edit-webhook-{webhook.id}" onclick={() => startEdit(webhook)} class="btn btn-sm mr-1">Edit</button>
-							<button type="button" data-testid="delete-webhook-{webhook.id}" onclick={() => { deleting = webhook.id; deleteError = ''; }} class="btn btn-sm border-red text-red-strong">Delete</button>
+							<button type="button" data-testid="delete-webhook-{webhook.id}" onclick={() => { deleting = webhook.id; deleteError = ''; }} class="btn btn-sm">Delete</button>
 						</td>
 					</tr>
 				{/each}
@@ -133,12 +133,12 @@
 		{#snippet body()}
 			<p class="mb-3 text-sm text-ink-secondary">Editing keeps this subscription's id and signing secret.</p>
 			<form class="space-y-3" onsubmit={(event) => { event.preventDefault(); void saveEdit(); }}>
-				<div><label class="field-label" for="webhook-edit-name">Name <span class="field-hint">(needs a namespace; empty makes it unnamed)</span></label><input id="webhook-edit-name" data-testid="webhook-edit-name" bind:value={editName} pattern={SCOPE_SLUG_PATTERN} maxlength={200} title={slugTitle} class={inputClass} /></div>
+				<div><label class="field-label" for="webhook-edit-name">Name <span class="field-hint">(needs a namespace; empty makes it unnamed)</span></label><input id="webhook-edit-name" data-testid="webhook-edit-name" bind:value={editName} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} /></div>
 				<div><label class="field-label" for="webhook-edit-url">URL</label><input id="webhook-edit-url" data-testid="webhook-edit-url" bind:value={editUrl} required class={inputClass} /></div>
 				<div class="grid gap-3 sm:grid-cols-3">
-					<div><label class="field-label" for="webhook-edit-namespace">Namespace</label><input id="webhook-edit-namespace" data-testid="webhook-edit-namespace" bind:value={editNamespace} pattern={SCOPE_SLUG_PATTERN} maxlength={200} title={slugTitle} class={inputClass} /></div>
-					<div><label class="field-label" for="webhook-edit-orkflow">Orkflow</label><input id="webhook-edit-orkflow" data-testid="webhook-edit-orkflow" bind:value={editOrkflow} pattern={SCOPE_SLUG_PATTERN} maxlength={200} title={slugTitle} class={inputClass} /></div>
-					<div><label class="field-label" for="webhook-edit-task">Task</label><input id="webhook-edit-task" data-testid="webhook-edit-task" bind:value={editTask} pattern={SCOPE_SLUG_PATTERN} maxlength={200} title={slugTitle} class={inputClass} /></div>
+					<div><label class="field-label" for="webhook-edit-namespace">Namespace</label><input id="webhook-edit-namespace" data-testid="webhook-edit-namespace" bind:value={editNamespace} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} /></div>
+					<div><label class="field-label" for="webhook-edit-orkflow">Orkflow</label><input id="webhook-edit-orkflow" data-testid="webhook-edit-orkflow" bind:value={editOrkflow} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} /></div>
+					<div><label class="field-label" for="webhook-edit-task">Task</label><input id="webhook-edit-task" data-testid="webhook-edit-task" bind:value={editTask} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} /></div>
 				</div>
 				<fieldset class="border-y border-rule py-3"><legend class="field-label float-left w-full">Events <span class="field-hint">(none means every run transition)</span></legend>
 					<div class="clear-left flex flex-wrap gap-x-4 gap-y-2">{#each [...RUN_EVENTS, ...TASK_EVENTS] as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-edit-event-{label(event)}" checked={editEvents.includes(event)} onchange={(e) => toggleEdit(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>

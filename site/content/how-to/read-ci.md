@@ -5,7 +5,7 @@ answer is a fix or a job run again.
 
 ## Find the workflow
 
-Only the `proof` job of the `proof` workflow gates a merge. `check` runs
+Only the `proof` job of the `proof` workflow gates a merge, once the GitHub rule is on (see [How OrkStack is proven](/docs/concepts/proven/)). `check` runs
 `make check` in a few minutes and is the first to report a lint, vet or unit
 failure. None of the others gates a merge: the nightly and the release run on
 `main`, and the Podman, Kubernetes and site workflows on the changes that

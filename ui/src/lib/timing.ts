@@ -227,6 +227,35 @@ export function formatQuantity(q: Quantity): string {
 	}
 }
 
+/** One attempt's phases gathered for its bar: what came before the container ran, the run, what came after. */
+export interface PhaseGroup {
+	key: 'setup' | 'run' | 'finish';
+	label: string;
+	ms: number;
+	phases: string[];
+}
+
+export function phaseGroups(phases: readonly PhaseTiming[]): PhaseGroup[] {
+	const groups: PhaseGroup[] = [];
+	let seenRun = false;
+	const add = (key: PhaseGroup['key'], label: string, phase: string, ms: number) => {
+		const group = groups.find((g) => g.key === key);
+		if (group) {
+			group.ms += ms;
+			group.phases.push(phase);
+		} else groups.push({ key, label, ms, phases: [phase] });
+	};
+	for (const p of phases) {
+		const ms = p.duration.kind === 'value' ? p.duration.ms : 0;
+		if (p.phase === 'run') {
+			seenRun = true;
+			add('run', 'Run', p.phase, ms);
+		} else if (seenRun) add('finish', 'Finish', p.phase, ms);
+		else add('setup', 'Setup', p.phase, ms);
+	}
+	return groups;
+}
+
 /** The phases line: `image 1.2s · run 50s · commit 700ms`. */
 export function phasesLine(phases: PhaseTiming[]): string {
 	return phases.map((p) => `${p.phase} ${formatQuantity(p.duration)}`).join(' · ');

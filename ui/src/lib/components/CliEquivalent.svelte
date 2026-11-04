@@ -7,6 +7,7 @@
 	// in one place, that SHOWS the command before it copies it: a reader who
 	// wants the CLI finds it in the same corner every time, and a reader who
 	// does not is not asked to read a shell command to use a button.
+	import { tick } from 'svelte';
 	import Icon from './Icon.svelte';
 	import Popover from './Popover.svelte';
 	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '#lib/clipboard.ts';
@@ -36,10 +37,14 @@
 		open = !open;
 		if (open) copied = '';
 	}
+	const done = $derived(copied === 'Copied');
 
 	// On an origin with no clipboard the command shown above is selected
 	// instead, and the status says to copy it by hand (#lib/clipboard.ts).
 	async function copy(): Promise<void> {
+		// Emptied first, so a second copy is announced too.
+		copied = '';
+		await tick();
 		if ((await copyText(command)) === 'copied') {
 			copied = 'Copied';
 			return;
@@ -67,27 +72,26 @@
 				: 'size-8'}"
 		>
 			<!-- A shell prompt: the window, the caret, the cursor. -->
-			<Icon name="terminal" />{#if text}<span class="font-mono text-xs whitespace-nowrap">{text}</span>{/if}
+			<Icon name="term" />{#if text}<span class="font-mono text-xs whitespace-nowrap">{text}</span>{/if}
 		</button>
 	{/snippet}
 	{#snippet content()}
-		<pre
-			data-testid="{testid}-command"
-			class="max-w-md overflow-x-auto border border-rule bg-paper-sunken p-2 font-mono text-xs text-ink"><code
-				>{command}</code
-			></pre>
-		<div class="mt-2 flex items-center gap-2">
+		<div class="flex items-start gap-2">
+			<pre
+				data-testid="{testid}-command"
+				class="max-w-md min-w-0 flex-1 overflow-x-auto border border-rule bg-paper-sunken p-2 font-mono text-xs text-ink"><code
+					>{command}</code
+				></pre>
 			<button
 				type="button"
+				aria-label="Copy command"
+				data-tip="Copy"
 				data-testid="{testid}-copy"
 				onclick={() => void copy()}
-				class="btn btn-sm"
-			>
-				Copy command
-			</button>
-			{#if copied}
-				<span data-testid="{testid}-copied" class="text-xs text-ink-muted">{copied}</span>
-			{/if}
+				class="btn btn-sm btn-icon"
+			><Icon name={done ? 'apply' : 'copy'} /></button>
 		</div>
+		<!-- Always there, so the browser announces what a copy did. -->
+		<p role="status" data-testid="{testid}-copied" class="mt-2 min-h-4 text-xs text-ink-muted">{copied}</p>
 	{/snippet}
 </Popover>

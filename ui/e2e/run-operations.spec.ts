@@ -1,3 +1,4 @@
+import { inspectTask, selectTask, tasksMore } from './uiHelpers';
 import { expect, test } from './test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -119,17 +120,20 @@ test('cancel confirmation, authoritative status, pinned version, deep links and 
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: NAME });
 	const runId = submitted.run.id;
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('RUNNING', { timeout: 60_000 });
-	const initialElapsed = await page.getByTestId('run-elapsed').innerText();
-	await expect.poll(() => page.getByTestId('run-elapsed').innerText()).not.toBe(initialElapsed);
+	await expect(page.getByTestId('run-status')).toHaveText('Running', { timeout: 60_000 });
+	const initialElapsed = await page.getByTestId('run-lasted').innerText();
+	await expect.poll(() => page.getByTestId('run-lasted').innerText()).not.toBe(initialElapsed);
 	await expect(page.getByTestId('pinned-orkflow-link')).toHaveAttribute('href', new RegExp(`version=0.1.0.*ns=default`));
 	await page.getByTestId('cancel-run').click();
 	await expect(page.getByTestId('cancel-run-confirm')).toBeVisible();
 	// F-ui-ux-2: a destructive confirmation takes the focus on Cancel, Tab and
 	// Shift+Tab never leave it, and dismissing it hands the focus back.
 	await expect(page.getByTestId('cancel-run-dismiss')).toBeFocused();
+	// A native modal dialog: Tab cycles its controls and may pass to the
+	// browser's own chrome (the body is then active), but never to the page
+	// behind it, which is inert.
 	const insideConfirm = () =>
-		page.evaluate(() => !!document.activeElement?.closest('[data-testid="cancel-run-confirm"]'));
+		page.evaluate(() => !!document.activeElement?.closest('[data-testid="cancel-run-confirm"]') || document.activeElement === document.body);
 	for (let i = 0; i < 6; i++) {
 		await page.keyboard.press('Tab');
 		expect(await insideConfirm(), `Tab ${i + 1} stays in the dialog`).toBe(true);
@@ -148,9 +152,9 @@ test('cancel confirmation, authoritative status, pinned version, deep links and 
 	await page.getByTestId('cancel-run-accept').click();
 	await expect(page.getByTestId('cancellation-requested')).toContainText('Waiting for the run to stop');
 	await page.screenshot({ path: out('screenshot-cancel-requested.png'), fullPage: true });
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 
-	await page.getByTestId('task-deep-link-wait').click();
+	await selectTask(page, 'wait');
 	await expect(page).toHaveURL(/task=wait/);
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default&task=wait&attempt=1`);
 	await expect(page).toHaveURL(/task=wait.*attempt=1/);
@@ -178,14 +182,16 @@ test('completed values, bounded pane replay, JSON export and recorded artifacts 
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: COMPLETED_NAME, input: { data: { requested: 'evidence' } } });
 	const runId = submitted.run.id;
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	// activity-shell owns values.json for its script mode; the script's own
 	// output remains a retained log, while the public task value records its
 	// measured exit and script path.
+	// (The values are read in the selected task's Inspect, in its Item card.)
+	await inspectTask(page, 'completed');
 	await expect(page.getByTestId('task-values-completed')).toContainText('"exitCode": 0');
 
 	const jsonDownload = page.waitForEvent('download');
-	await page.getByTestId('export-run-json').click();
+	await tasksMore(page, 'export-run-json');
 	const jsonFile = await jsonDownload;
 	expect(jsonFile.suggestedFilename()).toBe(`${runId}.json`);
 	const jsonPath = out(`${runId}.json`);
@@ -196,7 +202,7 @@ test('completed values, bounded pane replay, JSON export and recorded artifacts 
 	expect(exported.input).toEqual({ requested: 'evidence' });
 	expect(exported.tasks[0].output).toBeTruthy();
 
-	await page.getByTestId('task-log-toggle-completed').click();
+	// The selected task's one log pane is already open under the list.
 	await expect(page.getByTestId('task-log-dropped-completed')).toContainText('earlier lines', { timeout: 60_000 });
 	await page.getByTestId('task-log-search-completed').fill('retained line 2105');
 	await expect(page.getByTestId('task-log-completed')).toContainText('retained line 2105');
@@ -210,14 +216,12 @@ test('completed values, bounded pane replay, JSON export and recorded artifacts 
 	expect(retained).toContain('retained line 1');
 	expect(retained).toContain('retained line 2105');
 
-	// Recorded artifacts are inspection detail: the overview above carries the
-	// task's values and logs, and the download list is behind that task's own
-	// Inspect, in that task's own card. Open it through the card's toggle
-	// rather than by rewriting the URL, so everything asserted so far was read
-	// from the plain view — and the address never moved for it.
-	await page.getByTestId('task-inspect-toggle-completed').click();
+	// Recorded artifacts are inspection detail: the download list is in the
+	// selected task's Inspect, in its Item card, opened through the card's
+	// toggle rather than by rewriting the URL — and the address never moves
+	// for it.
 	await expect(
-		page.getByTestId('task-completed').getByTestId('task-artifacts-completed')
+		page.getByTestId('item-card').getByTestId('task-artifacts-completed')
 	).toBeVisible();
 	await expect(page).not.toHaveURL(/inspect=1|events=1/);
 	const artifactDownload = page.waitForEvent('download');
@@ -241,7 +245,8 @@ test('a slow client navigation shows the progress bar until the destination load
 	await expect(page.getByTestId('nav-progress')).toHaveCount(0);
 	await page.route('**/orkstack.v1.RunService/GetRun', async (route) => {
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
-		await route.continue();
+		// The list's own read of a row may be given up as the page leaves it.
+		await route.continue().catch(() => {});
 	});
 	await page.getByTestId(`run-row-${runId}`).getByRole('link', { name: runId }).click();
 	await expect(page.getByTestId('nav-progress')).toBeVisible();

@@ -129,4 +129,4 @@ orkctl apply automation.ork.yaml --check
 - [Declarative automation contract](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md): the full document rules and the plan
 - [The plan](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#the-plan): the symbols and the digest
 - [`orkctl apply`](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#orkctl-apply): the flags and the order of an apply
-- [Schedules](/docs/how-to/schedules/), [Triggers](/docs/how-to/triggers/) and [Webhooks](/docs/how-to/webhooks/): the objects a document declares
+- [Schedules](/docs/run/schedules-and-triggers/), [Triggers](/docs/run/schedules-and-triggers/) and [Webhooks](/docs/run/webhooks/): the objects a document declares

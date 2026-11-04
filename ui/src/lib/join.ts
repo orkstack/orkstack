@@ -23,6 +23,20 @@ export function joinWord(policy: JoinPolicy | undefined): string {
 }
 
 /** A failure handler: join any_failed or all_done. */
+/** What a task's join means, in the words of its row; '' for the default. */
+export function joinWords(policy: JoinPolicy | undefined): string {
+	switch (policy) {
+		case JoinPolicy.ANY_FAILED:
+			return 'failure handler, any need failed';
+		case JoinPolicy.ALL_DONE:
+			return 'runs when all its needs are done';
+		case JoinPolicy.NONE_FAILED:
+			return 'runs unless a need failed';
+		default:
+			return '';
+	}
+}
+
 export function isFailureHandler(policy: JoinPolicy | undefined): boolean {
 	return policy === JoinPolicy.ANY_FAILED || policy === JoinPolicy.ALL_DONE;
 }

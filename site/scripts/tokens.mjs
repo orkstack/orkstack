@@ -71,6 +71,10 @@ export function readTokens(file = tokensPath) {
 			keyframes.add(selector.slice('@keyframes'.length).trim());
 			continue;
 		}
+		// The system dark setting's block repeats the dark roles for a page with
+		// no data-theme (ui/test/tokens.test.ts holds the two identical); the
+		// explicit dark block is the one read here.
+		if (selector === '@media (prefers-color-scheme: dark)') continue;
 		const key =
 			selector === ':root'
 				? 'invariant'

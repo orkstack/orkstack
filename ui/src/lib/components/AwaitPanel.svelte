@@ -231,7 +231,7 @@
 			</div>
 		{/if}
 		{#if task.await?.resolvedBy}
-			<div title="Asserted by the resolving request's gateway, never authenticated by OrkStack.">
+			<div data-tip="Asserted by the resolving request's gateway, never authenticated by OrkStack.">
 				<dt class="inline">Resolved by</dt>
 				<dd class="ml-1 inline text-ink-secondary" data-testid="task-{task.id}-await-resolved-by">
 					{task.await.resolvedBy} (asserted)

@@ -1,4 +1,10 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
+	import { onMount } from 'svelte';
+	import CliPopover from './CliPopover.svelte';
+	import EditorDocsRail from './EditorDocsRail.svelte';
+	import Icon from './Icon.svelte';
+	import { shellQuote } from '#lib/runDetail.ts';
 	// The Edit tab: change ONE stored version's YAML and apply it as a new one.
 	//
 	// Three decisions are load-bearing here and none is cosmetic:
@@ -49,6 +55,8 @@
 		error: string | null;
 		/** Where to land after a successful apply. */
 		versionsHref: string;
+		/** Hands the page its header's actions: Validate, Apply version and the command line. */
+		onactions?: (actions: Snippet | undefined) => void;
 		onreload: () => Promise<void>;
 	}
 
@@ -60,8 +68,15 @@
 		headVersion,
 		error,
 		versionsHref,
-		onreload
+		onreload,
+		onactions
 	}: Props = $props();
+	const uid = $props.id();
+	const formId = `${uid}-form`;
+	$effect(() => {
+		onactions?.(error || reloading ? undefined : headerActions);
+		return () => onactions?.(undefined);
+	});
 
 	// Seeded from the first read that SUCCEEDS for a given version, whenever
 	// that is — and re-seeded when the SELECTED version changes.
@@ -91,6 +106,8 @@
 	);
 
 	let applying = $state(false);
+	// The version this draft would store, as its own top-level line says: only ever a label.
+	const draftVersion = $derived(/^version:[ \t]*["']?([^\s"'#]+)/m.exec(yaml)?.[1] ?? '');
 	let validating = $state(false);
 	let reloading = $state(false);
 	let applyError = $state('');
@@ -140,7 +157,7 @@
 	const session = new YamlSession(async (text, ns, signal) => {
 		const res = await orkflowClient(fetch).validateOrkflow({ yaml: text, namespace: ns }, { signal });
 		return res.issues;
-	}, 'Apply also refuses a version already stored with other content.');
+	});
 
 	async function validate(): Promise<boolean> {
 		applyError = '';
@@ -151,6 +168,8 @@
 		try {
 			const issues = await session.validateNow(validatedYaml, validatedNamespace);
 			if (issues === null || yaml !== validatedYaml || namespace !== validatedNamespace) return false;
+			// The person asked: the answer is the list, not only its first line.
+			if (issues.length > 0) problemsOpen = true;
 			return !issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
 		} catch (err) {
 			applyError = errorMessage(err);
@@ -292,7 +311,56 @@
 		conflictDiff = null;
 		conflictDiffError = '';
 	}
+
+	// ---- Layout C: the problems chip, the docs rail, the More disclosure ----
+	const allFindings = $derived([...session.engineFindings, ...session.localFindings]);
+	const errorCount = $derived(allFindings.filter((f) => f.severity === 'error').length);
+	const warningCount = $derived(allFindings.filter((f) => f.severity === 'warning').length);
+	const problemCount = $derived(errorCount + warningCount);
+	// Apply is held only by the engine's own verdict on this exact text, never
+	// by what the editor finds on its own.
+	const engineCurrent = $derived(session.engine.kind === 'answered' && session.engine.text === yaml);
+	const engineErrors = $derived(engineCurrent ? session.engineFindings.filter((f) => f.severity === 'error').length : 0);
+	const applyHeld = $derived(engineErrors > 0);
+	// The list stays shut, with the first problem in the strip, until the chip or a Validate opens it.
+	let problemsOpen = $state(false);
+	let moreOpen = $state(false);
+	let railOpen = $state(true);
+	onMount(() => {
+		railOpen = matchMedia('(min-width: 1280px)').matches;
+	});
+	const atCaret = $derived(session.caretTask);
 </script>
+
+{#snippet headerActions()}
+				<button type="button" data-testid="editor-validate" aria-disabled={validating || applying ? 'true' : undefined} onclick={() => { if (!validating && !applying) void validate(); }} class="btn">{validating ? 'Validating…' : 'Validate'}</button>
+				<button
+					type="submit"
+					form={formId}
+					data-tip="Applying stores a new version: change version: first"
+					data-testid="editor-apply"
+					aria-disabled={applyHeld || applying || validating ? 'true' : undefined}
+					aria-describedby={applyHeld ? 'editor-apply-why' : undefined}
+					onclick={(e) => {
+						if (applyHeld || applying || validating) e.preventDefault();
+					}}
+					class="btn btn-primary"
+				>
+					<Icon name="apply" />{applying ? 'Applying…' : `Apply version ${draftVersion}`.trim()}
+				</button>
+				<CliPopover
+					testid="editor-cli"
+					title="Command line: this Orkflow"
+					commands={[
+						{ label: 'Check a file without storing it', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} orkflow validate ${name}.ork.yaml` },
+						{ label: 'Apply it as a new version', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} apply ${name}.ork.yaml` },
+						{ label: 'Edit it in your own editor', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} orkflow edit ${name}` }
+					]}
+				/>
+			{#if applyHeld}
+				<p id="editor-apply-why" class="apply-why" data-testid="editor-apply-why">Fix {engineErrors} {engineErrors === 1 ? 'problem' : 'problems'} to apply</p>
+			{/if}
+{/snippet}
 
 {#if error}
 	<ErrorPanel
@@ -309,54 +377,97 @@
 	<p data-testid="editor-loading" class="text-sm text-ink-muted">Reloading the stored document…</p>
 {:else}
 	<form
-		class="space-y-4"
+		id={formId}
+		class="grid gap-4"
 		data-testid="editor-form"
 		onsubmit={(e) => {
 			e.preventDefault();
 			void apply();
 		}}
 	>
-		<div class="flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm text-ink-secondary">
-			<span>
-				Editing <span class="font-medium text-ink">{name}</span> in namespace
-				<span class="font-medium text-ink">{namespaceLabel(namespace)}</span>, derived from
-				version
-				<span class="figure font-semibold text-blue" data-testid="editor-base-version">{base}</span>.
-			</span>
-			<span class="text-xs text-ink-muted">
-				The newest applied version is
-				<span class="font-medium text-ink-secondary" data-testid="editor-head-version"
-					>{expectedHead}</span
-				>{#if base === expectedHead}, which is what this edit is derived from.{:else}<span
-						data-testid="editor-fork-notice"
-					>&nbsp;— applying forks forward from {base} and becomes the new head. The version that
-						runs is unchanged until somebody promotes.</span
-					>{/if}
-			</span>
-			<span class="text-xs text-ink-muted">
-				Applying stores a NEW version — change <code>version:</code> before you apply. Re-applying
-				the same version with different content is refused.
-			</span>
-		</div>
-
-		<div>
-			<span id="editor-yaml-label" class="field-label">Orkflow YAML</span>
-			<YamlField
-				bind:value={yaml}
-				kind="Orkflow"
-				{namespace}
-				{session}
-				testid="editor-yaml"
-				label="Orkflow YAML"
-				labelledby="editor-yaml-label"
-				rows={24}
-				oninput={() => (noop = '')}
-			/>
-		</div>
-		<div class="flex flex-wrap gap-3 text-sm">
-			<label class="link cursor-pointer font-semibold">Import YAML<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
-			<button type="button" data-testid="editor-export" onclick={exportYaml} class="link font-semibold">Export YAML</button>
-			{#if dirty}<span data-testid="editor-unsaved" class="caps self-center text-ink-secondary">Unsaved changes</span>{/if}
+		<div class="ed-grid" class:rail-closed={!railOpen}>
+			<section class="card edcard" aria-labelledby="editor-yaml-label">
+				<div class="card-head">
+					<h2 id="editor-yaml-label">Edit</h2>
+					<span class="card-sub">a new version from <span data-testid="editor-base-version">{base}</span><span class={base === expectedHead ? 'sr' : ''}>; the newest is <span class="figure" data-testid="editor-head-version">{expectedHead}</span></span></span>
+					<div class="card-end">
+						{#if problemCount > 0}
+							<button
+								type="button"
+								class="pchip"
+								aria-expanded={problemsOpen}
+								aria-controls="editor-problems"
+								data-testid="editor-problems-chip"
+								onclick={() => (problemsOpen = !problemsOpen)}
+								><span class="sr">Problems:{' '}</span>{#if errorCount}<span class="mk-fail" aria-hidden="true"></span><b>{errorCount}</b>{' '}{errorCount === 1 ? 'error' : 'errors'}{/if}{#if errorCount && warningCount}<span class="sr">,{' '}</span><span class="pdot" aria-hidden="true">·</span>{/if}{#if warningCount}<span class="mk-warn" aria-hidden="true"></span><b>{warningCount}</b>{' '}{warningCount === 1 ? 'warning' : 'warnings'}{/if}</button
+							>
+						{/if}
+						{#if dirty}<span data-testid="editor-unsaved" class="text-sm font-semibold text-ink-3">Unsaved changes</span>{/if}
+						<span class="ie">
+							<label class="btn btn-sm btn-quiet cursor-pointer">Import<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
+							<button type="button" data-testid="editor-export" onclick={exportYaml} class="btn btn-sm btn-quiet">Export</button>
+						</span>
+						<!-- A plain disclosure: Escape and focus leaving it close it. -->
+						<!-- svelte-ignore a11y_no_static_element_interactions -->
+						<span
+							class="more-wrap"
+							onkeydown={(e) => {
+								if (e.key === 'Escape' && moreOpen) {
+									e.stopPropagation();
+									moreOpen = false;
+									(e.currentTarget.querySelector('[data-testid="editor-more"]') as HTMLElement | null)?.focus();
+								}
+							}}
+						>
+							<button
+								type="button"
+								class="btn btn-sm btn-icon"
+								aria-label="More actions"
+								aria-expanded={moreOpen}
+								aria-controls="editor-more"
+								data-testid="editor-more"
+								onclick={() => (moreOpen = !moreOpen)}
+								onfocusout={(e) => {
+									const next = e.relatedTarget as Node | null;
+									if (!next || !(e.currentTarget.parentElement?.contains(next))) moreOpen = false;
+								}}><Icon name="more" /></button
+							>
+							{#if moreOpen}
+								<span id="editor-more" class="more-pop pop" data-testid="editor-more-menu">
+									<label class="more-item cursor-pointer">Import<input type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={(e) => { moreOpen = false; importYaml(e); }} /></label>
+									<button type="button" class="more-item" onclick={() => { moreOpen = false; exportYaml(); }}>Export</button>
+								</span>
+							{/if}
+						</span>
+					</div>
+				</div>
+				{#if base !== expectedHead}
+					<p class="ed-fork" data-testid="editor-fork-notice">Applying forks forward from {base} and becomes the new head; the version that runs is unchanged until somebody promotes.</p>
+				{/if}
+				<div class="px-0">
+					<YamlField
+						bind:value={yaml}
+						kind="Orkflow"
+						{namespace}
+						{session}
+						testid="editor-yaml"
+						label="Orkflow YAML"
+						labelledby="editor-yaml-label"
+						rows={24}
+						oninput={() => (noop = '')}
+						strip
+					>
+						{#snippet between()}
+							{#if problemsOpen && problemCount > 0}
+								<section id="editor-problems" class="plist scroll-panel" aria-label="Problems" data-testid="editor-problems">
+									<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" level={3} />
+								</section>
+							{/if}
+						{/snippet}
+					</YamlField>
+				</div>
+			</section>
+			<EditorDocsRail task={atCaret} open={railOpen} ontoggle={() => (railOpen = !railOpen)} />
 		</div>
 
 		{#if applyError}
@@ -377,10 +488,12 @@
 				{warning}
 			</div>
 		{/each}
-		<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" />
-		{#if applied}
-			<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
-		{/if}
+		<!-- A live region that is always there, so the apply's one confirmation is announced. -->
+		<div role="status">
+			{#if applied}
+				<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
+			{/if}
+		</div>
 
 		{#if conflict}
 			<div
@@ -462,14 +575,235 @@
 			</div>
 		{/if}
 
-		<button type="button" data-testid="editor-validate" disabled={validating || applying} onclick={() => void validate()} class="btn mr-3">{validating ? 'Validating…' : 'Validate'}</button>
-		<button
-			type="submit"
-			data-testid="editor-apply"
-			disabled={applying || validating}
-			class="btn btn-primary"
-		>
-			{applying ? 'Applying…' : `Apply as a new version of ${name}`}
-		</button>
 	</form>
 {/if}
+
+<style>
+	.ed-fork {
+		margin: 0;
+		padding: 8px 16px;
+		border-bottom: 1px solid var(--line);
+		font-size: 13.5px;
+		color: var(--ink-2);
+	}
+	/* The strip says it on a wide screen; a phone's strip is a screen below this. */
+	.apply-why {
+		display: none;
+		flex-basis: 100%;
+		margin: 0;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--fail);
+	}
+	.ed-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 320px;
+		gap: 16px;
+		align-items: start;
+	}
+	.edcard {
+		position: sticky;
+		top: calc(var(--spacing-bar) + 16px);
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+	.edcard :global(.cm-editor) {
+		height: max(420px, calc(100dvh - var(--spacing-bar) - 300px)) !important;
+		min-height: 0 !important;
+		max-height: none !important;
+		border: 0 !important;
+		border-radius: 0;
+	}
+	/* One strip under the code: what is known on the left, the keys on the right. */
+	.edcard :global(.yaml-foot) {
+		flex-wrap: nowrap;
+		align-items: center;
+		gap: 12px;
+		min-height: 40px;
+		margin: 0;
+		padding: 6px 16px;
+		border-top: 1px solid var(--line);
+		background: var(--surface);
+		font-size: 13px;
+	}
+	.edcard :global(.yaml-status) {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.edcard :global(.yaml-status[data-tone='problems']) {
+		flex: none;
+		font-weight: 600;
+	}
+	/* Why the engine could not answer is never cut. */
+	.edcard :global(.yaml-status[data-tone='unavailable']) {
+		white-space: normal;
+	}
+	.edcard :global(.yaml-keys) {
+		flex: none;
+	}
+	.pchip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 32px;
+		padding: 4px 10px;
+		border: 1px solid var(--line-2);
+		border-radius: 99px;
+		background: var(--surface);
+		font-size: 13px;
+		font-variant-numeric: tabular-nums;
+		color: var(--ink-2);
+		cursor: pointer;
+	}
+	.pchip b {
+		color: var(--ink);
+	}
+	.pchip .pdot {
+		margin: 0 2px;
+		color: var(--ink-3);
+	}
+	.pchip:hover {
+		background: var(--hover);
+	}
+	.pchip[aria-expanded='true'] {
+		border-color: var(--ink-3);
+		background: var(--surface-2);
+	}
+	.plist {
+		flex: none;
+		max-height: 196px;
+		overflow-y: auto;
+		scrollbar-gutter: stable;
+		padding: 0 16px;
+		border-top: 1px solid var(--line);
+		background: var(--surface);
+	}
+	.plist :global(.yp-group:first-child) {
+		border-top: 0;
+	}
+	.more-wrap {
+		position: relative;
+		display: none;
+	}
+	.more-pop {
+		right: 0;
+		top: calc(100% + 4px);
+		display: grid;
+		min-width: 140px;
+		padding: 4px;
+	}
+	.more-item {
+		display: block;
+		padding: 8px 10px;
+		border: 0;
+		border-radius: 4px;
+		background: transparent;
+		color: var(--ink);
+		font: inherit;
+		font-size: 14px;
+		text-align: left;
+		cursor: pointer;
+	}
+	.more-item:hover,
+	.more-item:focus-within,
+	.more-item:focus-visible {
+		background: var(--hover);
+	}
+	@media (max-width: 1359px) {
+		.ed-grid {
+			grid-template-columns: minmax(0, 1fr) 296px;
+		}
+		.edcard :global(.k-long) {
+			display: none;
+		}
+	}
+	@media (min-width: 1181px) and (max-width: 1279px) {
+		.ed-grid.rail-closed {
+			grid-template-columns: minmax(0, 1fr) 44px;
+		}
+		.ed-grid.rail-closed :global(.rail .rail-head > p) {
+			display: none;
+		}
+		.ed-grid.rail-closed :global(.rail .rail-head) {
+			padding: 8px 2px;
+		}
+	}
+	@media (min-width: 1280px) {
+		.ed-grid.rail-closed {
+			grid-template-columns: minmax(0, 1fr) 44px;
+		}
+		.ed-grid.rail-closed :global(.rail .rail-head > p) {
+			display: none;
+		}
+		.ed-grid.rail-closed :global(.rail .rail-head) {
+			padding: 8px 2px;
+		}
+	}
+	@media (max-width: 1180px) {
+		.ed-grid {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.edcard {
+			position: static;
+		}
+		.edcard :global(.cm-editor) {
+			height: clamp(380px, 58dvh, 680px) !important;
+		}
+		.ed-grid.rail-closed :global(.rail) {
+			position: sticky;
+			bottom: 0;
+			z-index: 10;
+		}
+		:global(html:has(.ed-grid.rail-closed)) {
+			scroll-padding-bottom: 80px;
+		}
+	}
+	@media (max-width: 640px) {
+		.apply-why {
+			display: block;
+		}
+		.ed-grid.rail-closed :global(.rail) {
+			position: static;
+		}
+		.card-end {
+			flex: 1 1 100%;
+			min-width: 0;
+			margin-left: 0;
+		}
+		.edcard :global(.cm-lineNumbers .cm-gutterElement) {
+			min-width: 36px;
+		}
+		.edcard :global(.cm-gutter-lint) {
+			width: 12px;
+		}
+		.edcard :global(.yaml-foot) {
+			flex-wrap: wrap;
+		}
+		.edcard :global(.yaml-status),
+		.edcard :global(.ptext) {
+			overflow: visible;
+			white-space: normal;
+		}
+		.edcard :global(.yaml-first) {
+			flex-wrap: wrap;
+		}
+		.edcard :global(.yaml-keys) {
+			margin-left: 0;
+			white-space: normal;
+		}
+		:global(html:has(.ed-grid.rail-closed)) {
+			scroll-padding-bottom: 0;
+		}
+	}
+	@media (max-width: 400px) {
+		.ie {
+			display: none;
+		}
+		.more-wrap {
+			display: inline-block;
+		}
+	}
+</style>

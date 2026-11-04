@@ -67,6 +67,10 @@ export class YamlSession {
 	namespace = $state('');
 	/** What the field's live region says: a settled check's sentence, or a key's explanation. */
 	announcement = $state('');
+	/** Where the caret is: the docs rail shows the task it is in. */
+	cursor = $state(0);
+	/** The task the caret is in, read by the editor (which already holds the YAML parser). */
+	caretTask = $state<import('./taskAt').TaskAtCursor | null>(null);
 	/** Moves the editor's selection to a finding; set by the editor. */
 	jump: ((from: number, to: number) => void) | null = null;
 

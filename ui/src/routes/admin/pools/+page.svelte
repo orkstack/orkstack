@@ -11,16 +11,17 @@
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ListFilter from '#lib/components/ListFilter.svelte';
-	import { listHref } from '#lib/browsing.ts';
-	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { listHref, runWindowFilters } from '#lib/browsing.ts';
+	import { filterFlags, type FieldFilter } from '#lib/listFilter.ts';
 	import { shellQuote } from '#lib/runDetail.ts';
 	import { ListPoolsRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
 	import PoolOrkers from '#lib/components/PoolOrkers.svelte';
-	import ScopeNote from '#lib/components/ScopeNote.svelte';
-	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import CliPopover from '#lib/components/CliPopover.svelte';
+	import TimeAgo from '#lib/components/TimeAgo.svelte';
+	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
+	import { formatBytes } from '#lib/resources.ts';
 	import type { Pool } from '#lib/gen/orkstack/v1/namespace_pb.ts';
 	import { namespaceLabel } from '#lib/namespace.ts';
-	import { fmtTimestamp } from '#lib/status.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -34,8 +35,11 @@
 	const command = $derived(['orkctl', '-n', shellQuote(namespaceLabel(data.namespace)), 'pool', 'list']);
 
 	let retrying = $state(false);
+	// The page's one Refresh reads each pool's Orkers again as well.
+	let refreshed = $state(0);
 	async function retry() {
 		retrying = true;
+		refreshed++;
 		try {
 			await invalidateAll();
 		} finally {
@@ -59,10 +63,61 @@
 	// Which pool cards have their Orker list open. Orkers are deployment
 	// infrastructure, so the list is a disclosure on the (namespace-scoped)
 	// pool card rather than a namespace-scoped list of its own.
+	// Every pool's Orkers are shown, with Cordon…; a reader may fold one away.
 	let expanded = $state<Record<string, boolean>>({});
+	const shown = (pool: string) => expanded[pool] ?? true;
 
 	// Nothing unavailable is ever drawn as zero: a pool the
 	// cluster could not answer for has NO number at all, only the reason.
+	/** What a pool's live Orkers reserved of what they declared. */
+	interface PoolLoad {
+		orkers: number;
+		cordoned: number;
+		tasks: number;
+		pins: number;
+		cpu: { reserved: number; capacity: number };
+		memory: { reserved: number; capacity: number };
+	}
+	function loadOf(pool: string, orkers: Orker[]): PoolLoad {
+		const mine = orkers.filter((o) => o.pool === pool && !o.unavailableReason);
+		const sum = (f: (o: Orker) => number) => mine.reduce((a, o) => a + f(o), 0);
+		return {
+			orkers: mine.length,
+			cordoned: mine.filter((o) => o.cordoned).length,
+			tasks: sum((o) => o.runningTasks),
+			pins: sum((o) => o.openPins),
+			cpu: { reserved: sum((o) => o.reserved?.cpu ?? 0), capacity: sum((o) => o.capacity?.cpu ?? 0) },
+			memory: { reserved: sum((o) => Number(o.reserved?.memoryBytes ?? 0n)), capacity: sum((o) => Number(o.capacity?.memoryBytes ?? 0n)) }
+		};
+	}
+	/** Ready, Full or Cordoned, in words; colour only beside the word. */
+	function stateOf(pool: Pool, load: PoolLoad | null): { word: string; tone: 'ok' | 'wait' | 'fail' | 'plain' } {
+		if (pool.unavailableReason) return { word: 'Unknown', tone: 'plain' };
+		if (pool.liveOrkerCount === 0) return { word: 'No Orkers', tone: 'fail' };
+		if (load && load.orkers > 0 && load.cordoned === load.orkers) return { word: 'Cordoned', tone: 'wait' };
+		if (load && isFull(load)) return { word: 'Full', tone: 'wait' };
+		if (load && load.cordoned > 0) return { word: `${load.cordoned} cordoned`, tone: 'wait' };
+		return { word: 'Ready', tone: 'ok' };
+	}
+	/** Every Orker has reserved all it declared, in a dimension their capacity bounds. */
+	function isFull(load: PoolLoad): boolean {
+		const at = (d: { reserved: number; capacity: number }) => d.capacity > 0 && d.reserved >= d.capacity;
+		return load.orkers > 0 && (at(load.cpu) || at(load.memory));
+	}
+	function fullPools(pools: Pool[], orkers: Orker[]): { name: string; dimension: string }[] {
+		return pools.flatMap((pool) => {
+			const load = loadOf(pool.name, orkers);
+			if (pool.unavailableReason || !isFull(load)) return [];
+			return [{ name: pool.name, dimension: load.cpu.capacity > 0 && load.cpu.reserved >= load.cpu.capacity ? 'cpu' : 'memory' }];
+		});
+	}
+	const cpuWords = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
+	const share = (r: number, c: number) => (c > 0 ? Math.min(1, r / c) : 0);
+	const cli = $derived([
+		{ label: 'The pools', command: [...command, ...filterFlags(data.applied)].join(' ') },
+		{ label: 'Every Orker, with its reservations', command: 'orkctl orker list' }
+	]);
+
 	function orkerLabel(pool: Pool): string {
 		if (pool.unavailableReason) return 'unknown';
 		if (pool.liveOrkerCount === 0) return '0';
@@ -72,14 +127,18 @@
 
 <svelte:head><title>Admin — Pools — OrkStack</title></svelte:head>
 
-<SheetHeader title="Pools" />
+<header class="mb-4 flex flex-wrap items-start gap-3">
+	<div class="ph-main min-w-0">
+		<h1 class="page-h1">Pools</h1>
+		<p class="mt-1 text-dense text-ink-2" data-testid="pools-scope-caption">
+			Where a task of namespace <b class="font-semibold text-ink">{namespaceLabel(data.namespace)}</b> can run, and the Orkers serving each pool now
+		</p>
+	</div>
+	<button type="button" class="btn" data-testid="pools-refresh" disabled={busy} onclick={() => void retry()}>Refresh</button>
+	<CliPopover testid="pools-cli" title="Command line: pools" commands={cli} />
+</header>
 
-<ScopeNote testid="pools-scope-caption">
-	Pools namespace {namespaceLabel(data.namespace)} may dispatch onto — this view honours the namespace
-	selector above.
-</ScopeNote>
-
-<ListFilter request={ListPoolsRequestSchema} applied={data.applied} testid="pools" {command} onapply={applyFilters} {clearHref} />
+<div class="mb-3"><ListFilter request={ListPoolsRequestSchema} applied={data.applied} testid="pools" {command} onapply={applyFilters} {clearHref} cli={false} /></div>
 
 {#if data.poolsError}
 	<ErrorPanel
@@ -99,74 +158,154 @@
 		No pools are in scope for namespace {namespaceLabel(data.namespace)}.
 	</p>
 {:else}
-	<!-- A register of pools, one ruled row each. A pool no Orker serves sits
-		on the red tint; one the cluster could not answer for says so in the
-		outlined warning mark, and has no number at all. -->
-	<div class="hidden grid-cols-[minmax(10rem,1fr)_minmax(12rem,2fr)_minmax(10rem,1fr)] gap-4 border-t-2 border-b-(length:--rule-region) border-ink bg-paper-sunken px-3 py-2 md:grid" aria-hidden="true">
-		<span class="caps text-ink-muted">Pool</span>
-		<span class="caps text-ink-muted">Live Orkers</span>
-		<span class="caps text-ink-muted">Last seen</span>
-	</div>
-	<ul class="border-t-2 border-ink md:border-t-0" data-testid="pool-list">
+	<!-- A card per pool: its state in words, its live Orkers, and how much of
+		what they declared is reserved now. A pool no Orker serves says so; one
+		the cluster could not answer for has no number at all. -->
+	{#await data.orkers then inv}
+		{@const full = inv.error ? [] : fullPools(data.pools, inv.orkers)}
+		{#if full.length}
+			<!-- The capacity note: what a full pool means for what is sent to it. -->
+			<div class="capline mb-4" role="status" data-testid="pools-capacity-note">
+				<span class="mark-wait" aria-hidden="true"></span>
+				<b class="font-semibold text-wait">{full.length === 1 ? `Pool ${full[0].name} is full` : `${full.length} pools are full`}</b>
+				<span class="min-w-0 text-ink-2">{full.length === 1 ? `every Orker has reserved its whole ${full[0].dimension}.` : `${full.map((p) => p.name).join(', ')}: every Orker has reserved all it declared.`} A task sent there starts when an Orker frees room or another Orker joins.</span>
+				<a class="ml-auto font-semibold whitespace-nowrap" data-testid="pools-capacity-runs" href={listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters('', 'RUNNING', '', '') })}>View running runs</a>
+			</div>
+		{/if}
+	{/await}
+	<ul class="poolgrid" data-testid="pool-list">
 		{#each data.pools as pool (pool.name)}
-			<li
-				class="border-b border-rule px-3 py-3 {pool.liveOrkerCount === 0 && !pool.unavailableReason ? 'bg-red-tint' : ''}"
-				data-testid="pool-card-{pool.name}"
-			>
-				<div class="grid gap-x-4 gap-y-1 md:grid-cols-[minmax(10rem,1fr)_minmax(12rem,2fr)_minmax(10rem,1fr)] md:items-baseline">
-					<h2 class="flex items-center gap-2 font-mono text-sm font-semibold text-ink">
-						{pool.name}
-						{#if pool.isDefault}
-							<span class="stamp border-blue font-sans text-blue" data-testid="pool-default-{pool.name}">default</span>
-						{/if}
-					</h2>
-					{#if pool.unavailableReason}
-						<p class="severity-warning text-xs" data-testid="pool-unavailable-{pool.name}">
-							Could not be reached: {pool.unavailableReason}. Orker count is <strong>unknown</strong
-							>, not zero — ask again rather than scaling.
-						</p>
-					{:else}
-						<p class="text-sm text-ink-secondary">
-							<span
-								class="figure font-semibold {pool.liveOrkerCount === 0 ? 'text-red-strong' : 'text-ink'}"
-								data-testid="pool-orker-count-{pool.name}"
-							>
-								{orkerLabel(pool)}
-							</span>
-							{pool.liveOrkerCount === 1 ? 'live Orker' : 'live Orkers'}
-							{#if pool.liveOrkerCount === 0}
-								<span class="ml-1 text-xs text-red-strong" data-testid="pool-no-orkers-{pool.name}"
-									>— no live Orkers; a task sent here waits</span
-								>
-							{/if}
-						</p>
-					{/if}
-					<p class="text-xs text-ink-muted">
-						<span class="md:sr-only">Last seen: </span><span class="figure" data-testid="pool-last-seen-{pool.name}"
-							>{pool.lastSeen ? fmtTimestamp(pool.lastSeen) : 'never (or gone quiet)'}</span
-						>
-					</p>
-				</div>
-
-				{#if !pool.unavailableReason}
-					<button
-						type="button"
-						class="btn-disclosure mt-2 inline-flex items-center gap-1 text-xs font-semibold text-blue hover:underline"
-						aria-expanded={expanded[pool.name] ?? false}
-						data-testid="pool-orkers-toggle-{pool.name}"
-						onclick={() => (expanded[pool.name] = !expanded[pool.name])}
-					>
-						{expanded[pool.name] ? 'Hide Orkers' : 'Show Orkers'}
-					</button>
-					{#if expanded[pool.name]}
-						<PoolOrkers pool={pool.name} namespace={data.namespace} />
-					{/if}
-				{/if}
+			<li class="card flex flex-col" id="pool-{pool.name}" data-testid="pool-card-{pool.name}">
+				{#await data.orkers}
+					{@render card(pool, null, '')}
+				{:then inv}
+					{@render card(pool, inv.error ? null : loadOf(pool.name, inv.orkers), inv.error ?? '')}
+				{/await}
 			</li>
 		{/each}
 	</ul>
-	<p class="mt-4 text-xs text-ink-muted" data-testid="pools-default-note">
-		A task naming no pool runs on <span class="font-mono font-semibold text-ink-secondary">{data.defaultPool}</span
-		>.
+	<!-- What was reserved reads after the pools have drawn, with its own client. -->
+	{#await import('#lib/components/PoolsUsage.svelte') then { default: PoolsUsage }}
+		<PoolsUsage namespace={data.namespace} />
+	{/await}
+	{#each data.pools as pool (pool.name)}
+		{#if shown(pool.name) && !pool.unavailableReason}
+			<section class="card mt-4" aria-labelledby="orkers-{pool.name}-h" id="orkers-{pool.name}">
+				<div class="card-head"><h2 id="orkers-{pool.name}-h">Orkers in {pool.name}</h2><span class="card-sub">{orkerLabel(pool)} live · reserved, not measured use</span></div>
+				<PoolOrkers pool={pool.name} namespace={data.namespace} refresh={refreshed} />
+			</section>
+		{/if}
+	{/each}
+	<p class="mt-4 text-sm text-ink-3" data-testid="pools-default-note">
+		A task naming no pool runs on <span class="font-mono font-semibold text-ink-2">{data.defaultPool}</span>.
 	</p>
 {/if}
+
+{#snippet meter(label: string, reserved: number, capacity: number, words: string, full: boolean)}
+	<div class="grid gap-1">
+		<div class="flex justify-between text-dense"><span class="text-ink-2">{label}</span><span class="num font-semibold text-ink">{words}</span></div>
+		<svg class="meter" height="8" aria-hidden="true"
+			><rect width="100%" height="8" rx="4" class="mtrack" /><rect width="{share(reserved, capacity) * 100}%" height="8" rx="4" class={full ? 'mfull' : 'mval'} /></svg
+		>
+	</div>
+{/snippet}
+
+{#snippet card(pool: Pool, load: PoolLoad | null, invError: string)}
+	{@const st = stateOf(pool, load)}
+	<div class="phead">
+		<h2>{pool.name}</h2>
+		{#if pool.isDefault}<span class="pill-plain" data-testid="pool-default-{pool.name}">Default</span>{/if}
+		<span class="ml-auto stamp {st.tone === 'ok' ? 'bg-ok-tint text-ok mark-square' : st.tone === 'wait' ? 'pill-wait' : st.tone === 'fail' ? 'bg-fail-tint text-fail mark-tri' : 'pill-plain'}"
+			>{#if st.tone === 'wait'}<span class="mark-wait" aria-hidden="true"></span>{/if}{st.word}</span
+		>
+	</div>
+	<div class="grid flex-1 gap-3 px-4 pb-2">
+		{#if pool.unavailableReason}
+			<p class="severity-warning text-sm" data-testid="pool-unavailable-{pool.name}">
+				Could not be reached: {pool.unavailableReason}. Orker count is <strong>unknown</strong>, not zero — ask again rather than scaling.
+			</p>
+		{:else}
+			{#if pool.liveOrkerCount === 0}
+				<p class="text-sm text-fail" data-testid="pool-no-orkers-{pool.name}">No live Orkers; a task sent here waits.</p>
+				<p class="text-sm text-ink-3">Last seen <span data-testid="pool-last-seen-{pool.name}">{#if pool.lastSeen}<TimeAgo at={pool.lastSeen} />{:else}never (or gone quiet){/if}</span></p>
+			{/if}
+			{#if load && load.cpu.capacity > 0}
+				{@render meter('cpu reserved', load.cpu.reserved, load.cpu.capacity, `${cpuWords(load.cpu.reserved)} of ${cpuWords(load.cpu.capacity)}`, load.cpu.reserved >= load.cpu.capacity)}
+			{/if}
+			{#if load && load.memory.capacity > 0}
+				{@render meter('memory reserved', load.memory.reserved, load.memory.capacity, `${formatBytes(load.memory.reserved)} of ${formatBytes(load.memory.capacity)}`, load.memory.reserved >= load.memory.capacity)}
+			{/if}
+			{#if load && load.cpu.capacity === 0 && load.orkers > 0}
+				<p class="text-sm text-ink-3">These Orkers declare no capacity, so nothing caps what they take.</p>
+			{/if}
+			{#if invError}<p class="text-sm text-ink-3">Reservations could not be read: {invError}</p>{/if}
+		{/if}
+	</div>
+	<div class="mt-auto flex items-center gap-3 px-4 pt-1 pb-3.5 text-dense text-ink-2">
+		{#if !pool.unavailableReason}
+			<span class="min-w-0"><span class="num" data-testid="pool-orker-count-{pool.name}">{orkerLabel(pool)}</span> {pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}{#if load}{' · '}{load.tasks} running {load.tasks === 1 ? 'task' : 'tasks'}{' · '}{load.pins} open {load.pins === 1 ? 'pin' : 'pins'}{/if}{#if load && load.cordoned > 0}{' · '}{load.cordoned} cordoned{/if}</span>
+			<button
+				type="button"
+				class="btn btn-sm ml-auto shrink-0"
+				aria-expanded={shown(pool.name)}
+				aria-label="Orkers of {pool.name}"
+				data-testid="pool-orkers-toggle-{pool.name}"
+				onclick={() => (expanded[pool.name] = !shown(pool.name))}>Orkers</button
+			>
+		{/if}
+	</div>
+{/snippet}
+
+<style>
+	/* The title takes the row; a phone's actions go under it, not beside it. */
+	.ph-main {
+		flex: 1 1 420px;
+	}
+	.phead {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 14px 16px 10px;
+	}
+	.phead h2 {
+		margin: 0;
+		font-size: 16px;
+		font-weight: 650;
+	}
+	.poolgrid {
+		display: grid;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 16px;
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.meter {
+		display: block;
+		width: 100%;
+	}
+	.mtrack {
+		fill: var(--surface-3);
+	}
+	.mval {
+		fill: var(--meter);
+	}
+	.mfull {
+		fill: var(--wait-mark);
+	}
+	@media (max-width: 1180px) {
+		.poolgrid {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+	}
+	@media (max-width: 900px) {
+		.poolgrid {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+	@media (forced-colors: active) {
+		.meter {
+			forced-color-adjust: none;
+		}
+	}
+</style>

@@ -8,10 +8,12 @@
 //             ended: the dashboard, Runs, Orkflows and Apply;
 //   Operate — run the deployment: every page under /admin.
 
+import type { IconName } from './icons';
+
 export type Mode = 'build' | 'operate';
 
 export interface NavPage {
-	/** Stable id: the Operate strip's `admin-tab-{id}` and the palette's command id. */
+	/** Stable id: the sidebar's `nav-{id}` / `admin-tab-{id}` and the palette's command id. */
 	id: string;
 	href: string;
 	/** What the link says. */
@@ -19,30 +21,32 @@ export interface NavPage {
 	/** What the palette's "Go to …" command and the title block call it. */
 	title: string;
 	mode: Mode;
+	/** The sidebar's glyph (#lib/icons.ts). */
+	icon: IconName;
 }
 
 /** Build: the dashboard and the three daily surfaces. */
 export const BUILD_PAGES: readonly NavPage[] = [
-	{ id: 'overview', href: '/', label: 'Overview', title: 'Overview', mode: 'build' },
-	{ id: 'runs', href: '/runs', label: 'Runs', title: 'Runs', mode: 'build' },
-	{ id: 'orkflows', href: '/orkflows', label: 'Orkflows', title: 'Orkflows', mode: 'build' },
-	{ id: 'apply', href: '/apply', label: 'Apply', title: 'Apply an Orkflow', mode: 'build' }
+	{ id: 'overview', href: '/', label: 'Overview', title: 'Overview', mode: 'build', icon: 'home' },
+	{ id: 'runs', href: '/runs', label: 'Runs', title: 'Runs', mode: 'build', icon: 'runs' },
+	{ id: 'orkflows', href: '/orkflows', label: 'Orkflows', title: 'Orkflows', mode: 'build', icon: 'flow' },
+	{ id: 'apply', href: '/apply', label: 'Apply', title: 'Apply an Orkflow', mode: 'build', icon: 'apply' }
 ];
 
-/** Operate: the deployment's own pages, in the order the strip shows them. */
+/** Operate: the deployment's own pages, in the order the sidebar shows them. */
 export const OPERATE_PAGES: readonly NavPage[] = [
-	{ id: 'overview', href: '/admin', label: 'Overview', title: 'Operate overview', mode: 'operate' },
-	{ id: 'namespaces', href: '/admin/namespaces', label: 'Namespaces', title: 'Namespaces', mode: 'operate' },
-	{ id: 'pools', href: '/admin/pools', label: 'Pools', title: 'Pools', mode: 'operate' },
-	{ id: 'releases', href: '/admin/releases', label: 'Releases', title: 'Releases', mode: 'operate' },
-	{ id: 'activities', href: '/admin/activities', label: 'Activities', title: 'Activities', mode: 'operate' },
-	{ id: 'webhooks', href: '/admin/webhooks', label: 'Webhooks', title: 'Webhooks', mode: 'operate' },
-	{ id: 'automation', href: '/admin/automation', label: 'Automation', title: 'Automation', mode: 'operate' },
-	{ id: 'retention', href: '/admin/retention', label: 'Retention', title: 'Retention', mode: 'operate' },
-	{ id: 'usage', href: '/admin/usage', label: 'Usage', title: 'Usage', mode: 'operate' },
-	{ id: 'cache', href: '/admin/cache', label: 'Cache', title: 'Cache', mode: 'operate' },
-	{ id: 'image-policy', href: '/admin/image-policy', label: 'Image policy', title: 'Image policy', mode: 'operate' },
-	{ id: 'audit', href: '/admin/audit', label: 'Audit', title: 'Audit', mode: 'operate' }
+	{ id: 'overview', href: '/admin', label: 'Overview', title: 'Operate overview', mode: 'operate', icon: 'home' },
+	{ id: 'pools', href: '/admin/pools', label: 'Pools', title: 'Pools', mode: 'operate', icon: 'pool' },
+	{ id: 'activities', href: '/admin/activities', label: 'Activities', title: 'Activities', mode: 'operate', icon: 'act' },
+	{ id: 'namespaces', href: '/admin/namespaces', label: 'Namespaces', title: 'Namespaces', mode: 'operate', icon: 'ns' },
+	{ id: 'releases', href: '/admin/releases', label: 'Releases', title: 'Releases', mode: 'operate', icon: 'rel' },
+	{ id: 'webhooks', href: '/admin/webhooks', label: 'Webhooks', title: 'Webhooks', mode: 'operate', icon: 'hook' },
+	{ id: 'automation', href: '/admin/automation', label: 'Automation', title: 'Automation', mode: 'operate', icon: 'doc' },
+	{ id: 'retention', href: '/admin/retention', label: 'Retention', title: 'Retention', mode: 'operate', icon: 'clock' },
+	{ id: 'usage', href: '/admin/usage', label: 'Usage', title: 'Usage', mode: 'operate', icon: 'usage' },
+	{ id: 'cache', href: '/admin/cache', label: 'Cache', title: 'Cache', mode: 'operate', icon: 'cache' },
+	{ id: 'image-policy', href: '/admin/image-policy', label: 'Image policy', title: 'Image policy', mode: 'operate', icon: 'shield' },
+	{ id: 'audit', href: '/admin/audit', label: 'Audit', title: 'Audit', mode: 'operate', icon: 'audit' }
 ];
 
 /** The mode a path belongs to: everything under /admin is Operate. */

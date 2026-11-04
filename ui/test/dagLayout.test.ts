@@ -4,6 +4,7 @@ import { JoinPolicy } from '../src/lib/gen/orkstack/v1/activity_pb';
 import { TaskSchema, type Task } from '../src/lib/gen/orkstack/v1/orkflow_pb';
 import { DAG_NODE_H, DAG_NODE_W, chooseDagDirection, dagDirectionParam, layoutDag, type DagDirection, type DagLayout } from '../src/lib/dag';
 import { buildModel } from '../src/lib/taskMap';
+import { isFailureHandler } from '../src/lib/join';
 import { cpuMs } from './cpuTime';
 import { DAG_STRESS, PLANAR, type StressTask } from './dagStress';
 
@@ -92,6 +93,14 @@ for (const [name, spec] of Object.entries(DAG_STRESS)) {
 			const needs = tasks.flatMap((t) => [...new Set(t.needs)].filter((n) => ids.includes(n)).map((n) => `${n}>${t.id}`));
 			expect(layout.edges.map((e) => `${e.fromId}>${e.toId}`).sort()).toEqual(needs.sort());
 
+			const handlers = new Set(tasks.filter((t) => isFailureHandler(t.join)).map((t) => t.id));
+			const laneDrawn =
+				direction === 'LR' &&
+				handlers.size > 0 &&
+				handlers.size < tasks.length &&
+				!tasks.some((t) => !handlers.has(t.id) && t.needs.some((n) => handlers.has(n)));
+			const inLane = (t: { id: string }) => laneDrawn && handlers.has(t.id);
+
 			// No two boxes touch.
 			const at = new Map(layout.nodes.map((n) => [n.task.id, n]));
 			const boxes = layout.nodes;
@@ -115,8 +124,11 @@ for (const [name, spec] of Object.entries(DAG_STRESS)) {
 				const to = at.get(e.toId)!;
 				const label = `${e.fromId}→${e.toId}`;
 				// From the source's port to the target's: right to left side
-				// (LR), bottom to top (TB).
-				if (direction === 'LR') {
+				// (LR), bottom to top (TB). A failure handler in its lane is
+				// reached from above or beside it, wherever it stands.
+				if (inLane(to.task)) {
+					expect(to.y > Math.min(from.y, to.y) || to.x > from.x, `${label} reaches the lane`).toBe(true);
+				} else if (direction === 'LR') {
 					expect([e.x1, e.y1], label).toEqual([from.x + DAG_NODE_W, from.y + DAG_NODE_H / 2]);
 					expect([e.x2, e.y2], label).toEqual([to.x, to.y + DAG_NODE_H / 2]);
 					expect(to.x > from.x, `${label} goes forward`).toBe(true);

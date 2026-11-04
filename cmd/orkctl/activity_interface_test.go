@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"net/http"
 	"os"
@@ -160,6 +161,51 @@ func TestActivityCommands_PrintNothingATerminalWouldObey(t *testing.T) {
 	// header says it does.
 	if header, row := lines[0], lines[1]; strings.Index(header, "REFERENCE") != strings.Index(row, "ghcr.io/acme/hostile:1") {
 		t.Fatalf("activity list's REFERENCE column is out of line:\n%s", hostileList)
+	}
+}
+
+// TestActivityCommands_JSONPrintsNothingATerminalWouldObey: --json writes
+// each character a terminal could obey — a control, DEL, a format
+// character, a line or paragraph separator — as a JSON escape, so the output
+// is safe to print, is still JSON, and decodes to exactly the media type and
+// platform the registry sent.
+func TestActivityCommands_JSONPrintsNothingATerminalWouldObey(t *testing.T) {
+	text := hostileText + " \x7f \u2028 \u2029"
+	described, _, info := hostileActivity(t, text)
+	inspected := interfaceFixture(t, stubResolver{"ghcr.io/acme/hostile:1": described}).
+		run("--json", "activity", "inspect", "ghcr.io/acme/hostile:1").requireExit(t, exitOK).stdout
+	listed := newFixture(t, info).run("--json", "activity", "list").requireExit(t, exitOK).stdout
+	for _, tc := range []struct {
+		name, out string
+		// activity finds the one activity in the decoded output.
+		activity func(decoded map[string]any) map[string]any
+	}{
+		{"activity inspect --json", inspected, func(d map[string]any) map[string]any {
+			activity, _ := d["activity"].(map[string]any)
+			return activity
+		}},
+		{"activity list --json", listed, func(d map[string]any) map[string]any {
+			activities, _ := d["activities"].([]any)
+			if len(activities) != 1 {
+				return nil
+			}
+			activity, _ := activities[0].(map[string]any)
+			return activity
+		}},
+	} {
+		requireTerminalSafeOutput(t, tc.name, tc.out)
+		if strings.ContainsAny(tc.out, "\u2028\u2029") {
+			t.Fatalf("%s holds a line or paragraph separator raw:\n%q", tc.name, tc.out)
+		}
+		var decoded map[string]any
+		if err := json.Unmarshal([]byte(tc.out), &decoded); err != nil {
+			t.Fatalf("%s is not JSON: %v\n%s", tc.name, err, tc.out)
+		}
+		activity := tc.activity(decoded)
+		platforms, _ := activity["platforms"].([]any)
+		if activity["mediaType"] != text || len(platforms) != 1 || platforms[0] != text {
+			t.Fatalf("%s decodes to media type %q and platforms %q, want %q in both", tc.name, activity["mediaType"], platforms, text)
+		}
 	}
 }
 

@@ -1,3 +1,4 @@
+import { selectTask } from './uiHelpers';
 import { expect, test, type Page } from './test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
@@ -316,11 +317,11 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	// The browser half, pointed at engine B throughout — B serves the UI, so
 	// the page's Connect calls and WebSockets reach B alone.
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
-	await expect(page.getByTestId('run-id')).toHaveText(run);
+	await expect(page.getByTestId('run-id')).toContainText(run);
 	await page.evaluate(() => {
 		(window as unknown as { __orkLiveMarker: string }).__orkLiveMarker = 'alive';
 	});
-	await page.getByTestId('task-log-toggle-talk').click();
+	await selectTask(page, 'talk');
 	const logPane = page.getByTestId('task-log-talk');
 	const logLines = logPane.getByTestId('task-log-line');
 	const appLines = logLines.filter({ hasText: /^story (?:stdout|stderr) line \d+$/ });
@@ -343,12 +344,12 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	// land before stdout's — the assertions below check EXISTENCE, never
 	// relative order.
 	const firstStdout = appLines.filter({ hasText: /^story stdout line 1$/ }).first();
-	const firstStderr = stderrLines.filter({ hasText: /^story stderr line 1$/ }).first();
+	const firstStderr = stderrLines.filter({ hasText: /story stderr line 1$/ }).first();
 	await expect(firstStdout).toBeVisible({ timeout: 30_000 });
 	await expect(firstStderr).toBeVisible({ timeout: 30_000 });
 	await expect(firstStderr).not.toContainText('[stderr]');
 	const runStatusWhileLive = (await page.getByTestId('run-status').innerText()).trim();
-	expect(runStatusWhileLive).toBe('RUNNING');
+	expect(runStatusWhileLive).toBe('Running');
 	note(
 		`browser pane shows a decoded stdout application line ("story stdout line 1") ` +
 			`AND a decoded stderr application line ("story stderr line 1", wire marker ` +
@@ -364,7 +365,7 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	const countAfterFirstPair = await appLines.count();
 	await expect.poll(async () => appLines.count(), { timeout: 15_000 }).toBeGreaterThan(countAfterFirstPair);
 	const runStatusStillLive = (await page.getByTestId('run-status').innerText()).trim();
-	expect(runStatusStillLive).toBe('RUNNING');
+	expect(runStatusStillLive).toBe('Running');
 	const countAfterGrowth = await appLines.count();
 	note(
 		`application line count grew from ${countAfterFirstPair} to ${countAfterGrowth} while run ` +
@@ -383,13 +384,13 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	await shot(page, 'screenshot-event-inspector-open-live.png');
 	note('event inspector opened: backlog present, RUN_CREATED included');
 
-	await expect(page.getByTestId('task-talk-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('task-talk-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	note('task talk reached SUCCEEDED with the event inspector OPEN');
 
 	await page.getByTestId('events-toggle').click();
 	await expect(page).not.toHaveURL(/events=1/);
 	await expect(page.getByTestId('event-inspector')).toHaveCount(0);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 60_000 });
 	note('event inspector closed; run reached SUCCEEDED with it CLOSED');
 
 	const marker = await page.evaluate(

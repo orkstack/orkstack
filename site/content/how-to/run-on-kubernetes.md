@@ -113,4 +113,4 @@ CI runs the same check on a kind cluster, both shapes, on every change to what t
 - [DEPLOY.md, "The web UI"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-web-ui): the names the engine answers to, and `ORK_ALLOWED_HOSTS`
 - [SECURITY_MODEL.md, "The Orker's own access to the host"](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#the-orkers-own-access-to-the-host): how much each shape trusts its engine
 - [PROOFS.md, "5. The CI job graph"](https://github.com/orkstack/orkstack/blob/main/docs/PROOFS.md#5-the-ci-job-graph): where the kind check runs, beside the proof tiers
-- Next: [Deploy OrkStack](/docs/how-to/deploy/), [Choose where tasks run](/docs/how-to/pools-and-pins/)
+- Next: [Deploy OrkStack](/docs/deploy/architecture/), [Choose where tasks run](/docs/build/choose-where-tasks-run/)

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { filterFlags } from '#lib/listFilter.ts';
 	// The activity catalog (§4.2): what this deployment can run.
 	//
 	// An activity is an image, and which images exist is engine configuration
@@ -17,16 +18,19 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
-	import ScopeNote from '#lib/components/ScopeNote.svelte';
-	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import ActivityIcon from '#lib/components/ActivityIcon.svelte';
+	import Icon from '#lib/components/Icon.svelte';
+	import CliPopover from '#lib/components/CliPopover.svelte';
+	import Plate from '#lib/components/Plate.svelte';
+	import DocText from '#lib/components/DocText.svelte';
 	import ListFilter from '#lib/components/ListFilter.svelte';
 	import { listHref } from '#lib/browsing.ts';
 	import type { FieldFilter } from '#lib/listFilter.ts';
 	import { namespaceLabel } from '#lib/namespace.ts';
 	import { ListActivitiesRequestSchema } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
 	import ActivityInterface from '#lib/components/ActivityInterface.svelte';
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
-	import { inspectCommand, interfaceSummary, pinnedReference, shortDigest } from '#lib/activity.ts';
+	import { inspectCommand, interfaceSummary, pinnedReference } from '#lib/activity.ts';
+	import { digestHead } from '#lib/runDetail.ts';
 	import { errorMessage } from '#lib/client.ts';
 	import { activityClient } from '#lib/clients/activities.ts';
 	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
@@ -45,6 +49,8 @@
 
 	// Which catalog rows have their interface disclosed. Keyed by name, which
 	// the catalog guarantees unique.
+	// The icons this catalog declares, for the page's key: the rest draw the default.
+	const declaredKinds = $derived(data.activities.filter((activity) => activity.icon && !activity.iconError));
 	let disclosed = $state<Record<string, boolean>>({});
 
 	// Inspect a reference: InspectActivity resolves one reference on demand,
@@ -73,15 +79,6 @@
 	}
 
 	let retrying = $state(false);
-	let copiedLocalTool = $state('');
-	async function copyLocalTool(command: string, label: string, shownAt: string) {
-		if ((await copyText(command)) === 'copied') {
-			copiedLocalTool = label;
-			return;
-		}
-		selectByTestid(shownAt);
-		copiedLocalTool = MANUAL_COPY_MESSAGE;
-	}
 	async function retry() {
 		retrying = true;
 		try {
@@ -102,102 +99,30 @@
 
 <svelte:head><title>Admin — Activities — OrkStack</title></svelte:head>
 
-<SheetHeader title="Activities" />
+<header class="mb-4 flex flex-wrap items-start gap-3">
+	<div class="ph-main min-w-0">
+		<h1 class="page-h1">Activities</h1>
+		<p class="mt-1 text-dense text-ink-2" data-testid="activities-scope-caption">The images tasks name in <code>uses:</code>, resolved to a digest. Deployment-wide: the same whichever namespace is selected.</p>
+	</div>
+	<button type="button" class="btn" data-testid="activities-refresh" disabled={busy} onclick={() => void retry()}>Refresh</button>
+	<CliPopover
+		testid="activities-cli"
+		title="Command line: activities"
+		commands={[
+			{ label: 'The catalog', command: ['orkctl', 'activity', 'list', ...filterFlags(data.applied)].join(' ') },
+			{ label: 'Build an image, on your machine', command: 'orkctl activity build ./images/my-activity' },
+			{ label: 'Run the activity contract test', command: 'orkctl activity test my-image' },
+			{ label: 'Inspect a reference, with its interface', command: inspectCli }
+		]}
+	/>
+</header>
 
-<ScopeNote testid="activities-scope-caption">
-	Every activity this deployment can run, as configured on the engine — deployment-wide, not scoped
-	by the namespace selector above. An activity is an OCI image; a task names one with
-	<code>uses:</code>.
-</ScopeNote>
 
-<!--
-	ORKER STATUS. Presented the way the Pools page presents liveness: an
-	unanswered probe is its OWN state, never drawn as a zero or an absence.
-	DescribeOrker is dispatched onto the default pool's own channel (§6.5), so
-	"no answer" means no Orker is serving that pool right now — which is
-	fixed by starting one, not by asking again.
--->
-<section class="mb-10" data-testid="orker-section" aria-labelledby="orker-heading">
-	<h2 id="orker-heading" class="mb-2 text-md font-semibold text-ink">Orker</h2>
-	{#if data.orkerError}
-		<div
-			class="border border-red px-4 py-3 text-sm"
-			data-testid="orker-unavailable"
-		>
-			<p class="severity-warning font-semibold">No Orker answered the default pool.</p>
-			<p class="mt-1 break-words text-ink-secondary">{data.orkerError}</p>
-			<p class="mt-1 text-xs text-ink-secondary">
-				Nothing was measured. Start an Orker for this deployment's default pool — this is not a
-				report that zero Orkers are healthy.
-			</p>
-		</div>
-	{:else if !data.orker}
-		<p class="text-sm text-ink-muted" data-testid="orker-empty">
-			The probe returned no Orker description.
-		</p>
-	{:else}
-		{@const orker = data.orker}
-		<!-- The Orker's facts in the title block's anatomy. -->
-		<dl
-			class="grid grid-cols-2 border-t-(length:--rule-frame) border-b border-ink text-sm sm:grid-cols-4"
-			data-testid="orker-card"
-		>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Orker</dt>
-				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-id">{orker.orkerId || '—'}</dd>
-			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Pool</dt>
-				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-pool">{orker.pool || '—'}</dd>
-			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Runtime</dt>
-				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-runtime">{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}</dd>
-			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Build</dt>
-				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-build">{orker.buildId || 'unversioned'}</dd>
-			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Security profile</dt>
-				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
-			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Max concurrent</dt>
-				<dd class="figure mt-0.5 text-xs font-semibold break-words text-ink" data-testid="orker-max-concurrent">{String(orker.maxConcurrent)}</dd>
-			</div>
-			<div class="min-w-0 border-r border-b border-rule px-3 py-2">
-				<dt class="caps text-ink-muted">Rootless</dt>
-				<dd class="mt-0.5 font-semibold break-words text-ink" data-testid="orker-rootless">{orker.rootless ? 'yes' : 'no'}</dd>
-			</div>
-		</dl>
-	{/if}
-</section>
 
-<section class="region mb-10 pt-3" data-testid="activity-local-tools">
-	<h2 class="text-md font-semibold text-ink">Local activity tools</h2>
-	<p class="mt-1 max-w-prose text-sm text-ink-secondary">
-		Builds and contract tests run on your machine with its OCI runtime. They are intentionally not browser actions.
-	</p>
-	<p class="mt-2 max-w-prose text-xs text-ink-muted">Prerequisites: a local build context, Docker or another supported OCI runtime, and access to the image registry when pushing.</p>
-	<ul class="mt-3 border-t border-rule">
-		<li class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2">
-			<p class="w-56 text-sm font-semibold text-ink">Build an image</p>
-			<code data-testid="activity-build-command" class="min-w-0 flex-1 break-all font-mono text-xs text-ink-secondary">orkctl activity build ./images/my-activity</code>
-			<button type="button" onclick={() => void copyLocalTool('orkctl activity build ./images/my-activity', 'Build command copied', 'activity-build-command')} class="btn btn-sm">Copy build command</button>
-		</li>
-		<li class="flex flex-wrap items-center gap-x-4 gap-y-1 border-b border-rule py-2">
-			<p class="w-56 text-sm font-semibold text-ink">Run the activity contract test</p>
-			<code data-testid="activity-test-command" class="min-w-0 flex-1 break-all font-mono text-xs text-ink-secondary">orkctl activity test my-image</code>
-			<button type="button" onclick={() => void copyLocalTool('orkctl activity test my-image', 'Test command copied', 'activity-test-command')} class="btn btn-sm">Copy test command</button>
-		</li>
-	</ul>
-	{#if copiedLocalTool}<p data-testid="activity-local-tool-copied" class="confirm mt-2 text-xs text-ink" role="status">{copiedLocalTool}</p>{/if}
-</section>
 
-<h2 class="mb-2 text-md font-semibold text-ink">Catalog</h2>
+<h2 class="sr">Catalog</h2>
 
-<ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} />
+<div class="mb-3"><ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} cli={false} /></div>
 
 {#if data.activitiesError}
 	<ErrorPanel
@@ -218,105 +143,81 @@
 		directly with <code>uses:</code>.
 	</p>
 {:else}
-	<div class="overflow-x-auto border-t-2 border-ink" data-testid="activity-list">
-		<table class="register min-w-[960px]">
+	<div class="card overflow-x-auto scroll-panel" data-testid="activity-list">
+		<!-- The phone layout makes rows of blocks: the roles keep it a table for assistive technology. -->
+		<!-- svelte-ignore a11y_no_redundant_roles -->
+		<table class="register acts" role="table" aria-label="Activities">
 			<thead>
 				<tr>
-					<th scope="col">Name</th>
-					<th scope="col">Reference</th>
-					<th scope="col">Index digest</th>
-					<th scope="col">Media type</th>
-					<th scope="col">Platforms</th>
+					<th scope="col">Activity</th>
+					<th scope="col">Image</th>
+					<th scope="col">Digest and platforms</th>
+					<th scope="col">Ops</th>
 					<th scope="col">Interface</th>
-					<th scope="col">Resolved</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#each data.activities as activity (activity.name)}
-					<tr
-						class="transition-colors hover:bg-hover"
-						data-testid="activity-row-{activity.name}"
-					>
-						<td class="font-mono font-semibold text-ink" data-testid="activity-name-{activity.name}">
-							{activity.name}
+					<!-- svelte-ignore a11y_no_redundant_roles -->
+					<tr role="row" data-testid="activity-row-{activity.name}">
+						<th scope="row" role="rowheader">
+							<span class="inline-flex items-center gap-2 font-semibold text-ink" data-testid="activity-name-{activity.name}"
+								><ActivityIcon icon={activity.icon} class="size-4 text-navy-text" />{activity.name}</span
+							>
+							{#if activity.docs?.description}
+								<span class="adesc"><DocText text={activity.docs.description} limit={160} subject={activity.name} testid="activity-summary-{activity.name}" /></span>
+							{/if}
+							{#if activity.iconError}
+								<span class="mt-1 block text-dense font-normal text-ink-3" data-testid="activity-icon-error-{activity.name}">Its icon was refused: {activity.iconError}</span>
+							{/if}
+							{#if activity.docsError}
+								<span class="mt-1 block text-dense font-normal text-ink-3" data-testid="activity-docs-error-{activity.name}">Its description was refused: {activity.docsError}</span>
+							{/if}
+						</th>
+						<td role="cell" data-label="Image" class="rid" data-testid="activity-reference-{activity.name}">
+							{#if activity.reference}{#each activity.reference.split(/(?<=\/)|(?=[:@])/) as part, i (i)}{part}<wbr />{/each}{:else}—{/if}
 						</td>
-						<td
-							class="font-mono text-xs whitespace-nowrap text-ink-secondary"
-							data-testid="activity-reference-{activity.name}"
-						>
-							{activity.reference || '—'}
-						</td>
-						<!--
-							The digest is the PIN, and the pin is the point: it is
-							what makes a run explainable after a tag moves. It is
-							abbreviated for the eye but carried in full in `title`
-							and in a data attribute, so nothing here is the only
-							copy of the value.
-						-->
-						<td>
+						<td role="cell" data-label="Digest and platforms">
 							{#if activity.indexDigest}
-								<span
-									class="figure text-xs whitespace-nowrap text-ink"
-									title={activity.indexDigest}
-									data-digest={activity.indexDigest}
-									data-testid="activity-digest-{activity.name}">{shortDigest(activity.indexDigest)}</span
+								<span data-digest={activity.indexDigest} data-testid="activity-digest-{activity.name}"
+									><Plate key="sha256" value={digestHead(activity.indexDigest)} tip={activity.indexDigest} /></span
 								>
 							{:else}
-								<span
-									class="text-xs text-ink-muted"
-									data-testid="activity-digest-unresolved-{activity.name}"
-									title="this reference has not been resolved to an index digest">unresolved</span
-								>
+								<span class="text-sm text-ink-3" data-testid="activity-digest-unresolved-{activity.name}">unresolved</span>
 							{/if}
+							<span class="aplat" data-testid="activity-platforms-{activity.name}"
+								>{activity.platforms.filter((p) => p !== 'unknown/unknown').join(', ') || 'single manifest'}</span
+							>
+							<span class="sr" data-testid="activity-media-type-{activity.name}">{activity.mediaType || '—'}</span>
+							<span class="sr" data-testid="activity-resolved-at-{activity.name}">{fmtTimestamp(activity.resolvedAt)}</span>
 						</td>
-						<td
-							class="font-mono text-xs text-ink-muted"
-							data-testid="activity-media-type-{activity.name}"
-						>
-							{activity.mediaType || '—'}
-						</td>
-						<td class="font-mono text-xs text-ink-muted" data-testid="activity-platforms-{activity.name}">
-							{#if activity.platforms.length > 0}
-								{activity.platforms.join(', ')}
+						<td role="cell" data-label="Ops" class="font-mono text-sm text-ink-2">
+							{#if activity.interface && Object.keys(activity.interface.ops).length > 0}
+								<span class="flex flex-wrap gap-1">{#each Object.keys(activity.interface.ops).sort() as op (op)}<code class="opchip" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</code>{/each}</span>
 							{:else}
-								<span title="a single-manifest reference advertises no platform list"
-									>single manifest</span
-								>
+								<span class="text-ink-3">—</span>
 							{/if}
 						</td>
-						<!--
-							What the image declares about its with: block. The cell
-							is a disclosure: the full table opens in a row beneath,
-							so the catalog stays one line per activity.
-						-->
-						<td class="text-xs">
+						<td role="cell" data-label="Interface" class="text-sm">
 							{#if activity.indexDigest}
 								<button
 									type="button"
-									class="btn-disclosure inline-flex items-center gap-1 font-semibold whitespace-nowrap text-blue hover:underline"
+									class="btn btn-sm btn-quiet btn-disclosure"
 									aria-expanded={!!disclosed[activity.name]}
-									aria-controls="activity-interface-panel-{activity.name}"
+									aria-controls={disclosed[activity.name] ? `activity-interface-panel-${activity.name}` : undefined}
 									data-testid="activity-interface-{activity.name}"
 									onclick={() => (disclosed[activity.name] = !disclosed[activity.name])}
 								>
-									{interfaceSummary(activity)}
+									{#if activity.interface && !activity.interfaceError}<span class="tag">Declared</span><span class="sr">{' '}{interfaceSummary(activity)}</span>{:else}{interfaceSummary(activity) === 'none' ? 'None declared' : interfaceSummary(activity)}{/if}
 								</button>
 							{:else}
-								<span class="text-ink-muted" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
+								<span class="text-ink-3" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
 							{/if}
-						</td>
-						<td class="figure text-xs whitespace-nowrap text-ink-muted" data-testid="activity-resolved-at-{activity.name}">
-							{fmtTimestamp(activity.resolvedAt)}
 						</td>
 					</tr>
 					{#if disclosed[activity.name]}
-						<tr class="bg-paper-sunken">
-							<td
-								colspan="7"
-								class="px-5 py-3"
-								id="activity-interface-panel-{activity.name}"
-								data-testid="activity-interface-panel-{activity.name}"
-							>
+						<tr class="bg-surface-2">
+							<td colspan="5" class="px-5 py-3" id="activity-interface-panel-{activity.name}" data-testid="activity-interface-panel-{activity.name}">
 								<ActivityInterface info={activity} />
 							</td>
 						</tr>
@@ -326,6 +227,17 @@
 		</table>
 	</div>
 {/if}
+
+<section class="card kinds mt-4" aria-labelledby="kinds-heading" data-testid="activity-kinds">
+	<h2 id="kinds-heading" class="kinds-h">Task kinds</h2>
+	<div class="kinds-key">
+		<span><Icon name="a-default" class="size-4 text-ink-3" />default</span>
+		{#each declaredKinds as activity (activity.name)}<span><ActivityIcon icon={activity.icon} class="size-4 text-ink-3" />{activity.name}</span>{/each}
+		<span><Icon name="a-orkflow" class="size-4 text-ink-3" />composed task</span>
+		<span><Icon name="a-await" class="size-4 text-ink-3" />awaited task</span>
+	</div>
+	<p class="kinds-note">An image that declares no icon or summary shows the default icon and no summary.</p>
+</section>
 
 <!--
 	INSPECT A REFERENCE. Any reference `uses:` would accept — a catalog name or
@@ -350,10 +262,9 @@
 		<button
 			type="submit"
 			disabled={inspecting || inspectReference.trim() === ''}
-			class="btn btn-primary"
+			class="btn"
 			data-testid="activity-inspect-submit">{inspecting ? 'Inspecting…' : 'Inspect'}</button
 		>
-		<CliEquivalent testid="activity-inspect-cli" command={inspectCli} label="orkctl activity inspect for this reference" />
 	</form>
 	{#if inspectError}
 		<div class="mt-3">
@@ -365,22 +276,197 @@
 			data-testid="activity-inspect-result"
 		>
 			<dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-xs">
-				<dt class="caps text-ink-muted">Activity</dt>
+				<dt>Activity</dt>
 				<dd class="text-ink" data-testid="activity-inspect-activity">
 					{inspected.name ? `${inspected.name} (catalog)` : `${inspected.reference} (reference)`}
 				</dd>
-				<dt class="caps text-ink-muted">Reference</dt>
+				<dt>Reference</dt>
 				<dd class="font-mono break-all text-ink-secondary">{inspected.reference}</dd>
-				<dt class="caps text-ink-muted">Pinned</dt>
+				<dt>Pinned</dt>
 				<dd class="font-mono break-all text-ink" data-testid="activity-inspect-pinned">{pinnedReference(inspected)}</dd>
-				<dt class="caps text-ink-muted">Media type</dt>
+				<dt>Media type</dt>
 				<dd class="font-mono text-ink-secondary">{inspected.mediaType || '-'}</dd>
-				<dt class="caps text-ink-muted">Platforms</dt>
+				<dt>Platforms</dt>
 				<dd class="text-ink-secondary">{inspected.platforms.length > 0 ? inspected.platforms.join(', ') : '-'}</dd>
-				<dt class="caps text-ink-muted">Resolved</dt>
+				<dt>Resolved</dt>
 				<dd class="text-ink-secondary">{fmtTimestamp(inspected.resolvedAt)}</dd>
 			</dl>
 			<ActivityInterface info={inspected} />
 		</div>
 	{/if}
 </section>
+
+<!--
+	ORKER STATUS. Presented the way the Pools page presents liveness: an
+	unanswered probe is its OWN state, never drawn as a zero or an absence.
+	DescribeOrker is dispatched onto the default pool's own channel (§6.5), so
+	"no answer" means no Orker is serving that pool right now — which is
+	fixed by starting one, not by asking again.
+-->
+<section class="mt-10" data-testid="orker-section" aria-labelledby="orker-heading">
+	<h2 id="orker-heading" class="mb-2 text-md font-semibold text-ink">Orker</h2>
+	{#if data.orkerError}
+		<div
+			class="border border-red px-4 py-3 text-sm"
+			data-testid="orker-unavailable"
+		>
+			<p class="severity-warning font-semibold">No Orker answered the default pool.</p>
+			<p class="mt-1 break-words text-ink-secondary">{data.orkerError}</p>
+			<p class="mt-1 text-xs text-ink-secondary">
+				Nothing was measured. Start an Orker for this deployment's default pool — this is not a
+				report that zero Orkers are healthy.
+			</p>
+		</div>
+	{:else if !data.orker}
+		<p class="text-sm text-ink-muted" data-testid="orker-empty">
+			The probe returned no Orker description.
+		</p>
+	{:else}
+		{@const orker = data.orker}
+		<!-- The Orker's facts in the title block's anatomy. -->
+		<dl
+			class="fstrip card p-4"
+			data-testid="orker-card"
+		>
+			<div class="min-w-0">
+				<dt>Orker</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-id">{orker.orkerId || '—'}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Pool</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-pool">{orker.pool || '—'}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Runtime</dt>
+				<dd class="break-words" data-testid="orker-runtime">{orker.runtimeName || '—'}{orker.runtimeVersion ? ` ${orker.runtimeVersion}` : ''}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Build</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-build">{orker.buildId || 'unversioned'}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Security profile</dt>
+				<dd class="[overflow-wrap:anywhere]" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Max concurrent</dt>
+				<dd class="font-mono text-sm break-words" data-testid="orker-max-concurrent">{String(orker.maxConcurrent)}</dd>
+			</div>
+			<div class="min-w-0">
+				<dt>Rootless</dt>
+				<dd class="break-words" data-testid="orker-rootless">{orker.rootless ? 'yes' : 'no'}</dd>
+			</div>
+		</dl>
+	{/if}
+</section>
+
+<style>
+	/* The title takes the row; a phone's actions go under it, not beside it. */
+	.ph-main {
+		flex: 1 1 420px;
+	}
+	/* The catalog's columns: an image's many ops read best on two lines. */
+	@media (min-width: 641px) {
+		.acts :global(thead th:nth-child(1)) {
+			width: 24%;
+		}
+		.acts :global(thead th:nth-child(2)) {
+			width: 20%;
+		}
+		.acts :global(thead th:nth-child(3)) {
+			width: 18%;
+		}
+		.acts :global(thead th:nth-child(4)) {
+			width: 28%;
+		}
+	}
+	.opchip {
+		padding: 2px 6px;
+		border: 1px solid var(--line);
+		border-radius: 4px;
+		background: var(--surface-2);
+		font-size: 12.5px;
+		line-height: 17px;
+	}
+	.adesc {
+		display: block;
+		max-width: 44ch;
+		margin-top: 3px;
+		font-size: 13.5px;
+		font-weight: 400;
+		line-height: 16px;
+		color: var(--ink-3);
+	}
+	.rid {
+		font-family: var(--font-mono);
+		font-size: 13px;
+		line-height: 17px;
+		color: var(--ink-2);
+	}
+	.aplat {
+		display: block;
+		margin-top: 6px;
+		font-size: 13px;
+		color: var(--ink-3);
+	}
+	.kinds {
+		display: grid;
+		gap: 10px;
+		padding: 14px 16px;
+	}
+	.kinds-h {
+		margin: 0;
+		font-size: 15px;
+		font-weight: 650;
+	}
+	.kinds-key {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 14px;
+		font-size: 13px;
+		color: var(--ink-2);
+	}
+	.kinds-key span {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.kinds-note {
+		margin: 0;
+		font-size: 13px;
+		color: var(--ink-3);
+	}
+	@media (max-width: 640px) {
+		.acts thead {
+			display: none;
+		}
+		.acts,
+		.acts tbody,
+		.acts tr,
+		.acts td,
+		.acts th {
+			display: block;
+		}
+		.acts tr {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr);
+			gap: 10px;
+			padding: 14px 16px;
+			border-bottom: 1px solid var(--line);
+		}
+		.acts td,
+		.acts th {
+			padding: 0 !important;
+			border: 0 !important;
+		}
+		.acts td[data-label]::before {
+			content: attr(data-label);
+			display: block;
+			margin-bottom: 3px;
+			font-family: var(--font-ui);
+			font-size: 12.5px;
+			font-weight: 600;
+			color: var(--ink-3);
+		}
+	}
+</style>

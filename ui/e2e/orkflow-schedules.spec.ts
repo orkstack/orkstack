@@ -212,7 +212,8 @@ test('pause with a reason and resume', async ({ page }) => {
 	await page.getByTestId('schedule-pause-accept').click();
 	const state = page.getByTestId('schedule-row-state-weekly');
 	await expect(state).toHaveText('paused');
-	await expect(state).toHaveAttribute('title', 'Q3 close');
+	await state.hover();
+	await expect(page.getByRole('tooltip')).toHaveText('Q3 close');
 	await expect(page.getByTestId('schedule-row-note-weekly')).toHaveText('Q3 close');
 	await shot(page, 'screenshot-schedules-paused-with-note.png');
 	await page.getByTestId('schedule-resume-weekly').click();
@@ -235,13 +236,13 @@ test('fire now starts a run that links back to the tab', async ({ page }) => {
 	expect(runId).toMatch(/^ork-/);
 	await shot(page, 'screenshot-schedules-row-run-link.png');
 	await lastRun.locator('a').click();
-	await expect(page.getByTestId('run-id')).toHaveText(runId);
-	await expect(page.getByTestId('run-origin-kind')).toHaveText('schedule');
+	await expect(page.getByTestId('run-id')).toContainText(runId);
+	await expect(page.getByTestId('run-origin-kind')).toHaveText('Schedule');
 	await expect(page.getByTestId('run-origin-description')).toHaveText('(adhoc)');
 	const link = page.getByTestId('run-origin-link');
 	await expect(link).toHaveText(id);
 	await expect(link).toHaveAttribute('href', `/orkflows/${NAME}?tab=schedules&ns=${NS}`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await shot(page, 'screenshot-run-origin-schedule.png');
 	await link.click();
 	await expect(page).toHaveURL(/tab=schedules/);
@@ -315,7 +316,7 @@ test('the runs list filters to one schedule', async ({ page }) => {
 	await expect.poll(() => new URL(page.url()).searchParams.getAll('filter')).toEqual([`origin.id=${id}`, 'origin.kind=SCHEDULE']);
 	await expect(page.getByTestId(`run-row-${runId}`)).toBeVisible();
 	await expect(page.getByTestId(`run-row-${submitted}`)).toHaveCount(0);
-	await expect(page.getByTestId(`run-row-origin-${runId}`)).toHaveText(`schedule ${id}`);
+	await expect(page.getByTestId(`run-row-origin-${runId}`)).toHaveText(new RegExp(`^Schedule\\s*${id}$`));
 	await expect(page.locator('[data-testid^="run-row-origin-"]')).toHaveCount(1);
 	await shot(page, 'screenshot-runs-filtered-by-schedule.png');
 	note(`list filters origin.kind=SCHEDULE origin.id=${id} -> [${runId}], not the submitted ${submitted}`);

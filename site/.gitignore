@@ -12,3 +12,5 @@ node_modules/
 .media-work/
 # The diagrams, copied from docs/images/ on every build.
 public/diagrams/
+# A recording's caption as one cue, until it has timed captions (sync-docs.mjs).
+public/captions/

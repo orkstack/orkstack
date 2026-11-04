@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { inspectTask, selectTask } from './uiHelpers';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -142,10 +143,10 @@ test('a second run shows the cached task and links to the run that produced it',
 	await expect(badge).toHaveAttribute('data-outcome', 'hit', { timeout: 60_000 });
 	await expect(page.getByTestId('task-summary-cached')).toContainText('· 1 cached');
 	await expect(page.getByTestId('task-featurize-cache-source')).toHaveText(first);
-	await page.getByTestId('task-inspect-toggle-featurize').click();
+	await inspectTask(page, 'featurize');
 	await expect(page.getByTestId('task-featurize-cache-key')).toHaveText(/^[0-9a-f]{64}$/);
 	await expect(page.getByTestId('task-featurize-cache-source-commit')).toContainText(first);
-	await page.getByTestId('task-log-toggle-featurize').click();
+	// (The selected task's one log pane is already open under the list.)
 	await expect(page.getByTestId('task-log-featurize')).toContainText('[ork] cache hit', { timeout: 60_000 });
 	await expect(page.getByTestId('task-log-featurize')).not.toContainText('featurized 1000 rows');
 	await shot(page, 'screenshot-p1-cached-task.png');
@@ -162,8 +163,9 @@ test('a cache miss says why, and the attempt timeline shows it', async ({ page }
 	const badge = page.getByTestId('task-train-cache');
 	await expect(badge).toHaveAttribute('data-outcome', 'miss', { timeout: 60_000 });
 	await expect(badge).toHaveText('Cache miss');
-	await expect(badge).toHaveAttribute('title', /No memo exists for this key/);
-	await page.getByTestId('task-inspect-toggle-train').click();
+	await badge.hover();
+	await expect(page.getByRole('tooltip')).toHaveText(/No memo exists for this key/);
+	await inspectTask(page, 'train');
 	await expect(page.getByTestId('task-train-cache-reason')).toContainText('No memo exists');
 	const row = page.getByTestId('task-train-attempt-1-cache');
 	await expect(row).toContainText('cache miss: MEMO_ABSENT', { timeout: 60_000 });
@@ -241,6 +243,8 @@ test('a cached fan-out marks its cached items', async ({ page }) => {
 	await submitAndWait(name, parts);
 	const second = await submitAndWait(name, parts);
 	await page.goto(`${UI}/runs/${second}?ns=${NS}`);
+	// A settled fan-out opens its item grid when it is the selection.
+	await selectTask(page, 'convert');
 	for (let i = 0; i < 4; i++) {
 		await expect(page.getByTestId(`task-convert-item-${i}`)).toHaveAttribute('data-cached', 'true', { timeout: 60_000 });
 	}

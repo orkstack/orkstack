@@ -1127,7 +1127,7 @@
 												type="button"
 												data-testid="namespace-hold-action-{ns.name}"
 												onclick={() => askToHold(ns.name)}
-												class="btn btn-sm border-red text-red-strong"
+												class="btn btn-sm"
 											>
 												Hold…
 											</button>
@@ -1136,7 +1136,7 @@
 											<span
 												class="text-xs text-ink-muted"
 												data-testid="namespace-delete-default-reason"
-												title="every Orkflow that names no namespace is in it"
+												data-tip="every Orkflow that names no namespace is in it"
 											>
 												undeletable
 											</span>
@@ -1144,7 +1144,7 @@
 												type="button"
 												data-testid="namespace-delete-default"
 												disabled
-												title="default cannot be deleted: every Orkflow that names no namespace is in it"
+												data-tip="default cannot be deleted: every Orkflow that names no namespace is in it"
 												class="btn btn-sm cursor-not-allowed"
 											>
 												Delete
@@ -1154,7 +1154,7 @@
 												type="button"
 												data-testid="namespace-delete-{ns.name}"
 												onclick={() => askToDelete(ns.name)}
-												class="btn btn-sm border-red text-red-strong hover:bg-red-tint"
+												class="btn btn-sm"
 											>
 												Delete
 											</button>
@@ -1172,7 +1172,7 @@
 								</td>
 								<td data-label="Allowed secrets"
 									class="max-w-xs truncate font-mono text-xs text-ink-secondary"
-									title={allowedSecretsLabel(ns.allowedSecrets)}
+									data-tip={allowedSecretsLabel(ns.allowedSecrets)}
 									data-testid="namespace-allowed-secrets-{ns.name}">{allowedSecretsLabel(ns.allowedSecrets)}</td
 								>
 								<td data-label="Run retention" class="text-ink-secondary" data-testid="namespace-run-retention-{ns.name}"
@@ -1180,7 +1180,7 @@
 								>
 								<td data-label="Hold"
 									class="max-w-xs truncate {ns.hold ? 'severity-error font-semibold' : 'text-ink-secondary'}"
-									title={holdLabel(ns.hold)}
+									data-tip={holdLabel(ns.hold)}
 									data-testid="namespace-hold-{ns.name}">{holdLabel(ns.hold)}</td
 								>
 								<td data-label="Max running" class="figure text-ink-secondary" data-testid="namespace-max-running-{ns.name}"

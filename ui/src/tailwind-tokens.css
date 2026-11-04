@@ -11,10 +11,13 @@
  * they are not identity, and media queries cannot read var().
  *
  * Runtime-only tokens (not registered; read with var() from CSS or an
- * inline style): the pin accents --color-pin-*, the syntax colours
- * --color-syntax-* (app.css's .syntax-* and the editor's theme), the rule widths --rule-*,
- * the durations --duration-*, the DAG grid's --grid-pitch-*, --underline-offset
- * and the opacities --opacity-*.
+ * inline style): the Harbour roles themselves (--bg, --ink, --side-*,
+ * --shadow, …), which the --color-* names here point at; the faces'
+ * --font-ui and --font-code, the radii --r and --r-sm and the durations
+ * --dur-* and --duration-*; the pin accents --color-pin-*, the syntax colours
+ * --color-syntax-* (app.css's .syntax-* and the editor's theme), the rule
+ * widths --rule-*, the DAG grid's --grid-pitch-*, --underline-offset and the
+ * opacities --opacity-*.
  * ui/test/tokens.test.ts holds this file and tokens.css to the same names.
  */
 @theme inline reference {
@@ -41,6 +44,8 @@
 	--text-xs--line-height: var(--text-xs--line-height);
 	--text-sm: var(--text-sm);
 	--text-sm--line-height: var(--text-sm--line-height);
+	--text-dense: var(--text-dense);
+	--text-dense--line-height: var(--text-dense--line-height);
 	--text-base: var(--text-base);
 	--text-base--line-height: var(--text-base--line-height);
 	--text-md: var(--text-md);
@@ -49,14 +54,19 @@
 	--text-lg--line-height: var(--text-lg--line-height);
 	--text-xl: var(--text-xl);
 	--text-xl--line-height: var(--text-xl--line-height);
+	--text-figure: var(--text-figure);
+	--text-figure--line-height: var(--text-figure--line-height);
 	--text-2xl: var(--text-2xl);
 	--text-2xl--line-height: var(--text-2xl--line-height);
+	--text-code: var(--text-code);
 	--font-weight-normal: var(--font-weight-normal);
 	--font-weight-body: var(--font-weight-body);
 	--font-weight-medium: var(--font-weight-medium);
 	--font-weight-semibold: var(--font-weight-semibold);
+	--font-weight-heading: var(--font-weight-heading);
 	--font-weight-bold: var(--font-weight-bold);
 	--tracking-tight: var(--tracking-tight);
+	--tracking-figure: var(--tracking-figure);
 	--tracking-normal: var(--tracking-normal);
 	--tracking-caps: var(--tracking-caps);
 	--leading-none: var(--leading-none);
@@ -64,6 +74,95 @@
 	--leading-normal: var(--leading-normal);
 
 	/* Colours */
+	--color-bg: var(--color-bg);
+	--color-surface: var(--color-surface);
+	--color-surface-2: var(--color-surface-2);
+	--color-surface-3: var(--color-surface-3);
+	--color-hover: var(--color-hover);
+	--color-scrim: var(--color-scrim);
+	--color-ink: var(--color-ink);
+	--color-ink-2: var(--color-ink-2);
+	--color-ink-3: var(--color-ink-3);
+	--color-line: var(--color-line);
+	--color-line-2: var(--color-line-2);
+	--color-line-strong: var(--color-line-strong);
+	--color-navy: var(--color-navy);
+	--color-navy-tint: var(--color-navy-tint);
+	--color-navy-text: var(--color-navy-text);
+	--color-meter: var(--color-meter);
+	--color-accent: var(--color-accent);
+	--color-accent-hover: var(--color-accent-hover);
+	--color-accent-edge: var(--color-accent-edge);
+	--color-on-accent: var(--color-on-accent);
+	--color-link: var(--color-link);
+	--color-focus: var(--color-focus);
+	--color-select: var(--color-select);
+	--color-run: var(--color-run);
+	--color-run-tint: var(--color-run-tint);
+	--color-ok: var(--color-ok);
+	--color-ok-mark: var(--color-ok-mark);
+	--color-ok-tint: var(--color-ok-tint);
+	--color-fail: var(--color-fail);
+	--color-fail-mark: var(--color-fail-mark);
+	--color-fail-tint: var(--color-fail-tint);
+	--color-wait: var(--color-wait);
+	--color-wait-mark: var(--color-wait-mark);
+	--color-wait-fill: var(--color-wait-fill);
+	--color-wait-tint: var(--color-wait-tint);
+	--color-await: var(--color-await);
+	--color-await-tint: var(--color-await-tint);
+	--color-cancel: var(--color-cancel);
+	--color-cancel-tint: var(--color-cancel-tint);
+	--color-pend-mark: var(--color-pend-mark);
+	--color-act: var(--color-act);
+	--color-act-ink: var(--color-act-ink);
+	--color-act-ink-2: var(--color-act-ink-2);
+	--color-dim-fill: var(--color-dim-fill);
+	--color-dim-line: var(--color-dim-line);
+	--color-destroy-bg: var(--color-destroy-bg);
+	--color-destroy-ink: var(--color-destroy-ink);
+	--color-destroy-hover: var(--color-destroy-hover);
+	--color-log-bg: var(--color-log-bg);
+	--color-log-ink: var(--color-log-ink);
+	--color-log-ink-2: var(--color-log-ink-2);
+	--color-log-err: var(--color-log-err);
+	--color-side: var(--color-side);
+	--color-side-line: var(--color-side-line);
+	--color-side-ink: var(--color-side-ink);
+	--color-side-ink-2: var(--color-side-ink-2);
+	--color-side-strong: var(--color-side-strong);
+	--color-side-hover: var(--color-side-hover);
+	--color-side-active: var(--color-side-active);
+	--color-side-active-ink: var(--color-side-active-ink);
+	--color-side-active-ink-2: var(--color-side-active-ink-2);
+	--color-side-field: var(--color-side-field);
+	--color-side-field-line: var(--color-side-field-line);
+	--color-viz-cancel: var(--color-viz-cancel);
+	--color-mark-base: var(--color-mark-base);
+	--color-mark-line: var(--color-mark-line);
+	--color-paper: var(--color-paper);
+	--color-paper-sunken: var(--color-paper-sunken);
+	--color-sheet: var(--color-sheet);
+	--color-ink-secondary: var(--color-ink-secondary);
+	--color-ink-muted: var(--color-ink-muted);
+	--color-ink-placeholder: var(--color-ink-placeholder);
+	--color-on-ink: var(--color-on-ink);
+	--color-mark: var(--color-mark);
+	--color-rule: var(--color-rule);
+	--color-rule-faint: var(--color-rule-faint);
+	--color-rule-strong: var(--color-rule-strong);
+	--color-grid: var(--color-grid);
+	--color-grid-major: var(--color-grid-major);
+	--color-blue: var(--color-blue);
+	--color-blue-strong: var(--color-blue-strong);
+	--color-blue-tint: var(--color-blue-tint);
+	--color-green: var(--color-green);
+	--color-green-strong: var(--color-green-strong);
+	--color-green-tint: var(--color-green-tint);
+	--color-red: var(--color-red);
+	--color-red-strong: var(--color-red-strong);
+	--color-red-tint: var(--color-red-tint);
+	--color-fg: var(--color-fg);
 	--color-pending-bg: var(--color-pending-bg);
 	--color-pending-fg: var(--color-pending-fg);
 	--color-pending-border: var(--color-pending-border);
@@ -96,33 +195,6 @@
 	--color-unspecified-fg: var(--color-unspecified-fg);
 	--color-unspecified-border: var(--color-unspecified-border);
 	--color-unspecified-solid: var(--color-unspecified-solid);
-	--color-fg: var(--color-fg);
-	--color-paper: var(--color-paper);
-	--color-paper-sunken: var(--color-paper-sunken);
-	--color-sheet: var(--color-sheet);
-	--color-hover: var(--color-hover);
-	--color-scrim: var(--color-scrim);
-	--color-ink: var(--color-ink);
-	--color-ink-secondary: var(--color-ink-secondary);
-	--color-ink-muted: var(--color-ink-muted);
-	--color-ink-placeholder: var(--color-ink-placeholder);
-	--color-on-ink: var(--color-on-ink);
-	--color-mark: var(--color-mark);
-	--color-rule: var(--color-rule);
-	--color-rule-faint: var(--color-rule-faint);
-	--color-rule-strong: var(--color-rule-strong);
-	--color-grid: var(--color-grid);
-	--color-grid-major: var(--color-grid-major);
-	--color-blue: var(--color-blue);
-	--color-blue-strong: var(--color-blue-strong);
-	--color-blue-tint: var(--color-blue-tint);
-	--color-green: var(--color-green);
-	--color-green-strong: var(--color-green-strong);
-	--color-green-tint: var(--color-green-tint);
-	--color-red: var(--color-red);
-	--color-red-strong: var(--color-red-strong);
-	--color-red-tint: var(--color-red-tint);
-	--color-focus: var(--color-focus);
 
 	/* Radii */
 	--radius-none: var(--radius-none);
@@ -137,26 +209,34 @@
 	--spacing-gutter: var(--spacing-gutter);
 	--spacing-sheet: var(--spacing-sheet);
 	--spacing-bar: var(--spacing-bar);
+	--spacing-side: var(--spacing-side);
 	--spacing-titleblock: var(--spacing-titleblock);
 	--spacing-aside: var(--spacing-aside);
+	--spacing-content: var(--spacing-content);
 	--spacing-drawing: var(--spacing-drawing);
 	--spacing-drawing-tall: var(--spacing-drawing-tall);
+	--spacing-log: var(--spacing-log);
+	--spacing-tip: var(--spacing-tip);
 
 	/* Shadows */
+	--shadow-card: var(--shadow-card);
 	--shadow-overlay: var(--shadow-overlay);
 	--shadow-lift: var(--shadow-lift);
+	--shadow-lg: var(--shadow-lg);
 
 	/* Motion */
+	--ease-in: var(--ease-in);
 	--ease-out: var(--ease-out);
 	--ease-in-out: var(--ease-in-out);
 	--ease-linear: var(--ease-linear);
 	--animate-live-dot: var(--animate-live-dot);
+	--animate-live-ring: var(--animate-live-ring);
 	--animate-live-fill: var(--animate-live-fill);
 	--animate-live-ground: var(--animate-live-ground);
 	--animate-nav-progress: var(--animate-nav-progress);
 	--animate-overlay-in: var(--animate-overlay-in);
 	--animate-cloud-draw: var(--animate-cloud-draw);
 
-	--default-transition-duration: var(--duration-fast);
-	--default-transition-timing-function: var(--ease-out);
+	--default-transition-duration: var(--dur-fast);
+	--default-transition-timing-function: var(--ease-in);
 }

@@ -611,7 +611,7 @@ then the variable it becomes.
 | `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
-| `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/orkstack/tmp` tmpfs |
+| `orker.resources.tmpfs_bytes` | `ORK_ORKER_TMPFS_BYTES` | `64 MiB` | `orker` | size of the container's `/tmp` tmpfs. `/orkstack/tmp` is a separate bind mount, which this does not size |
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable. An Orker whose boot probe finds that user does not land as the Orker (a rootless or user-namespaced daemon) refuses to start with it set, as `RUN_AS_ORKER_UNAVAILABLE` |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme except the Orker's own, and logs a warning at boot. No entry admits the Orker's own sources: its `ORK_*` and `OTEL_*` settings, its process files, its work root, its configuration and credential files (§5, "Secrets on a shared pool"). With `orker.workdir` unset the work root is the temp directory, so a `file:/tmp/…` source is refused and an entry under `/tmp` stops the Orker at boot: give tasks' secret files a directory of their own. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed, names a scheme not in `orker.secret_schemes`, or can match only the Orker's own sources |
@@ -820,7 +820,7 @@ with that container's cap reserved, and frees it once a later reap removes it.
 **Seeing a pool at its capacity.** A task no Orker has started is `RUNNING`,
 waiting in its pool. When every Orker of that pool that takes new tasks
 declares a capacity, runs a task and has no room for another within it, the run
-page captions the task `Waiting for capacity · every orker of pool <pool> is
+page captions the task `Waiting for capacity · every Orker of pool <pool> is
 full (reserved 4/4 cpu) · 2m 10s`, and `orkctl run inspect` prints
 `<task>: waiting for capacity for 2m10s (scheduled …): every orker of pool
 <pool> is full (reserved 4/4 cpu)`. The figures are summed over those Orkers,
@@ -828,7 +828,8 @@ for each dimension their capacity bounds. Otherwise — an Orker of the pool wit
 room but every slot taken, one declaring no capacity, one running nothing (what
 it reserves is then its own polls, which take the next task), a pinned member,
 a retry waiting out its backoff, an attempt waiting less than two seconds —
-they keep `Waiting for an orker`. No room means the
+the run page says only `Waiting for capacity · 2m 10s` and `orkctl run inspect`
+keeps `waiting for an orker`. No room means the
 per-task cap no longer fits beside `RESERVED`, so a pool can read full with
 less than its capacity reserved: an Orker with a 2-cpu cap and 3 of 4 cpus
 reserved takes nothing more.

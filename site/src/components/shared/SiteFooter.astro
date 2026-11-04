@@ -1,0 +1,28 @@
+---
+// The foot of every page: OrkStack's released version, the license, the
+// places, and what it is built on.
+import { route, REPO } from '../../../site.config.mjs';
+import { releasedVersion } from '../../lib/release';
+
+const links = [
+	{ label: 'Docs', href: route('docs') },
+	{ label: 'Examples', href: route('docs/examples') },
+	{ label: 'Reference', href: route('docs/reference/orkflow-keys') },
+	{ label: 'Changelog', href: route('docs/reference/changelog') },
+	{ label: 'Contribute', href: route('docs/contributing') },
+	{ label: 'GitHub', href: REPO },
+];
+---
+
+<footer class="foot-site">
+	<div class="wrapw">
+		<span class="vline">
+			<span class="plate ver sm"><span class="k">OrkStack</span><span class="v">{releasedVersion}</span></span>
+			· MIT licensed
+		</span>
+		<nav aria-label="Footer">
+			{links.map((l) => <a href={l.href}>{l.label}</a>)}
+		</nav>
+		<span class="end">Temporal for durability, any OCI image for compute, no database of its own</span>
+	</div>
+</footer>

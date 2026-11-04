@@ -77,4 +77,4 @@ A skipped task is absent from `.tasks`. Reading its output fails the task. The `
 - [DSL reference, “Joins and failure handlers”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#joins-and-failure-handlers-join): how a skipped need is handled
 - [ORKFLOW_PATTERNS, “Decide in a task, branch on its value”](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_PATTERNS.md#decide-in-a-task-branch-on-its-value): the pattern this example shows
 - [ORKFLOW_PATTERNS, “Branch and re-join”](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_PATTERNS.md#branch-and-re-join): the re-join pattern
-- [Handle a failed run](/docs/how-to/handle-failure/): the other join words
+- [Handle a failed run](/docs/build/handle-failure/): the other join words

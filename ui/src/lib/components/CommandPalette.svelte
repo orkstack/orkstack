@@ -55,7 +55,7 @@
 	$effect(() => {
 		dialog?.showModal();
 		input?.focus();
-		return () => opener?.focus?.();
+		return () => (opener?.isConnected ? opener.focus() : document.getElementById('content')?.focus());
 	});
 
 	const recents = readRecents();
@@ -212,7 +212,7 @@
 <dialog
 	bind:this={dialog}
 	data-testid="command-palette"
-	aria-label="Command palette"
+	aria-label="Jump to"
 	oncancel={(e) => {
 		e.preventDefault();
 		onclose();
@@ -220,10 +220,10 @@
 	onclick={(e) => {
 		if (e.target === dialog) onclose();
 	}}
-	class="mx-auto mt-16 w-[min(40rem,calc(100vw-2rem))] sm:mt-24 max-w-none rounded-md border-(length:--rule-region) border-ink bg-sheet p-0 text-ink shadow-overlay animate-overlay-in backdrop:bg-scrim motion-reduce:animate-none"
+	class="mx-auto mt-16 w-[min(40rem,calc(100vw-2rem))] max-w-none overflow-hidden rounded-md border border-line-2 bg-surface p-0 text-ink shadow-overlay sm:mt-24"
 >
-	<div class="flex items-center gap-2 border-b border-rule px-3">
-		<Icon name="search" class="size-4 text-ink-muted" />
+	<div class="flex items-center gap-2 border-b border-line px-3.5">
+		<Icon name="search" class="size-4 text-ink-3" />
 		<input
 			bind:this={input}
 			bind:value={query}
@@ -239,9 +239,9 @@
 			placeholder="Jump to a page, run, Orkflow or action…"
 			autocomplete="off"
 			spellcheck="false"
-			class="h-12 min-w-0 flex-1 bg-transparent px-2 text-md text-ink -outline-offset-2 placeholder:text-ink-placeholder"
+			class="h-12 min-w-0 flex-1 bg-transparent px-2 text-md text-ink -outline-offset-2 placeholder:text-ink-3"
 		/>
-		<button type="button" data-testid="command-palette-close" class="btn btn-icon" onclick={onclose}>
+		<button type="button" data-testid="command-palette-close" class="btn btn-quiet btn-icon btn-sm" onclick={onclose}>
 			<Icon name="close" /><span class="sr-only">Close</span>
 		</button>
 	</div>
@@ -251,13 +251,13 @@
 		data-testid="command-palette-list"
 		role="listbox"
 		aria-label="Results"
-		class="max-h-[min(26rem,60vh)] overflow-y-auto py-1"
+		class="scroll-panel max-h-[min(26rem,60vh)] overflow-y-auto p-1.5"
 	>
 		{#each groups as g (g.group)}
 			{@const headingId = `command-palette-group-${g.group.toLowerCase().replace(/\s+/g, '-')}-label`}
 			<li role="presentation">
 				<ul role="group" aria-labelledby={headingId} data-testid="command-palette-group-{g.group.toLowerCase().replace(/\s+/g, '-')}">
-					<li role="presentation" id={headingId} class="caps px-3 pt-3 pb-1 text-ink-muted">{g.group}</li>
+					<li role="presentation" id={headingId} class="px-2.5 pt-3 pb-1 text-sm font-semibold text-ink-3">{g.group}</li>
 					{#each g.items as c (c.id)}
 						{@const i = flat.indexOf(c)}
 						<li
@@ -268,10 +268,10 @@
 							onclick={() => void run(c)}
 							onmousemove={() => (active = i)}
 							onkeydown={() => {}}
-							class="flex cursor-pointer items-baseline gap-3 px-3 py-2 text-sm {i === active ? 'bg-blue-tint text-ink' : 'text-ink'}"
+							class="flex cursor-pointer items-baseline gap-3 rounded-sm px-2.5 py-2 text-dense {i === active ? 'bg-navy-tint text-navy-text' : 'text-ink'}"
 						>
 							<span class="min-w-0 flex-1 truncate {i === active ? 'font-semibold' : ''}">{c.label}</span>
-							{#if c.context}<span class="shrink-0 truncate text-xs text-ink-muted">{c.context}</span>{/if}
+							{#if c.context}<span class="shrink-0 truncate text-sm text-ink-3">{c.context}</span>{/if}
 							{#if i === active}<kbd class="kbd shrink-0" aria-hidden="true">Enter</kbd>{/if}
 						</li>
 					{/each}
@@ -280,16 +280,16 @@
 		{/each}
 	</ul>
 	{#if flat.length === 0}
-		<p data-testid="command-palette-empty" class="px-3 pb-4 text-sm text-ink-muted">
+		<p data-testid="command-palette-empty" class="px-4 pb-4 text-dense text-ink-3">
 			{searching ? 'Searching runs and Orkflows…' : `Nothing matches “${query}”.`}
 		</p>
 	{/if}
 	{#if remoteError}
-		<p data-testid="command-palette-error" class="severity-error border-t border-rule px-3 py-2 text-xs">
+		<p data-testid="command-palette-error" class="severity-error border-t border-line px-4 py-2 text-sm">
 			Error: could not search runs and Orkflows: {remoteError}
 		</p>
 	{/if}
-	<div class="flex items-center justify-between gap-3 border-t border-rule px-3 py-2 text-xs text-ink-muted">
+	<div class="flex items-center justify-between gap-3 border-t border-line bg-surface-2 px-4 py-2 text-sm text-ink-3">
 		<p data-testid="command-palette-status" role="status" aria-live="polite">{copied || status}</p>
 		<p aria-hidden="true" class="max-sm:hidden"><kbd class="kbd">↑</kbd> <kbd class="kbd">↓</kbd> move · <kbd class="kbd">Enter</kbd> open · <kbd class="kbd">Esc</kbd> close</p>
 	</div>

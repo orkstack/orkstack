@@ -91,5 +91,5 @@ A delivery record keeps the SHA-256 of the body. It does not keep the body.
 - [Run-event webhooks](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md): the full delivery rules
 - [Verifying the signature](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#verifying-the-signature): the verification steps
 - [Attempts and retries](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#attempts-and-retries): the retry ladder
-- [Triggers](/docs/how-to/triggers/): the inbound counterpart, which starts runs
-- [Inspect a run](/docs/how-to/inspect-a-run/): reading a run after its event arrives
+- [Triggers](/docs/run/schedules-and-triggers/): the inbound counterpart, which starts runs
+- [Inspect a run](/docs/run/watch-a-run/): reading a run after its event arrives

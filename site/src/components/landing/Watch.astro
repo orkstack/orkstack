@@ -1,0 +1,19 @@
+---
+// "Watch it work": the three recordings of the real UI. The heading keeps the
+// id README.md links to.
+import VideoSlot from '../shared/VideoSlot.astro';
+import { video } from '../../lib/media';
+
+const names = ['video-task-waits', 'video-yaml-to-run', 'video-why-failed'];
+const allRecorded = names.every((n) => video(n).recorded);
+---
+
+<section class="watch" aria-labelledby="reel-title">
+	<h2 id="reel-title">Watch it work</h2>
+	<p>
+		{allRecorded ? 'Recordings of the real UI. Each plays only when you press play, with captions.' : 'Recordings of the real UI are planned. Each will play only when you press play, with captions.'}
+	</p>
+	<div class="videos">
+		{names.map((n) => <VideoSlot name={n} />)}
+	</div>
+</section>

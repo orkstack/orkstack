@@ -45,7 +45,7 @@
 			data-testid={retryTestid || `${testid}-retry`}
 			disabled={busy}
 			onclick={() => onretry?.()}
-			class="btn btn-sm shrink-0 border-red text-red-strong"
+			class="btn btn-sm shrink-0"
 		>
 			{busy ? 'Retrying…' : retryLabel}
 		</button>

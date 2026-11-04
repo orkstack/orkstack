@@ -3,25 +3,25 @@ import { EventType } from './gen/orkstack/v1/run_pb';
 import type { Timestamp } from '@bufbuild/protobuf/wkt';
 
 export const STATUS_LABEL: Record<Status, string> = {
-	[Status.UNSPECIFIED]: 'UNSPECIFIED',
-	[Status.PENDING]: 'PENDING',
-	[Status.RUNNING]: 'RUNNING',
-	[Status.SUCCEEDED]: 'SUCCEEDED',
-	[Status.FAILED]: 'FAILED',
-	[Status.CANCELED]: 'CANCELED',
-	[Status.SKIPPED]: 'SKIPPED',
-	[Status.AWAITING]: 'AWAITING'
+	[Status.UNSPECIFIED]: 'Unspecified',
+	[Status.PENDING]: 'Pending',
+	[Status.RUNNING]: 'Running',
+	[Status.SUCCEEDED]: 'Succeeded',
+	[Status.FAILED]: 'Failed',
+	[Status.CANCELED]: 'Canceled',
+	[Status.SKIPPED]: 'Skipped',
+	[Status.AWAITING]: 'Awaiting'
 };
 
 export const STATUS_CLASSES: Record<Status, string> = {
-	[Status.UNSPECIFIED]: 'border-dotted border-unspecified-border bg-unspecified-bg text-unspecified-fg',
-	[Status.PENDING]: 'border-pending-border bg-pending-bg text-pending-fg',
-	[Status.RUNNING]: 'border-running-border bg-running-bg text-running-fg',
-	[Status.SUCCEEDED]: 'border-succeeded-border bg-succeeded-bg text-succeeded-fg',
-	[Status.FAILED]: 'border-failed-border bg-failed-bg text-failed-fg',
-	[Status.CANCELED]: 'border-canceled-border bg-canceled-bg text-canceled-fg',
-	[Status.SKIPPED]: 'border-dashed border-skipped-border bg-skipped-bg text-skipped-fg',
-	[Status.AWAITING]: 'border-awaiting-border bg-awaiting-bg text-awaiting-fg'
+	[Status.UNSPECIFIED]: 'bg-unspecified-bg text-unspecified-fg',
+	[Status.PENDING]: 'pill-outline bg-pending-bg text-pending-fg',
+	[Status.RUNNING]: 'bg-running-bg text-running-fg',
+	[Status.SUCCEEDED]: 'bg-succeeded-bg text-succeeded-fg',
+	[Status.FAILED]: 'bg-failed-bg text-failed-fg',
+	[Status.CANCELED]: 'bg-canceled-bg text-canceled-fg',
+	[Status.SKIPPED]: 'pill-outline bg-skipped-bg text-skipped-fg',
+	[Status.AWAITING]: 'bg-awaiting-bg text-awaiting-fg'
 };
 
 export function statusLabel(status: Status | undefined): string {

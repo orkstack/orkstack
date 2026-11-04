@@ -57,7 +57,7 @@ Read an input as `{{ .inputs.<name> }}`.
 | `join` | `all_succeeded` | When the task may start, from how its needs ended: `all_succeeded`, `none_failed`, `any_failed`, `all_done`. |
 | `timeout_seconds` | `300` | The container's time limit. |
 | `retry` | one attempt | [Retry](#retry). |
-| `each` | none | Run once per element of an array: [Fan out over a list](/docs/how-to/fan-out/). |
+| `each` | none | Run once per element of an array: [Fan out over a list](/docs/build/fan-out/). |
 | `await` | none | Wait for an outside resolution instead of running a container: [Await](#await). |
 | `cache` | none | Reuse an identical earlier result: [Cache](#cache). |
 | `pool` | the default pool | Which Orkers run the task. |
@@ -83,7 +83,7 @@ Read an input as `{{ .inputs.<name> }}`.
 
 ## Fan-out
 
-`each:` — [Fan out over a list](/docs/how-to/fan-out/).
+`each:` — [Fan out over a list](/docs/build/fan-out/).
 
 | Key | Required | Meaning |
 |---|---|---|

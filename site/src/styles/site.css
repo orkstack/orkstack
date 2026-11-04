@@ -8,8 +8,8 @@
  * (scripts/tokens.mjs). scripts/check-tokens.mjs refuses a colour or a face
  * written anywhere else under src/.
  */
-@import '@fontsource-variable/archivo-narrow/wght.css';
-@import '@fontsource-variable/spline-sans-mono/wght.css';
+@import '@fontsource-variable/inter/wght.css';
+@import '@fontsource-variable/jetbrains-mono/wght.css';
 @import '../../../ui/src/tokens.css';
 @import './generated/nojs-theme.css';
 @import './base.css';

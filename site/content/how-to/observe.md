@@ -14,7 +14,7 @@ export OTEL_TRACES_EXPORTER=otlp
 export OTEL_LOGS_EXPORTER=otlp
 ```
 
-To try this on a laptop first, start a local Collector, Loki, Tempo, Prometheus and Grafana with `make infra-up-observability`. Grafana is then at `http://localhost:3000`, on this machine only: every port the profile publishes is bound to `127.0.0.1`.
+To try this on a laptop first, start a local Collector, Loki, Tempo, Prometheus and Grafana with `make infra-up-observability`. That command needs a clone of the repository, and it runs from the clone's folder. Grafana is then at `http://localhost:3000`, on this machine only: every port the profile publishes is bound to `127.0.0.1`.
 
 ## What each kind of telemetry gives you
 
@@ -72,4 +72,4 @@ orkctl namespace update payments --telemetry-sink tenant-collector
 - [DEPLOY.md, “Lifecycle metrics”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics): every run and task metric, with its labels
 - [DEPLOY.md, “Declaring an Orker's capacity”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#declaring-an-orkers-capacity): the capacity metrics
 - [deploy/observability/README.md](https://github.com/orkstack/orkstack/blob/main/deploy/observability/README.md): the local observability stack and its example queries
-- Settings: [Configuration](/docs/reference/configuration/)
+- Settings: [Configuration](/docs/configuration/)

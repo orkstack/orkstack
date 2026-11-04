@@ -257,20 +257,18 @@ const clearOfChrome = EditorView.scrollMargins.of(() => {
 
 // ---------------------------------------------------------------- theme
 
-const SQUARE = 'calc(var(--spacing) * 2)';
-
 const theme = EditorView.theme({
 	'&': {
 		color: 'var(--color-ink)',
-		backgroundColor: 'var(--color-paper)',
+		backgroundColor: 'var(--color-surface)',
 		fontSize: 'var(--text-sm)',
 		border: 'var(--rule-hair) solid var(--color-rule-strong)',
 		borderRadius: 'var(--radius-sm)'
 	},
 	'&.cm-focused': { outline: 'var(--rule-frame) solid var(--color-focus)', outlineOffset: 'var(--rule-frame)' },
-	'.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: 'var(--text-sm--line-height)', fontVariantLigatures: 'none' },
-	'.cm-content': { caretColor: 'var(--color-ink)', paddingBlock: 'calc(var(--spacing) * 2)' },
-	'.cm-line': { paddingInline: 'calc(var(--spacing) * 3)' },
+	'.cm-scroller': { fontFamily: 'var(--font-mono)', fontSize: '13.5px', lineHeight: '22px', fontVariantLigatures: 'none' },
+	'.cm-content': { caretColor: 'var(--color-ink)', paddingBlock: '12px' },
+	'.cm-line': { paddingInline: '16px' },
 	'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-ink)' },
 	'&.cm-editor .cm-selectionBackground, &.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground':
 		{ background: 'var(--color-blue-tint)' },
@@ -287,7 +285,7 @@ const theme = EditorView.theme({
 		backgroundColor: 'var(--color-hover)',
 		color: 'var(--color-ink)'
 	},
-	'.cm-lineNumbers .cm-gutterElement': { paddingInline: 'calc(var(--spacing) * 2)', fontVariantNumeric: 'tabular-nums' },
+	'.cm-lineNumbers .cm-gutterElement': { padding: '0 8px 0 0', minWidth: '50px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' },
 	'&.cm-editor .cm-specialChar': { color: 'var(--color-red-strong)' },
 	'.cm-placeholder': { color: 'var(--color-ink-placeholder)' },
 
@@ -319,41 +317,51 @@ const theme = EditorView.theme({
 	'.cm-schema-doc-title': { fontFamily: 'var(--font-mono)', fontWeight: 'var(--font-weight-semibold)' },
 	'.cm-schema-doc-allowed': { fontFamily: 'var(--font-mono)', color: 'var(--color-ink-secondary)' },
 
-	// Findings: the severity marks of ui/DESIGN.md ("Notes and Holds") — a
-	// filled square for an error, an outlined one for a warning, in red — and
-	// an underline drawn as text decoration (a data-URL image cannot read a
-	// token). Errors wave; warnings dot.
+	// Findings: a filled red triangle for an error, a hollow ink one for a
+	// warning, and a wavy underline under an error alone, drawn as text
+	// decoration (a data-URL image cannot read a token). The marks are the
+	// same shapes as `.mk-fail` and `.mk-warn`.
 	'.cm-lintRange-error, .cm-lintRange-warning, .cm-lintRange-info, .cm-lintRange-hint': {
 		backgroundImage: 'none',
-		paddingBottom: '0',
+		paddingBottom: '0'
+	},
+	'.cm-lintRange-error': {
 		textDecorationLine: 'underline',
-		textDecorationColor: 'var(--color-red)',
-		textDecorationThickness: 'var(--rule-region)',
-		textUnderlineOffset: 'var(--underline-offset)',
+		textDecorationStyle: 'wavy',
+		textDecorationColor: 'var(--color-fail-mark)',
+		textDecorationThickness: '1.25px',
+		textUnderlineOffset: '3px',
 		textDecorationSkipInk: 'none'
 	},
-	'.cm-lintRange-error': { textDecorationStyle: 'wavy' },
-	'.cm-lintRange-warning, .cm-lintRange-info, .cm-lintRange-hint': { textDecorationStyle: 'dotted' },
-	'.cm-gutter-lint': { width: 'calc(var(--spacing) * 4)' },
+	'.cm-gutter-lint': { width: '16px' },
 	'.cm-gutter-lint .cm-gutterElement': { padding: '0', display: 'flex', alignItems: 'center', justifyContent: 'center' },
-	'.cm-lint-marker': { content: 'normal', width: SQUARE, height: SQUARE, boxSizing: 'border-box' },
-	'.cm-lint-marker-error': { content: 'normal', backgroundColor: 'var(--color-red)' },
+	'.cm-lint-marker': { content: 'normal', boxSizing: 'border-box', forcedColorAdjust: 'none' },
+	'.cm-lint-marker-error': {
+		content: 'normal',
+		width: '8px',
+		height: '8px',
+		backgroundColor: 'var(--color-fail-mark)',
+		clipPath: 'polygon(50% 0, 100% 100%, 0 100%)'
+	},
 	'.cm-lint-marker-warning, .cm-lint-marker-info': {
 		content: 'normal',
-		backgroundColor: 'transparent',
-		border: 'var(--rule-region) solid var(--color-red)'
+		width: '10px',
+		height: '9px',
+		backgroundColor: 'var(--ink-2)',
+		clipPath: 'polygon(50% 0, 100% 100%, 0 100%, 50% 0, 50% 34%, 20% 86%, 80% 86%, 50% 34%)'
 	},
 	'.cm-diagnostic': { padding: 'calc(var(--spacing) * 2) calc(var(--spacing) * 3)', marginLeft: '0', whiteSpace: 'pre-wrap' },
-	'.cm-diagnostic-error': { borderLeft: 'var(--rule-frame) solid var(--color-red)' },
-	'.cm-diagnostic-warning, .cm-diagnostic-info, .cm-diagnostic-hint': { borderLeft: 'var(--rule-frame) dotted var(--color-red)' },
+	'.cm-diagnostic-error': { borderLeft: 'var(--rule-frame) solid var(--color-fail-mark)' },
+	'.cm-diagnostic-warning, .cm-diagnostic-info, .cm-diagnostic-hint': { borderLeft: 'var(--rule-frame) solid var(--ink-2)' },
 	'.cm-diagnostic-path': { fontWeight: 'var(--font-weight-semibold)' },
 	'.cm-diagnostic-severity': {
 		fontSize: 'var(--text-2xs)',
 		fontWeight: 'var(--font-weight-semibold)',
 		letterSpacing: 'var(--tracking-caps)',
 		textTransform: 'uppercase',
-		color: 'var(--color-red-strong)'
+		color: 'var(--color-fail)'
 	},
+	'.cm-diagnostic-warning .cm-diagnostic-severity, .cm-diagnostic-info .cm-diagnostic-severity, .cm-diagnostic-hint .cm-diagnostic-severity': { color: 'var(--ink-2)' },
 	'.cm-diagnostic code': { fontFamily: 'var(--font-mono)' },
 	'.cm-diagnosticSource': { color: 'var(--color-ink-muted)', opacity: '1', fontFamily: 'var(--font-sans)' },
 	'.cm-tooltip-lint': { padding: '0' },

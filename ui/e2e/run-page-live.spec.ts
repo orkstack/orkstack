@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { selectTask } from './uiHelpers';
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
@@ -182,10 +183,12 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	note(`submitted run ${run} with no Orker polling`);
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 
-	// P1 — nobody polls the pool: the attempt is waiting for an Orker.
+	// P1 — nobody polls the pool: the attempt is waiting for capacity. The live
+	// facts are the Item card's, so the task is the selection.
+	await selectTask(page, 'talk');
 	const live = page.getByTestId('task-talk-live');
 	await expect(live).toHaveAttribute('data-live', 'waiting', { timeout: 60_000 });
-	await expect(live).toContainText('Waiting for an orker');
+	await expect(live).toContainText('Waiting for capacity');
 	note(`P1 task-talk-live data-live=waiting text="${await live.innerText()}"`);
 	await expect(page.getByTestId('task-talk-running-for')).toHaveCount(0);
 	await shot(page, 'live-waiting.png');
@@ -215,17 +218,19 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	const runningFirst = await runningFor.innerText();
 	await expect.poll(() => runningFor.innerText(), { timeout: 10_000 }).not.toBe(runningFirst);
 	note(`P2 ${runningFirst} -> ${await runningFor.innerText()}`);
-	await expect(page.getByTestId('task-talk-live-orker')).toHaveText(`Orker ${ORKER_ID}`);
-	note(`P2 task-talk-live-orker: "${await page.getByTestId('task-talk-live-orker').innerText()}"`);
+	// The Orker line is the live one until the row records the Orker, then the card's own.
+	const orkerLine = page.getByTestId(/^task-talk-(live|card)-orker$/);
+	await expect(orkerLine).toHaveText(ORKER_ID);
+	note(`P2 task-talk Orker line: "${await orkerLine.innerText()}"`);
 	await shot(page, 'live-started.png');
 
 	// P3 — the card's CLI equivalent, and what the CLI prints for the same run.
-	await page.getByTestId('run-task-talk-inspect-cli-trigger').click();
-	await expect(page.getByTestId('run-task-talk-inspect-cli-command')).toHaveText(
-		`orkctl --namespace default run inspect ${run} --task talk`
-	);
-	note(`P3 card command: ${await page.getByTestId('run-task-talk-inspect-cli-command').innerText()}`);
-	await page.getByTestId('run-task-talk-inspect-cli-trigger').click();
+	// (The row's commands are one popover now; the inspect command is the one with `run inspect` in it.)
+	await page.getByTestId('run-inspect-cli-trigger').click();
+	const inspectCommand = page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: '--task talk' }).filter({ hasText: 'run inspect' });
+	await expect(inspectCommand).toHaveText(`orkctl --namespace default run inspect ${run} --task talk`);
+	note(`P3 card command: ${await inspectCommand.innerText()}`);
+	await page.getByTestId('run-inspect-cli-trigger').click();
 	const cliOut = runInspectCLI(run);
 	expect(cliOut).toContain('talk');
 	expect(cliOut).toContain('STARTED');
@@ -239,7 +244,7 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	await expect(live).toContainText('Cancelling');
 	note(`P4 task-talk-live before CANCELED: "${await live.innerText()}" (run-status ${await page.getByTestId('run-status').innerText()})`);
 	await shot(page, 'live-cancelling.png');
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 	await expect(page.getByTestId('task-talk-live')).toHaveCount(0);
 	note('P4 run CANCELED; no task-talk-live element remains');
 });
@@ -269,6 +274,7 @@ test('the live poll pauses while the page is hidden and resumes when shown', asy
 	const run = submitted.run.id;
 	note(`P5 submitted run ${run}`);
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+	await selectTask(page, 'talk');
 	await expect(page.getByTestId('task-talk-live')).toBeVisible({ timeout: 120_000 });
 	await expect.poll(() => inspects, { timeout: 15_000 }).toBeGreaterThan(0);
 
@@ -286,7 +292,7 @@ test('the live poll pauses while the page is hidden and resumes when shown', asy
 	note(`P5 shown again: an InspectRun request within ${Date.now() - shownAt} ms`);
 
 	await rpc('RunService/CancelRun', { runId: run });
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 });
 
 // F-ui-ux-7: a run whose event socket can never be served stops saying
@@ -326,6 +332,6 @@ test('a dead event socket ends in a stopped banner, and Retry resumes live updat
 	await shot(page, 'live-resumed.png');
 
 	await rpc('RunService/CancelRun', { runId: run });
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 90_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 	note(`P6 Retry resumed from ${opened[opened.length - 1]}; the CANCELED transition arrived on the resumed stream`);
 });

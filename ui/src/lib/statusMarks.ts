@@ -6,8 +6,8 @@
 import { Status } from './gen/orkstack/v1/common_pb';
 import { statusClasses } from './status';
 
-export type MarkShape = 'square' | 'dot' | 'ring' | 'cross' | 'strike' | 'hatch' | 'hollow' | 'dotted';
-/** live: the survey green; live-outline: the drafting blue; alarm: the revision red; the rest are ink. */
+export type MarkShape = 'square' | 'dot' | 'diamond' | 'triangle' | 'strike' | 'dash' | 'hollow' | 'dotted';
+/** live: running blue; live-outline: awaiting violet; alarm: failed red; the rest are ink. */
 export type MarkFill = 'solid' | 'live' | 'live-outline' | 'alarm' | 'outline' | 'hatched' | 'none';
 
 export interface StatusMark {
@@ -24,10 +24,10 @@ export const STATUS_MARKS: Record<Status, StatusMark> = {
 	[Status.PENDING]: { shape: 'hollow', fill: 'outline', className: 'mark-hollow', inner: false },
 	[Status.RUNNING]: { shape: 'dot', fill: 'live', className: 'mark-dot', inner: true },
 	[Status.SUCCEEDED]: { shape: 'square', fill: 'solid', className: 'mark-square', inner: false },
-	[Status.FAILED]: { shape: 'cross', fill: 'alarm', className: 'mark-cross', inner: false },
+	[Status.FAILED]: { shape: 'triangle', fill: 'alarm', className: 'mark-tri', inner: false },
 	[Status.CANCELED]: { shape: 'strike', fill: 'outline', className: 'mark-strike', inner: false },
-	[Status.SKIPPED]: { shape: 'hatch', fill: 'hatched', className: 'mark-hatch', inner: false },
-	[Status.AWAITING]: { shape: 'ring', fill: 'live-outline', className: 'mark-ring', inner: true }
+	[Status.SKIPPED]: { shape: 'dash', fill: 'hatched', className: 'mark-dash', inner: false },
+	[Status.AWAITING]: { shape: 'diamond', fill: 'live-outline', className: 'mark-diamond', inner: true }
 };
 
 export function statusMark(status: Status | undefined): StatusMark {
@@ -59,35 +59,28 @@ export type SvgMarkPart =
  */
 export function svgMark(status: Status | undefined, x: number, y: number, size: number): SvgMarkPart[] {
 	const s = size;
-	const box = `M ${x} ${y} h ${s} v ${s} h ${-s} Z`;
 	const inset = `M ${x + 0.75} ${y + 0.75} h ${s - 1.5} v ${s - 1.5} h ${-(s - 1.5)} Z`;
 	const cx = x + s / 2;
 	const cy = y + s / 2;
 	const word = statusClassWord(status);
 	switch (statusMark(status).shape) {
 		case 'square':
-			return [{ el: 'path', d: box, cls: `mark-fill-${word}` }];
+			return [{ el: 'path', d: `M ${x + 2} ${y} h ${s - 4} a 2 2 0 0 1 2 2 v ${s - 4} a 2 2 0 0 1 -2 2 h ${-(s - 4)} a 2 2 0 0 1 -2 -2 v ${-(s - 4)} a 2 2 0 0 1 2 -2 Z`, cls: `mark-fill-${word}` }];
 		case 'dot':
-			return [
-				{ el: 'circle', cx, cy, r: s / 2, cls: `mark-fill-${word}` },
-				{ el: 'circle', cx, cy, r: s / 5, cls: 'mark-fill-paper' }
-			];
-		case 'ring':
-			return [{ el: 'circle', cx, cy, r: s / 2 - 0.75, cls: `mark-line-${word}` }];
-		case 'cross':
-			return [
-				{ el: 'path', d: box, cls: `mark-fill-${word}` },
-				{ el: 'path', d: `M ${x + 2} ${y + 2} L ${x + s - 2} ${y + s - 2} M ${x + s - 2} ${y + 2} L ${x + 2} ${y + s - 2}`, cls: 'mark-line-paper' }
-			];
+			return [{ el: 'circle', cx, cy, r: s / 2, cls: `mark-fill-${word}` }];
+		case 'diamond':
+			return [{ el: 'path', d: `M ${cx} ${y + 1} L ${x + s - 1} ${cy} L ${cx} ${y + s - 1} L ${x + 1} ${cy} Z`, cls: `mark-line-${word}` }];
+		case 'triangle':
+			return [{ el: 'path', d: `M ${cx} ${y} L ${x + s} ${y + s} L ${x} ${y + s} Z`, cls: `mark-fill-${word}` }];
 		case 'strike':
 			return [
 				{ el: 'path', d: inset, cls: `mark-line-${word}` },
 				{ el: 'path', d: `M ${x + s - 1} ${y + 1} L ${x + 1} ${y + s - 1}`, cls: `mark-line-${word}` }
 			];
-		case 'hatch':
+		case 'dash':
 			return [
-				{ el: 'path', d: inset, cls: `mark-line-${word}`, dash: '2 1.5' },
-				{ el: 'path', d: `M ${x} ${y + s / 2} L ${x + s / 2} ${y} M ${x} ${y + s} L ${x + s} ${y} M ${x + s / 2} ${y + s} L ${x + s} ${y + s / 2}`, cls: `mark-line-${word}` }
+				{ el: 'path', d: inset, cls: `mark-line-${word}` },
+				{ el: 'path', d: `M ${x + 2} ${cy} L ${x + s - 2} ${cy}`, cls: `mark-line-${word}` }
 			];
 		case 'hollow':
 			return [{ el: 'path', d: inset, cls: `mark-line-${word}` }];
