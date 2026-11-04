@@ -134,6 +134,8 @@ export default defineConfig({
 					errorOnInvalidHashes: true,
 					// The docs name the local stack's own addresses (localhost:8080 …).
 					errorOnLocalLinks: false,
+					// The landing page is no docs page; scripts/check-links.mjs covers it.
+					exclude: [`${BASE_PATH}/`],
 				}),
 			],
 		}),

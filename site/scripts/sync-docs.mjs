@@ -699,6 +699,8 @@ for (const page of pages) {
 	const fields = { title: page.title, description: page.description };
 	fields.editUrl = firstSource ? `${REPO}/edit/${BRANCH}/${firstSource}` : false;
 	if (page.tableOfContents) fields.tableOfContents = page.tableOfContents;
+	// The docs home's way back is the landing page.
+	if (page.route === 'docs') fields.prev = { link: `${BASE_PATH}/`, label: 'Home' };
 	mkdirSync(path.dirname(outFile), { recursive: true });
 	writeFileSync(outFile, frontmatter(fields) + body.trimEnd() + '\n');
 }

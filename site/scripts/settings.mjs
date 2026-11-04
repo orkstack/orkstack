@@ -183,7 +183,7 @@ export function sentences(text) {
 }
 
 /** The part of a row's details to show at once, and the part to fold away. */
-export function leadAndRest(effect, { lead = 140, foldOver = 120 } = {}) {
+export function leadAndRest(effect, { lead = 200, foldOver = 120 } = {}) {
 	const parts = sentences(effect);
 	const shown = [];
 	let size = 0;
@@ -228,6 +228,7 @@ export function linkMentions(effect, { deployHeadings, docHeadings, detailHeadin
 	// How OrkStack's own tests measured a default is no reader's concern here.
 	t = t.replace(/\s*The task soak runs in the nightly and pre-release proofs[^.]*\(docs\/PROOFS\.md\)\./g, '');
 	t = t.replace(/the task soak measured \([^)]*\)/g, 'measured');
+	t = t.replace(/The OrkStack-level setting; prefer it/g, 'Prefer it to `pool.queue`');
 	t = t.replace(/Pool-wide (?:—|-) see below/g, () => {
 		const a = detailHeadings.get('Pin hosting is a pool-wide setting');
 		return a ? `Pool-wide (see [Pin hosting is a pool-wide setting](${siteRoute('docs/configuration/details')}#${a}))` : 'Pool-wide';
@@ -276,6 +277,9 @@ export function headingAnchors(md) {
 	return map;
 }
 
+/** A table cell's words as a paragraph's: a capital to start, a full stop to end. */
+export const asSentence = (t) => t.replace(/^[a-z]/, (c) => c.toUpperCase()).replace(/([^.!?:])$/, '$1.');
+
 /** One setting as the page draws it. One line, so markdown never breaks the block. */
 export function renderEntry(row, { accepts, link, mentions = (t) => t }) {
 	const id = settingId(row);
@@ -294,8 +298,8 @@ export function renderEntry(row, { accepts, link, mentions = (t) => t }) {
 		.join('');
 	const { lead, rest } = leadAndRest(mentions(row.effect));
 	// A table cell starts in lower case; a paragraph does not.
-	const lede = lead ? `<p>${inlineHtml(lead.replace(/^[a-z]/, (c) => c.toUpperCase()), link)}</p>` : '';
-	const more = rest ? `<details><summary>More detail<span class="sr-only"> on ${esc(names[0])}</span></summary><p>${inlineHtml(rest, link)}</p></details>` : '';
+	const lede = lead ? `<p>${inlineHtml(asSentence(lead), link)}</p>` : '';
+	const more = rest ? `<details><summary>More detail<span class="sr-only"> on ${esc(names[0])}</span></summary><p>${inlineHtml(asSentence(rest), link)}</p></details>` : '';
 	return `<div class="setting not-content" data-setting><header><h3 id="${id}">${title}</h3>${tags}</header><dl>${dl}</dl>${lede}${more}</div>`;
 }
 

@@ -1,7 +1,7 @@
 ---
 // The foot of every page: OrkStack's released version, the license, the
 // places, and what it is built on.
-import { route, REPO, repoUrl } from '../../../site.config.mjs';
+import { route, REPO } from '../../../site.config.mjs';
 import { releasedVersion } from '../../lib/release';
 
 const links = [
@@ -18,7 +18,7 @@ const links = [
 	<div class="wrapw">
 		<span class="vline">
 			<span class="plate ver sm"><span class="k">OrkStack</span><span class="v">{releasedVersion}</span></span>
-			· <a href={repoUrl('LICENSE')}>MIT licensed</a>
+			· MIT licensed
 		</span>
 		<nav aria-label="Footer">
 			{links.map((l) => <a href={l.href}>{l.label}</a>)}

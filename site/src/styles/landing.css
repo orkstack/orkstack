@@ -371,12 +371,11 @@ pre.showcase-code {
 }
 .feature h3 a {
 	color: var(--ink);
-	text-decoration: underline;
-	text-decoration-color: var(--line-strong);
-	text-underline-offset: var(--underline-offset);
+	text-decoration: none;
 }
 .feature h3 a:hover {
-	text-decoration-color: currentColor;
+	text-decoration: underline;
+	text-underline-offset: var(--underline-offset);
 }
 .feature h3 a:focus-visible {
 	outline-offset: 1px;
@@ -480,6 +479,12 @@ pre.showcase-code {
 	font-size: 1.03125rem;
 	line-height: 1.65;
 }
+.section p code {
+	padding: 0;
+	border: 0;
+	background: none;
+	font-size: 0.86em;
+}
 .section p a {
 	color: var(--link);
 	text-underline-offset: var(--underline-offset);
@@ -523,11 +528,11 @@ pre.showcase-code {
 }
 .steps a {
 	color: var(--ink);
-	text-decoration-color: var(--line-strong);
-	text-underline-offset: var(--underline-offset);
+	text-decoration: none;
 }
 .steps a:hover {
-	text-decoration-color: currentColor;
+	text-decoration: underline;
+	text-underline-offset: var(--underline-offset);
 }
 .steps a:focus-visible {
 	outline-offset: 1px;
@@ -565,7 +570,7 @@ pre.showcase-code {
 	border: 0;
 	background: none;
 	color: var(--hero-ink-2);
-	font-size: inherit;
+	font-size: 0.86em;
 }
 .closer .end {
 	display: flex;
