@@ -2962,7 +2962,8 @@ the pool with no attempt started, and everything in flight is left alone. Good
 checks end it, with no operator step.
 
 With the defaults (`orker.store_check`, §1), an Orker cordons itself 30 to 45
-seconds into an outage, and a blip shorter than 30 seconds cordons nothing. It
+seconds into an outage, or up to about 50 when a stalled store makes each check
+run out its timeout, and a blip shorter than 30 seconds cordons nothing. It
 resumes 15 to 30 seconds after the store answers again.
 
 **Two independent causes.** An operator's cordon and a store outage are
@@ -3011,9 +3012,11 @@ Telemetry can never fail a task or change what the check does.
 
 **What a check is.** One conditional write of the fixed object the boot probe
 already wrote, which a live store refuses, and one read of it, with the Orker's
-own store credentials and its own client. So it exercises the write path and the
-read path a task's completion needs, and adds no object: if that one object has
-gone, the write puts it back, as the next boot would. Anything that keeps the
+own store credentials and its own client. So it exercises writing and reading a
+completion record, and adds no object: if that one object has gone, the write
+puts it back, as the next boot would. A failure that spares that one key, such
+as credentials scoped to some prefixes, goes unseen, and attempts fail as they
+always did. Anything that keeps the
 Orker from getting an answer fails it, revoked credentials included. Each check
 is bounded by `orker.store_check.timeout`, and one that does not answer in time
 counts as failed even when it cannot be interrupted, as on a hung mount, and no
@@ -3037,7 +3040,7 @@ as above.
   `PIN_UNAVAILABLE` once every pin host of its pool has refused for about five
   minutes, as for any cordon ("Removing an Orker safely", above).
 - **The window before the cordon.** An attempt that reaches the store during
-  those 30 to 45 seconds fails as it always did, and uses an attempt. So can
+  those seconds fails as it always did, and uses an attempt. So can
   the at most two tasks a cordon can still be handed (above), per Orker.
 - **Work already in flight.** A running container is left to finish, and a
   member of an open pin still runs. If either still cannot write its outputs

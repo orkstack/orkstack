@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -39,9 +40,12 @@ func storeOutageWatchConfig() orker.StoreWatchConfig {
 	}
 }
 
+// storeCheckCounts is how the shipped check answered the running watch.
+type storeCheckCounts struct{ passed, failed atomic.Int64 }
+
 // storeOutageOrker starts one Orker whose every store goes through a proxy,
-// running its store watch exactly as cmd/orker does.
-func storeOutageOrker(d *cordonDeployment, id, pool string) (*pinOrker, *faultproxy.Proxy) {
+// running its store watch exactly as cmd/orker does, and counts its checks.
+func storeOutageOrker(d *cordonDeployment, id, pool string) (*pinOrker, *faultproxy.Proxy, *storeCheckCounts) {
 	t := d.t
 	t.Helper()
 	endpoint, err := url.Parse(d.cfg.S3Endpoint)
@@ -78,9 +82,18 @@ func storeOutageOrker(d *cordonDeployment, id, pool string) (*pinOrker, *faultpr
 	})
 	watchCtx, stop := context.WithCancel(d.ctx)
 	t.Cleanup(stop)
-	check := func(ctx context.Context) error { return artifacts.CheckCommitStore(ctx, commits) }
+	checks := &storeCheckCounts{}
+	check := func(ctx context.Context) error {
+		err := artifacts.CheckCommitStore(ctx, commits)
+		if err != nil {
+			checks.failed.Add(1)
+		} else {
+			checks.passed.Add(1)
+		}
+		return err
+	}
 	go o.activities.NewStoreWatch(check, storeOutageWatchConfig(), nil).Run(watchCtx)
-	return o, proxy
+	return o, proxy, checks
 }
 
 func (d *cordonDeployment) awaitStoreOutage(id string, within time.Duration, want bool) *orkstackv1.Orker {
@@ -102,6 +115,22 @@ func (d *cordonDeployment) submitAllowingAnEmptyPool(orkflow string) string {
 	return resp.Msg.GetRun().GetId()
 }
 
+// awaitStoreCheck waits until the watch's check has answered as the step needs.
+func awaitStoreCheck(t *testing.T, ctx context.Context, what string, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for !done() {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s never happened within 30s", what)
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("context ended waiting for %s: %v", what, ctx.Err())
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+}
+
 // With the store cut, a task waits: the Orker is handed nothing, no attempt is
 // used, and other work keeps finishing. A blip cordons nothing. When the store
 // returns the Orker resumes with no operator step and the run completes on its
@@ -112,30 +141,30 @@ func TestIntegration_StoreOutage_TasksWaitWithNoAttemptUsedAndCompleteWhenTheSto
 	pool := fmt.Sprintf("outage-%d", time.Now().UnixNano()%1_000_000)
 	controlPool := pool + "-control"
 	d := newCordonDeployment(t, ctx, "outage", pool, controlPool)
-	o, proxy := storeOutageOrker(d, "orker-out-"+d.token, pool)
+	o, proxy, checks := storeOutageOrker(d, "orker-out-"+d.token, pool)
 	control := d.orker("orker-ctl-"+d.token, controlPool, pinOrkerConfig{})
 	d.storeOrkflow("echo-"+d.token, pool, cordonEchoYAML, 0)
 	d.storeOrkflow("ctl-"+d.token, controlPool, cordonEchoYAML, 0)
 
-	// A blip shorter than the failure threshold cordons nothing.
-	d.transcript.section("a blip")
-	proxy.Cut()
-	blipEnd := time.Now().Add(1500 * time.Millisecond)
-	for time.Now().Before(blipEnd) {
+	// A blip shorter than the failure threshold cordons nothing, and a good check
+	// between blips starts the count again: three blips of one failed check would
+	// cordon the Orker if it did not. Each step waits for the watch's own check to
+	// have answered, so no window passes with no check inside it.
+	d.transcript.section("three blips")
+	for blip := 1; blip <= 3; blip++ {
+		failed := checks.failed.Load()
+		proxy.Cut()
+		awaitStoreCheck(t, ctx, "a check fails", func() bool { return checks.failed.Load() > failed })
+		passed := checks.passed.Load()
+		proxy.Restore()
+		awaitStoreCheck(t, ctx, "a check passes", func() bool { return checks.passed.Load() > passed })
 		if row := d.one(o.id); row.GetStoreOutage() != nil || row.GetCordoned() {
-			t.Fatalf("a %v blip cordoned the Orker: %v", 1500*time.Millisecond, row)
+			t.Fatalf("blip %d cordoned the Orker: %v", blip, row)
 		}
-		time.Sleep(100 * time.Millisecond)
 	}
-	proxy.Restore()
-	stillReady := d.one(o.id)
-	if stillReady.GetCordoned() {
-		t.Fatalf("after the blip: %v", stillReady)
-	}
-	// Past the blip, the failures must have reset: run a good task through it.
 	blipRun := d.await(d.submit("echo-" + d.token))
 	if blipRun.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
-		t.Fatalf("a run after the blip ended %v: %v", blipRun.GetStatus(), blipRun.GetError())
+		t.Fatalf("a run after the blips ended %v: %v", blipRun.GetStatus(), blipRun.GetError())
 	}
 
 	d.transcript.section("the store is cut")
@@ -258,7 +287,7 @@ func TestIntegration_StoreOutage_LeavesARunningContainerAlone(t *testing.T) {
 	ctx := cordonContext(t, 8*time.Minute)
 	pool := fmt.Sprintf("outage-run-%d", time.Now().UnixNano()%1_000_000)
 	d := newCordonDeployment(t, ctx, "outagerun", pool)
-	o, proxy := storeOutageOrker(d, "orker-out-"+d.token, pool)
+	o, proxy, _ := storeOutageOrker(d, "orker-out-"+d.token, pool)
 	d.storeOrkflow("hold-"+d.token, pool, storeOutageHoldYAML, 45)
 
 	runID := d.submit("hold-" + d.token)
@@ -292,7 +321,7 @@ func TestIntegration_StoreOutage_AndAnOperatorsCordonAreIndependent(t *testing.T
 	ctx := cordonContext(t, 6*time.Minute)
 	pool := fmt.Sprintf("outage-two-%d", time.Now().UnixNano()%1_000_000)
 	d := newCordonDeployment(t, ctx, "outagetwo", pool)
-	o, proxy := storeOutageOrker(d, "orker-out-"+d.token, pool)
+	o, proxy, _ := storeOutageOrker(d, "orker-out-"+d.token, pool)
 
 	const reason = "runtime patch"
 	d.cordon(o.id, reason)
