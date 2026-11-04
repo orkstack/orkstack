@@ -64,6 +64,14 @@ activity container reaches only a test's own server on the host, by
 profile's services reach each other on the compose network.
 `TestDevCompose_PublishesOnlyOnLoopback` holds the rule.
 
+`make up` starts the engine on `127.0.0.1:8080` for the same reason: its API
+has no login, and whatever reaches it can start a run on this machine's Docker.
+`orkctl` and the UI's dev server reach it on loopback, and the suites and the
+proofs start engines of their own, at addresses of their own.
+`ORK_HTTP_ADDR=:8080 make up` opens it to other machines; an engine already
+running keeps its address until `make down`.
+`TestDevStack_EngineListensOnlyOnLoopback` holds the default.
+
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl apply examples/each-fan-out.ork.yaml` and the
 rest of [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) work as written,

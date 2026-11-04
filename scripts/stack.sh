@@ -20,7 +20,11 @@ REPO="$PWD"
 RUN_DIR="$REPO/.run"
 COMPOSE=(docker compose -f "$REPO/deploy/docker-compose.yml")
 
-ENGINE_ADDR="${ORK_HTTP_ADDR:-:8080}"
+# Loopback, as deploy/docker-compose.yml publishes the infrastructure: the
+# engine's API has no login, and only this host's own clients need it. The
+# binary's own default stays every interface; ORK_HTTP_ADDR=:8080 make up asks
+# for that here (CONTRIBUTING.md).
+ENGINE_ADDR="${ORK_HTTP_ADDR:-127.0.0.1:8080}"
 ENGINE_URL="http://127.0.0.1:${ENGINE_ADDR##*:}"
 UI_PORT="${ORK_UI_PORT:-5173}"
 UI_URL="http://localhost:$UI_PORT"

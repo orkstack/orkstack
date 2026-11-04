@@ -1,6 +1,7 @@
 package dist_test
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -8,9 +9,12 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/orker"
 )
 
@@ -45,6 +49,225 @@ func TestDevCompose_PublishesOnlyOnLoopback(t *testing.T) {
 	}
 	if published == 0 {
 		t.Error("the development stack publishes no port; the rule above checked nothing")
+	}
+}
+
+// TestDevStack_EngineListensOnlyOnLoopback: the engine `make up` starts is a
+// contributor's own too. Its API has no login, and whatever reaches it can start
+// a run on this host's Docker, so it listens on 127.0.0.1 unless the contributor
+// asks for more. Nothing needs more: orkctl and the UI's dev server run on this
+// host, no activity container calls the API, and the suites and the proofs start
+// engines of their own at addresses of their own, never through scripts/stack.sh.
+func TestDevStack_EngineListensOnlyOnLoopback(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+
+	code, out := s.up()
+
+	if code != 0 {
+		t.Fatalf("scripts/stack.sh up exited %d; want 0:\n%s", code, out)
+	}
+	if got := s.engineAddr(); got != "127.0.0.1:8080" {
+		t.Errorf("the engine is told to listen on %q; want 127.0.0.1:8080, which no other machine reaches", got)
+	}
+	s.assertClientsDial("http://127.0.0.1:8080")
+}
+
+// TestDevStack_TheEngineListensWhereTheContributorSays is the positive control
+// of the test above: the address it reads is the one the script chose, so a pass
+// there is the default's doing. ORK_HTTP_ADDR is how a contributor opens the
+// engine to other machines (CONTRIBUTING.md), and the script's own clients
+// follow its port.
+func TestDevStack_TheEngineListensWhereTheContributorSays(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+
+	code, out := s.up("ORK_HTTP_ADDR=:9090")
+
+	if code != 0 {
+		t.Fatalf("scripts/stack.sh up exited %d; want 0:\n%s", code, out)
+	}
+	if got := s.engineAddr(); got != ":9090" {
+		t.Errorf("the engine is told to listen on %q; want :9090, the address the contributor set", got)
+	}
+	s.assertClientsDial("http://127.0.0.1:9090")
+}
+
+// stackRepo is a throwaway repository holding the committed scripts/stack.sh,
+// with stand-ins for the docker CLI, make, curl, sleep and bun first on PATH and
+// for ork, orker and orkctl in its bin/, so `scripts/stack.sh up` runs as `make
+// up` runs it and touches nothing of the host's: not the shared stack's
+// containers, and no process but the stand-ins it starts, which the test stops
+// by the pids the script recorded (AGENTS.md §11.1).
+type stackRepo struct {
+	t    *testing.T
+	root string
+	logs string
+	path string
+}
+
+func newStackRepo(t *testing.T) *stackRepo {
+	t.Helper()
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Fatalf("bash is required (CONTRIBUTING.md): %v", err)
+	}
+	realSleep, err := exec.LookPath("sleep")
+	if err != nil {
+		t.Fatalf("sleep is required: %v", err)
+	}
+	s := &stackRepo{t: t, root: t.TempDir(), logs: t.TempDir()}
+	standIns := t.TempDir()
+	s.path = standIns + string(os.PathListSeparator) + os.Getenv("PATH")
+	t.Cleanup(s.stopStandIns)
+
+	s.write(filepath.Join(s.root, "scripts", "stack.sh"), string(readRepoFile(t, "scripts/stack.sh")))
+	// Present, so the script installs nothing.
+	if err := os.MkdirAll(filepath.Join(s.root, "ui", "node_modules"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// A process the script starts stays up until the test stops it, or until
+	// this runs out if the test could not.
+	stay := "exec " + shellQuote(realSleep) + " 120\n"
+	record := func(name, what string) string {
+		return `echo "` + what + `" >> ` + shellQuote(filepath.Join(s.logs, name)) + "\n"
+	}
+	for path, body := range map[string]string{
+		// `docker info` fails, which skips the script's mount probe.
+		filepath.Join(standIns, "docker"): `[ "$1" != info ] || exit 1` + "\n",
+		// One activity, whose image curl does not find, so the script writes no
+		// catalog.
+		filepath.Join(standIns, "make"): `case "$*" in *print-activities*) echo shell ;; esac` + "\n",
+		filepath.Join(standIns, "curl"): `case "$*" in
+*/manifests/*) exit 22 ;;
+*/ws/runs/*) printf 404 ;;
+*http_code*) printf 200 ;;
+esac
+`,
+		filepath.Join(standIns, "sleep"):      "",
+		filepath.Join(standIns, "bun"):        record("ui", "$ORK_SERVER") + stay,
+		filepath.Join(s.root, "bin", "ork"):   record("ork", "$*") + stay,
+		filepath.Join(s.root, "bin", "orker"): stay,
+		filepath.Join(s.root, "bin", "orkctl"): record("orkctl", "$*") +
+			`echo '"liveOrkerCount": 1'` + "\n",
+	} {
+		s.write(path, "#!/bin/sh\n"+body)
+	}
+	return s
+}
+
+func (s *stackRepo) write(path, content string) {
+	s.t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		s.t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
+		s.t.Fatal(err)
+	}
+}
+
+// up runs `scripts/stack.sh up` in the throwaway repository, with env and
+// nothing of the test's own environment but PATH: an ORK_* or OTEL_* variable
+// there would change what the script writes.
+func (s *stackRepo) up(env ...string) (int, string) {
+	s.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", filepath.Join(s.root, "scripts", "stack.sh"), "up")
+	cmd.Env = append([]string{"PATH=" + s.path, "HOME=" + s.logs}, env...)
+	out, err := cmd.CombinedOutput()
+	var exit *exec.ExitError
+	switch {
+	case err == nil:
+		return 0, string(out)
+	case errors.As(err, &exit):
+		return exit.ExitCode(), string(out)
+	}
+	s.t.Fatalf("run scripts/stack.sh up: %v\n%s", err, out)
+	return 0, ""
+}
+
+// engineAddr is the address the engine reads from the configuration the script
+// started it with, read as cmd/ork reads it.
+func (s *stackRepo) engineAddr() string {
+	s.t.Helper()
+	file := filepath.Join(s.root, ".run", "orkstack.yaml")
+	if got, want := strings.TrimSpace(s.await("ork")), "--config "+file; got != want {
+		s.t.Fatalf("the engine was started with %q; want %q", got, want)
+	}
+	doc, err := config.Load(file, config.BinaryOrk)
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	addr := ""
+	unset := func(string) (string, bool) { return "", false }
+	if _, err := doc.Apply(unset, func(name, value string) error {
+		if name == "ORK_HTTP_ADDR" {
+			addr = value
+		}
+		return nil
+	}); err != nil {
+		s.t.Fatal(err)
+	}
+	return addr
+}
+
+// assertClientsDial: the script's own readiness checks and the UI's dev server
+// both reach the engine at url.
+func (s *stackRepo) assertClientsDial(url string) {
+	s.t.Helper()
+	calls, err := os.ReadFile(filepath.Join(s.logs, "orkctl"))
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	if !strings.Contains(string(calls), "--server "+url+" ") {
+		s.t.Errorf("orkctl was called with %q; want --server %s", calls, url)
+	}
+	if got := strings.TrimSpace(s.await("ui")); got != url {
+		s.t.Errorf("the UI's dev server proxies to %q; want %s", got, url)
+	}
+}
+
+// await is what a stand-in the script started in the background recorded, once
+// it has: `up` does not wait for one to get that far.
+func (s *stackRepo) await(name string) string {
+	s.t.Helper()
+	deadline := time.Now().Add(time.Minute)
+	for {
+		raw, err := os.ReadFile(filepath.Join(s.logs, name))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			s.t.Fatal(err)
+		}
+		if strings.HasSuffix(string(raw), "\n") {
+			return string(raw)
+		}
+		if time.Now().After(deadline) {
+			s.t.Fatalf("the %s stand-in recorded nothing within a minute", name)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// stopStandIns stops the processes the script recorded, by those pids. Each
+// stand-in ended in `exec sleep`, so its pid is the one process it holds.
+func (s *stackRepo) stopStandIns() {
+	pidfiles, err := filepath.Glob(filepath.Join(s.root, ".run", "*.pid"))
+	if err != nil {
+		s.t.Error(err)
+	}
+	for _, pidfile := range pidfiles {
+		raw, err := os.ReadFile(pidfile)
+		if err != nil {
+			s.t.Error(err)
+			continue
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		if err != nil {
+			s.t.Errorf("%s: %v", pidfile, err)
+			continue
+		}
+		if p, err := os.FindProcess(pid); err == nil {
+			_ = p.Kill()
+		}
 	}
 }
 
