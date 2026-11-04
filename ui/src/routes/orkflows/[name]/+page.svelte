@@ -194,7 +194,7 @@
 	{#snippet meta()}
 		{#if wf}
 			{#snippet version()}<span data-testid="orkflow-version"><Plate key="version" value={wf.version} /></span>{/snippet}
-			{#snippet digest()}{#if wf.definitionDigest}<Plate key="sha256" value={wf.definitionDigest.replace(/^sha256:/, '').slice(0, 12)} tip={wf.definitionDigest} />{:else}—{/if}{/snippet}
+			{#snippet digest()}{#if wf.definitionDigest}<Plate key="digest" value={wf.definitionDigest.replace(/^sha256:/, '').slice(0, 12).replace(/(.{4})(?=.)/g, '$1 ')} tip={wf.definitionDigest} />{:else}—{/if}{/snippet}
 			{#snippet appliedAt()}<TimeAgo at={wf.createdAt} />{/snippet}
 			<FactsStrip facts={[{ label: 'Current version', value: version }, { label: 'Definition', value: digest }, { label: 'Applied', value: appliedAt }]} />
 			{#if wf.description && data.tab !== 'edit'}<p class="mt-2 max-w-prose">{wf.description}</p>{/if}

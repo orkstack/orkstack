@@ -268,7 +268,7 @@ const theme = EditorView.theme({
 		borderRadius: 'var(--radius-sm)'
 	},
 	'&.cm-focused': { outline: 'var(--rule-frame) solid var(--color-focus)', outlineOffset: 'var(--rule-frame)' },
-	'.cm-scroller': { fontFamily: 'var(--font-mono)', lineHeight: 'var(--text-sm--line-height)', fontVariantLigatures: 'none' },
+	'.cm-scroller': { fontFamily: 'var(--font-mono)', fontSize: '13.5px', lineHeight: '22px', fontVariantLigatures: 'none' },
 	'.cm-content': { caretColor: 'var(--color-ink)', paddingBlock: 'calc(var(--spacing) * 2)' },
 	'.cm-line': { paddingInline: 'calc(var(--spacing) * 3)' },
 	'.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--color-ink)' },

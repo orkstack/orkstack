@@ -378,7 +378,7 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	note(`DAG at 390: ${JSON.stringify(narrow)}`);
 	expect(narrow.scrolls).toBe(true);
 	expect(narrow.scale).toBeGreaterThanOrEqual(0.6 - 0.001);
-	await expect(page.getByTestId('run-dag-scroll-left').or(page.getByTestId('run-dag-scroll-right')).first()).toBeVisible();
+	await expect(page.getByTestId('run-drawing').getByRole('region')).toHaveAttribute('tabindex', '0');
 	await page.screenshot({ path: out('finish-run-dag-390.png') });
 
 	// The registers reflow below 640 px: nothing scrolls sideways, and a run's

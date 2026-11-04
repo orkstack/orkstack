@@ -885,7 +885,7 @@ test('pool health is namespace-scoped, and reports live Orker counts for every p
 
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${OPS_NS}`);
 	await expect(page.getByTestId('pools-scope-caption')).toContainText(OPS_NS);
-	await expect(page.getByTestId('pools-scope-caption')).toContainText('honours the namespace');
+	await expect(page.getByTestId('pools-scope-caption')).toContainText('Where a task of namespace');
 
 	// main: a live Orker really is polling for it, and it is the default.
 	const mainCard = page.getByTestId('pool-card-main');

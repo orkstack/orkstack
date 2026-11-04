@@ -1,6 +1,7 @@
 <script lang="ts">
 	import LiveControl from './LiveControl.svelte';
 	import { onDestroy, untrack } from 'svelte';
+	import Icon from './Icon.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import Select from '#lib/components/Select.svelte';
 	import type { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
@@ -551,9 +552,11 @@
 						data-testid="task-log-download-{taskId}"
 						disabled={downloading || !dispatched}
 						onclick={downloadRetained}
-						class="btn btn-sm btn-quiet"
+						aria-label={downloading ? 'Preparing download' : 'Download this log'}
+						data-tip={downloading ? 'Preparing download' : 'Download this log'}
+						class="btn btn-sm btn-quiet btn-icon"
 					>
-						{downloading ? 'Preparing download…' : 'Download'}
+						<Icon name="download" />
 					</button>
 				</div>
 			</div>

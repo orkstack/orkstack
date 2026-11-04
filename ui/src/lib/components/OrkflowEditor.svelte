@@ -157,7 +157,7 @@
 	const session = new YamlSession(async (text, ns, signal) => {
 		const res = await orkflowClient(fetch).validateOrkflow({ yaml: text, namespace: ns }, { signal });
 		return res.issues;
-	}, 'Apply also refuses a version already stored with other content.');
+	});
 
 	async function validate(): Promise<boolean> {
 		applyError = '';

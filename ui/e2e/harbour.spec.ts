@@ -28,6 +28,12 @@ import {
 import { editorReady } from './yaml';
 import { selectTask } from './uiHelpers';
 
+const hold = () => {
+	let release = () => {};
+	const held = new Promise<void>((resolve) => (release = resolve));
+	return { held, release };
+};
+
 // Harbour's own behaviour, against a real engine, Orker, Temporal and object
 // store (brief §12): every dialog (Jump, Cancel run…, Cordon…) and the
 // editor's More disclosure, the editor's docs rail at 1440, 1280, 1220, 1100
@@ -42,6 +48,7 @@ const TEMPORAL_NAMESPACE = `ork-ui-harbour-${STAMP}`;
 const BUCKET = ownBucket('harbour');
 const FAN = `hb-fan-${STAMP}`;
 const SLEEP = `hb-sleep-${STAMP}`;
+const FOLLOW = `hb-follow-${STAMP}`;
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR ? path.join(process.env.ORK_PROOF_DIR, 'harbour') : path.join(uiDir, 'test-results', 'harbour');
 const out = proofOut(PROOF_DIR);
@@ -86,6 +93,25 @@ test.beforeAll(async () => {
 			'    uses: shell',
 			'    network: none',
 			'    with: {op: exec, command: [sleep, "600"]}',
+			''
+		].join('\n')
+	});
+	await rpc('OrkflowService/ApplyOrkflow', {
+		yaml: [
+			'apiVersion: orkstack/v1',
+			'kind: Orkflow',
+			`name: ${FOLLOW}`,
+			'version: "1.0.0"',
+			'tasks:',
+			'  - id: first',
+			'    uses: shell',
+			'    network: none',
+			'    with: {op: exec, command: [sh, -c, "echo first line; sleep 6"]}',
+			'  - id: second',
+			'    uses: shell',
+			'    needs: [first]',
+			'    network: none',
+			'    with: {op: exec, command: [sh, -c, "echo second line; sleep 6"]}',
 			''
 		].join('\n')
 	});
@@ -220,11 +246,71 @@ test('a hovered tooltip stays while the pointer crosses onto it, the next tip fo
 	await expect(tip).toBeVisible();
 	// Sweeping straight on to the next tipped control shows its tip: the old
 	// tip's pending hide never cancels the new one's show.
-	await page.getByTestId('run-stability-toggle').hover();
-	await expect(tip).toHaveText(/retr/i);
+	await page.getByTestId('run-tasks-more').hover();
+	await expect(tip).toHaveText('More about these tasks');
 	await page.mouse.move(5, 5);
 	await expect(tip).toBeHidden();
 	expect(await page.locator('body [title]:not(svg *)').count()).toBe(0);
+});
+
+test('the page follows the task that runs, and the last one keeps its log when the run ends', async ({ page }) => {
+	// Regression: a log vanished under its reader as the run ended, or jumped off a task still running.
+	const run = (await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: FOLLOW })).run.id;
+	await page.goto(at(`/runs/${run}`));
+	const first = page.getByTestId('task-deep-link-first');
+	const second = page.getByTestId('task-deep-link-second');
+	await expect(first).toHaveAttribute('aria-pressed', 'true', { timeout: 60_000 });
+	await expect(page.getByTestId('task-log-first')).toContainText('first line', { timeout: 60_000 });
+	await expect(second).toHaveAttribute('aria-pressed', 'true', { timeout: 60_000 });
+	await expect(first).toHaveAttribute('aria-pressed', 'false');
+	await expect(page.getByTestId('task-log-second')).toContainText('second line', { timeout: 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
+	await expect(second).toHaveAttribute('aria-pressed', 'true');
+	await expect(page.getByTestId('task-log-second')).toContainText('second line');
+});
+
+test('a reader who clears the selection keeps it clear, whatever the run does next', async ({ page }) => {
+	// Regression: the page chose a task again the moment the next one started.
+	const run = (await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: FOLLOW })).run.id;
+	await page.goto(at(`/runs/${run}`));
+	const first = page.getByTestId('task-deep-link-first');
+	await expect(first).toHaveAttribute('aria-pressed', 'true', { timeout: 60_000 });
+	await page.getByTestId('run-dag-clear').click();
+	await expect(first).toHaveAttribute('aria-pressed', 'false');
+	// The run moves on, which is the page's chance to choose again.
+	await expect(page.getByTestId('task-second-status')).toHaveText('Running', { timeout: 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
+	await expect(page.getByTestId('task-list').getByRole('button', { pressed: true })).toHaveCount(0);
+	await expect(page.getByTestId('task-log-second')).toHaveCount(0);
+});
+
+test('the artifact list never holds the page up, and a failed read is a note beside the tasks', async ({ page }) => {
+	// Regression: at thousands of tasks the page waited a second for a list only an opened task shows.
+	const { held, release } = hold();
+	await page.route('**/orkstack.v1.RunService/ListRunArtifacts', async (route) => {
+		await held;
+		await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 'unavailable', message: 'the store is down' }) });
+	});
+	await page.goto(at(`/runs/${fanRun}`));
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded');
+	await expect(page.getByTestId('task-convert')).toBeVisible();
+	await expect(page.getByTestId('artifacts-unavailable')).toHaveCount(0);
+	release();
+	await expect(page.getByTestId('artifacts-unavailable')).toContainText('the store is down');
+	await expect(page.getByTestId('task-convert')).toBeVisible();
+	await page.unroute('**/orkstack.v1.RunService/ListRunArtifacts');
+});
+
+test('a row draws the icon its image declares, from a sprite the page holds', async ({ page }) => {
+	// Regression: a row pointed at a symbol nothing drew, leaving a blank where its icon goes.
+	// (An icon is aria-hidden, so only the document itself can say it resolves.)
+	await page.goto(at(`/runs/${fanRun}`));
+	const resolved = () =>
+		page.getByTestId('task-deep-link-convert').locator('use').evaluate((use) => {
+			const href = use.getAttribute('href');
+			return href && document.querySelector(href)?.tagName.toLowerCase() === 'symbol' ? href : '';
+		});
+	await expect.poll(resolved, { timeout: 30_000 }).toMatch(/^#i-declared-/);
 });
 
 test('a fan-out item is selected by its own button, and only that one is pressed', async ({ page }) => {
@@ -313,7 +399,7 @@ test('Cordon… cannot confirm until a reason is given, and Back leaves the Orke
 	// Regression: a cordon went through with no reason, or its confirm drew red (red is a status colour only).
 	await page.goto(at('/admin/pools'));
 	// A pool's Orkers are shown by default, each with Cordon….
-	await expect(page.getByRole('button', { name: 'Hide Orkers' }).first()).toHaveAttribute('aria-expanded', 'true');
+	await expect(page.getByRole('button', { name: /^Orkers of / }).first()).toHaveAttribute('aria-expanded', 'true');
 	const trigger = page.getByRole('button', { name: 'Cordon…' }).first();
 	await trigger.click();
 	const dialog = page.getByRole('dialog', { name: /^Cordon / });
@@ -356,9 +442,20 @@ test('forced colours: every status keeps its word and the live control its state
 	// Regression: in forced colours a status was only a colour, and the colour was gone.
 	await page.emulateMedia({ forcedColors: 'active' });
 	await page.goto(at('/runs'));
+	expect(await page.evaluate(() => matchMedia('(forced-colors: active)').matches)).toBe(true);
 	await expect(page.getByTestId(`run-row-status-${fanRun}`)).toHaveText('Succeeded');
 	await expect(page.getByTestId(`run-row-status-${canceledRun}`)).toHaveText('Canceled');
 	await expect(page.getByTestId('runs-live').getByRole('status')).toHaveText(/Live$/);
+	// The word and the mark are both still drawn: the mark takes the system's text colour, not a hue that was removed.
+	for (const id of [`run-row-status-${fanRun}`, `run-row-status-${canceledRun}`]) {
+		await expect(page.getByTestId(id)).toBeVisible();
+		const mark = await page.getByTestId(id).evaluate((el) => {
+			const before = getComputedStyle(el, '::before');
+			return { content: before.content, width: parseFloat(before.width) };
+		});
+		expect(mark.content, `${id} draws a mark`).not.toBe('none');
+		expect(mark.width, `${id}'s mark has a size`).toBeGreaterThan(0);
+	}
 	await shot(page, 'forced-colours-runs.png');
 	await page.goto(at(`/runs/${fanRun}`));
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded');

@@ -1,4 +1,4 @@
-import { inspectTask, selectTask } from './uiHelpers';
+import { inspectTask, selectTask, tasksMore } from './uiHelpers';
 import { expect, test } from './test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -191,7 +191,7 @@ test('completed values, bounded pane replay, JSON export and recorded artifacts 
 	await expect(page.getByTestId('task-values-completed')).toContainText('"exitCode": 0');
 
 	const jsonDownload = page.waitForEvent('download');
-	await page.getByTestId('export-run-json').click();
+	await tasksMore(page, 'export-run-json');
 	const jsonFile = await jsonDownload;
 	expect(jsonFile.suggestedFilename()).toBe(`${runId}.json`);
 	const jsonPath = out(`${runId}.json`);

@@ -34,7 +34,6 @@
 		readColors,
 		readoutPosition,
 		rectOf,
-		runningPulse,
 		scrollForCursor,
 		type MapColors,
 		type MapGeometry,
@@ -162,7 +161,7 @@
 	});
 
 	// ---- Paint ----
-	function paint(only?: number[], runningAlpha = 1): void {
+	function paint(only?: number[]): void {
 		const g = geometry;
 		if (!canvas || !g || !model) return;
 		colors ??= readColors();
@@ -177,50 +176,9 @@
 			canvas.style.height = `${g.height}px`;
 		}
 		ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-		paintCells(ctx, g, statuses, model.kinds, colors, only, runningAlpha);
+		paintCells(ctx, g, statuses, model.kinds, colors, only);
 		if (!only) painted = true;
 	}
-
-	// ---- Running cells breathe ----
-	// While any cell is RUNNING, its mark fades and returns every 2.4 s, as a
-	// running DAG node's ground does: only those cells are repainted, at most
-	// fifteen times a second (a hidden page gets no frames at all). Under
-	// reduced motion the loop never runs and the mark stays whole.
-	let reducedMotion = $state(false);
-	$effect(() => {
-		if (typeof matchMedia !== 'function') return;
-		const query = matchMedia('(prefers-reduced-motion: reduce)');
-		reducedMotion = query.matches;
-		const change = () => (reducedMotion = query.matches);
-		query.addEventListener('change', change);
-		return () => query.removeEventListener('change', change);
-	});
-	$effect(() => {
-		if (!painted || reducedMotion || (counts.get(Status.RUNNING) ?? 0) === 0) return;
-		if (typeof requestAnimationFrame !== 'function') return;
-		const runningCells = () => {
-			const out: number[] = [];
-			for (let i = 0; i < statuses.length; i++) if (statuses[i] === Status.RUNNING) out.push(i);
-			return out;
-		};
-		let pulse = 0;
-		let last = 0;
-		let faded = false;
-		const tick = (t: number) => {
-			pulse = requestAnimationFrame(tick);
-			if (t - last < 66) return;
-			last = t;
-			paint(runningCells(), runningPulse(t));
-			faded = true;
-		};
-		pulse = requestAnimationFrame(tick);
-		// Stopping — reduced motion asked for, no cell running, the map gone —
-		// leaves the cells whole, never half faded.
-		return () => {
-			cancelAnimationFrame(pulse);
-			if (faded) paint(runningCells());
-		};
-	});
 
 	// A full paint whenever the geometry changes (first build, resize).
 	$effect(() => {
@@ -313,6 +271,10 @@
 	});
 
 	const cursorRect = $derived(geometry && model && model.cells.length ? rectOf(geometry, Math.min(cursor, model.cells.length - 1)) : null);
+	const selectedRound = $derived.by(() => {
+		void counts;
+		return selectedIndex >= 0 && statuses[selectedIndex] === Status.RUNNING;
+	});
 	const selectedRect = $derived(geometry && selectedIndex >= 0 ? rectOf(geometry, selectedIndex) : null);
 
 	const summary = $derived(model ? mapSummary(counts, model.cells.length, model.order) : '');
@@ -381,13 +343,15 @@
 				</div>
 			{/each}
 			{#if selectedRect}
+				<!-- The selection follows the cell's shape, a pixel clear of it. -->
 				<div
 					aria-hidden="true"
-					class="pointer-events-none absolute border-2 border-ink"
-					style:left="{selectedRect.x - 2}px"
-					style:top="{selectedRect.y - 2}px"
-					style:width="{selectedRect.w + 4}px"
-					style:height="{selectedRect.h + 4}px"
+					class="map-sel pointer-events-none absolute"
+					class:round={selectedRound}
+					style:left="{selectedRect.x - 3}px"
+					style:top="{selectedRect.y - 3}px"
+					style:width="{selectedRect.w + 6}px"
+					style:height="{selectedRect.h + 6}px"
 				></div>
 			{/if}
 			{#if focused && cursorRect}
@@ -447,6 +411,13 @@
 </div>
 
 <style>
+	.map-sel {
+		border: 2px solid var(--select);
+		border-radius: 6px;
+	}
+	.map-sel.round {
+		border-radius: 50%;
+	}
 	/* A small run's rows: the label in a column beside its cells. */
 	.map-side {
 		width: 100px;

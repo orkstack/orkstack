@@ -22,6 +22,8 @@ const fixture = `${import.meta.dir}/fixtures/testid-baseline.txt`;
 const ALLOWED_REMOVALS: Record<string, string> = {
 	// A run's row draws its status itself, at thousands of rows: the same id, on its own span.
 	'prop task-{}-status': 'the row draws its status itself',
+	'id pool-orkers-refresh-{}': "The Pools page's one Refresh reads each pool's Orkers again (admin-orkers.spec.ts).",
+	'id task-{}-item-panel-cli': "A selected item's commands joined the run's one terminal icon, run-inspect-cli (each-fan-out.spec.ts).",
 	'prop activity-inspect-cli':
 		"Inspect a reference's command joined the Activities header's popover, activities-cli: one per screen (admin.spec.ts).",
 	'id task-{}-item-panel':

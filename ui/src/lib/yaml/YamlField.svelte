@@ -27,6 +27,8 @@
 		oninput?: () => void;
 	}
 
+	let sheetOpen = $state(false);
+
 	let {
 		value = $bindable(),
 		kind,
@@ -147,11 +149,88 @@
 			{session.editor === 'ready' || session.engine.kind !== 'idle' ? session.status.sentence : ''}
 		</p>
 		<p role="status" class="sr-only" data-testid="{testid}-announce">{session.announcement}</p>
-		<p id={hintId} class="text-ink-muted">
+		<p id={hintId} class="yaml-keys text-ink-3">
 			{#if session.editor === 'ready'}
-				Tab indents · Escape, then Tab within 2 s, leaves (Ctrl-M lets Tab leave) · Ctrl-Space suggests keys ·
-				Ctrl-Shift-Space explains a key · F8 goes to the next problem
+				<kbd class="kbd">F8</kbd> next problem<span class="k-long">{' · '}<kbd class="kbd">Ctrl</kbd> <kbd class="kbd">Space</kbd> suggests</span>{' · '}<button type="button" class="linkbtn" data-testid="{testid}-shortcuts" aria-haspopup="dialog" onclick={() => (sheetOpen = true)}>Shortcuts</button><span class="sr">. Escape, then Tab within 2 s, leaves the editor.</span>
 			{/if}
 		</p>
 	</div>
+	{#if sheetOpen}
+		{#await import('#lib/components/Dialog.svelte') then { default: Dialog }}
+			<Dialog title="Editor shortcuts" testid="{testid}-shortcuts-sheet" glyph="kbd" onclose={() => (sheetOpen = false)}>
+				{#snippet body()}
+					<div class="sheet" data-testid="{testid}-shortcuts-list">
+						<h3>Suggest and explain</h3>
+						<dl>
+							<dt>Suggest keys and values for the cursor's place</dt><dd><kbd class="kbd">Ctrl</kbd> <kbd class="kbd">Space</kbd></dd>
+							<dt>Explain the key under the cursor</dt><dd><kbd class="kbd">Ctrl</kbd> <kbd class="kbd">Shift</kbd> <kbd class="kbd">Space</kbd></dd>
+							<dt>Move through suggestions</dt><dd><kbd class="kbd">↑</kbd> or <kbd class="kbd">↓</kbd></dd>
+							<dt>Accept a suggestion</dt><dd><kbd class="kbd">Enter</kbd></dd>
+							<dt>Close the suggestions</dt><dd><kbd class="kbd">Esc</kbd></dd>
+						</dl>
+						<h3>Problems</h3>
+						<dl>
+							<dt>Go to the next problem</dt><dd><kbd class="kbd">F8</kbd></dd>
+						</dl>
+						<h3>Indenting and leaving the editor</h3>
+						<dl>
+							<dt>Indent or outdent</dt><dd><kbd class="kbd">Tab</kbd> or <kbd class="kbd">Shift</kbd> <kbd class="kbd">Tab</kbd></dd>
+							<dt>Leave the editor with the keyboard</dt><dd><kbd class="kbd">Esc</kbd> then <kbd class="kbd">Tab</kbd> within 2 s</dd>
+							<dt>Let Tab move focus instead of indenting</dt><dd><kbd class="kbd">Ctrl</kbd> <kbd class="kbd">M</kbd></dd>
+						</dl>
+						<h3>History</h3>
+						<dl>
+							<dt>Undo</dt><dd><kbd class="kbd">Ctrl</kbd> <kbd class="kbd">Z</kbd></dd>
+							<dt>Redo</dt><dd><kbd class="kbd">Ctrl</kbd> <kbd class="kbd">Shift</kbd> <kbd class="kbd">Z</kbd></dd>
+						</dl>
+					</div>
+				{/snippet}
+			</Dialog>
+		{/await}
+	{/if}
 </div>
+
+<style>
+	.yaml-keys {
+		margin-left: auto;
+		white-space: nowrap;
+	}
+	.linkbtn {
+		color: var(--link);
+		font-weight: 600;
+		text-decoration: underline;
+		text-underline-offset: 0.2em;
+		cursor: pointer;
+	}
+	.sheet {
+		display: grid;
+		gap: 8px;
+		font-size: 14px;
+	}
+	.sheet h3 {
+		margin: 8px 0 0;
+		font-size: 13px;
+		font-weight: 650;
+		color: var(--ink-2);
+	}
+	.sheet dl {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 6px 16px;
+		margin: 0;
+	}
+	.sheet dd {
+		margin: 0;
+		text-align: right;
+		white-space: nowrap;
+	}
+	@media (max-width: 640px) {
+		.yaml-keys {
+			margin-left: 0;
+			white-space: normal;
+		}
+		.k-long {
+			display: none;
+		}
+	}
+</style>

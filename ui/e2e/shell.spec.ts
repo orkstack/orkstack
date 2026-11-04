@@ -464,15 +464,16 @@ test('breadcrumb: the namespace, the page, then where on it; no whole run id on 
 	expect(await crumbs.innerText()).not.toContain(runId);
 	expect(BANNED.test(await crumbs.innerText())).toBe(false);
 
-	// On a run, the last crumb is the run's short id: its first four and last six characters.
+	// On a run, the last crumb is its Orkflow; the run's id is on the plate below.
 	await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
-	await expect(page.getByTestId('breadcrumb-current')).toHaveText(`${runId.slice(0, 4)}…${runId.slice(-6)}`);
+	await expect(page.getByTestId('breadcrumb-current')).toHaveText(FLOW);
+	expect(await crumbs.innerText()).not.toContain(runId);
 	expect(BANNED.test(await crumbs.innerText())).toBe(false);
 
 	// The scope of an Operate page is said in its own sentence now (the title block's SCOPE cell is gone).
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=default`);
 	await expect(page.getByTestId('breadcrumb-current')).toHaveText('Pools');
-	await expect(page.getByTestId('pools-scope-caption')).toContainText('honours the namespace selector');
+	await expect(page.getByTestId('pools-scope-caption')).toContainText('Where a task of namespace');
 
 	await page.keyboard.press('Tab');
 	const skip = page.getByRole('link', { name: 'Skip to content' });

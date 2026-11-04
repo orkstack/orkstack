@@ -211,7 +211,7 @@ test('An Orker that stops answering is unreachable, not idle', async ({ page }) 
 	orkerB!.kill('SIGSTOP');
 	note(`SIGSTOP ${ORKER_B} (pid ${orkerB!.pid})`);
 	try {
-		await page.getByTestId('pool-orkers-refresh-main').click();
+		await page.getByTestId('pools-refresh').click();
 		await expect(page.getByTestId(`orker-state-${ORKER_B}`)).toHaveText('unreachable', { timeout: 60_000 });
 		await expect(page.getByTestId(`orker-unavailable-${ORKER_B}`)).toContainText('Could not be asked');
 		await expect(page.getByTestId(`orker-tasks-${ORKER_B}`)).toHaveCount(0);
@@ -223,7 +223,7 @@ test('An Orker that stops answering is unreachable, not idle', async ({ page }) 
 		note(`SIGCONT ${ORKER_B}`);
 	}
 	await expect(async () => {
-		await page.getByTestId('pool-orkers-refresh-main').click();
+		await page.getByTestId('pools-refresh').click();
 		await expect(page.getByTestId(`orker-state-${ORKER_B}`)).toHaveText('ready', { timeout: 10_000 });
 	}).toPass({ timeout: 90_000 });
 	await shot(page, 'admin-orkers-ready-again.png');

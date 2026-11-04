@@ -165,6 +165,12 @@ export function downloadFilename(name: string): string {
 }
 
 /** A digest as the plates draw it: its first and last groups of four. */
+/** A digest's first two groups, for a plate with no room for more: the whole of it is the tip. */
+export function digestHead(digest: string): string {
+	const hex = digest.includes(':') ? digest.slice(digest.indexOf(':') + 1) : digest;
+	return `${hex.slice(0, 4)} ${hex.slice(4, 8)} …`;
+}
+
 export function shortDigestWords(digest: string): string {
 	const hex = digest.includes(':') ? digest.slice(digest.indexOf(':') + 1) : digest;
 	if (hex.length < 16) return hex;

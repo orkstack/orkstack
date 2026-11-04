@@ -26,8 +26,9 @@
 
 	// Past a few hundred items a cell is only its index, and the grid is skipped off screen.
 	const compact = $derived(items.length > 200);
+	// A cell's name starts with what it shows, so a voice command can say it.
 	function cellLabel(item: ItemView): string {
-		const words = itemAriaLabel(item);
+		const words = compact ? itemAriaLabel(item) : itemAriaLabel(item).replace(/^item \d+/, itemLabel(taskId, item.index));
 		return item.status === Status.RUNNING && waitingOf?.(item.index) ? `${words}, waiting for capacity` : words;
 	}
 	const summary = $derived(items.length > 0 ? eachCounts(items, waitingOf) : eachSummary(each?.expanded ?? false, items, spec));
@@ -159,6 +160,8 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 4px;
+		/* Room for a focused or selected cell's ring: this grid clips its paint. */
+		padding: 4px;
 		content-visibility: auto;
 		contain-intrinsic-size: auto 800px;
 	}
@@ -192,9 +195,7 @@
 		background: var(--run);
 	}
 	.is-running {
-		border-color: var(--run);
-		background: var(--run-tint);
-		color: var(--ink-2);
+		border-color: var(--line-2);
 	}
 	.is-wait::before {
 		width: 9px;
@@ -204,7 +205,6 @@
 	}
 	.is-wait {
 		border-color: var(--wait-mark);
-		background: var(--wait-tint);
 	}
 	.is-failed::before {
 		width: 9px;

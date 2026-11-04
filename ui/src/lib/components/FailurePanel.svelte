@@ -66,6 +66,7 @@
 	const retryNote = $derived(retryPhrase(tries));
 	const sentence = $derived(flat || bare ? humanFailure(plain.text) : plain.text);
 	const at = $derived(emphasis ? sentence.indexOf(emphasis) : -1);
+	const joiner = $derived(/[.!?]$/.test(sentence) ? ' ' : '. ');
 	// In a task's reason row an exit is already said by its attempt line.
 	const onlyAnExit = $derived(flat && /the container exited \d+$/.test(plain.text));
 
@@ -99,10 +100,10 @@
 	{#if bare && failure && (reason || error.code)}
 		<!-- A card's reason is a plate; the run's own wrapper code stays for assistive technology. -->
 		{#if reason}
-			<Plate key="reason" value={reason} testid="{testid}-reason" />
+			<Plate key="reason" value={reason} testid="{testid}-reason" wide />
 			{#if error.code}<span class="sr" data-testid="{testid}-code">{error.code}</span>{/if}
 		{:else}
-			<Plate key="reason" value={error.code} testid="{testid}-code" />
+			<Plate key="reason" value={error.code} testid="{testid}-code" wide />
 		{/if}
 		{#if retryNote}<span class="sr" data-testid="{testid}-retry-state">{retryNote}</span>{/if}
 	{:else}
@@ -147,8 +148,8 @@
 	{/if}
 
 	{#if plain.text}
-		<p class="{onlyAnExit ? 'sr' : flat ? 'mt-1 text-dense text-ink-2' : 'mt-1.5 text-ink'} max-w-prose break-words whitespace-pre-wrap">
-			<span data-testid="{testid}-message">{#if emphasis && at >= 0}{sentence.slice(0, at)}<b class="font-semibold">{emphasis}</b>{sentence.slice(at + emphasis.length)}{:else}{sentence}{/if}</span>{#if then}{sentence.endsWith('.') ? ' ' : '. '}{then}{/if}
+		<p class="{onlyAnExit ? 'sr' : flat ? 'mt-1 text-dense text-ink-2' : bare ? 'mt-1.5 text-base text-ink' : 'mt-1.5 text-ink'} max-w-prose break-words whitespace-pre-wrap">
+			<span data-testid="{testid}-message">{#if emphasis && at >= 0}{sentence.slice(0, at)}<b class="font-semibold">{emphasis}</b>{sentence.slice(at + emphasis.length)}{:else}{sentence}{/if}</span>{#if then}{joiner}{then}{/if}
 		</p>
 	{/if}
 

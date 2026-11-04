@@ -190,6 +190,28 @@
 			stop();
 		};
 	});
+	// The sidebar's other counts: read when the page has settled, by clients of
+	// their own, so no route pays for them on first load. A failed read draws none.
+	let navCounts = $state.raw<{ orkflows?: string; pools?: string; activities?: string }>({});
+	$effect(() => {
+		const namespace = data.namespace;
+		let live = true;
+		const settle = globalThis.requestIdleCallback ?? ((run: () => void) => setTimeout(run, 500));
+		settle(() => {
+			void (async () => {
+				const [{ orkflowClient }, { namespaceClient }, { activityClient }] = await Promise.all([import('#lib/clients/orkflows.ts'), import('#lib/clients/namespaces.ts'), import('#lib/clients/activities.ts')]);
+				const [orkflows, pools, activities] = await Promise.all([
+					orkflowClient(fetch).listOrkflows({ namespace }).then((res) => `${res.orkflows.length}${res.nextPageToken ? '+' : ''}`, () => undefined),
+					namespaceClient(fetch).listPools({ namespace }).then((res) => String(res.pools.length), () => undefined),
+					activityClient(fetch).listActivities({}).then((res) => String(res.activities.length), () => undefined)
+				]);
+				if (live) navCounts = { orkflows, pools, activities };
+			})();
+		});
+		return () => {
+			live = false;
+		};
+	});
 	onMount(() => {
 		systemClient(fetch)
 			.getSystemInfo({})
@@ -299,6 +321,7 @@
 		pathname={page.url.pathname}
 		{link}
 		{running}
+		counts={navCounts}
 		{version}
 		picker={namespacePicker}
 		{themeSwitch}

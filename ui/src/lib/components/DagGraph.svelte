@@ -108,11 +108,12 @@
 		if (!run) return '';
 		const to = stateOf?.(edge.toId);
 		const from = stateOf?.(edge.fromId);
-		if (isFailureHandler(joinById.get(edge.toId)) && !isFailureHandler(joinById.get(edge.fromId))) return 'is-fail';
+		// Red only out of the failed task into a handler; what it held back is dashed.
+		if (from?.status === Status.FAILED) return isFailureHandler(joinById.get(edge.toId)) ? 'is-fail' : 'is-held';
 		const touches = edge.fromId === selected || edge.toId === selected;
 		if (selected && !touches) return 'is-dim';
-		if (to?.status === Status.RUNNING) return 'is-live';
-		if (touches && from?.status === Status.SUCCEEDED) return 'is-done';
+		if (from?.status === Status.RUNNING) return 'is-live';
+		if (from?.status === Status.SUCCEEDED && (touches || to?.status === Status.RUNNING)) return 'is-done';
 		return '';
 	}
 
@@ -334,6 +335,9 @@
 	}
 	.dag-edge.is-fail {
 		stroke: var(--fail-mark);
+	}
+	.dag-edge.is-held {
+		stroke-dasharray: 4 3;
 	}
 	.dag-edge.is-dim {
 		stroke: var(--pend-mark);

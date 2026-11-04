@@ -1,5 +1,5 @@
 import { expect, test, type Page } from './test';
-import { inspectTask, selectTask } from './uiHelpers';
+import { inspectTask, selectTask, tasksMore } from './uiHelpers';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
@@ -1187,7 +1187,7 @@ test("a retried task's badge carries its retry history once asked, and a run tha
 	await expect(badge).toHaveText('retried ×1', { timeout: 60_000 });
 	await expect(page.getByTestId('run-stability-note')).toHaveCount(0);
 
-	await page.getByTestId('run-stability-toggle').click();
+	await tasksMore(page, 'run-stability-toggle');
 	await expect(page.getByTestId('run-stability-note')).toContainText('1 finished run ', { timeout: 60_000 });
 	// The in-run label is unchanged; the tooltip gains the history.
 	await expect(badge).toHaveText('retried ×1');
@@ -1210,7 +1210,7 @@ test("a retried task's badge carries its retry history once asked, and a run tha
 	await expect(page.getByTestId('task-flaky-status')).toHaveText('Succeeded', { timeout: 60_000 });
 	await expect(page.getByTestId('task-flaky-retries')).toHaveCount(0);
 
-	await page.getByTestId('run-stability-toggle').click();
+	await tasksMore(page, 'run-stability-toggle');
 	const flaky = page.getByTestId('task-flaky-retries');
 	await expect(flaky).toHaveText('flaky 50%', { timeout: 60_000 });
 	await expect(flaky).toHaveAttribute('data-flaky', 'true');

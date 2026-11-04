@@ -23,11 +23,12 @@
 		UNREPORTED_CAPTION,
 		attemptOutcomeClasses,
 		attemptOutcomeLabel,
+		attemptOutcomeWord,
 		isUnreported
 	} from '#lib/attempts.ts';
 	import { hasError } from '#lib/activity.ts';
 	import { formatDuration, runCommand } from '#lib/runDetail.ts';
-	import { fmtTime } from '#lib/status.ts';
+	import Icon from './Icon.svelte';
 	import { attemptPhases, formatQuantity, phasesLine, type TaskTiming } from '#lib/timing.ts';
 	import { attemptCacheLine, keyComponentRows } from '#lib/cache.ts';
 
@@ -99,9 +100,9 @@
 			data-testid="task-{taskId}-attempts-toggle"
 			aria-expanded={open}
 			onclick={() => (open = !open)}
-			class="inline-flex items-center gap-1.5 text-xs font-medium text-ink uppercase"
+			class="inline-flex items-center gap-1.5 text-sm font-semibold text-ink-2"
 		>
-			<span class="text-ink-muted">{open ? '▾' : '▸'}</span>
+			<Icon name={open ? 'chev' : 'chev-right'} class="size-3.5 text-ink-3" />
 			Attempts ({attempts.length})
 		</button>
 		{#if attempts.length > 0}
@@ -161,10 +162,10 @@
 									attempt.outcome
 								)}"
 							>
-								{attemptOutcomeLabel(attempt.outcome)}
+								{attemptOutcomeWord(attempt.outcome)}
 							</span>
 							{#if attempt.phase}<span data-tip="the phase the attempt ended in">{attempt.phase}</span>{/if}
-							{#if attempt.startedAt}<span>{fmtTime(attempt.startedAt)}</span>{/if}
+							{#if attempt.startedAt}<span>{new Date(Number(attempt.startedAt.seconds) * 1000).toLocaleTimeString('en-GB', { hour12: false })}</span>{/if}
 							{#if attempt.startedAt && attempt.finishedAt}
 								<span>{formatDuration(attempt.startedAt, attempt.finishedAt)}</span>
 							{/if}

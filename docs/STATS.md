@@ -403,7 +403,7 @@ orkctl -n payments stats flakes --orkflow reconcile --group-by phase --json
 
 The dashboard offers the same answer as a **Stability** disclosure
 (`ui/src/lib/components/FlakeIndex.svelte`), fetched only when opened; the run
-page's **Retry history (7 days)** button asks it for one orkflow and decorates
+page's **Retry history** (in the Tasks card's More) asks it for one orkflow and decorates
 each task's retry badge with the task's historical rate (`flaky 50%` on a run
 that did not retry a task that retries elsewhere).
 

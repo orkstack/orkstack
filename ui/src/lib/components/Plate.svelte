@@ -20,9 +20,11 @@
 		tip?: string;
 		/** What the button copies, when the value shown is a short form of it. */
 		copy?: string;
+		/** The whole width of its card. */
+		wide?: boolean;
 	}
 
-	let { key, value, short, copyLabel, small = false, testid, tip, copy: copied }: Props = $props();
+	let { key, value, short, copyLabel, small = false, testid, tip, copy: copied, wide = false }: Props = $props();
 	// What the last copy did, in a live region that is always there: a copy
 	// never silently does nothing (docs/UI_CLI_PARITY.md).
 	let said = $state('');
@@ -37,7 +39,7 @@
 	}
 </script>
 
-<span class="plate" class:plate-sm={small} data-testid={testid}
+<span class="plate" class:plate-sm={small} class:plate-wide={wide} data-testid={testid}
 	><span class="plate-k">{key}</span><span class="plate-v" data-tip={tip}
 		>{#if short}<span class="full">{value}</span><span class="short" aria-hidden="true">{short}</span>{:else}{value}{/if}</span
 	>{#if copyLabel}<button type="button" aria-label={copyLabel} data-tip={copyLabel} onclick={copy}
@@ -46,6 +48,10 @@
 >
 
 <style>
+	.plate-wide {
+		display: flex;
+		width: 100%;
+	}
 	.plate-said {
 		display: flex;
 		align-items: center;

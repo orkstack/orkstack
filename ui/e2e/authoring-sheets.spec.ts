@@ -305,7 +305,7 @@ test('orkflow sheet: the DAG beside its versions, the header facts, its runs a t
 	// first 12 hex characters), and the namespace in the breadcrumb. "current · head" is the aside's marks above.
 	await expect(page.getByTestId('orkflow-name')).toHaveText(SAGA);
 	await expect(page.getByTestId('orkflow-version')).toContainText('0.2.0');
-	await expect(page.locator('main header')).toContainText(hex.slice(0, 12));
+	await expect(page.locator('main header')).toContainText(hex.slice(0, 4));
 	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText('default');
 	await expect(page.getByTestId('breadcrumb-current')).toHaveText(SAGA);
 

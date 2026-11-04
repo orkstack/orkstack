@@ -64,6 +64,14 @@
 	// "Runs created each day": a bar is every run its bucket counted, failed
 	// on top; labelled with the local date of its start, and the bucket that
 	// holds now is today so far.
+	// What a running row has taken so far moves with the page, no faster than a tile reads.
+	let nowMs = $state(Date.now());
+	$effect(() => {
+		const timer = setInterval(() => (nowMs = Date.now()), 5_000);
+		return () => clearInterval(timer);
+	});
+	const nowStamp = $derived({ seconds: BigInt(Math.floor(nowMs / 1000)), nanos: 0 });
+
 	function dayBars(week: GetStatsResponse | null): DayBar[] {
 		return (week?.buckets ?? []).map((bucket) => {
 			const counts = bucket.runsByStatus;
@@ -404,7 +412,7 @@
 	{/await}
 
 	<section aria-labelledby="tiles-cap" class="grid gap-2">
-		<h2 id="tiles-cap" class="text-sm font-semibold text-ink-3">Last 24 hours · filter the list</h2>
+		<h2 id="tiles-cap" class="text-sm font-normal text-ink-3">Last 24 hours · filter the list</h2>
 		{#await data.insights.day}
 			<div class="tiles" aria-hidden="true">{#each TILES as t (t.key)}<div class="tile"><span class="lbl">{t.label}</span><b class="text-ink-3">…</b></div>{/each}</div>
 		{:then day}
@@ -563,7 +571,7 @@
 									{/if}
 								</td>
 								<td class="whitespace-nowrap"><TimeAgo at={run.createdAt} /></td>
-								<td class="num whitespace-nowrap text-right">{finishedOf(run) ? formatDuration(run.createdAt, finishedOf(run)) : '—'}</td>
+								<td class="num whitespace-nowrap text-right">{finishedOf(run) ? formatDuration(run.createdAt, finishedOf(run)) : isTerminal(status) ? '—' : formatDuration(run.createdAt, nowStamp)}</td>
 							</tr>
 						{/each}
 					</tbody>
@@ -690,6 +698,9 @@
 	/* One line with its mark, and a link whose middle is the link: a wrapped id's is the gap between its lines. */
 	.runs-table th.rid {
 		white-space: nowrap;
+	}
+	.runs-table th.rid :global(a) {
+		display: inline-block;
 	}
 	@media (max-width: 640px) {
 		.runs-table thead {

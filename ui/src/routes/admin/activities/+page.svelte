@@ -30,7 +30,7 @@
 	import { ListActivitiesRequestSchema } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
 	import ActivityInterface from '#lib/components/ActivityInterface.svelte';
 	import { inspectCommand, interfaceSummary, pinnedReference } from '#lib/activity.ts';
-	import { shortDigestWords } from '#lib/runDetail.ts';
+	import { digestHead } from '#lib/runDetail.ts';
 	import { errorMessage } from '#lib/client.ts';
 	import { activityClient } from '#lib/clients/activities.ts';
 	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
@@ -122,7 +122,7 @@
 
 <h2 class="sr">Catalog</h2>
 
-<ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} cli={false} />
+<div class="mb-3"><ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} cli={false} /></div>
 
 {#if data.activitiesError}
 	<ErrorPanel
@@ -180,12 +180,12 @@
 						<td role="cell" data-label="Digest and platforms">
 							{#if activity.indexDigest}
 								<span data-digest={activity.indexDigest} data-testid="activity-digest-{activity.name}"
-									><Plate key="sha256" value={shortDigestWords(activity.indexDigest)} tip={activity.indexDigest} small /></span
+									><Plate key="sha256" value={digestHead(activity.indexDigest)} tip={activity.indexDigest} small /></span
 								>
 							{:else}
 								<span class="text-sm text-ink-3" data-testid="activity-digest-unresolved-{activity.name}">unresolved</span>
 							{/if}
-							<span class="mt-1 block font-mono text-xs text-ink-3" data-testid="activity-platforms-{activity.name}"
+							<span class="mt-1 block text-xs text-ink-3" data-testid="activity-platforms-{activity.name}"
 								>{activity.platforms.filter((p) => p !== 'unknown/unknown').join(', ') || 'single manifest'}</span
 							>
 							<span class="sr" data-testid="activity-media-type-{activity.name}">{activity.mediaType || '—'}</span>
@@ -193,7 +193,7 @@
 						</td>
 						<td role="cell" data-label="Ops" class="font-mono text-sm text-ink-2">
 							{#if activity.interface && Object.keys(activity.interface.ops).length > 0}
-								<span class="flex flex-wrap gap-1">{#each Object.keys(activity.interface.ops).sort() as op (op)}<span class="tag" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</span>{/each}</span>
+								<span class="flex flex-wrap gap-1">{#each Object.keys(activity.interface.ops).sort() as op (op)}<code class="chip" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</code>{/each}</span>
 							{:else}
 								<span class="text-ink-3">—</span>
 							{/if}
@@ -208,7 +208,7 @@
 									data-testid="activity-interface-{activity.name}"
 									onclick={() => (disclosed[activity.name] = !disclosed[activity.name])}
 								>
-									{#if activity.interface && !activity.interfaceError}<span class="tag">Declared</span>{' '}{/if}{interfaceSummary(activity) === 'none' ? 'None declared' : interfaceSummary(activity)}
+									{#if activity.interface && !activity.interfaceError}<span class="tag">Declared</span><span class="sr">{' '}{interfaceSummary(activity)}</span>{:else}{interfaceSummary(activity) === 'none' ? 'None declared' : interfaceSummary(activity)}{/if}
 								</button>
 							{:else}
 								<span class="text-ink-3" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
@@ -361,6 +361,13 @@
 </section>
 
 <style>
+	.chip {
+		padding: 2px 6px;
+		border: 1px solid var(--line);
+		border-radius: 4px;
+		background: var(--surface-2);
+		font-size: 12.5px;
+	}
 	.kinds {
 		display: grid;
 		gap: 10px;

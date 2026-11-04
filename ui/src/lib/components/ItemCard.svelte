@@ -18,7 +18,6 @@
 	import { formatBytes, heartbeatAge, liveLine, unavailableReason } from '#lib/live.ts';
 	import { attemptPhases, phaseGroups, formatQuantity, type TaskTiming } from '#lib/timing.ts';
 	import { fmtQuantity, fmtRequest } from '#lib/resources.ts';
-	import CliPopover from './CliPopover.svelte';
 	import Plate from './Plate.svelte';
 	import RetryMark from './RetryMark.svelte';
 	import StatusPill from './StatusPill.svelte';
@@ -45,8 +44,6 @@
 		now: { seconds: bigint; nanos: number };
 		timing?: TaskTiming;
 		image?: ImageRef;
-		cli: { label: string; command: string }[];
-		cliTestid: string;
 		/** What the card says beyond the facts: its failure, cache, Inspect. */
 		children?: Snippet;
 		/** The head's words when nothing can be said yet (a fan-out with no item). */
@@ -73,8 +70,6 @@
 		now,
 		timing,
 		image,
-		cli,
-		cliTestid,
 		children,
 		note = '',
 		panelTestid = 'item-card'
@@ -116,7 +111,6 @@
 			{:else}
 				<StatusPill {status} testid="{prefix}-card-status" />
 			{/if}
-			{#if cli.length}<CliPopover testid={cliTestid} title="Command line: {title}" commands={cli} />{/if}
 		</div>
 	</div>
 	{#if note}<p class="insp-note">{note}</p>{/if}
@@ -145,7 +139,7 @@
 			<dd data-testid="{prefix}-wait" data-ms={timing.wait.kind === 'value' ? Math.round(timing.wait.ms) : undefined} data-reason={timing.wait.kind === 'unavailable' ? timing.wait.reason : undefined}>
 				{formatQuantity(timing.wait)}{#if timing.wait.kind === 'unavailable'} ({timing.wait.reason}){/if}
 			</dd>
-		{:else if !terminal && scheduledAt && started}
+		{:else if scheduledAt && started}
 			<dt>Waited to start</dt>
 			<dd>{formatDuration(scheduledAt, started)}</dd>
 		{:else if !terminal && scheduledAt}

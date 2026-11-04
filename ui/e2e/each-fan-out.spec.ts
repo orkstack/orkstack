@@ -262,7 +262,7 @@ test('a fan-out card fills its item grid live', async ({ page }) => {
 	for (let index = 0; index < 6; index++) {
 		await expect(page.getByTestId(`task-convert-item-${index}`)).toHaveAttribute(
 			'aria-label',
-			new RegExp(`^item ${index}, Succeeded, attempt \\d$`),
+			new RegExp(`^convert\\[${index}\\], Succeeded, attempt \\d$`),
 			{ timeout: 180_000 }
 		);
 	}
@@ -284,17 +284,18 @@ test('an item that retried shows its own attempts and logs', async ({ page }) =>
 	await expect(panel).toBeVisible();
 	await expect(page.getByTestId('task-convert-item-panel-label')).toContainText('convert[2]');
 
-	// Two attempts, the first FAILED — item 2's own timeline.
-	await expect(page.getByTestId('task-convert-attempt-1-outcome')).toHaveText(/FAILED/, { timeout: 30_000 });
-	await expect(page.getByTestId('task-convert-attempt-2-outcome')).toHaveText(/SUCCEEDED/);
+	// Two attempts, the first failed — item 2's own timeline, behind its Inspect.
+	await page.getByTestId('task-convert-item-panel-inspect-toggle').click();
+	await expect(page.getByTestId('task-convert-attempt-1-outcome')).toHaveText(/Failed/, { timeout: 30_000 });
+	await expect(page.getByTestId('task-convert-attempt-2-outcome')).toHaveText(/Succeeded/);
 
 	// The one log pane follows the selection to item 2 and streams its own output.
 	await expect(page.getByTestId('task-log-convert')).toContainText('converting item 2 of 6: c', { timeout: 30_000 });
 	await expect(page.getByTestId('task-log-convert')).not.toContainText('converting item 1 of 6');
 
 	// The CLI equivalents are one popover; its logs command names --item 2.
-	await page.getByTestId('task-convert-item-panel-cli-trigger').click();
-	const itemCommands = page.locator('[data-testid^="task-convert-item-panel-cli-command-"]');
+	await page.getByTestId('run-inspect-cli-trigger').click();
+	const itemCommands = page.locator('[data-testid^="run-inspect-cli-command-"]');
 	await expect(itemCommands.filter({ hasText: 'run logs' })).toContainText('--item 2');
 	await expect(itemCommands.filter({ hasText: 'run artifacts' })).toContainText('--item 2');
 	await expect(itemCommands.filter({ hasText: 'run attempts' })).toContainText('--item 2');
@@ -408,7 +409,7 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 	for (const index of [4, 5]) {
 		await expect(page.getByTestId(`task-convert-item-${index}`)).toHaveAttribute(
 			'aria-label',
-			new RegExp(`^item ${index}, Canceled \\(never started\\), attempt 0$`)
+			new RegExp(`^convert\\[${index}\\], Canceled \\(never started\\), attempt 0$`)
 		);
 	}
 	note(`run error: ${(await page.getByTestId('run-error').first().textContent())?.trim()}`);

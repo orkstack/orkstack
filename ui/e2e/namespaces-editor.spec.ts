@@ -439,6 +439,17 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	);
 	expect(afterInvalid.versions.map((v) => v.version)).toEqual(['0.1.0']);
 
+	// A refusal only Apply can give is the engine's own words, in the editor, with the draft kept.
+	const refused = orkflowYaml(ORKFLOW, '0.1.5', 'refused at apply');
+	await fillYaml(page, 'editor-yaml', refused);
+	await page.route('**/orkstack.v1.OrkflowService/ApplyOrkflow', (route) =>
+		route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: 'invalid_argument', message: 'a refusal only apply can make' }) })
+	);
+	await page.getByTestId('editor-apply').click();
+	await expect(page.getByTestId('editor-error')).toContainText('a refusal only apply can make');
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/refused at apply/);
+	await page.unroute('**/orkstack.v1.OrkflowService/ApplyOrkflow');
+
 	// 2. A good edit lands as a NEW version; the old one is untouched.
 	await fillYaml(page, 'editor-yaml', orkflowYaml(ORKFLOW, '0.2.0', 'second revision'));
 	await page.getByTestId('editor-apply').click();

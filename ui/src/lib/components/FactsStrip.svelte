@@ -35,11 +35,10 @@
 		padding-left: 14px;
 	}
 	@media (max-width: 640px) {
-		.small > :global(div) {
-			padding: 0 10px;
-		}
+		.small > :global(div),
 		.small > :global(div:first-child) {
-			padding-left: 0;
+			padding: 0;
+			border-left: 0;
 		}
 	}
 	@media (max-width: 360px) {

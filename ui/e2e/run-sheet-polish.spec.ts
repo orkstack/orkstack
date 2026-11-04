@@ -24,7 +24,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { fullPageShot, inspectTask } from './uiHelpers';
+import { fullPageShot, inspectTask, tasksMore } from './uiHelpers';
 
 // The finish review's fixes (2026-10-22), proven in the browser against a
 // real engine and Orker on real Temporal and MinIO:
@@ -218,9 +218,15 @@ async function mapPixel(page: Page, index: number): Promise<number[]> {
 		const canvas = document.querySelector('[data-testid="task-map-canvas"]') as HTMLCanvasElement;
 		const pitch = Number(map.dataset.pitch);
 		const columns = Number(map.dataset.columns);
+		const x0 = Number(map.dataset.x0 ?? 0);
+		// A small run's map is drawn stage by stage: where this cell's stage starts and stands.
+		const stages = (map.dataset.rows ?? '0:0').split(',').map((s) => s.split(':').map(Number));
+		const [start, top] = stages.filter(([first]) => first <= i).at(-1)!;
+		const local = i - start;
 		const dpr = canvas.width / canvas.getBoundingClientRect().width;
-		const x = ((i % columns) * pitch + 1) * dpr;
-		const y = (Math.floor(i / columns) * pitch + 1) * dpr;
+		// The middle of the cell: a running cell is a circle, so a corner is the card behind it.
+		const x = (x0 + (local % columns) * pitch + (pitch - 3) / 2) * dpr;
+		const y = (top + Math.floor(local / columns) * pitch + (pitch - 3) / 2) * dpr;
 		return [...canvas.getContext('2d')!.getImageData(Math.floor(x), Math.floor(y), 1, 1).data];
 	}, index);
 }
@@ -228,7 +234,7 @@ async function mapPixel(page: Page, index: number): Promise<number[]> {
 const rgb = (css: string) => (css.match(/\d+(\.\d+)?/g) ?? []).slice(0, 3).map(Number);
 const near = (a: number[], b: number[], tolerance = 3) => a.every((v, i) => Math.abs(v - b[i]) <= tolerance);
 
-test('running: a RUNNING task is drawn in the running green, its dot and its map cell move, and stand still under reduced motion', async ({ page }) => {
+test('running: a RUNNING task is drawn in the running green, its dot moves, its map cell is whole, and all stand still under reduced motion', async ({ page }) => {
 	test.setTimeout(6 * 60_000);
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
@@ -278,15 +284,14 @@ test('running: a RUNNING task is drawn in the running green, its dot and its map
 		}
 	}
 
-	// The task map: the running cell's mark fades and returns.
+	// The task map: the running cell is the running colour, drawn whole. Only
+	// the pills and the live dot breathe, and only three times.
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await setTheme(page, 'light');
 	await page.goto(`${UI_ORIGIN}/runs/${liveRun}?ns=default`);
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 	// DAG order: warm, long, after — `long` is the second cell.
-	const sample = await mapPixel(page, 1);
-	await expect.poll(async () => near(await mapPixel(page, 1), sample, 6), { timeout: 5_000 }).toBe(false);
-	note(`task map: the running cell moved from ${sample} within 5 s`);
+	await expect.poll(async () => near(await mapPixel(page, 1), rgb(green), 3), { timeout: 5_000 }).toBe(true);
 
 	// Reduced motion: nothing moves. The stamp's dot has no animation and
 	// the map's cell is drawn whole, in the green.
@@ -435,9 +440,9 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 	expect(await pastRightEdge(page)).toEqual([]);
 	await fullPageShot(page, out('failed-run-1440.png'));
 
-	// The task map's key says it too.
+	// A finished small run's map needs no key: its rows say what each cell is.
 	await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
-	await expect(page.getByTestId('task-map-legend-canceled-note')).toHaveText('· never started');
+	await expect(page.getByTestId('task-map-legend')).toHaveCount(0);
 	// The map sits in its card: the canvas is inside it, at the largest pitch.
 	const mapFit = await page.evaluate(() => {
 		const card = document.querySelector('[data-testid="run-map-card"]')!.getBoundingClientRect();
@@ -446,7 +451,7 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 		return { pitch: Number(map.dataset.pitch), inside: canvas.left >= card.left - 0.5 && canvas.right <= card.right + 0.5 && canvas.bottom <= card.bottom + 0.5 };
 	});
 	note(`map card at 1440: ${JSON.stringify(mapFit)}`);
-	expect(mapFit.pitch).toBe(16);
+	expect(mapFit.pitch).toBe(17);
 	expect(mapFit.inside).toBe(true);
 	await page.screenshot({ path: out('failed-run-map-1440.png') });
 
@@ -482,7 +487,8 @@ test('at 390 px the drawing starts on the first screen, and the secondary action
 		return { all: boxes.length, inside: boxes.filter((b) => b.top >= panel.top - 0.5 && b.bottom <= panel.bottom + 0.5).length };
 	});
 	note(`DAG at 390: ${phone.inside} of ${phone.all} boxes inside the frame`);
-	if (phone.inside < phone.all) await expect(page.getByTestId('run-dag-scroll-down')).toBeVisible();
+	// A phone swipes its drawing, and a keyboard scrolls its region.
+	if (phone.inside < phone.all) await expect(page.getByTestId('run-drawing').getByRole('region')).toHaveAttribute('tabindex', '0');
 	else expect(phone.inside).toBe(6);
 	// The caption keeps its count whatever it shortens.
 	await expect(page.getByTestId('run-drawing-sub')).toContainText('6 tasks');
@@ -501,7 +507,7 @@ test('at 390 px the drawing starts on the first screen, and the secondary action
 	await page.screenshot({ path: out('failed-run-390-lr.png') });
 
 	// The secondary actions are header buttons that wrap inside the screen.
-	const actions = ['run-evidence', 'compare-run', 'export-run-json', 'events-toggle', 'run-stability-toggle'];
+	const actions = ['run-evidence', 'compare-run', 'events-toggle', 'run-tasks-more'];
 	for (const id of actions) {
 		await expect(page.getByTestId(id)).toBeVisible();
 		const box = (await page.getByTestId(id).boundingBox())!;

@@ -589,7 +589,7 @@ prints a usable next-page command that repeats every `--filter`, `--json`
 carries `next_page_token`. UI: the Runs page's filter form (`ListFilter`),
 whose header reads `Runs for <name>` — and whose **Submit a run** opens that
 Orkflow — when one `orkflow_name=` filter is applied; the dashboard's failure,
-flake and fingerprint rows, an Orkflow's **View runs** and a run's **Child
+flake and fingerprint rows, an Orkflow's **Runs** tab and a run's **Child
 runs** open it already filtered.
 
 #### Paging in the browser

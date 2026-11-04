@@ -284,6 +284,9 @@ export function mapSummary(counts: Map<Status, number>, _total: number, order: '
 /** The cell pitches, largest first; a cell is the pitch less the gap. */
 export const PITCHES = [16, 14, 12, 10, 8] as const;
 export const CELL_GAP = 2;
+/** A small run's map, row by row, keeps the design's 14 px cell and 3 px gap. */
+export const STAGE_PITCH = 17;
+const gapOf = (pitch: number): number => (pitch === STAGE_PITCH ? 3 : CELL_GAP);
 /** The band above a fan-out section where its label sits (DOM, not canvas). */
 export const LABEL_H = 20;
 
@@ -331,7 +334,8 @@ function layout(segments: readonly { count: number; labelled: boolean; side?: nu
  * never the page).
  */
 export function mapGeometry(segments: readonly { count: number; labelled: boolean; side?: number }[], width: number, height: number): MapGeometry {
-	for (const pitch of PITCHES) {
+	const pitches: readonly number[] = segments.some((s) => s.side !== undefined) ? [STAGE_PITCH, ...PITCHES.slice(1)] : PITCHES;
+	for (const pitch of pitches) {
 		const g = layout(segments, pitch, width);
 		if (g.height <= height) return g;
 	}
@@ -355,7 +359,7 @@ export function rectOf(g: MapGeometry, i: number): Rect {
 	const s = segmentOf(g, i);
 	if (!s) return { x: 0, y: 0, w: 0, h: 0 };
 	const local = i - s.start;
-	const size = g.pitch - CELL_GAP;
+	const size = g.pitch - gapOf(g.pitch);
 	return { x: g.x0 + (local % g.columns) * g.pitch, y: s.y + Math.floor(local / g.columns) * g.pitch, w: size, h: size };
 }
 
@@ -364,11 +368,11 @@ export function cellAt(g: MapGeometry, x: number, y: number): number {
 	if (x < g.x0 || y < 0) return -1;
 	const cellX = x - g.x0;
 	const col = Math.floor(cellX / g.pitch);
-	if (col >= g.columns || cellX - col * g.pitch >= g.pitch - CELL_GAP) return -1;
+	if (col >= g.columns || cellX - col * g.pitch >= g.pitch - gapOf(g.pitch)) return -1;
 	for (const s of g.segments) {
 		if (y < s.y || y >= s.y + s.rows * g.pitch) continue;
 		const row = Math.floor((y - s.y) / g.pitch);
-		if (y - s.y - row * g.pitch >= g.pitch - CELL_GAP) return -1;
+		if (y - s.y - row * g.pitch >= g.pitch - gapOf(g.pitch)) return -1;
 		const local = row * g.columns + col;
 		return local < s.count ? s.start + local : -1;
 	}
@@ -529,26 +533,34 @@ function line(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number,
  * stamps draw from (#lib/statusMarks.ts): filled square, live dot, awaiting
  * diamond, failed triangle, struck, dashed, hollow, dotted.
  */
+function cellPath(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, inset = 0): void {
+	const side = s - 2 * inset;
+	ctx.beginPath();
+	// The design's corner, where a cell is large enough to show one: rounding
+	// thousands of tiny cells costs paint time and draws nothing a reader sees.
+	if (s >= 12) ctx.roundRect(x + inset, y + inset, side, side, 3);
+	else ctx.rect(x + inset, y + inset, side, side);
+}
+
 function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: number, colors: MapColors): void {
 	const { x, y, w: s } = r;
 	const c = colors.status[status] ?? colors.status[Status.UNSPECIFIED];
-	ctx.lineWidth = 1;
+	const stroke = s >= 12 ? 1.5 : 1;
+	ctx.lineWidth = stroke;
 	switch (statusMark(status).shape) {
 		case 'square':
 			ctx.fillStyle = c.solid;
-			ctx.fillRect(x, y, s, s);
+			cellPath(ctx, x, y, s);
+			ctx.fill();
 			break;
-		case 'dot': {
+		case 'dot':
 			ctx.fillStyle = c.solid;
-			ctx.fillRect(x, y, s, s);
-			const d = Math.max(2, Math.round(s / 3));
-			ctx.fillStyle = colors.paper;
-			ctx.fillRect(x + (s - d) / 2, y + (s - d) / 2, d, d);
+			ctx.beginPath();
+			ctx.arc(x + s / 2, y + s / 2, s / 2, 0, 2 * Math.PI);
+			ctx.fill();
 			break;
-		}
 		case 'diamond':
 			ctx.fillStyle = c.bg;
-			ctx.fillRect(x, y, s, s);
 			ctx.strokeStyle = c.solid;
 			ctx.beginPath();
 			ctx.moveTo(x + s / 2, y + 0.5);
@@ -556,6 +568,7 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
 			ctx.lineTo(x + s / 2, y + s - 0.5);
 			ctx.lineTo(x + 0.5, y + s / 2);
 			ctx.closePath();
+			ctx.fill();
 			ctx.stroke();
 			break;
 		case 'triangle':
@@ -568,20 +581,21 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
 			ctx.fill();
 			break;
 		case 'strike':
-			ctx.fillStyle = c.bg;
-			ctx.fillRect(x, y, s, s);
 			ctx.strokeStyle = c.solid;
-			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
-			line(ctx, x + s - 1, y + 1, x + 1, y + s - 1);
+			cellPath(ctx, x, y, s, stroke / 2);
+			ctx.stroke();
+			line(ctx, x + s - 2, y + 2, x + 2, y + s - 2);
 			break;
 		case 'dash':
 			ctx.strokeStyle = c.solid;
-			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
-			line(ctx, x + 2, y + s / 2, x + s - 2, y + s / 2);
+			cellPath(ctx, x, y, s, stroke / 2);
+			ctx.stroke();
+			line(ctx, x + 3, y + s / 2, x + s - 3, y + s / 2);
 			break;
 		case 'hollow':
 			ctx.strokeStyle = c.solid;
-			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
+			cellPath(ctx, x, y, s, stroke / 2);
+			ctx.stroke();
 			break;
 		case 'dotted':
 			ctx.fillStyle = c.solid;
@@ -612,9 +626,7 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
 /**
  * Paints cells onto a context already scaled to CSS pixels: every cell, or
  * only `only` (a live batch's dirty cells). No computed style is read here —
- * the colours are handed in. `runningAlpha` is how strongly a RUNNING cell's
- * mark is drawn over its paper (the map's pulse, #lib/taskMap.ts runningPulse);
- * every other mark, and every ground, is drawn whole.
+ * the colours are handed in. A cell's ground is the card behind the canvas.
  */
 export function paintCells(
 	ctx: CanvasRenderingContext2D,
@@ -622,17 +634,12 @@ export function paintCells(
 	statuses: Uint8Array,
 	kinds: Uint8Array,
 	colors: MapColors,
-	only?: Iterable<number>,
-	runningAlpha = 1
+	only?: Iterable<number>
 ): void {
 	const paintOne = (i: number) => {
 		const r = rectOf(g, i);
-		ctx.fillStyle = colors.paper;
-		ctx.fillRect(r.x, r.y, r.w, r.h);
-		const running = statuses[i] === Status.RUNNING;
-		if (running) ctx.globalAlpha = runningAlpha;
+		ctx.clearRect(r.x, r.y, r.w, r.h);
 		drawMark(ctx, r, statuses[i] as Status, kinds[i], colors);
-		if (running) ctx.globalAlpha = 1;
 	};
 	if (only) {
 		for (const i of only) if (i >= 0 && i < g.total) paintOne(i);
@@ -642,18 +649,6 @@ export function paintCells(
 	for (let i = 0; i < g.total; i++) paintOne(i);
 }
 
-/** How long one breath of a running cell takes, and how far it fades. */
-export const PULSE_MS = 2400;
-const PULSE_FLOOR = 0.45;
-
-/**
- * The alpha of a running cell's mark at time `t` (ms): whole at the start of
- * each breath, fading to PULSE_FLOOR halfway and back, on a cosine so it
- * eases at both ends — the same 2.4 s as a running DAG node's ground.
- */
-export function runningPulse(t: number): number {
-	return PULSE_FLOOR + (1 - PULSE_FLOOR) * (0.5 + 0.5 * Math.cos((2 * Math.PI * t) / PULSE_MS));
-}
 
 /** The overlay: the selected cell's ink frame (a paper gap inside it) and the keyboard cursor. */
 export function paintOverlay(

@@ -186,6 +186,12 @@ export async function selectTask(page: Page, id: string): Promise<void> {
  * disclosure is one boolean that survives a change of selection, so it is
  * pressed only when it is not already expanded.
  */
+/** Chooses one of the Tasks card's secondary actions, from its More. */
+export async function tasksMore(page: Page, id: string): Promise<void> {
+	await page.getByTestId('run-tasks-more').click();
+	await page.getByTestId(id).click();
+}
+
 export async function inspectTask(page: Page, id: string): Promise<void> {
 	await selectTask(page, id);
 	const toggle = page.getByTestId(`task-inspect-toggle-${id}`);

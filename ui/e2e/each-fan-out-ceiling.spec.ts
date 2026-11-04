@@ -201,6 +201,11 @@ test('the run page and the item list at the gated size are interactive within 5 
 		});
 		const listReady = Date.now() - started;
 		await expect(page.getByTestId('task-spread-item-grid').locator('button[data-item]')).toHaveCount(GATED_ITEMS);
+		// A cell of a grid this long shows its index and says the rest; the arrows walk it.
+		await expect(cell).toHaveAccessibleName(new RegExp(`^item ${last}, `));
+		await cell.focus();
+		await page.keyboard.press('ArrowLeft');
+		await expect(page.getByTestId(`task-spread-item-${last - 1}`)).toBeFocused();
 		note(
 			`${phase}: run page interactive ${pageReady} ms, item list of ${GATED_ITEMS} interactive ` +
 				`(item ${last} selected) ${listReady} ms after navigation`

@@ -14,6 +14,8 @@
 		link: (path: string) => string;
 		/** Runs not finished now, or null while unknown. */
 		running: number | null;
+		/** How many of each there are, once read; a read that failed draws no count. */
+		counts?: { orkflows?: string; pools?: string; activities?: string };
 		/** OrkStack's own build, for the foot's plate. */
 		version: string;
 		picker: Snippet;
@@ -23,7 +25,7 @@
 		onclose: () => void;
 	}
 
-	let { pathname, link, running, version, picker, themeSwitch, drawer, onclose }: Props = $props();
+	let { pathname, link, running, counts = {}, version, picker, themeSwitch, drawer, onclose }: Props = $props();
 
 	const [, runs, orkflows, apply] = BUILD_PAGES;
 	const build = $derived(buildPageOf(pathname)?.id);
@@ -45,7 +47,7 @@
 				><i class="mark-dot" aria-hidden="true"></i>{running} running</span
 			>{/if}</a
 	>
-	<a class="nav" href={link(orkflows.href)} data-testid="nav-orkflows" aria-current={current(build === 'orkflows')}
+	<a class="nav" href={link(orkflows.href)} data-testid="nav-orkflows" data-n={counts.orkflows} aria-current={current(build === 'orkflows')}
 		><Icon name="flow" />Orkflows</a
 	>
 	<a class="nav" href={link(apply.href)} data-testid="nav-apply" aria-current={current(build === 'apply')}
@@ -59,6 +61,7 @@
 				class="nav"
 				href={link(p.href)}
 				data-testid={p.id === 'overview' ? 'nav-admin' : `admin-tab-${p.id}`}
+				data-n={p.id === 'pools' ? counts.pools : p.id === 'activities' ? counts.activities : undefined}
 				aria-current={current(operate === p.id)}><Icon name={p.icon} />{p.label}</a
 			>
 		{/each}
@@ -115,6 +118,13 @@
 		width: 16px;
 		height: 16px;
 		color: var(--side-ink-2);
+	}
+	.nav[data-n]::after {
+		content: attr(data-n);
+		margin-left: auto;
+		color: var(--side-ink-2);
+		font-size: 12.5px;
+		font-variant-numeric: tabular-nums;
 	}
 	.nav:hover {
 		background: var(--side-hover);

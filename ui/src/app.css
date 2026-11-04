@@ -204,6 +204,10 @@
 		}
 	}
 	.btn:disabled,
+	.btn-quiet[aria-disabled='true'] {
+		background-color: transparent;
+		border-color: transparent;
+	}
 	.btn[aria-disabled='true'] {
 		background-color: var(--color-surface-2);
 		border-color: var(--color-line-2);
@@ -481,6 +485,9 @@
 	.plate-sm > .plate-v {
 		padding: var(--spacing) calc(var(--spacing) * 1.5);
 		font-size: var(--text-2xs);
+	}
+	.plate-sm > .plate-k {
+		font-weight: var(--font-weight-medium);
 	}
 
 	/* ---- Status pill: the mark, the word, then the colour -------------- */

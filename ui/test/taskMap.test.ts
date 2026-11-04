@@ -264,8 +264,15 @@ function fakeContext() {
 		strokeRect() {
 			calls.push('strokeRect');
 		},
-		clearRect() {
+		clearRect(x: number, y: number) {
 			calls.push('clearRect');
+			touched.add(`${x},${y}`);
+		},
+		rect() {
+			calls.push('rect');
+		},
+		roundRect() {
+			calls.push('roundRect');
 		},
 		beginPath() {
 			calls.push('beginPath');
@@ -357,6 +364,8 @@ function tracingContext() {
 		fillRect: log('fillRect', 'fill'),
 		strokeRect: log('strokeRect', 'stroke'),
 		clearRect: log('clearRect'),
+		rect: log('rect'),
+		roundRect: log('roundRect'),
 		beginPath: log('beginPath'),
 		moveTo: log('moveTo'),
 		lineTo: log('lineTo'),
@@ -439,11 +448,3 @@ test('scrollToCard converges within three passes on cards that change height, an
 	expect(n).toBe(3);
 });
 
-test('a running cell breathes: whole at the start of its 2.4 s, faded halfway, eased both ways', async () => {
-	const { PULSE_MS, runningPulse } = await import('../src/lib/taskMap');
-	expect(PULSE_MS).toBe(2400);
-	expect(Math.round(runningPulse(0) * 1e6) / 1e6).toBe(1);
-	expect(Math.round(runningPulse(PULSE_MS / 2) * 1e6) / 1e6).toBe(0.45);
-	expect(Math.round(runningPulse(PULSE_MS) * 1e6) / 1e6).toBe(1);
-	expect(Math.round(runningPulse(PULSE_MS / 4) * 1e6) / 1e6).toBe(0.725);
-});

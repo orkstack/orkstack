@@ -110,6 +110,7 @@
 		originReferenceURL
 	} from '#lib/origin.ts';
 	import { stampClass } from '#lib/statusMarks.ts';
+	import { digestHead } from '#lib/runDetail.ts';
 	import { SvelteSet } from 'svelte/reactivity';
 	import { fmtTimestamp, isTerminal, isTerminalEventType, keepsEventMessage, statusLabel, taskDispatched } from '#lib/status.ts';
 	import { statusMark } from '#lib/statusMarks.ts';
@@ -121,6 +122,7 @@
 	import { afterNavigation } from '#lib/settle.ts';
 	import DrawingFrame from '#lib/components/DrawingFrame.svelte';
 	import ActivityIcon from '#lib/components/ActivityIcon.svelte';
+	import MoreMenu from '#lib/components/MoreMenu.svelte';
 	import ActivitySymbol from '#lib/components/ActivitySymbol.svelte';
 	import { safeIcon } from '#lib/activityIcon.ts';
 	import { activityKind } from '#lib/activityIcon.ts';
@@ -343,7 +345,8 @@
 	// end, so a length that moved is the one change that rebuilds it.
 	const taskAt = new Map<string, number>();
 	function findTask(id: string): TaskView | undefined {
-		const list = tasksDraft ?? tasks;
+		const live = tasks;
+		const list = tasksDraft ?? live;
 		if (taskAt.size !== list.length) {
 			taskAt.clear();
 			list.forEach((task, at) => taskAt.set(task.id, at));
@@ -657,7 +660,9 @@
 					const task = findTask(taskId);
 					if (!task) continue;
 					const items = applyLiveItems(task.items, attempts);
-					if (items !== task.items) upsertTask(taskId, { items });
+					if (items === task.items) continue;
+					upsertTask(taskId, { items });
+					mapRevision++;
 				}
 			});
 			const computed = res.computedAt;
@@ -2014,6 +2019,9 @@
 		for (let i = 0; i < tasks.length; i += ROW_CHUNK) chunks.push(tasks.slice(i, i + ROW_CHUNK));
 		return chunks;
 	});
+	function itemHasArtifacts(taskId: string, item: number): boolean {
+		return (artifactsByTask.get(taskId) ?? []).some((record) => record.item === item);
+	}
 	function fanOutWords(task: TaskView): string {
 		const spec = taskDefs.get(task.id)?.each;
 		const count = task.each?.expanded ? task.items.length : 0;
@@ -2225,7 +2233,7 @@
 						<span data-testid="run-origin-reference" class="font-mono text-sm break-all text-ink-2">{origin.reference}</span>
 					{/if}
 				{/if}
-				{#if origin?.principal}<span data-testid="run-origin-principal"><span class={originSlug === 'submit' ? 'sr' : ''}>by </span><Principal name={origin.principal} /></span>{:else if originSlug === 'submit'}<span class="text-ink-3" data-testid="run-origin-unasserted">no principal asserted</span>{/if}
+				{#if origin?.principal}<span data-testid="run-origin-principal"><span class={originSlug === 'submit' ? 'sr' : ''}>{'by '}</span><Principal name={origin.principal} /></span>{:else if originSlug === 'submit'}<span class="text-ink-3" data-testid="run-origin-unasserted">no principal asserted</span>{/if}
 			{:else}
 				<span data-testid="run-origin-kind" class="text-ink-3" data-tip={UNRECORDED_CAPTION}>{UNRECORDED}</span>
 			{/if}
@@ -2245,9 +2253,8 @@
 			><StatusPill status={runStatus} testid="run-status" />
 		</h1>
 		<div class="rh-actions">
-			{#if isTerminal(runStatus)}
-				<button type="button" data-testid="run-evidence" onclick={() => (evidenceDialogOpen = true)} class="btn btn-quiet">Evidence</button>
-			{/if}
+			<button type="button" data-testid="run-evidence" aria-disabled={isTerminal(runStatus) ? undefined : 'true'} aria-describedby={isTerminal(runStatus) ? undefined : 'run-evidence-why'} data-tip={isTerminal(runStatus) ? undefined : 'A bundle is for a finished run'} onclick={() => { if (isTerminal(runStatus)) evidenceDialogOpen = true; }} class="btn btn-quiet">Evidence</button>
+			{#if !isTerminal(runStatus)}<span class="sr" id="run-evidence-why">A bundle is for a finished run</span>{/if}
 			<button type="button" data-testid="compare-run" onclick={() => void openCompare()} class="btn btn-quiet">Compare</button>
 			<a
 				href={eventsHref(!eventsOpen)}
@@ -2260,8 +2267,8 @@
 			{#if composesAny}
 				<a href={childrenListHref(data.namespace, run.id)} data-testid="run-children-link" class="btn btn-quiet">Child runs</a>
 			{/if}
-			<span class="act-gap" aria-hidden="true"></span>
 			{#if !isTerminal(runStatus)}
+				<span class="act-gap act-break" aria-hidden="true"></span>
 				<button
 					type="button"
 					data-testid="cancel-run"
@@ -2275,14 +2282,13 @@
 				>
 			{/if}
 			<button type="button" data-testid="run-again" onclick={() => (runAgainDialogOpen = true)} class="btn btn-primary"><Icon name="play" />Run again</button>
-			<CliPopover testid="run-inspect-cli" title="Command line: this run" commands={runCli} />
+			<CliPopover testid="run-inspect-cli" title="Command line: this run" commands={[...runCli, ...activeCli]} />
 		</div>
 		<div class="rh-plates">
 			<Plate key="run" value={run.id} short={shortRunId(run.id)} copyLabel="Copy run id" testid="run-id" />
-			<Plate key="version" value={run.orkflowVersion} testid="run-version" />
 			<Popover testid="run-versions-popover" open={versionsOpen} onOpenChange={(next) => (versionsOpen = next)}>
 				{#snippet trigger()}
-					<button type="button" class="btn btn-sm btn-quiet" data-testid="run-versions-toggle" aria-expanded={versionsOpen} onclick={() => (versionsOpen = !versionsOpen)}>Versions</button>
+					<button type="button" class="plate-open" data-testid="run-versions-toggle" aria-expanded={versionsOpen} aria-label="Version {run.orkflowVersion}: see this Orkflow's versions" data-tip="See this Orkflow's versions" onclick={() => (versionsOpen = !versionsOpen)}><Plate key="version" value={run.orkflowVersion} testid="run-version" /></button>
 				{/snippet}
 				{#snippet content()}
 					<div class="w-80 max-w-[calc(100vw-2rem)] p-3"><VersionTable namespace={data.namespace} orkflowName={run.orkflowName} runVersion={run.orkflowVersion} /></div>
@@ -2460,8 +2466,12 @@
 						{#if hasFanOut}
 							<button type="button" class="btn btn-sm btn-quiet" data-testid="run-expand-all" aria-pressed={expandAll} onclick={() => (expandAll = !expandAll)}>{expandAll ? 'Collapse' : 'Expand all'}</button>
 						{/if}
-						<button type="button" class="btn btn-sm btn-quiet" data-testid="run-stability-toggle" aria-pressed={historyOpen} data-tip="Whether each task retries in this Orkflow's other runs, over {HISTORY_WINDOW}" onclick={toggleHistory}>Retry history</button>
-						<button type="button" class="btn btn-sm btn-quiet" data-testid="export-run-json" onclick={() => downloadJson(`${run.id}.json`, runExport())}>Export JSON</button>
+						<MoreMenu testid="run-tasks-more" iconOnly label="More about these tasks">
+							{#snippet items(close)}
+								<button type="button" data-testid="run-stability-toggle" aria-pressed={historyOpen} data-tip="Whether each task retries in this Orkflow's other runs, over {HISTORY_WINDOW}" onclick={() => { close(); toggleHistory(); }}>{historyOpen ? 'Hide retry history' : 'Retry history'}</button>
+								<button type="button" data-testid="export-run-json" onclick={() => { close(); downloadJson(`${run.id}.json`, runExport()); }}>Export JSON</button>
+							{/snippet}
+						</MoreMenu>
 					</div>
 				</div>
 				<p class="sr" data-testid="task-summary"><span>{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length}</span> succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}</p>
@@ -2546,7 +2556,7 @@
 									><span data-testid="task-{task.id}-status" data-state={kind.waiting ? 'not-started' : undefined} class={kind.pill.cls}
 										>{#if kind.pill.mark}<span class={kind.pill.mark} aria-hidden="true"></span>{/if}{kind.pill.word}</span
 									><span class="num tdur" data-testid="task-{task.id}-elapsed"
-										>{#if task.status === Status.RUNNING || task.status === Status.AWAITING}<span class="sr">{task.status === Status.AWAITING ? 'Awaited ' : 'Since scheduled '}</span>{/if}{rowDuration(task)}</span
+										>{#if task.status === Status.RUNNING || task.status === Status.AWAITING}<span class="sr">{kind.isAwait ? 'Awaited ' : 'Since scheduled '}</span>{/if}{rowDuration(task)}</span
 									></span
 								></div
 							>
@@ -2574,17 +2584,11 @@
 										task.exitCode !== undefined ? `exit code ${task.exitCode}` : '',
 										def && !def.retry ? 'no retry policy' : ''
 									].filter(Boolean).join(' · ')}</span>
-									{#if !composed && !isAwait && !fanOut}
-										<span class="xhead-end">
-											<button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{task.id}" aria-expanded={inspectOpenByTask[task.id] ?? false} onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}>{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}</button>
-											<CliPopover testid="run-task-{task.id}-cli" title="Command line: task {task.id}" commands={taskCliOf(task)} />
-										</span>
-									{/if}
 								</p>
 <div class="xbody">
 								{#if !composed && !isAwait && !fanOut}
 									{#snippet wokerWord()}<span class="font-mono text-xs">{task.orkerId || lastAttempt?.orkerId || '—'}</span>{/snippet}
-									{#snippet imagePlate()}<span data-testid={task.id === failedTask?.id ? 'run-failed-image' : undefined}><span class="sr">{pinnedOrReference(image)}</span>{#if digest}<Plate key="sha256" value={shortDigestWords(digest)} tip={digest} copy={digest} copyLabel="Copy digest" small />{:else}<span class="font-mono text-xs break-all">{pinnedOrReference(image) || '—'}</span>{/if}</span>{/snippet}
+									{#snippet imagePlate()}<span data-testid={task.id === failedTask?.id ? 'run-failed-image' : undefined}><span class="sr">{pinnedOrReference(image)}</span>{#if digest}<Plate key="sha256" value={digestHead(digest)} tip={digest} small />{:else}<span class="font-mono text-xs break-all">{pinnedOrReference(image) || '—'}</span>{/if}</span>{/snippet}
 									<FactsStrip
 										small
 										label="Attempt of {task.id}"
@@ -2627,6 +2631,9 @@
 										embedded
 										label={task.id}
 									/>
+								{/if}
+								{#if !composed && !isAwait && !fanOut}
+									<div class="xfoot"><button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{task.id}" aria-expanded={inspectOpenByTask[task.id] ?? false} onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}>{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}</button></div>
 								{/if}
 								{#if !composed && !isAwait && !fanOut && inspectOpenByTask[task.id]}
 									{#await import('#lib/components/TaskInspect.svelte') then { default: TaskInspect }}
@@ -2833,7 +2840,7 @@
 				<SinceLastRun namespace={data.namespace} runId={run.id} orkflow={run.orkflowName} createdAt={timestampMs(run.createdAt)} sinceSuccess read={tasks.length <= DIFF_IN_PASSING} finished />
 			{/if}
 			<section class="card" aria-labelledby="run-map-heading" data-testid="run-map-card">
-				<div class="card-head"><h2 id="run-map-heading">Task map</h2><span class="card-sub">every task and item, in the order they can run</span></div>
+				<div class="card-head"><h2 id="run-map-heading">Task map</h2><span class="card-sub">{hasFanOut ? 'every task and item, in the order they can run' : 'every task, row by row in the order they can run'}</span></div>
 				<div class="tmap" style:height="{mapBoxHeight}px" bind:this={mapBox}>
 					<TaskMap
 						bind:this={taskMap}
@@ -2847,7 +2854,7 @@
 					/>
 				</div>
 				<div class="tmap-key">
-					<TaskMapLegend compact={tasks.length <= STAGE_ROWS_MAX} counts={legend} neverStarted={legendNever} onpick={(status) => taskMap?.focusStatus(status)} />
+					{#if !(isTerminal(runStatus) && tasks.length <= STAGE_ROWS_MAX)}<TaskMapLegend compact={tasks.length <= STAGE_ROWS_MAX} counts={legend} neverStarted={legendNever} onpick={(status) => taskMap?.focusStatus(status)} />{/if}
 				</div>
 			</section>
 			{#if firstWaiter?.capacityWait}
@@ -2874,7 +2881,7 @@
 					orkerId={current ? (itemRun?.orkerId ?? '') : activeView.orkerId}
 					pool={current ? itemRun?.pool || activeView.pool : activeView.pool}
 					requested={def?.resources}
-					scheduledAt={current ? itemRun?.scheduledAt : (activeView.scheduledAt ?? activeView.startedAt)}
+					scheduledAt={current ? (itemRun?.scheduledAt ?? liveNow?.attemptScheduledAt) : (activeView.scheduledAt ?? activeView.startedAt)}
 					startedAt={current ? itemRun?.startedAt : activeView.startedAt}
 					finishedAt={current ? itemRun?.finishedAt : activeView.finishedAt}
 					live={liveNow}
@@ -2883,8 +2890,6 @@
 					now={currentTimestamp}
 					{timing}
 					image={def?.image}
-					cli={activeCli}
-					cliTestid={current ? `task-${activeView.id}-item-panel-cli` : `run-task-${activeView.id}-cli`}
 					note={fanned && !current ? 'Select an item to see its attempts and log.' : ''}
 				>
 					{#if current}
@@ -2897,13 +2902,18 @@
 								<FailurePanel error={itemRun.error} testid="task-{activeView.id}-item-{current.index}-error" flat tries={{ retryable: itemRun.error.retryable, retryState: itemRun.retryState, attempts: attemptsSeen(facts) }} />
 							</div>
 						{/if}
-						{#if facts.length > 1 || (facts.length > 0 && isTerminal(current.status))}
+						{#if facts.length > 1 || (facts.length > 0 && isTerminal(current.status)) || itemHasArtifacts(activeView.id, current.index)}
+							<div class="insp-more">
+								<button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="{panel}-inspect-toggle" aria-expanded={inspectOpenByTask[key] ?? false} onclick={() => (inspectOpenByTask[key] = !inspectOpenByTask[key])}>{inspectOpenByTask[key] ? 'Hide inspect' : 'Inspect'}</button>
+							</div>
+						{/if}
+						{#if inspectOpenByTask[key] && (facts.length > 1 || (facts.length > 0 && isTerminal(current.status)))}
 							<div class="insp-row">
 								<AttemptTimeline runId={run.id} taskId={activeView.id} namespace={data.namespace} item={current.index} attempts={facts} pool={itemRun?.pool ?? ''} decidedOn={current.attempt} onViewLogs={(attempt) => viewTaskAttemptLogs(activeView!.id, attempt, current.index)} />
 							</div>
 						{/if}
 						{@const itemArtifacts = (artifactsByTask.get(activeView.id) ?? []).filter((record) => record.item === current.index)}
-						{#if itemArtifacts.length > 0}
+						{#if inspectOpenByTask[key] && itemArtifacts.length > 0}
 							<ul class="insp-row grid gap-1 text-xs" data-testid="{panel}-artifacts">
 								{#each itemArtifacts as record (`${record.kind}:${record.artifact?.name}`)}
 									{#if record.artifact}
@@ -2959,6 +2969,7 @@
 					</div>
 				</section>
 			{/if}
+			{#if !isTerminal(runStatus) || hasRunInput || run.output?.data}
 			<section class="card" aria-labelledby="run-inputs-heading" data-testid="run-inputs">
 				<div class="card-head">
 					<h2 id="run-inputs-heading">Inputs</h2>
@@ -2990,6 +3001,7 @@
 					</p>
 				{/if}
 			</section>
+			{/if}
 			{#if run.output}
 				<section class="card" aria-labelledby="run-output-kind" data-testid="run-outputs">
 					<div class="card-head">
@@ -3389,6 +3401,30 @@
 	[data-run-log] {
 		overflow: hidden;
 		border-radius: 0 0 var(--r) var(--r);
+	}
+	.plate-open {
+		display: inline-flex;
+		max-width: 100%;
+		border-radius: 6px;
+		cursor: pointer;
+	}
+	.plate-open:hover :global(.plate) {
+		border-color: var(--line-strong);
+	}
+	.xfoot {
+		display: flex;
+		justify-content: flex-end;
+	}
+	/* On a phone the quiet actions take one row and the run's own the next. */
+	@media (max-width: 640px) {
+		.act-break {
+			display: block;
+			flex-basis: 100%;
+			width: auto;
+			height: 0;
+			margin: 0;
+			background: none;
+		}
 	}
 	.xhead {
 		margin: 0;

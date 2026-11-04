@@ -25,7 +25,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { taskMapCellCenter } from './uiHelpers';
+import { taskMapCellCenter, tasksMore } from './uiHelpers';
 
 // The run sheet (UI revamp, stage 2), against a real engine and Orker on real
 // Temporal and MinIO:
@@ -332,6 +332,7 @@ test('aside: versions with THIS RUN / CURRENT / HEAD, the failure, the image, th
 	await expect(page.getByTestId('run-error')).toBeVisible();
 	// `charge` declares no retry policy and ran once: it exhausted nothing, and its attempt line says why.
 	await expect(page.getByTestId('run-error-retry-state')).toHaveCount(0);
+	await expect(page.getByTestId('task-charge-failure')).toContainText('attempt 1 of 1');
 	await expect(page.getByTestId('task-charge-failure')).toContainText('no retry policy');
 	await expect(page.getByTestId('run-failed-image')).toContainText('activity-shell');
 	// The commands that reproduce the run are behind the header's terminal icon.
@@ -348,7 +349,7 @@ test('aside: versions with THIS RUN / CURRENT / HEAD, the failure, the image, th
 	// The definition digest no longer has a cell on the page; the run's JSON export carries it.
 	const digest = (await rpc<{ run: { orkflowDefinitionDigest: string } }>('RunService/GetRun', { runId: sagaRun })).run.orkflowDefinitionDigest;
 	const download = page.waitForEvent('download');
-	await page.getByTestId('export-run-json').click();
+	await tasksMore(page, 'export-run-json');
 	const exportPath = out(`${sagaRun}-export.json`);
 	await (await download).saveAs(exportPath);
 	expect(JSON.parse(readFileSync(exportPath, 'utf8')).orkflow.definitionDigest).toBe(digest);
@@ -422,12 +423,10 @@ test('map: past 80 tasks the map is painted only after the last card is attached
 	await expect.poll(() => inViewport(page, 'task-t4')).toBe(true);
 });
 
-test('map: F jumps to the failed cell, and the legend counts every status present', async ({ page }) => {
+test('map: F jumps to the failed cell', async ({ page }) => {
 	await page.goto(runUrl(sagaRun));
 	const map = page.getByTestId('task-map');
 	await expect(map).toHaveAttribute('data-painted', 'true');
-	await expect(page.getByTestId('task-map-legend-failed')).toContainText('1');
-	await expect(page.getByTestId('task-map-legend-succeeded')).toBeVisible();
 	await page.getByRole('listbox', { name: /Task map/ }).focus();
 	await page.keyboard.press('f');
 	await expect(page.getByTestId('task-map-readout')).toContainText('charge · Failed');

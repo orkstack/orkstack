@@ -254,7 +254,8 @@
 {/snippet}
 
 {#snippet scrollers()}
-	<div class="flex h-8 overflow-hidden rounded-sm border border-line-2 bg-surface">
+	<!-- A phone swipes its drawing, and a keyboard scrolls its region: the arrows are for a pointer. -->
+	<div class="flex h-8 overflow-hidden rounded-sm border border-line-2 bg-surface max-sm:hidden">
 		{#if hidden.up || hidden.down}
 			{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chev-up', hidden.up, () => scrollBy(-1, 'y'), false)}
 			{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chev', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}

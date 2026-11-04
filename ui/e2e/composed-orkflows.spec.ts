@@ -173,6 +173,8 @@ test('a composed task links to its child run and rolls up its tasks live', async
 	await expect(link).toBeAttached({ timeout: 120_000 });
 	const childId = ((await link.textContent()) ?? '').trim();
 	expect(childId).toMatch(/^ork-\d+-\d+$/);
+	// The row names the same child, and links to it.
+	await expect(page.getByTestId('task-release-child-run')).toHaveAttribute('href', new RegExp(`/runs/${childId}\\?`));
 	await expect(page.getByTestId('task-release-child')).not.toBeInViewport();
 	expect(childReads.filter((id) => id === childId), 'no child read before the card is seen').toHaveLength(0);
 	expect(childSockets.filter((url) => url.includes(`/ws/runs/${childId}?`)), 'no child socket before the card is seen').toHaveLength(0);

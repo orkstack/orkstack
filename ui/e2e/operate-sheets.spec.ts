@@ -232,7 +232,10 @@ test('sheets: every Operate page is one sheet — its link current, one h1, its 
 		const scopeNote = SCOPE_NOTES[sheet.id];
 		if (scopeNote) {
 			await expect(page.getByTestId(scopeNote)).toBeVisible();
-			await expect(page.locator('.note', { has: page.getByTestId(scopeNote) }).getByText('Note', { exact: true })).toBeVisible();
+			// Pools and Activities say their reach in the header's own sentence.
+			if (!['pools', 'activities'].includes(sheet.id)) {
+				await expect(page.locator('.note', { has: page.getByTestId(scopeNote) }).getByText('Note', { exact: true })).toBeVisible();
+			}
 		}
 		// The breadcrumb names the page (the title block's PAGE cell is gone); Operate pages sit under "Operate".
 		await expect(page.getByTestId('breadcrumb-current')).toHaveText(sheet.crumb);

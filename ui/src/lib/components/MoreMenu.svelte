@@ -13,9 +13,11 @@
 		/** The items; each is handed the function that closes the list. */
 		items: Snippet<[() => void]>;
 		class?: string;
+		/** The design's three dots: the label is then the button's accessible name. */
+		iconOnly?: boolean;
 	}
 
-	let { testid, label = 'More', items, class: className = '' }: Props = $props();
+	let { testid, label = 'More', items, class: className = '', iconOnly = false }: Props = $props();
 
 	let open = $state(false);
 	const close = () => (open = false);
@@ -30,7 +32,9 @@
 				aria-expanded={open}
 				aria-controls="{testid}-items"
 				onclick={() => (open = !open)}
-				class="btn gap-1.5">{label}<Icon name="chev" class="size-4 text-ink-muted" /></button
+				aria-label={iconOnly ? label : undefined}
+				data-tip={iconOnly ? label : undefined}
+				class={iconOnly ? 'btn btn-sm btn-quiet btn-icon' : 'btn gap-1.5'}>{#if iconOnly}<Icon name="more" />{:else}{label}<Icon name="chev" class="size-4 text-ink-muted" />{/if}</button
 			>
 		{/snippet}
 		{#snippet content()}
