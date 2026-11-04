@@ -403,7 +403,7 @@ test('a shell icon\'s copy buttons are icons named Copy, and a click puts the co
 	// The page's command line: one icon per command, the check on the one copied.
 	await page.goto(at('/admin/pools'));
 	await page.getByTestId('pools-cli-trigger').click();
-	const panel = page.getByRole('dialog', { name: 'Command line for this page' });
+	const panel = page.getByRole('dialog', { name: /^Command line/ });
 	const copy = panel.getByRole('button', { name: /^Copy: / }).first();
 	await expect(copy).toHaveText('');
 	await copy.hover();
