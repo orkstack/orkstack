@@ -1282,6 +1282,8 @@ rule are [DEPLOY.md](DEPLOY.md), "Removing an Orker safely: cordon and drain".
 An Orker also cordons itself while object storage does not answer it, which no
 command clears ([DEPLOY.md](DEPLOY.md), "When object storage goes away"); both
 surfaces show that cause apart from an operator's, with its reason and since.
+A task waiting on such a pool reads `waiting for object storage` in `orkctl run
+inspect` and `Waiting for object storage` on the run page.
 
 CLI: `orker list [--filter F…]` (`--filter pool=build`), `orker get ID`
 (an `orker_id=ID` filter: that Orker alone is asked), `orker cordon ID --reason TEXT`

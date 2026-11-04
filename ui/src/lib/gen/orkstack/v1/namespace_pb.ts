@@ -401,8 +401,9 @@ export type Pool = Message<"orkstack.v1.Pool"> & {
 
   /**
    * live_orker_count is how many Orkers were serving this pool when the answer
-   * was computed. Zero means a task sent here would wait for an Orker that is
-   * not there, which is what a submit refuses.
+   * was computed, an Orker waiting out an object storage outage included. Zero
+   * means a task sent here would wait for an Orker that is not there, which is
+   * what a submit refuses.
    *
    * @generated from field: int32 live_orker_count = 2;
    */

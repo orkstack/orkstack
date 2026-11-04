@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -105,16 +106,6 @@ func (d *cordonDeployment) awaitStoreOutage(id string, within time.Duration, wan
 	return rows[0]
 }
 
-func (d *cordonDeployment) submitAllowingAnEmptyPool(orkflow string) string {
-	d.t.Helper()
-	resp, err := d.runs.SubmitRun(d.ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-		OrkflowName: orkflow, Namespace: d.orkNS, AllowEmptyPool: true}))
-	if err != nil {
-		d.t.Fatalf("SubmitRun(%s): %v", orkflow, err)
-	}
-	return resp.Msg.GetRun().GetId()
-}
-
 // awaitStoreCheck waits until the watch's check has answered as the step needs.
 func awaitStoreCheck(t *testing.T, ctx context.Context, what string, done func() bool) {
 	t.Helper()
@@ -134,8 +125,8 @@ func awaitStoreCheck(t *testing.T, ctx context.Context, what string, done func()
 // With the store cut, a task waits: the Orker is handed nothing, no attempt is
 // used, and other work keeps finishing. A blip cordons nothing. When the store
 // returns the Orker resumes with no operator step and the run completes on its
-// first attempt. Once every Orker of the pool holds this cordon a new submit is
-// refused, which is what docs/DEPLOY.md says it does.
+// first attempt. A pool whose every Orker holds this cordon has paused, so a new
+// submit is accepted and waits as well, and the wait names the outage.
 func TestIntegration_StoreOutage_TasksWaitWithNoAttemptUsedAndCompleteWhenTheStoreReturns(t *testing.T) {
 	ctx := cordonContext(t, 12*time.Minute)
 	pool := fmt.Sprintf("outage-%d", time.Now().UnixNano()%1_000_000)
@@ -192,7 +183,7 @@ func TestIntegration_StoreOutage_TasksWaitWithNoAttemptUsedAndCompleteWhenTheSto
 		time.Sleep(2 * time.Second)
 	}
 
-	runID := d.submitAllowingAnEmptyPool("echo-" + d.token)
+	runID := d.submit("echo-" + d.token)
 	d.transcript.line("run %s submitted into the outage", runID)
 	windowEnd := time.Now().Add(15 * time.Second)
 	progressed := 0
@@ -226,22 +217,30 @@ func TestIntegration_StoreOutage_TasksWaitWithNoAttemptUsedAndCompleteWhenTheSto
 	}
 	d.transcript.line("%d control runs finished while the run was handed nothing", controlRuns+progressed)
 
-	// Every Orker of the pool holds the cordon, so once the pool's poller record
-	// is stale a new submit is refused.
-	var refused error
-	refusalDeadline := time.Now().Add(3 * time.Minute)
-	for time.Now().Before(refusalDeadline) {
-		_, refused = d.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
-			OrkflowName: "echo-" + d.token, Namespace: d.orkNS}))
-		if refused != nil {
-			break
+	// The wait says why, from the same inventory the run page and the CLI read.
+	var outageWait *orkstackv1.StoreOutageWait
+	waitDeadline := time.Now().Add(30 * time.Second)
+	for outageWait == nil && time.Now().Before(waitDeadline) {
+		inspected, err := d.runs.InspectRun(ctx, connect.NewRequest(&orkstackv1.InspectRunRequest{RunId: runID, Namespace: d.orkNS}))
+		if err != nil {
+			t.Fatalf("InspectRun: %v", err)
 		}
-		time.Sleep(2 * time.Second)
+		for _, attempt := range inspected.Msg.GetAttempts() {
+			outageWait = attempt.GetStoreOutageWait()
+		}
+		time.Sleep(500 * time.Millisecond)
 	}
-	if connect.CodeOf(refused) != connect.CodeFailedPrecondition || !strings.Contains(refused.Error(), "no live Orkers") {
-		t.Fatalf("a submit to a pool whose every Orker is in a store outage = %v, want FailedPrecondition, no live Orkers", refused)
+	if outageWait == nil || outageWait.GetPool() != pool || outageWait.GetOrkers() != 1 || outageWait.GetSince() == nil {
+		t.Fatalf("the waiting attempt's store outage wait = %v", outageWait)
 	}
-	d.transcript.line("a new submit is refused after %s: %v", time.Since(cutAt).Round(time.Second), refused)
+
+	// Past the window in which the pool's poller record still looks fresh, a
+	// paused pool is still live: a plain submit is accepted, and it waits too.
+	if remaining := engine.DefaultPollerFreshness + 15*time.Second - time.Since(cutAt); remaining > 0 {
+		time.Sleep(remaining)
+	}
+	lateRun := d.submit("echo-" + d.token)
+	d.transcript.line("a plain submit %s accepted %s into the outage", lateRun, time.Since(cutAt).Round(time.Second))
 
 	d.transcript.section("the store returns")
 	proxy.Restore()
@@ -257,8 +256,13 @@ func TestIntegration_StoreOutage_TasksWaitWithNoAttemptUsedAndCompleteWhenTheSto
 	if echo.GetAttempt() != 1 || echo.GetOrkerId() != o.id || len(o.ranFor(runID)) != 1 {
 		t.Fatalf("attempt=%d orker=%s handed=%v; want the first attempt on %s", echo.GetAttempt(), echo.GetOrkerId(), o.ranFor(runID), o.id)
 	}
+	late := d.await(lateRun)
+	if late.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || pinTaskRun(t, late, "echo").GetAttempt() != 1 {
+		t.Fatalf("the run submitted into the outage ended %v, attempt %d: %v",
+			late.GetStatus(), pinTaskRun(t, late, "echo").GetAttempt(), late.GetError())
+	}
 	t.Logf("EVIDENCE store outage: %d control runs finished in the outage, the task used no attempt during it, "+
-		"a submit was refused, and attempt 1 succeeded after recovery", controlRuns+progressed)
+		"its wait named the outage, a submit into it was accepted, and both succeeded on attempt 1", controlRuns+progressed)
 }
 
 const storeOutageHoldYAML = `

@@ -3,8 +3,10 @@ package engine_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -188,6 +190,50 @@ func TestCapacityWaits_EveryCountedOrkerMustBeFull(t *testing.T) {
 			}
 			if unanswered != tc.unanswered {
 				t.Fatalf("unanswered = %d, want %d", unanswered, tc.unanswered)
+			}
+		})
+	}
+}
+
+func TestStoreOutageWaits_OnlyWhenNoOrkerOfThePoolTakesNewTasks(t *testing.T) {
+	early := time.Date(2026, 11, 4, 9, 0, 0, 0, time.UTC)
+	late := early.Add(time.Minute)
+	outage := func(id string, since time.Time) *orkstackv1.DescribeOrkerResult {
+		return editedOrker(currentOrker(id, "gpu", 0), func(o *orkstackv1.DescribeOrkerResult) {
+			o.Cordoned = true
+			o.StoreOutage = &orkstackv1.StoreOutage{Reason: "object storage unreachable", Since: timestamppb.New(since)}
+		})
+	}
+	operator := editedOrker(currentOrker("gpu-op", "gpu", 0), func(o *orkstackv1.DescribeOrkerResult) {
+		o.Cordoned = true
+		o.CordonReason = "patching"
+	})
+	cases := []struct {
+		name       string
+		fleet      *fakeFleet
+		wantOrkers int32
+		wantSince  time.Time
+	}{
+		{"one Orker", fleetOf(outage("gpu-1", early)), 1, early},
+		{"the earliest since of several", fleetOf(outage("gpu-1", late), outage("gpu-2", early)), 2, early},
+		{"beside an operator's cordon", fleetOf(outage("gpu-1", early), operator), 1, early},
+		{"a sibling still takes tasks", fleetOf(outage("gpu-1", early), currentOrker("gpu-2", "gpu", 0)), 0, time.Time{}},
+		{"an operator's cordon alone", fleetOf(operator), 0, time.Time{}},
+		{"no Orker", fleetOf(), 0, time.Time{}},
+		{"another pool's outage", fleetOf(editedOrker(outage("cpu-1", early), func(o *orkstackv1.DescribeOrkerResult) { o.Pool = "cpu" })), 0, time.Time{}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			orkers, err := engine.ReadFleet(context.Background(), tc.fleet)
+			if err != nil {
+				t.Fatal(err)
+			}
+			wait := engine.StoreOutageWaitsOf(orkers, []string{"gpu"})["gpu"]
+			if wait.GetOrkers() != tc.wantOrkers {
+				t.Fatalf("wait = %v, want %d Orkers", wait, tc.wantOrkers)
+			}
+			if tc.wantOrkers > 0 && !wait.GetSince().AsTime().Equal(tc.wantSince) {
+				t.Fatalf("since = %s, want %s", wait.GetSince().AsTime(), tc.wantSince)
 			}
 		})
 	}

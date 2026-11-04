@@ -100,8 +100,6 @@
 	/** Ready, Full or Cordoned, in words; colour only beside the word. */
 	function stateOf(pool: Pool, load: PoolLoad | null): { word: string; tone: 'ok' | 'wait' | 'fail' | 'plain' } {
 		if (pool.unavailableReason) return { word: 'Unknown', tone: 'plain' };
-		// Before the count: an Orker in a store outage stops asking for work, so a
-		// pool of nothing else counts zero live Orkers, and it is not an empty pool.
 		if (load && load.orkers > 0 && load.storeOutages === load.orkers) return { word: 'Object storage unreachable', tone: 'fail' };
 		if (pool.liveOrkerCount === 0) return { word: 'No Orkers', tone: 'fail' };
 		if (load && load.storeOutages > 0) return { word: `${load.storeOutages} cannot reach object storage`, tone: 'fail' };
@@ -237,7 +235,7 @@
 			</p>
 		{:else}
 			{#if load && load.orkers > 0 && load.storeOutages === load.orkers}
-				<p class="text-sm text-fail" data-testid="pool-all-store-outage-{pool.name}">Every Orker here has cordoned itself because object storage does not answer. Tasks already in this pool wait without using an attempt, and these Orkers resume by themselves once it answers. Until then a new run sent here can be refused for having no live Orkers.</p>
+				<p class="text-sm text-fail" data-testid="pool-all-store-outage-{pool.name}">Every Orker here has cordoned itself because object storage does not answer. Runs sent here are accepted and wait without using an attempt, and these Orkers resume by themselves once it answers.</p>
 			{:else if pool.liveOrkerCount === 0}
 				<p class="text-sm text-fail" data-testid="pool-no-orkers-{pool.name}">No live Orkers; a task sent here waits.</p>
 				<p class="text-sm text-ink-3">Last seen <span data-testid="pool-last-seen-{pool.name}">{#if pool.lastSeen}<TimeAgo at={pool.lastSeen} />{:else}never (or gone quiet){/if}</span></p>

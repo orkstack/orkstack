@@ -1815,6 +1815,7 @@ answer is the TaskAttempt record the Orker writes.
 | `orker_id` | `string` | orker_id is the Orker that sent the heartbeat, as it names itself (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id carry. Empty when the beat came from an Orker built before the detail carried it. |
 | `item` | optional `int32` | item is set when the pending activity is one item of a fan-out (read off the scheduled ExecuteTaskInput.each.index). |
 | `capacity_wait` | [`CapacityWait`](#capacitywait) | capacity_wait is set when this attempt is waiting for capacity: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, and every Orker of its pool that takes new tasks declares a capacity, runs a task, and has no room for another task within it. Derived on read from the Orker inventory ListOrkers reports, in a reading at most five seconds old that one engine replica shares among every caller. Unset otherwise — including when the inventory could not be read in time, when any live Orker did not answer (it could serve this pool, with room), when one of the pool's Orkers declares no capacity, runs nothing (what it reserves is then its own polls, which take the next task), or has room but every task slot (max_concurrent) taken. The attempt is then waiting for an Orker, as it always was. |
+| `store_outage_wait` | [`StoreOutageWait`](#storeoutagewait) | store_outage_wait is set when this attempt is waiting out an object storage outage: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, at least one Orker of its pool has cordoned itself because the store does not answer, and no Orker of the pool takes new tasks. Derived on read like capacity_wait, and unset for the same reasons. The attempt has used nothing while it waits, and starts once the store answers. |
 
 ### Namespace
 
@@ -2172,7 +2173,7 @@ one that started nothing and holds no state of its own.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `string` | name is the pool a task's `pool:` names. "main" is built in and is where a task runs when neither it nor its namespace names one. |
-| `live_orker_count` | `int32` | live_orker_count is how many Orkers were serving this pool when the answer was computed. Zero means a task sent here would wait for an Orker that is not there, which is what a submit refuses. |
+| `live_orker_count` | `int32` | live_orker_count is how many Orkers were serving this pool when the answer was computed, an Orker waiting out an object storage outage included. Zero means a task sent here would wait for an Orker that is not there, which is what a submit refuses. |
 | `is_default` | `bool` | is_default marks the pool a task of this namespace runs on when it names none. |
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment an Orker of this pool was observed STILL POLLING.<br><br>Temporal remembers a poller for minutes after its worker died, so the probe drops a record older than the freshness window before counting or timestamping anything (internal/engine/pool_probe.go). One consequence is load-bearing and stated here rather than discovered: a pool whose Orkers have all gone quiet reports NO last_seen at all, not the moment the last of them was heard. This field answers "how fresh is the number beside it", never "when did this pool die". |
 | `unavailable_reason` | `string` | unavailable_reason says that this pool COULD NOT BE ASKED, and why.<br><br>Empty is the normal case: live_orker_count is a measurement. Non-empty means nothing was measured — the cluster did not answer for this pool — and live_orker_count is 0 because there is no number to report, NOT because nobody is serving it. The two need opposite reactions: an empty pool is fixed by starting an Orker, an unreachable one by asking again, and a renderer that showed them alike would tell an operator to scale a pool that may be perfectly healthy.<br><br>It exists so that ListPools can NARROW instead of refusing. One pool the cluster could not answer for used to fail the whole call, hiding every healthy pool beside it — and an admin read is opened precisely when something is already wrong. Each pool carries its own verdict now. |
@@ -2589,6 +2590,19 @@ release without these checks ever reports.
 |---|---|---|
 | `reason` | `string` | reason says in plain words what the Orker saw, starting "object storage unreachable". |
 | `since` | `google.protobuf.Timestamp` | since is when this Orker cordoned itself. |
+
+### StoreOutageWait
+
+StoreOutageWait says why a SCHEDULED attempt has not started: its pool's
+Orkers have cordoned themselves because object storage does not answer them
+(Orker.store_outage; docs/DEPLOY.md, "When object storage goes away"). A
+reading of the inventory at most five seconds old, never a record.
+
+| Field | Type | Description |
+|---|---|---|
+| `pool` | `string` | pool is the pool the attempt waits on, as TaskRun.pool spells it. |
+| `orkers` | `int32` | orkers is how many Orkers of the pool hold that cordon. |
+| `since` | `google.protobuf.Timestamp` | since is when the first of them cordoned itself. |
 
 ### StreamEventsRequest
 

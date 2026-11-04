@@ -58,7 +58,9 @@ func newRunInspectCommand(g *globalFlags) *cobra.Command {
 			"An attempt no Orker has started is waiting for an orker on its pool. When\n" +
 			"every Orker of that pool is at its declared capacity, the footer says it\n" +
 			"is waiting for capacity instead, with what stands reserved against what\n" +
-			"the pool's Orkers admit within.\n\n" +
+			"the pool's Orkers admit within. When the pool's Orkers have cordoned\n" +
+			"themselves because object storage does not answer, it says it is waiting\n" +
+			"for object storage, which uses no attempt.\n\n" +
 			"With --watch the table is printed again every --interval until the run is\n" +
 			"terminal, and the exit code is the run's (0 succeeded, 2 failed,\n" +
 			"3 canceled). --json prints the raw response; with --watch, one compact\n" +
@@ -387,6 +389,13 @@ func liveFooters(
 			lines = append(lines, fmt.Sprintf("%s: waiting for capacity for %s (scheduled %s): every orker of pool %s is full%s",
 				id, roundedSince(live.GetAttemptScheduledAt(), now), formatTime(live.GetAttemptScheduledAt()),
 				wait.GetPool(), reservedOfCapacity(wait)))
+			break
+		}
+		if wait := live.GetStoreOutageWait(); wait != nil {
+			lines = append(lines, fmt.Sprintf("%s: waiting for object storage for %s (scheduled %s): %s of pool %s cannot reach it, since %s; "+
+				"no attempt is used, and the task starts once it answers",
+				id, roundedSince(live.GetAttemptScheduledAt(), now), formatTime(live.GetAttemptScheduledAt()),
+				orkerCount(int(wait.GetOrkers())), wait.GetPool(), formatTime(wait.GetSince())))
 			break
 		}
 		lines = append(lines, fmt.Sprintf("%s: waiting for an orker on pool %s for %s (scheduled %s)",

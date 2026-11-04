@@ -42,7 +42,7 @@ An Orker also cordons itself while object storage does not answer it, so tasks w
 - It resumes by itself after a few good checks. You don't need to do anything once the store is back.
 - `orkctl orker uncordon` clears only a cordon an operator set. It can't override an outage that is still failing.
 - `orkctl orker drain` sets an operator's cordon too, so a recovery in the middle of a drain can't put the Orker back to work.
-- While every Orker of a pool holds this cordon, a new run sent there can be refused with `has no live Orkers`. Starting another Orker doesn't help, because it needs the same store.
+- While every Orker of a pool holds this cordon, a new run sent there is accepted and waits. `orkctl run inspect` and the run page say it is waiting for object storage. Starting another Orker doesn't help, because it needs the same store.
 
 It can't protect everything: an attempt that reaches the store before the Orker cordons itself still fails and uses an attempt, a task that starts a pin still fails `PIN_UNAVAILABLE`, and runs that close without an Orker, such as a cancel, are not held back. To turn it off, set `ORK_ORKER_STORE_CHECK_ENABLED=false`.
 

@@ -134,7 +134,7 @@ A task waiting for a free slot on a busy pool is not one of them: the engine has
 
 - Every Orker of the pool is busy. Each runs at most `ORK_ORKER_MAX_CONCURRENT` tasks at once (16 by default), and, when it declares a capacity, polls only while a whole per-task cap is free beside what it has reserved; a task beyond that waits in the pool. `orkctl orker list` shows each Orker's `TASKS`, `CAPACITY` and `RESERVED`. The task is `RUNNING` from the moment it is dispatched: `orkctl run inspect` says `waiting for an orker on pool <pool> for <time>`, and the run page says `Waiting for an orker` (`internal/engine/workflow.go`; `internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling"). When every Orker of the pool is at its declared capacity, they say so instead: `orkctl run inspect` prints `waiting for capacity for <time> (scheduled …): every orker of pool <pool> is full (reserved 4/4 cpu)`, and the run page `Waiting for capacity` (`internal/engine/capacity_wait.go`; [DEPLOY.md](./DEPLOY.md), "Declaring an Orker's capacity").
 - No Orker serves the pool, or the ones that do are cordoned. A cordoned Orker takes no new task and opens no new pin, and a restart clears the cordon ([CLI.md](./CLI.md), "`orkctl orker cordon`").
-- The pool's Orkers cannot reach object storage, and have cordoned themselves. `orkctl orker list` shows `cordoned (object storage unreachable)`, and the task uses no attempt while it waits. See the next section.
+- The pool's Orkers cannot reach object storage, and have cordoned themselves. `orkctl run inspect` says `waiting for object storage`, and the task uses no attempt while it waits. See the next section.
 - An Orker died while it held an attempt. Its heartbeat stops, `orkctl run inspect` reports the heartbeat as `STALE`, and the attempt times out as `ORKER_HEARTBEAT_TIMEOUT` (`internal/engine/workflow.go`). A heartbeat timeout is retryable under the task's `retry:` policy ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.1 The five categories").
 - A pinned task's host was lost. See `PIN_HOST_LOST` below.
 
@@ -165,7 +165,7 @@ The Orker's log line `object storage check failed` carries the store's own error
 
 **Fix.** Restore object storage, or this Orker's way to it. The Orker resumes by itself after a few good checks, and the waiting tasks then run. `orkctl orker uncordon` cannot override it, and only clears a cordon an operator set. To stop an Orker from cordoning itself at all, set `ORK_ORKER_STORE_CHECK_ENABLED=false`; an outage then fails attempts as they arrive.
 
-While every Orker of a pool holds this cordon, a new `SubmitRun` can be refused with `has no live Orkers`. Starting another Orker does not help, because it needs the same store. Wait for the store, or submit with `--allow-empty-pool` so the run waits for it too.
+While every Orker of a pool holds this cordon, a new run is still accepted and waits, and `orkctl run inspect` says `waiting for object storage`. Starting another Orker does not help, because it needs the same store.
 
 ### I stopped an Orker and its tasks failed
 

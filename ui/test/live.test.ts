@@ -295,3 +295,18 @@ test('U14 liveLine never reads the browser clock', () => {
 	// A nowMs far from the browser's clock still drives every age.
 	expect(liveLine(row.attempt, row.now + 60_000).text).toBe('Phase run · 412.0 MiB logged · heartbeat 1m 3s ago');
 });
+
+test('a task waiting out an object storage outage says so, in place of capacity', () => {
+	const attempt = create(LiveAttemptSchema, {
+		taskId: 'eval',
+		attempt: 1,
+		state: LiveAttemptState.SCHEDULED,
+		storeOutageWait: { pool: 'gpu', orkers: 2 }
+	});
+	const line = liveLine(attempt, Date.now());
+	expect(line.kind).toBe('store-outage');
+	expect(line.text).toContain('Waiting for object storage');
+	expect(line.text).toContain('pool gpu');
+	expect(line.text).not.toContain('capacity');
+	expect(line.title).toContain('uses no attempt');
+});

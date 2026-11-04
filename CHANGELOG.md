@@ -28,9 +28,11 @@ version's own, and its text is the release's notes on GitHub, word for word.
   `cordoned_at` stay the operator's alone, so a client that reads a reason from
   `cordoned` alone should read `store_outage` too. `orkctl orker list` and Admin →
   Pools show it as `object storage unreachable`, with metrics
-  `ork.orker.store_outage.active` and `.transitions`. While every Orker of a pool
-  holds it, a new submit is refused `has no live Orkers`; the limits are in
-  `docs/DEPLOY.md`, "When object storage goes away".
+  `ork.orker.store_outage.active` and `.transitions`. An Orker holding it still
+  keeps its pool live, so a new run is accepted and waits; `InspectRun` adds
+  `store_outage_wait`, and `orkctl run inspect` and the run page say the task is
+  waiting for object storage. The limits are in `docs/DEPLOY.md`, "When object
+  storage goes away".
 - Runs created per day or per hour, on the viewer's own calendar. `GetStats`
   takes `bucket_width` (`HOUR` or `DAY`), an IANA `timezone` and
   `bucket_count`, and adds `buckets` to the window it already answers: each

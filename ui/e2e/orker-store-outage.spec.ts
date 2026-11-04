@@ -1,18 +1,22 @@
 import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from './test';
-import { type ChildProcess } from 'node:child_process';
+import { selectTask } from './uiHelpers';
+import { execFileSync, type ChildProcess } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import {
 	bin,
+	catalogEnv,
 	clusterEnv,
+	ensureActivityImages,
 	ensureBucket,
 	noteTo,
 	orkerEnv,
 	ownBucket,
 	proofOut,
 	removeBucket,
+	repoRoot,
 	rpc as callEngine,
 	spawnLogged,
 	storeEnv,
@@ -38,7 +42,10 @@ import {
 //   2. an operator's cordon set beside it shows both, and Uncordon clears only
 //      the operator's;
 //   3. recovery ends the outage by itself, and leaves an operator's cordon;
-//   4. the page is clean under axe (WCAG 2.2 AA) in the outage state.
+//   4. the page is clean under axe (WCAG 2.2 AA) in the outage state;
+//   5. a run sent during the outage is accepted, its page and `orkctl run
+//      inspect` name the outage as what it waits for, and it succeeds on its
+//      first attempt once the store returns and the Orker is free.
 
 const BUCKET = ownBucket('orker-store-outage');
 const ENGINE_PORT = '19011';
@@ -47,6 +54,8 @@ const STAMP = Date.now().toString(36);
 const TEMPORAL_NAMESPACE = `ork-ui-outage-${STAMP}`;
 const ORKER = `orker-ui-outage-${STAMP}`;
 const REASON = 'runtime patch';
+const ORKFLOW = `store-outage-wait-${STAMP}`;
+let waitingRun = '';
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'orker-store-outage')
@@ -157,10 +166,12 @@ test.beforeAll(async () => {
 	const store = new URL(storeEnv(BUCKET).ORK_S3_ENDPOINT);
 	if (!(await tcpOpen(Number(store.port)))) throw new Error(`the object store is not reachable on ${store.host}`);
 	if (await tcpOpen(Number(ENGINE_PORT))) throw new Error(`port ${ENGINE_PORT} already in use (stray process?)`);
+	ensureActivityImages();
 	await startProxy(store.hostname, Number(store.port));
 
 	mine.push(
 		spawnLogged(outPath('engine.log'), bin('ork'), [], {
+			...catalogEnv,
 			...clusterEnv(TEMPORAL_NAMESPACE),
 			...storeEnv(BUCKET),
 			...uiEnv(),
@@ -186,6 +197,22 @@ test.beforeAll(async () => {
 		return Boolean(orker) && !orker?.unavailableReason;
 	}, 120_000);
 	await waitFor('built ui', async () => (await fetch(`${ENGINE}/_app/version.json`)).ok);
+	await callEngine(ENGINE, 'OrkflowService/ApplyOrkflow', {
+		yaml: `apiVersion: orkstack/v1
+kind: Orkflow
+name: ${ORKFLOW}
+version: "0.1.0"
+description: One task on the pool in the outage.
+
+tasks:
+  - id: wait-store
+    uses: shell
+    timeout_seconds: 120
+    with:
+      op: exec
+      command: ["echo", "ran after the outage"]
+`
+	});
 });
 
 test.afterAll(async () => {
@@ -225,6 +252,38 @@ test('A store outage reads apart from an operator\'s cordon, and offers no Uncor
 
 	const violations = (await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze()).violations;
 	expect(violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target).join(', ')}`)).toEqual([]);
+});
+
+test('A run sent during the outage is accepted and says it waits for object storage', async ({ page }) => {
+	test.setTimeout(180_000);
+	// Polls already out when the cordon landed could still take this task, which
+	// would use an attempt: the integration test proves the wait; this page proves
+	// what a waiting run says, so it needs the attempt still scheduled.
+	await waitFor('the Orker is holding no poll', async () => {
+		const answer = await callEngine<{ run: { id: string } }>(ENGINE, 'RunService/SubmitRun', { orkflowName: ORKFLOW });
+		waitingRun = answer.run.id;
+		await new Promise((r) => setTimeout(r, 7_000));
+		const inspected = await callEngine<{ attempts?: { state?: string; storeOutageWait?: unknown; nextAttemptAt?: unknown }[] }>(ENGINE, 'RunService/InspectRun', { runId: waitingRun });
+		return (inspected.attempts ?? []).some((a) => a.state === 'LIVE_ATTEMPT_STATE_SCHEDULED' && !a.nextAttemptAt && a.storeOutageWait);
+	}, 150_000, 1_000);
+	note(`${waitingRun} accepted during the outage and waiting`);
+
+	await page.goto(`${ENGINE}/runs/${waitingRun}?ns=default`);
+	await expect(page.getByTestId('run-store-outage-note')).toContainText('wait-store is waiting for object storage', { timeout: 30_000 });
+	await expect(page.getByTestId('run-store-outage-note')).toContainText('cannot reach it');
+	await expect(page.getByTestId('run-capacity-note')).toHaveCount(0);
+	await selectTask(page, 'wait-store');
+	const live = page.getByTestId('task-wait-store-live');
+	await expect(live).toHaveAttribute('data-live', 'store-outage');
+	await expect(live).toContainText('Waiting for object storage');
+	await expect(page.getByTestId('run-waits-store-outage')).toContainText('uses no attempt');
+	await shot(page, 'run-waiting-for-object-storage.png');
+
+	const args = ['--server', ENGINE, '--namespace', 'default', 'run', 'inspect', waitingRun];
+	const out = execFileSync(bin('orkctl'), args, { cwd: repoRoot, encoding: 'utf8' });
+	note(`$ orkctl ${args.join(' ')}\n${out}`);
+	expect(out).toContain('wait-store: waiting for object storage for');
+	expect(out).toContain('1 orker of pool main cannot reach it');
 });
 
 test('An operator\'s cordon beside an outage shows both, and Uncordon clears only its own', async ({ page }) => {
@@ -268,4 +327,14 @@ test('Recovery ends the outage by itself, and leaves an operator\'s cordon', asy
 	await page.getByTestId(`orker-uncordon-${ORKER}`).click();
 	await expect(page.getByTestId(`orker-state-${ORKER}`)).toHaveText('ready');
 	note('recovered, then uncordoned: ready');
+});
+
+test('The run that waited out the outage succeeds on its first attempt', async ({ page }) => {
+	test.setTimeout(180_000);
+	await page.goto(`${ENGINE}/runs/${waitingRun}?ns=default`);
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 150_000 });
+	await expect(page.getByTestId('run-store-outage-note')).toHaveCount(0);
+	const run = await callEngine<{ run: { taskRuns?: { taskId: string; attempt?: number }[] } }>(ENGINE, 'RunService/GetRun', { runId: waitingRun });
+	expect(run.run.taskRuns?.find((t) => t.taskId === 'wait-store')?.attempt).toBe(1);
+	note(`${waitingRun} succeeded on attempt 1 after the store returned`);
 });

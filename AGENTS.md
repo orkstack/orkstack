@@ -581,7 +581,9 @@ internal never appears on any of those surfaces.
   delivered over the Orker's own control channel, and a store outage, which
   the Orker declares itself after consecutive failed object-storage checks and
   ends itself after consecutive good ones. Clearing one never touches the
-  other, and neither is stored: both are lost when the process exits.
+  other, and neither is stored: both are lost when the process exits. A store
+  outage only pauses an Orker, so unlike an operator's cordon it still keeps its
+  pool live: a run sent there is accepted and waits.
 - **Drain** means setting an operator's cordon on an Orker and waiting until it
   reports no running task and no open pin. It is a client-side wait over the inventory read
   (`orkctl orker drain`); nothing server-side holds drain state.

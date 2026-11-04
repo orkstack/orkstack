@@ -1578,7 +1578,9 @@ attempt out.
 An attempt no Orker has started is waiting for an orker on its pool. When
 every Orker of that pool is at its declared capacity, the footer says it
 is waiting for capacity instead, with what stands reserved against what
-the pool's Orkers admit within.
+the pool's Orkers admit within. When the pool's Orkers have cordoned
+themselves because object storage does not answer, it says it is waiting
+for object storage, which uses no attempt.
 
 With --watch the table is printed again every --interval until the run is
 terminal, and the exit code is the run's (0 succeeded, 2 failed,

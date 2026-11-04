@@ -20,18 +20,20 @@
 		onSelect: (item: number | undefined) => void;
 		/** Items the live read says are waiting for capacity. */
 		waitingOf?: (item: number) => boolean;
+		/** What those items are waiting for, in words, when it is not capacity. */
+		waitingWord?: string;
 	}
 
-	let { taskId, each, spec, items, selected, onSelect, waitingOf }: Props = $props();
+	let { taskId, each, spec, items, selected, onSelect, waitingOf, waitingWord = 'waiting for capacity' }: Props = $props();
 
 	// Past a few hundred items a cell is only its index, and the grid is skipped off screen.
 	const compact = $derived(items.length > 200);
 	// A cell's name starts with what it shows, so a voice command can say it.
 	function cellLabel(item: ItemView): string {
 		const words = compact ? itemAriaLabel(item) : itemAriaLabel(item).replace(/^item \d+/, itemLabel(taskId, item.index));
-		return item.status === Status.RUNNING && waitingOf?.(item.index) ? `${words}, waiting for capacity` : words;
+		return item.status === Status.RUNNING && waitingOf?.(item.index) ? `${words}, ${waitingWord}` : words;
 	}
-	const summary = $derived(items.length > 0 ? eachCounts(items, waitingOf) : eachSummary(each?.expanded ?? false, items, spec));
+	const summary = $derived(items.length > 0 ? eachCounts(items, waitingOf, waitingWord) : eachSummary(each?.expanded ?? false, items, spec));
 
 	let grid = $state<HTMLDivElement | undefined>();
 

@@ -596,6 +596,27 @@ message LiveAttempt {
   // take the next task), or has room but every task slot (max_concurrent)
   // taken. The attempt is then waiting for an Orker, as it always was.
   CapacityWait capacity_wait = 20;
+  // store_outage_wait is set when this attempt is waiting out an object
+  // storage outage: it has been SCHEDULED, with no next_attempt_at, for at
+  // least two seconds, its task is not pinned, at least one Orker of its pool
+  // has cordoned itself because the store does not answer, and no Orker of the
+  // pool takes new tasks. Derived on read like capacity_wait, and unset for the
+  // same reasons. The attempt has used nothing while it waits, and starts once
+  // the store answers.
+  StoreOutageWait store_outage_wait = 21;
+}
+
+// StoreOutageWait says why a SCHEDULED attempt has not started: its pool's
+// Orkers have cordoned themselves because object storage does not answer them
+// (Orker.store_outage; docs/DEPLOY.md, "When object storage goes away"). A
+// reading of the inventory at most five seconds old, never a record.
+message StoreOutageWait {
+  // pool is the pool the attempt waits on, as TaskRun.pool spells it.
+  string pool = 1;
+  // orkers is how many Orkers of the pool hold that cordon.
+  int32 orkers = 2;
+  // since is when the first of them cordoned itself.
+  google.protobuf.Timestamp since = 3;
 }
 
 // CapacityWait says why a SCHEDULED attempt has not started: every Orker of

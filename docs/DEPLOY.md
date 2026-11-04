@@ -2817,7 +2817,8 @@ What that costs, stated so nobody has to discover it:
   `LAST SEEN` come from the pool's channel and from the Orker inventory: the
   larger of the channel's live pollers and the pool's uncordoned Orkers that
   answer on their own channels, so a pool whose every Orker is busy, and so
-  polls nothing on its channel, still reports them.
+  polls nothing on its channel, still reports them. An Orker waiting out a store
+  outage counts as uncordoned here ("When object storage goes away").
 - **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
   minutes after its worker died, so a record older than the freshness window is
   dropped before anything is counted or timestamped. A pool whose Orkers have
@@ -2897,8 +2898,9 @@ What a cordon does, precisely:
   and zero after it, and a cordoned Orker never keeps a pool live or speaks for
   what it can run.
 
-An Orker also cordons itself, with these same effects, while object storage
-does not answer it ("When object storage goes away", below).
+An Orker also cordons itself, with these same effects on tasks and pins, while
+object storage does not answer it. That cordon does keep its pool live ("When
+object storage goes away", below).
 
 `SIGTERM` (or `SIGINT`) stops polling and cancels in-flight work; the Orker
 does not cordon itself on it. An operator who wants in-flight work to finish
@@ -2998,9 +3000,10 @@ orker-7f3a  build  -      cordoned (object storage unreachable)  0      -     - 
 Admin → Pools stamps the row `Object Storage Unreachable`, apart from an
 operator's `Cordoned`, and offers no Uncordon for it, because none would help.
 The reason is plain words on purpose: the store's own error names endpoints
-and keys, so it goes to the Orker's log (`object storage check failed`, and
-`orker cordoned itself: object storage unreachable` on entering, `object storage
-answers again` on leaving), never to the inventory. Nothing audits a store
+and keys, so it goes to the Orker's log, never to the inventory. The log lines
+are `object storage check failed`, `orker cordoned itself: object storage
+unreachable` on entering and `object storage answers again` on leaving; they are
+always on, whatever the telemetry settings, and the metrics below are not. Nothing audits a store
 outage's cordon, because no one asked for it. With metrics on:
 
 | Metric | Labels | What it reads |
@@ -3047,17 +3050,29 @@ as above.
   when it ends, that attempt fails `InfrastructureError` and uses an attempt;
   its retry then waits with everything else.
 
-**Submitting while every Orker of a pool holds it.** Such a pool reads as any
-wholly cordoned pool does: its poller-derived count holds for the freshness
-window, then reads zero, and `SubmitRun` refuses with `failed_precondition`,
-`has no live Orkers`, before a run id exists. The remedy that message names,
-starting an Orker, does not help here: the store has to come back, or a submit
-with `allow_empty_pool` waits for it. That refusal only shows when the engine can
-still reach the store, because a submit needs the store itself; so it also shows
-for the 15 to 30 seconds after a recovery that an Orker needs to resume. Runs
-already accepted are untouched. Likewise `orkctl release` counts such an Orker as
-cordoned, so a ramp or promote that needs it reports `POOL_NOT_SERVED`, naming the
-outage's reason.
+**Submitting while every Orker of a pool holds it.** A pool whose Orkers are
+waiting out an outage has paused, and is not absent. Such an Orker still keeps
+its pool live, so `SubmitRun` accepts the run, the run waits, and it starts once
+the store answers. `orkctl pool list` keeps counting it, and submit's capability
+probes still ask it. A submit needs the store itself, so during a whole outage it
+fails on the engine's own reads; this acceptance shows when only the Orkers have
+lost the store, and in the seconds after a recovery while they resume.
+
+An operator's cordon says the opposite, that the Orker is leaving, so an Orker
+that holds one does not keep its pool live, whatever else it holds. A pool that
+has only such Orkers refuses a submit `has no live Orkers`, as ever.
+
+While a task waits on such a pool, `orkctl run inspect` prints `waiting for
+object storage` with the pool and since when, and the run page says the same in
+place of `Waiting for capacity`. That wait is said only when no Orker of the
+pool takes new tasks and every live Orker answered when asked; otherwise it
+reads as any other wait for an Orker. A pinned task never reads it: it is
+covered by the pin's own wait, above.
+
+A release is a different decision. `orkctl release` counts such an Orker as
+cordoned, so a ramp or promote that needs it reports `POOL_NOT_SERVED`, naming
+the outage's reason: moving new runs onto Orkers that cannot run them can wait
+until the store is back.
 
 ### Fair dispatch across namespaces
 
