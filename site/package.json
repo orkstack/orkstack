@@ -11,7 +11,7 @@
 		"diagrams": "node scripts/readme-diagrams.mjs",
 		"dev": "node scripts/sync-docs.mjs && astro dev",
 		"check": "node --test 'test/**/*.test.mjs' && node scripts/sync-docs.mjs && node scripts/check-tokens.mjs && astro check",
-		"build": "node scripts/sync-docs.mjs && astro build && node scripts/check-links.mjs",
+		"build": "node scripts/sync-docs.mjs && astro build && node scripts/check-links.mjs && node scripts/check-site.mjs",
 		"preview": "astro preview",
 		"test": "node --test 'test/**/*.test.mjs'"
 	},

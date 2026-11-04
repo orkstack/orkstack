@@ -142,7 +142,7 @@ function main() {
 	// vacuously.
 	for (const f of ['styles/starlight.css', 'styles/base.css']) {
 		const text = sources.get(path.join(srcRoot, f)) ?? '';
-		if (!/var\(--color-/.test(text)) problems.push(`site/src/${f} maps no colour token`);
+		if (!/var\(--(?:color-|bg\b|ink\b|surface\b|line\b)/.test(text)) problems.push(`site/src/${f} maps no colour token`);
 	}
 
 	// The faces: the UI's own packages, at the UI's own versions.

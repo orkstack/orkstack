@@ -8,7 +8,7 @@
 # each-fan-out is already stored there.
 
 Set Shell "bash"
-# Twice the size the site shows it at (ThemeClip.astro), so a screen with two
+# Twice the size the site shows it at (sync-docs.mjs), so a screen with two
 # device pixels per CSS pixel shows the text one to one.
 Set FontSize 30
 Set Width 2400

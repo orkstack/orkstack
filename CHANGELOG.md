@@ -108,6 +108,9 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Changed
 
+- The documentation site moved to ten sections, from Get started to Concepts,
+  so its pages have new addresses. An old address redirects to the page's new
+  one, so there is nothing to do.
 - The web UI has a new look, Harbour: a light sidebar with the namespace
   switch, Runs, Orkflows, Apply and the Operate pages; Inter and JetBrains
   Mono; and the OrkStack mark. Statuses read Running, Succeeded, Failed and

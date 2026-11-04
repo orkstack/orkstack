@@ -90,8 +90,8 @@ The Go image runs `probe`, `report` and `per-label`. The shell image runs `repor
 
 ## Next
 
-- [Build an activity image](/docs/how-to/build-an-activity-image/): write an image of your own.
-- [Test an activity image](/docs/how-to/test-an-activity-image/): the test command, and its limits.
+- [Build an activity image](/docs/activities/build-an-image/): write an image of your own.
+- [Test an activity image](/docs/activities/test-an-image/): the test command, and its limits.
 - [Activities](/docs/concepts/activities/): the contract this image follows.
 - [Custom image example](/docs/examples/custom-image/): the Orkflow that uses both images.
 

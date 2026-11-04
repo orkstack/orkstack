@@ -91,8 +91,8 @@ This stops the stack and keeps the object store's data. To delete the stored dat
 
 ## Next
 
-- [Your first activity image](/docs/tutorials/first-activity/): build a container and run it as a task.
-- [Fan out over a list](/docs/how-to/fan-out/): every rule behind the fan-out in this tutorial.
+- [Your first activity image](/docs/get-started/first-activity/): build a container and run it as a task.
+- [Fan out over a list](/docs/build/fan-out/): every rule behind the fan-out in this tutorial.
 - [Examples](/docs/examples/): the other example Orkflows, and what each one needs.
 
 ## See also

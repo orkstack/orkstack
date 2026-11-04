@@ -8,6 +8,11 @@ import path from 'node:path';
 interface Item {
 	alt: string;
 	caption: string;
+	/** A planned or finished recording's name and length, as the page prints them. */
+	title?: string;
+	duration?: string;
+	/** A recording's WebVTT captions, in public/media. */
+	captions?: string;
 	/** A screenshot's size in CSS pixels: its one-x file's, half its two-x file's. */
 	width?: number;
 	height?: number;
@@ -33,7 +38,7 @@ const allowMissing = import.meta.env.SITE_ALLOW_MISSING_MEDIA === '1' || process
 /** One theme of a screenshot: its one-x file, and the srcset that offers the two-x one. */
 export interface ShotTheme {
 	src: string;
-	srcset: string;
+	srcset?: string;
 }
 
 export interface Shot {
@@ -57,8 +62,8 @@ export function shot(name: string): Shot {
 	const theme = (one: string | undefined, two: string | undefined): ShotTheme | undefined => {
 		const src = served(one, name);
 		const src2x = served(two, name);
-		if (!src || !src2x) return undefined;
-		return { src, srcset: `${src} ${width}w, ${src2x} ${width * 2}w` };
+		if (!src) return undefined;
+		return { src, srcset: src2x ? `${src} ${width}w, ${src2x} ${width * 2}w` : undefined };
 	};
 	return {
 		alt: item.alt,
@@ -101,21 +106,32 @@ function served(name: string | undefined, item: string): string | undefined {
 	return `${import.meta.env.BASE_URL.replace(/\/$/, '')}/media/${name}`;
 }
 
-export function clip(name: string): Clip {
+export interface Video {
+	title: string;
+	alt: string;
+	caption: string;
+	/** The recording's length as the page prints it, such as 0:45. */
+	duration: string;
+	width: number;
+	height: number;
+	/** The recording exists: without it, the page shows the poster and says it is planned. */
+	recorded: boolean;
+	captions?: string;
+	light: ClipTheme;
+	dark: ClipTheme;
+}
+
+/** A place for a recording on the landing page: planned until its files exist. */
+export function video(name: string): Video {
 	const item = items[name];
-	if (!item) {
-		if (allowMissing) return { alt: `${name} (not generated yet)`, caption: name, width: 1280, height: 800, terminal: name.startsWith('cli-'), light: {}, dark: {} };
-		throw new Error(`media ${name} has no entry in src/assets/media/manifest.json (run make site-media)`);
-	}
-	const { width, height } = item;
-	if (!width || !height) throw new Error(`media ${name} has no width and height in src/assets/media/manifest.json (run make site-media)`);
-	return {
-		alt: item.alt,
-		caption: item.caption,
-		width,
-		height,
-		terminal: name.startsWith('cli-'),
-		light: { webm: served(item.webm, name), mp4: served(item.mp4, name), poster: served(item.poster, name) },
-		dark: { webm: served(item.webmDark, name), mp4: served(item.mp4Dark, name), poster: served(item.posterDark, name) },
-	};
+	if (!item) throw new Error(`media ${name} has no entry in src/assets/media/manifest.json`);
+	const { width, height, title, duration } = item;
+	if (!width || !height || !title || !duration) throw new Error(`media ${name} needs a width, height, title and duration in src/assets/media/manifest.json`);
+	const light = { webm: served(item.webm, name), mp4: served(item.mp4, name), poster: served(item.poster, name) };
+	const dark = { webm: served(item.webmDark, name), mp4: served(item.mp4Dark, name), poster: served(item.posterDark, name) };
+	const recorded = Boolean((light.webm || light.mp4) && (dark.webm || dark.mp4));
+	// A recording never ships without its captions (AGENTS' site rules, the brief's §11).
+	const captions = served(item.captions, name);
+	if (recorded && !captions) throw new Error(`media ${name} is recorded but has no captions file`);
+	return { title, alt: item.alt, caption: item.caption, duration, width, height, recorded, captions, light, dark };
 }

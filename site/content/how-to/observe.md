@@ -72,4 +72,4 @@ orkctl namespace update payments --telemetry-sink tenant-collector
 - [DEPLOY.md, “Lifecycle metrics”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics): every run and task metric, with its labels
 - [DEPLOY.md, “Declaring an Orker's capacity”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#declaring-an-orkers-capacity): the capacity metrics
 - [deploy/observability/README.md](https://github.com/orkstack/orkstack/blob/main/deploy/observability/README.md): the local observability stack and its example queries
-- Settings: [Configuration](/docs/reference/configuration/)
+- Settings: [Configuration](/docs/configuration/)

@@ -76,7 +76,7 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 
 ## Limits
 
-- Do not cache a task that mounts a secret. A cache hit reads no secret. See [Reuse an earlier result](/docs/how-to/cache/).
+- Do not cache a task that mounts a secret. A cache hit reads no secret. See [Reuse an earlier result](/docs/build/cache/).
 - Do not copy a secret into `/orkstack/shared` or `/orkstack/output`. Those files stay on disk for the life of the attempt or the pin.
 
 ## See also

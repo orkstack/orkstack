@@ -1,0 +1,36 @@
+---
+// A plate holding a command, with a copy button once a script can use it.
+import Icon from './Icon.astro';
+
+interface Props {
+	label: string;
+	command: string;
+	class?: string;
+}
+const { label, command, class: className } = Astro.props;
+---
+
+<span class:list={['plate', className]} data-copy-plate>
+	<span class="k">{label}</span>
+	<span class="v">{command}</span>
+	<button type="button" aria-label="Copy command" data-tip="Copy command" data-copy={command} hidden>
+		<Icon name="copy" />
+	</button>
+	<span class="sr-only" role="status" data-copy-status></span>
+</span>
+
+<script>
+	for (const button of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+		if (!navigator.clipboard) continue;
+		button.hidden = false;
+		const status = button.parentElement?.querySelector('[data-copy-status]');
+		button.addEventListener('click', async () => {
+			try {
+				await navigator.clipboard.writeText(button.dataset.copy ?? '');
+				if (status) status.textContent = 'Copied';
+			} catch {
+				if (status) status.textContent = 'Could not copy';
+			}
+		});
+	}
+</script>

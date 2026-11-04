@@ -63,7 +63,7 @@ It does not cover timeouts, retries, `needs:`, the condition, the pool or the ru
 ## Do not cache these
 
 - A task with a `pin:` cannot be cached. Neither can an `await:`, a composed task (`uses: orkflow:…`) or a failure handler.
-- A task that mounts a secret. A hit reads no secret. See [Pass secrets and environment variables](/docs/how-to/secrets-and-env/).
+- A task that mounts a secret. A hit reads no secret. See [Pass secrets and environment variables](/docs/build/secrets-and-env/).
 - A task with side effects outside OrkStack.
 
 ## Limits

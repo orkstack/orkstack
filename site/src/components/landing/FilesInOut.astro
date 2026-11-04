@@ -1,0 +1,61 @@
+---
+// The contract in one sentence, the three steps of using it, and what OrkStack
+// deliberately leaves out, each linking the page that states it.
+import { route } from '../../../site.config.mjs';
+
+const steps = [
+	{ name: 'Apply an Orkflow', text: 'Applying stores an immutable version and its digest.' },
+	{ name: 'Plan it', text: 'A plan shows which tasks run and which are skipped, before anything starts.' },
+	{ name: 'Run and watch it', text: 'Every attempt, digest, log line and reason is recorded, in the UI and the CLI alike.' },
+];
+const limits = [
+	{ name: 'No loops', text: 'The graph stays a DAG. Repeat with a retry policy, a fan-out, a schedule or an awaited task.', href: 'docs/reference/limits' },
+	{ name: 'No exactly-once', text: 'Activities run at least once. A committed result never runs again; side effects outside it may repeat.', href: 'docs/concepts/durability' },
+	{ name: 'No database of its own', text: 'Nothing beyond Temporal and object storage, and no record anyone edits to unstick a run.', href: 'docs/concepts/how-it-works' },
+	{ name: 'Not yet production-ready', text: 'Its required failure and recovery scenarios are still being proven, in the open.', href: 'docs/concepts/proven' },
+];
+---
+
+<section class="section">
+	<div>
+		<h2>Files in, files out, exit.</h2>
+		<p>
+			A task's image reads its inputs from files under <code>/orkstack</code>, writes its results to files, and exits. Exit 0 means it succeeded. No SDK, no sidecar, no callback: a Bash script is a first-class activity.
+		</p>
+	</div>
+	<ol class="card steps" role="list">
+		{
+			steps.map((s, i) => (
+				<li>
+					<span class="n2" aria-hidden="true">
+						{i + 1}
+					</span>
+					<div>
+						<b>{s.name}</b>
+						<span>{s.text}</span>
+					</div>
+				</li>
+			))
+		}
+	</ol>
+</section>
+<section class="section limits">
+	<div>
+		<h2>What it deliberately doesn’t do.</h2>
+		<p>Each of these is a decision, written down with its reason. <a href={route('docs/reference/limits')}>Limits</a> lists every bound and the setting that moves it.</p>
+	</div>
+	<ul class="card steps" role="list">
+		{
+			limits.map((l) => (
+				<li>
+					<div>
+						<a href={route(l.href)}>
+							<b>{l.name}</b>
+						</a>
+						<span>{l.text}</span>
+					</div>
+				</li>
+			))
+		}
+	</ul>
+</section>

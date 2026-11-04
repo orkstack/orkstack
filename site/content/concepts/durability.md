@@ -38,7 +38,7 @@ Each failure ends with a reason code and a plain-language message. The [reason c
 
 ## Caching is your call
 
-A cached task reuses a stored result for an identical run of it. You turn that on with `cache:`, and you assert that reuse is safe. OrkStack cannot check that assertion. [Cache a task](/docs/how-to/cache/) shows how to decide.
+A cached task reuses a stored result for an identical run of it. You turn that on with `cache:`, and you assert that reuse is safe. OrkStack cannot check that assertion. [Cache a task](/docs/build/cache/) shows how to decide.
 
 ## See also
 

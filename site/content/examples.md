@@ -55,11 +55,11 @@ Applying several documents in one command checks every one against the Orkflows 
 
 ## The automation document
 
-The automation document in `examples/automation/` declares the `examples` namespace's settings, a schedule and a trigger. Create that namespace first, and apply the Orkflows the document names before it. See [Automation documents](/docs/how-to/automation/) for how to apply one.
+The automation document in `examples/automation/` declares the `examples` namespace's settings, a schedule and a trigger. Create that namespace first, and apply the Orkflows the document names before it. See [Automation documents](/docs/operate/automation/) for how to apply one.
 
 ## The custom images
 
-[`custom-image`](/docs/examples/custom-image/) uses two activity images built from this repository: one in Go, and one in POSIX shell. Nothing publishes them. Build and push them first, as [Your first activity image](/docs/tutorials/first-activity/) shows.
+[`custom-image`](/docs/examples/custom-image/) uses two activity images built from this repository: one in Go, and one in POSIX shell. Nothing publishes them. Build and push them first, as [Your first activity image](/docs/get-started/first-activity/) shows.
 
 The shell image's folder is [`examples/custom-image-shell/`](https://github.com/orkstack/orkstack/tree/main/examples/custom-image-shell). The Go image is in [`examples/custom-image/`](https://github.com/orkstack/orkstack/tree/main/examples/custom-image).
 

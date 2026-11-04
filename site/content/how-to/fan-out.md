@@ -25,7 +25,7 @@ In [`examples/each-fan-out.ork.yaml`](https://github.com/orkstack/orkstack/blob/
       interpreter: sh
       script: |
         set -eu
-        # `sh` quotes the item's value for the shell (AGENTS.md §6).
+        # `sh` quotes the item's value for the shell.
         printf '%s\n' {{ sh .each.part.name }} > /orkstack/output/artifacts/part.txt
         echo converted {{ sh .each.part.name }} "({{ .each.index }} of {{ .each.count }})"
 ```

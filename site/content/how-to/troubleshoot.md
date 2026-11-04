@@ -65,5 +65,5 @@ A refused submission leaves nothing behind. Fix the cause and submit again.
 
 - [TROUBLESHOOTING.md](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md): every symptom, cause and fix
 - [Error reasons](/docs/reference/reasons/): every reason code
-- [Inspect a run](/docs/how-to/inspect-a-run/): the commands behind the examples above
+- [Inspect a run](/docs/run/watch-a-run/): the commands behind the examples above
 - [Activity contract](/docs/reference/activity-contract/): the failure categories a task's exit and outputs produce

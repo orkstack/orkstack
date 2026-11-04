@@ -5,7 +5,7 @@
 // its own with its colours written out (the README's <picture> picks one by
 // prefers-color-scheme), and no web font loads: the faces are the tokens'
 // stacks, whose fallbacks carry the text. Every value here comes from the
-// tokens, the landing page's model graph (src/lib/model-graph.ts) or the
+// tokens, the model graph (src/lib/model-graph.ts) or the
 // example Orkflow a diagram shows; test/readme-diagrams.test.mjs holds the
 // committed files to this script. `bun run diagrams` writes them.
 import { mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
@@ -20,7 +20,7 @@ export const DIAGRAMS = ['architecture', 'each-fan-out-run', 'durable-commit'];
 
 const EXAMPLE = path.join(repoRoot, 'examples', 'each-fan-out.ork.yaml');
 // The caption band at the top of every drawing, as the UI's drawing frame
-// carries one (site/src/components/shared/DrawingFrame.astro).
+// carries one (the UI's own graph ground).
 const BAND = 32;
 
 const esc = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');

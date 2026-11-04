@@ -64,7 +64,7 @@ orkctl run artifacts <run-id> --task fetch
 - In `with:`, `{{ artifact "<task>/<name>" }}` gives the path. The helper does not work in `condition:`.
 - A task reads only the tasks in its `needs:`, directly or through them. Any other task name fails validation.
 - OrkStack checks each file against its recorded SHA-256 before the task starts.
-- A fan-out's items are one folder per item, in item order. See [Fan out over a list](/docs/how-to/fan-out/).
+- A fan-out's items are one folder per item, in item order. See [Fan out over a list](/docs/build/fan-out/).
 
 ## Limits
 

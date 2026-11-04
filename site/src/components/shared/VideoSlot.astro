@@ -1,0 +1,49 @@
+---
+// One recording's place on a page. Until its recording exists it shows the
+// poster and says the recording is planned. Once `make site-media` has made it
+// (the manifest then names its files), it is a plain player in both themes:
+// click to play, with controls and captions, never autoplaying, and nothing
+// fetched before the visitor presses play. So under reduced motion, as under
+// any other setting, nothing moves until asked.
+import Icon from './Icon.astro';
+import { video as readVideo } from '../../lib/media';
+
+interface Props {
+	name: string;
+}
+const { name } = Astro.props;
+const v = readVideo(name);
+const views = [v.light, v.dark];
+---
+
+<figure class="video">
+	{
+		v.recorded ? (
+			<div class="poster theme-pair">
+				{views.map((view) => (
+					<video controls playsinline preload="none" poster={view.poster} width={v.width} height={v.height} aria-label={v.alt}>
+						{view.webm && <source src={view.webm} type="video/webm" />}
+						{view.mp4 && <source src={view.mp4} type="video/mp4" />}
+						{v.captions && <track kind="captions" src={v.captions} srclang="en" label="English" />}
+					</video>
+				))}
+			</div>
+		) : (
+			<div class="poster theme-pair">
+				{views.map((view) => (view.poster ? <img src={view.poster} alt="" width={v.width} height={v.height} loading="lazy" decoding="async" /> : <div class="shot-missing" />))}
+			</div>
+		)
+	}
+	<figcaption>
+		{
+			!v.recorded && (
+				<span class="vbadge">
+					<Icon name="video" />
+					Recording planned · {v.duration} · captions planned
+				</span>
+			)
+		}
+		<b>{v.title}</b>
+		<span>{v.caption}</span>
+	</figcaption>
+</figure>

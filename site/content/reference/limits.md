@@ -92,4 +92,4 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 - [LIMITATIONS.md, “Not built yet”](https://github.com/orkstack/orkstack/blob/main/docs/LIMITATIONS.md#not-built-yet): the full list
 - [DEPLOY.md, “The API listener's bounds”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-api-listeners-bounds): the request bounds, and why none of them cuts a stream
 - [DEPLOY.md, “Task ceiling and the flat-stage bound”](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#task-ceiling-and-the-flat-stage-bound): how the task ceiling is derived
-- Settings: [Configuration](/docs/reference/configuration/), [Orkflow keys](/docs/reference/orkflow-keys/)
+- Settings: [Configuration](/docs/configuration/), [Orkflow keys](/docs/reference/orkflow-keys/)

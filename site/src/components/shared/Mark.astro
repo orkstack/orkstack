@@ -1,0 +1,31 @@
+---
+// The OrkStack mark, "Strata": three bars joined by round turns inside a ring,
+// with a dot where each end meets the ring.
+//   colour   ring and S from the tokens, so it follows the theme;
+//   one      one ink, currentColor, for any single-colour use;
+//   navy     white and orange for the navy hero, in every theme. Its colours
+//            are the drawing's own (public/logo/), as no token holds them.
+import { BASE_PATH } from '../../../site.config.mjs';
+
+interface Props {
+	variant?: 'colour' | 'one' | 'navy';
+	size?: number;
+	class?: string;
+}
+const { variant = 'colour', size = 26, class: className } = Astro.props;
+const ring = variant === 'one' ? 'currentColor' : 'var(--mark-ring)';
+const s = variant === 'one' ? 'currentColor' : 'var(--mark-s)';
+---
+
+{
+	variant === 'navy' ? (
+		<img class:list={['mark', className]} src={`${BASE_PATH}/logo/mark-colour-on-navy.svg`} width={size} height={size} alt="" />
+	) : (
+		<svg class:list={['mark', className]} viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" focusable="false">
+			<circle cx="16" cy="16" r="11.5" fill="none" stroke={ring} stroke-width="3" />
+			<path d="M25.81 10 H13.6 A3 3 0 0 0 13.6 16 H18.4 A3 3 0 0 1 18.4 22 H6.19" fill="none" stroke={s} stroke-width="3" stroke-linejoin="round" />
+			<circle cx="25.81" cy="10" r="2.3" fill={s} />
+			<circle cx="6.19" cy="22" r="2.3" fill={s} />
+		</svg>
+	)
+}

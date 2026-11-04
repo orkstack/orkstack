@@ -160,4 +160,4 @@ A contract violation is never retried. A non-zero exit is retried only when the 
 - [Describing the activity](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#describing-the-activity) and [The icon](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#the-icon): the description and icon labels, and their limits
 - [OCI Activity Contract, section 3](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#3-the-orkstack-workspace): the workspace, file by file
 - [OCI Activity Contract, section 10.1](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#101-the-dockerfile-and-entry-script-rules): the Dockerfile and entry-script rules
-- [Test an activity image](/docs/how-to/test-an-activity-image/): check your image before a run uses it
+- [Test an activity image](/docs/activities/test-an-image/): check your image before a run uses it

@@ -17,7 +17,11 @@
 //   - replaces a <!-- site-media: NAME --> marker (invisible on GitHub) with
 //     NAME's light and dark screenshots, and a <!-- site-diagram: NAME -->
 //     marker with docs/images/NAME-{light,dark}.svg (scripts/readme-diagrams.mjs);
-//   - writes one page per example Orkflow, with its YAML read from the file;
+//   - writes one page per example Orkflow: what it shows and needs, how to run
+//     it, and its YAML read from the file;
+//   - writes every configuration setting as an entry, from docs/DEPLOY.md's
+//     table (scripts/settings.mjs), and the docs home's cards from the
+//     manifest's groups, so neither can go stale;
 //   - fails when a page written for the site cites no repository doc, or
 //     cites a file or heading that does not exist (its See also links them on
 //     GitHub), and when a doc under docs/ is cited by no page, so a new doc
@@ -31,8 +35,20 @@ import path from 'node:path';
 import GithubSlugger from 'github-slugger';
 import YAML from 'yaml';
 import { BASE_PATH, REPO, BRANCH, repoUrl } from '../site.config.mjs';
-import { siteRoot, repoRoot, readTokens, darkMediaCss, resolve, codeTheme } from './tokens.mjs';
+import { siteRoot, repoRoot, readTokens, darkMediaCss, codeTheme } from './tokens.mjs';
 import { checkAnchor, checkCitations, leftoverMarkers, uncitedDocs } from './citations.mjs';
+import {
+	AREAS,
+	acceptsFor,
+	acceptsProblems,
+	headingAnchors,
+	linkMentions,
+	parseSettings,
+	renderEntry,
+	renderTable,
+	schemaKinds,
+	settingArea,
+} from './settings.mjs';
 
 const manifest = JSON.parse(readFileSync(path.join(siteRoot, 'docs.manifest.json'), 'utf8'));
 const outRoot = path.join(siteRoot, 'src', 'content', 'docs');
@@ -140,10 +156,11 @@ function flatten(groups, out = []) {
 }
 const pages = flatten(manifest.groups);
 
-// Example Orkflows: one generated page each.
+// Example Orkflows: one generated page each, the page's featured ones first.
 const exampleFiles = [];
 for (const page of pages.filter((p) => p.examples)) {
 	const dirs = ['examples', 'examples/automation'];
+	const found = [];
 	for (const dir of dirs) {
 		for (const name of readdirSync(path.join(repoRoot, dir)).sort()) {
 			if (!name.endsWith('.ork.yaml')) continue;
@@ -155,9 +172,17 @@ for (const page of pages.filter((p) => p.examples)) {
 				doc.get('description') ||
 				(kind === 'Automation' ? `The ${doc.get('namespace') ?? 'example'} namespace's automation document.` : '');
 			if (!description) fail(`${rel} has no description: for its page`);
-			exampleFiles.push({ rel, id, route: `${page.examples}/${id}`, title: rel.replace(/^examples\//, ''), description, kind });
+			// A required input with no default: its page's command must pass it.
+			const inputs = doc.toJS().inputs ?? {};
+			const required = Object.entries(inputs)
+				.filter(([, spec]) => spec && spec.required === true && spec.default === undefined)
+				.map(([k]) => k);
+			found.push({ rel, id, route: `${page.examples}/${id}`, title: rel.replace(/^examples\//, '').replace(/\.ork\.yaml$/, ''), description, kind, name: doc.get('name'), required });
 		}
 	}
+	const featured = page.featuredExamples ?? [];
+	for (const f of featured) if (!found.some((e) => e.id === f)) fail(`${page.route}: its featured example ${f} does not exist`);
+	exampleFiles.push(...featured.map((f) => found.find((e) => e.id === f)).filter(Boolean), ...found.filter((e) => !featured.includes(e.id)));
 }
 
 // Every source file, and the page(s) holding each of its headings.
@@ -174,14 +199,6 @@ for (const page of pages) {
 	const pageSlugger = new GithubSlugger();
 	const chunks = [];
 	page.parts.forEach((part, index) => {
-		if (part.append) {
-			const body = read(part.append).replace(/\n+$/, '');
-			const ticks = '`'.repeat(Math.max(3, ...[...body.matchAll(/`+/g)].map((m) => m[0].length + 1)));
-			const heading = part.heading ?? path.basename(part.append);
-			chunks.push({ text: `## ${heading}\n\n${ticks}${part.lang ?? ''} title="${part.append}"\n${body}\n${ticks}\n`, source: null });
-			pageSlugger.slug(heading);
-			return;
-		}
 		const text = read(part.source);
 		const keep = selectLines(part, text);
 		const whole = !part.include && !part.omit && !part.from;
@@ -194,16 +211,18 @@ for (const page of pages) {
 		if (whole && !idx.whole) idx.whole = page.route;
 		if (!idx.first) idx.first = page.route;
 		// Drop the file's own title: the page title is the h1. A later
-		// whole-file part keeps its title one level down, as a section.
+		// whole-file part keeps its title one level down, as a section; a part
+		// whose sections sit lower in their file (promote) moves them up, so the
+		// page's headings stay in order.
 		const firstH1 = hs.find((h) => h.level === 1);
-		const demote = index > 0 && whole ? 1 : 0;
+		const demote = (index > 0 && whole ? 1 : 0) - (part.promote ?? 0);
 		const out = [];
 		lines.forEach((line, i) => {
 			if (!keep[i]) return;
 			const h = hs.find((o) => o.line === i);
 			if (h && h === firstH1 && index === 0) return;
 			if (h) {
-				const level = Math.min(6, h.level + demote);
+				const level = Math.max(2, Math.min(6, h.level + demote));
 				const pageSlug = pageSlugger.slug(h.text);
 				const src = srcSlugs.get(i);
 				if (!idx.slugs.has(src) || whole) idx.slugs.set(src, { route: page.route, pageSlug });
@@ -370,18 +389,19 @@ function mediaFigure(name) {
 		// public/media as they are. No autoplay; nothing loads until played.
 		// Its box keeps the recording's shape before anything loads; a
 		// terminal recording's is 110 CSS pixels taller, so a paused video's
-		// controls fall below its last line (ThemeClip.astro).
+		// controls fall below its last line.
 		const src = (f) => `${BASE_PATH}/media/${f}`;
 		if (!item.width || !item.height) fail(`media ${name} has no width and height in src/assets/media/manifest.json (run make site-media)`);
 		const aspect = `${item.width} / ${item.height + (name.startsWith('cli-') ? 110 : 0)}`;
 		const video = (webm, mp4, poster) =>
 			[
-				`<video controls muted playsinline preload="none"${poster ? ` poster="${src(poster)}"` : ''} style="aspect-ratio: ${aspect}" aria-label="${escapeHtml(item.alt)}">`,
+				`<video controls playsinline preload="none"${poster ? ` poster="${src(poster)}"` : ''} style="aspect-ratio: ${aspect}" aria-label="${escapeHtml(item.alt)}">`,
 				webm ? `<source src="${src(webm)}" type="video/webm" />` : '',
 				mp4 ? `<source src="${src(mp4)}" type="video/mp4" />` : '',
+				item.captions ? `<track kind="captions" src="${src(item.captions)}" srclang="en" label="English" />` : '',
 				`</video>`,
 			].join('');
-		for (const f of [item.webm, item.mp4, item.poster, item.webmDark, item.mp4Dark, item.posterDark].filter(Boolean)) {
+		for (const f of [item.webm, item.mp4, item.poster, item.webmDark, item.mp4Dark, item.posterDark, item.captions].filter(Boolean)) {
 			if (!existsSync(path.join(siteRoot, 'public', 'media', f))) fail(`media ${name}: public/media/${f} is missing (run make site-media)`);
 		}
 		return [
@@ -495,7 +515,116 @@ function section11Coverage() {
 	return [`The coverage map, generated from [\`${rel}\`](${repoUrl(rel)}):`, '', ...out].join('\n');
 }
 
-const generatedBlocks = { 'section11-coverage': section11Coverage };
+// ------------------------------------------- the configuration settings
+
+const deployRel = 'docs/DEPLOY.md';
+const deployMd = readFileSync(path.join(repoRoot, deployRel), 'utf8');
+const settings = parseSettings(deployMd);
+const kinds = schemaKinds(readFileSync(path.join(repoRoot, 'internal/config/config.go'), 'utf8'));
+const acceptsRel = 'site/content/configuration/accepts.yaml';
+const acceptsOverlay = YAML.parse(readFileSync(path.join(repoRoot, acceptsRel), 'utf8')) ?? {};
+for (const [key, text] of Object.entries(acceptsOverlay)) {
+	const row = settings.find((r) => r.keys.includes(key));
+	if (!row) fail(`${acceptsRel} names ${key}, which docs/DEPLOY.md's table does not have`);
+	else acceptsProblems(key, text, row).forEach(fail);
+}
+const deployHeadings = headingAnchors(deployMd);
+const docHeadingCache = new Map();
+const docHeadings = (rel) => {
+	if (!docHeadingCache.has(rel)) docHeadingCache.set(rel, headingAnchors(readFileSync(path.join(repoRoot, rel), 'utf8')));
+	return docHeadingCache.get(rel);
+};
+const settingLink = (target) => {
+	if (target.startsWith('route:')) {
+		const [r, anchor] = target.slice('route:'.length).split('#');
+		return url(r, anchor);
+	}
+	return rewriteTarget(target, deployRel);
+};
+const settingEntry = (row) =>
+	renderEntry(row, {
+		accepts: acceptsFor(row, kinds, acceptsOverlay),
+		link: settingLink,
+		mentions: (t) => linkMentions(t, { deployHeadings, docHeadings, detailHeadings: deployHeadings }),
+	});
+
+/** Every setting, grouped by area, with the filter the page's script wires up. */
+function settingsAll() {
+	const out = [
+		`<div class="settings-filter not-content" data-settings-filter hidden><label class="search"><span class="sr-only">Filter settings</span><input type="search" placeholder="Filter by key, variable or word" data-settings-input /></label><p role="status" data-settings-count></p></div>`,
+		'',
+	];
+	for (const area of AREAS) {
+		const rows = settings.filter((r) => settingArea(r) === area.id);
+		out.push(`## ${area.title}`, '', area.lede, '', ...rows.map(settingEntry), '');
+	}
+	return out.join('\n');
+}
+
+const settingBlocks = {};
+for (const area of AREAS) {
+	settingBlocks[`settings-table-${area.id}`] = () =>
+		renderTable(
+			settings.filter((r) => settingArea(r) === area.id),
+			{ allRoute: url('docs/configuration') },
+		);
+}
+// A sample entry on the docs home: site-generated: setting-<file key>.
+const settingSample = (name) => {
+	const key = name.slice('setting-'.length);
+	const row = settings.find((r) => r.keys.includes(key));
+	if (!row) {
+		fail(`the marker ${name} names a setting docs/DEPLOY.md's table does not have`);
+		return '';
+	}
+	// The real entry lives on All settings: a sample's heading is no anchor of its own.
+	return settingEntry(row).replace(/<h3 id="[^"]*">/, '<h3>');
+};
+
+// ------------------------------------------------- the docs home's cards
+
+const visibleGroups = manifest.groups.filter((g) => !g.hidden);
+const titleOf = (route) => {
+	const page = pages.find((p) => p.route === route);
+	if (page) return page.title;
+	const ex = exampleFiles.find((e) => e.route === route);
+	if (ex) return ex.title;
+	fail(`docs.manifest.json features ${route}, which is no page`);
+	return route;
+};
+const firstRoute = (g) => g.pages.find((p) => !p.pages)?.route;
+
+function findYourWay() {
+	const cards = visibleGroups.map((g) => {
+		if (!g.description || g.featured?.length !== 3) fail(`docs.manifest.json: the group ${g.label} needs a description and three featured pages`);
+		const links = (g.featured ?? []).map((r) => `<li><a href="${url(r)}">${escapeHtml(titleOf(r))}</a></li>`).join('');
+		// The docs home is its section's first page: its card goes to the first task.
+		const home = firstRoute(g) === 'docs' ? g.featured[0] : firstRoute(g);
+		return `<div class="card ia-card"><h3><a href="${url(home)}">${escapeHtml(g.label)}</a></h3><p>${escapeHtml(g.description)}</p><ul>${links}</ul></div>`;
+	});
+	return `<div class="ia not-content">${cards.join('')}</div>`;
+}
+
+function generatedReferences() {
+	const refs = pages.filter((p) => p.generatedNote && p.route !== 'docs/configuration/details');
+	return `<ul class="gens not-content" role="list">${refs.map((p) => `<li><a class="gen" href="${url(p.route)}">${escapeHtml(p.title)}</a></li>`).join('')}</ul>`;
+}
+
+/** The generated defaults file, in a fence longer than anything inside it. */
+function defaultsYaml() {
+	const rel = 'deploy/orkstack.defaults.yaml';
+	const body = read(rel).replace(/\n+$/, '');
+	return ['```yaml title="' + rel + '"', body, '```'].join('\n');
+}
+
+const generatedBlocks = {
+	'section11-coverage': section11Coverage,
+	'settings-all': settingsAll,
+	'defaults-yaml': defaultsYaml,
+	'find-your-way': findYourWay,
+	'generated-references': generatedReferences,
+	...settingBlocks,
+};
 
 // ------------------------------------------------------------ writing
 
@@ -518,7 +647,8 @@ for (const page of pages) {
 		.join('\n\n');
 	body = body.replace(/<!--\s*site-media:\s*([a-z0-9-]+)\s*-->/g, (_, name) => mediaFigure(name));
 	body = body.replace(/<!--\s*site-diagram:\s*([a-z0-9-]+)\s*-->/g, (_, name) => diagramFigure(name));
-	body = body.replace(/<!--\s*site-generated:\s*([a-z0-9-]+)\s*-->/g, (_, name) => {
+	body = body.replace(/<!--\s*site-generated:\s*([a-z0-9._-]+)\s*-->/g, (_, name) => {
+		if (name.startsWith('setting-')) return settingSample(name);
 		if (!generatedBlocks[name]) {
 			fail(`${page.route}: no generated block named ${name}`);
 			return '';
@@ -526,17 +656,63 @@ for (const page of pages) {
 		return generatedBlocks[name]();
 	});
 	for (const marker of leftoverMarkers(body)) fail(`${page.route}: the marker <!-- ${marker} --> was not replaced (no such media or diagram name)`);
+	if (page.generatedNote) {
+		body = `<div class="gen-note not-content"><span class="gen">Generated from the source, always current</span></div>\n\n${body}`;
+	}
 	const fields = { title: page.title, description: page.description };
 	fields.editUrl = firstSource ? `${REPO}/edit/${BRANCH}/${firstSource}` : false;
+	if (page.tableOfContents) fields.tableOfContents = page.tableOfContents;
 	mkdirSync(path.dirname(outFile), { recursive: true });
 	writeFileSync(outFile, frontmatter(fields) + body.trimEnd() + '\n');
+}
+
+// The gallery's table says what each example shows and needs: one row per
+// example, read here so its page and the gallery cannot disagree.
+const galleryRows = new Map();
+{
+	const gallery = pages.find((p) => p.examples);
+	const text = gallery ? read(gallery.parts[0].source) : '';
+	for (const line of text.split('\n')) {
+		const m = /^\|\s*\[[^\]]+\]\(\/docs\/examples\/([a-z0-9-]+)\/\)[^|]*\|(.*)\|(.*)\|\s*$/.exec(line);
+		if (m) galleryRows.set(m[1], { shows: m[2].trim(), needs: m[3].trim() });
+	}
 }
 
 for (const ex of exampleFiles) {
 	const outFile = outFileFor(ex.route);
 	const yaml = readFileSync(path.join(repoRoot, ex.rel), 'utf8').replace(/\n+$/, '');
+	const row = galleryRows.get(ex.id);
+	if (!row) fail(`${ex.rel} has no row in the Example gallery's table`);
+	const siteLinks = (t) => t.replace(/\]\(\/docs\//g, `](${BASE_PATH}/docs/`);
+	const inputFlags = ex.required.map((k) => ` --input ${k}=…`).join('');
+	const run =
+		ex.kind === 'Automation'
+			? [`This is an automation document: [Automation documents](${url('docs/operate/automation')}) shows how to plan and apply it.`]
+			: [
+					'```bash',
+					`orkctl apply ${ex.rel}`,
+					`orkctl run submit ${ex.name}${inputFlags} --watch`,
+					'```',
+					...(ex.required.length ? ['', `Pass your own value for each input (\`${ex.required.join('`, `')}\`). [Inputs and outputs](${url('docs/build/inputs-and-outputs')}) shows how.`] : []),
+				];
 	const body = [
-		`[Examples](${BASE_PATH}/${path.posix.dirname(ex.route)}/) lists what this ${ex.kind === 'Automation' ? 'automation document' : 'Orkflow'} shows and what it needs to run; its comment header says the same. The file, as it is in the repository: [${ex.rel}](${repoUrl(ex.rel)}).`,
+		ex.description,
+		'',
+		'## What it shows',
+		'',
+		siteLinks(row?.shows ?? ex.description).replace(/^./, (c) => c.toUpperCase()) + '.',
+		'',
+		'## What it needs',
+		'',
+		siteLinks(row?.needs ?? 'See the file.').replace(/^./, (c) => c.toUpperCase()) + '.',
+		'',
+		'## Run it',
+		'',
+		...run,
+		'',
+		'## The file',
+		'',
+		`As it is in the repository: [${ex.rel}](${repoUrl(ex.rel)}).`,
 		'',
 		'```yaml title="' + ex.rel + '"',
 		yaml,
@@ -629,6 +805,11 @@ writeFileSync(path.join(generated, 'nojs-theme.css'), darkMediaCss(tokens));
 	writeFileSync(path.join(generated, 'icons.json'), JSON.stringify(icons, null, '\t') + '\n');
 }
 
+// The one tooltip, the UI's own, copied as it is: it has no imports, and the
+// site cannot bundle a file under ui/ directly (its tsconfig needs the UI's
+// generated .svelte-kit directory).
+writeFileSync(path.join(generated, 'tooltip.ts'), readFileSync(path.join(repoRoot, 'ui', 'src', 'lib', 'tooltip.ts')));
+
 // The code themes the landing page's listing renders with (the docs get the
 // same two through Expressive Code, in astro.config.mjs).
 writeFileSync(
@@ -636,18 +817,24 @@ writeFileSync(
 	JSON.stringify({ light: codeTheme('light', tokens), dark: codeTheme('dark', tokens) }, null, '\t') + '\n',
 );
 
-// The favicon: the wordmark's title-block corner, in each theme's ink.
+// The favicon: the UI's own badge at 16 px, its light drawing with the dark
+// one's two colours under the system's dark setting, so it follows the theme.
 mkdirSync(path.join(siteRoot, 'public'), { recursive: true });
-writeFileSync(
-	path.join(siteRoot, 'public', 'favicon.svg'),
-	[
-		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke-width="1.5">',
-		`<style>path{stroke:${resolve(tokens, '--color-ink', 'light')}}@media (prefers-color-scheme:dark){path{stroke:${resolve(tokens, '--color-ink', 'dark')}}}</style>`,
-		'<path d="M1.75 1.75h12.5v12.5H1.75zM1.75 10.25h12.5M8.75 10.25v4"/>',
-		'</svg>',
-		'',
-	].join('\n'),
-);
+{
+	const read16 = (theme) => readFileSync(path.join(repoRoot, 'ui', 'static', `favicon-${theme}.svg`), 'utf8');
+	const light = read16('light').trim();
+	const dark = read16('dark');
+	const colours = (svg) => ({ badge: /<rect[^>]*fill="([^"]+)"/.exec(svg)?.[1], s: /<path[^>]*stroke="([^"]+)"/.exec(svg)?.[1] });
+	const l = colours(light);
+	const d = colours(dark);
+	if (!l.badge || !l.s || !d.badge || !d.s) fail('ui/static/favicon-*.svg: cannot read the badge and S colours');
+	const themed = light
+		.replace(`fill="${l.badge}"`, 'class="b"')
+		.replaceAll(`stroke="${l.s}"`, 'class="s"')
+		.replaceAll(`fill="${l.s}"`, 'class="d"');
+	const style = `<style>.b{fill:${l.badge}}.s{stroke:${l.s}}.d{fill:${l.s}}@media (prefers-color-scheme:dark){.b{fill:${d.badge}}.s{stroke:${d.s}}.d{fill:${d.s}}}</style>`;
+	writeFileSync(path.join(siteRoot, 'public', 'favicon.svg'), themed.replace(/(<svg[^>]*>)/, `$1${style}`) + '\n');
+}
 
 // Exported for astro.config.mjs's sidebar.
 writeFileSync(

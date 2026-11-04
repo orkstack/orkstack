@@ -1,0 +1,71 @@
+---
+// Three blocks with their screenshots: watch a run, find the cause, write
+// Orkflows. Each screenshot is a whole-card crop of the real UI (make
+// site-media) and follows the theme.
+import Icon from '../shared/Icon.astro';
+import Shot from '../shared/Shot.astro';
+import { route } from '../../../site.config.mjs';
+
+const blocks = [
+	{
+		icon: 'runs',
+		kicker: 'Watch a run',
+		title: 'See every task as it happens.',
+		text: 'The run page draws the graph, the timeline and every item of a fan-out, and says in one line what holds a task up, such as waiting for capacity, and why a run failed.',
+		points: ['Graph, timeline and a map of every task and item', 'A plain note on whatever blocks progress', 'The activity type of each task at a glance'],
+		shot: 'tour-run',
+		href: route('docs/run/watch-a-run'),
+		more: 'Watch a run',
+	},
+	{
+		icon: 'alert',
+		kicker: 'Find the cause',
+		title: 'Know why a run failed.',
+		text: 'The failed task opens with its stderr, the reason in plain words, how often it failed the same way, and what changed since the last success.',
+		points: ['The reason, as a code and in words', 'Failures like it in the last 7 days', 'What changed since the last success'],
+		shot: 'tour-failed',
+		href: route('docs/run/why-a-run-failed'),
+		more: 'Find why a run failed',
+	},
+	{
+		icon: 'flow',
+		kicker: 'Write Orkflows',
+		title: 'Edit with the activity at hand.',
+		text: 'The editor checks your document against the engine as you type, suggests keys, and shows the options of the activity the cursor is in.',
+		points: ['Ctrl Space suggests keys and values', 'Problems found by the engine itself', 'Each activity’s keys, with their types and descriptions'],
+		shot: 'tour-editor',
+		href: route('docs/activities/declare-an-interface'),
+		more: 'Declare an interface',
+	},
+] as const;
+---
+
+<section class="tour" aria-label="What it looks like">
+	{
+		blocks.map((b, i) => (
+			<div class:list={['tour-item', { flip: i % 2 === 1 }]}>
+				<div class="tour-text">
+					<span class="tour-kicker">
+						<Icon name={b.icon} />
+						{b.kicker}
+					</span>
+					<h2>{b.title}</h2>
+					<p>{b.text}</p>
+					<ul role="list">
+						{b.points.map((p) => (
+							<li>
+								<span class="bul" aria-hidden="true" />
+								<span>{p}</span>
+							</li>
+						))}
+					</ul>
+					<a class="more" href={b.href}>
+						{b.more}
+						<Icon name="chev-right" />
+					</a>
+				</div>
+				<Shot name={b.shot} sizes="(min-width: 900px) 700px, 100vw" />
+			</div>
+		))
+	}
+</section>

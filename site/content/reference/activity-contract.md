@@ -90,4 +90,4 @@ Each container has a read-only root filesystem, no Linux capabilities, `no-new-p
 - [OCI_ACTIVITY_CONTRACT.md, “8. Failure categories and error handling”](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#8-failure-categories-and-error-handling): every reason code
 - [OCI_ACTIVITY_CONTRACT.md, “9. Security”](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#9-security): what each container is denied
 - [ACTIVITY_IMAGES.md](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md): the first-party images, and writing your own
-- Next: [Build an activity image](/docs/how-to/build-an-activity-image/), [Limits](/docs/reference/limits/)
+- Next: [Build an activity image](/docs/activities/build-an-image/), [Limits](/docs/reference/limits/)
