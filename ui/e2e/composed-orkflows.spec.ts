@@ -278,7 +278,7 @@ test('the Orkflow page shows the child reference, its digest and the outputs', a
 	// stays whole, and the full reference is the line's title.
 	const ref = page.getByTestId('dag-node-release-orkflow');
 	await expect(ref.locator('title')).toHaveText('orkflow release-block@0.1.0');
-	expect(await ref.evaluate((el) => el.lastChild?.textContent)).toBe('orkflow release-…@0.1.0');
+	expect(await ref.evaluate((el) => el.lastChild?.textContent)).toBe('orkflow relea…@0.1.0');
 	await expect(page.getByTestId('orkflow-output-digest')).toContainText('{{ .tasks.release.output.digest }}');
 	await shot(page, 'screenshot-orkflow-page.png');
 	await page.getByTestId('task-child-link-release').click();

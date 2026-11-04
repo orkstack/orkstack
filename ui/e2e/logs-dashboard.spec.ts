@@ -316,7 +316,8 @@ async function lineNumbers(page: Page, taskId: string, prefix: string): Promise<
 	const texts = await page.getByTestId(`task-log-${taskId}`).getByTestId('task-log-line').allInnerTexts();
 	const numbers: number[] = [];
 	for (const text of texts) {
-		const match = text.trim().match(new RegExp(`^${prefix} line (\\d+)$`));
+		// A stderr line opens with its stream's name for assistive technology.
+		const match = text.trim().replace(/^stderr: /, '').match(new RegExp(`^${prefix} line (\\d+)$`));
 		if (match) numbers.push(Number(match[1]));
 	}
 	return numbers;

@@ -267,7 +267,8 @@ async function paneLines(
 		.evaluateAll((nodes) =>
 			nodes.map((node) => ({
 				stream: node.getAttribute('data-stream') ?? '',
-				text: (node.textContent ?? '').trim()
+				// A stderr line opens with its stream's name for assistive technology.
+				text: (node.textContent ?? '').trim().replace(/^stderr: /, '')
 			}))
 		);
 }

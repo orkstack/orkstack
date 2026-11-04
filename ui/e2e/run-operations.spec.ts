@@ -247,7 +247,7 @@ test('a slow client navigation shows the progress bar until the destination load
 		await new Promise((resolve) => setTimeout(resolve, 1_000));
 		await route.continue();
 	});
-	await page.getByTestId(`run-row-${runId}`).getByRole('link', { name: runId }).click();
+	await page.getByTestId(`run-row-${runId}`).getByRole('link').first().click();
 	await expect(page.getByTestId('nav-progress')).toBeVisible();
 	await expect(page.locator('main')).toHaveAttribute('aria-busy', 'true');
 	await page.screenshot({ path: out('screenshot-nav-progress.png'), fullPage: true });

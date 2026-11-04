@@ -222,7 +222,7 @@ test('P4 — a failing run, watched live', async ({ page }) => {
 	// A never-started task's reason is the note's tip, not repeated on its row.
 	await expect(page.getByTestId('task-announce-status-note')).toHaveAttribute(
 		'data-tip',
-		'the run is failing (task "deploy" failed) and this task is not a failure handler'
+		'task canceled: the run is failing (task "deploy" failed) and this task is not a failure handler'
 	);
 	await shot(page, 'screenshot-failing-before.png');
 

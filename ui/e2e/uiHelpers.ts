@@ -127,16 +127,22 @@ export async function taskMapCellCenter(page: Page, index: number): Promise<{ x:
 	await expect(map).toHaveAttribute('data-painted', 'true');
 	const pitch = Number(await map.getAttribute('data-pitch'));
 	const columns = Number(await map.getAttribute('data-columns'));
+	const x0 = Number((await map.getAttribute('data-x0')) ?? 0);
+	// A small run's map is drawn stage by stage: where each stage's cells start and stand.
+	const stages = ((await map.getAttribute('data-rows')) ?? '0:0').split(',').map((s) => s.split(':').map(Number));
+	const [start, top] = stages.filter(([first]) => first <= index).at(-1)!;
+	const local = index - start;
 	const area = page.getByTestId('task-map-area');
-	const row = Math.floor(index / columns);
-	const col = index % columns;
-	await area.evaluate((el, top) => (el.scrollTop = Math.max(0, top)), row * pitch - pitch);
+	await area.scrollIntoViewIfNeeded();
+	const row = Math.floor(local / columns);
+	const col = local % columns;
+	await area.evaluate((el, y) => (el.scrollTop = Math.max(0, y)), top + row * pitch - pitch);
 	const box = await area.boundingBox();
 	if (!box) throw new Error('the task map area is not on screen');
 	const scrollTop = await area.evaluate((el) => el.scrollTop);
 	const PAD = 8;
 	const half = (pitch - 2) / 2;
-	return { x: box.x + PAD + col * pitch + half, y: box.y + PAD + row * pitch - scrollTop + half };
+	return { x: box.x + PAD + x0 + col * pitch + half, y: box.y + PAD + top + row * pitch - scrollTop + half };
 }
 
 /**
@@ -168,8 +174,11 @@ export async function fullPageShot(page: Page, path: string): Promise<void> {
 export async function selectTask(page: Page, id: string): Promise<void> {
 	const link = page.getByTestId(`task-deep-link-${id}`);
 	await expect(link).toBeVisible();
-	if ((await link.getAttribute('aria-pressed')) !== 'true') await link.click();
+	// The page may have chosen this task by itself (pressed, and not in the
+	// address): pressing it makes it the reader's own choice, which stays.
+	if (new URL(page.url()).searchParams.get('task') !== id) await link.click();
 	await expect(link).toHaveAttribute('aria-pressed', 'true');
+	await expect(page).toHaveURL(new RegExp(`[?&]task=${id}(&|$)`));
 }
 
 /**

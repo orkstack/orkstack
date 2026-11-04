@@ -226,7 +226,8 @@ test('the run page and the item list at the gated size are interactive within 5 
 	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	const map = page.getByTestId('task-map');
 	await expect(map).toHaveAttribute('data-painted', 'true', { timeout: 30_000 });
-	await expect(map).toHaveAttribute('data-cells', String(2 + GATED_ITEMS));
+	// A small run's map draws a fan-out as its items: no cell of its own.
+	await expect(map).toHaveAttribute('data-cells', String(1 + GATED_ITEMS));
 	await expect(page.getByTestId('task-map-section-spread')).toContainText(
 		`${new Intl.NumberFormat('en-US').format(GATED_ITEMS)} items`
 	);

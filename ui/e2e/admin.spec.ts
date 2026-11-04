@@ -1047,10 +1047,10 @@ test("the Activities page shows each first-party image's declared interface, and
 	await expect(result.getByTestId('activity-interface-row-untar-member')).toContainText('required');
 
 	// The CLI equivalent is the same question, asked of `orkctl`.
-	await page.getByTestId('activity-inspect-cli-trigger').click();
-	await expect(page.getByTestId('activity-inspect-cli-command')).toHaveText('orkctl activity inspect file');
+	await page.getByTestId('activities-cli-trigger').click();
+	await expect(page.getByRole('dialog', { name: /command line/i }).getByText('orkctl activity inspect file')).toBeVisible();
 	await shot(page, 'screenshot-admin-activities-interface.png');
-	await page.getByTestId('activity-inspect-cli-trigger').click();
+	await page.keyboard.press('Escape');
 
 	// A reference `uses:` would refuse is refused here too, in the server's
 	// own words — never a silently empty result.

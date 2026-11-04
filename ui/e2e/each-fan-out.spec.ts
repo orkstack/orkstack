@@ -249,6 +249,7 @@ test('a fan-out card fills its item grid live', async ({ page }) => {
 	// Open the page BEFORE the fan-out expands, so every cell it shows turning
 	// SUCCEEDED was moved by an item event, not read from a finished snapshot.
 	await page.goto(`${UI_ORIGIN}/runs/${fanOutRun}?ns=default`);
+	await selectTask(page, 'convert');
 	await expect(page.getByTestId('task-convert-each-summary')).toBeVisible();
 
 	// A cell that is RUNNING while the run is still RUNNING: the grid is live.
@@ -265,7 +266,7 @@ test('a fan-out card fills its item grid live', async ({ page }) => {
 			{ timeout: 180_000 }
 		);
 	}
-	await expect(page.getByTestId('task-convert-each-summary')).toContainText('6 of 6 settled');
+	await expect(page.getByTestId('task-convert-each-summary')).toContainText('6 succeeded');
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	// One card for the fan-out, and its retry badge counts items.
 	await expect(page.getByTestId('task-convert-retries')).toHaveText('1 item retried');
@@ -390,7 +391,7 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 	// The run's failure and the task's lead with the item's reason and keep
 	// the item sentence, with no word of the execution service's wrapper.
 	await expect(page.getByTestId('run-error-reason')).toContainText('CONTAINER_EXIT_NONZERO');
-	await expect(page.getByTestId('run-error-message')).toHaveText('item 3 of 6 failed: task "convert": the container exited 1');
+	await expect(page.getByTestId('run-error-message')).toHaveText('Item 3 of 6 failed: the container of convert exited 1');
 	await expect(page.getByTestId('task-convert-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
 	await expect(page.getByTestId('task-convert-error-message')).toHaveText('item 3 of 6 failed: task "convert": the container exited 1');
 	for (const id of ['run-error', 'task-convert-error']) {

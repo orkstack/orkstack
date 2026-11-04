@@ -342,7 +342,9 @@ test('a task that failed once shows both attempts\' phases and how long it waite
 	page.on('request', (request) => {
 		if (request.url().endsWith('/orkstack.v1.RunService/GetRun')) runReads++;
 	});
-	await page.reload();
+	// Opened afresh, with no task chosen: a chosen task's log pane reports the
+	// tries it was served, which reads that one task's attempts by itself.
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded');
 	await expect(page.getByTestId('task-flaky-timing')).toBeVisible();
 	// The collapsed card's retry badge is the seed's: absent while it is pending.

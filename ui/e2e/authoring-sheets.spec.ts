@@ -309,9 +309,8 @@ test('orkflow sheet: the DAG beside its versions, the header facts, one View run
 	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText('default');
 	await expect(page.getByTestId('breadcrumb-current')).toHaveText(SAGA);
 
-	// Exactly one link whose name contains "View runs", and it is in the header's actions.
-	await expect(page.getByRole('link', { name: /View runs/ })).toHaveCount(1);
-	await expect(page.locator('main header').getByRole('link', { name: /View runs/ })).toHaveCount(1);
+	// An Orkflow's runs are one of its tabs, and the way to its filtered list.
+	await expect(page.getByTestId('tab-runs')).toHaveAttribute('href', /\/runs\?/);
 	await expect(page.locator('main header').getByTestId('orkflow-submit-run')).toBeVisible();
 	await page.screenshot({ path: out('screenshot-orkflow-overview-light-1440.png') });
 

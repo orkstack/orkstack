@@ -280,7 +280,7 @@ test('R1: status in and not equals through the enum controls', async ({ page }) 
 	await page.getByTestId('run-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['status!=SUCCEEDED']);
 	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('Failed'));
-	await expect(page.getByTestId(`run-filter-value-${ne}`)).toHaveText('Succeeded');
+	await expect(page.getByTestId(`run-filter-value-${ne}`)).toHaveText('SUCCEEDED');
 	await page.screenshot({ path: out('screenshot-runs-status-not-equals.png'), fullPage: true });
 });
 
@@ -372,9 +372,9 @@ test('R6: the dashboard and an Orkflow page link into the filtered runs list', a
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(FAILED_RUNS);
 	await expect(page.getByTestId('runs-heading')).toContainText(`for ${FAILING}`);
 
-	// An Orkflow's View runs is the same filter.
+	// An Orkflow's Runs tab is the same filter.
 	await page.goto(`${UI}/orkflows/${FLOW}?ns=${NS}`);
-	await page.getByRole('link', { name: 'View runs' }).click();
+	await page.getByTestId('tab-runs').click();
 	await page.waitForURL(/\/runs\?/);
 	expect(urlFilters(page)).toEqual([`orkflow_name=${FLOW}`]);
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS);

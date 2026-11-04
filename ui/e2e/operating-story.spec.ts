@@ -344,7 +344,7 @@ test('a chatty container is followed live, in the CLI and the browser, from engi
 	// land before stdout's — the assertions below check EXISTENCE, never
 	// relative order.
 	const firstStdout = appLines.filter({ hasText: /^story stdout line 1$/ }).first();
-	const firstStderr = stderrLines.filter({ hasText: /^story stderr line 1$/ }).first();
+	const firstStderr = stderrLines.filter({ hasText: /story stderr line 1$/ }).first();
 	await expect(firstStdout).toBeVisible({ timeout: 30_000 });
 	await expect(firstStderr).toBeVisible({ timeout: 30_000 });
 	await expect(firstStderr).not.toContainText('[stderr]');
