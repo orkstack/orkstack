@@ -11,8 +11,11 @@
 	let {
 		counts,
 		neverStarted = new Map(),
-		onpick
+		onpick,
+		compact = false
 	}: {
+		/** A small run's key: the words alone, its cells already countable by eye. */
+		compact?: boolean;
 		counts: Map<Status, number>;
 		/** Of each status's cells, how many never started. */
 		neverStarted?: Map<Status, number>;
@@ -37,13 +40,13 @@
 				type="button"
 				data-testid="task-map-legend-{statusClassWord(status)}"
 				onclick={() => onpick(status)}
-				class="inline-flex min-h-6 items-center gap-1.5 text-xs text-ink-secondary hover:text-ink"
+				class="inline-flex min-h-6 items-center gap-1.5 text-xs text-ink-secondary hover:text-ink max-sm:min-h-10"
 			>
 				<span class="stamp border-transparent bg-transparent p-0 {mark.inner ? '' : mark.className}" aria-hidden="true"
 					>{#if mark.inner}<span class={mark.className}></span>{/if}</span
 				>
-				<span class="caps">{statusLabel(status)}</span>
-				<span class="figure">{fmt.format(counts.get(status) ?? 0)}</span>
+				<span class={compact ? 'lowercase' : 'font-semibold'}>{statusLabel(status)}</span>
+				<span class={compact ? 'sr' : 'figure'}>{fmt.format(counts.get(status) ?? 0)}</span>
 				{#if never(status)}<span class="text-ink-muted" data-testid="task-map-legend-{statusClassWord(status)}-note">· {never(status)}</span>{/if}
 			</button>
 		</li>

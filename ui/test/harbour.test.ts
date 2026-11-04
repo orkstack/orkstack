@@ -5,9 +5,12 @@ import { JoinPolicy } from '../src/lib/gen/orkstack/v1/activity_pb';
 import { taskTimelineBars, timelineAxis } from '../src/lib/taskTimeline';
 import { phaseGroups } from '../src/lib/timing';
 import { fmtQuantity, reservedOf } from '../src/lib/resources';
-import { layoutDag } from '../src/lib/dag';
-import { expect, test } from 'bun:test';
+import { DAG_NODE_H, DAG_NODE_W, layoutDag } from '../src/lib/dag';
+import { SIDE_COL, buildModel, cellAt, fillStatuses, mapGeometry, mapSectionsOf, rectOf } from '../src/lib/taskMap';
 import { Status } from '../src/lib/gen/orkstack/v1/common_pb';
+import { humanFailure } from '../src/lib/failureText';
+import { applyLiveItems, eachCounts } from '../src/lib/each';
+import { expect, test } from 'bun:test';
 import { runProgress, progressWords } from '../src/lib/progress';
 import { placeTip, shouldDescribe, TIP_EDGE, TIP_GAP } from '../src/lib/tooltip';
 import { activityKind, safeIcon, type IconNode } from '../src/lib/activityIcon';
@@ -277,9 +280,80 @@ test('a resource amount in the run page words', () => {
 	expect(reservedOf(undefined, undefined)).toBe('');
 });
 
-test('failure handlers keep to a lane of their own, under the tasks they follow', () => {
+test('failure handlers keep to one row of their own, under the tasks they follow', () => {
+	// Regression: handlers stacked under one another in the main drawing's layer.
 	const task = (id: string, needs: string[], join = 0) => ({ id, needs, join }) as never;
-	const layout = layoutDag([task('a', []), task('h', ['a'], JoinPolicy.ANY_FAILED), task('b', ['a'])]);
-	const y = (id: string) => layout.nodes.find((n) => n.task.id === id)!.y;
-	expect(y('h') > y('b')).toBe(true);
+	const layout = layoutDag([
+		task('a', []),
+		task('b', ['a']),
+		task('c', ['b']),
+		task('release', ['b'], JoinPolicy.ANY_FAILED),
+		task('refund', ['b'], JoinPolicy.ANY_FAILED),
+		task('report', ['c', 'release'], JoinPolicy.ALL_DONE)
+	]);
+	const at = (id: string) => layout.nodes.find((n) => n.task.id === id)!;
+	expect(at('release').y).toBe(at('refund').y);
+	expect(at('refund').y).toBe(at('report').y);
+	expect(at('release').y > at('c').y).toBe(true);
+	expect(at('release').x < at('refund').x && at('refund').x < at('report').x).toBe(true);
+	// The first ones stand beneath the task that sets them off.
+	expect(at('refund').x).toBe(at('b').x);
+	// A drop from its need's bottom edge into the handler's top.
+	const drop = layout.edges.find((e) => e.toId === 'refund')!;
+	expect([drop.x1, drop.y1]).toEqual([at('b').x + DAG_NODE_W / 2, at('b').y + DAG_NODE_H]);
+	expect([drop.x2, drop.y2]).toEqual([at('refund').x + DAG_NODE_W / 2, at('refund').y]);
+	// A plain task that needs a handler keeps the layered drawing.
+	const mixed = layoutDag([task('a', []), task('h', ['a'], JoinPolicy.ANY_FAILED), task('after', ['h'])]);
+	expect(mixed.nodes.find((n) => n.task.id === 'after')!.x > mixed.nodes.find((n) => n.task.id === 'h')!.x).toBe(true);
+});
+
+test("a small run's task map reads row by row: a stage's tasks on one row, a fan-out's items on their own", () => {
+	const tasks = [
+		{ id: 'a', status: Status.SUCCEEDED, needs: [] },
+		{ id: 'b', status: Status.SUCCEEDED, needs: ['a'] },
+		{ id: 'c', status: Status.SUCCEEDED, needs: ['a'] },
+		{ id: 'fan', status: Status.RUNNING, needs: ['b'], items: [{ index: 0, status: Status.RUNNING }, { index: 1, status: Status.PENDING }] }
+	];
+	const model = buildModel(tasks, true, undefined, true);
+	expect(model.segments.map((s) => s.label)).toEqual(['a', 'b, c', 'fan']);
+	expect(model.indexOf('fan')).toBe(-1);
+	expect(model.indexOf('fan', 1)).toBe(4);
+	// What sizes the box agrees with what is drawn.
+	const sections = mapSectionsOf(tasks.map((t) => ({ id: t.id, needs: t.needs, itemCount: t.items?.length ?? 0 })), true);
+	expect(sections.map((s) => s.count)).toEqual(model.segments.map((s) => s.count));
+	const g = mapGeometry(sections, 300, 300);
+	expect(rectOf(g, 0).x).toBe(SIDE_COL);
+	expect(cellAt(g, rectOf(g, 2).x + 1, rectOf(g, 2).y + 1)).toBe(2);
+	expect(cellAt(g, 10, rectOf(g, 0).y + 1)).toBe(-1);
+	const statuses = new Uint8Array(model.cells.length);
+	fillStatuses(model, tasks, statuses);
+	expect(statuses[3]).toBe(Status.RUNNING);
+});
+
+test('a dispatched item reads as running before any event says so', () => {
+	// Regression: items stayed Pending under a live attempt, and their log said no attempt yet.
+	const items = [
+		{ index: 0, status: Status.PENDING, attempt: 0 },
+		{ index: 1, status: Status.SUCCEEDED, attempt: 1 },
+		{ index: 2, status: Status.PENDING, attempt: 0 }
+	] as never as Parameters<typeof applyLiveItems>[0];
+	const moved = applyLiveItems(items, [{ item: 0, attempt: 2 }, { item: 1, attempt: 1 }]);
+	expect(moved.map((i) => i.status)).toEqual([Status.RUNNING, Status.SUCCEEDED, Status.PENDING]);
+	expect(moved[0].attempt).toBe(2);
+	// Nothing moved: the same array, so a poll does not touch the page.
+	expect(applyLiveItems(moved, [{ item: 0, attempt: 2 }])).toBe(moved);
+	expect(applyLiveItems(items, [{ attempt: 1 }])).toBe(items);
+});
+
+test('an exit in the words of a page, and a grid line of counts', () => {
+	expect(humanFailure('task "charge": the container exited 1')).toBe('The container of charge exited 1');
+	expect(humanFailure('item 3 of 6 failed: task "convert": the container exited 2')).toBe('Item 3 of 6 failed: the container of convert exited 2');
+	expect(humanFailure('image pull failed')).toBe('Image pull failed');
+	const items = [
+		{ index: 0, status: Status.SUCCEEDED, attempt: 1 },
+		{ index: 1, status: Status.RUNNING, attempt: 1 },
+		{ index: 2, status: Status.RUNNING, attempt: 1 },
+		{ index: 3, status: Status.PENDING, attempt: 0 }
+	] as never;
+	expect(eachCounts(items, (i) => i === 2)).toBe('1 succeeded · 1 running · 1 waiting for capacity · 1 pending');
 });

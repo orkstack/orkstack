@@ -42,6 +42,25 @@
 
 	let { data }: PageProps = $props();
 
+	// The order of this page's rows. The list itself is always newest first; this
+	// orders only what has been read.
+	type RowOrder = 'newest' | 'oldest' | 'longest';
+	const ROW_ORDERS = [
+		{ value: 'newest', label: 'newest first' },
+		{ value: 'oldest', label: 'oldest first' },
+		{ value: 'longest', label: 'longest first' }
+	];
+	let rowOrder = $state<RowOrder>('newest');
+	const orderedRuns = $derived.by(() => {
+		if (rowOrder === 'newest') return data.runs;
+		if (rowOrder === 'oldest') return [...data.runs].reverse();
+		const lasted = (r: (typeof data.runs)[number]) => {
+			const from = r.startedAt ?? r.createdAt;
+			return from ? (r.finishedAt ? Number(r.finishedAt.seconds) : Date.now() / 1000) - Number(from.seconds) : 0;
+		};
+		return [...data.runs].sort((a, b) => lasted(b) - lasted(a));
+	});
+
 	// "Runs created each day": a bar is every run its bucket counted, failed
 	// on top; labelled with the local date of its start, and the bucket that
 	// holds now is today so far.
@@ -52,6 +71,7 @@
 			const since = bucket.since ? new Date(Number(bucket.since.seconds) * 1000) : null;
 			return {
 				label: since ? since.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '',
+				day: since ? since.toLocaleDateString(undefined, { weekday: 'short' }) : '',
 				total,
 				failed: Number(counts.failed ?? 0n),
 				partial: bucket.partial
@@ -397,7 +417,6 @@
 						<button
 							type="button"
 							class="tile"
-							class:has-fail={t.key === 'failed' && count > 0}
 							aria-pressed={statusShown === t.status}
 							data-testid="runs-tile-{t.key}"
 							onclick={() => void tileFilter(t.status)}
@@ -455,6 +474,8 @@
 				/>
 			{/await}
 			<Select variant="chip" testid="runs-chip-origin" label="Origin" value={equalityOf(data.applied, 'origin.kind') ?? ''} options={originOptions} onchange={(v) => void filterTo('origin.kind', v || null)} />
+			<!-- The table's head is hidden on a phone: this says, and sets, what its rows read in. -->
+			<span class="sort-chip"><Select variant="chip" testid="runs-sort" label="Sort" value={rowOrder} options={ROW_ORDERS} onchange={(v) => (rowOrder = v as RowOrder)} /></span>
 			<ListFilter request={ListRunsRequestSchema} applied={data.applied} testid="run" {command} onapply={applyFilters} {clearHref} cli={false} />
 		</div>
 
@@ -502,7 +523,7 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each data.runs as run (run.id)}
+						{#each orderedRuns as run (run.id)}
 							{@const status = statusOf(run)}
 							{@const from = held.get(run.id)}
 							{@const reason = reasonOf(run)}
@@ -610,8 +631,13 @@
 		font-weight: 700;
 		letter-spacing: -0.02em;
 	}
-	.tile.has-fail b {
-		color: var(--fail);
+	.sort-chip {
+		display: none;
+	}
+	@media (max-width: 640px) {
+		.sort-chip {
+			display: inline-block;
+		}
 	}
 	.filters {
 		display: flex;

@@ -2,6 +2,8 @@
 	/** One bar of "Runs created each day": its label and what it holds. */
 	export interface DayBar {
 		label: string;
+		/** The word under its bar: the weekday. */
+		day: string;
 		total: number;
 		failed: number;
 		/** The bucket that holds now: "today so far". */
@@ -17,7 +19,8 @@
 	// "Runs created each day" draws only when the engine answers a daily
 	// series; without one the window's totals stand alone.
 	import type { GetFailureBreakdownResponse, GetFlakeIndexResponse, GetStatsResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
-	import { durationMs, finishedRuns, fmtDuration, fmtInstant } from '#lib/stats.ts';
+	import { durationMs, finishedRuns, fmtDuration } from '#lib/stats.ts';
+	import { shortInstant } from '#lib/when.ts';
 	import { fmtCategoryWords } from '#lib/failureWords.ts';
 
 	interface Props {
@@ -138,7 +141,7 @@
 									data-tip="{d.label}{d.partial ? ' (so far)' : ''}: {d.total} runs, {d.failed} failed"
 								/>{/each}</svg
 						>
-						<div class="axis" aria-hidden="true">{#each days as d, i (i)}<span>{d.label.split(' ')[0]}</span>{/each}</div>
+						<div class="axis" aria-hidden="true">{#each days as d, i (i)}<span>{d.day}</span>{/each}</div>
 						<div class="axis" aria-hidden="true">{#each days as d, i (i)}<span class="num">{d.total}</span>{/each}</div>
 						<div class="axis fails" aria-hidden="true">{#each days as d, i (i)}<span class="num"><i class="mark-tri key-mark"></i>{d.failed}</span>{/each}</div>
 						<div class="sr">
@@ -187,7 +190,7 @@
 				<div class="taxis" aria-hidden="true">{#each ticks as t (t.s)}<span style:left="{lp(t.s * 1000)}%">{t.l}</span>{/each}</div>
 			</div>
 			<figcaption>
-				From {Number(week.durationSampleCount)} finished runs{#if week.durationCoverageSince}{' '}created since {fmtInstant(week.durationCoverageSince)}{/if}: durations reach back only as far as the run records the cluster still keeps.
+				From {Number(week.durationSampleCount)} finished runs{#if week.durationCoverageSince}{' '}created since {shortInstant(week.durationCoverageSince)}{/if}: durations reach back only as far as the run records the cluster still keeps.
 			</figcaption>
 		{/if}
 	</figure>

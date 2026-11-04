@@ -126,6 +126,8 @@
 	);
 	let panel = $state<HTMLDivElement | undefined>(undefined);
 	let hidden = $state({ left: false, right: false, up: false, down: false });
+	// A drawing that does not fit is a scroll region a keyboard can reach (WCAG 2.1.1).
+	const overflowing = $derived(drawn && (hidden.left || hidden.right || hidden.up || hidden.down));
 
 	function measure(): void {
 		if (!panel) return;
@@ -332,12 +334,15 @@
 		</p>
 	</div>
 	{/if}
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
 		bind:this={panel}
 		onscroll={measure}
 		id="{uid}-panel"
-		role={views.length > 1 ? 'tabpanel' : undefined}
+		role={views.length > 1 ? 'tabpanel' : overflowing ? 'region' : undefined}
 		aria-labelledby={views.length > 1 ? `${uid}-tab-${view}` : undefined}
+		aria-label={views.length <= 1 && overflowing ? dagLabel : undefined}
+		tabindex={views.length <= 1 && overflowing ? 0 : undefined}
 		class="min-h-0 flex-1 {view === 'dag' ? 'drafting-grid overflow-auto' : 'overflow-hidden'}"
 	>
 		{#if view === 'map' && map}

@@ -6,7 +6,7 @@
 	import type { EachSpec } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
 	import type { TaskEach } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
-	import { eachSummary, isCachedItem, itemAriaLabel, itemLabel, type ItemView } from '#lib/each.ts';
+	import { eachCounts, eachSummary, isCachedItem, itemAriaLabel, itemLabel, type ItemView } from '#lib/each.ts';
 	import { statusClassWord } from '#lib/statusMarks.ts';
 	import { statusLabel } from '#lib/status.ts';
 
@@ -25,9 +25,15 @@
 
 	let { taskId, each, spec, items, selected, onSelect, waitingOf }: Props = $props();
 
-	const summary = $derived(eachSummary(each?.expanded ?? false, items, spec));
+	const summary = $derived(items.length > 0 ? eachCounts(items, waitingOf) : eachSummary(each?.expanded ?? false, items, spec));
 
 	let grid = $state<HTMLDivElement | undefined>();
+
+	// One tab stop for the whole grid, however many items it holds: the last
+	// cell focused, else the selected one, else the first. The arrows, Home and
+	// End walk the rest.
+	let cursor = $state<number | undefined>(undefined);
+	const tabStop = $derived(cursor ?? selected ?? items[0]?.index);
 
 	// The grid is one tab stop's worth of buttons a keyboard can walk: the
 	// arrows move between cells, Home and End jump to either end. Every cell
@@ -63,11 +69,11 @@
 <div class="items" data-testid="task-{taskId}-each">
 	<p class="items-head">
 		<b>Items of {taskId}</b>
-		<span class="text-ink-3" data-testid="task-{taskId}-each-summary">{summary}{#if selected !== undefined} · selected <b class="font-semibold text-ink-2">{itemLabel(taskId, selected)}</b>{/if}</span>
+		<span class="text-ink-3" data-testid="task-{taskId}-each-summary">{summary}{#if selected !== undefined}{' · '}selected <b class="font-semibold text-ink-2">{itemLabel(taskId, selected)}</b>{/if}</span>
 	</p>
 	{#if items.length > 0}
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-		<div bind:this={grid} role="group" aria-label="Items of {taskId}" class="items-grid" data-testid="task-{taskId}-item-grid" onkeydown={onGridKey}>
+		<div bind:this={grid} role="group" aria-label="Items of {taskId}" class="items-grid" data-testid="task-{taskId}-item-grid" onkeydown={onGridKey} onfocusin={(e) => { const at = (e.target as HTMLElement).dataset.item; if (at !== undefined) cursor = Number(at); }}>
 			{#each items as item (item.index)}
 				{@const waiting = item.status === Status.RUNNING && waitingOf?.(item.index)}
 				<button
@@ -78,7 +84,7 @@
 					data-cached={isCachedItem(item) ? 'true' : undefined}
 					aria-label={itemAriaLabel(item)}
 					aria-pressed={selected === item.index}
-					aria-controls="item-card"
+					tabindex={tabStop === item.index ? 0 : -1}
 					data-tip={itemAriaLabel(item)}
 					onclick={() => onSelect(selected === item.index ? undefined : item.index)}
 					class="item is-{waiting ? 'wait' : statusClassWord(item.status)}"
@@ -123,6 +129,11 @@
 		font-size: 13.5px;
 		cursor: pointer;
 		min-width: 0;
+	}
+	@media (max-width: 640px) {
+		.item {
+			height: 40px;
+		}
 	}
 	.item::before {
 		content: '';

@@ -140,7 +140,7 @@ test('the shell and its new components render no banned word', () => {
 test('the run, runs and authoring pages add no banned word to the palette or the title block', () => {
 	const found: string[] = [];
 	for (const f of [
-		'routes/runs/[id]/+page.svelte',
+		'routes/runs/[id]/RunView.svelte',
 		'routes/runs/+page.svelte',
 		'routes/runs/[id]/compare/+page.svelte',
 		'lib/taskMap.ts',

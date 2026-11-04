@@ -83,7 +83,7 @@
 		void built;
 		if (!model || width <= 0) return null;
 		return mapGeometry(
-			model.segments.map((s) => ({ count: s.count, labelled: s.labelled })),
+			model.segments.map((s) => ({ count: s.count, labelled: s.labelled, side: s.side })),
 			width,
 			height
 		);
@@ -167,7 +167,7 @@
 		if (!canvas || !g || !model) return;
 		colors ??= readColors();
 		const dpr = globalThis.devicePixelRatio || 1;
-		const w = g.columns * g.pitch;
+		const w = g.x0 + g.columns * g.pitch;
 		const ctx = canvas.getContext('2d');
 		if (!ctx) return;
 		if (!only) {
@@ -324,17 +324,17 @@
 	});
 	const taskCount = $derived.by(() => {
 		void built;
-		return model ? model.segments.reduce((sum, s) => (s.taskId === undefined ? sum + s.count : sum), 0) : 0;
+		return model ? new Set(model.cells.map((c) => c.taskId)).size : 0;
 	});
 	const sections = $derived.by(() => {
 		const g = geometry;
 		if (!g || !model) return [];
 		return model.segments.flatMap((s, k) => {
-			if (!s.labelled) return [];
+			if (!s.labelled && s.side === undefined) return [];
 			let failed = 0;
 			for (let i = s.start; i < s.start + s.count; i++) if (statuses[i] === Status.FAILED) failed++;
 			void counts;
-			return [{ taskId: s.taskId ?? '', label: s.label ?? '', key: k, count: s.count, failed, y: g.segments[k].y - LABEL_H }];
+			return [{ taskId: s.taskId ?? '', label: s.label ?? '', side: s.side !== undefined, key: k, count: s.count, failed, y: g.segments[k].y - (s.side === undefined ? LABEL_H : 0) }];
 		});
 	});
 	const fmt = new Intl.NumberFormat('en-US');
@@ -347,6 +347,8 @@
 	data-cells={model ? model.cells.length : undefined}
 	data-columns={geometry?.columns}
 	data-pitch={geometry?.pitch}
+	data-x0={geometry?.x0}
+	data-rows={geometry?.x0 ? geometry.segments.map((s) => `${s.start}:${s.y}`).join(',') : undefined}
 	data-selected={selectedAttr || undefined}
 	data-order={model?.order}
 	data-painted={painted ? 'true' : undefined}
@@ -363,17 +365,17 @@
 		{/if}
 		<div
 			class="relative"
-			style:width={geometry ? `${geometry.columns * geometry.pitch}px` : undefined}
+			style:width={geometry ? `${geometry.x0 + geometry.columns * geometry.pitch}px` : undefined}
 			style:height={geometry ? `${geometry.height}px` : undefined}
 		>
 			<canvas bind:this={canvas} data-testid="task-map-canvas" aria-hidden="true" class="block"></canvas>
 			{#each sections as s (s.key)}
 				<div
 					data-testid={s.taskId ? `task-map-section-${s.taskId}` : `task-map-stage-${s.key}`}
-					class="absolute left-0 w-full truncate text-sm text-ink-2"
+					class={s.side ? 'map-side absolute left-0 text-dense text-ink-2' : 'absolute left-0 w-full truncate text-sm text-ink-2'}
 					style:top="{s.y}px"
 				>
-					{#if s.taskId}{s.taskId} · {fmt.format(s.count)} items{#if s.failed} · <span class="text-fail">{fmt.format(s.failed)} failed</span>{/if}{:else}{s.label}{/if}
+					{#if s.side}{s.label}{#if s.taskId}<span class="sr"> · {fmt.format(s.count)} items{#if s.failed} · {fmt.format(s.failed)} failed{/if}</span>{/if}{:else if s.taskId}{s.taskId} · {fmt.format(s.count)} items{#if s.failed} · <span class="text-fail">{fmt.format(s.failed)} failed</span>{/if}{:else}{s.label}{/if}
 				</div>
 			{/each}
 			{#if selectedRect}
@@ -441,3 +443,12 @@
 		{readoutText}
 	</div>
 </div>
+
+<style>
+	/* A small run's rows: the label in a column beside its cells. */
+	.map-side {
+		width: 100px;
+		line-height: 16px;
+		overflow-wrap: anywhere;
+	}
+</style>

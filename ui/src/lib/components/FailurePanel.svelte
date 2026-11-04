@@ -22,7 +22,7 @@
 		failureCategoryLabel
 	} from '#lib/activity.ts';
 	import { retryPhrase, type FailureTries } from '#lib/attempts.ts';
-	import { plainFailure } from '#lib/failureText.ts';
+	import { humanFailure, plainFailure } from '#lib/failureText.ts';
 	import Plate from './Plate.svelte';
 
 	interface Props {
@@ -41,6 +41,8 @@
 		bare?: boolean;
 		/** One reason row inside a failed task's details: no frame, no stamp. */
 		flat?: boolean;
+		/** Something else on the page announces this failure. */
+		silent?: boolean;
 		/**
 		 * A run that ended without failing (an operator's cancel) says why in
 		 * ink, as a NOTE: red is for failure and attention only.
@@ -48,7 +50,7 @@
 		tone?: 'failure' | 'note';
 	}
 
-	let { error, testid, compact = false, tries, bare = false, flat = false, tone = 'failure' }: Props = $props();
+	let { error, testid, compact = false, tries, bare = false, flat = false, silent = false, tone = 'failure' }: Props = $props();
 
 	// The sentence without the execution service's wrapper, and the reason
 	// code it led with. A run's RUN_FAILED wraps its task's reason: the panel
@@ -58,6 +60,9 @@
 	const failure = $derived(tone === 'failure');
 
 	const retryNote = $derived(retryPhrase(tries));
+	const sentence = $derived(flat || bare ? humanFailure(plain.text) : plain.text);
+	// In a task's reason row an exit is already said by its attempt line.
+	const onlyAnExit = $derived(flat && /the container exited \d+$/.test(plain.text));
 
 	const category = $derived(error.category ?? FailureCategory.UNSPECIFIED);
 </script>
@@ -71,7 +76,7 @@
 -->
 <div
 	data-testid={testid}
-	role={failure ? 'alert' : 'status'}
+	role={flat || silent ? undefined : failure ? 'alert' : 'status'}
 	data-tone={tone}
 	class="{bare || flat ? '' : failure ? 'rounded-sm bg-red-tint px-3 py-2' : 'note px-3 py-2'} text-sm"
 >
@@ -137,8 +142,8 @@
 	{/if}
 
 	{#if plain.text}
-		<p class="{flat ? 'mt-1 text-dense text-ink-2' : 'mt-1.5 text-ink'} max-w-prose break-words whitespace-pre-wrap" data-testid="{testid}-message">
-			{plain.text}
+		<p class="{onlyAnExit ? 'sr' : flat ? 'mt-1 text-dense text-ink-2' : 'mt-1.5 text-ink'} max-w-prose break-words whitespace-pre-wrap" data-testid="{testid}-message">
+			{sentence}
 		</p>
 	{/if}
 

@@ -666,6 +666,7 @@
 		align-items: center;
 		gap: calc(var(--spacing) * 1.5);
 		min-width: 0;
+		overflow-wrap: anywhere;
 		min-height: calc(var(--spacing) * 6);
 		margin: 0;
 		font-size: var(--text-base);

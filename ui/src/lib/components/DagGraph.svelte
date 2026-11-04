@@ -6,8 +6,9 @@
 	// hold, and everything outside that selection is greyed.
 	//
 	// The contract a spec reads (join-policy.spec.ts): a failure handler's dash
-	// is set by ATTRIBUTE (DAG_DASH) on the node's outline and on every edge
-	// into it, never by the CSS property, so the attribute is the dash drawn.
+	// is set by ATTRIBUTE (DAG_DASH) on every edge into it, and on its outline
+	// where no status is drawn, never by the CSS property, so the attribute is the
+	// dash drawn. On a run page a dashed outline means a task that has not run.
 	//
 	// The caller bounds what is drawn (DrawingFrame: at most 80 tasks, 300 on
 	// request); this component lays out whatever it is handed. The drawing
@@ -37,6 +38,7 @@
 	import { statusLabel } from '#lib/status.ts';
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import { statusClassWord, svgMark } from '#lib/statusMarks.ts';
+	import { MediaQuery } from 'svelte/reactivity';
 	import type { JoinPolicy } from '#lib/gen/orkstack/v1/activity_pb.ts';
 	import ActivityIcon from './ActivityIcon.svelte';
 
@@ -84,6 +86,9 @@
 
 	const run = $derived(on === 'run');
 	const MARK = 10;
+	// On a phone the drawing keeps its words readable and scrolls instead.
+	const phone = new MediaQuery('(max-width: 640px)');
+	const PHONE_MIN_SCALE = 0.78;
 	const TEXT_X = 12;
 	const ID_X = 29;
 	const CACHED_TAG = 'cached';
@@ -103,7 +108,7 @@
 		if (!run) return '';
 		const to = stateOf?.(edge.toId);
 		const from = stateOf?.(edge.fromId);
-		if (isFailureHandler(joinById.get(edge.toId))) return 'is-fail';
+		if (isFailureHandler(joinById.get(edge.toId)) && !isFailureHandler(joinById.get(edge.fromId))) return 'is-fail';
 		const touches = edge.fromId === selected || edge.toId === selected;
 		if (selected && !touches) return 'is-dim';
 		if (to?.status === Status.RUNNING) return 'is-live';
@@ -114,17 +119,16 @@
 	// The lane's name: to the left of its first task where nothing stands
 	// there, else above it.
 	const handlerLabel = $derived.by(() => {
-		if (!run) return null;
 		const handlers = layout.nodes.filter((n) => isFailureHandler(n.task.join));
 		if (handlers.length === 0) return null;
 		const first = handlers.reduce((a, b) => (b.x < a.x || (b.x === a.x && b.y < a.y) ? b : a));
-		const room = 150;
+		const room = 110;
 		const blocked = layout.nodes.some(
 			(n) => n !== first && n.x < first.x && n.x + DAG_NODE_W > first.x - room && n.y < first.y + DAG_NODE_H && n.y + DAG_NODE_H > first.y
 		);
 		return blocked
 			? { x: first.x, y: first.y - 8, anchor: 'start' as const }
-			: { x: first.x - 40, y: first.y + DAG_NODE_H / 2 + 4, anchor: 'end' as const };
+			: { x: first.x - 14, y: first.y + DAG_NODE_H / 2 + 4, anchor: 'end' as const };
 	});
 
 	function nodeName(task: Task, state: NodeState | undefined): string {
@@ -164,7 +168,7 @@
 		height={DAG_NODE_H}
 		rx="10"
 		class="dag-outline"
-		stroke-dasharray={isFailureHandler(node.task.join) ? DAG_DASH : undefined}
+		stroke-dasharray={!run && isFailureHandler(node.task.join) ? DAG_DASH : undefined}
 	/>
 	<rect class="dag-focus" x={node.x - 5} y={node.y - 5} width={DAG_NODE_W + 10} height={DAG_NODE_H + 10} rx="14" />
 	{#if state?.items && state.items.total > 0}
@@ -253,8 +257,8 @@
 		data-testid={run ? 'run-dag' : 'orkflow-dag'}
 		data-direction={layout.direction}
 		viewBox="0 0 {layout.width} {layout.height}"
-		style="width:100%;max-width:{layout.width}px;min-width:{fit ? 0 : Math.round(layout.width * DAG_MIN_SCALE)}px"
-		class="dag block h-auto"
+		style="width:100%;max-width:{layout.width}px;min-width:{fit ? 0 : Math.round(layout.width * (phone.current ? PHONE_MIN_SCALE : DAG_MIN_SCALE))}px"
+		class="dag mx-auto block h-auto"
 		role="group"
 		aria-label={label}
 	>
@@ -268,7 +272,7 @@
 			/>
 		{/each}
 		{#if handlerLabel}
-			<text class="dag-lane" x={handlerLabel.x} y={handlerLabel.y} text-anchor={handlerLabel.anchor} data-testid="run-dag-handlers">Failure handlers</text>
+			<text class="dag-lane" x={handlerLabel.x} y={handlerLabel.y} text-anchor={handlerLabel.anchor} data-testid={run ? 'run-dag-handlers' : 'dag-handlers'}>Failure handlers</text>
 		{/if}
 		{#each layout.nodes as node (node.task.id)}
 			{@const state = stateOf?.(node.task.id)}
@@ -401,7 +405,8 @@
 	.dag-hit:hover .dag-outline {
 		fill: var(--hover);
 	}
-	.dag-node.is-pend .dag-outline:not([stroke-dasharray]) {
+	.dag-node.is-pend .dag-outline:not([stroke-dasharray]),
+	.dag-node.is-never .dag-outline:not([stroke-dasharray]) {
 		stroke-dasharray: 4 3;
 	}
 	.dag-node.is-failed .dag-outline {

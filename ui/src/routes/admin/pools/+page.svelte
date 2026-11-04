@@ -16,7 +16,6 @@
 	import { shellQuote } from '#lib/runDetail.ts';
 	import { ListPoolsRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
 	import PoolOrkers from '#lib/components/PoolOrkers.svelte';
-	import ScopeNote from '#lib/components/ScopeNote.svelte';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
@@ -121,15 +120,16 @@
 
 <svelte:head><title>Admin — Pools — OrkStack</title></svelte:head>
 
-<header class="mb-5 flex flex-wrap items-start gap-3">
-	<h1 class="page-h1 min-w-0 flex-1">Pools</h1>
+<header class="mb-4 flex flex-wrap items-start gap-3">
+	<div class="min-w-0 flex-1">
+		<h1 class="page-h1">Pools</h1>
+		<p class="mt-1 text-dense text-ink-2" data-testid="pools-scope-caption">
+			The pools namespace {namespaceLabel(data.namespace)} may dispatch onto; this view honours the namespace selector.
+		</p>
+	</div>
+	<button type="button" class="btn" data-testid="pools-refresh" disabled={busy} onclick={() => void retry()}>Refresh</button>
 	<CliPopover testid="pools-cli" title="Command line: pools" commands={cli} />
 </header>
-
-<ScopeNote testid="pools-scope-caption">
-	Pools namespace {namespaceLabel(data.namespace)} may dispatch onto — this view honours the namespace
-	selector above.
-</ScopeNote>
 
 <ListFilter request={ListPoolsRequestSchema} applied={data.applied} testid="pools" {command} onapply={applyFilters} {clearHref} cli={false} />
 
@@ -183,8 +183,8 @@
 	{/await}
 	{#each data.pools as pool (pool.name)}
 		{#if shown(pool.name) && !pool.unavailableReason}
-			<section class="card mt-4 p-4" aria-label="Orkers of pool {pool.name}">
-				<h2 class="mb-2 text-md font-heading">Orkers of {pool.name}</h2>
+			<section class="card mt-4" aria-labelledby="orkers-{pool.name}-h" id="orkers-{pool.name}">
+				<div class="card-head"><h2 id="orkers-{pool.name}-h">Orkers of {pool.name}</h2></div>
 				<PoolOrkers pool={pool.name} namespace={data.namespace} />
 			</section>
 		{/if}
@@ -206,7 +206,7 @@
 {#snippet card(pool: Pool, load: PoolLoad | null, invError: string)}
 	{@const st = stateOf(pool, load)}
 	<div class="card-head">
-		<h2 class="font-mono">{pool.name}</h2>
+		<h2>{pool.name}</h2>
 		{#if pool.isDefault}<span class="pill-plain" data-testid="pool-default-{pool.name}">Default</span>{/if}
 		<span class="ml-auto stamp {st.tone === 'ok' ? 'bg-ok-tint text-ok mark-square' : st.tone === 'wait' ? 'pill-wait' : st.tone === 'fail' ? 'bg-fail-tint text-fail mark-tri' : 'pill-plain'}" data-testid="pool-state-{pool.name}"
 			>{#if st.tone === 'wait'}<span class="mark-wait" aria-hidden="true"></span>{/if}{st.word}</span

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
 	import { dagDirectionParam } from '#lib/dag.ts';
@@ -31,6 +32,8 @@
 
 	let { data }: PageProps = $props();
 	const wf = $derived(data.orkflow);
+	// The Edit tab's actions live in the page header and act on the editor's state.
+	let editorActions = $state<Snippet | undefined>(undefined);
 	// What each task's image declares: drawn on the graph once it is known, the default until then.
 	let activityByTask = $state.raw(new Map<string, ActivityInfo>());
 	$effect(() => {
@@ -180,13 +183,15 @@
 			{#snippet digest()}{#if wf.definitionDigest}<Plate key="sha256" value={wf.definitionDigest.replace(/^sha256:/, '').slice(0, 12)} tip={wf.definitionDigest} />{:else}—{/if}{/snippet}
 			{#snippet appliedAt()}<TimeAgo at={wf.createdAt} />{/snippet}
 			<FactsStrip facts={[{ label: 'Current version', value: version }, { label: 'Definition', value: digest }, { label: 'Applied', value: appliedAt }]} />
-			{#if wf.description}<p class="mt-2 max-w-prose">{wf.description}</p>{/if}
+			{#if wf.description && data.tab !== 'edit'}<p class="mt-2 max-w-prose">{wf.description}</p>{/if}
 		{/if}
 	{/snippet}
 	{#snippet actions()}
-		{#if wf}
-			<!-- One orange action per screen: on the Edit tab it is Apply version. -->
-			<button type="button" data-testid="orkflow-submit-run" onclick={() => (submitDialogOpen = true)} class="btn {data.tab === 'edit' ? '' : 'btn-primary'}"
+		{#if data.tab === 'edit' && editorActions}
+			<!-- The Edit tab's one orange action is Apply version, with Validate and its command line. -->
+			{@render editorActions()}
+		{:else if wf}
+			<button type="button" data-testid="orkflow-submit-run" onclick={() => (submitDialogOpen = true)} class="btn btn-primary"
 				><Icon name="play" />Submit a run</button
 			>
 		{/if}
@@ -444,6 +449,7 @@
 	/>
 {:else}
 	<OrkflowEditor
+		onactions={(snippet) => (editorActions = snippet)}
 		name={data.name}
 		namespace={data.namespace}
 		sourceYaml={data.editYaml}

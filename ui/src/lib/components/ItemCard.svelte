@@ -13,7 +13,7 @@
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { TaskAttempt } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import { LiveAttemptState, type LiveAttempt } from '#lib/gen/orkstack/v1/run_service_pb.ts';
-	import { isTerminal, statusLabel } from '#lib/status.ts';
+	import { isTerminal } from '#lib/status.ts';
 	import { formatDuration, shortDigestWords } from '#lib/runDetail.ts';
 	import { formatBytes, heartbeatAge, liveLine, unavailableReason } from '#lib/live.ts';
 	import { attemptPhases, phaseGroups, formatQuantity, type TaskTiming } from '#lib/timing.ts';
@@ -105,7 +105,6 @@
 	// Clock times are on the 24-hour clock everywhere on this card.
 	const clock = (ts: Timestamp) => new Date(Number(ts.seconds) * 1000).toLocaleTimeString('en-GB', { hour12: false });
 	const secs = (ms: number) => (ms >= 60_000 ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` : `${(ms / 1000).toFixed(1)}s`);
-	const statusWords = $derived(waiting ? 'waiting for capacity' : statusLabel(status).toLowerCase());
 </script>
 
 <section class="card insp" id="item-card" aria-labelledby="item-card-heading" data-testid={panelTestid}>
@@ -120,7 +119,6 @@
 			{#if cli.length}<CliPopover testid={cliTestid} title="Command line: {title}" commands={cli} />{/if}
 		</div>
 	</div>
-	<p class="sr" role="status" data-testid="item-card-status">Item card shows {title}, {statusWords}</p>
 	{#if note}<p class="insp-note">{note}</p>{/if}
 	<dl class="kv">
 		<dt>Attempts</dt>
@@ -264,7 +262,7 @@
 		color: var(--ink-3);
 	}
 	.insp-sec :global(.kv) {
-		padding: 0;
+		padding: 0 16px;
 	}
 	.insp-line {
 		margin: 0;

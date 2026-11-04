@@ -8,7 +8,7 @@
 	import { statsClient } from '#lib/clients/stats.ts';
 	import { FailureGroupBy, type FailureGroup } from '#lib/gen/orkstack/v1/stats_pb.ts';
 	import { fmtCategoryWords } from '#lib/failureWords.ts';
-	import { fmtTimestamp } from '#lib/status.ts';
+	import { shortInstant } from '#lib/when.ts';
 	import { shortRunId } from '#lib/runDetail.ts';
 	import { withNamespace } from '#lib/namespace.ts';
 	import Icon from './Icon.svelte';
@@ -22,6 +22,8 @@
 	$effect(() => {
 		const [ns, name, task, reason] = [namespace, orkflow, taskId, code];
 		let live = true;
+		read = false;
+		failure = '';
 		statsClient(fetch)
 			.getFailureBreakdown({ namespace: ns, orkflowName: name, lookback: durationFromMs(WEEK_MS), groupBy: [FailureGroupBy.TASK, FailureGroupBy.CODE, FailureGroupBy.CATEGORY] })
 			.then(
@@ -52,8 +54,8 @@
 		{:else if !group || count <= 1}
 			<p class="diag-line" data-testid="run-seen-first">The first run in 7 days to fail this way.</p>
 		{:else}
-			<div class="r2"><span class="mark-tri" aria-hidden="true"></span><div><b data-testid="run-seen-count">{count} runs</b> failed the same way<small>{orkflow} · {taskId} · {code}{#if group.category} · {fmtCategoryWords(group.category)}{/if}</small></div></div>
-			<div class="r2"><Icon name="clock" /><div>First {fmtTimestamp(group.firstSeen)} · latest {fmtTimestamp(group.lastSeen)}</div></div>
+			<div class="r2"><span class="mark-tri" aria-hidden="true"></span><div><b data-testid="run-seen-count">{count} runs</b> failed the same way<small>{orkflow} · {taskId} · {code}{#if group.category}{' · '}{fmtCategoryWords(group.category)}{/if}</small></div></div>
+			<div class="r2"><Icon name="clock" /><div>First {shortInstant(group.firstSeen)} · latest {shortInstant(group.lastSeen)}</div></div>
 			{#if others.length}
 				<div class="r2">
 					<Icon name="runs" />

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Snippet } from 'svelte';
 	import { onMount } from 'svelte';
 	import CliPopover from './CliPopover.svelte';
 	import EditorDocsRail from './EditorDocsRail.svelte';
@@ -54,6 +55,8 @@
 		error: string | null;
 		/** Where to land after a successful apply. */
 		versionsHref: string;
+		/** Hands the page its header's actions: Validate, Apply version and the command line. */
+		onactions?: (actions: Snippet | undefined) => void;
 		onreload: () => Promise<void>;
 	}
 
@@ -65,8 +68,15 @@
 		headVersion,
 		error,
 		versionsHref,
-		onreload
+		onreload,
+		onactions
 	}: Props = $props();
+	const uid = $props.id();
+	const formId = `${uid}-form`;
+	$effect(() => {
+		onactions?.(error || reloading ? undefined : headerActions);
+		return () => onactions?.(undefined);
+	});
 
 	// Seeded from the first read that SUCCEEDS for a given version, whenever
 	// that is — and re-seeded when the SELECTED version changes.
@@ -318,42 +328,12 @@
 	const atCaret = $derived(session.caretTask);
 </script>
 
-{#if error}
-	<ErrorPanel
-		testid="editor-error-load"
-		retryTestid="editor-retry-load"
-		subject={baseVersion
-			? `version ${baseVersion} of ${name} in namespace ${namespaceLabel(namespace)}`
-			: `the stored YAML of ${name} in namespace ${namespaceLabel(namespace)}`}
-		message={error}
-		busy={reloading}
-		onretry={reload}
-	/>
-{:else if reloading}
-	<p data-testid="editor-loading" class="text-sm text-ink-muted">Reloading the stored document…</p>
-{:else}
-	<form
-		class="grid gap-4"
-		data-testid="editor-form"
-		onsubmit={(e) => {
-			e.preventDefault();
-			void apply();
-		}}
-	>
-		<div class="ed-bar">
-			<p class="min-w-0 flex-[1_1_20rem] text-dense text-ink-2">
-				Editing <b class="text-ink">{name}</b> from version
-				<span class="figure font-semibold text-navy-text" data-testid="editor-base-version">{base}</span>; the newest is
-				<span class="figure font-semibold text-ink" data-testid="editor-head-version">{expectedHead}</span>.
-				{#if base !== expectedHead}<span data-testid="editor-fork-notice"
-						>Applying forks forward from {base} and becomes the new head; the version that runs is unchanged until somebody promotes.</span
-					>{/if}
-				Applying stores a new version: change <code>version:</code> first.
-			</p>
-			<div class="flex flex-wrap items-center gap-2">
+{#snippet headerActions()}
 				<button type="button" data-testid="editor-validate" disabled={validating || applying} onclick={() => void validate()} class="btn">{validating ? 'Validating…' : 'Validate'}</button>
 				<button
 					type="submit"
+					form={formId}
+					data-tip="Applying stores a new version: change version: first"
 					data-testid="editor-apply"
 					aria-disabled={applyHeld || applying || validating ? 'true' : undefined}
 					aria-describedby={applyHeld ? 'editor-apply-why' : undefined}
@@ -373,16 +353,39 @@
 						{ label: 'Edit it in your own editor', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} orkflow edit ${name}` }
 					]}
 				/>
-			</div>
 			{#if applyHeld}
 				<p id="editor-apply-why" class="apply-why" data-testid="editor-apply-why">Fix {engineErrors} {engineErrors === 1 ? 'problem' : 'problems'} to apply</p>
 			{/if}
-		</div>
+{/snippet}
 
+{#if error}
+	<ErrorPanel
+		testid="editor-error-load"
+		retryTestid="editor-retry-load"
+		subject={baseVersion
+			? `version ${baseVersion} of ${name} in namespace ${namespaceLabel(namespace)}`
+			: `the stored YAML of ${name} in namespace ${namespaceLabel(namespace)}`}
+		message={error}
+		busy={reloading}
+		onretry={reload}
+	/>
+{:else if reloading}
+	<p data-testid="editor-loading" class="text-sm text-ink-muted">Reloading the stored document…</p>
+{:else}
+	<form
+		id={formId}
+		class="grid gap-4"
+		data-testid="editor-form"
+		onsubmit={(e) => {
+			e.preventDefault();
+			void apply();
+		}}
+	>
 		<div class="ed-grid" class:rail-closed={!railOpen}>
 			<section class="card edcard" aria-labelledby="editor-yaml-label">
 				<div class="card-head">
 					<h2 id="editor-yaml-label">Edit</h2>
+					<span class="card-sub">a new version from <span class="figure" data-testid="editor-base-version">{base}</span><span class={base === expectedHead ? 'sr' : ''}>; the newest is <span class="figure" data-testid="editor-head-version">{expectedHead}</span></span></span>
 					{#if problemCount > 0}
 						<button
 							type="button"
@@ -436,6 +439,9 @@
 						</span>
 					</div>
 				</div>
+				{#if base !== expectedHead}
+					<p class="ed-fork" data-testid="editor-fork-notice">Applying forks forward from {base} and becomes the new head; the version that runs is unchanged until somebody promotes.</p>
+				{/if}
 				<div class="px-0">
 					<YamlField
 						bind:value={yaml}
@@ -567,11 +573,12 @@
 {/if}
 
 <style>
-	.ed-bar {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 10px 20px;
+	.ed-fork {
+		margin: 0;
+		padding: 8px 16px;
+		border-bottom: 1px solid var(--line);
+		font-size: 13.5px;
+		color: var(--ink-2);
 	}
 	.apply-why {
 		flex-basis: 100%;
@@ -676,7 +683,7 @@
 			position: static;
 		}
 		.edcard :global(.cm-editor) {
-			height: clamp(380px, 58dvh, 680px);
+			height: clamp(380px, 58dvh, 680px) !important;
 		}
 		.ed-grid.rail-closed :global(.rail) {
 			position: sticky;

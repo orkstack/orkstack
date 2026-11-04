@@ -46,6 +46,8 @@ export interface Segment {
 	taskId?: string;
 	/** A stage's words: the tasks that can run at that point. */
 	label?: string;
+	/** Drawn with its label in the column beside its cells: that label's lines. */
+	side?: number;
 }
 
 /** Up to this many tasks the map reads row by row, each stage named. */
@@ -61,6 +63,68 @@ export interface MapModel {
 }
 
 const cellKey = (taskId: string, item?: number) => (item === undefined ? taskId : `${taskId}\u0000${item}`);
+
+// How many characters of a stage's label fit one line of its column, and that
+// column's width.
+const SIDE_CHARS = 15;
+export const SIDE_COL = 110;
+const SIDE_LINE_H = 16;
+const SIDE_ROW_GAP = 8;
+
+function sideLines(label: string): number {
+	return Math.max(1, Math.ceil(label.length / SIDE_CHARS));
+}
+
+/** A small run's rows, in the order they can run: one per stage, and one per fan-out with its items. */
+function stageRows(
+	ordered: readonly { id: string; itemCount: number }[],
+	layers: readonly number[]
+): { label: string; taskIds: string[]; fanOut?: string; count: number }[] {
+	const rows: { label: string; taskIds: string[]; fanOut?: string; count: number }[] = [];
+	let open: (typeof rows)[number] | null = null;
+	ordered.forEach((task, i) => {
+		if (i > 0 && layers[i] !== layers[i - 1]) open = null;
+		if (task.itemCount > 0) {
+			rows.push({ label: task.id, taskIds: [], fanOut: task.id, count: task.itemCount });
+			return;
+		}
+		if (open) {
+			open.taskIds.push(task.id);
+			open.label += `, ${task.id}`;
+			open.count++;
+		} else {
+			open = { label: task.id, taskIds: [task.id], count: 1 };
+			rows.push(open);
+		}
+	});
+	return rows;
+}
+
+function stageModel(ordered: readonly MapTask[], layers: readonly number[]): MapModel {
+	const byId = new Map(ordered.map((t) => [t.id, t]));
+	const rows = stageRows(ordered.map((t) => ({ id: t.id, itemCount: t.items?.length ?? 0 })), layers);
+	const cells: MapCell[] = [];
+	const kinds: number[] = [];
+	const segments: Segment[] = [];
+	for (const row of rows) {
+		const start = cells.length;
+		if (row.fanOut) {
+			for (const item of byId.get(row.fanOut)?.items ?? []) {
+				cells.push({ taskId: row.fanOut, item: item.index });
+				kinds.push(KIND_ITEM);
+			}
+		} else {
+			for (const id of row.taskIds) {
+				cells.push({ taskId: id });
+				kinds.push(byId.get(id)?.items !== undefined ? KIND_STACK : KIND_TASK);
+			}
+		}
+		segments.push({ start, count: row.count, labelled: false, taskId: row.fanOut, label: row.label, side: sideLines(row.label) });
+	}
+	const index = new Map<string, number>();
+	cells.forEach((c, i) => index.set(cellKey(c.taskId, c.item), i));
+	return { order: 'dag', cells, kinds: Uint8Array.from(kinds), segments, indexOf: (taskId, item) => index.get(cellKey(taskId, item)) ?? -1 };
+}
 
 /**
  * The cells, in reading order: every task in DAG order (layer, then
@@ -81,22 +145,14 @@ export function buildModel(
 		ordered = Array.from(order, (i) => tasks[i]);
 		if (stages) layers = Array.from(order, (i) => layer[i]);
 	}
+	if (layers) return stageModel(ordered, layers);
 	const cells: MapCell[] = [];
 	const kinds: number[] = [];
 	for (const t of ordered) {
 		cells.push({ taskId: t.id });
 		kinds.push(t.items !== undefined ? KIND_STACK : KIND_TASK);
 	}
-	const segments: Segment[] = [];
-	if (layers) {
-		for (let i = 0; i < ordered.length; i++) {
-			const last = segments[segments.length - 1];
-			if (last && layers[i] === layers[i - 1]) {
-				last.count++;
-				last.label += `, ${ordered[i].id}`;
-			} else segments.push({ start: i, count: 1, labelled: true, label: ordered[i].id });
-		}
-	} else segments.push({ start: 0, count: ordered.length, labelled: false });
+	const segments: Segment[] = [{ start: 0, count: ordered.length, labelled: false }];
 	for (const t of ordered) {
 		if (!t.items || t.items.length === 0) continue;
 		const start = cells.length;
@@ -121,14 +177,13 @@ export function buildModel(
 export function mapSectionsOf(
 	tasks: readonly { id: string; needs?: readonly string[]; itemCount: number }[],
 	definition: boolean
-): { count: number; labelled: boolean }[] {
-	const out: { count: number; labelled: boolean }[] = [];
+): { count: number; labelled: boolean; side?: number }[] {
 	if (definition && tasks.length <= STAGE_ROWS_MAX) {
-		const { layer } = defaultLayerOrder(tasks.map((t) => ({ id: t.id, needs: t.needs ?? [] })));
-		const perLayer = new Map<number, number>();
-		for (const l of layer) perLayer.set(l, (perLayer.get(l) ?? 0) + 1);
-		for (const count of perLayer.values()) out.push({ count, labelled: true });
-	} else out.push({ count: tasks.length, labelled: false });
+		const { layer, order } = defaultLayerOrder(tasks.map((t) => ({ id: t.id, needs: t.needs ?? [] })));
+		const rows = stageRows(Array.from(order, (i) => tasks[i]), Array.from(order, (i) => layer[i]));
+		return rows.map((row) => ({ count: row.count, labelled: false, side: sideLines(row.label) }));
+	}
+	const out: { count: number; labelled: boolean; side?: number }[] = [{ count: tasks.length, labelled: false }];
 	for (const t of tasks) if (t.itemCount > 0) out.push({ count: t.itemCount, labelled: true });
 	return out;
 }
@@ -167,7 +222,9 @@ export function fillStatuses(model: MapModel, tasks: readonly MapTask[], out: Ui
 	};
 	for (const t of tasks) {
 		if (t.items && t.items.length > 0) {
-			set(model.indexOf(t.id), worstStatus(t.items.map((i) => i.status)) ?? t.status);
+			// A small run's fan-out has no cell of its own: its row is its items.
+			const own = model.indexOf(t.id);
+			if (own >= 0) set(own, worstStatus(t.items.map((i) => i.status)) ?? t.status);
 			for (const item of t.items) set(model.indexOf(t.id, item.index), item.status);
 		} else {
 			set(model.indexOf(t.id), t.status);
@@ -244,14 +301,17 @@ export interface MapGeometry {
 	columns: number;
 	/** The map's whole height in CSS pixels. */
 	height: number;
+	/** Where the cells start: past the label column of a small run. */
+	x0: number;
 	/** How far the map area scrolls (0 when it fits). */
 	scroll: number;
 	total: number;
 	segments: SegmentGeometry[];
 }
 
-function layout(segments: readonly { count: number; labelled: boolean }[], pitch: number, width: number): MapGeometry {
-	const columns = Math.max(1, Math.floor(width / pitch));
+function layout(segments: readonly { count: number; labelled: boolean; side?: number }[], pitch: number, width: number): MapGeometry {
+	const x0 = segments.some((s) => s.side !== undefined) ? SIDE_COL : 0;
+	const columns = Math.max(1, Math.floor((width - x0) / pitch));
 	let y = 0;
 	let start = 0;
 	const out: SegmentGeometry[] = [];
@@ -259,10 +319,10 @@ function layout(segments: readonly { count: number; labelled: boolean }[], pitch
 		if (s.labelled) y += LABEL_H;
 		const rows = Math.ceil(s.count / columns);
 		out.push({ start, count: s.count, rows, y, labelled: s.labelled });
-		y += rows * pitch;
+		y += s.side === undefined ? rows * pitch : Math.max(rows * pitch, s.side * SIDE_LINE_H) + SIDE_ROW_GAP;
 		start += s.count;
 	}
-	return { pitch, columns, height: y, scroll: 0, total: start, segments: out };
+	return { pitch, columns, height: y, x0, scroll: 0, total: start, segments: out };
 }
 
 /**
@@ -270,7 +330,7 @@ function layout(segments: readonly { count: number; labelled: boolean }[], pitch
  * smallest does not, the smallest, and the area scrolls (inside its frame,
  * never the page).
  */
-export function mapGeometry(segments: readonly { count: number; labelled: boolean }[], width: number, height: number): MapGeometry {
+export function mapGeometry(segments: readonly { count: number; labelled: boolean; side?: number }[], width: number, height: number): MapGeometry {
 	for (const pitch of PITCHES) {
 		const g = layout(segments, pitch, width);
 		if (g.height <= height) return g;
@@ -296,14 +356,15 @@ export function rectOf(g: MapGeometry, i: number): Rect {
 	if (!s) return { x: 0, y: 0, w: 0, h: 0 };
 	const local = i - s.start;
 	const size = g.pitch - CELL_GAP;
-	return { x: (local % g.columns) * g.pitch, y: s.y + Math.floor(local / g.columns) * g.pitch, w: size, h: size };
+	return { x: g.x0 + (local % g.columns) * g.pitch, y: s.y + Math.floor(local / g.columns) * g.pitch, w: size, h: size };
 }
 
 /** The cell under a point of the map, or -1 (a gap, a label band, past the end). */
 export function cellAt(g: MapGeometry, x: number, y: number): number {
-	if (x < 0 || y < 0) return -1;
-	const col = Math.floor(x / g.pitch);
-	if (col >= g.columns || x - col * g.pitch >= g.pitch - CELL_GAP) return -1;
+	if (x < g.x0 || y < 0) return -1;
+	const cellX = x - g.x0;
+	const col = Math.floor(cellX / g.pitch);
+	if (col >= g.columns || cellX - col * g.pitch >= g.pitch - CELL_GAP) return -1;
 	for (const s of g.segments) {
 		if (y < s.y || y >= s.y + s.rows * g.pitch) continue;
 		const row = Math.floor((y - s.y) / g.pitch);
@@ -577,7 +638,7 @@ export function paintCells(
 		for (const i of only) if (i >= 0 && i < g.total) paintOne(i);
 		return;
 	}
-	ctx.clearRect(0, 0, g.columns * g.pitch, g.height);
+	ctx.clearRect(0, 0, g.x0 + g.columns * g.pitch, g.height);
 	for (let i = 0; i < g.total; i++) paintOne(i);
 }
 

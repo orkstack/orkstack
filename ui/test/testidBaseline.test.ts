@@ -20,6 +20,8 @@ const fixture = `${import.meta.dir}/fixtures/testid-baseline.txt`;
 
 /** Shape → why it may be gone (and the spec change that goes with it). */
 const ALLOWED_REMOVALS: Record<string, string> = {
+	'prop activity-inspect-cli':
+		"Inspect a reference's command joined the Activities header's popover, activities-cli: one per screen (admin.spec.ts).",
 	'id task-{}-item-panel':
 		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
 	'id task-{}-item-panel-artifacts':

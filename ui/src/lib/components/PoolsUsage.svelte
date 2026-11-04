@@ -17,23 +17,35 @@
 	let week = $state.raw<GetUsageResponse | null>(null);
 	let budgetRead = $state.raw<GetUsageResponse | null>(null);
 	let failure = $state('');
+	let budgetFailure = $state('');
 
 	$effect(() => {
 		const ns = namespace;
 		let live = true;
 		const stats = statsClient(fetch);
-		stats.getUsage({ namespace: ns, lookback: durationFromMs(WEEK_MS), groupBy: [FailureGroupBy.ORKFLOW] }).then(
-			async (res) => {
+		failure = '';
+		budgetFailure = '';
+		void (async () => {
+			try {
+				const res = await stats.getUsage({ namespace: ns, lookback: durationFromMs(WEEK_MS), groupBy: [FailureGroupBy.ORKFLOW] });
 				if (!live) return;
 				week = res;
 				// A budget is judged over its own period: ask that, when it is not this one.
 				const period: Duration | undefined = res.budget?.period;
-				budgetRead = res.budgetWindow || !period ? res : await stats.getUsage({ namespace: ns, lookback: period, groupBy: [] });
-			},
-			(err) => {
+				if (res.budgetWindow || !period) {
+					budgetRead = res;
+					return;
+				}
+				try {
+					const over = await stats.getUsage({ namespace: ns, lookback: period, groupBy: [] });
+					if (live) budgetRead = over;
+				} catch (err) {
+					if (live) budgetFailure = errorMessage(err);
+				}
+			} catch (err) {
 				if (live) failure = errorMessage(err);
 			}
-		);
+		})();
 		return () => {
 			live = false;
 		};
@@ -49,7 +61,7 @@
 		return top;
 	});
 	const barMax = $derived(Math.max(0.0001, ...rows.map((row) => row.h)));
-	const budget = $derived(budgetRead?.budget);
+	const budget = $derived(budgetRead?.budget ?? week?.budget);
 	const used = $derived(hours(budgetRead?.total?.cpuSeconds ?? 0));
 	const allowed = $derived(budget ? Number(budget.cpuSeconds) / 3600 : 0);
 	const share = $derived(allowed > 0 ? Math.min(100, Math.round((100 * used) / allowed)) : 0);
@@ -89,10 +101,16 @@
 		<figure class="card viz" aria-labelledby="pools-budget-h" data-testid="pools-budget">
 			{#if budget}
 				<h3 id="pools-budget-h">Budget of namespace {namespaceLabel(namespace)} <small>{budget.enforce ? 'enforced' : 'reported only'}</small></h3>
-				<div class="kpis"><span class="big" data-testid="pools-budget-used">{fmtHours(used)}<small>of {fmtHours(allowed)} cpu-hours per {fmtGoDuration(budget.period)}</small></span></div>
-				<svg class="bar" height="14" role="img" aria-label="{share}% of the budget used"><rect class="track" width="100%" height="14" rx="7" /><rect class="fill" width="{share}%" height="14" /></svg>
-				<div class="vkey"><span><i></i>{share}% used</span></div>
-				<figcaption>{budget.enforce ? 'An enforced budget refuses new runs once it is used up; runs already accepted finish.' : 'A soft budget is reported and refuses nothing.'} {fmtHours(gibHours)} GiB-hours reserved.</figcaption>
+				{#if budgetFailure}
+					<p class="viz-none" data-testid="pools-budget-error">What it has used could not be read: {budgetFailure}</p>
+				{:else if !budgetRead}
+					<p class="viz-none">Reading what it has used…</p>
+				{:else}
+					<div class="kpis"><span class="big" data-testid="pools-budget-used">{fmtHours(used)}<small>of {fmtHours(allowed)} cpu-hours per {fmtGoDuration(budget.period)}</small></span></div>
+					<svg class="bar" height="14" role="img" aria-label="{share}% of the budget used"><rect class="track" width="100%" height="14" rx="7" /><rect class="fill" width="{share}%" height="14" /></svg>
+					<div class="vkey"><span><i></i>{share}% used</span></div>
+					<figcaption>{budget.enforce ? 'An enforced budget refuses new runs once it is used up; runs already accepted finish.' : 'A soft budget is reported and refuses nothing.'} {fmtHours(gibHours)} GiB-hours reserved.</figcaption>
+				{/if}
 			{:else}
 				<h3 id="pools-budget-h">Budget of namespace {namespaceLabel(namespace)}</h3>
 				<p class="viz-none" data-testid="pools-budget-none">{week ? 'No budget: what this namespace reserves is unbounded.' : 'Reading its budget…'}</p>

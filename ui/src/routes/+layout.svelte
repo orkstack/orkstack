@@ -254,7 +254,9 @@
 		const rest = here && here.href !== '/' ? path.slice(here.href.length).split('/').filter(Boolean) : [];
 		for (const [i, part] of rest.entries()) {
 			const value = decodeURIComponent(part);
-			const label = here?.id === 'runs' && i === 0 ? shortRunId(value) : value === 'compare' ? 'Compare' : value;
+			// A run's crumb is its Orkflow, once the page has read it; the run id is the page's own plate.
+			const runName = (page.data as { run?: { orkflowName?: string } | null }).run?.orkflowName;
+			const label = here?.id === 'runs' && i === 0 ? (runName ?? shortRunId(value)) : value === 'compare' ? 'Compare' : value;
 			out.push({ label, href: link(`${here!.href}/${rest.slice(0, i + 1).join('/')}`) });
 		}
 		return out;

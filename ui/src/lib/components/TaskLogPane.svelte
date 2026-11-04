@@ -497,7 +497,7 @@
 				{/if}
 				<span
 					data-testid="task-log-state-{taskId}"
-					class="{stateLabel === 'LIVE' || stateLabel === 'ENDED' ? 'sr' : 'font-semibold'} {stateLabel === 'FAILED' ? 'text-fail' : 'text-ink-3'}"
+					class="{stateLabel === 'LIVE' || stateLabel === 'ENDED' || stateLabel === 'CONNECTING' ? 'sr' : 'font-semibold'} {stateLabel === 'FAILED' ? 'text-fail' : 'text-ink-3'}"
 					>{stateLabel}</span
 				>
 				<span data-testid="task-log-follow-{taskId}" class="sr">{following ? 'FOLLOWING' : 'PAUSED'}</span>
@@ -614,7 +614,7 @@
 			>
 				{#if !started}
 					<p data-testid="task-log-waiting-{taskId}" class="log-none">
-						No attempt yet, so no log. Its output appears here when the task starts.
+						No attempt yet, so no log.
 					</p>
 				{:else if lines.length === 0}
 					<p data-testid="task-log-empty-{taskId}" class="log-none">
@@ -629,7 +629,7 @@
 				{:else if filteredLines.length === 0}
 					<p data-testid="task-log-no-match-{taskId}" class="log-none">No loaded lines match this search.</p>
 				{:else}
-					{#each filteredLines as line (line.n)}
+					{#each filteredLines as line, i (line.n)}
 						<!--
 							Three renderings, in priority order: an ORKER notice
 							(amber) is about the log rather than in it, stderr
@@ -641,14 +641,15 @@
 						<div
 							data-testid="task-log-line"
 							data-line={line.n}
+							data-gutter={shownStream === 'all' && !search.trim() ? line.n : i + 1}
 							data-stream={line.stream}
 							class="logline {line.notice
 								? 'text-log-ink-2'
-								: line.stream === 'stderr'
-									? 'text-log-err'
+								: line.stream === 'stderr' && shownStream !== 'stderr'
+									? 'logline-err text-log-err'
 									: 'text-log-ink'}"
 						>
-							{line.text}
+							{#if line.stream === 'stderr' && !line.notice}<span class="sr">stderr: </span>{/if}{line.text}
 						</div>
 					{/each}
 				{/if}
@@ -722,8 +723,12 @@
 		overflow-wrap: anywhere;
 		line-height: 1.7;
 	}
+	/* stderr is its colour and a rule at its edge, never its colour alone. */
+	.logline-err {
+		box-shadow: inset 2px 0 0 var(--log-err);
+	}
 	.logline::before {
-		content: attr(data-line);
+		content: attr(data-gutter);
 		display: inline-block;
 		width: 22px;
 		margin-right: 14px;

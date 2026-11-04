@@ -18,6 +18,13 @@ export function relativeTime(at: Date, now: number = Date.now()): string {
 	return at.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: at.getFullYear() === new Date(now).getFullYear() ? undefined : 'numeric' });
 }
 
+/** "Oct 25, 09:12": an instant in a sentence. */
+export function shortInstant(at: { seconds: bigint; nanos: number } | undefined): string {
+	if (!at) return '—';
+	const d = new Date(Number(at.seconds) * 1000);
+	return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
+}
+
 export function exactTime(at: Date): string {
 	return at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
 }

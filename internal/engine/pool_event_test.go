@@ -16,7 +16,7 @@ import (
 // and must survive. That exemption is also a blind spot: the engine composes the strings it SHIPS
 // TO CLIENTS here, and the gate cannot see them. `orkctl watch` prints an
 // event's message in its MESSAGE column (cmd/orkctl/watch.go) and the run page
-// renders it (ui/src/routes/runs/[id]/+page.svelte), so a message naming a
+// renders it (ui/src/routes/runs/[id]/RunView.svelte), so a message naming a
 // queue tells an author who wrote `pool: gpu` about a Temporal concept and an
 // internal name they never typed.
 //

@@ -18,7 +18,6 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
-	import ScopeNote from '#lib/components/ScopeNote.svelte';
 	import ActivityIcon from '#lib/components/ActivityIcon.svelte';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import Plate from '#lib/components/Plate.svelte';
@@ -29,8 +28,8 @@
 	import { namespaceLabel } from '#lib/namespace.ts';
 	import { ListActivitiesRequestSchema } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
 	import ActivityInterface from '#lib/components/ActivityInterface.svelte';
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
-	import { inspectCommand, interfaceSummary, pinnedReference, shortDigest } from '#lib/activity.ts';
+	import { inspectCommand, interfaceSummary, pinnedReference } from '#lib/activity.ts';
+	import { shortDigestWords } from '#lib/runDetail.ts';
 	import { errorMessage } from '#lib/client.ts';
 	import { activityClient } from '#lib/clients/activities.ts';
 	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
@@ -97,24 +96,23 @@
 
 <svelte:head><title>Admin — Activities — OrkStack</title></svelte:head>
 
-<header class="mb-5 flex flex-wrap items-start gap-3">
-	<h1 class="page-h1 min-w-0 flex-1">Activities</h1>
+<header class="mb-4 flex flex-wrap items-start gap-3">
+	<div class="min-w-0 flex-1">
+		<h1 class="page-h1">Activities</h1>
+		<p class="mt-1 text-dense text-ink-2" data-testid="activities-scope-caption">The images tasks name in <code>uses:</code>, resolved to a digest. Deployment-wide: the same whichever namespace is selected.</p>
+	</div>
+	<button type="button" class="btn" data-testid="activities-refresh" disabled={busy} onclick={() => void retry()}>Refresh</button>
 	<CliPopover
 		testid="activities-cli"
 		title="Command line: activities"
 		commands={[
 			{ label: 'The catalog', command: ['orkctl', 'activity', 'list', ...filterFlags(data.applied)].join(' ') },
 			{ label: 'Build an image, on your machine', command: 'orkctl activity build ./images/my-activity' },
-			{ label: 'Run the activity contract test', command: 'orkctl activity test my-image' }
+			{ label: 'Run the activity contract test', command: 'orkctl activity test my-image' },
+			{ label: 'Inspect a reference, with its interface', command: inspectCli }
 		]}
 	/>
 </header>
-
-<ScopeNote testid="activities-scope-caption">
-	Every activity this deployment can run, as configured on the engine — deployment-wide, not scoped
-	by the namespace selector above. An activity is an OCI image; a task names one with
-	<code>uses:</code>.
-</ScopeNote>
 
 <!--
 	ORKER STATUS. Presented the way the Pools page presents liveness: an
@@ -234,25 +232,25 @@
 							{/if}
 						</th>
 						<td data-label="Image" class="font-mono text-sm text-ink-2" data-testid="activity-reference-{activity.name}">
-							<span class="break-all">{activity.reference || '—'}</span>
+							{#if activity.reference}{#each activity.reference.split(/(?<=\/)|(?=[:@])/) as part, i (i)}{part}<wbr />{/each}{:else}—{/if}
 						</td>
 						<td data-label="Digest and platforms">
 							{#if activity.indexDigest}
 								<span data-digest={activity.indexDigest} data-testid="activity-digest-{activity.name}"
-									><Plate key="digest" value={shortDigest(activity.indexDigest)} tip={activity.indexDigest} small /></span
+									><Plate key="sha256" value={shortDigestWords(activity.indexDigest)} tip={activity.indexDigest} small /></span
 								>
 							{:else}
 								<span class="text-sm text-ink-3" data-testid="activity-digest-unresolved-{activity.name}">unresolved</span>
 							{/if}
 							<span class="mt-1 block font-mono text-xs text-ink-3" data-testid="activity-platforms-{activity.name}"
-								>{activity.platforms.length > 0 ? activity.platforms.join(', ') : 'single manifest'}</span
+								>{activity.platforms.filter((p) => p !== 'unknown/unknown').join(', ') || 'single manifest'}</span
 							>
 							<span class="sr" data-testid="activity-media-type-{activity.name}">{activity.mediaType || '—'}</span>
 							<span class="sr" data-testid="activity-resolved-at-{activity.name}">{fmtTimestamp(activity.resolvedAt)}</span>
 						</td>
 						<td data-label="Ops" class="font-mono text-sm text-ink-2">
 							{#if activity.interface && Object.keys(activity.interface.ops).length > 0}
-								{#each Object.keys(activity.interface.ops).sort() as op (op)}<span class="block" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</span>{/each}
+								<span class="flex flex-wrap gap-1">{#each Object.keys(activity.interface.ops).sort() as op (op)}<span class="tag" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</span>{/each}</span>
 							{:else}
 								<span class="text-ink-3">—</span>
 							{/if}
@@ -267,7 +265,7 @@
 									data-testid="activity-interface-{activity.name}"
 									onclick={() => (disclosed[activity.name] = !disclosed[activity.name])}
 								>
-									{interfaceSummary(activity)}
+									<span class="sr">Declared: </span>{interfaceSummary(activity)}
 								</button>
 							{:else}
 								<span class="text-ink-3" data-testid="activity-interface-{activity.name}">{interfaceSummary(activity)}</span>
@@ -313,7 +311,6 @@
 			class="btn"
 			data-testid="activity-inspect-submit">{inspecting ? 'Inspecting…' : 'Inspect'}</button
 		>
-		<CliEquivalent testid="activity-inspect-cli" command={inspectCli} label="orkctl activity inspect for this reference" />
 	</form>
 	{#if inspectError}
 		<div class="mt-3">
