@@ -48,7 +48,7 @@ An older release cannot run every Orkflow construct. Apply a document that uses 
 
 ## Turning versioning on for a running system
 
-Versioning on a system that already runs unversioned work is a separate procedure. Drain first: hold each namespace, let running runs finish, then promote the first versioned release. The full procedure is in the deployment manual.
+Versioning on a system that already runs unversioned work is a separate procedure. Drain first: hold each namespace, let running runs finish, then promote the first versioned release. The full procedure is in [Upgrades, Turn versioning on](/docs/deploy/upgrades/#turn-versioning-on).
 
 ## Limits
 

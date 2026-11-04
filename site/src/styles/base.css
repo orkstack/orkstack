@@ -379,6 +379,11 @@ body {
 .brand .mark {
 	flex: none;
 }
+@media (max-width: 640px) {
+	.brand {
+		min-height: 40px;
+	}
+}
 .site-head nav {
 	display: flex;
 	gap: 22px;

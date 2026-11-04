@@ -208,9 +208,17 @@ pre.showcase-code {
 		inset 0 0 0 7px var(--ok-mark);
 }
 @media (forced-colors: active) {
+	/* Shape and fill still tell the marks apart, in the system's colours. */
 	.cell {
 		forced-color-adjust: none;
+		background: Canvas;
 		outline: 1px solid CanvasText;
+	}
+	.cell.ok {
+		background: CanvasText;
+	}
+	.cell.running {
+		background: Highlight;
 	}
 }
 
@@ -640,6 +648,12 @@ pre.showcase-code {
 	}
 }
 @media (max-width: 640px) {
+	.feature h3 a,
+	.steps a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 40px;
+	}
 	.feature-grid {
 		grid-template-columns: minmax(0, 1fr);
 	}

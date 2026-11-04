@@ -643,9 +643,9 @@ const generatedBlocks = {
 // ------------------------------------------------------------ writing
 
 /**
- * Every markdown table sits in a named region, so a wide one scrolls without
- * losing its own semantics; src/lib/scrolling-tables.ts gives the tab stop to a
- * region that really scrolls.
+ * Every markdown table sits in a wrapper, so a wide one scrolls without losing
+ * its own semantics; src/lib/scrolling-tables.ts names a wrapper that really
+ * scrolls and gives it a tab stop.
  */
 function wrapTables(text) {
 	const { lines, inCode } = scan(text);
@@ -656,7 +656,7 @@ function wrapTables(text) {
 			out.push(lines[i]);
 			continue;
 		}
-		out.push('<div class="table-wrap" role="region" aria-label="Table">', '');
+		out.push('<div class="table-wrap">', '');
 		while (i < lines.length && lines[i].startsWith('|')) out.push(lines[i++]);
 		out.push('', '</div>', '');
 		i--;

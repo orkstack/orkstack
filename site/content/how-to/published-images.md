@@ -31,6 +31,7 @@ ORK_S3_SECRET_KEY=replace-me
 ORK_S3_PATH_STYLE=false
 ORK_ADMIN_ADDR=127.0.0.1:9464
 ORK_DEPLOYMENT_NAME=orkstack
+# Setting ORK_BUILD_ID turns versioning on. Leave it out to run unversioned.
 ORK_BUILD_ID=0.1.0
 ```
 
@@ -82,6 +83,8 @@ services:
       retries: 3
 ```
 
+With `ORK_BUILD_ID` set in `ork.env` and `orker.env`, run `orkctl release promote 0.1.0` once, after the first start. Until you do, runs sit idle, because the new release has no traffic. To run unversioned, leave `ORK_BUILD_ID` out.
+
 ## What the Orker needs
 
 - **The Docker socket.** Each task's container starts through the host's Docker daemon. Whoever can use the socket can start a privileged container, so give it to the Orker and to nothing else.
@@ -99,6 +102,7 @@ An Orker's boot runs a probe container. On an overloaded daemon the boot can tak
 ## What you choose
 
 - **The release.** Use the version tag or the digest, and the same `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on every `ork` and `orker`. Leaving `ORK_BUILD_ID` unset turns versioning off. Setting it turns versioning on, and then the first versioned release needs one call: `orkctl release promote 0.1.0`. Until that call, submitted runs wait. [Upgrades](/docs/deploy/upgrades/) covers the rest.
+- **Activities.** `uses: shell` resolves to `ghcr.io/orkstack/activity-shell:0.1`. That tag moves with each patch release. To pin an exact release, or to use a mirror, set `ORK_ACTIVITY_CATALOG` on `ork`. See [Configuration](/docs/configuration/#activities).
 - **Temporal.** The address, and one namespace per environment. See [Requirements](/docs/deploy/requirements/).
 - **The bucket.** Its endpoint, region and path style. Every `ork` and `orker` must share it.
 - **The pool.** Set `ORK_ORKER_POOL` on the Orkers that join a pool. Leave it unset on `ork` unless you change the default pool. See [Pools, Orkers and pins](/docs/operate/pools-and-orkers/).

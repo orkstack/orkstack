@@ -1,102 +1,125 @@
 # Your first activity image
 
-Build the shell image in `examples/custom-image-shell/`, check the settings it declares, and run one of its tasks on your machine.
+Turn a small shell script into an image, push it to the quickstart's registry, and run it as a task of an Orkflow. It takes about ten minutes.
 
-> **This tutorial uses the development stack.** It runs OrkStack's processes on your machine, beside a registry on `localhost:5001` that the steps push the image to. If the quickstart is running, stop it first with `docker compose down`: the two use the same ports.
+## What you need
 
-You need Docker, Go, Bun, make, git and curl, as [Contributing](/docs/contributing/) lists.
+This tutorial continues the quickstart. Finish [Your first Orkflow](/docs/get-started/first-orkflow/), or [Run it locally](/docs/get-started/run-locally/), first, so the stack is up. You need Docker and the clone from those steps. Nothing else: no Go, no Bun, no make.
 
-## 1. Start the local stack
+An activity is an image that reads its inputs from `/orkstack/input`, writes its results to `/orkstack/output`, and exits. This one has no OrkStack SDK or library. It follows the file contract and nothing more.
 
-```bash
-make infra-up
-make -C images push
-make up
-```
-
-- `make infra-up` starts Temporal, SeaweedFS and a registry on `localhost:5001`.
-- `make -C images push` builds the first-party activities and pushes them to that registry. The example Orkflow in step 7 uses them.
-- `make up` builds `./bin/ork`, `./bin/orker` and `./bin/orkctl`, and starts them with the UI's dev server on http://localhost:5173. It prints `OrkStack is up` when every part answers.
-
-The steps below use `./bin/orkctl`.
-
-## 2. Read the image
-
-The image is two files: a `Dockerfile` and an `entrypoint.sh` script. The script reads two files the platform writes, `/orkstack/input/task.json` and `/orkstack/input/config.json`. The second one holds the task's `with:` block. It writes `/orkstack/output/values.json`, and, when you set `src:`, a report file in `/orkstack/output/artifacts/`.
-
-The script exits `0` on success. On any error it exits `1` and writes one line to stderr. The image has no SDK and no OrkStack code. It is an activity only because it follows the file contract.
-
-## 3. Build and push the images
+## 1. Check the stack
 
 ```bash
-./bin/orkctl activity build examples/custom-image-shell --tag localhost:5001/orkstack-examples/custom-image-shell:dev
-./bin/orkctl activity build examples/custom-image --tag localhost:5001/orkstack-examples/custom-image:dev
+docker compose ps
 ```
 
-Each build pushes its image and prints two `uses:` lines. One has the tag. The other has the same name with `@sha256:` and a digest. The second command builds the Go image of the same activity, which the example Orkflow also uses.
+The `temporal`, `seaweedfs`, `registry`, `ork` and `orker` services should be running, and `ork` and `orker` should be healthy. If one is not, start the stack again with `docker compose up --build -d --wait`.
 
-## 4. Check the settings the image declares
+## 2. Write the image
+
+In the clone's folder, create a folder named `hello-image` with two files.
+
+`hello-image/Dockerfile`:
+
+```dockerfile
+# Alpine Linux, pinned by digest.
+FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+RUN apk add --no-cache 'jq~1.8'
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod 0555 /usr/local/bin/entrypoint.sh
+# never root
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
+```
+
+`hello-image/entrypoint.sh`:
+
+```sh
+#!/bin/sh
+# Greets the name in the task's with: block.
+set -eu
+umask 022
+
+who=$(jq -r '.who' /orkstack/input/config.json)
+echo "hello $who from my own image"
+jq -nc --arg greeting "hello $who" '{greeting: $greeting}' > /orkstack/output/values.json
+```
+
+The script reads the task's `with:` block from `/orkstack/input/config.json`. What it prints goes to the task's log. It writes one JSON object to `/orkstack/output/values.json`, which is the task's output. Exit `0` means success. Any failure should exit non-zero, and `set -eu` does that for a failed command.
+
+## 3. Build and push the image
 
 ```bash
-./bin/orkctl activity inspect localhost:5001/orkstack-examples/custom-image-shell:dev
+docker build -t 127.0.0.1:5002/hello-image:0.1 hello-image
+docker push 127.0.0.1:5002/hello-image:0.1
 ```
 
-The image declares three `with:` keys: `label`, `src` and `as`. Without `src`, it writes no report. `orkctl` reads these keys from a label on the image. The container never reads the label.
+The registry is the quickstart's own. It listens on this machine only, on port 5002. Its address is the one the engine reads, and the Orker's Docker pulls the image from it when a task runs. If you set `ORKSTACK_REGISTRY_PORT` in `.env`, use that port here and in the Orkflow. Write `127.0.0.1` as shown, not `localhost`.
 
-## 5. Run one task on your machine
+## 4. Write the Orkflow
 
-The task `report-shell` runs this image. It reads the output of `probe`, a task you have not run. So you supply that output with `--output`:
+Save this as `hello-image.ork.yaml`, in the clone's folder:
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+name: hello-image
+version: "0.1.0"
+
+inputs:
+  who:
+    type: string
+    default: world
+
+tasks:
+  - id: greet
+    uses: 127.0.0.1:5002/hello-image:0.1
+    with:
+      who: "{{ .inputs.who }}"
+```
+
+`uses:` names the image by its registry address, not by a catalog name. Apply resolves the tag to a digest, and the run uses that digest.
+
+## 5. Apply it and run it
 
 ```bash
-./bin/orkctl task run --file examples/custom-image.ork.yaml --task report-shell \
-  --output probe='{"idempotencyKey":"x","attempt":1,"taskId":"probe","argv":[]}' \
-  --keep
+orkctl apply hello-image.ork.yaml
+orkctl run submit hello-image --input who=Ada --watch
 ```
 
-`task run` starts the container on this machine. It writes nothing to the deployment: no run, no commit and no log. Any external side effect the container performs is real.
+`run submit` prints `Submitted run` with the run's ID, then follows the run until it ends. The last line reads `Run <id> finished with status SUCCEEDED`.
 
-Expect this, in order:
+## 6. Read the log and the output
 
-- The rendered `config.json` is printed before the container starts.
-- A result line, `SUCCEEDED`, and an `exit code` of `0`.
-- `values`: a JSON object with `idempotencyKey`, `attempt`, `taskId` and `argv`. It also has `label`, because the task sets `label:`, and `source`, `artifact` and `stats`, because `src` is set.
-- `artifacts`: one row, `report-shell.txt`, with its size and sha256.
-- `workspace kept at <path>`, because you passed `--keep`.
-
-## 6. Read the report
-
-Replace `<path>` with the path from step 5:
+Use the run ID from step 5 in place of `<run-id>`:
 
 ```bash
-cat <path>/output/artifacts/report-shell.txt
+orkctl run logs <run-id> --task greet
 ```
 
-The report is exactly seven lines: `activity report`, then `label`, `source`, `argv`, `lines`, `words` and `bytes`. The `argv` line shows `{{ .inputs.label }}` as written. The task's `command:` is passed as written, and OrkStack does not render it.
+The log reads `hello Ada from my own image`. Leave out `--input who=Ada` and the task greets `world`.
 
-## 7. Run the whole example (optional)
-
-The example Orkflow runs both images:
+The output is the task's `values.json`. The run page in the UI shows it under the task. To save the file, use the installed `orkctl` binary, because the alias cannot write files. [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains how to install it.
 
 ```bash
-./bin/orkctl apply examples/custom-image.ork.yaml
-./bin/orkctl run submit custom-image --watch
+orkctl run artifact download <run-id> --task greet --kind values --name values.json --output greeting.json
+cat greeting.json
 ```
 
-The Go image runs `probe`, `report` and `per-label`. The shell image runs `report-shell`. Given the same configuration and the same source file, both images write byte-identical reports. The `collate` task joins them into `both-reports.txt`. The run should finish with `finished with status SUCCEEDED`. The repository's test suite runs this example end to end.
-
-## Do not use `orkctl activity test` on this image
-
-`orkctl activity test` drives the shell activity's `op: exec` configuration. This image does not read that configuration, so the test's assertions do not describe it. Use `task run`, as in step 5, to try this image.
+The file holds one JSON object, `{"greeting":"hello Ada"}`.
 
 ## Next
 
-- [Build an activity image](/docs/activities/build-an-image/): write an image of your own.
+- [Build an activity image](/docs/activities/build-an-image/): the rules every image follows, and how to declare what it accepts.
 - [Test an activity image](/docs/activities/test-an-image/): the test command, and its limits.
 - [Activities](/docs/concepts/activities/): the contract this image follows.
-- [Custom image example](/docs/examples/custom-image/): the Orkflow that uses both images.
 
 ## See also
 
-- [examples/custom-image-shell/README.md](https://github.com/orkstack/orkstack/blob/main/examples/custom-image-shell/README.md): the image's configuration, output and errors.
-- [docs/OCI_ACTIVITY_CONTRACT.md](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#0-the-one-paragraph-version): the contract in one paragraph.
-- [docs/ACTIVITY_IMAGES.md](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md): the conventions the first-party images share.
+- [docs/GETTING_STARTED.md, "2. Start OrkStack"](https://github.com/orkstack/orkstack/blob/main/docs/GETTING_STARTED.md#2-start-orkstack): the stack, its ports and the registry port.
+- [docs/OCI_ACTIVITY_CONTRACT.md, "0. The one-paragraph version"](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#0-the-one-paragraph-version): the contract in one paragraph.
+- [docs/OCI_ACTIVITY_CONTRACT.md, "10.1 The Dockerfile and entry-script rules"](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#101-the-dockerfile-and-entry-script-rules): what a Dockerfile and its entry script must do.
+- [docs/ACTIVITY_IMAGES.md, "The op convention"](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#the-op-convention): a task that puts a registry reference directly in `uses:`.
+- [docs/CLI.md, "orkctl run artifact download"](https://github.com/orkstack/orkstack/blob/main/docs/CLI.md#orkctl-run-artifact-download): every flag of the download.
+- [examples/custom-image-shell/README.md](https://github.com/orkstack/orkstack/blob/main/examples/custom-image-shell/README.md): a larger image of the same kind, in POSIX shell.

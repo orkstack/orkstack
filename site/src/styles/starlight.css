@@ -530,8 +530,8 @@ h1#_top {
 	display: inline-flex;
 	align-items: center;
 	gap: 6px;
-	height: 22px;
-	padding: 0 8px;
+	min-height: 22px;
+	padding: 2px 8px;
 	border-radius: var(--radius-full);
 	background: var(--navy-tint);
 	color: var(--navy-text);
@@ -539,8 +539,8 @@ h1#_top {
 	font-weight: 600;
 }
 .gens .gen {
-	height: 28px;
-	padding: 0 12px;
+	min-height: 28px;
+	padding: 2px 12px;
 	text-decoration: none;
 }
 .gens .gen:hover {
@@ -771,6 +771,10 @@ starlight-toc ul ul a {
 	padding-inline-start: 24px;
 	font-size: var(--text-sm);
 }
+/* The panel scrolls, so it clips: the ring stays inside it. */
+starlight-toc a:focus-visible {
+	outline-offset: -2px;
+}
 starlight-toc a:hover {
 	color: var(--ink);
 }
@@ -821,12 +825,18 @@ mobile-starlight-toc nav {
 /* The foot runs under the page, beside the fixed tree; behind the open menu it
    leaves the tab order with the page. */
 @media (min-width: 50em) {
-	.foot-site {
+	[data-has-sidebar] .foot-site {
 		margin-inline-start: var(--sl-sidebar-width);
 	}
-	.foot-site .wrapw {
+	[data-has-sidebar] .foot-site .wrapw {
 		max-width: none;
 		padding-inline: var(--sl-content-pad-x) 1.5rem;
+	}
+}
+/* The fixed contents panel runs the page's whole height: the foot keeps clear. */
+@media (min-width: 72rem) {
+	[data-has-toc] .foot-site {
+		margin-inline-end: var(--toc-width);
 	}
 }
 body:has(#starlight__sidebar:popover-open) .foot-site {
@@ -840,12 +850,17 @@ body:has(#starlight__sidebar:popover-open) .foot-site {
 
 /* ---------------------------------------------- phones and forced colours */
 @media (max-width: 640px) {
+	site-search > button {
+		min-width: 40px;
+	}
 	site-search > button,
 	.gens .gen,
-	.crumb a {
+	.crumb a,
+	.meta a {
 		min-height: 40px;
 	}
-	.crumb a {
+	.crumb a,
+	.meta a {
 		display: inline-flex;
 		align-items: center;
 	}

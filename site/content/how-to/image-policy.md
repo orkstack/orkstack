@@ -82,6 +82,8 @@ orkctl namespace update ops --require-signed-by cosign:orkstack
 cosign verify --key cosign.pub --insecure-ignore-tlog=true ghcr.io/orkstack/ork@sha256:<digest>
 ```
 
+The images of v0.1.0 use cosign's legacy signature layout. Later releases use cosign 3's bundle layout, which an engine or Orker of v0.1.0 cannot read. Read [Upgrading from 0.1.0](/docs/deploy/upgrades/#upgrading-from-010) before you require this key on a v0.1.0 deployment.
+
 Rotate a key without a gap: add the new key under a new name, re-sign, move each namespace's `--require-signed-by`, then remove the old name.
 
 ## See also

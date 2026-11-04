@@ -46,7 +46,7 @@
 				{
 					"route": "docs/get-started/first-activity",
 					"title": "Your first activity image",
-					"description": "Turn a shell script into an activity image and run it as a task of an Orkflow.",
+					"description": "Turn a small shell script into an image, push it to the quickstart's registry, and run it as a task of an Orkflow.",
 					"parts": [
 						{
 							"source": "site/content/tutorials/first-activity.md"

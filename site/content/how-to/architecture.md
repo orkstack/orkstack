@@ -10,7 +10,7 @@ A deployment runs one Temporal cluster, one S3-compatible bucket, any number of 
 |---|---|---|
 | Temporal | The cluster you operate | Live runs, task state, retries, idempotency claims |
 | S3-compatible bucket | Storage only | Definitions, artifacts, task logs, finished runs, audit records, cache memos |
-| `ork` replicas | The API, the WebSocket bridge, the web UI, and run workflows | Nothing durable |
+| `ork` replicas | The API, the WebSocket bridge, the web UI, and runs | Nothing durable |
 | `orker` pools | Task containers, on a Docker or Podman engine on each Orker's host | Nothing durable |
 
 A replica can stop at any time. Its runs carry on through the other replicas, and a client that reconnects to any replica reads the same run.
@@ -19,7 +19,7 @@ A replica can stop at any time. Its runs carry on through the other replicas, an
 
 - Every replica runs with the same Temporal address and namespace, release identity, pool, and bucket settings. Only `ORK_HTTP_ADDR` must differ, and only when replicas share a host.
 - Put one address in front of the replicas, with a load balancer, an ingress or DNS round robin. No affinity to one replica is needed.
-- Each replica also polls the engine's own work, so adding a replica adds workflow capacity as well as API capacity.
+- Each replica also polls the engine's own work, so adding a replica adds capacity for runs as well as API capacity.
 - Point `orkctl` at any replica with `--server` or `ORK_SERVER`.
 
 ## Pools: M Orker pools

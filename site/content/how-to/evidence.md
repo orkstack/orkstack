@@ -57,7 +57,7 @@ orkctl run evidence verify run.tar.gz --against-store   # also compare with the 
 `verify` needs no server and no credentials. It writes nothing to disk. It hashes every member and compares it with the manifest.
 
 - A member whose bytes do not match is named, and the command exits `1`.
-- A `reclaimed` or `unrecorded` member is a finding. The command still exits `0` and lists it.
+- A `reclaimed`, `unrecorded` or `rejected` member is a finding. The command still exits `0` and lists it.
 - `--against-store` asks the engine for the run's live manifest, and reports any member that differs.
 
 ## What a gap means

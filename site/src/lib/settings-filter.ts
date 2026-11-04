@@ -59,6 +59,12 @@ export function wireSettingsFilter(doc: Document): void {
 				} else if (!inFold && opened.delete(more)) more.open = false;
 			}
 			for (const el of area.head) el.hidden = !any;
+			// The contents link only to what is left.
+			const id = (area.head[0].matches('h2') ? area.head[0] : area.head[0].querySelector('h2'))?.id;
+			if (id) for (const link of doc.querySelectorAll(`a[href="#${id}"]`)) {
+				const item = link.closest('li');
+				if (item) item.hidden = !any;
+			}
 		}
 		// The count is a live region: it speaks once the typing settles.
 		clearTimeout(announce);

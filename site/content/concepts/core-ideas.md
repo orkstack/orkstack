@@ -25,7 +25,7 @@ tasks:
       interpreter: sh
       script: |
         set -eu
-        echo "hello {{ sh .inputs.who }}"
+        echo hello {{ sh .inputs.who }}
 
   - id: goodbye
     uses: shell
@@ -36,7 +36,7 @@ tasks:
       interpreter: sh
       script: |
         set -eu
-        echo "goodbye {{ sh .inputs.who }}"
+        echo goodbye {{ sh .inputs.who }}
 ```
 
 ## The words

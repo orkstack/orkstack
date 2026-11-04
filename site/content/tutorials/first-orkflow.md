@@ -11,7 +11,7 @@ Nothing else is needed: no toolchain and no database. The compose file builds th
 
 This path is checked on Linux with Docker Engine, on amd64. Docker Desktop on macOS and Windows, and arm64, are not checked yet.
 
-If you did [Run it locally](/docs/get-started/run-locally/), the stack is up: skip to step 4, Apply the Orkflow.
+If you did [Run it locally](/docs/get-started/run-locally/), the stack is up. Skip to step 3 in a new terminal, otherwise skip to step 4, Apply the Orkflow. The alias from step 3 lasts only for one terminal window.
 
 ## 1. Clone the repository
 
@@ -108,7 +108,7 @@ tasks:
       interpreter: sh
       script: |
         set -eu
-        echo "hello {{ sh .inputs.who }}"
+        echo hello {{ sh .inputs.who }}
 
   - id: goodbye
     uses: shell
@@ -119,7 +119,7 @@ tasks:
       interpreter: sh
       script: |
         set -eu
-        echo "goodbye {{ sh .inputs.who }}"
+        echo goodbye {{ sh .inputs.who }}
 ```
 
 The `orkctl` alias reads the clone's folder, so the file must be saved there. Then apply it, run it with one input, and read the log of its first task:

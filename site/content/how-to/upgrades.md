@@ -64,10 +64,9 @@ Versioning is off while `ORK_BUILD_ID` is unset. A run that started before versi
 
 1. Hold each namespace that takes runs: `orkctl namespace update NS --hold "versioning rollout"`.
 2. Let the running runs finish. `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists the ones still open.
-3. Make the first versioned release current: `orkctl release promote "$FIRST"`. It refuses while a run that started before versioning is still executing.
-4. Release each hold: `orkctl namespace update NS --release-hold`.
-
-Set `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on every process first, as [Set the release identity](#set-the-release-identity) says.
+3. Start the first versioned release. Restart every `ork` and every `orker` with `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` set, as [Set the release identity](#set-the-release-identity) says. The new release must be running before the next step: `orkctl release status` lists it as a candidate.
+4. Make the first versioned release current: `orkctl release promote "$FIRST"`. It refuses while the release cannot take runs, and while a run that started before versioning is still executing.
+5. Release each hold: `orkctl namespace update NS --release-hold`.
 
 ## Check the defaults
 
@@ -78,6 +77,15 @@ ork --defaults
 ```
 
 Set any key yourself if you need an older value.
+
+## Upgrading from 0.1.0
+
+Four things differ on a deployment that runs 0.1.0. Check each one before you upgrade it.
+
+- **Signatures.** The images of v0.1.0 are signed in cosign's legacy `.sig` layout. Later releases sign in cosign 3's bundle layout. An engine or Orker of v0.1.0 cannot read the bundle layout, so it refuses such an image with `IMAGE_NOT_SIGNED`.
+- **Catalog names.** The built-in catalog names the first-party images by their `0.1` tag, and that tag moves to each patch release. A v0.1.0 deployment whose namespace requires `cosign:orkstack` refuses `uses: shell`, and the other first-party activities, at its next apply or submit once a later 0.1 release is out. Upgrade every engine and Orker to that release. Until then, name the v0.1.0 images by digest in `ORK_ACTIVITY_CATALOG`.
+- **Orkers.** Upgrade the Orkers together with the engines. Once an engine is upgraded, it accepts a bundle-signed image at apply and at submit. A v0.1.0 Orker that still polls refuses that run's task with `IMAGE_NOT_SIGNED` when the run's namespace requires a signer. That refusal is a contract violation, which is never retried, so the run fails. A namespace that requires no signer is not affected.
+- **Boot probe.** v0.1.0 runs its boot probe on Alpine 3.20. The release after 0.1.0 moves it to Alpine 3.24. An Orker that cannot pull `docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a` refuses to start with `BIND_PROBE_IMAGE_UNAVAILABLE`. On an air-gapped or rate-limited host, mirror or load that image before the Orkers start.
 
 ## See also
 
