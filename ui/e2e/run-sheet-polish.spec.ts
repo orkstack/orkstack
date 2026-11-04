@@ -474,10 +474,9 @@ test('at 390 px the drawing starts on the first screen, and the secondary action
 	// The id is drawn short in its plate; the whole id stays in the plate's text.
 	await expect(page.getByTestId('run-id')).toContainText(failedRun);
 	await expect(page.getByTestId('run-id').getByText(`ork-…${failedRun.slice(-6)}`, { exact: true })).toBeVisible();
-	// On a phone the saga's DAG reads top to bottom (the Direction Rule), in
-	// a frame tall enough for all of it — or, where it is not, one that says
-	// there is more below.
-	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'TB');
+	// On a phone a run's graph still reads left to right, in a frame that
+	// scrolls it, and tall enough for all its rows.
+	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'LR');
 	const phone = await page.evaluate(() => {
 		const panel = document.querySelector('[data-testid="run-drawing"]')!.getBoundingClientRect();
 		const boxes = [...document.querySelectorAll('[data-testid="run-dag"] g.dag-node rect.dag-outline')].map((r) => r.getBoundingClientRect());
@@ -490,10 +489,7 @@ test('at 390 px the drawing starts on the first screen, and the secondary action
 	// The caption keeps its count whatever it shortens.
 	await expect(page.getByTestId('run-drawing-sub')).toContainText('6 tasks');
 	await page.screenshot({ path: out('failed-run-390-first.png') });
-	// Read left to right, it scrolls sideways; the scroll controls sit on the
-	// frame's top band, never over a node.
-	await page.goto(`${UI_ORIGIN}/runs/${failedRun}?ns=default&dag=lr`);
-	await expect(page.getByTestId('run-dag')).toHaveAttribute('data-direction', 'LR');
+	// The scroll controls are for a pointer: on a phone none sits over a node.
 	const band = await page.evaluate(() => {
 		const nodes = [...document.querySelectorAll('[data-testid="run-dag"] g.dag-node')].map((n) => n.getBoundingClientRect());
 		const buttons = ['run-dag-scroll-left', 'run-dag-scroll-right'].map((id) => document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect());
