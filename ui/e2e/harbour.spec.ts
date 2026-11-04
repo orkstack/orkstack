@@ -395,6 +395,36 @@ test('at 390 px Import and Export fold into More, a plain disclosure that Escape
 	await shot(page, 'editor-390.png');
 });
 
+test('a shell icon\'s copy buttons are icons named Copy, and a click puts the command on the clipboard', async ({ page, context }) => {
+	// Regression: the buttons were the words Copy and Copy command, and no spec read the clipboard back.
+	await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: ENGINE });
+	const clipboard = () => page.evaluate(() => navigator.clipboard.readText());
+
+	// The page's command line: one icon per command, the check on the one copied.
+	await page.goto(at('/admin/pools'));
+	await page.getByTestId('pools-cli-trigger').click();
+	const panel = page.getByRole('dialog', { name: 'Command line for this page' });
+	const copy = panel.getByRole('button', { name: /^Copy: / }).first();
+	await expect(copy).toHaveText('');
+	await copy.hover();
+	await expect(page.getByRole('tooltip')).toHaveText('Copy');
+	await copy.click();
+	await expect(panel.getByRole('status')).toHaveText(/^Copied: /);
+	expect(await clipboard()).toBe((await page.getByTestId('pools-cli-command-0').innerText()).trim());
+	await page.keyboard.press('Escape');
+
+	// A form's own command line: the same button, its word now the name alone.
+	await page.goto(at(`/orkflows/${FAN}`));
+	await page.getByTestId('orkflow-submit-run').click();
+	await page.getByRole('button', { name: 'CLI equivalent of this submission' }).click();
+	const one = page.getByRole('button', { name: 'Copy command' });
+	await expect(one).toHaveText('');
+	await one.click();
+	await expect(page.getByTestId('run-submit-cli-copied')).toHaveRole('status');
+	await expect(page.getByTestId('run-submit-cli-copied')).toHaveText('Copied');
+	expect(await clipboard()).toBe((await page.getByTestId('run-submit-cli-command').innerText()).trim());
+});
+
 test('an Orkflow tab says its count apart from its name, and the Runs table says its order', async ({ page }) => {
 	// Regression: a screen reader read "Versions1", and nothing said the runs were newest first.
 	await page.goto(at(`/orkflows/${FAN}`));

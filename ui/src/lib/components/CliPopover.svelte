@@ -9,8 +9,10 @@
 
 <script lang="ts">
 	// The command line for a screen, only behind the terminal icon (brief
-	// §6.4): a popover listing this screen's orkctl commands, each with Copy.
+	// §6.4): a popover listing this screen's orkctl commands, each with a copy
+	// icon, which turns to a check once it has copied.
 	// It closes on Escape and when focus leaves it.
+	import { tick } from 'svelte';
 	import Icon from './Icon.svelte';
 	import Popover from './Popover.svelte';
 	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '#lib/clipboard.ts';
@@ -26,10 +28,16 @@
 
 	let open = $state(false);
 	let status = $state('');
+	let copiedAt = $state(-1);
 
 	async function copy(i: number): Promise<void> {
+		// Emptied first, so a second copy of one command is announced too.
+		status = '';
+		copiedAt = -1;
+		await tick();
 		if ((await copyText(commands[i].command)) === 'copied') {
 			status = `Copied: ${commands[i].label}`;
+			copiedAt = i;
 			return;
 		}
 		selectByTestid(`${testid}-command-${i}`);
@@ -50,6 +58,7 @@
 			onclick={() => {
 				open = !open;
 				status = '';
+				copiedAt = -1;
 			}}><Icon name="term" /></button
 		>
 	{/snippet}
@@ -66,8 +75,8 @@
 						<pre
 							data-testid="{testid}-command-{i}"
 							class="min-w-0 flex-1 rounded-sm border border-line bg-surface-2 px-2.5 py-1.5 font-mono text-xs leading-normal break-words whitespace-pre-wrap text-ink">{cmd.command}</pre>
-						<button type="button" class="btn btn-sm" aria-label="Copy: {cmd.label}" data-testid="{testid}-copy-{i}" onclick={() => void copy(i)}
-							>Copy</button
+						<button type="button" class="btn btn-sm btn-icon" aria-label="Copy: {cmd.label}" data-tip="Copy" data-testid="{testid}-copy-{i}" onclick={() => void copy(i)}
+							><Icon name={copiedAt === i ? 'apply' : 'copy'} /></button
 						>
 					</div>
 				</div>

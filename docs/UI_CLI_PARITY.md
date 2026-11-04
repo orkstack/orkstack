@@ -53,12 +53,12 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   output is refused and names the command that prints it.
 - **Every action has its CLI equivalent.** Behind the terminal icon of each
   page (and of a run's task row) the UI lists that page's shell-escaped,
-  runnable `orkctl` (or `curl`) commands, each with Copy, carrying the
+  runnable `orkctl` (or `curl`) commands, each with a copy icon, carrying the
   namespace, version, task, attempt and item where they apply; the commands
   are never printed on the page itself. A quote in a value cannot become
   shell syntax. A word is quoted only when a shell would read it as syntax (a
   space, a quote, `$`, `*`, `~`, a leading `=`), so the command reads the way
-  a person types it. Copy works on a plain-HTTP origin too (where the browser
+  a person types it. The copy icon works on a plain-HTTP origin too (where the browser
   offers no Clipboard API, it falls back to the legacy copy command); when the
   browser refuses both, the command is selected on screen and the page says to
   copy it by hand. A copy never silently does nothing.
