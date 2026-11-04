@@ -504,8 +504,8 @@ h1#_top {
 		border-inline-start: var(--rule-hair) solid var(--line);
 		background: var(--surface);
 	}
-	.expressive-code .ec-line {
-		padding-inline-end: 2.75rem;
+	.expressive-code .ec-line .code {
+		padding-inline-end: calc(var(--ec-codePadInl) + 2.75rem);
 	}
 }
 .sl-heading-wrapper .sl-anchor-link {
