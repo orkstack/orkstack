@@ -1676,5 +1676,13 @@ Unless an accepted contract explicitly changes one, these are non-negotiable:
 - every terminal failure has machine-readable and human-readable reasons;
 - an engineer must never edit a database record to unstick an execution.
 
+The first has one stated exception (accepted 2026-11-04): a finished run with no
+archive is lost if object storage stays down until the cluster's delete time for
+that run, which is fixed when the run closes and cannot be postponed. While that
+risk stands, every pass of the archive sweep logs an error and reports a metric
+with the runs at risk and when the first of them expires; that is what the
+operator gets (`docs/DEPLOY.md`, "The archive sweep"). A run with an archive, and
+a run not yet finished, are outside it.
+
 The objective is not feature count. It is the smallest durable execution
 substrate engineers can trust with consequential production operations.
