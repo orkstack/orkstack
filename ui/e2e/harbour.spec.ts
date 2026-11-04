@@ -220,8 +220,8 @@ test('a hovered tooltip stays while the pointer crosses onto it, the next tip fo
 	await expect(tip).toBeVisible();
 	// Sweeping straight on to the next tipped control shows its tip: the old
 	// tip's pending hide never cancels the new one's show.
-	await page.getByTestId('run-progress').hover();
-	await expect(tip).toHaveText(/tasks and items ended|tasks ended/);
+	await page.getByTestId('run-stability-toggle').hover();
+	await expect(tip).toHaveText(/retr/i);
 	await page.mouse.move(5, 5);
 	await expect(tip).toBeHidden();
 	expect(await page.locator('body [title]:not(svg *)').count()).toBe(0);

@@ -393,7 +393,7 @@ test('a failed item fails the run and names itself', async ({ page }) => {
 	await expect(page.getByTestId('run-error-reason')).toContainText('CONTAINER_EXIT_NONZERO');
 	await expect(page.getByTestId('run-error-message')).toHaveText('Item 3 of 6 failed: the container of convert exited 1');
 	await expect(page.getByTestId('task-convert-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
-	await expect(page.getByTestId('task-convert-error-message')).toHaveText('item 3 of 6 failed: task "convert": the container exited 1');
+	await expect(page.getByTestId('task-convert-error-message')).toHaveText('Item 3 of 6 failed: the container exited 1');
 	for (const id of ['run-error', 'task-convert-error']) {
 		for (const word of ['activity error', 'scheduledEventID', 'identity:', '(type:']) {
 			await expect(page.getByTestId(id)).not.toContainText(word);

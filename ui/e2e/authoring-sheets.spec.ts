@@ -39,7 +39,7 @@ import { fillYaml } from './yaml';
 //   orkflows   the register: exactly one link in every row (the NAME);
 //   orkflow    the DAG on the grid beside the versions it has, current and
 //              head marked, the header naming what is shown (its version and
-//              definition plates); exactly one "View runs" link, in the
+//              definition plates); its runs a tab, not a link in the
 //              header's actions; every tab;
 //   palette    on an Orkflow page, Submit a run… opens the page's own dialog
 //              and sends nothing; a task id jumps to its row;
@@ -281,7 +281,7 @@ test('orkflows: a register of NAME, VERSION, DIGEST, TASKS, APPLIED, LABELS with
 	note(`orkflows register: ${count} rows, one link each`);
 });
 
-test('orkflow sheet: the DAG beside its versions, the header facts, one View runs in the header', async ({ page }) => {
+test('orkflow sheet: the DAG beside its versions, the header facts, its runs a tab', async ({ page }) => {
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto(sagaUrl());
 	await expect(page.getByTestId('orkflow-dag')).toBeVisible();
@@ -336,7 +336,7 @@ test('orkflow sheet: every tab renders, with axe', async ({ page }) => {
 		await expect(page.getByTestId(ready)).toBeVisible();
 		await expect(page.getByTestId(`tab-${tab}`)).toHaveAttribute('aria-current', 'page');
 		if (tab === 'versions') await expect(page.getByTestId('callers-table').or(page.getByTestId('callers-empty'))).toBeVisible();
-		await expect(page.getByRole('link', { name: /View runs/ })).toHaveCount(1);
+		await expect(page.getByTestId('tab-runs')).toBeVisible();
 		await page.screenshot({ path: out(`screenshot-orkflow-${tab}-light-1280.png`), fullPage: true });
 		await axe(page, `Orkflow page, ${tab} (light)`);
 	}

@@ -334,7 +334,7 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	await expect(page.getByTestId('run-error-message')).toHaveText('The container of charge exited 3');
 	// (The failed task's reason is in the failure block under its row.)
 	await expect(page.getByTestId('task-charge-error-code')).toHaveText('CONTAINER_EXIT_NONZERO');
-	await expect(page.getByTestId('task-charge-error-message')).toHaveText('task "charge": the container exited 3');
+	await expect(page.getByTestId('task-charge-error-message')).toHaveText('The container of charge exited 3');
 	for (const id of ['run-error', 'task-charge-error']) {
 		for (const word of ['activity error', 'scheduledEventID', 'startedEventID', 'identity:', 'ExecuteTask', '(type:']) {
 			await expect(page.getByTestId(id)).not.toContainText(word);

@@ -1108,7 +1108,7 @@ test('the activity catalog is global and resolved, and an Orker outage is report
 
 	await page.goto(`${UI_ORIGIN}/admin/activities?ns=${OPS_NS}`);
 	await expect(page.getByTestId('activities-scope-caption')).toContainText(
-		'deployment-wide, not scoped'
+		'Deployment-wide: the same whichever namespace is selected'
 	);
 
 	// The catalog, in the RESPONSE's own order — §2.3 makes that order

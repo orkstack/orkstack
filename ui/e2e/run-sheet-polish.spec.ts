@@ -242,9 +242,10 @@ test('running: a RUNNING task is drawn in the running green, its dot and its map
 	// The page selects the task it follows, and a selected node's outline is the
 	// selection's: let it go to read the running colour.
 	await page.getByTestId('run-dag-clear').click();
+	// (The outline's colour eases, so it is read until it has.)
+	await expect.poll(async () => (await runningNode(page, 'long')).stroke).toBe(green);
 	const first = await runningNode(page, 'long');
 	note(`DAG running node (light): ${JSON.stringify(first)}`);
-	expect(first.stroke).toBe(green);
 	// A finished node is not drawn in the running green.
 	expect((await runningNode(page, 'warm')).stroke).not.toBe(green);
 	// Its stamp's dot is the same green and pulses (live-dot).

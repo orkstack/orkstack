@@ -279,7 +279,7 @@ async function inViewport(page: Page, testid: string): Promise<boolean> {
 	}, testid);
 }
 
-test('DAG: a small run opens on its DAG, drawn by status, one box per node, the handler dashed by attribute', async ({ page }) => {
+test('DAG: a small run opens on its DAG, drawn by status, one box per node, the handler in its own lane, its edge dashed by attribute', async ({ page }) => {
 	await page.goto(runUrl(sagaRun));
 	await expect(page.getByTestId('run-status')).toHaveText('Failed');
 	// The graph is always on the page, in a card of its own (the view tabs are gone).
@@ -293,7 +293,10 @@ test('DAG: a small run opens on its DAG, drawn by status, one box per node, the 
 	}
 	await expect(page.getByTestId('run-dag-node-charge')).toHaveAttribute('data-status', 'FAILED');
 	await expect(page.getByTestId('run-dag-node-validate')).toHaveAttribute('data-status', 'SUCCEEDED');
-	await expect(page.getByTestId('run-dag-node-refund').locator('rect.dag-outline')).toHaveAttribute('stroke-dasharray', '5 4');
+	// A dashed outline on a run page means a task that has not run: a handler is
+	// told by its join, its lane's label and its dashed edge.
+	await expect(page.getByTestId('run-dag-node-refund')).toHaveAttribute('data-join', /any_failed|all_done/);
+	await expect(page.getByTestId('run-dag-handlers')).toHaveText('Failure handlers');
 	await expect(page.getByTestId('run-dag-edge-charge-refund')).toHaveAttribute('stroke-dasharray', '5 4');
 	await expect(page.getByTestId('run-dag-node-charge').locator('rect.dag-outline')).not.toHaveAttribute('stroke-dasharray', /.+/);
 	// The Orkflow page's ids are its own.

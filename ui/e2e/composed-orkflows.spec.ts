@@ -183,6 +183,8 @@ test('a composed task links to its child run and rolls up its tasks live', async
 	expect(childSockets.filter((url) => url.includes(`/ws/runs/${childId}?`)).length <= 1).toBe(true);
 	note(`composed card below the fold: 0 child reads and 0 child sockets until scrolled to; then ${childReads.filter((id) => id === childId).length} read(s)`);
 	await page.setViewportSize({ width: 1280, height: 720 });
+	// Chosen, so its panel stays once the page has moved on to the next task.
+	await selectTask(page, 'release');
 	await page.getByTestId('task-release-child').scrollIntoViewIfNeeded();
 	await expect(page.getByTestId('task-release-child-task-sign-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await expect(page.getByTestId('task-release-child-task-publish-status')).toHaveText('Succeeded', { timeout: 120_000 });
