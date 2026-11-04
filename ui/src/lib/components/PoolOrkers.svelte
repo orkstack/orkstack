@@ -145,7 +145,9 @@
 			<p class="mx-4 my-2 text-dense text-fail" role="alert" data-testid="pool-orkers-action-error-{pool}">{actionError}</p>
 		{/if}
 		<div class="overflow-x-auto scroll-panel">
-			<table class="register orkers">
+			<!-- The phone layout makes rows of blocks: the roles keep it a table for assistive technology. -->
+			<!-- svelte-ignore a11y_no_redundant_roles -->
+			<table class="register orkers" role="table" aria-label="Orkers of pool {pool}">
 				<thead>
 					<tr>
 						<th scope="col">Orker</th>
@@ -160,30 +162,31 @@
 				<tbody>
 					{#each orkers as orker (orker.orkerId)}
 						{@const rowState = orkerState(orker)}
-						<tr data-testid="orker-row-{orker.orkerId}">
-							<th scope="row">
+						<!-- svelte-ignore a11y_no_redundant_roles -->
+						<tr role="row" data-testid="orker-row-{orker.orkerId}">
+							<th scope="row" role="rowheader">
 								<span class="font-mono text-sm font-medium break-all text-ink">{orker.orkerId}</span>
 								<small class="ork-sub">
 									{#if rowState !== 'unreachable'}build <span data-testid="orker-build-{orker.orkerId}">{orker.buildId || '-'}</span>{' · '}{/if}last seen <span data-testid="orker-last-seen-{orker.orkerId}">{fmtTimestamp(orker.lastSeen)}</span>
 								</small>
 							</th>
-							<td data-label="Status">
+							<td role="cell" data-label="Status">
 								<span class="stamp {stateClass[rowState]} capitalize" data-testid="orker-state-{orker.orkerId}">{rowState}</span>
 								{#if orker.cordoned}
 									<small class="ork-sub" data-testid="orker-reason-{orker.orkerId}">Cordoned since {fmtTimestamp(orker.cordonedAt)}: “{orker.cordonReason}”</small>
 								{/if}
 							</td>
 							{#if rowState === 'unreachable'}
-								<td colspan="4" class="text-dense text-ink-2" data-testid="orker-unavailable-{orker.orkerId}">
+								<td role="cell" colspan="4" class="text-dense text-ink-2" data-testid="orker-unavailable-{orker.orkerId}">
 									Could not be asked: {orker.unavailableReason}. Its load is <strong>unknown</strong>, not zero.
 								</td>
 							{:else}
-								<td data-label="cpu" class="num">{(orker.capacity?.cpu ?? 0) > 0 ? `${orker.reserved?.cpu ?? 0} of ${orker.capacity?.cpu}` : '—'}</td>
-								<td data-label="Memory" class="num">{(orker.capacity?.memoryBytes ?? 0n) > 0n ? `${formatBytes(orker.reserved?.memoryBytes ?? 0n)} of ${formatBytes(orker.capacity?.memoryBytes ?? 0n)}` : '—'}</td>
-								<td data-label="Running tasks" class="num" data-testid="orker-tasks-{orker.orkerId}">{orkerTasks(orker)}</td>
-								<td data-label="Open pins" class="num" data-testid="orker-pins-{orker.orkerId}">{orkerPins(orker)}</td>
+								<td role="cell" data-label="cpu" class="num">{(orker.capacity?.cpu ?? 0) > 0 ? `${orker.reserved?.cpu ?? 0} of ${orker.capacity?.cpu}` : '—'}</td>
+								<td role="cell" data-label="Memory" class="num">{(orker.capacity?.memoryBytes ?? 0n) > 0n ? `${formatBytes(orker.reserved?.memoryBytes ?? 0n)} of ${formatBytes(orker.capacity?.memoryBytes ?? 0n)}` : '—'}</td>
+								<td role="cell" data-label="Running tasks" class="num" data-testid="orker-tasks-{orker.orkerId}">{orkerTasks(orker)}</td>
+								<td role="cell" data-label="Open pins" class="num" data-testid="orker-pins-{orker.orkerId}">{orkerPins(orker)}</td>
 							{/if}
-							<td class="ork-actions">
+							<td role="cell" class="ork-actions">
 								{#if rowState !== 'unreachable'}
 									{#if orker.cordoned}
 										<button type="button" data-testid="orker-uncordon-{orker.orkerId}" disabled={uncordonBusy === orker.orkerId} onclick={() => void uncordon(orker)} class="btn btn-sm">Uncordon</button>

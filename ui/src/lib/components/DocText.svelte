@@ -9,8 +9,9 @@
 		limit,
 		lines = 2,
 		testid = undefined,
+		subject = '',
 		class: className = ''
-	}: { text: string; limit: number; lines?: number; testid?: string; class?: string } = $props();
+	}: { text: string; limit: number; lines?: number; testid?: string; subject?: string; class?: string } = $props();
 
 	const parts = $derived(docParts(text));
 	const long = $derived(docLong(text, limit));
@@ -20,7 +21,7 @@
 <span class="doc {className}" data-testid={testid}>
 	<span class="doc-text" class:clamped={long && !open} style:-webkit-line-clamp={long && !open ? lines : undefined}
 		>{#each parts as part, i (i)}{#if part.code}<code>{part.text}</code>{:else}{part.text}{/if}{/each}</span
-	>{#if long}<button type="button" class="doc-more" aria-expanded={open} onclick={() => (open = !open)}>{open ? 'Less' : 'More'}</button>{/if}
+	>{#if long}<button type="button" class="doc-more" aria-expanded={open} onclick={() => (open = !open)}>{open ? 'Less' : 'More'}{#if subject}<span class="sr">{' '}about {subject}</span>{/if}</button>{/if}
 </span>
 
 <style>

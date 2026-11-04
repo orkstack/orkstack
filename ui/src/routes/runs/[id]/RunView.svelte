@@ -1868,7 +1868,8 @@
 	// old pane would fall to the body, so it goes to the task's name instead.
 	let logFocusMoved = false;
 	$effect.pre(() => {
-		if (activeView?.status === Status.FAILED && document.activeElement?.closest('[data-run-log]')) logFocusMoved = true;
+		// A fan-out's log stays where it is: only a plain task's moves under its row.
+		if (activeView?.status === Status.FAILED && !isFanOut(activeView.id) && document.activeElement?.closest('[data-run-log]')) logFocusMoved = true;
 	});
 	$effect(() => {
 		const id = activeView?.status === Status.FAILED ? activeView.id : '';

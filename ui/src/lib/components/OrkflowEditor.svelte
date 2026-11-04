@@ -329,7 +329,7 @@
 </script>
 
 {#snippet headerActions()}
-				<button type="button" data-testid="editor-validate" disabled={validating || applying} onclick={() => void validate()} class="btn">{validating ? 'Validating…' : 'Validate'}</button>
+				<button type="button" data-testid="editor-validate" aria-disabled={validating || applying ? 'true' : undefined} onclick={() => { if (!validating && !applying) void validate(); }} class="btn">{validating ? 'Validating…' : 'Validate'}</button>
 				<button
 					type="submit"
 					form={formId}

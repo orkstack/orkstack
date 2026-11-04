@@ -204,7 +204,9 @@
 	</p>
 {:else}
 	<div class="card overflow-x-auto scroll-panel" data-testid="activity-list">
-		<table class="register acts">
+		<!-- The phone layout makes rows of blocks: the roles keep it a table for assistive technology. -->
+		<!-- svelte-ignore a11y_no_redundant_roles -->
+		<table class="register acts" role="table" aria-label="Activities">
 			<thead>
 				<tr>
 					<th scope="col">Activity</th>
@@ -216,13 +218,14 @@
 			</thead>
 			<tbody>
 				{#each data.activities as activity (activity.name)}
-					<tr data-testid="activity-row-{activity.name}">
-						<th scope="row">
+					<!-- svelte-ignore a11y_no_redundant_roles -->
+					<tr role="row" data-testid="activity-row-{activity.name}">
+						<th scope="row" role="rowheader">
 							<span class="inline-flex items-center gap-2 font-semibold text-ink" data-testid="activity-name-{activity.name}"
 								><ActivityIcon icon={activity.icon} class="size-4 text-navy-text" />{activity.name}</span
 							>
 							{#if activity.docs?.description}
-								<span class="mt-1 block text-dense font-normal text-ink-2"><DocText text={activity.docs.description} limit={160} testid="activity-summary-{activity.name}" /></span>
+								<span class="mt-1 block text-dense font-normal text-ink-2"><DocText text={activity.docs.description} limit={160} subject={activity.name} testid="activity-summary-{activity.name}" /></span>
 							{/if}
 							{#if activity.iconError}
 								<span class="mt-1 block text-dense font-normal text-ink-3" data-testid="activity-icon-error-{activity.name}">Its icon was refused: {activity.iconError}</span>
@@ -231,10 +234,10 @@
 								<span class="mt-1 block text-dense font-normal text-ink-3" data-testid="activity-docs-error-{activity.name}">Its description was refused: {activity.docsError}</span>
 							{/if}
 						</th>
-						<td data-label="Image" class="font-mono text-sm text-ink-2" data-testid="activity-reference-{activity.name}">
+						<td role="cell" data-label="Image" class="font-mono text-sm text-ink-2" data-testid="activity-reference-{activity.name}">
 							{#if activity.reference}{#each activity.reference.split(/(?<=\/)|(?=[:@])/) as part, i (i)}{part}<wbr />{/each}{:else}—{/if}
 						</td>
-						<td data-label="Digest and platforms">
+						<td role="cell" data-label="Digest and platforms">
 							{#if activity.indexDigest}
 								<span data-digest={activity.indexDigest} data-testid="activity-digest-{activity.name}"
 									><Plate key="sha256" value={shortDigestWords(activity.indexDigest)} tip={activity.indexDigest} small /></span
@@ -248,20 +251,20 @@
 							<span class="sr" data-testid="activity-media-type-{activity.name}">{activity.mediaType || '—'}</span>
 							<span class="sr" data-testid="activity-resolved-at-{activity.name}">{fmtTimestamp(activity.resolvedAt)}</span>
 						</td>
-						<td data-label="Ops" class="font-mono text-sm text-ink-2">
+						<td role="cell" data-label="Ops" class="font-mono text-sm text-ink-2">
 							{#if activity.interface && Object.keys(activity.interface.ops).length > 0}
 								<span class="flex flex-wrap gap-1">{#each Object.keys(activity.interface.ops).sort() as op (op)}<span class="tag" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</span>{/each}</span>
 							{:else}
 								<span class="text-ink-3">—</span>
 							{/if}
 						</td>
-						<td data-label="Interface" class="text-sm">
+						<td role="cell" data-label="Interface" class="text-sm">
 							{#if activity.indexDigest}
 								<button
 									type="button"
 									class="btn btn-sm btn-quiet btn-disclosure"
 									aria-expanded={!!disclosed[activity.name]}
-									aria-controls="activity-interface-panel-{activity.name}"
+									aria-controls={disclosed[activity.name] ? `activity-interface-panel-${activity.name}` : undefined}
 									data-testid="activity-interface-{activity.name}"
 									onclick={() => (disclosed[activity.name] = !disclosed[activity.name])}
 								>

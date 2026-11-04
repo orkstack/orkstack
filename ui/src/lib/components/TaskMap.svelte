@@ -334,7 +334,7 @@
 			let failed = 0;
 			for (let i = s.start; i < s.start + s.count; i++) if (statuses[i] === Status.FAILED) failed++;
 			void counts;
-			return [{ taskId: s.taskId ?? '', label: s.label ?? '', side: s.side !== undefined, key: k, count: s.count, failed, y: g.segments[k].y - (s.side === undefined ? LABEL_H : 0) }];
+			return [{ taskId: s.taskId ?? '', label: s.label ?? '', side: s.side !== undefined, rowHeight: Math.max(g.segments[k].rows * g.pitch, (s.side ?? 0) * 16), key: k, count: s.count, failed, y: g.segments[k].y - (s.side === undefined ? LABEL_H : 0) }];
 		});
 	});
 	const fmt = new Intl.NumberFormat('en-US');
@@ -374,6 +374,8 @@
 					data-testid={s.taskId ? `task-map-section-${s.taskId}` : `task-map-stage-${s.key}`}
 					class={s.side ? 'map-side absolute left-0 text-dense text-ink-2' : 'absolute left-0 w-full truncate text-sm text-ink-2'}
 					style:top="{s.y}px"
+					style:max-height={s.side ? `${s.rowHeight}px` : undefined}
+					data-tip={s.side ? s.label : undefined}
 				>
 					{#if s.side}{s.label}{#if s.taskId}<span class="sr"> · {fmt.format(s.count)} items{#if s.failed} · {fmt.format(s.failed)} failed{/if}</span>{/if}{:else if s.taskId}{s.taskId} · {fmt.format(s.count)} items{#if s.failed} · <span class="text-fail">{fmt.format(s.failed)} failed</span>{/if}{:else}{s.label}{/if}
 				</div>
@@ -449,6 +451,7 @@
 	.map-side {
 		width: 100px;
 		line-height: 16px;
+		overflow: hidden;
 		overflow-wrap: anywhere;
 	}
 </style>
