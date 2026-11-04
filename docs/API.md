@@ -1157,7 +1157,7 @@ in runs_evidence_missing instead.
 |---|---|---|
 | `usage` | repeated [`CacheUsageRow`](#cacheusagerow) | usage: orkflow ascending, then task ascending. |
 | `inventory` | repeated [`CacheInventoryRow`](#cacheinventoryrow) | inventory: ORKFLOW scope before NAMESPACE, then orkflow, then task. |
-| `runs_in_window` | `int64` | runs_in_window counts the archive index's finished runs in the window (of orkflow_name, when set); runs_scanned how many had a body to read — less only for an index row whose body is absent (the crash window between the archive's two writes, which ListRuns already skips). |
+| `runs_in_window` | `int64` | runs_in_window counts the archive index's finished runs in the window (of orkflow_name, when set); runs_scanned how many had a body to read — less only for an index row whose body is absent (an archive write that stopped short, which ListRuns already skips). |
 | `runs_scanned` | `int64` |  |
 | `namespace` | `string` | The question answered, and when — exactly as GetStatsResponse carries them. |
 | `window_since` | `google.protobuf.Timestamp` |  |
@@ -1195,7 +1195,7 @@ in runs_evidence_missing instead.
 |---|---|---|
 | `groups` | repeated [`FailureGroup`](#failuregroup) |  |
 | `failed_runs_in_window` | `int64` | failed_runs_in_window is the population: index keys under the namespace's `failed` status inside the window — the same count GetStats reports as runs_by_status["failed"] for the same window. |
-| `failed_runs_scanned` | `int64` | failed_runs_scanned is how many of those had a body to read. It is less than failed_runs_in_window only for an index row whose body is absent — the crash window between the archive's two writes, which ListRuns already skips. Any OTHER unreadable body fails the call. |
+| `failed_runs_scanned` | `int64` | failed_runs_scanned is how many of those had a body to read. It is less than failed_runs_in_window only for an index row whose body is absent — an archive write that stopped short, which ListRuns already skips. Any OTHER unreadable body fails the call. |
 | `failed_runs_grouped` | `int64` | failed_runs_grouped is sum(run_count) over EVERY group, before limit. It equals failed_runs_scanned unless category narrowed the answer. |
 | `groups_total` | `int64` | groups_total is how many groups there were before limit, so a client can say "showing 50 of 212". |
 | `attempt_evidence_missing` | `int64` | attempt_evidence_missing is the total across groups. |
@@ -1388,7 +1388,7 @@ No fields.
 | `rows` | repeated [`UsageRow`](#usagerow) | rows is one per group, ordered by cpu_seconds desc, gib_seconds desc, task_seconds desc, then each keyed dimension ascending in group_by's enum order — total and clock-free, so two replicas produce the same table from the same bytes. Empty when group_by is. |
 | `group_by` | repeated [`FailureGroupBy`](#failuregroupby) | group_by is the dimensions actually grouped by, TASK's implied ORKFLOW made explicit at the front. A client cannot label its columns without it. |
 | `runs_in_window` | `int64` | THE POPULATION AND ITS EVIDENCE — the same definitions GetFlakeIndexResponse uses, over the same set.<br><br>runs_in_window is the population: archive index keys of this namespace inside the window, every finished status — the count GetStats reports as runs_by_status succeeded + failed + canceled for the same window. Runs still in flight are not in it; they are counted once they finish. |
-| `runs_scanned` | `int64` | runs_scanned is how many of those had a body to read; less only for an index row whose body is absent (the crash window between the archive's two writes, which ListRuns already skips). Any other unreadable body fails the call. |
+| `runs_scanned` | `int64` | runs_scanned is how many of those had a body to read; less only for an index row whose body is absent (an archive write that stopped short, which ListRuns already skips). Any other unreadable body fails the call. |
 | `runs_dispatched` | `int64` | runs_dispatched is how many scanned runs dispatched at least one task. |
 | `runs_evidence_complete` | `int64` | runs_evidence_complete counts dispatched runs holding at least one attempt record for every task they dispatched; runs_evidence_missing counts those holding none for at least one. They sum to runs_dispatched. The consumption of a task with no record is NOT in any sum above: reclaimed on the run's retention schedule, removed by a lifecycle rule, or never written by a best-effort Orker write — the reader cannot tell which, and says "missing". |
 | `runs_evidence_missing` | `int64` |  |

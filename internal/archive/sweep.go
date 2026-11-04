@@ -308,7 +308,7 @@ func (s *Sweeper) clusterRetention(ctx context.Context) time.Duration {
 	defer cancel()
 	retention, err := s.cluster.NamespaceRetention(askCtx, s.config.TemporalNamespace)
 	if err != nil {
-		s.logger.Warn("archive sweep could not read the cluster's retention to date the risk", "error", err)
+		s.logger.Warn("archive sweep could not read the cluster's retention, so it cannot date the risk or check its interval", "error", err)
 		return 0
 	}
 	return retention

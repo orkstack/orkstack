@@ -297,8 +297,8 @@ func TestSweeper_AClusterRetentionItCannotReadStillSweeps(t *testing.T) {
 	f.store.writeErr = map[string]error{"ork-bad": errors.New("refused")}
 
 	result, _ := f.sweeper.RunOnce(context.Background())
-	if result.Archived != 1 || result.Unconfirmed != 1 || !result.EarliestExpiry.IsZero() {
-		t.Fatalf("result = %+v, want 1 archived, 1 unconfirmed and no expiry", result)
+	if result.Archived != 1 || result.Unconfirmed != 1 || !result.EarliestExpiry.IsZero() || result.IntervalTooLong {
+		t.Fatalf("result = %+v, want 1 archived, 1 unconfirmed, no expiry and no verdict on the interval", result)
 	}
 }
 

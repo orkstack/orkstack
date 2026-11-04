@@ -132,7 +132,8 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return fmt.Errorf("artifacts: s3 archive run %q: write recent index %q: %w", rec.RunID, recentKey, err)
 	}
 	// The index carries everything in its key, so its body is empty. Publishing
-	// it last makes all prior durable records visible to cleanup first.
+	// it after them makes every record but the archive body visible to cleanup
+	// first; cleanup checks for the body itself before it retires a run.
 	if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(a.bucket), Key: aws.String(indexKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
 	}); err != nil {
