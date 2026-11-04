@@ -62,7 +62,10 @@ type ResolveError struct {
 
 func (e *ResolveError) Error() string {
 	if e.Err != nil {
-		return fmt.Sprintf("resolve image %q: %s: %s: %v", e.Reference, e.Code, e.Detail, e.Err)
+		// What it wraps — a network or parse error — can quote a host or a
+		// value a registry named: escaped and cut, as the Detail's own
+		// registry text is.
+		return fmt.Sprintf("resolve image %q: %s: %s: %s", e.Reference, e.Code, e.Detail, SafeReason(e.Err.Error()))
 	}
 	return fmt.Sprintf("resolve image %q: %s: %s", e.Reference, e.Code, e.Detail)
 }
@@ -229,7 +232,7 @@ func (r *Resolver) Inspect(ctx context.Context, uses, reference string) (*Resolu
 	if headerDigest != "" && !strings.EqualFold(headerDigest, computed) {
 		return nil, &ResolveError{Reference: reference, Code: ReasonImageDigestMismatch,
 			Detail: fmt.Sprintf("registry sent Docker-Content-Digest %s but the response body hashes to %s",
-				headerDigest, computed)}
+				SafeReason(headerDigest), computed)}
 	}
 	// Step 5: an already-pinned reference still gets the GET, and the body
 	// must hash to the pin. Apply MUST NOT succeed with an unpullable pin —
@@ -385,7 +388,9 @@ const maxReasonBytes = 512
 func SafeReason(reason string) string {
 	var pieces []string
 	total := 0
-	for i := 0; i < len(reason); {
+	// Reading stops once past the bound: a registry's 4 MiB error body costs
+	// what its first 512 bytes do.
+	for i := 0; i < len(reason) && total <= maxReasonBytes; {
 		r, size := utf8.DecodeRuneInString(reason[i:])
 		var piece string
 		switch {
@@ -589,9 +594,11 @@ func (r *Resolver) getManifest(ctx context.Context, ref Reference, target string
 		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnavailable,
 			Detail: fmt.Sprintf("registry %s answered %d", ref.APIHost(), resp.StatusCode)}
 	default:
+		// The registry's own words reach a client's terminal through this
+		// error: escaped and cut, as every reason a label gives is.
 		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
 			Detail: fmt.Sprintf("registry %s answered %d: %s",
-				ref.APIHost(), resp.StatusCode, strings.TrimSpace(string(body)))}
+				ref.APIHost(), resp.StatusCode, SafeReason(strings.TrimSpace(string(body))))}
 	}
 }
 
@@ -627,7 +634,7 @@ func (r *Resolver) getBlob(ctx context.Context, ref Reference, digest string, au
 	default:
 		return nil, &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
 			Detail: fmt.Sprintf("registry %s answered %d for blob %s: %s",
-				ref.APIHost(), resp.StatusCode, digest, strings.TrimSpace(string(body)))}
+				ref.APIHost(), resp.StatusCode, digest, SafeReason(strings.TrimSpace(string(body))))}
 	}
 }
 

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+	"unicode"
+	"unicode/utf16"
 	"unicode/utf8"
 
 	"google.golang.org/protobuf/proto"
@@ -36,7 +38,35 @@ func marshalJSON(message proto.Message) ([]byte, error) {
 	if err := json.Indent(&indented, compact, "", "  "); err != nil {
 		return nil, fmt.Errorf("encode json: %w", err)
 	}
-	return indented.Bytes(), nil
+	return jsonTerminalSafe(indented.Bytes()), nil
+}
+
+// jsonTerminalSafe writes each character a terminal could obey that the
+// encoder leaves raw — DEL, a C1 control and a format character
+// (bidirectional, zero-width, tag) — as its \u escape, a character past
+// U+FFFF as its surrogate pair. None of them is JSON syntax or white space,
+// so each stands inside a string, where the escape means the same
+// character: the output is the same JSON, and a registry's platform or
+// media type printed with --json reaches the terminal as text. (The encoder
+// already escapes the C0 controls and the line and paragraph separators.)
+func jsonTerminalSafe(encoded []byte) []byte {
+	var out bytes.Buffer
+	for len(encoded) > 0 {
+		r, size := utf8.DecodeRune(encoded)
+		switch {
+		case r == 0x7f, r >= 0x80 && r <= 0x9f, unicode.Is(unicode.Cf, r):
+			if r > 0xffff {
+				high, low := utf16.EncodeRune(r)
+				fmt.Fprintf(&out, `\u%04x\u%04x`, high, low)
+			} else {
+				fmt.Fprintf(&out, `\u%04x`, r)
+			}
+		default:
+			out.Write(encoded[:size])
+		}
+		encoded = encoded[size:]
+	}
+	return out.Bytes()
 }
 
 // writeJSON prints a protobuf message as indented JSON followed by a newline.
