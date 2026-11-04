@@ -73,6 +73,8 @@ func newOrkerCommand(g *globalFlags) *cobra.Command {
 			"Orkers, cordons one so it takes no new task and opens no new pin, and waits\n" +
 			"for one to drain. Orkers are deployment infrastructure, not namespace\n" +
 			"objects: these commands ignore --namespace.\n\n" +
+			"An Orker also cordons itself while object storage does not answer it, and\n" +
+			"resumes by itself; the list says which cause holds.\n\n" +
 			"A cordon is a flag in the Orker process and nowhere else: it touches nothing\n" +
 			"already running, and a restarted Orker comes back ready.",
 	}
@@ -213,8 +215,11 @@ func newOrkerCordonCommand(g *globalFlags) *cobra.Command {
 func newOrkerUncordonCommand(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "uncordon <orker-id>",
-		Short: "Let a cordoned Orker take work again",
-		Args:  cobra.ExactArgs(1),
+		Short: "Clear an operator's cordon so the Orker can take work again",
+		Long: "Clear the operator's cordon on one Orker. An Orker that has cordoned itself\n" +
+			"because object storage does not answer stays cordoned until the store answers\n" +
+			"again, then resumes by itself; this command cannot override that.",
+		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
 			defer cancel()
@@ -226,7 +231,13 @@ func newOrkerUncordonCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "uncordoned %s; it is accepting work again.\n", resp.Msg.GetOrker().GetOrkerId())
+			row := resp.Msg.GetOrker()
+			if row.GetStoreOutage() != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "cleared the operator's cordon on %s; it stays cordoned while %s, and resumes by itself once object storage answers.\n",
+					row.GetOrkerId(), row.GetStoreOutage().GetReason())
+				return nil
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "uncordoned %s; it is accepting work again.\n", row.GetOrkerId())
 			return nil
 		},
 	}
@@ -246,6 +257,8 @@ func newOrkerDrainCommand(g *globalFlags) *cobra.Command {
 			"Exit 0 means the Orker measured zero: it is safe to stop the process.\n" +
 			"Exit 4 means --timeout passed first; what is still running is printed, and\n" +
 			"stopping the process then fails any open pin's run with PIN_HOST_LOST.\n" +
+			"An Orker cordoned only because object storage does not answer gets an\n" +
+			"operator's cordon too, so it does not resume in the middle of the drain.\n\n" +
 			"Exit 1 means the Orker stopped answering, or was uncordoned or restarted\n" +
 			"(a restart clears the cordon, so it is taking work again).\n\n" +
 			"Nothing server-side holds drain state: this is a loop in orkctl.",
@@ -330,7 +343,7 @@ func (d *drainer) run() error {
 		return d.finish(exitError, errNotPolling(d.id))
 	}
 	row := first.GetOrkers()[0]
-	if row.GetCordoned() && !d.reasonGiven {
+	if operatorCordoned(row) && !d.reasonGiven {
 		d.say("cordoned %s: %s\n", d.id, strconv.Quote(row.GetCordonReason()))
 	} else {
 		reason := d.reason
@@ -389,6 +402,11 @@ func (d *drainer) run() error {
 				return d.finish(exitError, fmt.Errorf("%s stopped answering; if the process is gone its pins are "+
 					"already lost (PIN_HOST_LOST), if it restarted it is uncordoned and accepting work", d.id))
 			}
+		case !operatorCordoned(cur) && cur.GetCordoned():
+			// A store outage alone holds it now, and that ends by itself, so this
+			// Orker would take work again with the drain reporting it empty.
+			return d.finish(exitError, fmt.Errorf("%s was uncordoned by an operator; it is cordoned only while object "+
+				"storage does not answer, and takes work again once the store answers", d.id))
 		case !cur.GetCordoned():
 			unreachableSince, reportedUnreachable = time.Time{}, false
 			return d.finish(exitError, fmt.Errorf("%s is no longer cordoned: it restarted or was uncordoned, "+
@@ -492,11 +510,22 @@ func isAre(n int32) string {
 	return "are"
 }
 
+// operatorCordoned says an operator's cordon holds. An Orker of a release with
+// no store check only ever reports that cause, so a row with no store_outage
+// reads exactly as it always has.
+func operatorCordoned(row *orkstackv1.Orker) bool {
+	return row.GetCordoned() && (row.GetStoreOutage() == nil || row.GetCordonReason() != "")
+}
+
 // orkerState is the STATE column.
 func orkerState(row *orkstackv1.Orker) string {
 	switch {
 	case row.GetUnavailableReason() != "":
 		return "unknown (unreachable)"
+	case row.GetStoreOutage() != nil && operatorCordoned(row):
+		return "cordoned (operator; object storage unreachable)"
+	case row.GetStoreOutage() != nil:
+		return "cordoned (object storage unreachable)"
 	case row.GetCordoned():
 		return "cordoned"
 	default:
@@ -567,13 +596,17 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 	}
 	table := newTable(out)
 	fmt.Fprintln(table, "ORKER\tPOOL\tBUILD\tSTATE\tTASKS\tPINS\tCAPACITY\tRESERVED\tLAST SEEN")
-	var cordoned, unreachable []*orkstackv1.Orker
+	var cordoned, outages, unreachable []*orkstackv1.Orker
 	for _, row := range rows {
-		switch {
-		case row.GetUnavailableReason() != "":
+		if row.GetUnavailableReason() != "" {
 			unreachable = append(unreachable, row)
-		case row.GetCordoned():
-			cordoned = append(cordoned, row)
+		} else {
+			if operatorCordoned(row) {
+				cordoned = append(cordoned, row)
+			}
+			if row.GetStoreOutage() != nil {
+				outages = append(outages, row)
+			}
 		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.GetOrkerId(), orDash(row.GetPool()), orDash(row.GetBuildId()), orkerState(row),
@@ -591,6 +624,14 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 				formatTime(row.GetCordonedAt()))
 		}
 	}
+	if len(outages) > 0 {
+		fmt.Fprintf(out, "\n%s cordoned %s because object storage does not answer; tasks wait, and %s by %s once it does:\n",
+			orkerCount(len(outages)), itselfThemselves(len(outages)), resumeVerb(len(outages)), itselfThemselves(len(outages)))
+		for _, row := range outages {
+			fmt.Fprintf(out, "  %s: %s, since %s\n", row.GetOrkerId(), row.GetStoreOutage().GetReason(),
+				formatTime(row.GetStoreOutage().GetSince()))
+		}
+	}
 	if len(unreachable) > 0 {
 		fmt.Fprintf(out, "\n%s could not be asked, so %s load is unknown rather than zero:\n",
 			orkerCount(len(unreachable)), itsTheir(len(unreachable)))
@@ -599,6 +640,20 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 		}
 	}
 	return nil
+}
+
+func itselfThemselves(n int) string {
+	if n == 1 {
+		return "itself"
+	}
+	return "themselves"
+}
+
+func resumeVerb(n int) string {
+	if n == 1 {
+		return "it resumes"
+	}
+	return "they resume"
 }
 
 func itsTheir(n int) string {
@@ -612,7 +667,7 @@ func itsTheir(n int) string {
 func renderOrker(out io.Writer, row *orkstackv1.Orker) error {
 	table := newTable(out)
 	reason, since := dash, dash
-	if row.GetCordoned() {
+	if operatorCordoned(row) {
 		reason, since = strconv.Quote(row.GetCordonReason()), formatTime(row.GetCordonedAt())
 	}
 	fmt.Fprintf(table, "orker\t%s\n", row.GetOrkerId())
@@ -624,6 +679,11 @@ func renderOrker(out io.Writer, row *orkstackv1.Orker) error {
 	}
 	fmt.Fprintf(table, "reason\t%s\n", reason)
 	fmt.Fprintf(table, "since\t%s\n", since)
+	if outage := row.GetStoreOutage(); outage != nil {
+		fmt.Fprintf(table, "store outage\t%s\n", outage.GetReason())
+		fmt.Fprintf(table, "outage since\t%s\n", formatTime(outage.GetSince()))
+		fmt.Fprintf(table, "resumes\tby itself once object storage answers\n")
+	}
 	fmt.Fprintf(table, "tasks\t%s\n", orkerTasks(row))
 	fmt.Fprintf(table, "pins\t%s\n", orkerPins(row))
 	fmt.Fprintf(table, "last seen\t%s\n", formatTime(row.GetLastSeen()))

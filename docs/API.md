@@ -32,7 +32,7 @@ Defined in `proto/orkstack/v1/activity_service.proto`.
 | `ListActivities` | [`ListActivitiesRequest`](#listactivitiesrequest) | [`ListActivitiesResponse`](#listactivitiesresponse) |  |
 | `DescribeOrker` | [`DescribeOrkerRequest`](#describeorkerrequest) | [`DescribeOrkerResponse`](#describeorkerresponse) | DescribeOrker is the pool-liveness probe (§6.5). It is answered by an Orker of that pool, so it answers only when an Orker is actually polling that pool. |
 | `ListOrkers` | [`ListOrkersRequest`](#listorkersrequest) | [`ListOrkersResponse`](#listorkersresponse) | ListOrkers is the fleet: one row per live Orker of the deployment, derived on read. Like Pool, nothing WRITES an Orker — the list comes from the cluster's own poller records and each Orker's own answer, so any replica answers and none holds state of its own (AGENTS.md §7). It NARROWS rather than refusing: an Orker that did not answer keeps its row and carries unavailable_reason. Two conditions are distinct: a known poller whose describe failed is a row with unavailable_reason; an orker_id that NO live poller answers to is an EMPTY list, never NOT_FOUND — a read for an id nothing polls is an empty answer, and the drain loop relies on it (CordonOrker, a write, is the one that answers NOT_FOUND for that id).<br><br>An orker_id EQUALS filter asks exactly that one Orker, and no other, and returns at most one row: it is what `orkctl orker get` and the drain loop send, so a drain costs one activity per poll and not one per Orker of the fleet. Every other filter is applied to the inventory; an unreachable row is kept under a pool, build_id or cordoned filter, since none of those was measured on it. A malformed orker_id in an equals, not-equals or in filter is INVALID_ARGUMENT before any read. |
-| `CordonOrker` | [`CordonOrkerRequest`](#cordonorkerrequest) | [`CordonOrkerResponse`](#cordonorkerresponse) | CordonOrker sets or clears ONE Orker's cordon: a process-local flag delivered to that Orker alone, lost when the process exits. A cordoned Orker takes no new task and opens no new pin; everything already in flight on it is untouched. The response is the Orker's state AFTER the change, as the Orker itself reported it. |
+| `CordonOrker` | [`CordonOrkerRequest`](#cordonorkerrequest) | [`CordonOrkerResponse`](#cordonorkerresponse) | CordonOrker sets or clears ONE Orker's cordon: a process-local flag delivered to that Orker alone, lost when the process exits. A cordoned Orker takes no new task and opens no new pin; everything already in flight on it is untouched. The response is the Orker's state AFTER the change, as the Orker itself reported it. This is the operator's cordon: it neither sets nor clears the cordon an Orker holds on itself during a store outage (Orker.store_outage), so an Orker cleared here can still answer cordoned. |
 | `InspectActivity` | [`InspectActivityRequest`](#inspectactivityrequest) | [`InspectActivityResponse`](#inspectactivityresponse) | InspectActivity resolves ONE reference on demand — a catalog name or any registry reference `uses:` would accept — and reports it as ListActivities would: the pinned digest, platforms, and the interface, icon and docs the image declares. It resolves afresh on every call, unless the request sets allow_cached for a reference that pins a digest. It reads engine configuration and the registry only, never asks an Orker, and writes nothing. |
 
 ### AuditService
@@ -866,9 +866,9 @@ is alive by answering DescribeOrker (§6.5).
 | `max_concurrent` | `int32` | max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs at once, the size of its task worker's activity slots. |
 | `rootless` | `bool` |  |
 | `max_concurrent_pins` | `int32` | max_concurrent_pins is ORK_ORKER_MAX_PINS: how many pins this Orker hosts at once. 0 means it hosts none, and a submit that pins a task to this Orker's pool is refused at submit rather than left waiting. |
-| `cordoned` | `bool` | cordoned is this Orker's process-local cordon flag. It is NEVER stored anywhere but the process: a restarted Orker answers false. |
-| `cordon_reason` | `string` | cordon_reason is the reason given to CordonOrker; empty when not cordoned. |
-| `cordoned_at` | `google.protobuf.Timestamp` | cordoned_at is when the flag was last set; unset when not cordoned. |
+| `cordoned` | `bool` | cordoned is this Orker's process-local cordon: true while an operator's cordon or a store outage holds it (store_outage). It is NEVER stored anywhere but the process: a restarted Orker answers false. |
+| `cordon_reason` | `string` | cordon_reason is the reason given to CordonOrker: the operator's cordon. Empty when no operator's cordon holds, even while store_outage does. |
+| `cordoned_at` | `google.protobuf.Timestamp` | cordoned_at is when the operator's cordon was last set; unset when none holds. |
 | `running_tasks` | `int32` | running_tasks is how many ExecuteTask activities this Orker has in flight right now, pinned members included. Counted in the process; it is a measurement, not a projection. |
 | `open_pins` | `int32` | open_pins is how many pins this Orker currently hosts: pins it accepted and has not closed. Counted from the pin openings in flight, so it is exact from the instant a pin is accepted, before its first member arrives. It never exceeds max_concurrent_pins. |
 | `pins` | repeated [`OpenPin`](#openpin) | pins details each open pin, ordered by run_id. len(pins) == open_pins. |
@@ -879,6 +879,7 @@ is alive by answering DescribeOrker (§6.5).
 | `reserved` | [`ResourceQuantity`](#resourcequantity) | reserved is what stands reserved against capacity now: the per-task cap of every outstanding poll for a task, the request of every task it holds, pinned members included, and every container it has not yet removed. Unset when capacity is. A pinned member is counted but never made to wait, so reserved can exceed capacity by what open pins run. |
 | `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is the per-task cap (orker.resources.max_cpu and max_memory): the largest request this Orker runs. Submit refuses a task whose request no answering Orker of its pool could hold (RESOURCES_UNSATISFIABLE). Unset on an Orker built before it existed. |
 | `default_request` | [`ResourceQuantity`](#resourcequantity) | default_request is what a task that requests nothing is given (orker.resources.default_cpu and default_memory). |
+| `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage (Orker.store_outage). cordoned is true beside it. |
 
 ### DiffOrkflowVersionsRequest
 
@@ -1908,15 +1909,16 @@ Orker is one execution process, observed live.
 | `running_tasks` | `int32` |  |
 | `open_pins` | `int32` |  |
 | `max_concurrent_pins` | `int32` | ORK_ORKER_MAX_PINS; 0 means not a pin host |
-| `cordoned` | `bool` |  |
-| `cordon_reason` | `string` | empty when not cordoned |
-| `cordoned_at` | `google.protobuf.Timestamp` |  |
+| `cordoned` | `bool` | cordoned is true while this Orker takes no new task and opens no new pin, whichever cause holds it: an operator's cordon (cordon_reason), a store outage (store_outage), or both. |
+| `cordon_reason` | `string` | cordon_reason is the operator's reason; empty when no operator's cordon holds, even while store_outage does. |
+| `cordoned_at` | `google.protobuf.Timestamp` | cordoned_at is when the operator's cordon was set; unset when none holds. |
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment this Orker was observed polling. It answers "how fresh is this row", never "when did this Orker die". |
 | `unavailable_reason` | `string` | unavailable_reason says this Orker COULD NOT BE ASKED, and why — the same three-state distinction Pool.unavailable_reason makes, for the same reason: "not measured" rendered as "measured zero" sends an operator to stop a host that may be mid-task. When set, fields 2–9 and 12 are unset: nothing was measured, so there is no number to report. |
 | `pins` | repeated [`OpenPin`](#openpin) |  |
 | `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity and reserved are DescribeOrkerResult's: what this Orker admits tasks within, and what stands reserved against it, each outstanding poll counted at the per-task cap. Both unset when it declares no capacity. |
 | `reserved` | [`ResourceQuantity`](#resourcequantity) |  |
 | `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is DescribeOrkerResult's: the per-task cap, the largest request this Orker runs, which submit holds a task's declared request to. |
+| `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage. It clears by itself once the store answers again; CordonOrker neither sets nor clears it. Unset from an Orker of a release without these checks. |
 
 ### Orkflow
 
@@ -2575,6 +2577,18 @@ bucket it was submitted in, whenever it ends.
 | `until` | `google.protobuf.Timestamp` | exclusive |
 | `runs_by_status` | map&lt;`string`, `int64`&gt; | runs_by_status has the window's four keys, always present. succeeded, failed and canceled count the bucket's runs that have finished; running counts the bucket's runs not finished when the answer was computed. The four sum to how many runs the bucket created, up to one skew: a run still going is placed by the cluster's record of its start, a finished one by the archive's stamp of its creation, and the two differ by the milliseconds a submission takes, so a run submitted that close to a boundary can change buckets when it finishes.<br><br>Across the series, succeeded, failed and canceled sum EXACTLY to the window's runs_by_status: both come from one scan of the archive index. running sums to at most the window's running, and the difference is the runs still going that were created before window_since. The window's running is a fact about now and counts them; no bucket can, because none of them was created in one. |
 | `partial` | `bool` | partial is true when the window cut this bucket short, so it spans less than its whole hour or day: the first bucket of a window that starts mid-day, and the last bucket of one that ends now ("today, so far"). |
+
+### StoreOutage
+
+StoreOutage says an Orker has cordoned itself because its object storage
+checks keep failing. It clears by itself once they pass again, and no
+operator can clear it. Unset means no outage holds, and is all an Orker of a
+release without these checks ever reports.
+
+| Field | Type | Description |
+|---|---|---|
+| `reason` | `string` | reason says in plain words what the Orker saw, starting "object storage unreachable". |
+| `since` | `google.protobuf.Timestamp` | since is when this Orker cordoned itself. |
 
 ### StreamEventsRequest
 

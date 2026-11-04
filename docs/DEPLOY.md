@@ -623,6 +623,11 @@ then the variable it becomes.
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat actually reaches Temporal. Two consequences, both real: it is the longest a **cancellation** waits before the Orker acts on it — Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long — and it is the longest **Temporal frontend outage** a running container survives, since the SDK gives up on an activity whose heartbeat RPC keeps failing for a whole interval. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` where Temporal is local or highly available; raise it where the frontend is flaky |
 | `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | `orker` | how many tasks this Orker runs at once — the size of its task worker's activity slots, and the **Max concurrent** Admin → Activities reports. A whole number, 1 or more; anything else is refused at boot. The default fits a 16-CPU, 64 GiB host running default-sized tasks; size it to the host — see "Sizing an Orker's task ceiling" below |
+| `orker.store_check.enabled` | `ORK_ORKER_STORE_CHECK_ENABLED` | `true` | `orker` | whether this Orker checks object storage and cordons itself while the checks keep failing, so tasks wait without using attempts. `false` turns it off, and then an outage fails attempts as they arrive — see "When object storage goes away" below |
+| `orker.store_check.interval` | `ORK_ORKER_STORE_CHECK_INTERVAL` | `15s` | `orker` | how often the store is checked: one conditional write the store refuses and one read of one small object, per Orker, per check. `1s` to `1h`; anything else is refused at boot |
+| `orker.store_check.timeout` | `ORK_ORKER_STORE_CHECK_TIMEOUT` | `5s` | `orker` | how long one check may take before it counts as failed. Above zero and at most the interval; anything else is refused at boot |
+| `orker.store_check.failures` | `ORK_ORKER_STORE_CHECK_FAILURES` | `3` | `orker` | how many failed checks in a row cordon this Orker. 1 or more; anything else is refused at boot. A shorter blip cordons nothing |
+| `orker.store_check.recoveries` | `ORK_ORKER_STORE_CHECK_RECOVERIES` | `2` | `orker` | how many good checks in a row end the cordon. 1 or more; anything else is refused at boot |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no extra pollers; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
@@ -2892,6 +2897,9 @@ What a cordon does, precisely:
   and zero after it, and a cordoned Orker never keeps a pool live or speaks for
   what it can run.
 
+An Orker also cordons itself, with these same effects, while object storage
+does not answer it ("When object storage goes away", below).
+
 `SIGTERM` (or `SIGINT`) stops polling and cancels in-flight work; the Orker
 does not cordon itself on it. An operator who wants in-flight work to finish
 first cordons and drains. What a stop owes the work it cancels, the Orker
@@ -2942,6 +2950,111 @@ cordon` answers `NotFound`.
 Every cordon and uncordon is an audit record (`orker.cordon`,
 `orker.uncordon`, target the Orker id, the reason in its detail, no
 namespace).
+
+### When object storage goes away
+
+An Orker that cannot reach object storage cannot finish a task: an attempt
+handed to it fails `InfrastructureError` and uses one of the task's retries, so
+a long outage would fail runs that only had to wait. So every Orker checks the
+store on a cadence, and while the checks keep failing it **cordons itself**,
+with the same effects as an operator's cordon (above). Tasks stay queued for
+the pool with no attempt started, and everything in flight is left alone. Good
+checks end it, with no operator step.
+
+With the defaults (`orker.store_check`, §1), an Orker cordons itself 30 to 45
+seconds into an outage, and a blip shorter than 30 seconds cordons nothing. It
+resumes 15 to 30 seconds after the store answers again.
+
+**Two independent causes.** An operator's cordon and a store outage are
+separate, and the Orker is cordoned while either holds:
+
+- Recovery never clears an operator's cordon.
+- `orkctl orker uncordon` clears only the operator's. An Orker whose store is
+  still failing stays cordoned, and the command says so.
+- `orkctl orker drain` sets an operator's cordon on an Orker only an outage
+  holds, so a recovery in the middle of a drain cannot put it back to work. An
+  operator's uncordon during a drain ends the drain with exit `1`, even while
+  the outage still holds.
+
+Neither is stored: a restart clears both. While the store is out, though, a
+restarted Orker refuses to boot, because its boot probe needs the store
+(`COMMIT_STORE_NOT_CONDITIONAL`), and whatever restarts it keeps trying.
+
+**Reading it.** The inventory carries the cause: `cordoned` is true for either,
+`cordon_reason` and `cordoned_at` are the operator's alone, and `store_outage`
+(`reason`, `since`) is set while an outage holds. An Orker of a release without
+this check sends no `store_outage`, and reads as it always has.
+
+```text
+$ orkctl orker list
+ORKER       POOL   BUILD  STATE                                  TASKS  PINS  CAPACITY  RESERVED  LAST SEEN
+orker-7f3a  build  -      cordoned (object storage unreachable)  0      -     -         -         2026-11-04T09:14:02Z
+
+1 orker cordoned itself because object storage does not answer; tasks wait, and it resumes by itself once it does:
+  orker-7f3a: object storage unreachable: the last check failed; this Orker's log has the error, since 2026-11-04T09:13:10Z
+```
+
+Admin → Pools stamps the row `Object Storage Unreachable`, apart from an
+operator's `Cordoned`, and offers no Uncordon for it, because none would help.
+The reason is plain words on purpose: the store's own error names endpoints
+and keys, so it goes to the Orker's log (`object storage check failed`, and
+`orker cordoned itself: object storage unreachable` on entering, `object storage
+answers again` on leaving), never to the inventory. Nothing audits a store
+outage's cordon, because no one asked for it. With metrics on:
+
+| Metric | Labels | What it reads |
+|---|---|---|
+| `ork.orker.store_outage.active` | `ork.orker_id` | 1 while this Orker holds its cordon for a store outage, else 0 |
+| `ork.orker.store_outage.transitions` | `ork.orker_id`, `ork.transition` | each entry (`entered`) and exit (`left`) |
+
+Telemetry can never fail a task or change what the check does.
+
+**What a check is.** One conditional write of the fixed object the boot probe
+already wrote, which a live store refuses, and one read of it, with the Orker's
+own store credentials and its own client. So it exercises the write path and the
+read path a task's completion needs, and adds no object: if that one object has
+gone, the write puts it back, as the next boot would. Anything that keeps the
+Orker from getting an answer fails it, revoked credentials included. Each check
+is bounded by `orker.store_check.timeout`, and one that does not answer in time
+counts as failed even when it cannot be interrupted, as on a hung mount, and no
+second check starts behind it.
+
+**The local backend** (`ORK_ARTIFACT_BACKEND=local`) runs the same check on its
+directory: a temporary file written there, a refused link, and a read. It fires
+when that directory cannot be written or read, such as a full or read-only
+disk, or a mount gone away. A check that hangs on a hung mount counts as failed
+as above.
+
+**What it does not cover:**
+
+- **Runs that finished before the outage.** No Orker work is left in them to
+  pause, and what the engine still has to write for them, such as an archive,
+  is the engine's to retry.
+- **Runs that close without an Orker,** such as an operator's cancel or an
+  await whose deadline passes. The engine closes those by itself, and an
+  Orker's cordon does not hold them back.
+- **A task that starts a pin during the outage.** It still fails
+  `PIN_UNAVAILABLE` once every pin host of its pool has refused for about five
+  minutes, as for any cordon ("Removing an Orker safely", above).
+- **The window before the cordon.** An attempt that reaches the store during
+  those 30 to 45 seconds fails as it always did, and uses an attempt. So can
+  the at most two tasks a cordon can still be handed (above), per Orker.
+- **Work already in flight.** A running container is left to finish, and a
+  member of an open pin still runs. If either still cannot write its outputs
+  when it ends, that attempt fails `InfrastructureError` and uses an attempt;
+  its retry then waits with everything else.
+
+**Submitting while every Orker of a pool holds it.** Such a pool reads as any
+wholly cordoned pool does: its poller-derived count holds for the freshness
+window, then reads zero, and `SubmitRun` refuses with `failed_precondition`,
+`has no live Orkers`, before a run id exists. The remedy that message names,
+starting an Orker, does not help here: the store has to come back, or a submit
+with `allow_empty_pool` waits for it. That refusal only shows when the engine can
+still reach the store, because a submit needs the store itself; so it also shows
+for the 15 to 30 seconds after a recovery that an Orker needs to resume. Runs
+already accepted are untouched. Likewise `orkctl release` counts such an Orker as
+cordoned, so a ramp or promote that needs it reports `POOL_NOT_SERVED`, naming the
+outage's reason.
 
 ### Fair dispatch across namespaces
 
@@ -4189,7 +4302,8 @@ workflow task latency, poll counts, failures — arrive via
 `client.Options.MetricsHandler`, and Go's runtime and process collectors ride
 along on the same `/metrics`. An Orker that declares a capacity adds
 `ork.orker.capacity.*` and `ork.orker.admission.*` ("Declaring an Orker's
-capacity", above).
+capacity", above). Every Orker adds `ork.orker.store_outage.*` ("When object
+storage goes away", above).
 
 `ork.audit.records{action,outcome}` (engine) counts every control-plane
 audit write, once per audited write RPC: `outcome` is `written`, or `dropped`

@@ -15,11 +15,14 @@
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
 	import { withNamespace } from '#lib/namespace.ts';
 	import {
+		operatorCordoned,
 		orkerCommand,
 		orkerLoad,
 		orkerPins,
 		orkerState,
-		orkerTasks
+		orkerStateLabel,
+		orkerTasks,
+		STORE_OUTAGE_LABEL
 	} from '#lib/orkers.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
 	import CliPopover from './CliPopover.svelte';
@@ -114,6 +117,7 @@
 	const stateClass: Record<string, string> = {
 		ready: 'bg-ok-tint text-ok mark-square',
 		cordoned: 'pill-wait',
+		'store-outage': 'bg-fail-tint text-fail mark-tri',
 		unreachable: 'bg-fail-tint text-fail mark-tri'
 	};
 </script>
@@ -168,9 +172,15 @@
 								</small>
 							</th>
 							<td role="cell" data-label="Status">
-								<span class="stamp {stateClass[rowState]} capitalize" data-testid="orker-state-{orker.orkerId}">{rowState}</span>
-								{#if orker.cordoned}
+								<span class="stamp {stateClass[rowState]} capitalize" data-testid="orker-state-{orker.orkerId}">{orkerStateLabel(rowState)}</span>
+								{#if rowState === 'cordoned' && orker.storeOutage}
+									<span class="stamp {stateClass['store-outage']} capitalize" data-testid="orker-outage-stamp-{orker.orkerId}">{STORE_OUTAGE_LABEL}</span>
+								{/if}
+								{#if operatorCordoned(orker)}
 									<small class="ork-sub" data-testid="orker-reason-{orker.orkerId}">Cordoned since {fmtTimestamp(orker.cordonedAt)}: “{orker.cordonReason}”</small>
+								{/if}
+								{#if orker.storeOutage}
+									<small class="ork-sub" data-testid="orker-outage-{orker.orkerId}">Cordoned itself since {fmtTimestamp(orker.storeOutage.since)}: {orker.storeOutage.reason}. Tasks wait for it without using an attempt. It resumes by itself once object storage answers{#if operatorCordoned(orker)}, and stays cordoned until an operator's cordon is cleared too{/if}.</small>
 								{/if}
 							</td>
 							{#if rowState === 'unreachable'}
@@ -185,7 +195,7 @@
 							{/if}
 							<td role="cell" class="ork-actions">
 								{#if rowState !== 'unreachable'}
-									{#if orker.cordoned}
+									{#if operatorCordoned(orker)}
 										<button type="button" data-testid="orker-uncordon-{orker.orkerId}" disabled={uncordonBusy === orker.orkerId} onclick={() => void uncordon(orker)} class="btn btn-sm">Uncordon</button>
 									{:else}
 										<button type="button" data-testid="orker-cordon-{orker.orkerId}" onclick={() => openCordon(orker)} class="btn btn-sm"><Icon name="pause" />Cordon…</button>

@@ -715,6 +715,9 @@ Orkers, cordons one so it takes no new task and opens no new pin, and waits
 for one to drain. Orkers are deployment infrastructure, not namespace
 objects: these commands ignore --namespace.
 
+An Orker also cordons itself while object storage does not answer it, and
+resumes by itself; the list says which cause holds.
+
 A cordon is a flag in the Orker process and nowhere else: it touches nothing
 already running, and a restarted Orker comes back ready.
 
@@ -755,6 +758,9 @@ until it reports no running task and no open pin.
 Exit 0 means the Orker measured zero: it is safe to stop the process.
 Exit 4 means --timeout passed first; what is still running is printed, and
 stopping the process then fails any open pin's run with PIN_HOST_LOST.
+An Orker cordoned only because object storage does not answer gets an
+operator's cordon too, so it does not resume in the middle of the drain.
+
 Exit 1 means the Orker stopped answering, or was uncordoned or restarted
 (a restart clears the cordon, so it is taking work again).
 
@@ -822,7 +828,11 @@ Inherited flags:
 
 ## `orkctl orker uncordon`
 
-Let a cordoned Orker take work again
+Clear an operator's cordon so the Orker can take work again
+
+Clear the operator's cordon on one Orker. An Orker that has cordoned itself
+because object storage does not answer stays cordoned until the store answers
+again, then resumes by itself; this command cannot override that.
 
 Inherited flags:
 

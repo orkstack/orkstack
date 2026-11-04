@@ -47,6 +47,7 @@ The listener answers only names it knows in a request's `Host`: an IP address, `
 | `ork.audit.records` | `action`, `outcome` | Control-plane writes. A rising `dropped` rate means the audit store cannot be written. |
 | `ork.orker.capacity.reserved.cpu`, `.memory` | `ork.orker_id` | What stands reserved on an Orker that declares a capacity. `ork.orker.capacity.cpu` and `.memory` are the capacity itself. |
 | `ork.orker.admission.wait.duration` | `ork.orker_id`, `ork.admission.bound` | How long an Orker went without room to ask for another task: `capacity`, or `slots` when every task slot was taken. |
+| `ork.orker.store_outage.active` | `ork.orker_id` | 1 while an Orker has cordoned itself because object storage does not answer. `ork.orker.store_outage.transitions` counts each entry and exit. |
 
 Prometheus shows the dotted names with underscores, and counters with a `_total` suffix. For example, `ork.runs.refused` appears as `ork_runs_refused_total`.
 

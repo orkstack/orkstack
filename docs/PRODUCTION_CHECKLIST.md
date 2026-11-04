@@ -115,6 +115,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Drain an Orker before you stop it if it may host pins. `orkctl orker cordon ID --reason "REASON"`, then `orkctl orker drain ID --timeout 4h --watch` ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Stop the process only when `orkctl orker drain` exits 0. Exit 4 means the timeout passed with work still on the host, and stopping then fails the runs whose pins it holds with `PIN_HOST_LOST` ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Remember that a cordon is a flag in the Orker process, so a restarted Orker comes back ready ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
+- [ ] Alert on `ork.orker.store_outage.active`. An Orker cordons itself while object storage does not answer it and resumes by itself, and tasks wait for it meanwhile ([DEPLOY.md](./DEPLOY.md), "When object storage goes away").
 - [ ] Remember that `SIGTERM` stops polling and cancels in-flight work, and does not cordon the Orker first ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Give the Orker's process manager longer to stop it than the longest `cancellation_grace_period_seconds` its tasks use, 30 s by default: `terminationGracePeriodSeconds`, `TimeoutStopSec` or `docker stop --time`. A stopped Orker sends each container `SIGKILL` after that grace and writes each attempt's record before it exits ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 

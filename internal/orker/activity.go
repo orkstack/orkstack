@@ -395,10 +395,15 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 	}
 	// The cordon and the load: one lock read, one atomic load and — only when
 	// a pin is open — one ReadDir of the work root.
-	if cordoned, reason, since := a.cordon.State(); cordoned {
+	operator, outage := a.cordon.Causes()
+	if operator != nil {
 		result.Cordoned = true
-		result.CordonReason = reason
-		result.CordonedAt = timestamppb.New(since)
+		result.CordonReason = operator.Reason
+		result.CordonedAt = timestamppb.New(operator.Since)
+	}
+	if outage != nil {
+		result.Cordoned = true
+		result.StoreOutage = &orkstackv1.StoreOutage{Reason: outage.Reason, Since: timestamppb.New(outage.Since)}
 	}
 	result.Pins = a.describePins()
 	result.OpenPins = int32(len(result.Pins))
