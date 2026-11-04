@@ -55,6 +55,8 @@ Usage is a reservation, not a measurement. It shows what was reserved, not what 
 
 Usage counts only finished runs. Records removed by retention are reported as missing, and they are not folded into a smaller total.
 
+A usage read over more than 10,000 finished runs is refused, rather than answered from part of the window. Narrow the window with a shorter `--since`. This is the usual reason an enforced budget cannot be measured: its period holds too many finished runs.
+
 A budget bounds a namespace's reserved cpu-seconds or GiB-seconds over a rolling period, from 1 to 744 hours:
 
 ```bash

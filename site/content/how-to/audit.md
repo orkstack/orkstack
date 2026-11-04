@@ -20,7 +20,9 @@ Each write call leaves one record, whether it succeeded or was refused. The reco
 - cache purges, run cancels and await resolutions;
 - Orker cordons and uncordons.
 
-Reads are not recorded. Run submissions, trigger invocations and await callbacks are not recorded either, because the run itself is the record of those. A deployment-wide write, such as a retention change or an Orker cordon, has no namespace. To list only those, filter with `namespace=`.
+Reads are not recorded. Run submissions, trigger invocations and await callbacks are not recorded either, because the run itself is the record of those. A deployment-wide write, such as a retention change or an Orker cordon, has no namespace. To list only those, filter with `--filter 'namespace='`, with an empty value.
+
+`-n` is refused by `orkctl admin audit`, so it does not narrow the trail. Use `--filter 'namespace=payments'` to list one namespace's writes.
 
 ## Read it
 

@@ -67,6 +67,7 @@ Run state is kept by Temporal, which keeps runs durable. A run is not lost when 
 
 - [Your first Orkflow](/docs/get-started/first-orkflow/): apply this kind of document, run it and read the results.
 - [Inputs and outputs](/docs/build/inputs-and-outputs/): how `inputs:` and `outputs:` work.
+- [Write your own](/docs/get-started/first-orkflow/#7-write-your-own): save the `greet` example above, apply it, run it and read a task's log.
 
 ## See also
 

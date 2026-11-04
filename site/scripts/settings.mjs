@@ -86,9 +86,10 @@ export function parseSettings(deployMd) {
 }
 
 /** A setting's id on the page: its key, lower case, every other run a hyphen. */
+const idOf = (name) => name.split('{')[0].toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+
 export function settingId(row) {
-	const name = (row.keys[0] ?? row.envs[0] ?? '').split('{')[0];
-	return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+	return idOf(row.keys[0] ?? row.envs[0] ?? '');
 }
 
 export function settingArea(row) {
@@ -136,9 +137,24 @@ export function acceptsProblems(key, text, row) {
 	return out;
 }
 
+/** The default of a size written for people ("256 KiB", "10 MiB/s"), in the digits the setting takes. */
+export function bytesDefault(cell) {
+	const m = /^`?(\d+(?:\.\d+)?)\s*(KiB|MiB|GiB)(\/s)?`?$/.exec(cell.trim());
+	if (!m) return null;
+	const unit = { KiB: 1024, MiB: 1024 ** 2, GiB: 1024 ** 3 }[m[2]];
+	return { value: Number(m[1]) * unit, perSecond: Boolean(m[3]) };
+}
+
 export function acceptsFor(row, kinds, overlay) {
-	for (const key of row.keys) if (overlay[key]) return overlay[key];
+	const key = [...row.keys, ...row.envs].find((k) => overlay[k]);
 	const kind = kinds.get(row.keys[0] ?? '');
+	// A size's default is printed for people, but only digits parse: say so.
+	const size = kind === 'KindInt' ? bytesDefault(row.defaultCell) : null;
+	if (size) {
+		const words = key ? overlay[key] : `a whole number of bytes${size.perSecond ? ' per second' : ''}`;
+		return `${words}, written in digits: the default is \`${size.value}\``;
+	}
+	if (key) return overlay[key];
 	return kind ? KIND_WORDS[kind] : null;
 }
 
@@ -209,6 +225,13 @@ export function linkMentions(effect, { deployHeadings, docHeadings, detailHeadin
 	let t = effect;
 	t = t.replace(/\s*\(AGENTS\.md §[\d.]+\)/g, '');
 	t = t.replace(/AGENTS\.md §[\d.]+/g, 'the project’s engineering contract');
+	// How OrkStack's own tests measured a default is no reader's concern here.
+	t = t.replace(/\s*The task soak runs in the nightly and pre-release proofs[^.]*\(docs\/PROOFS\.md\)\./g, '');
+	t = t.replace(/the task soak measured \([^)]*\)/g, 'measured');
+	t = t.replace(/Pool-wide (?:—|-) see below/g, () => {
+		const a = detailHeadings.get('Pin hosting is a pool-wide setting');
+		return a ? `Pool-wide (see [Pin hosting is a pool-wide setting](${siteRoute('docs/configuration/details')}#${a}))` : 'Pool-wide';
+	});
 	// §5, "Health checks" and § "The web UI": a named section of DEPLOY.md.
 	t = t.replace(/§\s*(?:\d+(?:\.\d+)?\s*,\s*)?"([^"]+)"/g, (all, name) => {
 		const a = deployAnchor(name);
@@ -257,7 +280,8 @@ export function headingAnchors(md) {
 export function renderEntry(row, { accepts, link, mentions = (t) => t }) {
 	const id = settingId(row);
 	const names = row.keys.length ? row.keys : row.envs.slice(0, 1);
-	const title = names.map((k) => `<code>${esc(k)}</code>`).join(', ');
+	// A row of several keys: each later key is a link target of its own.
+	const title = names.map((k, i) => `<code${i > 0 ? ` id="${idOf(k)}"` : ''}>${esc(k)}</code>`).join(', ');
 	const tags = (row.scope === 'both' ? ['ork', 'orker'] : [row.scope]).map((s) => `<span class="tag">${esc(s)}</span>`).join('');
 	const dl = [
 		['Environment', inlineHtml(row.envCell, link)],
@@ -271,7 +295,7 @@ export function renderEntry(row, { accepts, link, mentions = (t) => t }) {
 	const { lead, rest } = leadAndRest(mentions(row.effect));
 	// A table cell starts in lower case; a paragraph does not.
 	const lede = lead ? `<p>${inlineHtml(lead.replace(/^[a-z]/, (c) => c.toUpperCase()), link)}</p>` : '';
-	const more = rest ? `<details><summary>More detail</summary><p>${inlineHtml(rest, link)}</p></details>` : '';
+	const more = rest ? `<details><summary>More detail<span class="sr-only"> on ${esc(names[0])}</span></summary><p>${inlineHtml(rest, link)}</p></details>` : '';
 	return `<div class="setting not-content" data-setting><header><h3 id="${id}">${title}</h3>${tags}</header><dl>${dl}</dl>${lede}${more}</div>`;
 }
 

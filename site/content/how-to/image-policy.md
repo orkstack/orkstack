@@ -67,11 +67,13 @@ cosign signing-config create --out signing-config.json     # names no transparen
 cosign sign --key cosign.key --signing-config signing-config.json ghcr.io/acme/migrate@sha256:<digest>
 ```
 
+`cosign signing-config create` is a cosign 3 command. It writes a signing config that names no transparency service. With cosign 2, leave the signature out of the transparency log with `--tlog-upload=false` instead.
+
 Keep `cosign.key` out of the repository. OrkStack never holds it.
 
 ## Check OrkStack's own images
 
-Each release signs its images by digest with one key. Take `cosign.pub` from the repository at the release's tag:
+Each release signs its images by digest with one key. Take its public key, `deploy/cosign.pub`, from the repository at the release's tag. The release also attaches the same file as `cosign.pub`. The commands below read it from the current folder as `cosign.pub`:
 
 ```bash
 orkctl admin image-policy set --signing-key orkstack=cosign.pub

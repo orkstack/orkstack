@@ -9,7 +9,9 @@ import YAML from 'yaml';
 import { repoRoot } from '../scripts/tokens.mjs';
 import {
 	AREAS,
+	acceptsFor,
 	acceptsProblems,
+	bytesDefault,
 	checkedWhen,
 	headingAnchors,
 	inlineHtml,
@@ -73,7 +75,7 @@ test('an accepts line cannot outlive its row: a value the table no longer names 
 test('the repository accepts.yaml names only settings and values the table holds', () => {
 	const overlay = YAML.parse(readFileSync(path.join(repoRoot, 'site/content/configuration/accepts.yaml'), 'utf8'));
 	for (const [key, text] of Object.entries(overlay)) {
-		const row = rows.find((r) => r.keys.includes(key));
+		const row = rows.find((r) => r.keys.includes(key) || r.envs.includes(key));
 		assert.ok(row, `${key} is not in the table`);
 		assert.deepEqual(acceptsProblems(key, text, row), []);
 	}
@@ -115,6 +117,34 @@ test('the table speaking of itself becomes links a reader on another page can fo
 	assert.equal(linkMentions('see "Sizing" below', ctx), 'see [Sizing](route:docs/configuration/details#sizing)');
 	assert.equal(linkMentions('see §4', ctx), 'see [DEPLOY.md §4](/docs/DEPLOY.md#4-rolling-back)');
 	assert.equal(linkMentions('harnesses (AGENTS.md §11.1). More', ctx), 'harnesses. More');
+});
+
+test('a size says it takes digits: 256 KiB as the default must not read as a value to write', () => {
+	assert.deepEqual(bytesDefault('`256 KiB`'), { value: 262144, perSecond: false });
+	assert.deepEqual(bytesDefault('`10 MiB/s`'), { value: 10485760, perSecond: true });
+	assert.equal(bytesDefault('`8`'), null);
+	const kinds = new Map([['a.size', 'KindInt'], ['a.limit', 'KindInt']]);
+	const size = { keys: ['a.size'], envs: ['A'], defaultCell: '`64 KiB`' };
+	assert.equal(acceptsFor(size, kinds, {}), 'a whole number of bytes, written in digits: the default is `65536`');
+	assert.equal(acceptsFor(size, kinds, { 'a.size': 'a whole number of bytes, at least 16 KiB' }), 'a whole number of bytes, at least 16 KiB, written in digits: the default is `65536`');
+	assert.equal(acceptsFor({ keys: ['a.limit'], envs: ['B'], defaultCell: '`16`' }, kinds, {}), 'a whole number');
+});
+
+test('a row with no key finds its accepts line by its variable', () => {
+	assert.equal(acceptsFor({ keys: [], envs: ['OTEL_X'], defaultCell: '' }, new Map(), { OTEL_X: 'text' }), 'text');
+});
+
+test('every key of a row is a link target: orker.capacity.memory lands on its entry', () => {
+	const row = rows.find((r) => r.keys.includes('orker.capacity.memory'));
+	assert.match(renderEntry(row, { accepts: null, link: (t) => t }), /id="orker-capacity-memory"/);
+});
+
+test('the proof harness is no reader’s concern: its words leave the entry, the fact stays', () => {
+	const ctx = { deployHeadings: new Map(), docHeadings: () => new Map(), detailHeadings: new Map() };
+	const row = rows.find((r) => r.keys.includes('engine.orkflow_max_tasks'));
+	const text = linkMentions(row.effect, ctx);
+	assert.doesNotMatch(text, /soak|nightly|proof/i);
+	assert.match(text, /the largest size measured/);
 });
 
 test('a heading is found by its text and by its number', () => {

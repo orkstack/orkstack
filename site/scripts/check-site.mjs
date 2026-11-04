@@ -62,11 +62,13 @@ const htmlFiles = (dir, out = []) => {
 };
 for (const file of htmlFiles(dist)) {
 	const html = readFileSync(file, 'utf8');
-	for (const m of html.matchAll(/<video\b[^>]*>/g)) {
+	for (const m of html.matchAll(/<video\b[^>]*>[\s\S]*?<\/video>/g)) {
 		const where = path.relative(dist, file);
-		if (/\bautoplay\b/.test(m[0])) problems.push(`${where}: a video autoplays`);
-		if (!/\bcontrols\b/.test(m[0])) problems.push(`${where}: a video has no controls`);
-		if (!/preload="none"/.test(m[0])) problems.push(`${where}: a video loads before it is asked to`);
+		const open = m[0].slice(0, m[0].indexOf('>') + 1);
+		if (/\bautoplay\b/.test(open)) problems.push(`${where}: a video autoplays`);
+		if (!/\bcontrols\b/.test(open)) problems.push(`${where}: a video has no controls`);
+		if (!/preload="none"/.test(open)) problems.push(`${where}: a video loads before it is asked to`);
+		if (!/<track[^>]+kind="captions"/.test(m[0])) problems.push(`${where}: a video has no captions`);
 	}
 }
 

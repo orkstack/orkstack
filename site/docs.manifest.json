@@ -542,6 +542,16 @@
 					]
 				},
 				{
+					"route": "docs/deploy/published-images",
+					"title": "Run the published images",
+					"description": "Start ork and orker in production from the published images: what each needs, with a worked example.",
+					"parts": [
+						{
+							"source": "site/content/how-to/published-images.md"
+						}
+					]
+				},
+				{
 					"route": "docs/deploy/kubernetes",
 					"title": "Production on Kubernetes",
 					"description": "Run each Orker in a Kubernetes pod with a Docker engine of its own.",

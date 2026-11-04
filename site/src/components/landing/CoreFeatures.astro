@@ -1,40 +1,37 @@
 ---
 // The core features, each one sentence and a link to the page that holds the
-// detail. Every statement is in the docs it links.
-import Icon from '../shared/Icon.astro';
+// detail, in one card divided by hairlines. Every statement is in the docs it
+// links.
 import { route } from '../../../site.config.mjs';
 
 /** A row's text with `backticked` words set as code; nothing else is markup. */
 const html = (t: string) => t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/`([^`]+)`/g, '<code>$1</code>');
 
 const features = [
-	{ icon: 'a-default', name: 'Any OCI image', text: 'A task reads files, writes files, logs to stdout and stderr, and exits. No SDK, sidecar or callback.', href: 'docs/concepts/activities' },
-	{ icon: 'flow', name: 'A DAG in YAML', text: 'Tasks ordered only by `needs:`, with typed `inputs:`, a `condition:`, retries and timeouts. Independent tasks run in parallel.', href: 'docs/reference/orkflow-keys' },
-	{ icon: 'runs', name: 'Fan out over a list', text: '`each:` runs one durable item per element of an array, with its own attempts, logs and artifacts.', href: 'docs/build/fan-out' },
-	{ icon: 'a-await', name: 'Wait for people and systems', text: '`await:` holds a task until someone approves or a system answers, or its deadline passes, with no container running.', href: 'docs/build/await' },
-	{ icon: 'alert', name: 'Handle failure', text: 'Failure handlers run clean-up and compensation, and the run still ends Failed with its original reason.', href: 'docs/build/handle-failure' },
-	{ icon: 'retry', name: 'Retries and cancellation', text: 'Retry policies are per task. A cancel reaches the container as SIGTERM, then SIGKILL after its grace period.', href: 'docs/build/retries-and-timeouts' },
-	{ icon: 'cache', name: 'Reuse results', text: '`cache:` reuses an identical task’s committed result and starts no container. A retry adopts a commit the same way.', href: 'docs/build/cache' },
-	{ icon: 'a-orkflow', name: 'Compose Orkflows', text: '`uses: orkflow:name@version` runs another Orkflow as a task and reads the outputs it declares.', href: 'docs/build/compose' },
-	{ icon: 'clock', name: 'Schedules, triggers and webhooks', text: 'Start runs on a schedule or over plain HTTP, and get signed notifications when they change state.', href: 'docs/run/schedules-and-triggers' },
-	{ icon: 'pool', name: 'Pools and pins', text: 'Any Orker of a pool runs any task. `pin:` keeps a group of tasks on one Orker, sharing a directory.', href: 'docs/build/choose-where-tasks-run' },
-	{ icon: 'shield', name: 'Pinned versions and images', text: 'A version is immutable and addressed by its digest. Every image resolves to a digest, and a policy can require signatures.', href: 'docs/operate/image-policy' },
-	{ icon: 'evidence', name: 'Evidence you can check', text: 'Every attempt, digest and reason is recorded. Export a run as one bundle and verify it offline.', href: 'docs/run/evidence' },
+	{ name: 'Any OCI image', text: 'A task reads files, writes files, logs to stdout and stderr, and exits. No SDK, sidecar or callback.', href: 'docs/concepts/activities' },
+	{ name: 'A DAG in YAML', text: 'Tasks ordered only by `needs:`, with typed `inputs:`, a `condition:`, retries and timeouts. Independent tasks run in parallel.', href: 'docs/reference/orkflow-keys' },
+	{ name: 'Fan out over a list', text: '`each:` runs one durable item per element of an array, with its own attempts, logs and artifacts.', href: 'docs/build/fan-out' },
+	{ name: 'Wait for people and systems', text: '`await:` holds a task until someone approves or a system answers, or its deadline passes, with no container running.', href: 'docs/build/await' },
+	{ name: 'Handle failure', text: 'Failure handlers run clean-up and compensation, and the run still ends Failed with its original reason.', href: 'docs/build/handle-failure' },
+	{ name: 'Retries and cancellation', text: 'Retry policies are per task. A cancel reaches the container as SIGTERM, then SIGKILL after its grace period.', href: 'docs/build/retries-and-timeouts' },
+	{ name: 'Reuse results', text: '`cache:` reuses an identical task’s committed result and starts no container. A retry adopts a commit the same way.', href: 'docs/build/cache' },
+	{ name: 'Compose Orkflows', text: '`uses: orkflow:name@version` runs another Orkflow as a task and reads the outputs it declares.', href: 'docs/build/compose' },
+	{ name: 'Schedules, triggers and webhooks', text: 'Start runs on a schedule or over plain HTTP, and get signed notifications when they change state.', href: 'docs/run/schedules-and-triggers' },
+	{ name: 'Pools and pins', text: 'Any Orker of a pool runs any task. `pin:` keeps a group of tasks on one Orker, sharing a directory.', href: 'docs/build/choose-where-tasks-run' },
+	{ name: 'Pinned versions and images', text: 'A version is immutable and addressed by its digest. Every image resolves to a digest, and a policy can require signatures.', href: 'docs/operate/image-policy' },
+	{ name: 'Evidence you can check', text: 'Every attempt, digest and reason is recorded. Export a run as one bundle and verify it offline.', href: 'docs/run/evidence' },
 ] as const;
 ---
 
 <section class="features" aria-labelledby="features-h">
 	<h2 id="features-h">Everything a long job needs</h2>
 	<p>The durable parts come from Temporal and object storage. An Orkflow only says what should happen.</p>
-	<ul class="feature-grid" role="list">
+	<ul class="card feature-grid" role="list">
 		{
 			features.map((f) => (
-				<li class="card feature">
+				<li class="feature">
 					<h3>
-						<a href={route(f.href)}>
-							<Icon name={f.icon} />
-							{f.name}
-						</a>
+						<a href={route(f.href)}>{f.name}</a>
 					</h3>
 					<p set:html={html(f.text)} />
 				</li>

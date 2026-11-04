@@ -54,7 +54,7 @@ Cleanup does not touch every prefix. Use bucket lifecycle rules for these, and o
 |---|---|
 | `metadata/logs/` | Task output of finished runs |
 | `metadata/attempts/` | Per-attempt records |
-| `orkflows/`, `objects/` | Artifact bytes. References stay, and `bytes_present` turns false. |
+| `orkflows/` (on S3) or `objects/` (on the local backend) | Artifact bytes. References stay, and `bytes_present` turns false. The Orkflow definitions under `metadata/orkflows/` are a different prefix, and must never expire. |
 | `metadata/audit/` | The audit trail. No OrkStack setting shortens it. |
 | `metadata/deliveries/` | Webhook delivery records |
 | `metadata/memo/` | Cached-task memos. Keep the rule at least as long as `ORK_CACHE_MAX_TTL`. |

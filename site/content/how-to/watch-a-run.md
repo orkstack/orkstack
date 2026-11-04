@@ -9,7 +9,7 @@ orkctl run list --filter status=FAILED
 orkctl run list --filter orkflow_name=payments-release --filter status=FAILED
 ```
 
-The list is newest first. Filters can name `status` (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELED`, `SKIPPED`), `orkflow_name`, `created_at` and `origin.kind`. Add `-n NAMESPACE` when the run is not in `default`.
+The list is newest first. Filters can name `status` (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELED`, `SKIPPED`), `orkflow_name`, `created_at`, `origin.kind`, `origin.id` (with `origin.kind`, to name one trigger, schedule or source run) and `labels.KEY`, a run's label by its key. Add `-n NAMESPACE` when the run is not in `default`.
 
 ## Follow it in the UI
 
@@ -50,7 +50,7 @@ Each task shows one of these states. A run is `Running`, `Succeeded`, `Failed` o
 | Awaiting | The task waits for someone outside the run to complete or reject it, or for its deadline. | Resolve it, as below. |
 | Skipped | The task's condition or join policy said not to run it. | Check the condition with `orkctl run plan`. |
 
-`orkctl run inspect` marks a heartbeat as `STALE` when the Orker has stopped reporting. Temporal times the attempt out at the deadline it names.
+`orkctl run inspect` marks a heartbeat as `STALE` when the Orker has stopped reporting. The attempt is timed out at the deadline it names.
 
 ### Resolve an awaited task
 
@@ -85,6 +85,8 @@ orkctl run artifact download <run-id> --task convert --name part.txt --output pa
 ```
 
 A fan-out's artifact needs `--item`. `download` refuses to overwrite an existing file unless you pass `--overwrite`.
+
+`download --output` writes a file, which the `orkctl` alias cannot do. Use the installed binary, as [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains.
 
 ## Limits
 

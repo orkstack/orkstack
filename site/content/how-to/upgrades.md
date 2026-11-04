@@ -20,6 +20,8 @@ orkctl release status                              # current, ramping and candid
 
 Set `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on every `ork` and every `orker`. The two binaries of one release share them, and the pinning guarantee depends on that. Each binary prints the version it resolved at boot, and the two lines must match.
 
+Versioning is off while `ORK_BUILD_ID` is unset. Set the same build id on every process to turn it on, as [Turn versioning on](#turn-versioning-on) describes.
+
 Use the `orkctl` of the release you operate. An older `orkctl` that writes a held namespace drops the hold.
 
 ## Roll forward
@@ -50,10 +52,22 @@ Some rollbacks need preparation first. Each one below names what to change, then
 
 - join policies: hold each namespace whose versions declare a failure handler, then roll back;
 - a fan-out maximum above 1,000 items: lower `engine.each_max_items` to 1,000;
-- definitions passed by reference: set `engine.definition_by_reference` to `false` on every replica;
-- snapshot overlays: set `engine.snapshot_overlays` to `false` on every replica.
+- definitions passed by reference: set `engine.definition_by_reference` to `false` on every replica, then wait for the runs started that way to finish;
+- snapshot overlays: set `engine.snapshot_overlays` to `false` on every replica, then wait for the runs started while it was on to finish;
+- the Temporal Go SDK 1.50, which is release 0.1.1, with versioning off: hold each namespace that takes runs, wait until `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run, roll back, then release each hold with `orkctl namespace update NS --release-hold`. Count every open run, however old. Resolve or cancel an awaited task rather than wait for its deadline. With versioning on, this case needs nothing more: a run that 0.1.1 started finishes on 0.1.1.
 
 Do not roll back below the release that introduced reading runs carried into a fresh history. Every release from 0.1.0 contains it.
+
+## Turn versioning on
+
+Versioning is off while `ORK_BUILD_ID` is unset. A run that started before versioning has nothing pinning it. When the first versioned release becomes current, such a run moves onto that release at its next task, so a partly finished run can meet a different build. To avoid that, drain first:
+
+1. Hold each namespace that takes runs: `orkctl namespace update NS --hold "versioning rollout"`.
+2. Let the running runs finish. `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists the ones still open.
+3. Make the first versioned release current: `orkctl release promote "$FIRST"`. It refuses while a run that started before versioning is still executing.
+4. Release each hold: `orkctl namespace update NS --release-hold`.
+
+Set `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on every process first, as [Set the release identity](#set-the-release-identity) says.
 
 ## Check the defaults
 

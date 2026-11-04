@@ -1,0 +1,13 @@
+---
+// Starlight's frame, with the site's foot after it: Starlight renders its own
+// footer inside <main>, and a foot there is no page-level landmark.
+import Default from '@astrojs/starlight/components/PageFrame.astro';
+import SiteFooter from '../shared/SiteFooter.astro';
+---
+
+<Default {...Astro.props}>
+	<slot name="header" slot="header" />
+	<slot name="sidebar" slot="sidebar" />
+	<slot />
+</Default>
+<SiteFooter />

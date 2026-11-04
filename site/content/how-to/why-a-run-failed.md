@@ -78,6 +78,8 @@ orkctl task run --from-run <run-id> --task convert --render-only
 
 Drop `--render-only` to run the task here. It writes nothing to the deployment, but any external side effect it has is real.
 
+`orkctl task run` needs Docker, so run it with the installed binary, not the `orkctl` alias. See [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine).
+
 ## See also
 
 - [docs/TROUBLESHOOTING.md, "Reading a failed run"](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#reading-a-failed-run): the four steps in full

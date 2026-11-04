@@ -155,7 +155,6 @@ pre.showcase-code {
 }
 .tmap {
 	display: grid;
-	align-content: start;
 	gap: 8px;
 	padding: 14px 16px 12px;
 	font-size: var(--text-base);
@@ -302,20 +301,6 @@ pre.showcase-code {
 	border-radius: 2px;
 	background: var(--navy-text);
 }
-.more {
-	display: inline-flex;
-	align-items: center;
-	gap: 4px;
-	margin-top: 14px;
-	color: var(--link);
-	font-size: var(--text-md);
-	font-weight: 600;
-	text-underline-offset: var(--underline-offset);
-}
-.more svg {
-	width: 14px;
-	height: 14px;
-}
 .shot {
 	margin: 0;
 	overflow: hidden;
@@ -355,16 +340,21 @@ pre.showcase-code {
 	color: var(--ink-2);
 	font-size: 1rem;
 }
+/* One card divided by hairlines: the rules are the card's own colour showing
+   through the gaps. */
 .feature-grid {
 	display: grid;
 	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: 12px;
+	gap: 1px;
 	margin: 0;
 	padding: 0;
+	overflow: hidden;
+	background: var(--line);
 	list-style: none;
 }
 .feature {
-	padding: 14px 16px;
+	padding: 16px 18px;
+	background: var(--surface);
 }
 .feature h3 {
 	margin: 0;
@@ -372,21 +362,16 @@ pre.showcase-code {
 	font-weight: 650;
 }
 .feature h3 a {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
 	color: var(--ink);
-	text-decoration: none;
-}
-.feature h3 a:hover {
 	text-decoration: underline;
+	text-decoration-color: var(--line-strong);
 	text-underline-offset: var(--underline-offset);
 }
-.feature h3 svg {
-	width: 16px;
-	height: 16px;
-	flex: none;
-	color: var(--navy-text);
+.feature h3 a:hover {
+	text-decoration-color: currentColor;
+}
+.feature h3 a:focus-visible {
+	outline-offset: 1px;
 }
 .feature p {
 	margin: 6px 0 0;
@@ -529,8 +514,15 @@ pre.showcase-code {
 	font-size: 0.90625rem;
 }
 .steps a {
-	color: var(--link);
+	color: var(--ink);
+	text-decoration-color: var(--line-strong);
 	text-underline-offset: var(--underline-offset);
+}
+.steps a:hover {
+	text-decoration-color: currentColor;
+}
+.steps a:focus-visible {
+	outline-offset: 1px;
 }
 
 /* ------------------------------------------------------ the closing band */
@@ -561,9 +553,11 @@ pre.showcase-code {
 	font-size: 0.96875rem;
 }
 .closer code {
-	border-color: var(--hero-line);
-	background: var(--hero-2);
-	color: var(--hero-ink);
+	padding: 0;
+	border: 0;
+	background: none;
+	color: var(--hero-ink-2);
+	font-size: inherit;
 }
 .closer .end {
 	display: flex;
@@ -631,6 +625,18 @@ pre.showcase-code {
 	}
 	.closer .end {
 		margin-left: 0;
+	}
+}
+@media (forced-colors: active) {
+	.bul {
+		forced-color-adjust: none;
+		outline: 1px solid CanvasText;
+	}
+	.feature-grid {
+		gap: 0;
+	}
+	.feature {
+		border: 1px solid CanvasText;
 	}
 }
 @media (max-width: 640px) {

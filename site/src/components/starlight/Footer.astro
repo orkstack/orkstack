@@ -1,15 +1,15 @@
 ---
-// Starlight's footer (its edit link and pagination), then the site's foot and
-// the settings filter's script.
+// Starlight's footer (its edit link and pagination), and the scripts a docs
+// page's own content needs: the settings filter and the scrolling tables.
 import Default from '@astrojs/starlight/components/Footer.astro';
-import SiteFooter from '../shared/SiteFooter.astro';
 ---
 
 <Default {...Astro.props}><slot /></Default>
-<SiteFooter />
 
 <script>
 	import { wireSettingsFilter } from '../../lib/settings-filter';
+	import { wireScrollingTables } from '../../lib/scrolling-tables';
 
 	wireSettingsFilter(document);
+	wireScrollingTables(document);
 </script>

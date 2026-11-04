@@ -1,6 +1,6 @@
 # Architecture
 
-A deployment runs one Temporal cluster, one S3-compatible bucket, any number of `ork` replicas and one or more Orker pools. Replicas and Orkers hold no state, so any replica answers for any run.
+A deployment runs one Temporal cluster, one S3-compatible bucket, any number of `ork` replicas and one or more Orker pools. Replicas and Orkers hold no state, so any replica answers for any run. To start the published images, see [Run the published images](/docs/deploy/published-images/).
 
 <!-- site-diagram: architecture -->
 
@@ -24,7 +24,7 @@ A replica can stop at any time. Its runs carry on through the other replicas, an
 
 ## Pools: M Orker pools
 
-Each Orker joins one pool with `ORK_ORKER_POOL`. Pools isolate work: a GPU host, an Orker build with a different security profile, or a host near some data. Add Orkers to a pool for throughput. Add a pool for isolation. See [Pools, Orkers and pins](/docs/operate/pools-and-orkers/).
+Each Orker joins one pool with `ORK_ORKER_POOL`. On `ork`, the same variable sets where a task that names no pool goes, so leave it unset unless you change the default pool. Pools isolate work: a GPU host, an Orker build with a different security profile, or a host near some data. Add Orkers to a pool for throughput. Add a pool for isolation. See [Pools, Orkers and pins](/docs/operate/pools-and-orkers/).
 
 ## The web UI
 

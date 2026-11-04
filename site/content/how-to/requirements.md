@@ -1,6 +1,6 @@
 # Requirements
 
-OrkStack needs a Temporal cluster, an S3-compatible bucket, Docker or Podman on each Orker host, and the published images. This page lists what to provide and what to decide before you start.
+OrkStack needs a Temporal cluster, an S3-compatible bucket, Docker or Podman on each Orker host, and the published images. This page lists what to provide and what to decide before you start. To start the published images, see [Run the published images](/docs/deploy/published-images/).
 
 ## What you provide
 
@@ -23,7 +23,7 @@ Set these before the first start. Both binaries read the same file, and each ent
 | [`storage.backend`](/docs/configuration/#storage-backend) | Set `s3` for any replicated deployment. The default `local` is one directory per process. |
 | [`storage.s3.endpoint`](/docs/configuration/#storage-s3-endpoint), [`storage.s3.bucket`](/docs/configuration/#storage-s3-bucket) | The bucket every `ork` and `orker` shares. |
 | [`storage.s3.secret_key`](/docs/configuration/#storage-s3-secret-key) | Replace the development credentials with your own, or read them from a file. |
-| [`pool.name`](/docs/configuration/#pool-name) | The pool each Orker joins, and the pool a task with no `pool:` runs on. |
+| [`pool.name`](/docs/configuration/#pool-name) | The pool each Orker joins. On `ork`, the value is where a task that names no `pool:` goes. Leave it unset on `ork` unless you change the default pool. |
 | [`orker.workdir`](/docs/configuration/#orker-workdir) | A path the container daemon can bind-mount, the same inside and out. |
 | [`orker.max_concurrent`](/docs/configuration/#orker-max-concurrent) | Tasks one Orker runs at once. Size it to the host. |
 | [`telemetry.admin_addr`](/docs/configuration/#telemetry-admin-addr) | The address of the health and metrics listener. Empty opens none. |

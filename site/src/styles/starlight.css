@@ -44,7 +44,7 @@
 
 	--sl-color-text: var(--ink);
 	--sl-color-text-accent: var(--link);
-	--sl-color-text-invert: var(--act-ink);
+	--sl-color-text-invert: var(--bg);
 	--sl-color-bg: var(--bg);
 	--sl-color-bg-nav: var(--side);
 	--sl-color-bg-sidebar: var(--bg);
@@ -106,7 +106,7 @@ body {
 }
 /* Anything a link lands on clears the sticky header. */
 html {
-	scroll-padding-top: calc(var(--sl-nav-height) + 1.5rem);
+	scroll-padding-top: calc(var(--sl-nav-height) + var(--sl-mobile-toc-height) + 1.5rem);
 }
 
 /* --------------------------------------------------------------- the header */
@@ -329,14 +329,15 @@ body:has(#starlight__sidebar:popover-open) {
 @media (min-width: 72rem) {
 	.right-sidebar-container {
 		width: var(--toc-width);
+		margin-inline-start: 0;
 	}
 	.right-sidebar {
 		width: var(--toc-width);
 		border-inline-start: 0;
 	}
 	[data-has-sidebar][data-has-toc] .main-pane {
-		--sl-content-margin-inline: auto;
-		width: calc(100% - var(--toc-width));
+		--sl-content-margin-inline: 0;
+		width: min(var(--sl-content-width), calc(100% - var(--toc-width)));
 	}
 }
 .content-panel {
@@ -344,7 +345,7 @@ body:has(#starlight__sidebar:popover-open) {
 	border: 0;
 }
 .content-panel .sl-container {
-	max-width: var(--sl-content-width);
+	max-width: calc(var(--sl-content-width) - 2 * var(--sl-content-pad-x));
 }
 .main-pane .content-panel:first-child {
 	padding-top: 2.5rem;
@@ -397,12 +398,23 @@ h1#_top {
 .sl-markdown-content > p:first-child,
 .sl-markdown-content > .gen-note + p {
 	margin-bottom: 1.75rem;
+	max-width: 56ch;
 	color: var(--ink-2);
 	font-size: var(--text-lg);
 	line-height: 1.6;
 }
 .sl-markdown-content :is(p, li):not(:where(.not-content *)) {
-	max-width: 68ch;
+	max-width: 60ch;
+}
+.sl-markdown-content > p:first-child,
+.sl-markdown-content > .gen-note + p {
+	max-width: 56ch;
+}
+.table-wrap {
+	overflow-x: auto;
+}
+.table-wrap:focus-visible {
+	outline-offset: 0;
 }
 .sl-markdown-content a:not(:where(.not-content *)) {
 	color: var(--link);
@@ -422,9 +434,9 @@ h1#_top {
 	font-size: var(--text-code);
 }
 .sl-markdown-content table:not(:where(.not-content *)) {
-	display: block;
+	display: table;
 	width: 100%;
-	overflow-x: auto;
+	overflow: visible;
 	border-collapse: collapse;
 	font-size: var(--text-md);
 	line-height: 1.5;
@@ -597,7 +609,7 @@ h1#_top {
 	overflow-wrap: anywhere;
 }
 .setting p {
-	max-width: calc(72ch + 28px);
+	max-width: calc(62ch + 28px);
 	margin: 0;
 	padding: 4px 14px 12px;
 	font-size: var(--text-md);
@@ -616,6 +628,10 @@ h1#_top {
 	font-weight: 600;
 	cursor: pointer;
 }
+/* The card clips what sits outside it: the ring stays inside. */
+.setting summary:focus-visible {
+	outline-offset: -3px;
+}
 .setting details p {
 	padding-top: 0;
 }
@@ -632,7 +648,7 @@ h1#_top {
 }
 .settings-filter {
 	position: sticky;
-	top: calc(var(--sl-nav-height) + 0.5rem);
+	top: calc(var(--sl-nav-height) + var(--sl-mobile-toc-height) + 0.5rem);
 	z-index: 2;
 	display: flex;
 	flex-wrap: wrap;
@@ -650,18 +666,27 @@ h1#_top {
 }
 /* A link to an entry clears the filter bar as well as the header. */
 html:has(.settings-filter:not([hidden])) {
-	scroll-padding-top: calc(var(--sl-nav-height) + 5.5rem);
+	scroll-padding-top: calc(var(--sl-nav-height) + var(--sl-mobile-toc-height) + 5.5rem);
 }
 @media (max-width: 640px) {
 	.settings-filter {
 		position: static;
 	}
 	html:has(.settings-filter:not([hidden])) {
-		scroll-padding-top: calc(var(--sl-nav-height) + 1.5rem);
+		scroll-padding-top: calc(var(--sl-nav-height) + var(--sl-mobile-toc-height) + 1.5rem);
 	}
 }
-.settings-filter .search {
+.settings-filter label {
+	display: flex;
 	flex: 1 1 16rem;
+	align-items: center;
+	gap: 10px;
+	color: var(--ink-2);
+	font-size: var(--text-sm);
+	font-weight: 600;
+}
+.settings-filter .search {
+	flex: 1 1 auto;
 }
 .settings-filter p {
 	margin: 0;
@@ -683,7 +708,6 @@ html:has(.settings-filter:not([hidden])) {
 	height: auto;
 }
 .sl-markdown-content .theme-clip video {
-	display: block;
 	width: 100%;
 	height: auto;
 	object-fit: contain;
@@ -724,9 +748,15 @@ starlight-toc ul {
 	padding: 0;
 	list-style: none;
 }
-/* The title is at the top of the page already: the contents start below it. */
+/* The title is at the top of the page already: the contents start below it,
+   and at the top of the page the first section is the one marked. */
 starlight-toc nav > ul > li:first-child > a {
 	display: none;
+}
+starlight-toc nav > ul > li:first-child:has(> a[aria-current='true']) + li > a {
+	box-shadow: inset 2px 0 0 var(--navy-text);
+	color: var(--ink);
+	font-weight: 650;
 }
 starlight-toc a {
 	display: block;
@@ -788,16 +818,49 @@ mobile-starlight-toc nav {
 	font-size: var(--text-md);
 	font-weight: 700;
 }
-.foot-site {
-	margin-top: 2.5rem;
-	margin-inline: calc(var(--sl-content-pad-x) * -1);
-	background: transparent;
+/* The foot runs under the page, beside the fixed tree; behind the open menu it
+   leaves the tab order with the page. */
+@media (min-width: 50em) {
+	.foot-site {
+		margin-inline-start: var(--sl-sidebar-width);
+	}
+	.foot-site .wrapw {
+		max-width: none;
+		padding-inline: var(--sl-content-pad-x) 1.5rem;
+	}
 }
-.foot-site .wrapw {
-	padding-inline: var(--sl-content-pad-x);
+body:has(#starlight__sidebar:popover-open) .foot-site {
+	display: none;
 }
 @media (max-width: 900px) {
 	.ia {
 		grid-template-columns: minmax(0, 1fr);
+	}
+}
+
+/* ---------------------------------------------- phones and forced colours */
+@media (max-width: 640px) {
+	site-search > button,
+	.gens .gen,
+	.crumb a {
+		min-height: 40px;
+	}
+	.crumb a {
+		display: inline-flex;
+		align-items: center;
+	}
+}
+/* The dark theme's current page is a close fill: an edge marks it in both. */
+.sidebar-content a[aria-current='page'] {
+	box-shadow: inset 0 0 0 1px var(--line-strong);
+}
+@media (forced-colors: active) {
+	.sl-places a[aria-current],
+	starlight-toc a[aria-current='true'] {
+		text-decoration: underline;
+		text-decoration-thickness: 2px;
+	}
+	.sidebar-content a[aria-current='page'] {
+		outline: 2px solid Highlight;
 	}
 }

@@ -45,13 +45,16 @@ The local development stack uses SeaweedFS, with path style turned on.
 
 | Prefix | Contents |
 |---|---|
-| `orkflows/`, `objects/` | Artifact bytes. The run archive keeps references to them. |
+| `orkflows/` | Artifact bytes on the `s3` backend. The run archive keeps references to them. |
+| `objects/` | Artifact bytes on the `local` backend. |
 | `metadata/logs/` | Task output of runs |
 | `metadata/attempts/` | One record per task attempt |
 | `metadata/runs/`, `metadata/index/` | The archive of finished runs |
 | `metadata/audit/` | The control-plane audit trail |
 | `metadata/memo/` | Cached-task memos |
 | `metadata/settings/`, `metadata/namespaces/`, `metadata/orkflows/` | Deployment settings, namespaces and definitions |
+
+Artifact bytes are under `orkflows/`, not under `metadata/orkflows/`. The second prefix holds the Orkflow definitions, and it must never expire.
 
 Expiry rules for the prefixes that are safe to shorten are on the [Retention](/docs/operate/retention/) page. Do not expire the settings, namespace, definition, snapshot or commit prefixes.
 

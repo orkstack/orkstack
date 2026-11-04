@@ -375,6 +375,17 @@ const decodeXml = (t) =>
 const mediaManifestPath = path.join(mediaDir, 'manifest.json');
 const media = existsSync(mediaManifestPath) ? JSON.parse(readFileSync(mediaManifestPath, 'utf8')).items ?? {} : {};
 
+// A recording with no timed captions yet: its caption as one cue, for its whole
+// length. Written on every build to public/captions (ignored by git).
+const captionsOut = path.join(siteRoot, 'public', 'captions');
+rmSync(captionsOut, { recursive: true, force: true });
+function describedCaptions(name, caption) {
+	mkdirSync(captionsOut, { recursive: true });
+	const text = String(caption).replace(/-->/g, '→').replace(/\s+/g, ' ').trim();
+	writeFileSync(path.join(captionsOut, `${name}.vtt`), `WEBVTT\n\n00:00.000 --> 59:59.000\n${text}\n`);
+	return `${BASE_PATH}/captions/${name}.vtt`;
+}
+
 function mediaFigure(name) {
 	const item = media[name];
 	if (!item) {
@@ -393,12 +404,15 @@ function mediaFigure(name) {
 		const src = (f) => `${BASE_PATH}/media/${f}`;
 		if (!item.width || !item.height) fail(`media ${name} has no width and height in src/assets/media/manifest.json (run make site-media)`);
 		const aspect = `${item.width} / ${item.height + (name.startsWith('cli-') ? 110 : 0)}`;
+		// Every recording has captions: its own timed file when make site-media
+		// wrote one; until then, its caption as one cue.
+		const track = item.captions ? src(item.captions) : describedCaptions(name, item.caption);
 		const video = (webm, mp4, poster) =>
 			[
 				`<video controls playsinline preload="none"${poster ? ` poster="${src(poster)}"` : ''} style="aspect-ratio: ${aspect}" aria-label="${escapeHtml(item.alt)}">`,
 				webm ? `<source src="${src(webm)}" type="video/webm" />` : '',
 				mp4 ? `<source src="${src(mp4)}" type="video/mp4" />` : '',
-				item.captions ? `<track kind="captions" src="${src(item.captions)}" srclang="en" label="English" />` : '',
+				`<track kind="captions" src="${track}" srclang="en" label="English" />`,
 				`</video>`,
 			].join('');
 		for (const f of [item.webm, item.mp4, item.poster, item.webmDark, item.mp4Dark, item.posterDark, item.captions].filter(Boolean)) {
@@ -524,7 +538,7 @@ const kinds = schemaKinds(readFileSync(path.join(repoRoot, 'internal/config/conf
 const acceptsRel = 'site/content/configuration/accepts.yaml';
 const acceptsOverlay = YAML.parse(readFileSync(path.join(repoRoot, acceptsRel), 'utf8')) ?? {};
 for (const [key, text] of Object.entries(acceptsOverlay)) {
-	const row = settings.find((r) => r.keys.includes(key));
+	const row = settings.find((r) => r.keys.includes(key) || r.envs.includes(key));
 	if (!row) fail(`${acceptsRel} names ${key}, which docs/DEPLOY.md's table does not have`);
 	else acceptsProblems(key, text, row).forEach(fail);
 }
@@ -551,7 +565,7 @@ const settingEntry = (row) =>
 /** Every setting, grouped by area, with the filter the page's script wires up. */
 function settingsAll() {
 	const out = [
-		`<div class="settings-filter not-content" data-settings-filter hidden><label class="search"><span class="sr-only">Filter settings</span><input type="search" placeholder="Filter by key, variable or word" data-settings-input /></label><p role="status" data-settings-count></p></div>`,
+		`<div class="settings-filter not-content" data-settings-filter hidden><label>Filter settings<span class="search"><input type="search" placeholder="By key, variable or word" data-settings-input /></span></label><p role="status" data-settings-count>${settings.length} settings</p></div>`,
 		'',
 	];
 	for (const area of AREAS) {
@@ -577,8 +591,8 @@ const settingSample = (name) => {
 		fail(`the marker ${name} names a setting docs/DEPLOY.md's table does not have`);
 		return '';
 	}
-	// The real entry lives on All settings: a sample's heading is no anchor of its own.
-	return settingEntry(row).replace(/<h3 id="[^"]*">/, '<h3>');
+	// The real entry lives on All settings: a sample carries no anchor of its own.
+	return settingEntry(row).replace(/<h3 id="[^"]*">/, '<h3>').replace(/<code id="[^"]*">/g, '<code>');
 };
 
 // ------------------------------------------------- the docs home's cards
@@ -628,6 +642,28 @@ const generatedBlocks = {
 
 // ------------------------------------------------------------ writing
 
+/**
+ * Every markdown table sits in a named region, so a wide one scrolls without
+ * losing its own semantics; src/lib/scrolling-tables.ts gives the tab stop to a
+ * region that really scrolls.
+ */
+function wrapTables(text) {
+	const { lines, inCode } = scan(text);
+	const out = [];
+	for (let i = 0; i < lines.length; i++) {
+		const opens = !inCode[i] && lines[i].startsWith('|') && /^\|[\s:|-]+\|?\s*$/.test(lines[i + 1] ?? '');
+		if (!opens) {
+			out.push(lines[i]);
+			continue;
+		}
+		out.push('<div class="table-wrap" role="region" aria-label="Table">', '');
+		while (i < lines.length && lines[i].startsWith('|')) out.push(lines[i++]);
+		out.push('', '</div>', '');
+		i--;
+	}
+	return out.join('\n');
+}
+
 rmSync(path.join(outRoot, 'docs'), { recursive: true, force: true });
 
 function frontmatter(fields) {
@@ -656,6 +692,7 @@ for (const page of pages) {
 		return generatedBlocks[name]();
 	});
 	for (const marker of leftoverMarkers(body)) fail(`${page.route}: the marker <!-- ${marker} --> was not replaced (no such media or diagram name)`);
+	body = wrapTables(body);
 	if (page.generatedNote) {
 		body = `<div class="gen-note not-content"><span class="gen">Generated from the source, always current</span></div>\n\n${body}`;
 	}

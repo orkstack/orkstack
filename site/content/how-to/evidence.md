@@ -15,6 +15,7 @@ orkctl run evidence export <run-id> --json        # prints MANIFEST.json, writes
 - The file is written only once the engine confirms a complete bundle. An interrupted export leaves no file behind.
 - `--no-logs` and `--no-artifacts` leave those members out. `--task` and `--item` narrow the bundle to one task, or to one item of a fan-out.
 - `--overwrite` replaces an existing file.
+- The `orkctl` alias cannot write `--output` files. Use the installed binary, as [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains.
 
 In the UI, choose **Evidence** on a finished run. The dialog shows the manifest first, so you can see what is in the bundle before the download starts. A bundle larger than 256 MiB is not downloaded by the browser. The dialog shows the `orkctl` command to use instead.
 
@@ -33,7 +34,9 @@ In the UI, choose **Evidence** on a finished run. The dialog shows the manifest 
 
 A fan-out's items sit under `tasks/<task>/items/`, one folder per item.
 
-A bundle does not hold the Orker's per-attempt `task.json`, `config.json` or `run.json`. Those files live in a workspace that is removed after each try. The bundle holds no secret values.
+A bundle does not hold the Orker's per-attempt `task.json`, `config.json` or `run.json`. Those files live in a workspace that is removed after each try.
+
+No member carries a secret value, because no store holds one. The bundle does hold the run's input, the `with:` and `env` values of the Orkflow, and the logs and artifacts as they were. Treat the file as sensitive as the run itself.
 
 Each member has a state:
 

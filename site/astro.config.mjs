@@ -57,8 +57,13 @@ export default defineConfig({
 			description:
 				'A thin, Temporal-backed durable execution platform: Orkflows in YAML, every task an OCI container.',
 			favicon: '/favicon.svg',
+			head: [
+				{ tag: 'meta', attrs: { property: 'og:image', content: `${SITE}${BASE_PATH}/og.png` } },
+				{ tag: 'meta', attrs: { name: 'twitter:image', content: `${SITE}${BASE_PATH}/og.png` } },
+			],
 			customCss: ['./src/styles/site.css', './src/styles/starlight.css'],
 			components: {
+				PageFrame: './src/components/starlight/PageFrame.astro',
 				Header: './src/components/starlight/Header.astro',
 				SiteTitle: './src/components/starlight/SiteTitle.astro',
 				ThemeProvider: './src/components/starlight/ThemeProvider.astro',

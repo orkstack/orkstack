@@ -4,6 +4,11 @@
  * search field, tooltip) and the header and foot. Values are tokens only.
  */
 
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
 html {
 	-webkit-text-size-adjust: 100%;
 }
@@ -129,6 +134,7 @@ body {
 	top: 12px;
 	z-index: 100;
 	transform: translateY(-200%);
+	--focus: var(--hero-ink);
 }
 .skip-link:focus {
 	transform: none;
@@ -244,6 +250,19 @@ body {
 }
 .plate button[hidden] {
 	display: none;
+}
+.plate button .copied,
+.plate button.done .to-copy {
+	display: none;
+}
+.plate button.done .copied {
+	display: block;
+}
+@media (max-width: 640px) {
+	.plate button {
+		min-width: 40px;
+		min-height: 40px;
+	}
 }
 
 /* ------------------------------------------------------- the search field */
@@ -400,7 +419,14 @@ body {
 .site-menu {
 	display: none;
 }
-@media (max-width: 720px) {
+@media (max-width: 400px) {
+	/* At the narrowest there is room for the name and the menu: the hero and
+	   the foot hold the repository's link. */
+	.site-head .end > a.btn {
+		display: none;
+	}
+}
+@media (max-width: 820px) {
 	.site-head .in {
 		gap: 12px;
 	}
@@ -464,12 +490,34 @@ body {
 	align-items: center;
 	gap: 6px;
 }
+.foot-site .vline a {
+	text-decoration: underline;
+	text-underline-offset: var(--underline-offset);
+}
 .foot-site .end {
 	margin-left: auto;
 }
 @media (max-width: 900px) {
 	.foot-site .end {
 		margin-left: 0;
+	}
+}
+@media (max-width: 640px) {
+	.foot-site nav a,
+	.foot-site .vline a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 40px;
+	}
+}
+@media (forced-colors: active) {
+	.site-head nav a[aria-current] {
+		text-decoration: underline;
+		text-decoration-thickness: 2px;
+	}
+	.st::before {
+		forced-color-adjust: none;
+		outline: 1px solid CanvasText;
 	}
 }
 

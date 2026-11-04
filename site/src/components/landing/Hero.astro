@@ -28,6 +28,14 @@ const map = [
 	{ name: 'render', cells: [...Array(9).fill(ok), ...Array(3).fill(run), wait, ...Array(11).fill(pend)] },
 	{ name: 'manifest', cells: [pend] },
 ];
+// The map's text alternative says what its marks say.
+const count = (cells: string[], kind: string) => cells.filter((c) => c === kind).length;
+const render = map[4].cells;
+const mapLabel = `Task map: resolve, clone and prepare succeeded; tmpl and services reused from the cache; render has ${render.length} items, ${count(render, ok)} succeeded, ${count(render, run)} running, ${count(render, wait)} waiting for capacity and ${count(render, pend)} not started; manifest not started.`;
+// A code block that wraps never scrolls, so it needs no tab stop of its own.
+const noTabStop = { pre(node: { properties: Record<string, unknown> }) {
+	delete node.properties.tabindex;
+} };
 ---
 
 <section class="hero">
@@ -44,7 +52,7 @@ const map = [
 			</div>
 			<CopyCommand label="Run it locally" command={up} class="install" />
 		</div>
-		<div class="showcase" role="img" aria-label={`A run of ${example.path}: the render task's YAML beside its task map`}>
+		<div class="showcase">
 			<div class="bar">
 				<span class="plate"><span class="k">run</span><span class="v">ork-…080912</span></span>
 				<b>{example.name}</b>
@@ -52,8 +60,8 @@ const map = [
 				<span class="st running push">Running</span>
 			</div>
 			<div class="split">
-				<Code code={example.excerpt} lang="yaml" embeddedLangs={[templateInjection as any]} themes={codeThemes as any} defaultColor={false} class="showcase-code" />
-				<div class="tmap">
+				<Code code={example.excerpt} lang="yaml" embeddedLangs={[templateInjection as any]} themes={codeThemes as any} defaultColor={false} class="showcase-code" transformers={[noTabStop as any]} />
+				<div class="tmap" role="img" aria-label={mapLabel}>
 					<b>Task map</b>
 					{
 						map.map((t) => (

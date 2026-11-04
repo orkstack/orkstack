@@ -8,7 +8,7 @@ These settings configure `ork`, the engine: its API and web UI listener, the lim
 |---|---|
 | [`engine.history.max_events`](/docs/configuration/#engine-history-max-events) | Match the cluster's real per-run history limit. A value above it defeats the guard, and a value below it stops runs early. |
 | [`engine.allowed_hosts`](/docs/configuration/#engine-allowed-hosts) | Every name with a dot that the API is reached by. Any other `Host` is refused with `403`. |
-| [`engine.cleanup.enabled`](/docs/configuration/#engine-cleanup-enabled) | Off keeps every run. On deletes each finished run's stored data at its namespace's retention. |
+| [`engine.cleanup.enabled`](/docs/configuration/#engine-cleanup-enabled) | Off keeps each run for the deployment maximum plus a margin, 24 hours by default. On deletes each finished run's stored data at its namespace's retention. |
 | [`engine.orkflow_max_tasks`](/docs/configuration/#engine-orkflow-max-tasks) | The most tasks one Orkflow may declare. The default is the largest size measured. Above it, the deployment runs unmeasured. |
 | [`engine.ws_allowed_origins`](/docs/configuration/#engine-ws-allowed-origins) | Set it only for a browser page served from another origin, or behind a proxy that rewrites `Host`. |
 

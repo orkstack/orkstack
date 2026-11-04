@@ -13,12 +13,13 @@ orkctl pool list -n payments                 # the pool, and how many Orkers ser
 orkctl orker list --filter pool=gpu          # each Orker in the pool, with its load
 ```
 
-Set `ORK_ORKER_POOL` on `ork` too, to the same value. A task that names no pool runs on the deployment's default pool, so the engine's default must match the Orkers that serve it.
+Leave `ORK_ORKER_POOL` unset on `ork`. A task that names no pool runs on the deployment's default pool, `main`. To change that default, set `ORK_ORKER_POOL` on `ork` and on the Orkers of the new default pool, to the same value.
 
 ## Join a pool
 
 - `main` is the built-in pool. An Orker with no pool setting serves it.
-- Set the pool with `ORK_ORKER_POOL` on both binaries, or `pool.name` in the config file. The two must agree, or the process refuses to start.
+- Set the pool on each Orker with `ORK_ORKER_POOL`, or `pool.name` in the config file. Do not set it on `ork` to join a pool.
+- If `ORK_ORKER_QUEUE` is also set on a process, the two must agree, or that process refuses to boot.
 - A task chooses its pool with `pool:` in the Orkflow ([Pins](/docs/build/choose-where-tasks-run/) explains the choice).
 - A namespace may dispatch onto only the pools it allows: `orkctl namespace update payments --allow-pool gpu`. An empty list means no restriction.
 - A submit into a pool with no live Orkers is refused, and the refusal names the pool and the fix.
