@@ -12,7 +12,8 @@
 	// header's chip and the CLI's table count the same tries and must agree.
 	import type { TaskAttempt } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import type { FlakeGroup } from '#lib/gen/orkstack/v1/stats_pb.ts';
-	import { retryBadgeLabel } from '#lib/attempts.ts';
+	import { attemptsSeen, retryBadgeLabel } from '#lib/attempts.ts';
+	import Icon from './Icon.svelte';
 	import { flakeBadgeLabel, flakeHistoryTitle } from '#lib/flakes.ts';
 
 	interface Props {
@@ -44,13 +45,9 @@
 	);
 </script>
 
-{#if label}
-	<span
-		data-testid={testid}
-		data-flaky={inRun ? undefined : 'true'}
-		data-tip={title}
-		class="stamp pill-outline bg-surface text-ink-2"
-	>
-		{label}
-	</span>
+<!-- A retry is the mark with its count; the label stays for assistive technology. -->
+{#if label && inRun}
+	<span data-testid={testid} data-tip={title} class="retry" data-count={attemptsSeen(attempts)}><Icon name="retry" class="" /><span class="sr">{label}</span></span>
+{:else if label}
+	<span data-testid={testid} data-flaky="true" data-tip={title} class="tag">{label}</span>
 {/if}

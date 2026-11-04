@@ -18,9 +18,11 @@
 		testid?: string;
 		/** Said by the tooltip on the value. */
 		tip?: string;
+		/** What the button copies, when the value shown is a short form of it. */
+		copy?: string;
 	}
 
-	let { key, value, short, copyLabel, small = false, testid, tip }: Props = $props();
+	let { key, value, short, copyLabel, small = false, testid, tip, copy: copied }: Props = $props();
 	// What the last copy did, in a live region that is always there: a copy
 	// never silently does nothing (docs/UI_CLI_PARITY.md).
 	let said = $state('');
@@ -30,7 +32,7 @@
 		clearTimeout(clear);
 		said = '';
 		await tick();
-		said = (await copyText(value)) === 'copied' ? 'Copied' : 'The browser refused to copy; select the value and copy it by hand';
+		said = (await copyText(copied ?? value)) === 'copied' ? 'Copied' : 'The browser refused to copy; select the value and copy it by hand';
 		clear = setTimeout(() => (said = ''), 2500);
 	}
 </script>

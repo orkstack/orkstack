@@ -1,7 +1,8 @@
-// An activity's icon. A first-party activity, a composed task and an awaited
-// task have the UI's own drawings (#lib/icons.ts, a-*); an image may declare
-// its own (`org.orkstack.activity.icon`), which the engine reads, checks and
-// returns as a tree of elements and attributes — never markup. The UI renders
+// An activity's icon. An image declares its own
+// (`org.orkstack.activity.icon`), which the engine reads, checks and returns
+// as a tree of elements and attributes — never markup; a composed task and an
+// awaited task have the UI's own drawings (#lib/icons.ts, a-*), and an image
+// that declares nothing has the default. The UI renders
 // that tree through a closed switch over the names it allows (the same list
 // the engine enforces, specs/ui-revamp-icons.md), and draws the default icon
 // for anything else: an unknown element or attribute shows the default icon,
@@ -99,26 +100,14 @@ export function safeIcon(icon: DeclaredIcon | undefined): { attrs: Record<string
 	return { attrs: root, nodes };
 }
 
-const FIRST_PARTY: Record<string, ActivityKind> = {
-	http: 'http',
-	shell: 'shell',
-	file: 'file',
-	json: 'json',
-	git: 'git',
-	template: 'template'
-};
-
 /**
- * The drawing the UI owns for a task's `uses:` — the first-party activities
- * by their catalog name, a composed task, an awaited task — and the default
- * for any other image.
+ * The drawing the UI owns for a task: a composed task, an awaited task, and
+ * the default for any image (which its own declared icon replaces).
  */
 export function activityKind(uses: string | undefined, opts: { awaited?: boolean } = {}): ActivityKind {
 	if (opts.awaited) return 'await';
-	if (!uses) return 'default';
-	if (uses.startsWith('orkflow:')) return 'orkflow';
-	const name = uses.split(/[@:]/)[0];
-	return FIRST_PARTY[name] ?? 'default';
+	if (uses?.startsWith('orkflow:')) return 'orkflow';
+	return 'default';
 }
 
 /** What the icon stands for, in words (a tooltip; the icon itself is decorative). */

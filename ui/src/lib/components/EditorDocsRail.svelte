@@ -13,6 +13,7 @@
 	// declared interface (InspectActivity). A description the image does not
 	// declare shows nothing; nothing here is guessed.
 	import { activityClient } from '#lib/clients/activities.ts';
+	import DocText from './DocText.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { activityKind } from '#lib/activityIcon.ts';
 	import type { TaskAtCursor } from '#lib/yaml/taskAt.ts';
@@ -55,6 +56,27 @@
 		return () => clearTimeout(timer);
 	});
 
+	// The header's icon and count follow the answer the body has drawn.
+	let answered = $state<{ uses: string; info: ActivityInfo } | null>(null);
+	$effect(() => {
+		const uses = settled?.uses;
+		if (!uses) return;
+		let live = true;
+		void inspect(uses).then((answer) => {
+			if (live && answer.info) answered = { uses, info: answer.info };
+		});
+		return () => {
+			live = false;
+		};
+	});
+	const shownInfo = $derived(answered && answered.uses === settled?.uses ? answered.info : null);
+	function keysOf(info: ActivityInfo | null, op: string): string[] {
+		const iface = info?.interface;
+		if (!iface) return [];
+		return Object.keys({ ...iface.fields, ...(op && iface.ops[op] ? iface.ops[op].fields : {}) }).filter((k) => k !== 'op');
+	}
+	const headKeys = $derived(keysOf(shownInfo, settled?.op || shownInfo?.interface?.defaultOp || ''));
+
 	let body = $state<HTMLElement>();
 	let overflows = $state(false);
 	$effect(() => {
@@ -75,10 +97,10 @@
 	<div class="rail-head">
 		{#if settled?.uses}
 			<p class="rail-title">
-				<ActivityIcon kind={activityKind(settled.uses)} class="size-4.5 text-navy-text" />
+				<ActivityIcon kind={activityKind(settled.uses)} icon={shownInfo?.icon} class="size-4.5 text-navy-text" />
 				<span class="min-w-0"><b>{settled.id || 'This task'}</b> uses <b class="font-mono">{settled.uses}</b></span>
 			</p>
-			<p class="rail-sub">line {settled.line}{#if settled.set.length} · {settled.set.length} set{/if}</p>
+			<p class="rail-sub">line {settled.line}{#if headKeys.length} · <span data-testid="editor-docs-set">{settled.set.filter((k) => headKeys.includes(k)).length} of {headKeys.length} set</span>{/if}</p>
 		{:else}
 			<p class="rail-title"><span>Activity docs</span></p>
 			<p class="rail-sub">Place the caret in a task to see what its activity takes.</p>
@@ -117,9 +139,12 @@
 					{@const op = settled.op || iface?.defaultOp || ''}
 					{@const fields = { ...(iface?.fields ?? {}), ...(op && iface?.ops[op] ? iface.ops[op].fields : {}) }}
 					{@const keys = Object.keys(fields).filter((k) => k !== 'op')}
+					{@const docs = info.docs}
+					{@const opDocs = op ? docs?.ops[op] : undefined}
 					<div class="grid gap-2 px-4 pt-3">
+						{#if docs?.description}<p class="rail-summary"><DocText text={docs.description} limit={160} testid="editor-docs-summary" /></p>{/if}
 						{#if info.indexDigest}<Plate key="image" value={`${info.reference.split('@')[0]}@${info.indexDigest.slice(0, 19)}…`} tip={`${info.reference.split('@')[0]}@${info.indexDigest}`} small />{/if}
-						{#if op}<p class="text-dense text-ink-2">Op <code class="font-semibold">{op}</code>{#if !settled.op && iface?.defaultOp}<span class="text-ink-3"> (the image's default)</span>{/if}</p>{/if}
+						{#if op}<div class="text-dense text-ink-2">Op <code class="font-semibold">{op}</code>{#if !settled.op && iface?.defaultOp}<span class="text-ink-3"> (the image's default)</span>{/if}{#if opDocs?.description}: <DocText class="inline" text={opDocs.description} limit={120} testid="editor-docs-op" />{/if}</div>{/if}
 					</div>
 					{#if !iface}
 						<p class="rail-note">This image declares no interface, so OrkStack cannot say what its <code>with:</code> takes.</p>
@@ -138,13 +163,31 @@
 										<td>{typeOf(f.type)}</td>
 										<td>{#if isSet}<span class="sr">set</span><Icon name="apply" class="size-4 text-ok" />{:else}<span class="text-ink-3">—<span class="sr"> not set</span></span>{/if}</td>
 									</tr>
+									{#if opDocs?.fields[key] ?? docs?.fields[key]}
+										<tr class="kd">
+											<td colspan="3"><DocText text={opDocs?.fields[key] ?? docs?.fields[key] ?? ''} limit={200} lines={3} testid="editor-docs-key-{key}" /></td>
+										</tr>
+									{/if}
 								{/each}
 							</tbody>
 						</table>
 						{#if Object.keys(iface.values ?? {}).length}
-							<p class="rail-note">Returns <code>{Object.keys(iface.values).join('`, `').replaceAll('`', '')}</code>.</p>
+							<table class="ktable" data-testid="editor-docs-values">
+								<caption class="sr">The values it returns</caption>
+								<thead><tr><th scope="col">Value</th><th scope="col">Type</th></tr></thead>
+								<tbody>
+									{#each Object.keys(iface.values) as value (value)}
+										<tr>
+											<th scope="row"><code>{value}</code></th>
+											<td>{typeOf(iface.values[value]?.type ?? '')}</td>
+										</tr>
+										{#if docs?.values[value]}
+											<tr class="kd"><td colspan="2"><DocText text={docs.values[value]} limit={200} lines={3} /></td></tr>
+										{/if}
+									{/each}
+								</tbody>
+							</table>
 						{/if}
-						<p class="rail-sub px-4 pb-3">{settled.set.filter((k) => keys.includes(k)).length} of {keys.length} set</p>
 					{/if}
 				{/if}
 			{/await}
@@ -227,6 +270,21 @@
 	}
 	.ktable tbody th {
 		font-weight: 400;
+	}
+	.ktable tr:has(+ .kd) th,
+	.ktable tr:has(+ .kd) td {
+		border-bottom: 0;
+		padding-bottom: 2px;
+	}
+	.ktable .kd td {
+		padding-top: 0;
+		font-size: 13px;
+		color: var(--ink-3);
+	}
+	.rail-summary {
+		margin: 0;
+		font-size: 14px;
+		color: var(--ink-2);
 	}
 	@media (max-width: 1180px) {
 		.rail {

@@ -26,6 +26,7 @@
 	// whose failure handlers follow it — into view.
 	import { tick, type Snippet } from 'svelte';
 	import type { Task } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
+	import type { DeclaredIcon } from '#lib/activityIcon.ts';
 	import DagGraph from './DagGraph.svelte';
 	import Icon from './Icon.svelte';
 	import { DAG_LEGIBLE_LIMIT, chooseDagDirection, dagBound, neighbourhood, type DagDirection, type NodeState } from '#lib/dag.ts';
@@ -71,6 +72,15 @@
 		 * frame (#lib/dag.ts chooseDagDirection).
 		 */
 		direction?: DagDirection | 'auto';
+		/** The card's heading: with one the head is a card head, not the caption band. */
+		title?: string;
+		sub?: string;
+		/** Controls at the head's end, beside Fit. */
+		actions?: Snippet;
+		/** The row under the drawing (its legend). */
+		footer?: Snippet;
+		/** What a task's image declares as its icon. */
+		iconOf?: (id: string) => DeclaredIcon | undefined;
 	}
 
 	let {
@@ -93,11 +103,17 @@
 		largeHint = 'The task register below lists every task and what it needs.',
 		map,
 		mapSections = undefined,
-		direction = 'LR'
+		direction = 'LR',
+		title = undefined,
+		sub = '',
+		actions = undefined,
+		footer = undefined,
+		iconOf = undefined
 	}: Props = $props();
 
 	const uid = $props.id();
 	let drawAll = $state(false);
+	let fit = $state(false);
 	const bound = $derived(tasks ? dagBound(tasks.length) : 'draw');
 	const near = $derived(
 		tasks && bound === 'too-large' && neighbourhoodWhenLarge && selected ? neighbourhood(tasks, selected) : []
@@ -151,17 +167,26 @@
 		void tick().then(() => bringIntoView(el));
 	});
 
-	function bringIntoView(el: HTMLDivElement): void {
+	// A drawing that does not fit is centred on the task a reader came for: on
+	// a phone the first view is the one that matters. A later selection is
+	// followed the same way, but only when it is out of view.
+	function bringIntoView(el: HTMLDivElement, onlyIfHidden = false): void {
 		if (el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1) return;
 		const target = el.querySelector('.dag-node.is-selected') ?? el.querySelector('.dag-node.is-failed');
 		if (!target) return;
 		const node = target.getBoundingClientRect();
 		const frame = el.getBoundingClientRect();
-		const margin = Math.min(frame.width * 0.15, 48);
-		el.scrollLeft += node.left - frame.left - margin;
-		if (node.top < frame.top || node.bottom > frame.bottom) el.scrollTop += node.top - frame.top - margin;
+		if (onlyIfHidden && node.left >= frame.left && node.right <= frame.right && node.top >= frame.top && node.bottom <= frame.bottom) return;
+		el.scrollLeft += node.left + node.width / 2 - (frame.left + frame.width / 2);
+		if (node.top < frame.top || node.bottom > frame.bottom) el.scrollTop += node.top + node.height / 2 - (frame.top + frame.height / 2);
 		measure();
 	}
+	$effect(() => {
+		void selected;
+		const el = panel;
+		if (!el || !placed) return;
+		void tick().then(() => bringIntoView(el, true));
+	});
 
 	// The task map's frame: as tall as the map the frame's width lays out at
 	// the largest pitch that fits, plus the 32 px patch, the 16 px padding and
@@ -225,6 +250,19 @@
 	>
 {/snippet}
 
+{#snippet scrollers()}
+	<div class="flex h-8 overflow-hidden rounded-sm border border-line-2 bg-surface">
+		{#if hidden.up || hidden.down}
+			{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chev-up', hidden.up, () => scrollBy(-1, 'y'), false)}
+			{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chev', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}
+		{/if}
+		{#if hidden.left || hidden.right}
+			{@render scroller(`${prefix}-scroll-left`, 'Scroll the DAG left', 'More of the DAG to the left', 'chev-left', hidden.left, () => scrollBy(-1), false)}
+			{@render scroller(`${prefix}-scroll-right`, 'Scroll the DAG right', 'More of the DAG to the right', 'chev-right', hidden.right, () => scrollBy(1), true)}
+		{/if}
+	</div>
+{/snippet}
+
 {#snippet note(text: string, testidValue: string, action?: Snippet)}
 	<div data-testid={testidValue} class="note m-4 flex max-w-prose flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2 text-dense">
 		<span class="font-semibold text-ink-3">Note</span>
@@ -246,6 +284,19 @@
 	class="card relative isolate flex flex-col overflow-hidden max-h-drawing max-sm:max-h-drawing-tall {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
 	style:height={mapHeight !== undefined ? `${mapHeight}px` : undefined}
 >
+	{#if title}
+		<div class="card-head shrink-0">
+			<h2>{title}</h2>
+			{#if sub}<span class="card-sub" data-testid="{testid}-sub">{sub}</span>{/if}
+			<div class="card-end">
+				{#if drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}{@render scrollers()}{/if}
+				{#if actions}{@render actions()}{/if}
+				{#if drawn}
+					<button type="button" class="btn btn-sm btn-quiet" data-testid="{prefix}-fit" aria-pressed={fit} onclick={() => (fit = !fit)}>Fit</button>
+				{/if}
+			</div>
+		</div>
+	{:else}
 	<div
 		class="relative z-10 flex min-h-12 shrink-0 flex-wrap items-center gap-3 self-stretch border-b border-line bg-surface px-3 py-2 {!drawn
 			? 'max-w-full'
@@ -280,6 +331,7 @@
 				>{:else}<span class="truncate">{caption}</span>{/if}
 		</p>
 	</div>
+	{/if}
 	<div
 		bind:this={panel}
 		onscroll={measure}
@@ -297,7 +349,7 @@
 			)}
 		{:else if bound === 'draw' || (bound === 'on-request' && drawAll)}
 			<div class="p-2">
-				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} />
+				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} {iconOf} {fit} />
 			</div>
 		{:else if bound === 'on-request'}
 			{@render note(
@@ -318,25 +370,17 @@
 			)}
 			{#if near.length}
 				<div class="p-2">
-					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} />
+					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} {iconOf} {fit} />
 				</div>
 			{/if}
 		{/if}
 	</div>
-	{#if drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}
+	{#if !title && drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}
 		<!-- A drawing that does not fit says so on the frame's top band, for
 		     each way it overflows: the pair for a way with more to show. -->
-		<div class="absolute top-2 right-2 z-10 flex h-8 overflow-hidden rounded-sm border border-line-2 bg-surface">
-			{#if hidden.up || hidden.down}
-				{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chev-up', hidden.up, () => scrollBy(-1, 'y'), false)}
-				{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chev', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}
-			{/if}
-			{#if hidden.left || hidden.right}
-				{@render scroller(`${prefix}-scroll-left`, 'Scroll the DAG left', 'More of the DAG to the left', 'chev-left', hidden.left, () => scrollBy(-1), false)}
-				{@render scroller(`${prefix}-scroll-right`, 'Scroll the DAG right', 'More of the DAG to the right', 'chev-right', hidden.right, () => scrollBy(1), true)}
-			{/if}
-		</div>
+		<div class="absolute top-2 right-2 z-10">{@render scrollers()}</div>
 	{/if}
+	{#if footer}{@render footer()}{/if}
 </section>
 
 <style>

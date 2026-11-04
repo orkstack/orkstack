@@ -1,3 +1,11 @@
+import { docLong, docParts } from '../src/lib/docText';
+import { forgetActivities, loadActivities, type ActivityReads } from '../src/lib/activityMeta';
+import type { ActivityInfo } from '../src/lib/gen/orkstack/v1/activity_service_pb';
+import { JoinPolicy } from '../src/lib/gen/orkstack/v1/activity_pb';
+import { taskTimelineBars, timelineAxis } from '../src/lib/taskTimeline';
+import { phaseGroups } from '../src/lib/timing';
+import { fmtQuantity, reservedOf } from '../src/lib/resources';
+import { layoutDag } from '../src/lib/dag';
 import { expect, test } from 'bun:test';
 import { Status } from '../src/lib/gen/orkstack/v1/common_pb';
 import { runProgress, progressWords } from '../src/lib/progress';
@@ -102,9 +110,10 @@ test('anything outside the allowed set draws the default icon, never a partial o
 	expect(safeIcon(undefined)).toBeNull();
 });
 
-test("the UI's own drawings: first-party activities by name, composed and awaited tasks, else the default", () => {
-	expect(activityKind('http')).toBe('http');
-	expect(activityKind('json@sha256:abc')).toBe('json');
+test("the UI's own drawings: composed and awaited tasks; any image is the default until it declares its own", () => {
+	// Regression: a first-party name must not earn a drawing the image did not declare.
+	expect(activityKind('http')).toBe('default');
+	expect(activityKind('json@sha256:abc')).toBe('default');
 	expect(activityKind('orkflow:release-block@0.1.0')).toBe('orkflow');
 	expect(activityKind('shell', { awaited: true })).toBe('await');
 	expect(activityKind('ghcr.io/acme/migrate:1.2')).toBe('default');
@@ -147,4 +156,130 @@ test('the task under the caret: its id, uses, op and the with: keys it sets', ()
 	expect(taskAt(DOC, DOC.indexOf('url:'))).toEqual({ id: 'fetch', uses: 'http', op: 'get', set: ['op', 'url'], line: 6 });
 	expect(taskAt(DOC, DOC.indexOf('name: demo'))).toBeNull();
 	expect(taskAt('tasks: [', 3)).toBeNull();
+});
+
+test('a description is plain text: only a paired backtick is code', () => {
+	// Regression: an unmatched backtick must stay a character, not swallow the rest as code.
+	expect(docParts('takes `src` and `as`')).toEqual([
+		{ text: 'takes ', code: false },
+		{ text: 'src', code: true },
+		{ text: ' and ', code: false },
+		{ text: 'as', code: true }
+	]);
+	expect(docParts('a `lone tick')).toEqual([
+		{ text: 'a ', code: false },
+		{ text: '`lone tick', code: false }
+	]);
+	expect(docParts('<b>not html</b>')).toEqual([{ text: '<b>not html</b>', code: false }]);
+	expect(docLong('é'.repeat(160), 160)).toBe(false);
+	expect(docLong('é'.repeat(161), 160)).toBe(true);
+});
+
+test('one read per image per session: the catalog first, then each pin it does not hold', async () => {
+	forgetActivities();
+	let lists = 0;
+	const inspected: string[] = [];
+	const info = (name: string, indexDigest: string) => ({ name, indexDigest }) as unknown as ActivityInfo;
+	const reads: ActivityReads = {
+		listActivities: async () => {
+			lists++;
+			return { activities: [info('http', 'sha256:h')] };
+		},
+		inspectActivity: async ({ reference, allowCached }) => {
+			expect(allowCached).toBe(true);
+			inspected.push(reference);
+			return { activity: info('', reference) };
+		}
+	};
+	const tasks = [
+		{ id: 'a', uses: 'http', image: { pinned: 'r/http@sha256:h', indexDigest: 'sha256:h' } },
+		{ id: 'b', uses: 'r/x', image: { pinned: 'r/x@sha256:x', indexDigest: 'sha256:x' } },
+		{ id: 'c', uses: 'r/x', image: { pinned: 'r/x@sha256:x', indexDigest: 'sha256:x' } },
+		{ id: 'd', uses: 'http' },
+		{ id: 'e', uses: 'orkflow:child@1', orkflow: {} },
+		{ id: 'f', uses: '', await: {} }
+	];
+	const first = await loadActivities(tasks, reads);
+	expect([...first.keys()].sort()).toEqual(['a', 'b', 'c', 'd']);
+	expect(inspected).toEqual(['r/x@sha256:x']);
+	await loadActivities(tasks, reads);
+	expect(lists).toBe(1);
+	expect(inspected).toEqual(['r/x@sha256:x']);
+});
+
+test('a read that fails draws the default and is asked again', async () => {
+	forgetActivities();
+	let inspects = 0;
+	const reads: ActivityReads = {
+		listActivities: async () => ({ activities: [] }),
+		inspectActivity: async () => {
+			inspects++;
+			throw new Error('refused');
+		}
+	};
+	const tasks = [{ id: 'b', uses: 'r/x', image: { pinned: 'r/x@sha256:x', indexDigest: 'sha256:x' } }];
+	expect((await loadActivities(tasks, reads)).size).toBe(0);
+	await loadActivities(tasks, reads);
+	expect(inspects).toBe(2);
+});
+
+test("a task's bars: its wait, its failed attempts, what ran, all on the run's axis", () => {
+	const run = { start: 0, end: 10_000 };
+	const plain = taskTimelineBars({ run, scheduled: 1000, started: 2000, finished: 4000, running: false, now: 10_000, attempts: [] });
+	expect(plain.bars).toEqual([
+		{ kind: 'wait', left: 0.1, width: 0.1 },
+		{ kind: 'ran', left: 0.2, width: 0.2 }
+	]);
+	expect(plain.words).toBe('waited 1.0s, ran 2.0s');
+	// Regression: a retried task must show the attempt that failed, not one long bar.
+	const retried = taskTimelineBars({
+		run,
+		scheduled: 0,
+		started: 3000,
+		finished: 5000,
+		running: false,
+		now: 10_000,
+		attempts: [
+			{ attempt: 1, failed: true, started: 0, finished: 1000 },
+			{ attempt: 2, failed: false, started: 3000, finished: 5000 }
+		]
+	});
+	expect(retried.bars.map((b) => b.kind)).toEqual(['failed', 'wait', 'ran']);
+	// A dispatched task no Orker has started is all waiting, never drawn as running.
+	const waiting = taskTimelineBars({ run, scheduled: 1000, started: null, finished: null, running: true, now: 6000, attempts: [] });
+	expect(waiting.bars).toEqual([{ kind: 'wait', left: 0.1, width: 0.5 }]);
+	// A run with no span yet draws nothing.
+	expect(taskTimelineBars({ run: { start: null, end: null }, scheduled: 1, started: 2, finished: 3, running: false, now: 4, attempts: [] }).bars).toEqual([]);
+});
+
+test('the Tasks axis picks round marks that fit its span', () => {
+	expect(timelineAxis(0)).toEqual([]);
+	expect(timelineAxis(7700).map((m) => m.label)).toEqual(['0s', '2s', '4s', '6s']);
+	expect(timelineAxis(252_000).map((m) => m.label)).toEqual(['0s', '1m', '2m', '3m', '4m']);
+});
+
+test('a task or item phases gather round the run', () => {
+	const value = (ms: number) => ({ kind: 'value' as const, from: { seconds: 0n, nanos: 0 }, to: { seconds: 0n, nanos: 0 }, ms });
+	const groups = phaseGroups([
+		{ phase: 'image', duration: value(100) },
+		{ phase: 'create', duration: value(200) },
+		{ phase: 'run', duration: value(1000) },
+		{ phase: 'commit', duration: value(50) }
+	]);
+	expect(groups.map((g) => [g.key, g.ms])).toEqual([['setup', 300], ['run', 1000], ['finish', 50]]);
+	expect(groups[0].phases).toEqual(['image', 'create']);
+});
+
+test('a resource amount in the run page words', () => {
+	expect(fmtQuantity({ cpu: 1, memoryBytes: 2n * 2n ** 30n })).toBe('1 cpu · 2 GiB');
+	expect(fmtQuantity({ cpu: 0, memoryBytes: 0n })).toBe('');
+	expect(reservedOf({ cpu: 12, memoryBytes: 0n } as never, { cpu: 12, memoryBytes: 0n } as never)).toBe('12 of 12 cpu');
+	expect(reservedOf(undefined, undefined)).toBe('');
+});
+
+test('failure handlers keep to a lane of their own, under the tasks they follow', () => {
+	const task = (id: string, needs: string[], join = 0) => ({ id, needs, join }) as never;
+	const layout = layoutDag([task('a', []), task('h', ['a'], JoinPolicy.ANY_FAILED), task('b', ['a'])]);
+	const y = (id: string) => layout.nodes.find((n) => n.task.id === id)!.y;
+	expect(y('h')).toBeGreaterThan(y('b'));
 });

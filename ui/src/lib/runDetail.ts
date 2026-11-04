@@ -162,3 +162,10 @@ export function downloadFilename(name: string): string {
 	const safe = name.replace(/[\\/\u0000-\u001f\u007f]/g, '_').trim();
 	return safe || 'artifact';
 }
+
+/** A digest as the plates draw it: its first and last groups of four. */
+export function shortDigestWords(digest: string): string {
+	const hex = digest.includes(':') ? digest.slice(digest.indexOf(':') + 1) : digest;
+	if (hex.length < 16) return hex;
+	return `${hex.slice(0, 4)} ${hex.slice(4, 8)} … ${hex.slice(-8, -4)} ${hex.slice(-4)}`;
+}

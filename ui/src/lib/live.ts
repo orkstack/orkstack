@@ -150,14 +150,14 @@ export function liveLine(attempt: LiveAttempt | undefined, nowMs: number): LiveL
 			if (wait) {
 				return {
 					kind: 'capacity',
-					text: `Waiting for capacity · every orker of pool ${wait.pool} is full${reservedOfCapacity(wait)} · ${span(waited)}`,
+					text: `Waiting for capacity · every Orker of pool ${wait.pool} is full${reservedOfCapacity(wait)} · ${span(waited)}`,
 					title: `No orker of pool ${wait.pool} has room for another task: an orker takes one only while its per-task cap still fits beside what it has reserved.`,
 					stale: false
 				};
 			}
 			return {
 				kind: 'waiting',
-				text: `Waiting for an orker · ${span(waited)}`,
+				text: `Waiting for capacity · ${span(waited)}`,
 				title: 'No orker has picked this attempt up yet: the pool has no free orker.',
 				stale: false
 			};

@@ -4,6 +4,9 @@
 	import { dagDirectionParam } from '#lib/dag.ts';
 	import { rememberRecent } from '#lib/palette/recent.ts';
 	import DrawingFrame from '#lib/components/DrawingFrame.svelte';
+	import { activityClient } from '#lib/clients/activities.ts';
+	import { loadActivities } from '#lib/activityMeta.ts';
+	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import OrkflowEditor from '#lib/components/OrkflowEditor.svelte';
@@ -29,6 +32,19 @@
 
 	let { data }: PageProps = $props();
 	const wf = $derived(data.orkflow);
+	// What each task's image declares: drawn on the graph once it is known, the default until then.
+	let activityByTask = $state.raw(new Map<string, ActivityInfo>());
+	$effect(() => {
+		const tasks = wf?.tasks;
+		if (!tasks?.length) return;
+		let live = true;
+		void loadActivities(tasks, activityClient(fetch)).then((answer) => {
+			if (live) activityByTask = answer;
+		});
+		return () => {
+			live = false;
+		};
+	});
 
 	// The palette's RECENT group: this browser remembers the Orkflow's name.
 	$effect(() => {
@@ -222,6 +238,7 @@
 					tasks={wf.tasks}
 					orkflowLabel="{wf.name}@{wf.version}"
 					direction={dagDirectionParam(page.url)}
+					iconOf={(id) => activityByTask.get(id)?.icon}
 				/>
 			</section>
 			<aside class="min-w-0" aria-labelledby="orkflow-sheet-versions-heading">

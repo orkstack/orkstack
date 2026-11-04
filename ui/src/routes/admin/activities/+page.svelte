@@ -22,7 +22,7 @@
 	import ActivityIcon from '#lib/components/ActivityIcon.svelte';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import Plate from '#lib/components/Plate.svelte';
-	import { activityKind } from '#lib/activityIcon.ts';
+	import DocText from '#lib/components/DocText.svelte';
 	import ListFilter from '#lib/components/ListFilter.svelte';
 	import { listHref } from '#lib/browsing.ts';
 	import type { FieldFilter } from '#lib/listFilter.ts';
@@ -221,8 +221,17 @@
 					<tr data-testid="activity-row-{activity.name}">
 						<th scope="row">
 							<span class="inline-flex items-center gap-2 font-semibold text-ink" data-testid="activity-name-{activity.name}"
-								><ActivityIcon kind={activityKind(activity.name)} class="size-4 text-navy-text" />{activity.name}</span
+								><ActivityIcon icon={activity.icon} class="size-4 text-navy-text" />{activity.name}</span
 							>
+							{#if activity.docs?.description}
+								<span class="mt-1 block text-dense font-normal text-ink-2"><DocText text={activity.docs.description} limit={160} testid="activity-summary-{activity.name}" /></span>
+							{/if}
+							{#if activity.iconError}
+								<span class="mt-1 block text-dense font-normal text-ink-3" data-testid="activity-icon-error-{activity.name}">Its icon was refused: {activity.iconError}</span>
+							{/if}
+							{#if activity.docsError}
+								<span class="mt-1 block text-dense font-normal text-ink-3" data-testid="activity-docs-error-{activity.name}">Its description was refused: {activity.docsError}</span>
+							{/if}
 						</th>
 						<td data-label="Image" class="font-mono text-sm text-ink-2" data-testid="activity-reference-{activity.name}">
 							<span class="break-all">{activity.reference || '—'}</span>
@@ -243,7 +252,7 @@
 						</td>
 						<td data-label="Ops" class="font-mono text-sm text-ink-2">
 							{#if activity.interface && Object.keys(activity.interface.ops).length > 0}
-								{Object.keys(activity.interface.ops).sort().join(', ')}
+								{#each Object.keys(activity.interface.ops).sort() as op (op)}<span class="block" data-tip={activity.docs?.ops[op]?.description || undefined}>{op}</span>{/each}
 							{:else}
 								<span class="text-ink-3">—</span>
 							{/if}

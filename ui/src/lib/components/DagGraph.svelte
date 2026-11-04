@@ -1,23 +1,22 @@
 <script lang="ts">
 	// An Orkflow's tasks drawn as the DAG they form: one node per task, one
-	// edge per need, routed across, down, across. A node is a link — on the
-	// Orkflow page to its row in the task register, on the run page to the task
-	// itself (selecting it, the same coordinate as the task map).
+	// edge per need, routed across, down, across. On the Orkflow page a node is
+	// a link to its row in the task register; on the run page it is a toggle
+	// button that selects the task, the same selection its row and the task map
+	// hold, and everything outside that selection is greyed.
 	//
-	// The contract a spec reads (join-policy.spec.ts): exactly ONE <rect> per
-	// node, and a failure handler's dash set by ATTRIBUTE (DAG_DASH) on that
-	// rect and on every edge into it — never by the CSS property, so the
-	// attribute is the dash drawn. Every other mark of a node (selection,
-	// focus, status, tags) is a path, a circle or text.
+	// The contract a spec reads (join-policy.spec.ts): a failure handler's dash
+	// is set by ATTRIBUTE (DAG_DASH) on the node's outline and on every edge
+	// into it, never by the CSS property, so the attribute is the dash drawn.
 	//
 	// The caller bounds what is drawn (DrawingFrame: at most 80 tasks, 300 on
 	// request); this component lays out whatever it is handed. The drawing
-	// takes its container's width — never wider than its natural size, never
-	// narrower than DAG_MIN_SCALE of it — so a typical Orkflow is drawn whole
-	// in its frame, and one too wide for that scrolls in it.
+	// takes its container's width, never wider than its natural size, and never
+	// narrower than DAG_MIN_SCALE of it unless the reader asks to fit it.
 	import type { Task } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
 	import {
 		DAG_DASH,
+		DAG_ID_CHARS,
 		DAG_LINE_CHARS,
 		DAG_MIN_SCALE,
 		DAG_NODE_H,
@@ -27,9 +26,11 @@
 		fitDagRef,
 		layoutDag,
 		type DagDirection,
+		type DagEdge,
 		type DagNode,
 		type NodeState
 	} from '#lib/dag.ts';
+	import type { DeclaredIcon } from '#lib/activityIcon.ts';
 	import { activityLabel } from '#lib/activity.ts';
 	import { activityKind } from '#lib/activityIcon.ts';
 	import { isFailureHandler, joinTitle, joinWord } from '#lib/join.ts';
@@ -37,6 +38,7 @@
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import { statusClassWord, svgMark } from '#lib/statusMarks.ts';
 	import type { JoinPolicy } from '#lib/gen/orkstack/v1/activity_pb.ts';
+	import ActivityIcon from './ActivityIcon.svelte';
 
 	interface Props {
 		tasks: Task[];
@@ -54,6 +56,10 @@
 		onselect?: (id: string) => void;
 		/** Left to right (the default) or top to bottom. */
 		direction?: DagDirection;
+		/** What a task's image declares as its icon. */
+		iconOf?: (id: string) => DeclaredIcon | undefined;
+		/** Scale the whole drawing into its frame, however small that makes it. */
+		fit?: boolean;
 	}
 
 	let {
@@ -64,7 +70,9 @@
 		selected = undefined,
 		hrefOf = (id: string) => `#task-row-${id}`,
 		onselect = undefined,
-		direction = 'LR'
+		direction = 'LR',
+		iconOf = undefined,
+		fit = false
 	}: Props = $props();
 
 	const layout = $derived(layoutDag(tasks, direction));
@@ -77,8 +85,47 @@
 	const run = $derived(on === 'run');
 	const MARK = 10;
 	const TEXT_X = 12;
+	const ID_X = 29;
 	const CACHED_TAG = 'cached';
 
+	// What the selection keeps lit: the task, what it needs, what needs it.
+	const lit = $derived.by(() => {
+		if (!selected) return null;
+		const keep = new Set<string>([selected]);
+		for (const task of tasks) {
+			if (task.id === selected) for (const need of task.needs) keep.add(need);
+			else if (task.needs.includes(selected)) keep.add(task.id);
+		}
+		return keep;
+	});
+
+	function edgeClass(edge: DagEdge): string {
+		if (!run) return '';
+		const to = stateOf?.(edge.toId);
+		const from = stateOf?.(edge.fromId);
+		if (isFailureHandler(joinById.get(edge.toId))) return 'is-fail';
+		const touches = edge.fromId === selected || edge.toId === selected;
+		if (selected && !touches) return 'is-dim';
+		if (to?.status === Status.RUNNING) return 'is-live';
+		if (touches && from?.status === Status.SUCCEEDED) return 'is-done';
+		return '';
+	}
+
+	// The lane's name: to the left of its first task where nothing stands
+	// there, else above it.
+	const handlerLabel = $derived.by(() => {
+		if (!run) return null;
+		const handlers = layout.nodes.filter((n) => isFailureHandler(n.task.join));
+		if (handlers.length === 0) return null;
+		const first = handlers.reduce((a, b) => (b.x < a.x || (b.x === a.x && b.y < a.y) ? b : a));
+		const room = 150;
+		const blocked = layout.nodes.some(
+			(n) => n !== first && n.x < first.x && n.x + DAG_NODE_W > first.x - room && n.y < first.y + DAG_NODE_H && n.y + DAG_NODE_H > first.y
+		);
+		return blocked
+			? { x: first.x, y: first.y - 8, anchor: 'start' as const }
+			: { x: first.x - 40, y: first.y + DAG_NODE_H / 2 + 4, anchor: 'end' as const };
+	});
 
 	function nodeName(task: Task, state: NodeState | undefined): string {
 		if (!state) return `Task ${task.id}`;
@@ -90,6 +137,11 @@
 		event.preventDefault();
 		onselect(id);
 	}
+	function selectByKey(event: KeyboardEvent, id: string): void {
+		if (event.key !== 'Enter' && event.key !== ' ') return;
+		event.preventDefault();
+		onselect?.(id);
+	}
 </script>
 
 {#snippet line(node: DagNode, text: string)}
@@ -99,6 +151,101 @@
 	>
 {/snippet}
 
+{#snippet body(node: DagNode, state: NodeState | undefined)}
+	{@const textX = state ? node.x + ID_X : node.x + TEXT_X}
+	{@const id = fitDagLine(node.task.id, DAG_ID_CHARS + (state ? 0 : 2))}
+	{@const declared = iconOf?.(node.task.id)}
+	<!-- One <g> root: a snippet's namespace is decided by what stands at its top. -->
+	<g>
+	<rect
+		x={node.x}
+		y={node.y}
+		width={DAG_NODE_W}
+		height={DAG_NODE_H}
+		rx="10"
+		class="dag-outline"
+		stroke-dasharray={isFailureHandler(node.task.join) ? DAG_DASH : undefined}
+	/>
+	<rect class="dag-focus" x={node.x - 5} y={node.y - 5} width={DAG_NODE_W + 10} height={DAG_NODE_H + 10} rx="14" />
+	{#if state?.items && state.items.total > 0}
+		{@const ok = (DAG_NODE_W * state.items.succeeded) / state.items.total}
+		{@const going = (DAG_NODE_W * state.items.running) / state.items.total}
+		<clipPath id="{on}-clip-{node.task.id}"><rect x={node.x} y={node.y} width={DAG_NODE_W} height={DAG_NODE_H} rx="10" /></clipPath>
+		<g clip-path="url(#{on}-clip-{node.task.id})">
+			<rect class="dag-track" x={node.x} y={node.y + DAG_NODE_H - 6} width={DAG_NODE_W} height="6" />
+			<rect class="dag-bar-ok" x={node.x} y={node.y + DAG_NODE_H - 6} width={ok} height="6" />
+			<rect class="dag-bar-run" x={node.x + ok} y={node.y + DAG_NODE_H - 6} width={going} height="6" />
+		</g>
+	{/if}
+	{#if declared}
+		<ActivityIcon icon={declared} class="dag-icon" x={node.x + DAG_NODE_W - 25} y={node.y + 11} width={15} height={15} />
+	{:else}
+		<use
+			href="#i-a-{node.task.orkflow ? 'orkflow' : activityKind(node.task.uses, { awaited: !!node.task.await })}"
+			x={node.x + DAG_NODE_W - 25}
+			y={node.y + 11}
+			width="15"
+			height="15"
+			class="dag-icon"
+		/>
+	{/if}
+	{#if state}
+		{#each svgMark(state.status, node.x + TEXT_X, node.y + 13, MARK) as part, i (i)}
+			{#if part.el === 'circle'}
+				<circle cx={part.cx} cy={part.cy} r={part.r} class={part.cls} />
+			{:else}
+				<path d={part.d} class={part.cls} stroke-dasharray={part.dash} />
+			{/if}
+		{/each}
+	{/if}
+	<text x={textX} y={node.y + 24} class="dag-id"
+		>{#if id !== node.task.id}<title>{node.task.id}</title>{/if}{id}</text
+	>
+	{#if state}
+		{@render line(node, state.line)}
+	{:else if node.task.orkflow}
+		<!-- A composed task: it runs another Orkflow as a child run. Its
+		     name gives way to fit the node; its version never does. -->
+		{@const ref = `orkflow ${node.task.orkflow.name}@${node.task.orkflow.version}`}
+		{@const shown = fitDagRef(
+			node.task.orkflow.name,
+			node.task.orkflow.version,
+			DAG_LINE_CHARS - (node.task.cache ? CACHED_TAG.length + 1 : 0)
+		)}
+		<text
+			data-testid={run ? `run-dag-node-${node.task.id}-orkflow` : `dag-node-${node.task.id}-orkflow`}
+			x={node.x + TEXT_X}
+			y={node.y + 44}
+			class="dag-tag">{#if shown !== ref}<title>{ref}</title>{/if}{shown}</text
+		>
+	{:else}
+		{@render line(node, activityLabel(node.task) || '—')}
+	{/if}
+	{#if !run && node.task.each}
+		<!-- A fan-out: one node, run as up to max_items items. -->
+		<text
+			data-testid="dag-node-{node.task.id}-each"
+			x={node.x + DAG_NODE_W - TEXT_X - 22}
+			y={node.y + 22}
+			text-anchor="end"
+			class="dag-tag">≤ {node.task.each.maxItems}</text
+		>
+	{/if}
+	{#if run && node.task.each}<title>A fan-out of up to {node.task.each.maxItems} items</title><desc data-testid="run-dag-node-{node.task.id}-each">each ≤ {node.task.each.maxItems}</desc>{/if}
+	{#if joinAttr(node.task.join)}<desc data-testid={run ? `run-dag-node-${node.task.id}-join` : `dag-node-${node.task.id}-join`}>join {joinWord(node.task.join)}</desc>{/if}
+	{#if node.task.cache}
+		<!-- A cached task: memoized across runs (docs/DSL.md "Caching"). -->
+		<text
+			data-testid={run ? `run-dag-node-${node.task.id}-cache` : `dag-node-${node.task.id}-cache`}
+			x={node.x + DAG_NODE_W - TEXT_X}
+			y={node.y + 44}
+			text-anchor="end"
+			class="dag-tag">{CACHED_TAG}</text
+		>
+	{/if}
+	</g>
+{/snippet}
+
 {#if tasks.length === 0}
 	<p class="p-4 text-sm text-ink-muted">No tasks.</p>
 {:else}
@@ -106,133 +253,56 @@
 		data-testid={run ? 'run-dag' : 'orkflow-dag'}
 		data-direction={layout.direction}
 		viewBox="0 0 {layout.width} {layout.height}"
-		style="width:100%;max-width:{layout.width}px;min-width:{Math.round(layout.width * DAG_MIN_SCALE)}px"
+		style="width:100%;max-width:{layout.width}px;min-width:{fit ? 0 : Math.round(layout.width * DAG_MIN_SCALE)}px"
 		class="dag block h-auto"
 		role="group"
 		aria-label={label}
 	>
-		<defs>
-			<marker
-				id={run ? 'run-dag-arrow' : 'dag-arrow'}
-				viewBox="0 0 10 10"
-				refX="9"
-				refY="5"
-				markerWidth="7"
-				markerHeight="7"
-				orient="auto-start-reverse"
-			>
-				<path d="M 0 1 L 9 5 L 0 9 z" class="dag-arrowhead" />
-			</marker>
-		</defs>
 		{#each layout.edges as edge (edge.fromId + '->' + edge.toId)}
 			<path
 				data-testid={run ? `run-dag-edge-${edge.fromId}-${edge.toId}` : `dag-edge-${edge.fromId}-${edge.toId}`}
-				d={edgePath(edge, 2)}
-				class="dag-edge"
+				d={edgePath(edge, 0)}
+				class="dag-edge {edgeClass(edge)}"
 				stroke-dasharray={isFailureHandler(joinById.get(edge.toId)) ? DAG_DASH : undefined}
 				data-join={joinAttr(joinById.get(edge.toId))}
-				marker-end={run ? 'url(#run-dag-arrow)' : 'url(#dag-arrow)'}
 			/>
 		{/each}
+		{#if handlerLabel}
+			<text class="dag-lane" x={handlerLabel.x} y={handlerLabel.y} text-anchor={handlerLabel.anchor} data-testid="run-dag-handlers">Failure handlers</text>
+		{/if}
 		{#each layout.nodes as node (node.task.id)}
 			{@const state = stateOf?.(node.task.id)}
 			{@const word = state ? statusClassWord(state.status) : ''}
-			{@const textX = node.x + TEXT_X + (state ? MARK + 6 : 0)}
+			{@const pending = state?.status === Status.PENDING || state?.status === Status.SKIPPED}
 			<g
 				data-testid={run ? `run-dag-node-${node.task.id}` : `dag-node-${node.task.id}`}
 				data-join={joinAttr(node.task.join)}
 				data-status={state ? Status[state.status ?? Status.UNSPECIFIED] : undefined}
-				class="dag-node {word ? `is-${word}` : ''} {state?.neverStarted ? 'is-never' : ''} {selected === node.task.id
+				class="dag-node {word ? `is-${word}` : ''} {state?.neverStarted ? 'is-never' : ''} {pending ? 'is-pend' : ''} {selected === node.task.id
 					? 'is-selected'
-					: ''}"
+					: ''} {lit && !lit.has(node.task.id) ? 'is-dim' : ''}"
 			>
 				{#if joinAttr(node.task.join)}
 					<title>{joinTitle(node.task.join, node.task.needs)}</title>
 				{/if}
-				<a
-					href={hrefOf(node.task.id)}
-					aria-label={nodeName(node.task, state)}
-					aria-current={selected === node.task.id ? 'true' : undefined}
-					onclick={(e) => select(e, node.task.id)}
-				>
-					<rect
-						x={node.x}
-						y={node.y}
-						width={DAG_NODE_W}
-						height={DAG_NODE_H}
-						rx="10"
-						class="dag-outline"
-						stroke-dasharray={isFailureHandler(node.task.join) ? DAG_DASH : undefined}
-					/>
-					<rect class="dag-focus" x={node.x - 5} y={node.y - 5} width={DAG_NODE_W + 10} height={DAG_NODE_H + 10} rx="14" />
-					<use
-						href="#i-a-{node.task.orkflow ? 'orkflow' : activityKind(node.task.uses, { awaited: !!node.task.await })}"
-						x={node.x + DAG_NODE_W - 25}
-						y={node.y + 11}
-						width="15"
-						height="15"
-						class="dag-icon"
-					/>
-					{#if state}
-						{#each svgMark(state.status, node.x + TEXT_X, node.y + 12, MARK) as part, i (i)}
-							{#if part.el === 'circle'}
-								<circle cx={part.cx} cy={part.cy} r={part.r} class={part.cls} />
-							{:else}
-								<path d={part.d} class={part.cls} stroke-dasharray={part.dash} />
-							{/if}
-						{/each}
-					{/if}
-					<text x={textX} y={node.y + 22} class="dag-id">{node.task.id}</text>
-					{#if state}
-						{@render line(node, state.line)}
-					{:else if node.task.orkflow}
-						<!-- A composed task: it runs another Orkflow as a child run. Its
-						     name gives way to fit the node; its version never does. -->
-						{@const ref = `orkflow ${node.task.orkflow.name}@${node.task.orkflow.version}`}
-						{@const shown = fitDagRef(
-							node.task.orkflow.name,
-							node.task.orkflow.version,
-							DAG_LINE_CHARS - (node.task.cache ? CACHED_TAG.length + 1 : 0)
-						)}
-						<text
-							data-testid={run ? `run-dag-node-${node.task.id}-orkflow` : `dag-node-${node.task.id}-orkflow`}
-							x={node.x + TEXT_X}
-							y={node.y + 44}
-							class="dag-tag">{#if shown !== ref}<title>{ref}</title>{/if}{shown}</text
-						>
-					{:else}
-						{@render line(node, activityLabel(node.task) || '—')}
-					{/if}
-					{#if node.task.each}
-						<!-- A fan-out: one node, run as up to max_items items. -->
-						<text
-							data-testid={run ? `run-dag-node-${node.task.id}-each` : `dag-node-${node.task.id}-each`}
-							x={node.x + DAG_NODE_W - TEXT_X - 22}
-							y={node.y + 22}
-							text-anchor="end"
-							class="dag-tag">each ≤ {node.task.each.maxItems}</text
-						>
-					{:else if joinAttr(node.task.join)}
-						<!-- A join: when the task starts, decided from how its needs ended. -->
-						<text
-							data-testid={run ? `run-dag-node-${node.task.id}-join` : `dag-node-${node.task.id}-join`}
-							x={node.x + DAG_NODE_W - TEXT_X - 22}
-							y={node.y + 22}
-							text-anchor="end"
-							class="dag-tag">join {joinWord(node.task.join)}</text
-						>
-					{/if}
-					{#if node.task.cache}
-						<!-- A cached task: memoized across runs (docs/DSL.md "Caching"). -->
-						<text
-							data-testid={run ? `run-dag-node-${node.task.id}-cache` : `dag-node-${node.task.id}-cache`}
-							x={node.x + DAG_NODE_W - TEXT_X}
-							y={node.y + 44}
-							text-anchor="end"
-							class="dag-tag">{CACHED_TAG}</text
-						>
-					{/if}
-				</a>
+				{#if run}
+					<!-- svelte-ignore a11y_click_events_have_key_events -->
+					<g
+						class="dag-hit"
+						role="button"
+						tabindex="0"
+						aria-label={nodeName(node.task, state)}
+						aria-pressed={selected === node.task.id}
+						onclick={(e) => select(e, node.task.id)}
+						onkeydown={(e) => selectByKey(e, node.task.id)}
+					>
+						{@render body(node, state)}
+					</g>
+				{:else}
+					<a href={hrefOf(node.task.id)} class="dag-hit" aria-label={nodeName(node.task, state)} onclick={(e) => select(e, node.task.id)}>
+						{@render body(node, state)}
+					</a>
+				{/if}
 			</g>
 		{/each}
 	</svg>
@@ -240,17 +310,32 @@
 
 <style>
 	/* Harbour's graph: white rounded nodes on the dotted ground, the id in
-	   the sans, the second line in the mono, an activity icon top right.
-	   Every colour is a token; the markup carries geometry only. */
+	   the sans, an activity icon top right. Every colour is a token; the
+	   markup carries geometry only. */
 	.dag-outline {
 		fill: var(--surface);
-		stroke: var(--line-2);
-		stroke-width: 1.5;
+		stroke: var(--line-strong);
+		stroke-width: 1.25;
 	}
 	.dag-edge {
 		fill: none;
 		stroke: var(--line-strong);
 		stroke-width: 1.5;
+	}
+	.dag-edge.is-done {
+		stroke: var(--ok-mark);
+	}
+	.dag-edge.is-live {
+		stroke: var(--run);
+		stroke-dasharray: 5 4;
+	}
+	.dag-edge.is-fail {
+		stroke: var(--fail-mark);
+	}
+	.dag-edge.is-dim {
+		stroke: var(--pend-mark);
+		stroke-dasharray: 1.5 3.5;
+		stroke-linecap: round;
 	}
 	/* A drawing scaled to its frame keeps its rules at their drawn weight. */
 	.dag-outline,
@@ -258,27 +343,40 @@
 	.dag-focus {
 		vector-effect: non-scaling-stroke;
 	}
-	.dag-arrowhead {
-		fill: var(--line-strong);
-	}
 	.dag-id {
 		fill: var(--ink);
-		font-family: var(--font-sans);
-		font-size: var(--text-sm);
+		font-family: var(--font-ui);
+		font-size: var(--text-base);
 		font-weight: var(--font-weight-semibold);
 	}
 	.dag-line {
 		fill: var(--ink-3);
-		font-family: var(--font-mono);
-		font-size: var(--text-2xs);
+		font-family: var(--font-ui);
+		font-size: var(--text-sm);
+		font-variant-numeric: tabular-nums;
 	}
 	.dag-tag {
 		fill: var(--ink-2);
-		font-family: var(--font-mono);
+		font-family: var(--font-ui);
 		font-size: var(--text-2xs);
 	}
-	.dag-icon {
+	.dag-lane {
+		fill: var(--ink-2);
+		font-family: var(--font-ui);
+		font-size: var(--text-sm);
+		font-weight: var(--font-weight-semibold);
+	}
+	:global(.dag-icon) {
 		color: var(--ink-3);
+	}
+	.dag-track {
+		fill: var(--surface-3);
+	}
+	.dag-bar-ok {
+		fill: var(--ok-mark);
+	}
+	.dag-bar-run {
+		fill: var(--run);
 	}
 	.dag-focus {
 		fill: none;
@@ -291,17 +389,20 @@
 		stroke: var(--select);
 		stroke-width: 2;
 	}
-	.dag-node a {
+	.dag-hit {
 		cursor: pointer;
 	}
-	.dag-node a:focus {
+	.dag-hit:focus {
 		outline: none;
 	}
-	.dag-node a:focus-visible .dag-focus {
+	.dag-hit:focus-visible .dag-focus {
 		stroke: var(--focus);
 	}
-	.dag-node a:hover .dag-outline {
+	.dag-hit:hover .dag-outline {
 		fill: var(--hover);
+	}
+	.dag-node.is-pend .dag-outline:not([stroke-dasharray]) {
+		stroke-dasharray: 4 3;
 	}
 	.dag-node.is-failed .dag-outline {
 		fill: var(--fail-tint);
@@ -312,19 +413,31 @@
 		stroke: var(--select);
 	}
 	.dag-node.is-running .dag-outline {
+		fill: var(--run-tint);
 		stroke: var(--run);
+		stroke-width: 2;
+	}
+	.dag-node.is-running.is-selected .dag-outline {
+		stroke: var(--select);
 	}
 	.dag-node.is-awaiting .dag-outline {
 		stroke: var(--await);
 	}
-	/* A task that never started is greyed, not faded: its words keep 4.5:1. */
+	/* Outside the selection, and a task that never started: greyed, not
+	   faded, so its words keep 4.5:1. */
+	.dag-node.is-dim .dag-outline,
 	.dag-node.is-never .dag-outline {
 		fill: var(--dim-fill);
 		stroke: var(--dim-line);
+		stroke-width: 1.25;
 	}
+	.dag-node.is-dim .dag-id,
 	.dag-node.is-never .dag-id {
-		fill: var(--ink-3);
+		fill: var(--ink-2);
 		font-weight: var(--font-weight-medium);
+	}
+	.dag-node.is-dim :global(.dag-icon) {
+		opacity: var(--opacity-faded);
 	}
 
 	/* The status marks (statusMarks.svgMark). */
@@ -362,7 +475,7 @@
 			stroke: CanvasText;
 		}
 		.dag-node.is-selected .dag-outline,
-		.dag-node a:focus-visible .dag-focus {
+		.dag-hit:focus-visible .dag-focus {
 			stroke: Highlight;
 		}
 	}

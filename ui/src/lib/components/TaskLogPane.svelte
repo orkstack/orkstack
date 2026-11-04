@@ -81,6 +81,12 @@
 		 * toggle in its own row of actions passes false and binds `open`.
 		 */
 		toggle?: boolean;
+		/** What the pane is showing, in words: "render[10]". The pane follows the selection; so does this. */
+		label?: string;
+		/** Under a failed task: its stderr first, with stdout and the full log a press away. */
+		embedded?: boolean;
+		/** Reports the first line the task wrote to stderr. */
+		onFirstStderr?: (line: string) => void;
 	}
 
 	let {
@@ -97,8 +103,17 @@
 		scrollback = 2000,
 		item,
 		open = $bindable(false),
-		toggle: ownToggle = true
+		toggle: ownToggle = true,
+		label = '',
+		embedded = false,
+		onFirstStderr
 	}: Props = $props();
+
+	// Which stream to read: a failed task's pane opens on stderr.
+	let streamView = $state<'all' | 'stderr' | 'stdout'>(untrack(() => (embedded ? 'stderr' : 'all')));
+	function setStreamView(next: 'all' | 'stderr' | 'stdout'): void {
+		streamView = streamView === next && !embedded ? 'all' : next;
+	}
 
 	// Opened from outside (a caller's own toggle): follow the output, as the
 	// pane's own button does.
@@ -197,10 +212,25 @@
 	// stderr is shown in red, and the legend appears only once a red line has
 	// actually arrived: a colour nobody can see needs no key.
 	const hasStderr = $derived(lines.some((line) => line.stream === 'stderr'));
+	// A task that wrote nothing to stderr has only its stdout to show.
+	const shownStream = $derived(streamView === 'stderr' && !hasStderr ? 'all' : streamView);
 	const filteredLines = $derived.by(() => {
 		const needle = search.trim().toLocaleLowerCase();
-		return needle ? lines.filter((line) => line.text.toLocaleLowerCase().includes(needle)) : lines;
+		const inStream = shownStream === 'all' ? lines : lines.filter((line) => (shownStream === 'stderr' ? line.stream === 'stderr' : line.stream !== 'stderr'));
+		return needle ? inStream.filter((line) => line.text.toLocaleLowerCase().includes(needle)) : inStream;
 	});
+	let reportedStderr = false;
+	$effect(() => {
+		if (reportedStderr || !onFirstStderr) return;
+		const first = lines.find((line) => line.stream === 'stderr' && !line.notice);
+		if (first) {
+			reportedStderr = true;
+			onFirstStderr(first.text);
+		}
+	});
+	const shownWords = $derived(
+		[label, shownStream === 'all' ? '' : shownStream, shownAttempt > 0 ? `attempt ${shownAttempt}` : ''].filter(Boolean).join(' · ')
+	);
 
 	onDestroy(() => downloadStop?.());
 
@@ -446,7 +476,7 @@
 	}
 </script>
 
-<div class={ownToggle || open ? 'mt-2' : ''}>
+<div class={label ? '' : ownToggle || open ? 'mt-2' : ''}>
 	{#if ownToggle}
 		<button
 			type="button"
@@ -460,17 +490,22 @@
 	{/if}
 
 	{#if open}
-		<div class="{ownToggle ? 'mt-2' : ''} overflow-hidden rounded-md border border-line bg-surface">
-			<div class="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line px-3 py-2 text-sm">
-				{#if stateLabel === 'LIVE' || logPaused}
+		<div class="{ownToggle ? 'mt-2' : ''} logbox" class:logbox-framed={!label} class:logbox-embedded={embedded}>
+			<div class="loghead">
+				{#if !embedded && (stateLabel === 'LIVE' || logPaused)}
 					<LiveControl what="log" paused={logPaused} ontoggle={toggleLogPause} testid="task-log-live-{taskId}" />
 				{/if}
 				<span
 					data-testid="task-log-state-{taskId}"
-					class="{stateLabel === 'LIVE' ? 'sr' : 'font-semibold'} {stateLabel === 'FAILED' ? 'text-fail' : 'text-ink-3'}"
+					class="{stateLabel === 'LIVE' || stateLabel === 'ENDED' ? 'sr' : 'font-semibold'} {stateLabel === 'FAILED' ? 'text-fail' : 'text-ink-3'}"
 					>{stateLabel}</span
 				>
 				<span data-testid="task-log-follow-{taskId}" class="sr">{following ? 'FOLLOWING' : 'PAUSED'}</span>
+				{#if embedded}
+					<span data-testid="task-log-what-{taskId}">{#if shownStream === 'stderr'}<b>stderr</b>{:else if shownStream === 'stdout'}<b>stdout</b>{:else}<b>Full log</b>{/if} · all <span class="num" data-testid="task-log-count-{taskId}">{filteredLines.length} {filteredLines.length === 1 ? 'line' : 'lines'}</span></span>
+				{:else if shownWords}
+					<span data-testid="task-log-what-{taskId}" class="text-ink-2">{shownWords}</span>
+				{/if}
 				{#if maxAttempt > 1}
 					<!--
 						The task retried, so WHICH try is a question the reader
@@ -491,47 +526,36 @@
 					</label>
 				{/if}
 				{#if shownAttempt > 1 || pinned !== null}
-					<span
-						data-testid="task-log-attempt-{taskId}"
-						class="tag"
-						>attempt {shownAttempt || pinned}</span
-					>
-				{/if}
-				{#if hasStderr}
-					<span
-						data-testid="task-log-stderr-legend-{taskId}"
-						class="text-fail"
-					>
-						stderr shown in red
-					</span>
+					<span data-testid="task-log-attempt-{taskId}" class="tag">attempt {shownAttempt || pinned}</span>
 				{/if}
 				{#if !following}
+					<button type="button" data-testid="task-log-jump-{taskId}" onclick={jumpToLatest} class="btn btn-sm">Jump to latest</button>
+				{/if}
+				<div class="logend">
+					{#if !embedded}
+						<span class="num text-ink-3" data-testid="task-log-count-{taskId}">{lines.length} lines</span>
+						<label class="search h-7.5">
+							<span class="sr">Search loaded lines</span>
+							<svg viewBox="0 0 16 16" aria-hidden="true" class="size-3.5 shrink-0"><use href="#i-search" /></svg>
+							<input data-testid="task-log-search-{taskId}" bind:value={search} placeholder="Search loaded lines" />
+						</label>
+						{#if hasStderr}
+							<button type="button" class="btn btn-sm" data-testid="task-log-stderr-legend-{taskId}" aria-pressed={streamView === 'stderr'} onclick={() => setStreamView('stderr')}>stderr</button>
+						{/if}
+					{:else}
+						<button type="button" class="btn btn-sm" data-testid="task-log-stdout-{taskId}" aria-pressed={shownStream === 'stdout'} onclick={() => setStreamView('stdout')}>stdout</button>
+						<button type="button" class="btn btn-sm" data-testid="task-log-full-{taskId}" aria-pressed={shownStream === 'all'} onclick={() => setStreamView('all')}>Full log</button>
+					{/if}
 					<button
 						type="button"
-						data-testid="task-log-jump-{taskId}"
-						onclick={jumpToLatest}
-						class="btn btn-sm"
+						data-testid="task-log-download-{taskId}"
+						disabled={downloading || !dispatched}
+						onclick={downloadRetained}
+						class="btn btn-sm btn-quiet"
 					>
-						Jump to latest
+						{downloading ? 'Preparing download…' : 'Download'}
 					</button>
-				{/if}
-				<span class="num ml-auto text-ink-3" data-testid="task-log-count-{taskId}">
-					{lines.length} lines
-				</span>
-				<button
-					type="button"
-					data-testid="task-log-download-{taskId}"
-					disabled={downloading || !dispatched}
-					onclick={downloadRetained}
-					class="btn btn-sm btn-quiet"
-				>
-					{downloading ? 'Preparing download…' : 'Download retained logs'}
-				</button>
-				<label class="search h-7.5 max-w-44">
-					<span class="sr">Search the loaded lines</span>
-					<svg viewBox="0 0 16 16" aria-hidden="true" class="size-3.5 shrink-0"><use href="#i-search" /></svg>
-					<input data-testid="task-log-search-{taskId}" bind:value={search} placeholder="Search" />
-				</label>
+				</div>
 			</div>
 			{#if downloadError}
 				<p data-testid="task-log-download-error-{taskId}" class="border-b border-line px-3 py-1.5 text-sm text-red">
@@ -586,14 +610,14 @@
 				tabindex="0"
 				role="region"
 				aria-label="Output of task {taskId}"
-				class="log-region scroll-log max-h-(--spacing-log) overflow-y-auto bg-log-bg px-3.5 py-2.5 font-mono text-xs leading-5 text-log-ink [font-variant-ligatures:none]"
+				class="log-region scroll-log max-h-(--spacing-log) overflow-y-auto bg-log-bg py-2.5 font-mono text-sm text-log-ink [font-variant-ligatures:none]"
 			>
 				{#if !started}
-					<p data-testid="task-log-waiting-{taskId}" class="text-log-ink-2">
+					<p data-testid="task-log-waiting-{taskId}" class="log-none">
 						No attempt yet, so no log. Its output appears here when the task starts.
 					</p>
 				{:else if lines.length === 0}
-					<p data-testid="task-log-empty-{taskId}" class="text-log-ink-2">
+					<p data-testid="task-log-empty-{taskId}" class="log-none">
 						{#if ended}
 							This task wrote nothing.
 						{:else if socketState === 'failed'}
@@ -603,7 +627,7 @@
 						{/if}
 					</p>
 				{:else if filteredLines.length === 0}
-					<p data-testid="task-log-no-match-{taskId}" class="text-log-ink-2">No loaded lines match this search.</p>
+					<p data-testid="task-log-no-match-{taskId}" class="log-none">No loaded lines match this search.</p>
 				{:else}
 					{#each filteredLines as line (line.n)}
 						<!--
@@ -618,7 +642,7 @@
 							data-testid="task-log-line"
 							data-line={line.n}
 							data-stream={line.stream}
-							class="whitespace-pre-wrap break-all {line.notice
+							class="logline {line.notice
 								? 'text-log-ink-2'
 								: line.stream === 'stderr'
 									? 'text-log-err'
@@ -647,5 +671,70 @@
 	.log-region:focus-visible {
 		outline: 2px solid var(--log-ink);
 		outline-offset: -2px;
+	}
+	.logbox {
+		overflow: hidden;
+		background: var(--surface);
+	}
+	.logbox-framed {
+		border: 1px solid var(--line);
+		border-radius: var(--r);
+	}
+	.logbox-embedded {
+		border: 0;
+		background: transparent;
+	}
+	.logbox-embedded .log-region {
+		border-radius: var(--r-sm);
+	}
+	.loghead {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px 12px;
+		padding: 8px 16px;
+		border-bottom: 1px solid var(--line);
+		font-size: 13px;
+		color: var(--ink-2);
+	}
+	.logbox-embedded .loghead {
+		padding: 0 0 8px;
+		border-bottom: 0;
+	}
+	.logend {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+		min-width: 0;
+		margin-left: auto;
+	}
+	.logend .search {
+		flex: 1 1 150px;
+		min-width: 0;
+		max-width: 220px;
+	}
+	.logline {
+		padding-left: 52px;
+		padding-right: 16px;
+		text-indent: -36px;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+		line-height: 1.7;
+	}
+	.logline::before {
+		content: attr(data-line);
+		display: inline-block;
+		width: 22px;
+		margin-right: 14px;
+		color: var(--log-ink-2);
+		text-align: right;
+		text-indent: 0;
+	}
+	.log-none {
+		padding: 0 16px;
+		color: var(--log-ink-2);
+		font-family: var(--font-ui);
+		font-size: 13.5px;
 	}
 </style>

@@ -2,13 +2,25 @@
 	import { copyText, MANUAL_COPY_MESSAGE, selectByTestid } from '#lib/clipboard.ts';
 	import { pollWhileVisible } from '#lib/visibility.ts';
 	import { rememberRecent } from '#lib/palette/recent.ts';
-	import { onDestroy, untrack } from 'svelte';
+	import { onDestroy, tick, untrack } from 'svelte';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
-	import ArtifactProvenance from '#lib/components/ArtifactProvenance.svelte';
 	import AwaitPanel from '#lib/components/AwaitPanel.svelte';
 	import ChildRunPanel from '#lib/components/ChildRunPanel.svelte';
 	import { childLabel, childrenListHref } from '#lib/compose.ts';
+	import ItemCard from '#lib/components/ItemCard.svelte';
+	import Popover from '#lib/components/Popover.svelte';
+	import SeenBefore from '#lib/components/SeenBefore.svelte';
+	import SinceLastRun from '#lib/components/SinceLastRun.svelte';
+	import TaskInspect from '#lib/components/TaskInspect.svelte';
+	import TaskTimeline from '#lib/components/TaskTimeline.svelte';
+	import WaitsFor from '#lib/components/WaitsFor.svelte';
+	import { taskTimelineBars, timelineAxis } from '#lib/taskTimeline.ts';
+	import { activityClient } from '#lib/clients/activities.ts';
+	import { catalogName, loadActivities } from '#lib/activityMeta.ts';
+	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
+	import { fmtQuantity, reservedOf } from '#lib/resources.ts';
+	import { attemptPhases, phaseGroups } from '#lib/timing.ts';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import EventInspector from '#lib/components/EventInspector.svelte';
@@ -19,7 +31,9 @@
 	import EachItemGrid from '#lib/components/EachItemGrid.svelte';
 	import {
 		applyItemEvents,
+		itemCli,
 		itemFromUrl,
+		itemStatusText,
 		itemsFromTaskRun,
 		mergeItems,
 		retriedItemsLabel,
@@ -36,22 +50,12 @@
 		failingBannerText,
 		isFailingNote,
 		joinTitle,
-		joinWord,
+		joinWords,
 		outstandingHandlers,
 		runFailing
 	} from '#lib/join.ts';
-	import {
-		cacheOutcomeLabel,
-		cacheSourceHref,
-		cacheSpecLabel,
-		cachedCount,
-		memoWriteSentence,
-		missReasonSentence,
-		sourceAttemptDuration
-	} from '#lib/cache.ts';
-	import AttemptTimeline from '#lib/components/AttemptTimeline.svelte';
-	import TimingBar from '#lib/components/TimingBar.svelte';
-	import { formatQuantity, taskTiming, timelinePlacement } from '#lib/timing.ts';
+	import { cachedCount } from '#lib/cache.ts';
+	import { taskTiming } from '#lib/timing.ts';
 	import { timestampMs } from '#lib/stats.ts';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import CliPopover from '#lib/components/CliPopover.svelte';
@@ -67,11 +71,12 @@
 	import { errorMessage } from '#lib/client.ts';
 	import { runClient } from '#lib/clients/runs.ts';
 	import { statsClient } from '#lib/clients/stats.ts';
-	import { artifactMetadata, commandWords, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shortRunId, taskRunCommand, timestampJson } from '#lib/runDetail.ts';
+	import { artifactMetadata, downloadFilename, emptyPayload, formatDuration, payloadJson, pinAccent, runCommand, shortDigestWords, shortRunId, taskRunCommand, timestampJson } from '#lib/runDetail.ts';
 	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '#lib/eventBuffer.ts';
 	import { eventBatcher, slicedApply } from '#lib/eventBatch.ts';
 	import { Status, type ArtifactRef, type Payload } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import {
+		AttemptOutcome,
 		EventType,
 		TaskAwaitSchema,
 		TaskChildSchema,
@@ -111,19 +116,20 @@
 		originReferenceURL
 	} from '#lib/origin.ts';
 	import { fmtTimestamp, isTerminal, isTerminalEventType, keepsEventMessage, statusLabel, taskDispatched } from '#lib/status.ts';
+	import { statusMark } from '#lib/statusMarks.ts';
 	import { activityLabel, hasError, pinnedOrReference, shortDigest } from '#lib/activity.ts';
 	import type { Error as OrkError } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { CommitRef } from '#lib/gen/orkstack/v1/activity_pb.ts';
-	import { ArtifactKind, type LiveAttempt, type RunArtifact } from '#lib/gen/orkstack/v1/run_service_pb.ts';
+	import { LiveAttemptState, type LiveAttempt, type RunArtifact } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	import { liveLine } from '#lib/live.ts';
 	import { afterNavigation } from '#lib/settle.ts';
-	import DrawingFrame, { type DrawingView } from '#lib/components/DrawingFrame.svelte';
+	import DrawingFrame from '#lib/components/DrawingFrame.svelte';
 	import ActivityIcon from '#lib/components/ActivityIcon.svelte';
 	import { activityKind } from '#lib/activityIcon.ts';
 	import TaskMap from '#lib/components/TaskMap.svelte';
 	import TaskMapLegend from '#lib/components/TaskMapLegend.svelte';
 	import VersionTable from '#lib/components/VersionTable.svelte';
-	import { DAG_DRAW_LIMIT, dagDirectionParam, type NodeState } from '#lib/dag.ts';
+	import { dagDirectionParam, type NodeState } from '#lib/dag.ts';
 	import { itemLabel } from '#lib/each.ts';
 	import { isFailureHandler } from '#lib/join.ts';
 	import { recordSeen } from '#lib/heldRuns.ts';
@@ -131,7 +137,8 @@
 	import { commandId, type Command } from '#lib/palette/commands.ts';
 	import { match } from '#lib/palette/rank.ts';
 	import { setTitleBlock } from '#lib/sheet.svelte.ts';
-	import { scrollToCard, twoFrames, type MapTask } from '#lib/taskMap.ts';
+	import { mapGeometry, scrollToCard, twoFrames, type MapTask } from '#lib/taskMap.ts';
+	import AttemptTimeline from '#lib/components/AttemptTimeline.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -557,16 +564,6 @@
 	let cancelBusy = $state(false);
 	let cancelError = $state('');
 	let cancellationRequested = $state(false);
-	// Which task cards have their Inspect open, keyed by task id. It is the
-	// same shape as a log pane's own `open`: component-lifetime state for a
-	// disclosure inside one card, deliberately NOT in the URL. A per-card
-	// toggle is not a view somebody sends to somebody else, and putting it in
-	// the address would make a link's meaning depend on which cards the sender
-	// happened to have expanded.
-	let inspectOpenByTask = $state<Record<string, boolean>>({});
-	// Which tasks' output panes are open: the toggle sits in the row's
-	// actions, the pane below it (TaskLogPane binds it).
-	let logOpenByTask = $state<Record<string, boolean>>({});
 	let copied = $state('');
 	let downloadingArtifact = $state('');
 	let artifactDownloadError = $state('');
@@ -580,12 +577,6 @@
 	const currentTimestamp = $derived({
 		seconds: BigInt(Math.floor(wallNow / 1000)),
 		nanos: (wallNow % 1000) * 1_000_000
-	});
-	// The run's span, the timeline every task row shares: started to finished,
-	// or to now while it runs.
-	const runSpan = $derived({
-		start: timestampMs(startedAt ?? data.run?.startedAt ?? data.run?.createdAt),
-		end: timestampMs(finishedAt ?? data.run?.finishedAt) ?? (isTerminal(runStatus) ? null : wallNow)
 	});
 
 	// WHAT EACH RUNNING TASK IS DOING RIGHT NOW. InspectRun reads the
@@ -1245,7 +1236,8 @@
 	// The item a fan-out card has open, keyed by task. A deep link's
 	// `?task=convert&item=97` seeds it, so a reload restores the selection.
 	const deepItem = $derived(itemFromUrl(page.url));
-	let selectedItemByTask = $state<Record<string, number | undefined>>(
+	// A number is the item chosen, null that a reader deselected it, absent no choice yet.
+	let selectedItemByTask = $state<Record<string, number | null | undefined>>(
 		untrack(() => {
 			const task = page.url.searchParams.get('task') ?? '';
 			const item = itemFromUrl(page.url);
@@ -1253,8 +1245,9 @@
 		})
 	);
 	function selectItem(taskId: string, item: number | undefined): void {
-		selectedItemByTask[taskId] = item;
+		selectedItemByTask[taskId] = item ?? null;
 		selectedTask = taskId;
+		selectionCleared = false;
 		shallow(writeHref({ task: taskId, attempt: 0, item }));
 		if (item !== undefined) void refreshAttempts(taskId, item);
 	}
@@ -1348,9 +1341,6 @@
 		} finally {
 			cancelBusy = false;
 		}
-	}
-	function artifactKindLabel(kind: ArtifactKind): string {
-		return ArtifactKind[kind] ?? 'UNSPECIFIED';
 	}
 	async function downloadArtifact(record: RunArtifact): Promise<void> {
 		if (!run || !record.artifact) return;
@@ -1453,9 +1443,10 @@
 			shallowTick++;
 		});
 	}
-	function writeHref(next: { task?: string; attempt?: number; item?: number; view?: DrawingView }): string {
+	function writeHref(next: { task?: string; attempt?: number; item?: number; clear?: boolean }): string {
 		const params = new URLSearchParams(location.search);
 		params.set(NAMESPACE_PARAM, namespaceLabel(data.namespace));
+		if (next.clear) for (const key of ['task', 'attempt', 'item']) params.delete(key);
 		if (next.task !== undefined) {
 			params.set('task', next.task);
 			if (next.attempt) params.set('attempt', String(next.attempt));
@@ -1463,7 +1454,6 @@
 			if (next.item !== undefined) params.set('item', String(next.item));
 			else params.delete('item');
 		}
-		if (next.view !== undefined) params.set('view', next.view);
 		return `/runs/${encodeURIComponent(data.runId)}?${params.toString()}`;
 	}
 
@@ -1493,41 +1483,63 @@
 	const loadedLive = untrack(() => !isTerminal(data.run?.status ?? Status.UNSPECIFIED));
 	let failedWhileWatched = $state(false);
 
-	// The drawing's view: the URL's `view=` if it names one, else the task map
-	// for a run of more than DAG_DRAW_LIMIT tasks or with no readable
-	// definition (the DAG needs its needs), else the DAG.
-	const loadedTasks = untrack(() => Math.max(data.orkflow?.tasks.length ?? 0, data.run?.taskRuns.length ?? 0));
-	const urlView = untrack(() => page.url.searchParams.get('view'));
-	let view = $state<DrawingView>(
-		urlView === 'dag' || urlView === 'map'
-			? urlView
-			: !untrack(() => data.orkflow) || loadedTasks > DAG_DRAW_LIMIT
-				? 'map'
-				: 'dag'
-	);
-	function setView(next: DrawingView): void {
-		view = next;
-		shallow(writeHref({ view: next }));
-	}
-	const drawingViews = [
-		{ id: 'dag' as const, label: 'DAG', testid: 'run-view-dag' },
-		{ id: 'map' as const, label: 'Task map', testid: 'run-view-map' }
-	];
-
-	// The task a reader selected — from the map, the DAG or the palette — and
-	// the item of a fan-out. A deep link seeds it and does not scroll.
+	// THE SELECTION. A row's name, its graph node, a task map cell and the
+	// palette all select the same task. With no choice made it is the task the
+	// page is about: the failed one on a failed run, else the first one running
+	// or waiting. A deep link seeds it. Clear selection stands until the next
+	// choice.
 	let selectedTask = $state(untrack(() => page.url.searchParams.get('task') ?? ''));
-	const selectedCell = $derived(
-		selectedTask ? { taskId: selectedTask, item: selectedItemByTask[selectedTask] } : null
+	let selectionCleared = $state(false);
+	const autoTask = $derived(
+		(
+			tasks.find((t) => t.status === Status.FAILED && !isFailureHandler(joinOf(t.id))) ??
+			tasks.find((t) => t.status === Status.RUNNING) ??
+			tasks.find((t) => t.status === Status.AWAITING)
+		)?.id ?? ''
 	);
+	const activeTask = $derived(selectedTask || (selectionCleared ? '' : autoTask));
+	const activeView = $derived(activeTask ? findTask(activeTask) : undefined);
+	const activeItem = $derived.by((): number | undefined => {
+		const task = activeView;
+		if (!task || !isFanOut(task.id)) return undefined;
+		const chosen = selectedItemByTask[task.id];
+		if (chosen !== undefined) return chosen ?? undefined;
+		return (task.items.find((i) => i.status === Status.FAILED) ?? task.items.find((i) => i.status === Status.RUNNING))?.index;
+	});
+	const selectedCell = $derived(activeTask ? { taskId: activeTask, item: activeItem } : null);
 	function selectTask(taskId: string, item?: number): void {
 		if (item !== undefined && isFanOut(taskId)) selectItem(taskId, item);
 		else {
 			selectedTask = taskId;
+			selectionCleared = false;
 			shallow(writeHref({ task: taskId, attempt: 0 }));
 		}
 		void bringIntoView(taskId);
 	}
+	function clearSelection(): void {
+		selectedTask = '';
+		selectionCleared = true;
+		shallow(writeHref({ clear: true }));
+	}
+	// A row's name: pressing the chosen task lets it go; pressing the task the
+	// page chose by itself makes it the reader's choice.
+	function toggleRow(taskId: string): void {
+		if (selectedTask === taskId) clearSelection();
+		else {
+			selectedTask = taskId;
+			selectionCleared = false;
+			shallow(writeHref({ task: taskId, attempt: 0 }));
+		}
+	}
+	function toggleNode(taskId: string): void {
+		if (selectedTask === taskId) clearSelection();
+		else selectTask(taskId);
+	}
+	// An item chosen by the page has its timeline read as if a reader had pressed it.
+	$effect(() => {
+		const [task, item] = [activeTask, activeItem];
+		if (task && item !== undefined && !untrack(() => attemptsByTask.has(attemptsKey(task, item)))) void refreshAttempts(task, item);
+	});
 	function cardOf(taskId: string): HTMLElement | null {
 		return document.querySelector(`[data-testid="task-${CSS.escape(taskId)}"]`);
 	}
@@ -1539,18 +1551,37 @@
 			scroll: () => card.scrollIntoView({ block: 'center' }),
 			viewport: () => ({
 				top: document.querySelector('header')?.getBoundingClientRect().bottom ?? 0,
-				bottom: document.querySelector('[data-testid="title-block"]')?.getBoundingClientRect().top ?? innerHeight
+				bottom: innerHeight
 			}),
 			frames: twoFrames
 		});
 	}
-	// The selected card is marked imperatively, on two elements, so a new
-	// selection never re-renders thousands of cards.
+	// The selected row is marked imperatively, so a new selection never
+	// re-renders thousands of rows.
 	$effect(() => {
-		const id = selectedTask;
+		const id = activeTask;
 		const card = id ? cardOf(id) : null;
+		const name = card?.querySelector('[aria-pressed]');
 		card?.setAttribute('data-selected', 'true');
-		return () => card?.removeAttribute('data-selected');
+		name?.setAttribute('aria-pressed', 'true');
+		return () => {
+			card?.removeAttribute('data-selected');
+			name?.setAttribute('aria-pressed', 'false');
+		};
+	});
+
+	// What each task's image declares: the default icon until it is known.
+	let activityByTask = $state.raw(new Map<string, ActivityInfo>());
+	$effect(() => {
+		const defs = data.orkflow?.tasks;
+		if (!defs?.length) return;
+		let live = true;
+		void loadActivities(defs, activityClient(fetch)).then((answer) => {
+			if (live) activityByTask = answer;
+		});
+		return () => {
+			live = false;
+		};
 	});
 
 	// The map reads the tasks only in idle time and once per `mapRevision`
@@ -1612,16 +1643,26 @@
 		const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt);
 		if (!dispatched && task.status !== Status.SKIPPED) {
 			const never = neverStarted(task);
-			return { status: task.status, line: never ? 'never started' : 'waiting', neverStarted: never };
+			return { status: task.status, line: never ? 'never started' : 'Pending', neverStarted: never };
+		}
+		const fanOut = isFanOut(id);
+		if (fanOut && task.items.length > 0 && !isTerminal(task.status)) {
+			const succeeded = task.items.filter((i) => i.status === Status.SUCCEEDED).length;
+			const running = task.items.filter((i) => i.status === Status.RUNNING).length;
+			return { status: task.status, line: `Running · ${succeeded} of ${task.items.length}`, items: { succeeded, running, total: task.items.length } };
 		}
 		const took = isTerminal(task.status) ? formatDuration(task.startedAt ?? task.scheduledAt, task.finishedAt) : '';
-		const word =
-			task.status === Status.SUCCEEDED
-				? 'ok'
-				: task.status === Status.FAILED
-					? task.error?.code || 'failed'
-					: statusLabel(task.status).toLowerCase();
-		return { status: task.status, line: took && took !== '—' ? `${word} · ${took}` : word };
+		const shown = took && took !== '—' ? took : '';
+		switch (task.status) {
+			case Status.SUCCEEDED:
+				if (task.cache?.outcome === CacheOutcome.HIT) return { status: task.status, line: 'From the cache' };
+				if (isComposed(id)) return { status: task.status, line: shown ? `Child run · ${shown}` : 'Child run' };
+				return { status: task.status, line: shown ? `Succeeded ${shown}` : 'Succeeded' };
+			case Status.FAILED:
+				return { status: task.status, line: task.exitCode ? `Failed · exit ${task.exitCode}` : task.error?.code || 'Failed' };
+			default:
+				return { status: task.status, line: statusLabel(task.status) };
+		}
 	}
 
 	// A failed task's tries, as every failure surface on this page states
@@ -1634,12 +1675,10 @@
 		};
 	}
 
-	// The run's failure, for the cloud: the first task that failed, and its try.
+	// The run's failure: the first task that failed, and its try.
 	const failedTask = $derived(tasks.find((t) => t.status === Status.FAILED && !isFailureHandler(joinOf(t.id))));
-	const cloudTag = $derived(
-		`Version ${run?.orkflowVersion ?? ''} · ${failedTask ? `${failedTask.id} failed` : 'run failed'}`
-	);
-	const failedImage = $derived(failedTask ? pinnedOrReference(taskDefs.get(failedTask.id)?.image) : '');
+	// The first line the failed task wrote to stderr, as its log pane reads it.
+	let firstStderr = $state('');
 	const getCommand = $derived(run ? runCommand(data.namespace, ['run', 'get', run.id, '--json']) : '');
 	const againCommand = $derived(run ? runCommand(data.namespace, ['run', 'again', run.id]) : '');
 
@@ -1763,6 +1802,188 @@
 		const end = finishedAt ?? run?.finishedAt;
 		return end ? formatDuration(from, end) : formatDuration(from, { seconds: BigInt(Math.floor(clock / 1000)), nanos: (clock % 1000) * 1e6 });
 	});
+	// ---- The Tasks card ----
+	const timelineEnd = $derived.by(() => {
+		// The axis grows with a live run: every second for a small one, every
+		// half minute at thousands of rows.
+		const step = tasks.length > 200 ? 30_000 : 1000;
+		return timestampMs(finishedAt ?? run?.finishedAt) ?? (isTerminal(runStatus) ? null : Math.ceil(wallNow / step) * step);
+	});
+	const timelineSpan = $derived({ start: timestampMs(startedAt ?? run?.startedAt ?? run?.createdAt), end: timelineEnd });
+	const axis = $derived(timelineSpan.start !== null && timelineSpan.end !== null ? timelineAxis(timelineSpan.end - timelineSpan.start) : []);
+	const spanWords = $derived(timelineSpan.start !== null && timelineSpan.end !== null ? formatDuration(startedAt ?? run?.startedAt ?? run?.createdAt, { seconds: BigInt(Math.floor(timelineSpan.end / 1000)), nanos: 0 }) : '');
+	function barsOf(task: TaskView) {
+		const rows = attemptsByTask.get(task.id) ?? [];
+		return taskTimelineBars({
+			run: timelineSpan,
+			scheduled: timestampMs(task.scheduledAt),
+			started: timestampMs(task.startedAt ?? (task.status === Status.RUNNING ? liveByTask.get(task.id)?.attemptStartedAt : undefined)),
+			finished: timestampMs(task.finishedAt),
+			running: task.status === Status.RUNNING,
+			now: timelineEnd ?? wallNow,
+			failed: task.status === Status.FAILED,
+			attempts: rows.map((row) => ({
+				attempt: row.attempt,
+				failed: row.outcome === AttemptOutcome.FAILED,
+				started: timestampMs(row.startedAt),
+				finished: timestampMs(row.finishedAt)
+			}))
+		});
+	}
+	// A running attempt no Orker has started, for want of room.
+	function waitingFor(live: LiveAttempt | undefined): boolean {
+		return live?.state === LiveAttemptState.SCHEDULED && live.nextAttemptAt === undefined;
+	}
+	/** The word a task's image goes by: its catalog name, or the last part of its reference. */
+	function imageWord(taskId: string): string {
+		const def = taskDefs.get(taskId);
+		const info = activityByTask.get(taskId);
+		if (info?.name) return info.name;
+		const uses = def?.uses ?? findTask(taskId)?.activity ?? '';
+		const tail = uses.split('/').pop() ?? uses;
+		return catalogName(tail);
+	}
+	function fanOutWords(task: TaskView): string {
+		const spec = taskDefs.get(task.id)?.each;
+		const count = task.each?.expanded ? task.items.length : 0;
+		const parts = [count ? `${count} ${count === 1 ? 'item' : 'items'}` : 'a fan-out'];
+		if (spec?.maxParallel) parts.push(`${spec.maxParallel} at a time`);
+		return parts.join(', ');
+	}
+	function rowDuration(task: TaskView): string {
+		if (isTerminal(task.status)) {
+			const took = formatDuration(task.startedAt ?? task.scheduledAt, task.finishedAt);
+			return took === '—' ? '' : took;
+		}
+		if (task.status === Status.RUNNING || task.status === Status.AWAITING) {
+			return formatDuration(task.scheduledAt ?? task.startedAt, currentTimestamp);
+		}
+		return '';
+	}
+	let expandAll = $state(false);
+	const hasFanOut = $derived((data.orkflow?.tasks ?? []).some((t) => t.each !== undefined));
+	const graphSub = $derived.by(() => {
+		const count = `${tasks.length} ${tasks.length === 1 ? 'task' : 'tasks'}`;
+		const fan = tasks.filter((t) => t.items.length > 0);
+		if (fan.length === 1) return `${count}; ${fan[0].id} has ${fan[0].items.length} items`;
+		return count;
+	});
+	// The graph's key: the statuses it shows, and the activities drawn.
+	const legendStatuses = $derived([...new Set(tasks.map((t) => t.status))].sort((a, b) => a - b));
+	const legendActivities = $derived.by(() => {
+		const seen = new Map<string, { word: string; icon?: ActivityInfo['icon']; kind: 'default' | 'orkflow' | 'await' }>();
+		for (const def of data.orkflow?.tasks ?? []) {
+			const kind = def.orkflow ? 'orkflow' : def.await ? 'await' : 'default';
+			const word = kind === 'orkflow' ? 'composed task' : kind === 'await' ? 'awaited task' : imageWord(def.id);
+			if (!seen.has(word)) seen.set(word, { word, kind, icon: activityByTask.get(def.id)?.icon });
+		}
+		return [...seen.values()].slice(0, 8);
+	});
+	const anyHandlers = $derived(tasks.some((t) => isFailureHandler(joinOf(t.id))));
+
+	// ---- The capacity note and What X waits for ----
+	const capacityWaiters = $derived([...liveByTask.values()].filter((live) => waitingFor(live) && live.capacityWait));
+	const firstWaiter = $derived(capacityWaiters[0]);
+	const waiterLabel = (live: LiveAttempt) => (live.item !== undefined ? itemLabel(live.taskId, live.item) : live.taskId);
+	const waiterSeconds = (live: LiveAttempt): string => {
+		const from = timestampMs(live.attemptScheduledAt);
+		return from === null ? '' : `${Math.max(0, Math.round((liveNowMs - from) / 1000))}s`;
+	};
+	// How this run's own work on that pool is going, for "what frees it".
+	const poolPeers = $derived.by(() => {
+		const pool = firstWaiter?.capacityWait?.pool;
+		if (!pool) return { running: 0, took: '' };
+		let running = 0;
+		const spans: number[] = [];
+		const count = (status: Status, r: { pool: string; startedAt?: TaskRun['startedAt']; finishedAt?: TaskRun['finishedAt'] } | undefined) => {
+			if (r?.pool !== pool) return;
+			if (status === Status.RUNNING) running++;
+			const [from, to] = [timestampMs(r.startedAt), timestampMs(r.finishedAt)];
+			if (status === Status.SUCCEEDED && from !== null && to !== null) spans.push(to - from);
+		};
+		for (const task of tasks) {
+			if (task.items.length) for (const item of task.items) count(item.status, item.run);
+			else count(task.status, task);
+		}
+		if (spans.length === 0) return { running, took: '' };
+		spans.sort((a, b) => a - b);
+		const s = (ms: number) => `${Math.round(ms / 1000)}s`;
+		const median = spans[Math.floor(spans.length / 2)];
+		return { running, took: spans.length === 1 ? s(median) : `${s(spans[0])} to ${s(spans[spans.length - 1])}, ${s(median)} median` };
+	});
+
+	// ---- How it failed: the chain of records that led here ----
+	const failedNeed = $derived.by(() => {
+		if (!failedTask) return '';
+		return (taskDefs.get(failedTask.id)?.needs ?? []).find((need) => findTask(need)?.status === Status.SUCCEEDED) ?? '';
+	});
+	const skippedTasks = $derived(tasks.filter((t) => t.status === Status.SKIPPED).map((t) => t.id));
+	const handlerTasks = $derived(tasks.filter((t) => isFailureHandler(joinOf(t.id)) && t.status !== Status.SKIPPED && !neverStarted(t)).map((t) => t.id));
+	function failureSentence(message: string): string {
+		const parts = [plainFailure(message).text.replace(/\.?$/, '.')];
+		if (skippedTasks.length) parts.push(`${listWords(skippedTasks)} ${skippedTasks.length === 1 ? 'was' : 'were'} skipped.`);
+		if (handlerTasks.length) parts.push(`${listWords(handlerTasks)} ran as failure ${handlerTasks.length === 1 ? 'handler' : 'handlers'}; the run still ends Failed with this reason.`);
+		return parts.join(' ');
+	}
+	const listWords = (ids: string[]) => (ids.length <= 1 ? ids.join('') : `${ids.slice(0, -1).join(', ')} and ${ids[ids.length - 1]}`);
+
+	function viewStderr(event: MouseEvent, task: TaskView): void {
+		event.preventDefault();
+		selectedTask = task.id;
+		selectionCleared = false;
+		shallow(writeHref({ task: task.id, attempt: task.attempt }));
+		void tick().then(() => {
+			const log = document.querySelector<HTMLElement>(`[data-testid="task-log-${CSS.escape(task.id)}"]`);
+			log?.scrollIntoView({ block: 'center' });
+			log?.focus({ preventScroll: true });
+		});
+	}
+
+	let versionsOpen = $state(false);
+	let inputsAsJson = $state(false);
+	let inspectOpen = $state(false);
+	const inputEntries = $derived.by(() => {
+		const raw = run?.input?.data;
+		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];
+		return Object.entries(raw as Record<string, unknown>).map(([key, value]) => [key, typeof value === 'string' ? value : JSON.stringify(value)] as const);
+	});
+
+	const task_isAwait = (task: TaskView) => task.await !== undefined || taskDefs.get(task.id)?.await !== undefined;
+	const task_isComposed = (task: TaskView) => task.child !== undefined || taskDefs.get(task.id)?.orkflow !== undefined;
+	const task_isFanOut = (task: TaskView) => task.each !== undefined || taskDefs.get(task.id)?.each !== undefined;
+	const task_isContainer = (task: TaskView) => !task_isAwait(task) && !task_isComposed(task) && !task_isFanOut(task);
+	// A comparison in passing reads every task's attempt records on the engine:
+	// past this many tasks the card offers it and leaves the reading to the page.
+	const DIFF_IN_PASSING = 300;
+	// The task map's box: as tall as the map at the card's width, within a bound.
+	let mapWidth = $state(0);
+	const MAP_MAX_HEIGHT = 320;
+	const mapBoxHeight = $derived.by(() => {
+		if (mapWidth <= 0) return 60;
+		const g = mapGeometry(mapSections, mapWidth - 16, MAP_MAX_HEIGHT - 16);
+		return g.scroll > 0 ? MAP_MAX_HEIGHT : Math.max(g.height + 16, 36);
+	});
+	// The selected task's commands: the Item card's terminal icon.
+	const activeCli = $derived.by(() => {
+		const task = activeView;
+		if (!run || !task) return [];
+		const fanned = task_isFanOut(task);
+		const item = fanned ? activeItem : undefined;
+		const canLog = task_isContainer(task) && !neverStarted(task);
+		const rows = attemptsByTask.get(attemptsKey(task.id, item)) ?? [];
+		if (item !== undefined) {
+			const words = ['logs', 'artifacts', 'attempts'];
+			return words.map((command) => ({ label: `This item's ${command}`, command: itemCli({ namespace: data.namespace, runId: run.id, taskId: task.id, item, command }) }));
+		}
+		return [
+			...(canLog ? [{ label: 'Its log', command: runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])]) }] : []),
+			...(canLog && task.status === Status.FAILED ? [{ label: 'Run it here, on your machine', command: taskRunCommand(data.namespace, run.id, task.id) }] : []),
+			...((task.cache && task.cache.outcome !== CacheOutcome.HIT) || rows.length > 1 ? [{ label: 'Its attempts and cache key', command: runCommand(data.namespace, ['run', 'attempts', run.id, '--task', task.id]) }] : []),
+			...(task.status === Status.RUNNING ? [{ label: 'What it is doing', command: runCommand(data.namespace, ['run', 'inspect', run.id, '--task', task.id]) }] : []),
+			...(task.scheduledAt || task.startedAt ? [{ label: 'Where its time went', command: runCommand(data.namespace, ['run', 'timing', run.id, '--task', task.id]) }] : [])
+		];
+	});
+
 	const runCli = $derived(
 		run
 			? [
@@ -1865,6 +2086,14 @@
 		<div class="rh-plates">
 			<Plate key="run" value={run.id} short={shortRunId(run.id)} copyLabel="Copy run id" testid="run-id" />
 			<Plate key="version" value={run.orkflowVersion} testid="run-version" />
+			<Popover testid="run-versions-popover" open={versionsOpen} onOpenChange={(next) => (versionsOpen = next)}>
+				{#snippet trigger()}
+					<button type="button" class="btn btn-sm btn-quiet" data-testid="run-versions-toggle" aria-expanded={versionsOpen} onclick={() => (versionsOpen = !versionsOpen)}>Versions</button>
+				{/snippet}
+				{#snippet content()}
+					<div class="w-80 max-w-[calc(100vw-2rem)] p-3"><VersionTable namespace={data.namespace} orkflowName={run.orkflowName} runVersion={run.orkflowVersion} /></div>
+				{/snippet}
+			</Popover>
 		</div>
 		<div class="rh-facts">
 			<FactsStrip
@@ -1920,93 +2149,420 @@
 			<span>Cancellation requested. Waiting for the run to stop.</span>
 		</p>
 	{/if}
+	{#if firstWaiter?.capacityWait}
+		<!-- Why something that should be running is not: one amber line above the graph. -->
+		{@const wait = firstWaiter.capacityWait}
+		{@const reserved = reservedOf(wait.reserved, wait.capacity)}
+		<div class="capline mb-4" role="status" data-testid="run-capacity-note">
+			<span class="mark-wait" aria-hidden="true"></span>
+			<b class="font-semibold text-wait">{waiterLabel(firstWaiter)} is waiting for capacity{#if capacityWaiters.length > 1}, and {capacityWaiters.length - 1} more{/if}</b>
+			<span class="min-w-0 text-ink-2">every Orker of pool {wait.pool} is full{#if reserved}, {reserved} reserved{/if} · {waiterSeconds(firstWaiter)}</span>
+			<a class="ml-auto font-semibold whitespace-nowrap" data-testid="run-capacity-pool" href={withNamespace(`/admin/pools#pool-${encodeURIComponent(wait.pool)}`, data.namespace)}>View pool {wait.pool}</a>
+		</div>
+	{/if}
 	{#if runStatus === Status.FAILED && failedTask}
 		<!-- The failure, said once above the graph: which task, its reason code and its plain sentence. -->
 		<div class="alert alert-fail mb-4" role="status" data-testid="run-failure-banner">
 			<span class="alert-ic"><Icon name="alert" /></span>
 			<div class="min-w-0 flex-[1_1_15rem]">
 				<b>{failedTask.id} failed{#if failedTask.error?.code}: <code>{failedTask.error.code}</code>{/if}</b>
-				{#if failedTask.error?.message}<p class="mt-0.5 text-ink-2">{plainFailure(failedTask.error.message).text}</p>{/if}
+				{#if failedTask.error?.message}<p class="mt-0.5 text-ink-2" data-testid="run-failure-sentence">{failureSentence(failedTask.error.message)}</p>{/if}
 			</div>
-			<a class="btn btn-sm ml-auto" href={taskHref(failedTask.id, failedTask.attempt)} data-testid="run-failure-view-stderr">View stderr</a>
+			<a class="btn btn-sm ml-auto" href={taskHref(failedTask.id, failedTask.attempt)} onclick={(e) => viewStderr(e, failedTask!)} data-testid="run-failure-view-stderr">View stderr</a>
 		</div>
 	{/if}
 	{#if runFailing(runStatus, runError, failingNote)}
 		<!--
 			A failing run: its outcome is decided FAILED and its failure
 			handlers still run. Keyed on the LIVE status, so the terminal event
-			— RUN_FAILED, or a terminated run's RUN_CANCELED — clears it.
+			— RUN_FAILED, or a terminated run's RUN_			{#if cancelDialog && run}
+				<ConfirmDialog
+					testid="cancel-run-confirm"
+					title="Cancel run {shortRunId(run.id)}?"
+					acceptLabel="Cancel run"
+					cancelLabel="Keep running"
+					glyph="ban"
+					acceptTestid="cancel-run-accept"
+					cancelTestid="cancel-run-dismiss"
+					busy={cancelBusy}
+					error={cancelError}
+					destructive
+					onaccept={cancelRun}
+					oncancel={() => { cancelDialog = false; cancelError = ''; }}
+				>
+					{#snippet body()}
+						<p>Running tasks get a stop signal and the run ends Canceled once they have stopped. Tasks that have not started never will. This page keeps the current status until the run records the change.</p>
+						<label class="text-dense font-semibold text-ink" for="cancel-reason">Reason <span class="font-normal text-ink-3">(optional)</span></label>
+						<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="field w-full px-2.5 py-2 text-base" placeholder="Why should this run stop?"></textarea>
+
+					{/snippet}
+				</ConfirmDialog>
+			{/if}
+ED — clears it.
 		-->
 		<p
 			data-testid="run-failing"
 			data-handlers={failingHandlers.map((h) => h.id).join(',')}
 			role="status"
-			class="severity-warning mb-4 border border-red px-3 py-2 text-sm"
+			class="capline mb-4 text-sm"
 		>
 			{failingBannerText(failingHandlers)}
 		</p>
 	{/if}
 
-	<!--
-		THE DRAWING beside its aside: the run's tasks as a DAG or a task map,
-		and what a reader asks next — which version this is, why it failed, on
-		which image, and the command that reproduces it. Below 1280 px the
-		aside follows the drawing.
-	-->
-	<div class="mb-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_var(--spacing-aside)] xl:grid-rows-[auto_1fr]">
-		<div class="min-w-0 xl:col-start-1 xl:row-start-1">
-			<DrawingFrame
-				testid="run-drawing"
-				caption="{run.orkflowName} @ {run.orkflowVersion} · {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'}"
-				captionLead={run.orkflowName}
-				views={drawingViews}
-				{view}
-				onview={setView}
-				tasks={data.orkflow?.tasks ?? null}
-				unavailable={data.orkflowError ?? 'the definition was not found'}
-				orkflowLabel="{run.orkflowName}@{run.orkflowVersion}"
-				on="run"
-				dagLabel="Task DAG of this run"
-				stateOf={nodeState}
-				selected={selectedTask}
-				hrefOf={(id) => taskHref(id, 0)}
-				onselect={(id) => selectTask(id)}
-				neighbourhoodWhenLarge
-				{mapSections}
-				direction={dagDirectionParam(page.url)}
-			>
-				{#snippet map()}
-					<TaskMap
-						bind:this={taskMap}
-						source={mapSource}
-						definition={data.orkflow !== null}
-						revision={mapRevision}
-						selected={selectedCell}
-						onselect={selectTask}
-						describe={describeCell}
-						onlegend={(counts) => (legend = counts)}
+	<!-- THE GRAPH: the run's tasks, what is selected and what it touches. -->
+	<div class="mb-5 min-w-0">
+		<DrawingFrame
+			testid="run-drawing"
+			title="Graph"
+			sub={graphSub}
+			caption="{run.orkflowName} @ {run.orkflowVersion} · {tasks.length} {tasks.length === 1 ? 'task' : 'tasks'}"
+			tasks={data.orkflow?.tasks ?? null}
+			unavailable={data.orkflowError ?? 'the definition was not found'}
+			orkflowLabel="{run.orkflowName}@{run.orkflowVersion}"
+			on="run"
+			dagLabel="Graph of {run.orkflowName}.{activeTask ? ` Selected: ${activeTask}.` : ' No task selected.'}"
+			stateOf={nodeState}
+			selected={activeTask}
+			hrefOf={(id) => taskHref(id, 0)}
+			onselect={toggleNode}
+			neighbourhoodWhenLarge
+			direction={dagDirectionParam(page.url)}
+			iconOf={(id) => activityByTask.get(id)?.icon}
+		>
+			{#snippet actions()}
+				<button type="button" class="btn btn-sm btn-quiet" data-testid="run-dag-clear" aria-disabled={!activeTask} onclick={() => activeTask && clearSelection()}>Clear selection</button>
+			{/snippet}
+			{#snippet footer()}
+				<div class="legend" data-testid="run-dag-key">
+					{#each legendStatuses as status (status)}
+						{@const mark = statusMark(status)}
+						<span class="legend-i"
+							><span class="stamp border-transparent bg-transparent p-0 {mark.inner ? '' : mark.className}" aria-hidden="true">{#if mark.inner}<span class={mark.className}></span>{/if}</span>{statusLabel(status)}</span
+						>
+					{/each}
+					{#each legendActivities as activity (activity.word)}
+						<span class="legend-i"><ActivityIcon kind={activity.kind} icon={activity.icon} class="size-3.5 text-ink-3" />{activity.word}</span>
+					{/each}
+					<span class="legend-note text-ink-3">
+						{#if activeTask}Greyed tasks are outside the selection.{/if}
+						{#if anyHandlers && !activeTask}Failure handlers run only in a failing run and never rescue it.{/if}
+					</span>
+				</div>
+			{/snippet}
+		</DrawingFrame>
+	</div>
+
+	<div class="run-grid">
+		<div class="run-col">
+			<!--
+				The run's history reads BEFORE the tasks it produced. It is the
+				run-level account of what happened, so it belongs beside the run's
+				own header rather than under a task list a reader has to scroll past.
+			-->
+			{#if eventsOpen}
+				<section id="run-events" aria-label="Run events" data-testid="run-events">
+					<EventInspector
+						events={buffer.events}
+						dropped={buffer.dropped}
+						total={buffer.total}
+						{streamBroken}
+						runId={run.id}
+						cap={EVENT_BUFFER_CAP}
 					/>
-				{/snippet}
-			</DrawingFrame>
-			<div class="mt-2 min-h-12 sm:min-h-6">
-				{#if view === 'map'}
-					<TaskMapLegend counts={legend} neverStarted={legendNever} onpick={(status) => taskMap?.focusStatus(status)} />
-				{:else}
-					{@const handlers = tasks.some((t) => isFailureHandler(joinOf(t.id)))}
-					{@const faded = tasks.some((t) => neverStarted(t))}
-					{#if handlers || faded}
-						<!-- The key says only what this drawing shows. -->
-						<p class="text-xs text-ink-muted" data-testid="run-dag-key">
-							{[handlers ? 'A dashed outline is a failure handler' : '', faded ? 'a faded node never started' : '']
-								.filter(Boolean)
-								.join('; ')
-								.replace(/^a/, 'A')}.
-						</p>
+				</section>
+			{/if}
+			<section class="card tasks" aria-labelledby="run-tasks-heading">
+				<div class="card-head">
+					<h2 id="run-tasks-heading">Tasks</h2>
+					{#if spanWords}<span class="card-sub">timeline from run start, 0 to {spanWords}</span>{/if}
+					<span class="tlkey" aria-hidden="true"
+						><span><i class="k-r"></i>ran</span>{#if !isTerminal(runStatus)}<span><i class="k-run"></i>running</span>{/if}<span><i class="k-w"></i>waited</span>{#if runRetries > 0 || runStatus === Status.FAILED}<span><i class="k-c"></i>failed attempt</span>{/if}</span
+					>
+					{#if hasFanOut}
+						<div class="card-end">
+							<button type="button" class="btn btn-sm btn-quiet" data-testid="run-expand-all" aria-pressed={expandAll} onclick={() => (expandAll = !expandAll)}>{expandAll ? 'Collapse' : 'Expand all'}</button>
+						</div>
+					{/if}
+				</div>
+				<div class="guide">
+					<span data-testid="task-summary"><span class="num">{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length}</span> succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}</span>
+					<span class="guide-end">
+						<button type="button" data-testid="run-stability-toggle" aria-pressed={historyOpen} onclick={toggleHistory} class="guide-btn">Retry history ({HISTORY_WINDOW})</button>
+						<button type="button" data-testid="export-run-json" onclick={() => downloadJson(`${run.id}.json`, runExport())} class="guide-btn">Export JSON</button>
+					</span>
+				</div>
+				{#if data.artifactsError}
+					<p data-testid="artifacts-unavailable" class="tasks-note">Artifact metadata is unavailable: {data.artifactsError}. Downloads require the engine's recorded-artifact read API and are never linked directly to storage URIs.</p>
+				{/if}
+				<!--
+					The attempt store is not the run: a deployment that has none, or
+					one whose store is unreachable, still renders every status, every
+					log and every artifact on this page. Say what is missing and what
+					it costs — nothing else changes.
+				-->
+				{#if attemptsError}
+					<p data-testid="attempts-unavailable" class="tasks-note">Attempt history is not available: {attemptsError}. Task statuses, output and artifacts are unaffected; what each earlier try of a retried task did cannot be shown.</p>
+				{/if}
+				{#if artifactDownloadError}
+					<p data-testid="artifact-download-error" role="alert" class="tasks-note text-fail">Error: artifact download failed: {artifactDownloadError}</p>
+				{/if}
+				<div class="trow thead" aria-hidden="true">
+					<span>Task</span>
+					<span class="tl-axis">{#each axis as mark, i (i)}<span style:left="{mark.at * 100}%" class:first={i === 0}>{mark.label}</span>{/each}</span>
+					<span class="text-right">Status</span>
+				</div>
+				<div data-testid="task-list">
+					{#each tasks as task (task.id)}
+						{@const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt)}
+						{@const def = taskDefs.get(task.id)}
+						{@const isAwait = task.await !== undefined || def?.await !== undefined}
+						{@const fanOut = task.each !== undefined || def?.each !== undefined}
+						{@const composed = task.child !== undefined || def?.orkflow !== undefined}
+						{@const accent = pinAccent(task.pin)}
+						{@const line = barsOf(task)}
+						{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
+						{@const live = task.status === Status.RUNNING ? liveByTask.get(task.id) : undefined}
+						{@const waiting = waitingFor(live)}
+						<!--
+							content-visibility: auto lets the browser skip laying out and
+							painting a row while it is off screen, and the intrinsic size
+							keeps the list's height (and its scrollbar) honest meanwhile:
+							on a run of thousands of tasks every scroll and focus otherwise
+							re-laid out every row, seconds before the page answered.
+
+							A pinned task's row carries its pin's line and a faint fill, so
+							the members of one pin read as a block without being re-sorted:
+							the accent is an inline style because the token is chosen at
+							run time, and the words `Pin <name>` say the same thing.
+						-->
+						<div
+							class="trow"
+							class:pinned={!!accent}
+							style={accent ? `border-color:var(--color-${accent}-line);background-color:var(--color-${accent}-fill)` : undefined}
+							data-testid="task-{task.id}"
+							data-dispatched={dispatched}
+							data-pin={task.pin || undefined}
+							data-pin-accent={accent}
+						>
+							<span class="tname-col">
+								<button type="button" class="tname" aria-pressed="false" aria-controls="item-card" data-testid="task-deep-link-{task.id}" onclick={() => toggleRow(task.id)}
+									><ActivityIcon kind={composed ? 'orkflow' : isAwait ? 'await' : 'default'} icon={activityByTask.get(task.id)?.icon} class="size-4 text-ink-3" />{task.id}</button
+								>
+								<small class="tsub">
+									{#if composed && task.child}
+										<span class="break-all">{childLabel(task.child)}</span>{#if task.child.runId} · child run <a class="font-mono" data-testid="task-{task.id}-child-link" href={withNamespace(`/runs/${encodeURIComponent(task.child.runId)}`, data.namespace)}>{shortRunId(task.child.runId)}</a>{/if}
+									{:else if isAwait}
+										<span>awaited task</span>
+									{:else}
+										<span>{imageWord(task.id)}</span>
+									{/if}
+									{#if fanOut}<span> · {fanOutWords(task)}</span>{/if}
+									{#if task.join && joinWords(task.join)}<span data-testid="task-{task.id}-join" data-tip={joinTitle(task.join, def?.needs ?? [])}> · {joinWords(task.join)}</span>{/if}
+									{#if task.orkerId}<span class="nw" data-testid="task-{task.id}-orker"> · <span class="sr">Orker </span>{task.orkerId}</span>{/if}
+									{#if task.pin}<span data-testid="task-{task.id}-pin"> · <i class="pin-dot" style="background-color:var(--color-{accent}-line)"></i>Pin {task.pin}</span>{/if}
+									{#if !dispatched && task.status !== Status.SKIPPED && !neverStarted(task)} · <span data-testid="task-{task.id}-status-note">{notStartedCaption(task)}</span>{/if}
+									{#if neverStarted(task)} · <span data-testid="task-{task.id}-status-note" data-tip={task.message || undefined}>never started</span>{/if}
+									{#if task.message && !task.error && !neverStarted(task)}<span class="break-words"> · {task.message}</span>{/if}
+									{#if live && !live.heartbeatAvailable && line.words === ''}<span class="sr">{liveLine(live, liveNowMs).text}</span>{/if}
+									{#if fanOut}
+										<!-- A fan-out retries per item: the mark counts the items that took more than one try. -->
+										{@const retried = retriedItemsLabel(task.items)}
+										{#if retried}<span data-testid="task-{task.id}-retries" data-tip="These items were retried. Open an item for the outcome and error of every attempt."> · {retried}</span>{/if}
+									{:else}
+										<RetryBadge attempts={taskAttempts} terminal={isTerminal(task.status)} testid="task-{task.id}-retries" history={flakesByTask.get(task.id)} historyWindow={HISTORY_WINDOW} />
+										<CacheBadge cache={task.cache} declared={def?.cache !== undefined} succeeded={task.status === Status.SUCCEEDED && task.factsRead === true} namespace={data.namespace} testid="task-{task.id}-cache" />
+									{/if}
+								</small>
+							</span>
+							<TaskTimeline taskId={task.id} bars={line.bars} words={line.words} />
+							<span class="stc">
+								{#if waiting}
+									<span class="stamp pill-wait" data-testid="task-{task.id}-status"><span class="mark-wait" aria-hidden="true"></span>Waiting for capacity</span>
+								{:else if dispatched || task.status === Status.SKIPPED || neverStarted(task)}
+									<StatusPill status={task.status} testid="task-{task.id}-status" />
+								{:else}
+									<span data-testid="task-{task.id}-status" data-state="not-started" class="stamp pill-outline text-ink-2">Pending</span>
+								{/if}
+								<span class="num tdur" data-testid="task-{task.id}-elapsed">{#if !isTerminal(task.status) && rowDuration(task)}<span class="sr">{isAwait ? 'Awaited' : 'Since scheduled'} </span>{/if}{rowDuration(task)}</span>
+							</span>
+						</div>
+						{#if task.status === Status.FAILED}
+							<!-- A failed task says everything about its failure under its row. -->
+							{@const shownAttempts = taskAttempts}
+							{@const lastAttempt = shownAttempts[shownAttempts.length - 1]}
+							{@const phases = lastAttempt ? attemptPhases(lastAttempt) : null}
+							{@const groups = phases?.kind === 'phases' ? phaseGroups(phases.phases) : []}
+							{@const groupTotal = groups.reduce((sum, g) => sum + g.ms, 0)}
+							{@const image = lastAttempt?.image ?? def?.image}
+							{@const digest = image?.indexDigest ?? ''}
+							{@const timing = taskTiming({ ...task, awaited: isAwait }, attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
+							<div class="xpand" data-testid="task-{task.id}-failure">
+								<p class="xhead">
+									<b>{task.id}</b>
+									<span class="text-ink-3">{[
+										task.attempt > 0 || shownAttempts.length > 0 ? `attempt ${Math.max(task.attempt, shownAttempts.length)} of ${Math.max(def?.retry?.maximumAttempts ?? 1, task.attempt, shownAttempts.length)}` : '',
+										task.exitCode !== undefined ? `exit code ${task.exitCode}` : '',
+										def && !def.retry ? 'no retry policy' : ''
+									].filter(Boolean).join(' · ')}</span>
+								</p>
+								{#if !composed && !isAwait && !fanOut}
+									{#snippet wokerWord()}<span class="font-mono text-xs">{task.orkerId || lastAttempt?.orkerId || '—'}</span>{/snippet}
+									{#snippet imagePlate()}<span data-testid={task.id === failedTask?.id ? 'run-failed-image' : undefined}><span class="sr">{pinnedOrReference(image)}</span>{#if digest}<Plate key="sha256" value={shortDigestWords(digest)} tip={digest} copy={digest} copyLabel="Copy digest" small />{:else}<span class="font-mono text-xs break-all">{pinnedOrReference(image) || '—'}</span>{/if}</span>{/snippet}
+									<FactsStrip
+										small
+										label="Attempt of {task.id}"
+										facts={[
+											{ label: 'Orker', value: wokerWord },
+											{ label: 'Pool', value: task.pool || lastAttempt?.pool || '—' },
+											...(lastAttempt?.resources && fmtQuantity(lastAttempt.resources) ? [{ label: 'Reserved', value: fmtQuantity(lastAttempt.resources) }] : []),
+											{ label: 'Waited to start', value: timing.wait.kind === 'value' ? formatDuration(timing.wait.from, timing.wait.to) : '—' },
+											{ label: 'Image', value: imagePlate }
+										] satisfies Fact[]}
+									/>
+								{/if}
+								{#if task.error}
+									<FailurePanel error={task.error} testid="task-{task.id}-error" flat tries={triesOf(task)} />
+								{/if}
+								{#if groupTotal > 0}
+									<div class="phline">
+										<div class="pbar pbar-sm" role="img" aria-label="Phases of attempt {lastAttempt?.attempt}: {groups.map((g) => `${g.label} ${(g.ms / 1000).toFixed(1)} seconds`).join(', ')}">
+											{#each groups as group (group.key)}<i class="ph-{group.key}" style:width="{(100 * group.ms) / groupTotal}%"></i>{/each}
+										</div>
+										<span class="pkey-in" aria-hidden="true">{#each groups as group (group.key)}<span><i class="ph-{group.key}"></i>{group.label.toLowerCase()} {(group.ms / 1000).toFixed(1)}s</span>{/each}</span>
+									</div>
+								{/if}
+								{#if !composed && !isAwait && !fanOut && (task.id === failedTask?.id || task.id === activeTask)}
+									<TaskLogPane
+										runId={run.id}
+										taskId={task.id}
+										namespace={data.namespace}
+										status={task.status}
+										scheduledAt={task.scheduledAt ?? task.startedAt}
+										attempt={deepTask === task.id && Number.isFinite(deepAttempt) ? deepAttempt : 0}
+										deepLinked={deepTask === task.id}
+										pinRequest={logPinByTask[task.id]}
+										onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt)}
+										onAttemptSeen={(attempt) => attemptSeen(task.id, attempt)}
+										onFirstStderr={task.id === failedTask?.id ? (text) => (firstStderr = text) : undefined}
+										toggle={false}
+										open
+										embedded
+										label={task.id}
+									/>
+								{/if}
+							</div>
+						{/if}
+						{#if isAwait && (!isTerminal(task.status) || task.id === activeTask)}
+							<!--
+								An awaited task runs no container: no log pane, and no image
+								to inspect. The panel says what it waits for, until when, who
+								resolved it — and resolves it.
+							-->
+							<div class="xpand">
+								<AwaitPanel
+									runId={run.id}
+									namespace={data.namespace}
+									task={{ id: task.id, status: task.status, await: task.await, error: task.error, startedAt: task.startedAt }}
+									spec={def?.await}
+									runTerminal={isTerminal(runStatus)}
+									now={currentTimestamp}
+									origin={page.url.origin}
+								/>
+							</div>
+						{:else if composed && (!isTerminal(task.status) || task.id === activeTask)}
+							<!-- A composed task starts a child run: its panel names the pinned child and rolls its tasks up live. -->
+							<div class="xpand">
+								<ChildRunPanel runId={run.id} namespace={data.namespace} taskId={task.id} child={task.child} status={task.status} />
+							</div>
+						{:else if fanOut && (expandAll || task.id === activeTask || !isTerminal(task.status) || task.status === Status.FAILED)}
+							<EachItemGrid
+								taskId={task.id}
+								each={task.each}
+								spec={def?.each}
+								items={task.items}
+								selected={task.id === activeTask ? activeItem : undefined}
+								onSelect={(item) => selectItem(task.id, item)}
+								waitingOf={(item) => waitingFor(liveByTask.get(attemptsKey(task.id, item)))}
+							/>
+						{/if}
+					{/each}
+				</div>
+				<!-- THE LOG: one pane, in the column, that follows the selection. -->
+				{#if activeView && !(task_isAwait(activeView) || task_isComposed(activeView))}
+					{@const fanned = task_isFanOut(activeView)}
+					{@const embeddedHere = activeView.status === Status.FAILED && !fanned}
+					{#if !embeddedHere}
+						{#if fanned && activeItem === undefined}
+							<p class="log-none" data-testid="run-log-pick-item">Select an item of {activeView.id} to see its log.</p>
+						{:else if fanned && activeItem !== undefined}
+							{@const current = activeView.items[activeItem]}
+							{#key `${activeView.id}[${activeItem}]`}
+								<TaskLogPane
+									runId={run.id}
+									taskId={activeView.id}
+									namespace={data.namespace}
+									item={activeItem}
+									status={current?.status ?? Status.PENDING}
+									scheduledAt={current?.run?.scheduledAt ?? current?.run?.startedAt}
+									attempt={deepTask === activeView.id && deepItem === activeItem && Number.isFinite(deepAttempt) ? deepAttempt : 0}
+									deepLinked={deepTask === activeView.id && deepItem === activeItem}
+									pinRequest={logPinByTask[attemptsKey(activeView.id, activeItem)]}
+									onAttemptChange={(attempt) => setTaskAttempt(activeView!.id, attempt, activeItem)}
+									onAttemptSeen={(attempt) => attemptSeen(activeView!.id, attempt, activeItem)}
+									toggle={false}
+									open
+									label={itemLabel(activeView.id, activeItem)}
+								/>
+							{/key}
+						{:else}
+							{#key activeView.id}
+								<TaskLogPane
+									runId={run.id}
+									taskId={activeView.id}
+									namespace={data.namespace}
+									status={activeView.status}
+									scheduledAt={activeView.scheduledAt ?? activeView.startedAt}
+									attempt={deepTask === activeView.id && Number.isFinite(deepAttempt) ? deepAttempt : 0}
+									deepLinked={deepTask === activeView.id}
+									pinRequest={logPinByTask[activeView.id]}
+									onAttemptChange={(attempt) => setTaskAttempt(activeView!.id, attempt)}
+									onAttemptSeen={(attempt) => attemptSeen(activeView!.id, attempt)}
+									toggle={false}
+									open
+									label={activeView.id}
+								/>
+							{/key}
+						{/if}
 					{/if}
 				{/if}
-			</div>
+			</section>
+			{#if cancelDialog && run}
+				<ConfirmDialog
+					testid="cancel-run-confirm"
+					title="Cancel run {shortRunId(run.id)}?"
+					acceptLabel="Cancel run"
+					cancelLabel="Keep running"
+					glyph="ban"
+					acceptTestid="cancel-run-accept"
+					cancelTestid="cancel-run-dismiss"
+					busy={cancelBusy}
+					error={cancelError}
+					destructive
+					onaccept={cancelRun}
+					oncancel={() => { cancelDialog = false; cancelError = ''; }}
+				>
+					{#snippet body()}
+						<p>Running tasks get a stop signal and the run ends Canceled once they have stopped. Tasks that have not started never will. This page keeps the current status until the run records the change.</p>
+						<label class="text-dense font-semibold text-ink" for="cancel-reason">Reason <span class="font-normal text-ink-3">(optional)</span></label>
+						<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="field w-full px-2.5 py-2 text-base" placeholder="Why should this run stop?"></textarea>
+
+					{/snippet}
+				</ConfirmDialog>
+			{/if}
 		</div>
-		<aside class="min-w-0 space-y-4 xl:col-start-2 xl:row-span-2 xl:row-start-1 xl:self-start" aria-label="About this run">
+
+		<aside class="run-aside" aria-label="Run details">
 			{#if runError || runErrorMessage}
 				<!--
 					WHY IT ENDED: the run's terminal error, in full when the snapshot
@@ -2014,16 +2570,26 @@
 					message the socket delivered. Recorded facts only, never a guess.
 				-->
 				<section class="card" aria-labelledby="run-why-heading" data-testid="run-why">
-					<div class="card-head"><h2 id="run-why-heading">{runStatus === Status.FAILED ? 'Why it failed' : 'How it ended'}</h2>{#if runStatus === Status.FAILED && failedTask}<span class="card-sub">{cloudTag}</span>{/if}</div>
-					<div class="px-4 py-3">
+					<div class="card-head"><h2 id="run-why-heading">{runStatus === Status.FAILED ? 'Why it failed' : 'How it ended'}</h2></div>
+					<div class="diag">
 						{#if runStatus === Status.FAILED}
 							{#if runError}
-								<FailurePanel error={runError} testid="run-error" bare tries={failedTask ? triesOf(failedTask) : undefined} />
+								<FailurePanel error={runError} testid="run-error" bare compact tries={failedTask ? triesOf(failedTask) : undefined} />
 							{:else}
 								{@const plain = plainFailure(runErrorMessage)}
 								<div data-testid="run-error" role="alert" class="text-dense text-ink">
 									{#if plain.code}<p class="severity-error font-mono font-semibold">{plain.code}</p>{/if}
 									<p class="mt-1.5 max-w-prose break-words">{plain.text}</p>
+								</div>
+							{/if}
+							{#if failedTask && firstStderr}
+								<div>Its first stderr line says why:</div>
+								<code class="why-line" data-testid="run-why-stderr">{firstStderr}</code>
+							{/if}
+							{#if failedTask}
+								<div class="flex flex-wrap gap-2">
+									<a class="btn btn-sm" href={taskHref(failedTask.id, failedTask.attempt)} onclick={(e) => viewStderr(e, failedTask!)} data-testid="run-why-view-stderr">View stderr</a>
+									<a class="btn btn-sm btn-quiet" href={withNamespace(`/orkflows/${encodeURIComponent(run.orkflowName)}?tab=edit`, data.namespace)} data-testid="run-why-open-orkflow">Open {run.orkflowName}</a>
 								</div>
 							{/if}
 						{:else if runError}
@@ -2034,756 +2600,188 @@
 					</div>
 				</section>
 			{/if}
-			<section class="card" aria-labelledby="run-timing-heading">
-				<div class="card-head"><h2 id="run-timing-heading">Timing</h2></div>
-				<dl class="kv" aria-label="Timing and tasks">
-					{#each [{ label: 'Created', at: run.createdAt }, { label: 'Started', at: startedAt ?? run.startedAt }, { label: 'Finished', at: finishedAt ?? run.finishedAt }] as row (row.label)}
-						<dt>{row.label}</dt>
-						<dd>{#if row.at}<TimeAgo at={row.at} />{:else}—{/if}</dd>
-					{/each}
-					<dt>Elapsed</dt>
-					<dd data-testid="run-elapsed">{formatDuration(startedAt ?? run.startedAt, finishedAt ?? run.finishedAt ?? (isTerminal(runStatus) ? undefined : currentTimestamp))}</dd>
-					<dt>Tasks</dt>
-					<dd data-testid="task-summary">
-						<span class="num">{tasks.filter((t) => t.status === Status.SUCCEEDED).length}/{tasks.length}</span> succeeded{#if tasks.some((t) => t.status === Status.AWAITING)}, {tasks.filter((t) => t.status === Status.AWAITING).length} awaiting{/if}{#if cachedTotal > 0}<span data-testid="task-summary-cached"> · {cachedTotal} cached</span>{/if}
-					</dd>
-				</dl>
-			</section>
-			{#if failedImage}
-				<section class="card" aria-labelledby="run-image-heading">
-					<div class="card-head"><h2 id="run-image-heading">Image</h2><span class="card-sub">of the failed task</span></div>
-					<p class="px-4 py-3 font-mono text-sm break-all text-ink" data-testid="run-failed-image">{failedImage}</p>
+			{#if runStatus === Status.FAILED && failedTask}
+				<section class="card" aria-labelledby="run-how-heading" data-testid="run-how-failed">
+					<div class="card-head"><h2 id="run-how-heading">How it failed</h2><span class="card-sub">from this run's records</span></div>
+					<div class="diag">
+						<ol class="chain">
+							{#if failedNeed}<li><b>{failedNeed}</b> succeeded</li>{/if}
+							<li class="bad"><b>{failedTask.id}</b>{#if failedNeed}, which needs it,{/if} {failedTask.exitCode ? `exited ${failedTask.exitCode}` : 'failed'}{#if failedTask.error?.code}<small>{failedTask.error.code}</small>{/if}</li>
+							{#if skippedTasks.length}<li class="pend"><b>{listWords(skippedTasks)}</b> {skippedTasks.length === 1 ? 'was' : 'were'} skipped<small>{skippedTasks.length === 1 ? 'its need' : 'their needs'} did not succeed</small></li>{/if}
+						</ol>
+					</div>
 				</section>
+				<SeenBefore namespace={data.namespace} orkflow={run.orkflowName} taskId={failedTask.id} code={failedTask.error?.code ?? ''} runId={run.id} />
 			{/if}
-			<section class="card" aria-label="Versions">
-				<div class="px-4 py-3"><VersionTable namespace={data.namespace} orkflowName={run.orkflowName} runVersion={run.orkflowVersion} /></div>
-			</section>
-		</aside>
-		<!--
-			THE BODY, in the drawing's column: from 1280 px the run's values and
-			its tasks start under the drawing, the aside beside them, instead of
-			waiting for the aside to end; below that the aside follows the
-			drawing and the body follows the aside.
-		-->
-		<div class="min-w-0 space-y-6 xl:col-start-1 xl:row-start-2">
-
-	<!--
-		THE RUN'S VALUES. A value is shown in its own block; what a run has
-		none of (no input, no aggregated output yet or at all) is said once, in
-		one NOTE, rather than as an empty box beside a sentence in another.
-	-->
-	<section class="space-y-4" aria-label="Run values">
-		{#if hasRunInput || run.output}
-			<div class="grid gap-6 lg:grid-cols-2">
-				{#if hasRunInput}
-					<div class="min-w-0">
-						<div class="flex items-center justify-between gap-3">
-							<h2 class="caps text-ink-muted">Inputs</h2>
-							<button type="button" data-testid="copy-run-input" onclick={() => void copy(payloadJson(run.input), 'Inputs copied', 'run-input')} class="link text-xs">Copy JSON</button>
-						</div>
-						<pre data-testid="run-input" class="mt-1.5 max-h-56 overflow-auto rounded-sm border border-rule-faint bg-paper-sunken p-3 font-mono text-xs text-ink-secondary">{payloadJson(run.input)}</pre>
-					</div>
-				{/if}
-				{#if run.output}
-					<div class="min-w-0">
-						<div class="flex items-center justify-between gap-3">
-							<h2 class="caps text-ink-muted" data-testid="run-output-kind">
-								{declaresOutputs ? 'Declared outputs' : 'Leaf task values'}
-							</h2>
-							<button type="button" data-testid="copy-run-output" onclick={() => void copy(payloadJson(run.output), 'Run output copied', 'run-output')} class="link text-xs">Copy JSON</button>
-						</div>
-						<pre data-testid="run-output" class="mt-1.5 max-h-56 overflow-auto rounded-sm border border-rule-faint bg-paper-sunken p-3 font-mono text-xs text-ink-secondary">{payloadJson(run.output)}</pre>
-					</div>
-				{/if}
-			</div>
-		{/if}
-		{#if !hasRunInput || !run.output}
-			<p data-testid="run-values-note" class="note flex max-w-prose gap-3 px-3 py-2 text-sm">
-				<span class="caps text-ink-muted">Note</span>
-				<span>
-					{#if !hasRunInput}<span data-testid="run-input">This run took no input values.</span>{/if}
-					{#if !run.output}<span data-testid="run-output"
-							>{isTerminal(runStatus)
-								? `It finished without ${declaresOutputs ? 'its declared outputs' : 'aggregated output values'}.`
-								: `Its ${declaresOutputs ? 'declared outputs are' : 'output is'} not available yet.`}</span
-						>{/if}
-				</span>
-			</p>
-		{/if}
-	</section>
-
-	<div class="space-y-6">
-		<!--
-			The run's history reads BEFORE the tasks it produced. It is the
-			run-level account of what happened, so it belongs beside the run's
-			own header rather than under a task list a reader has to scroll
-			past — and it is what subsumed the old status trail: every row
-			carries a sequence number and a timestamp the trail never had.
-		-->
-		{#if eventsOpen}
-			<section id="run-events" aria-label="Run events" data-testid="run-events">
-				<EventInspector
-					events={buffer.events}
-					dropped={buffer.dropped}
-					total={buffer.total}
-					{streamBroken}
-					runId={run.id}
-					cap={EVENT_BUFFER_CAP}
-				/>
-			</section>
-		{/if}
-		<section class="card" aria-labelledby="run-tasks-heading">
-			<div class="card-head">
-				<h2 id="run-tasks-heading">Tasks</h2>
-				<span class="card-sub">{tasks.length} {tasks.length === 1 ? 'task' : 'tasks'}</span>
-				<div class="card-end">
-					<button type="button" data-testid="run-stability-toggle" aria-pressed={historyOpen} onclick={toggleHistory} class="btn btn-sm btn-quiet"
-						><Icon name={historyOpen ? 'apply' : 'retry'} />Retry history ({HISTORY_WINDOW})</button
-					>
-					<button type="button" data-testid="export-run-json" onclick={() => downloadJson(`${run.id}.json`, runExport())} class="btn btn-sm btn-quiet">Export JSON</button>
+			{#if runStatus === Status.FAILED}
+				<SinceLastRun namespace={data.namespace} runId={run.id} orkflow={run.orkflowName} createdAt={timestampMs(run.createdAt)} sinceSuccess read={tasks.length <= DIFF_IN_PASSING} />
+			{/if}
+			<section class="card" aria-labelledby="run-map-heading" data-testid="run-map-card">
+				<div class="card-head"><h2 id="run-map-heading">Task map</h2><span class="card-sub">every task and item, in the order they can run</span></div>
+				<div class="tmap" style:height="{mapBoxHeight}px" bind:clientWidth={mapWidth}>
+					<TaskMap
+						bind:this={taskMap}
+						source={mapSource}
+						definition={data.orkflow !== null}
+						revision={mapRevision}
+						selected={selectedCell}
+						onselect={selectTask}
+						describe={describeCell}
+						onlegend={(counts) => (legend = counts)}
+					/>
 				</div>
-			</div>
-			{#if data.artifactsError}
-				<p data-testid="artifacts-unavailable" class="note mb-3 flex gap-3 px-3 py-2 text-xs">
-					<span class="caps text-ink-muted">Note</span>
-					<span>Artifact metadata is unavailable: {data.artifactsError}. Downloads require the engine's recorded-artifact read API and are never linked directly to storage URIs.</span>
-				</p>
+				<div class="tmap-key">
+					<TaskMapLegend counts={legend} neverStarted={legendNever} onpick={(status) => taskMap?.focusStatus(status)} />
+				</div>
+			</section>
+			{#if firstWaiter?.capacityWait}
+				<WaitsFor label={waiterLabel(firstWaiter)} wait={firstWaiter.capacityWait} namespace={data.namespace} ownRunning={poolPeers.running} took={poolPeers.took} />
 			{/if}
-			<!--
-				The attempt store is not the run: a deployment that has none, or
-				one whose store is unreachable, still renders every status, every
-				log and every artifact on this page. Say what is missing and what
-				it costs — nothing else changes.
-			-->
-			{#if attemptsError}
-				<p data-testid="attempts-unavailable" class="note mb-3 flex gap-3 px-3 py-2 text-xs">
-					<span class="caps text-ink-muted">Note</span>
-					<span>Attempt history is not available: {attemptsError}. Task statuses, output and artifacts
-					are unaffected; what each earlier try of a retried task did cannot be shown.</span>
-				</p>
-			{/if}
-			{#if artifactDownloadError}
-				<p data-testid="artifact-download-error" role="alert" class="severity-error mb-3 border border-red px-3 py-2 text-xs">Error: artifact download failed: {artifactDownloadError}</p>
-			{/if}
-			<!-- One hairline-ruled row per task, on clean ground: no box round a row. -->
-			<div class="border-t border-rule" data-testid="task-list">
-				{#each tasks as task (task.id)}
-					{@const dispatched = taskDispatched(task.status, task.scheduledAt ?? task.startedAt)}
-					{@const taskAttempts = attemptsByTask.get(task.id) ?? []}
-					{@const isAwait = task.await !== undefined || taskDefs.get(task.id)?.await !== undefined}
-					{@const timing = taskTiming({ ...task, awaited: isAwait }, attemptStoreAbsent ? undefined : taskAttempts, currentTimestamp)}
-					{@const accent = pinAccent(task.pin)}
-					{@const fanOut = task.each !== undefined || taskDefs.get(task.id)?.each !== undefined}
-					{@const composed = task.child !== undefined || taskDefs.get(task.id)?.orkflow !== undefined}
-				{@const taskCli = [
-					...(!isAwait && !fanOut && !composed && !neverStarted(task)
-						? [{ label: 'Its log', command: runCommand(data.namespace, ['run', 'logs', run.id, '--task', task.id, ...(task.attempt > 0 ? ['--attempt', String(task.attempt)] : [])]) }]
-						: []),
-					...(!isAwait && !fanOut && !composed && !neverStarted(task) && task.status === Status.FAILED
-						? [{ label: 'Run it here, on your machine', command: taskRunCommand(data.namespace, run.id, task.id) }]
-						: []),
-					...(task.cache && task.cache.outcome !== CacheOutcome.HIT || taskAttempts.length > 1
-						? [{ label: 'Its attempts and cache key', command: runCommand(data.namespace, ['run', 'attempts', run.id, '--task', task.id]) }]
-						: []),
-					...(task.status === Status.RUNNING ? [{ label: 'What it is doing', command: runCommand(data.namespace, ['run', 'inspect', run.id, '--task', task.id]) }] : []),
-					...(timing.scheduled ? [{ label: 'Where its time went', command: runCommand(data.namespace, ['run', 'timing', run.id, '--task', task.id]) }] : [])
-				]}
-					<!--
-						A pinned task's row is the one row with an outline: its pin's
-						line, 1 px all round, and a faint fill, so the members of one
-						pin read as a block in the list without being re-sorted — the
-						DAG order is the order, and regrouping the list would hide it.
-
-						The accent is applied as an inline style rather than a class
-						because the token is chosen at runtime: Tailwind's scanner
-						only sees literal class names in source, so a composed
-						`border-l-{accent}` would emit no CSS at all. The tokens it
-						reads are therefore declared in a plain `:root` in app.css
-						and NOT in `@theme`, which drops variables no utility class
-						references — see the note there.
-
-						It is decoration on top of the status pill, never a
-						substitute for it, and the `Pin <name>` label below says the
-						same thing in words.
-					-->
-					<!--
-						content-visibility: auto lets the browser skip laying out and
-						painting a card while it is off screen, and the intrinsic size
-						keeps the list's height (and its scrollbar) honest meanwhile:
-						on a run of thousands of tasks every scroll and focus otherwise
-						re-laid out every card, seconds before the page answered. It
-						also contains the card's painting, so a card that can hold an
-						overlay — an await's resolve and reject dialogs, a composed
-						task's panel, an open Inspect with its command popover — is
-						never skipped, and its overlay is never clipped to it.
-					-->
-					<div
-						class="task-card px-3 py-3 {isAwait || composed || inspectOpenByTask[task.id]
-							? ''
-							: '[content-visibility:auto] [contain-intrinsic-size:auto_5rem]'} {accent
-							? 'relative -mt-px rounded-sm border'
-							: 'border-b border-rule'}"
-						style={accent ? `border-color:var(--color-${accent}-line);background-color:var(--color-${accent}-fill)` : undefined}
-						data-testid="task-{task.id}"
-						data-dispatched={dispatched}
-						data-pin={task.pin || undefined}
-						data-pin-accent={accent}
-					>
-						<!-- Below 640 px the stamps wrap under the task rather than squeeze it. -->
-						<div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
-							<div class="min-w-48 flex-1">
-								<span class="inline-flex items-center gap-1.75"
-									><ActivityIcon
-										kind={composed ? 'orkflow' : activityKind(taskDefs.get(task.id)?.uses, { awaited: isAwait })}
-										class="size-4 text-ink-3"
-									/><a href={taskHref(task.id, task.attempt)} class="font-semibold break-all text-ink hover:underline" data-testid="task-deep-link-{task.id}">{task.id}</a></span
-								>
-								{#if task.message && !task.error}
-									<p class="text-xs break-words text-ink-secondary">{task.message}</p>
-								{/if}
-								<!-- Short values are a fact of the row, said on it in the mono. -->
-								{#if task.output && inlinePayload(task.output) !== null}
-									<!-- A value breaks only at its spaces; one still too long for a
-									     phone scrolls inside its line rather than splitting a word. -->
-									<p class="mt-0.5 flex min-w-0 items-baseline gap-2 overflow-x-auto text-xs">
-										<span class="caps shrink-0 text-ink-muted">Values</span>
-										<code data-testid="task-values-{task.id}" class="font-mono break-normal text-ink-secondary">{inlinePayload(task.output)}</code>
-									</p>
-								{/if}
-							</div>
-							<!--
-								SKIPPED keeps its pill: a skip is a DAG decision the reader
-								should see, not the absence of one. Everything else that was
-								never dispatched gets the caption instead of a pill — and
-								keeps the same data-testid, because "what does this task say"
-								is one question whichever of the two answers it.
-							-->
-							<div class="flex flex-wrap items-center justify-end gap-2">
-								{#if task.join}
-									<span
-										data-testid="task-{task.id}-join"
-										data-tip={joinTitle(task.join, taskDefs.get(task.id)?.needs ?? [])}
-										class="inline-flex items-center rounded-sm border border-rule-strong px-1.5 font-mono text-2xs leading-4 whitespace-nowrap text-ink-secondary"
-									>join {joinWord(task.join)}</span>
-								{/if}
-								{#if dispatched || task.status === Status.SKIPPED}
-									<StatusPill status={task.status} testid="task-{task.id}-status" />
-								{:else if neverStarted(task)}
-									<span class="inline-flex flex-col items-end gap-0.5">
-										<StatusPill status={task.status} testid="task-{task.id}-status" />
-										<span data-testid="task-{task.id}-status-note" class="text-2xs whitespace-nowrap text-ink-muted">never started</span>
-									</span>
-								{:else}
-									<span
-										data-testid="task-{task.id}-status"
-										data-state="not-started"
-										class="text-2xs whitespace-nowrap text-ink-muted"
-									>{notStartedCaption(task)}</span>
-								{/if}
-								<!--
-									A retry is invisible in a status — SUCCEEDED is SUCCEEDED
-									whether it took one try or four — so it is said beside the
-									pill rather than folded into it.
-								-->
-								{#if fanOut}
-									<!--
-										A fan-out retries per item: the badge counts the items
-										that took more than one try, never a sum of their tries.
-									-->
-									{@const retried = retriedItemsLabel(task.items)}
-									{#if retried}
-										<span
-											data-testid="task-{task.id}-retries"
-											data-tip="Temporal retried these items. Open an item for the outcome and error of every attempt."
-											class="stamp border-rule-strong bg-paper text-ink-secondary"
-										>{retried}</span>
-									{/if}
-								{:else}
-								<RetryBadge
-									attempts={taskAttempts}
-									terminal={isTerminal(task.status)}
-									testid="task-{task.id}-retries"
-									history={flakesByTask.get(task.id)}
-									historyWindow={HISTORY_WINDOW}
-								/>
-								{/if}
-								{#if !fanOut}
-									<CacheBadge
-										cache={task.cache}
-										declared={taskDefs.get(task.id)?.cache !== undefined}
-										succeeded={task.status === Status.SUCCEEDED && task.factsRead === true}
-										namespace={data.namespace}
-										testid="task-{task.id}-cache"
-									/>
-								{/if}
-							</div>
-						</div>
-						<div class="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-ink-muted">
-							<!--
-								WAITING OR SLOW. While the task has not finished, the only
-								honest number is how long ago it was scheduled — no
-								per-phase or wait/run split exists yet. Once it has, the
-								bar splits its time into the wait for an Orker and the
-								run on one. The Orker's start reaches the page with the
-								run's terminal snapshot, so until that snapshot has been
-								read (terminalFactsRead) a finished task shows its
-								scheduled-to-finished span rather than a bar that would
-								call the start unknown.
-							-->
-							{#if isAwait}
-								{#if timing.run.kind === 'value'}
-									<span data-testid="task-{task.id}-elapsed">Awaited {formatQuantity(timing.run)}</span>
-								{/if}
-							{:else if dispatched && !isTerminal(task.status)}
-								<span data-testid="task-{task.id}-elapsed">Since scheduled {formatDuration(task.scheduledAt ?? task.startedAt, currentTimestamp)}</span>
-							{:else if timing.scheduled && isTerminal(task.status) && (task.startedAt || terminalFactsRead)}
-								<TimingBar
-									taskId={task.id}
-									{timing}
-									placement={timelinePlacement(runSpan, {
-										scheduled: timestampMs(task.scheduledAt),
-										started: timestampMs(task.startedAt),
-										finished: timestampMs(task.finishedAt)
-									})}
-								/>
-							{:else if timing.scheduled && isTerminal(task.status)}
-								<span data-testid="task-{task.id}-elapsed">Elapsed {formatDuration(task.scheduledAt ?? task.startedAt, task.finishedAt)}</span>
-							{/if}
-							<!--
-								LIVE. While the task runs, what its pending attempt is doing
-								now, from the heartbeat the cluster holds: its own running
-								time, its phase, bytes and heartbeat age — or why that is
-								unavailable. Nothing about the attempt's PAST is drawn from
-								here; that is AttemptTimeline's. The Orker the heartbeat
-								names is a live claim, so it has its own testid beside the
-								snapshot's proof a pin held.
-							-->
-							{#if task.status === Status.RUNNING}
-								{@const live = liveByTask.get(task.id)}
-								{#if live?.attemptStartedAt}
-									<span data-testid="task-{task.id}-running-for">Running for {formatDuration(live.attemptStartedAt, liveNowTimestamp)}</span>
-								{/if}
-								{#if live}
-									{@const line = liveLine(live, liveNowMs)}
-									<span
-										data-testid="task-{task.id}-live"
-										data-live={line.kind}
-										data-stale={line.stale}
-										data-tip={line.title}
-										class={line.stale ? 'font-medium text-ink-secondary' : ''}>{line.text}</span
-									>
-									{#if live.heartbeatAvailable && live.orkerId && !task.orkerId}
-										<span data-testid="task-{task.id}-live-orker">Orker {live.orkerId}</span>
-									{/if}
-								{:else if liveError}
-									<span data-testid="task-{task.id}-live" data-live="unavailable" data-stale="false" data-tip={liveError}>Live detail unavailable</span>
-								{/if}
-							{/if}
-							{#if task.pool}<span>Pool {task.pool}</span>{/if}
-							<!--
-								Pin and Orker are stated the same way Pool is: when the
-								run knows one. Orker is filled for every task that
-								reached one, pinned or not, so it is NOT gated on the
-								pin — its absence means the task never got to an Orker.
-								Together they are the proof a pin held, which is why the
-								pin's own accent dot is drawn beside its name.
-							-->
-							{#if task.pin}
-								<span data-testid="task-{task.id}-pin" class="inline-flex items-center gap-1.5">
-									<span
-										class="inline-block size-2 shrink-0 rounded-full"
-										style="background-color:var(--color-{pinAccent(task.pin)}-line)"
-									></span>
-									Pin {task.pin}
-								</span>
-							{/if}
-							{#if task.orkerId}
-								<span data-testid="task-{task.id}-orker">Orker {task.orkerId}</span>
-							{/if}
-							{#if taskCli.length}
-								<CliPopover testid="run-task-{task.id}-cli" title="Command line: task {task.id}" commands={taskCli} />
-							{/if}
-							<!-- The row's own actions, inline: its output and what ran. -->
-							<span class="ml-auto flex flex-wrap items-center gap-2">
-								{#if !isAwait && !composed && !fanOut && !neverStarted(task)}
-									<button
-										type="button"
-										data-testid="task-log-toggle-{task.id}"
-										aria-expanded={logOpenByTask[task.id] ?? false}
-										onclick={() => (logOpenByTask[task.id] = !logOpenByTask[task.id])}
-										class="btn btn-sm btn-disclosure"
-									>
-										{logOpenByTask[task.id] ? 'Hide output' : 'Show output'}
-									</button>
-								{/if}
-								<button
-									type="button"
-									data-testid="task-inspect-toggle-{task.id}"
-									aria-expanded={inspectOpenByTask[task.id] ?? false}
-									onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}
-									class="btn btn-sm btn-disclosure"
-								>
-									{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}
-								</button>
-							</span>
-						</div>
-
-						{#if task.error}
-							<div class="mt-3">
-								<FailurePanel
-									error={task.error}
-									testid="task-{task.id}-error"
-									compact
-									tries={triesOf(task)}
-								/>
+			{#if activeView && !(activeView.status === Status.FAILED && task_isContainer(activeView))}
+				{@const fanned = task_isFanOut(activeView)}
+				{@const current = fanned && activeItem !== undefined ? activeView.items[activeItem] : undefined}
+				{@const itemRun = current?.run}
+				{@const key = attemptsKey(activeView.id, current?.index)}
+				{@const facts = attemptsByTask.get(key) ?? []}
+				{@const panel = current ? `task-${activeView.id}-item-panel` : `task-${activeView.id}`}
+				{@const liveNow = liveByTask.get(key)}
+				{@const def = taskDefs.get(activeView.id)}
+				{@const timing = current ? undefined : taskTiming({ ...activeView, awaited: task_isAwait(activeView) }, attemptStoreAbsent ? undefined : facts, currentTimestamp)}
+				<ItemCard
+					title={current ? `Item ${itemLabel(activeView.id, current.index)}` : `Task ${activeView.id}`}
+					prefix={panel}
+					panelTestid={current ? panel : 'item-card'}
+					status={current ? current.status : activeView.status}
+					waiting={waitingFor(liveNow)}
+					attempts={facts}
+					attempt={current ? current.attempt : activeView.attempt}
+					orkerId={current ? (itemRun?.orkerId ?? '') : activeView.orkerId}
+					pool={current ? (itemRun?.pool ?? '') : activeView.pool}
+					requested={def?.resources}
+					scheduledAt={current ? itemRun?.scheduledAt : (activeView.scheduledAt ?? activeView.startedAt)}
+					startedAt={current ? itemRun?.startedAt : activeView.startedAt}
+					finishedAt={current ? itemRun?.finishedAt : activeView.finishedAt}
+					live={liveNow}
+					liveError={liveError}
+					{liveNowMs}
+					now={currentTimestamp}
+					{timing}
+					image={def?.image}
+					cli={activeCli}
+					cliTestid={current ? `task-${activeView.id}-item-panel-cli` : `run-task-${activeView.id}-cli`}
+					note={fanned && !current ? 'Select an item to see its attempts and log.' : ''}
+				>
+					{#if current}
+						{#if itemRun?.cache}<div class="insp-row"><CacheBadge cache={itemRun.cache} namespace={data.namespace} testid="{panel}-cache" /></div>{/if}
+						{#if itemRun?.orkerId && isTerminal(current.status)}<span class="sr" data-testid="{panel}-exit">Exit {itemRun.exitCode}</span>{/if}
+						<span class="sr" data-testid="{panel}-status">{itemStatusText(current)}</span>
+						{#if current.message && !itemRun?.error?.message}<p class="insp-row text-dense text-ink-2">{current.message}</p>{/if}
+						{#if itemRun?.error?.message}
+							<div class="insp-row">
+								<FailurePanel error={itemRun.error} testid="task-{activeView.id}-item-{current.index}-error" flat tries={{ retryable: itemRun.error.retryable, retryState: itemRun.retryState, attempts: attemptsSeen(facts) }} />
 							</div>
 						{/if}
-						{#if isAwait}
-							<!--
-								An awaited task runs no container: no log pane, and no image
-								to inspect. The panel says what it waits for, until when, who
-								resolved it — and resolves it.
-							-->
-							<AwaitPanel
+						{#if facts.length > 1 || (facts.length > 0 && isTerminal(current.status))}
+							<div class="insp-row">
+								<AttemptTimeline runId={run.id} taskId={activeView.id} namespace={data.namespace} item={current.index} attempts={facts} pool={itemRun?.pool ?? ''} decidedOn={current.attempt} onViewLogs={(attempt) => viewTaskAttemptLogs(activeView!.id, attempt, current.index)} />
+							</div>
+						{/if}
+						{@const itemArtifacts = (artifactsByTask.get(activeView.id) ?? []).filter((record) => record.item === current.index)}
+						{#if itemArtifacts.length > 0}
+							<ul class="insp-row grid gap-1 text-xs" data-testid="{panel}-artifacts">
+								{#each itemArtifacts as record (`${record.kind}:${record.artifact?.name}`)}
+									{#if record.artifact}
+										{@const dl = `${record.taskId}:${record.item}:${record.kind}:${record.artifact.name}`}
+										<li class="flex flex-wrap items-center gap-2">
+											<span class="font-mono break-all text-ink">{record.artifact.name}</span>
+											<span class="text-ink-3">{record.artifact.sizeBytes} bytes</span>
+											<button type="button" data-testid="download-artifact-{activeView.id}-item-{current.index}-{record.artifact.name}" onclick={() => void downloadArtifact(record)} disabled={downloadingArtifact === dl} class="link ml-auto font-medium disabled:opacity-50">{downloadingArtifact === dl ? 'Downloading…' : 'Download'}</button>
+										</li>
+									{/if}
+								{/each}
+							</ul>
+						{/if}
+					{:else if !fanned}
+						<div class="insp-more">
+							<button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{activeView.id}" aria-expanded={inspectOpen} onclick={() => (inspectOpen = !inspectOpen)}>{inspectOpen ? 'Hide inspect' : 'Inspect'}</button>
+						</div>
+						{#if inspectOpen && timing}
+							<TaskInspect
 								runId={run.id}
 								namespace={data.namespace}
-								task={{ id: task.id, status: task.status, await: task.await, error: task.error, startedAt: task.startedAt }}
-								spec={taskDefs.get(task.id)?.await}
-								runTerminal={isTerminal(runStatus)}
-								now={currentTimestamp}
-								origin={page.url.origin}
-							/>
-						{:else if composed}
-							<!--
-								A composed task starts a child run: no log pane, no image.
-								The panel names the pinned child, links its run, and rolls
-								its tasks up live from the child run's own stream.
-							-->
-							<ChildRunPanel
-								runId={run.id}
-								namespace={data.namespace}
-								taskId={task.id}
-								child={task.child}
-								status={task.status}
-							/>
-						{:else if fanOut}
-							{@const selected = selectedItemByTask[task.id]}
-							<EachItemGrid
-								runId={run.id}
-								namespace={data.namespace}
-								taskId={task.id}
-								each={task.each}
-								spec={taskDefs.get(task.id)?.each}
-								items={task.items}
-								{selected}
-								onSelect={(item) => selectItem(task.id, item)}
-								attemptsOf={(item) => attemptsByTask.get(attemptsKey(task.id, item)) ?? []}
-								artifacts={artifactsByTask.get(task.id) ?? []}
+								task={activeView}
+								{def}
+								isAwait={task_isAwait(activeView)}
+								isComposed={task_isComposed(activeView)}
+								attempts={facts}
+								{attemptsSeeded}
+								{attemptsError}
+								{timing}
+								artifacts={(artifactsByTask.get(activeView.id) ?? []).filter((record) => record.item === undefined)}
 								downloading={downloadingArtifact}
 								onDownload={(record) => void downloadArtifact(record)}
-								liveOf={(item) => liveByTask.get(attemptsKey(task.id, item))}
-								{liveNowMs}
-								attempt={deepTask === task.id && deepItem === selected && Number.isFinite(deepAttempt) ? deepAttempt : 0}
-								deepLinked={deepTask === task.id && deepItem !== undefined && deepItem === selected}
-								pinRequest={selected !== undefined ? logPinByTask[attemptsKey(task.id, selected)] : undefined}
-								onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt, selected)}
-								onAttemptSeen={(attempt) => attemptSeen(task.id, attempt, selected)}
-								onViewLogs={(attempt) => viewTaskAttemptLogs(task.id, attempt, selected)}
+								onViewLogs={(attempt) => viewTaskAttemptLogs(activeView!.id, attempt)}
+								onCopyValues={() => void copy(payloadJson(activeView!.output), 'Task values copied', `task-values-${activeView!.id}`)}
 							/>
-						{:else}
-						<TaskLogPane
-							runId={run.id}
-							taskId={task.id}
-							namespace={data.namespace}
-							status={task.status}
-							scheduledAt={task.scheduledAt ?? task.startedAt}
-							attempt={deepTask === task.id && Number.isFinite(deepAttempt) ? deepAttempt : 0}
-							deepLinked={deepTask === task.id}
-							pinRequest={logPinByTask[task.id]}
-							onAttemptChange={(attempt) => setTaskAttempt(task.id, attempt)}
-							onAttemptSeen={(attempt) => attemptSeen(task.id, attempt)}
-							toggle={false}
-							bind:open={() => logOpenByTask[task.id] ?? false, (open) => (logOpenByTask[task.id] = open)}
-						/>
 						{/if}
-						{#if inspectOpenByTask[task.id]}
-							{@const def = taskDefs.get(task.id)}
-							{@const taskArtifacts = (artifactsByTask.get(task.id) ?? []).filter((record) => record.item === undefined)}
-							<div
-								class="mt-3 rounded-sm bg-paper-sunken p-3"
-								data-testid="task-{task.id}-inspect"
-							>
-								<p class="text-xs break-all text-ink-muted" data-testid="task-{task.id}-activity">{task.activity || 'activity not yet known'}</p>
-								<!--
-									WHAT RAN, AND WHAT IT PRODUCED.
-
-									The definition half (image, command, env, secret NAMES)
-									comes from the Orkflow this run pinned; the attempt half
-									(exit code, commit) comes from the TaskRun. They are shown
-									together because a reader debugging a task needs both, and
-									the pin — the resolved index digest — is the point: it is
-									what makes this run explainable after a tag moves.
-
-									SECRET VALUES ARE NEVER HERE. A SecretRef carries a name
-									and a SOURCE; the value is resolved on the Orker, into the
-									container, and never travels to the engine or this page.
-									Only names are rendered, and nothing renders `source`.
-								-->
-								{#if composed}
-									<dl
-										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-rule-faint pt-3 text-xs"
-										data-testid="task-{task.id}-detail"
-									>
-										<div>
-											<dt class="caps text-ink-muted">Child Orkflow</dt>
-											<dd class="mt-0.5 font-mono break-all text-ink-secondary" data-testid="task-{task.id}-child-ref">
-												{childLabel(task.child)}
-											</dd>
-										</div>
-										<div>
-											<dt class="caps text-ink-muted">Definition digest</dt>
-											<dd class="mt-0.5 font-mono break-all text-ink-secondary" data-testid="task-{task.id}-child-digest">
-												{task.child?.orkflowDefinitionDigest || '—'}
-											</dd>
-										</div>
-									</dl>
-								{:else if !isAwait && (def || task.exitCode !== undefined || task.commit)}
-									<dl
-										class="mt-3 grid grid-cols-1 gap-x-6 gap-y-2 border-t border-rule-faint pt-3 text-xs sm:grid-cols-2"
-										data-testid="task-{task.id}-detail"
-									>
-										{#if def?.image}
-											<div class="sm:col-span-2">
-												<dt class="caps text-ink-muted">Image</dt>
-												<dd
-													class="mt-0.5 font-mono break-all text-ink-secondary"
-													data-testid="task-{task.id}-image"
-												>
-													{pinnedOrReference(def.image) || '—'}
-												</dd>
-												{#if def.image.indexDigest}
-													<dd class="mt-0.5">
-														<span
-															class="font-mono text-blue"
-															data-tip={def.image.indexDigest}
-															data-digest={def.image.indexDigest}
-															data-testid="task-{task.id}-image-digest"
-															>{shortDigest(def.image.indexDigest)}</span
-														>
-													</dd>
-												{/if}
-											</div>
-										{/if}
-										{#if def && def.command.length > 0}
-											<div class="sm:col-span-2">
-												<dt class="caps text-ink-muted">Command</dt>
-												<dd
-													class="mt-0.5 font-mono break-all text-ink-secondary"
-													data-testid="task-{task.id}-command"
-												>
-													{JSON.stringify(def.command)}
-												</dd>
-											</div>
-										{/if}
-										{#if def && Object.keys(def.env).length > 0}
-											<div class="sm:col-span-2">
-												<dt class="caps text-ink-muted">Environment</dt>
-												<!--
-													Env is shown as NAME=VALUE. It is
-													workload-supplied, non-secret configuration by
-													construction: the platform puts nothing here
-													(Task.env's own contract), and anything that
-													must not be read travels as a `secrets:` entry,
-													whose value is resolved on the Orker and never
-													reaches the engine at all.
-												-->
-												<dd
-													class="mt-0.5 font-mono break-all text-ink-secondary"
-													data-testid="task-{task.id}-env"
-												>
-													{Object.entries(def.env)
-														.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-														.map(([k, v]) => `${k}=${v}`)
-														.join('  ')}
-												</dd>
-											</div>
-										{/if}
-										{#if def && def.secrets.length > 0}
-											<div>
-												<dt class="caps text-ink-muted">Secrets</dt>
-												<dd
-													class="mt-0.5 font-mono text-ink-secondary"
-													data-tip="names only — a secret's value is resolved on the Orker and never reaches this page"
-													data-testid="task-{task.id}-secrets"
-												>
-													{def.secrets.map((s) => s.name).join(', ')}
-												</dd>
-											</div>
-										{/if}
-										{#if def?.cache}
-											<div>
-												<dt class="caps text-ink-muted">Cache</dt>
-												<dd class="mt-0.5 text-ink-secondary" data-testid="task-{task.id}-cache-spec">
-													{cacheSpecLabel(def.cache)}
-												</dd>
-											</div>
-										{/if}
-										{#if task.cache}
-											<div class="sm:col-span-2" data-testid="task-{task.id}-cache-detail">
-												<dt class="caps text-ink-muted">Cache decision</dt>
-												<dd class="mt-0.5 text-ink-secondary">{cacheOutcomeLabel(task.cache.outcome)}</dd>
-												{#if task.cache.key}
-													<dd class="mt-0.5 font-mono break-all text-ink-muted" data-testid="task-{task.id}-cache-key">
-														{task.cache.key}
-													</dd>
-												{/if}
-												{#if task.cache.outcome === CacheOutcome.HIT}
-													<dd class="mt-0.5">
-														Reused the result of run
-														<a
-															class="link font-mono"
-															href={cacheSourceHref(data.namespace, task.cache.source)}
-															data-testid="task-{task.id}-cache-detail-source">{task.cache.source?.runId}</a
-														>, produced {fmtTimestamp(task.cache.source?.finishedAt)}{#if sourceAttemptDuration(task.cache.source)}
-															(its attempt took {sourceAttemptDuration(task.cache.source)}){/if}.
-													</dd>
-													<dd
-														class="mt-0.5 font-mono break-all text-ink-muted"
-														data-testid="task-{task.id}-cache-source-commit"
-													>
-														{task.cache.source?.commitUri}
-													</dd>
-													<dd class="mt-0.5 text-ink-muted">
-														stdout.log and stderr.log below are the producing run's; this
-														attempt's own log is the cache line in the log pane.
-													</dd>
-												{:else}
-													{#if task.cache.outcome === CacheOutcome.MISS}
-														<dd class="mt-0.5" data-testid="task-{task.id}-cache-reason">
-															{missReasonSentence(task.cache.missReason, task.cache.missDetail)}
-														</dd>
-													{/if}
-													{#if memoWriteSentence(task.cache)}
-														<dd class="mt-0.5 text-ink-muted" data-testid="task-{task.id}-cache-memo">
-															{memoWriteSentence(task.cache)}
-														</dd>
-													{/if}
-												{/if}
-											</div>
-										{/if}
-										<div>
-											<dt class="caps text-ink-muted">Exit code</dt>
-											<dd
-												class="mt-0.5 font-mono {task.exitCode === undefined
-													? 'text-ink-muted'
-													: task.exitCode === 0
-														? 'text-ink-secondary'
-														: 'text-failed-fg'}"
-												data-state={task.exitCode === undefined ? 'unknown' : 'measured'}
-												data-testid="task-{task.id}-exit-code"
-											>
-												{task.exitCode === undefined ? 'Not measured' : task.exitCode}
-											</dd>
-										</div>
-										{#if task.commit?.uri}
-											<div class="sm:col-span-2">
-												<dt class="caps text-ink-muted">Commit</dt>
-												<dd
-													class="mt-0.5 font-mono break-all text-ink-muted"
-													data-testid="task-{task.id}-commit"
-												>
-													{task.commit.uri}
-												</dd>
-											</div>
-										{/if}
-									</dl>
-								{/if}
-								<!--
-									WHAT EVERY TRY DID. The block above describes the
-									task's FINAL attempt — its exit code, its commit —
-									because that is all a TaskRun carries. The timeline
-									is the rest of the story: the tries that failed, why
-									they failed, and which Orker was holding each one.
-									It is drawn only when the store had something to
-									say; a deployment with no attempt store shows the
-									page-level notice instead of an empty disclosure in
-									every card.
-								-->
-								{#if !fanOut && attemptsSeeded && (!attemptsError || taskAttempts.length > 0)}
-									<AttemptTimeline
-										runId={run.id}
-										taskId={task.id}
-										namespace={data.namespace}
-										attempts={taskAttempts}
-										pool={task.pool}
-										decidedOn={task.attempt}
-										{timing}
-										onViewLogs={(attempt) => viewTaskAttemptLogs(task.id, attempt)}
-									/>
-								{/if}
-								<!--
-									Gated on their own presence, not on the definition
-									block above: a task that produced artifacts and has
-									no pinned definition still lists them.
-								-->
-								{#if taskArtifacts.length > 0}
-									<div class="mt-3 border-t border-rule-faint pt-3" data-testid="task-artifacts-{task.id}">
-										<h4 class="caps text-ink-muted">Artifacts</h4>
-										{#each taskArtifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
-											{#if record.artifact}
-												{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
-												<div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule-faint py-2 text-xs last:border-b-0">
-													<span class="font-medium text-ink">{artifactKindLabel(record.kind)}</span>
-													<span class="font-mono break-all text-ink-secondary">{record.artifact.name}</span>
-													<span class="text-ink-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
-													<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => downloadArtifact(record)} disabled={downloadingArtifact === key} class="link ml-auto font-medium disabled:opacity-50">{downloadingArtifact === key ? 'Downloading…' : 'Download'}</button>
-													<ArtifactProvenance runId={run.id} namespace={data.namespace} taskId={task.id} kind={record.kind} name={record.artifact.name} />
-													<details class="w-full min-w-0 text-ink-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
-												</div>
-											{/if}
-										{/each}
-									</div>
-								{/if}
-							</div>
-						{/if}
-						{#if (task.output && inlinePayload(task.output) === null) || (!task.output && task.valuesRef)}
-							<div class="mt-3 rounded-sm bg-paper-sunken p-3">
-								<div class="flex items-center justify-between gap-3">
-									<span class="text-xs font-medium text-ink">Task values</span>
-									{#if task.output}<button type="button" data-testid="copy-task-values-{task.id}" onclick={() => void copy(payloadJson(task.output), 'Task values copied', `task-values-${task.id}`)} class="link text-xs">Copy JSON</button>{/if}
-								</div>
-								<pre data-testid="task-values-{task.id}" class="mt-2 max-h-40 overflow-auto font-mono text-xs text-ink-secondary">{task.output ? payloadJson(task.output) : isTerminal(task.status) ? 'This task finished without inline values. Its recorded values artifact, if present, is listed under Inspect.' : 'Task values are not available yet.'}</pre>
-							</div>
-						{/if}
+					{/if}
+				</ItemCard>
+			{/if}
+			{#if runStatus !== Status.FAILED}
+				<SinceLastRun namespace={data.namespace} runId={run.id} orkflow={run.orkflowName} createdAt={timestampMs(run.createdAt)} sinceSuccess={false} read={tasks.length <= DIFF_IN_PASSING} />
+			{/if}
+			{#if activeView && runStatus !== Status.FAILED && taskDefs.get(activeView.id)?.image}
+				{@const image = taskDefs.get(activeView.id)?.image}
+				<section class="card" aria-labelledby="run-image-heading" data-testid="run-image">
+					<div class="card-head"><h2 id="run-image-heading">Image of {activeView.id}</h2></div>
+					<div class="pad">
+						<span class="break-all text-ink-3">{image?.reference}</span>
+						{#if image?.indexDigest}<Plate key="sha256" value={shortDigestWords(image.indexDigest)} tip={image.indexDigest} copy={image.indexDigest} copyLabel="Copy digest" small />{/if}
+						<span class="text-ink-3">Resolved from its tag at dispatch; every attempt so far ran this digest.</span>
 					</div>
-				{/each}
-			</div>
-		</section>
-		{#if cancelDialog && run}
-			<ConfirmDialog
-				testid="cancel-run-confirm"
-				title="Cancel run {shortRunId(run.id)}?"
-				acceptLabel="Cancel run"
-				cancelLabel="Keep running"
-				glyph="ban"
-				acceptTestid="cancel-run-accept"
-				cancelTestid="cancel-run-dismiss"
-				busy={cancelBusy}
-				error={cancelError}
-				destructive
-				onaccept={cancelRun}
-				oncancel={() => { cancelDialog = false; cancelError = ''; }}
-			>
-				{#snippet body()}
-					<p>Running tasks get a stop signal and the run ends Canceled once they have stopped. Tasks that have not started never will. This page keeps the current status until the run records the change.</p>
-					<label class="text-dense font-semibold text-ink" for="cancel-reason">Reason <span class="font-normal text-ink-3">(optional)</span></label>
-					<textarea id="cancel-reason" data-testid="cancel-reason" bind:value={cancelReason} rows="3" class="field w-full px-2.5 py-2 text-base" placeholder="Why should this run stop?"></textarea>
-
-				{/snippet}
-			</ConfirmDialog>
-		{/if}
-	</div>
-		</div>
+				</section>
+			{/if}
+			<section class="card" aria-labelledby="run-inputs-heading" data-testid="run-inputs">
+				<div class="card-head">
+					<h2 id="run-inputs-heading">Inputs</h2>
+					{#if hasRunInput}
+						<div class="card-end">
+							<button type="button" class="btn btn-sm btn-quiet" data-testid="run-inputs-json" aria-pressed={inputsAsJson} onclick={() => (inputsAsJson = !inputsAsJson)}>JSON</button>
+							<button type="button" class="btn btn-sm btn-quiet" data-testid="copy-run-input" onclick={() => void copy(payloadJson(run.input), 'Inputs copied', 'run-input')}>Copy</button>
+						</div>
+					{/if}
+				</div>
+				{#if hasRunInput && (inputsAsJson || inputEntries.length === 0)}
+					<pre data-testid="run-input" class="valbox">{payloadJson(run.input)}</pre>
+				{:else if hasRunInput}
+					<dl class="kv kv-stack" data-testid="run-input">
+						{#each inputEntries as [key, value] (key)}
+							<dt>{key}</dt>
+							<dd><code>{value}</code></dd>
+						{/each}
+					</dl>
+				{/if}
+				{#if !hasRunInput || !run.output}
+					<p data-testid="run-values-note" class="pad text-ink-2">
+						{#if !hasRunInput}<span data-testid="run-input">This run took no input values.</span>{/if}
+						{#if !run.output}<span data-testid="run-output"
+								>{isTerminal(runStatus)
+									? `It finished without ${declaresOutputs ? 'its declared outputs' : 'aggregated output values'}.`
+									: `Its ${declaresOutputs ? 'declared outputs are' : 'output is'} not available yet.`}</span
+							>{/if}
+					</p>
+				{/if}
+			</section>
+			{#if run.output}
+				<section class="card" aria-labelledby="run-output-kind" data-testid="run-outputs">
+					<div class="card-head">
+						<h2 id="run-output-kind" data-testid="run-output-kind">{declaresOutputs ? 'Declared outputs' : 'Leaf task values'}</h2>
+						<div class="card-end"><button type="button" class="btn btn-sm btn-quiet" data-testid="copy-run-output" onclick={() => void copy(payloadJson(run.output), 'Run output copied', 'run-output')}>Copy</button></div>
+					</div>
+					<pre data-testid="run-output" class="valbox">{payloadJson(run.output)}</pre>
+				</section>
+			{/if}
+		</aside>
 	</div>
 
 	{#if runAgainDialogOpen}
@@ -2886,6 +2884,351 @@
 {/if}
 
 <style>
+	.run-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) 340px;
+		gap: 20px;
+		align-items: start;
+		margin-bottom: 24px;
+	}
+	.run-col {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 20px;
+		min-width: 0;
+	}
+	.run-aside {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		min-width: 0;
+	}
+	@media (max-width: 1180px) {
+		.run-grid {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+	.legend {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 6px 16px;
+		padding: 10px 16px;
+		border-top: 1px solid var(--line);
+		font-size: 13.5px;
+		color: var(--ink-2);
+	}
+	.legend-i {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.legend-note {
+		margin-left: auto;
+	}
+	.legend-note:empty {
+		display: none;
+	}
+	.tlkey {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: 4px 12px;
+		margin-left: 8px;
+		font-size: 13px;
+		color: var(--ink-3);
+	}
+	.tlkey > span {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+	}
+	.tlkey i {
+		display: inline-block;
+		width: 16px;
+		height: 8px;
+		border-radius: 99px;
+	}
+	.k-r {
+		background: var(--ok-mark);
+	}
+	.k-run {
+		background: var(--run);
+	}
+	.k-w {
+		background: repeating-linear-gradient(135deg, var(--wait-mark) 0 3px, transparent 3px 6px);
+		box-shadow: inset 0 0 0 1px var(--wait-mark);
+	}
+	.k-c {
+		background: var(--surface);
+		box-shadow: inset 0 0 0 2px var(--fail-mark);
+	}
+	.guide {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: space-between;
+		gap: 4px 12px;
+		padding: 8px 16px;
+		border-bottom: 1px solid var(--line);
+		background: var(--surface-2);
+		font-size: 13.5px;
+		color: var(--ink-3);
+	}
+	.guide-end {
+		display: inline-flex;
+		flex-wrap: wrap;
+		gap: 4px 14px;
+	}
+	.guide-btn {
+		padding: 0;
+		border: 0;
+		background: none;
+		color: var(--ink-2);
+		font: inherit;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.guide-btn:hover {
+		color: var(--ink);
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+	.guide-btn[aria-pressed='true'] {
+		color: var(--navy-text);
+	}
+	.tasks-note {
+		margin: 0;
+		padding: 8px 16px;
+		border-bottom: 1px solid var(--line);
+		font-size: 13.5px;
+		color: var(--ink-2);
+	}
+	.trow {
+		position: relative;
+		display: grid;
+		grid-template-columns: 230px minmax(0, 1fr) 176px;
+		gap: 16px;
+		align-items: center;
+		padding: 10px 16px;
+		border-bottom: 1px solid var(--line);
+		font-size: 14px;
+		content-visibility: auto;
+		contain-intrinsic-size: auto 62px;
+	}
+	.trow:global([data-selected]) {
+		background: var(--hover);
+		content-visibility: visible;
+	}
+	.trow:global([data-selected]) .tname {
+		font-weight: 750;
+	}
+	.trow.pinned {
+		margin-top: -1px;
+		border: 1px solid;
+		border-radius: var(--r-sm);
+	}
+	.thead {
+		padding-block: 8px;
+		font-size: 13px;
+		font-weight: 600;
+		color: var(--ink-3);
+		content-visibility: visible;
+	}
+	.tl-axis {
+		position: relative;
+		display: block;
+		height: 18px;
+		font-variant-numeric: tabular-nums;
+		font-weight: 400;
+	}
+	.tl-axis span {
+		position: absolute;
+		top: 0;
+		transform: translateX(-50%);
+	}
+	.tl-axis span.first {
+		transform: none;
+	}
+	.tname-col {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+	.tname {
+		display: inline-flex;
+		align-items: center;
+		gap: 7px;
+		min-height: 24px;
+		padding: 2px 0;
+		border: 0;
+		border-radius: 4px;
+		background: none;
+		color: inherit;
+		font: inherit;
+		font-weight: 600;
+		overflow-wrap: anywhere;
+		text-align: left;
+		cursor: pointer;
+	}
+	.tname:hover {
+		text-decoration: underline;
+		text-underline-offset: 3px;
+	}
+	.tsub {
+		padding-left: 23px;
+		font-size: 13.5px;
+		color: var(--ink-3);
+		overflow-wrap: anywhere;
+	}
+	.tsub :global(.retry) {
+		margin-left: 4px;
+	}
+	.pin-dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		margin-right: 4px;
+		border-radius: 50%;
+	}
+	.stc {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		align-items: center;
+		gap: 4px 8px;
+	}
+	.tdur {
+		min-width: 34px;
+		font-size: 13px;
+		color: var(--ink-3);
+		text-align: right;
+	}
+	.xpand {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 10px;
+		padding: 14px 16px;
+		border-bottom: 1px solid var(--line);
+		background: var(--surface-2);
+		min-width: 0;
+	}
+	.xhead {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 12px;
+		font-size: 13px;
+	}
+	.phline {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 6px 14px;
+	}
+	.phline .pbar {
+		flex: 1 1 200px;
+	}
+	.pkey-in {
+		display: inline-flex;
+		gap: 12px;
+		font-size: 12.5px;
+		color: var(--ink-2);
+	}
+	.pkey-in span {
+		display: inline-flex;
+		align-items: center;
+		gap: 5px;
+	}
+	.pkey-in i {
+		display: inline-block;
+		width: 10px;
+		height: 10px;
+		border-radius: 2px;
+	}
+	.log-none {
+		margin: 0;
+		padding: 14px 16px;
+		background: var(--log-bg);
+		color: var(--log-ink-2);
+		font-size: 13.5px;
+		border-radius: 0 0 var(--r) var(--r);
+	}
+	.why-line {
+		display: block;
+		padding: 8px 10px;
+		border: 1px solid var(--line);
+		border-radius: 6px;
+		background: var(--surface-2);
+		font-size: 12.5px;
+		line-height: 1.5;
+		overflow-wrap: anywhere;
+	}
+	.tmap {
+		overflow: hidden;
+	}
+	.tmap-key {
+		padding: 0 16px 12px;
+	}
+	.pad {
+		display: grid;
+		gap: 8px;
+		margin: 0;
+		padding: 12px 16px;
+		font-size: 13.5px;
+	}
+	.kv-stack {
+		grid-template-columns: minmax(0, 1fr);
+	}
+	.kv-stack :global(dt) {
+		padding-bottom: 0;
+		border-bottom: 0;
+		font-size: 13px;
+	}
+	.kv-stack :global(dd) {
+		padding: 2px 16px 9px;
+		text-align: left;
+		overflow-wrap: anywhere;
+	}
+	.valbox {
+		max-height: 224px;
+		margin: 0;
+		padding: 12px 16px;
+		overflow: auto;
+		font-family: var(--font-code);
+		font-size: 12.5px;
+		color: var(--ink-2);
+	}
+	.insp-row {
+		margin: 0;
+		padding: 10px 16px;
+		border-top: 1px solid var(--line);
+	}
+	.insp-more {
+		padding: 8px 16px;
+		border-top: 1px solid var(--line);
+	}
+	@media (max-width: 900px) {
+		.trow {
+			grid-template-columns: minmax(0, 1fr) auto;
+			row-gap: 6px;
+		}
+		.trow > :global(.tl) {
+			grid-column: 1 / -1;
+			grid-row: 2;
+		}
+		.thead {
+			display: none;
+		}
+		.legend-note {
+			margin-left: 0;
+		}
+	}
+	@media (forced-colors: active) {
+		.tlkey i,
+		.pkey-in i {
+			forced-color-adjust: none;
+		}
+	}
 	.rh {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;

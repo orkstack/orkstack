@@ -1,5 +1,6 @@
 import type { Status } from './gen/orkstack/v1/common_pb';
 import type { Task } from './gen/orkstack/v1/orkflow_pb';
+import { isFailureHandler } from './join';
 
 /** What the run page says about a DAG node: its status and the line under its id. */
 export interface NodeState {
@@ -8,6 +9,8 @@ export interface NodeState {
 	line: string;
 	/** The task never reached an Orker: drawn faded, with its solid outline. */
 	neverStarted?: boolean;
+	/** A fan-out's items: the node's bottom edge shows how far they have got. */
+	items?: { succeeded: number; running: number; total: number };
 }
 
 export interface DagNode {
@@ -54,10 +57,10 @@ export interface DagLayout {
 // its arrowhead — and no more, so a five-layer Orkflow is drawn whole in
 // the run page's frame at 1440 px (DagGraph scales the drawing down to the
 // frame, never below DAG_MIN_SCALE).
-export const DAG_NODE_W = 190;
-export const DAG_NODE_H = 58;
-const LAYER_GAP = 56;
-const ROW_GAP = 34;
+export const DAG_NODE_W = 150;
+export const DAG_NODE_H = 56;
+const LAYER_GAP = 30;
+const ROW_GAP = 28;
 const PAD = 24;
 // Top to bottom, a layer gap holds a vertical elbow and its arrowhead, and
 // nodes side by side are a column gutter apart.
@@ -70,8 +73,8 @@ const LANE_GAP = 10;
 // A gap's tracks: the clear margin after a source and before a target (the
 // arrowhead's room), the pitch between two tracks, and the widest a gap may
 // grow to give its tracks that pitch.
-const TRACK_LEAD = 10;
-const TRACK_TAIL = 14;
+const TRACK_LEAD = 8;
+const TRACK_TAIL = 8;
 const TRACK_PITCH = 8;
 const GAP_MAX = 216;
 // Barycentre sweeps: each round is one sweep down and one up.
@@ -88,10 +91,10 @@ export const DAG_MIN_SCALE = 0.6;
 export const DAG_DASH = '5 4';
 
 // How many characters a node's second line holds: the node's width less its
-// two text insets, over the mono face's advance (Spline Sans Mono, about
-// 0.64 em, at --text-2xs, 11 px). The face is monospaced, so a count of
-// characters is a width.
-export const DAG_LINE_CHARS = 23;
+// two text insets, over the sans face's average advance at --text-sm (13 px).
+export const DAG_LINE_CHARS = 20;
+// How many characters of a task's id fit beside its mark and the activity icon.
+export const DAG_ID_CHARS = 13;
 
 /**
  * fitDagLine fits a node's second line into `room` characters: it drops
@@ -338,6 +341,18 @@ export function layoutDag(tasks: Task[], direction: DagDirection = 'LR'): DagLay
 		}
 	}
 	for (let l = 0; l < layers; l++) rows[l] = best[l];
+	// Failure handlers read as a lane of their own, under the tasks they follow.
+	const handlerSide = (v: number): number => {
+		if (!isLane(v)) return isFailureHandler(tasks[v].join) ? 1 : 0;
+		// A long edge's lane stays with the task it leads to.
+		let next = v;
+		while (isLane(next)) next = succ[next][0];
+		return isFailureHandler(tasks[next].join) ? 1 : 0;
+	};
+	for (const row of rows) {
+		const order2 = new Map(row.map((v, k) => [v, k]));
+		row.sort((a, b) => handlerSide(a) - handlerSide(b) || order2.get(a)! - order2.get(b)!);
+	}
 	reRank();
 
 	// ---- 3. Place: stack each layer from the top ----

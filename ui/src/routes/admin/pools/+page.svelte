@@ -16,6 +16,7 @@
 	import { shellQuote } from '#lib/runDetail.ts';
 	import { ListPoolsRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
 	import PoolOrkers from '#lib/components/PoolOrkers.svelte';
+	import PoolsUsage from '#lib/components/PoolsUsage.svelte';
 	import ScopeNote from '#lib/components/ScopeNote.svelte';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
@@ -142,7 +143,7 @@
 		the cluster could not answer for has no number at all. -->
 	<ul class="poolgrid" data-testid="pool-list">
 		{#each data.pools as pool (pool.name)}
-			<li class="card flex flex-col" data-testid="pool-card-{pool.name}">
+			<li class="card flex flex-col" id="pool-{pool.name}" data-testid="pool-card-{pool.name}">
 				{#await data.orkers}
 					{@render card(pool, null, '')}
 				{:then inv}
@@ -151,6 +152,7 @@
 			</li>
 		{/each}
 	</ul>
+	<PoolsUsage namespace={data.namespace} />
 	{#each data.pools as pool (pool.name)}
 		{#if shown(pool.name) && !pool.unavailableReason}
 			<section class="card mt-4 p-4" aria-label="Orkers of pool {pool.name}">

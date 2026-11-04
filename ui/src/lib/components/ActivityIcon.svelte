@@ -7,7 +7,7 @@
 	import type { ActivityKind } from '#lib/icons.ts';
 	import Icon from './Icon.svelte';
 
-	let { kind = 'default', icon, class: className = 'size-4' }: { kind?: ActivityKind; icon?: DeclaredIcon; class?: string } = $props();
+	let { kind = 'default', icon, class: className = 'size-4', ...rest }: { kind?: ActivityKind; icon?: DeclaredIcon; class?: string; x?: number; y?: number; width?: number; height?: number } = $props();
 
 	const declared = $derived(safeIcon(icon));
 </script>
@@ -23,7 +23,7 @@
 {/snippet}
 
 {#if declared}
-	<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false" class="shrink-0 {className}" {...declared.attrs}
+	<svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false" class="shrink-0 {className}" {...rest} {...declared.attrs}
 		>{@render draw(declared.nodes)}</svg
 	>
 {:else}

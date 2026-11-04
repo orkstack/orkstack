@@ -20,6 +20,38 @@ const fixture = `${import.meta.dir}/fixtures/testid-baseline.txt`;
 
 /** Shape → why it may be gone (and the spec change that goes with it). */
 const ALLOWED_REMOVALS: Record<string, string> = {
+	'id task-{}-item-panel':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-artifacts':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-attempt':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-exit':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-label':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-live':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-orker':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-status':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-live':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-live-orker':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-running-for':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'prop task-{}-item-panel-cache':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'prop task-{}-item-panel-cli-artifacts':
+		'One command-line popover per Item card, task-{}-item-panel-cli, holds what three buttons held.',
+	'prop task-{}-item-panel-cli-attempts':
+		'One command-line popover per Item card, task-{}-item-panel-cli, holds what three buttons held.',
+	'prop task-{}-item-panel-cli-logs':
+		'One command-line popover per Item card, task-{}-item-panel-cli, holds what three buttons held.',
+	'id run-elapsed':
+		'The Timing card went with the frozen design; run-lasted in the facts strip says how long the run took (run-operations, run-sheet-polish).',
 	'id {}-retryable':
 		"FailurePanel no longer prints the error's bare retryable flag: what happened to the retries is one phrase read off the failing task's tries ({testid}-retry-state), so the run's cloud and the task's panel say the same thing (finish review 2026-10-22, run page contradictions). No spec read it; no spec changes.",
 	'id {}-filters-none':

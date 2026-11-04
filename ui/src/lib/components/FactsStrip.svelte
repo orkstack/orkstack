@@ -28,6 +28,17 @@
 	.small :global(dd) {
 		font-size: var(--text-sm);
 	}
+	.small > :global(div) {
+		padding: 0 14px;
+	}
+	.small > :global(div:first-child) {
+		padding-left: 0;
+	}
+	@media (max-width: 640px) {
+		.small > :global(div) {
+			padding: 0 10px;
+		}
+	}
 	@media (max-width: 360px) {
 		.fstrip {
 			grid-template-columns: minmax(0, 1fr);

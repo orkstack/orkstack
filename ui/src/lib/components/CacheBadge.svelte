@@ -30,22 +30,16 @@
 		data-testid={testid}
 		data-outcome="hit"
 		data-tip="No container ran: this task's result was reused from an identical earlier run."
-		class="stamp border-blue bg-blue-tint text-blue-strong"
 	>
 		{cacheOutcomeLabel(cache?.outcome)}
-		<span class="font-normal tracking-normal text-ink-secondary normal-case">from</span>
-		<a
-			data-testid="{testid}-source"
-			href={cacheSourceHref(namespace, cache?.source)}
-			class="font-mono tracking-normal normal-case underline-offset-2 hover:underline">{cache?.source?.runId}</a
-		>
+		from
+		<a data-testid="{testid}-source" href={cacheSourceHref(namespace, cache?.source)} class="break-all">{cache?.source?.runId}</a>, no container
 	</span>
 {:else if outcome === 'miss'}
 	<span
 		data-testid={testid}
 		data-outcome="miss"
 		data-tip={missReasonSentence(cache?.missReason ?? '', cache?.missDetail ?? '')}
-		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>{cacheOutcomeLabel(cache?.outcome)}</span
 	>
 {:else if outcome === 'bypassed'}
@@ -53,7 +47,6 @@
 		data-testid={testid}
 		data-outcome="bypassed"
 		data-tip="The run was submitted with Ignore cached results (--no-cache): the container ran and its memo was refreshed."
-		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>{cacheOutcomeLabel(cache?.outcome)}</span
 	>
 {:else if outcome === 'unreported'}
@@ -61,7 +54,6 @@
 		data-testid={testid}
 		data-outcome="unreported"
 		data-tip="the Orker that ran this task predates caching"
-		class="stamp border-rule-strong bg-paper text-ink-secondary"
 		>Cache not reported</span
 	>
 {/if}

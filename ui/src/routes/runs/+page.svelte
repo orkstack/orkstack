@@ -10,6 +10,8 @@
 	import ProgressRing from '#lib/components/ProgressRing.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { runProgress } from '#lib/progress.ts';
+	import type { DayBar } from '#lib/components/RunsInsights.svelte';
+	import type { GetStatsResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
 	import { relativeTime } from '#lib/when.ts';
 	import { filterFlags, filterOf, FilterOperator } from '#lib/listFilter.ts';
 	import { timestampDate } from '@bufbuild/protobuf/wkt';
@@ -39,6 +41,23 @@
 	import { shortRunId } from '#lib/runDetail.ts';
 
 	let { data }: PageProps = $props();
+
+	// "Runs created each day": a bar is every run its bucket counted, failed
+	// on top; labelled with the local date of its start, and the bucket that
+	// holds now is today so far.
+	function dayBars(week: GetStatsResponse | null): DayBar[] {
+		return (week?.buckets ?? []).map((bucket) => {
+			const counts = bucket.runsByStatus;
+			const total = Number(Object.values(counts).reduce((sum, n) => sum + n, 0n));
+			const since = bucket.since ? new Date(Number(bucket.since.seconds) * 1000) : null;
+			return {
+				label: since ? since.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '',
+				total,
+				failed: Number(counts.failed ?? 0n),
+				partial: bucket.partial
+			};
+		});
+	}
 
 	const sizeOptions = [10, 25, 50, 100].map((size) => ({ value: String(size), label: String(size) }));
 
@@ -410,7 +429,7 @@
 			{#await Promise.all([import('#lib/components/RunsInsights.svelte'), data.insights.week, data.insights.failures, data.insights.flakes])}
 				<p class="text-dense text-ink-3">Reading the last 7 days…</p>
 			{:then [{ default: RunsInsights }, week, failures, flakes]}
-				<RunsInsights week={week.value} weekError={week.error} failures={failures.value} flakes={flakes.value} />
+				<RunsInsights week={week.value} weekError={week.error} failures={failures.value} flakes={flakes.value} days={dayBars(week.value)} />
 			{:catch err}
 				<p class="text-dense text-ink-3" data-testid="runs-insights-error">The charts could not load: {String(err)}</p>
 			{/await}

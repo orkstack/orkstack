@@ -183,8 +183,8 @@ time, or one created after the window, and an index entry outside the window
 it was listed for. Each would otherwise vanish from a bar or land in the wrong
 one. A series adds no read: it is the same scan, folded twice.
 
-The series is an API and `orkctl` read today; the web UI does not draw it
-yet.
+The web UI draws seven `DAY` buckets on the Runs page, in the browser's own
+zone, as "Runs created each day".
 
 ## 3. Numbers that cannot be answered say so
 

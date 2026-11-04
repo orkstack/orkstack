@@ -23,6 +23,7 @@
 	} from '#lib/activity.ts';
 	import { retryPhrase, type FailureTries } from '#lib/attempts.ts';
 	import { plainFailure } from '#lib/failureText.ts';
+	import Plate from './Plate.svelte';
 
 	interface Props {
 		error: OrkError;
@@ -36,8 +37,10 @@
 		 * has no retries to speak of.
 		 */
 		tries?: FailureTries;
-		/** Inside the run's revision cloud: no frame of its own. */
+		/** Inside a card of its own: no frame. */
 		bare?: boolean;
+		/** One reason row inside a failed task's details: no frame, no stamp. */
+		flat?: boolean;
 		/**
 		 * A run that ended without failing (an operator's cancel) says why in
 		 * ink, as a NOTE: red is for failure and attention only.
@@ -45,7 +48,7 @@
 		tone?: 'failure' | 'note';
 	}
 
-	let { error, testid, compact = false, tries, bare = false, tone = 'failure' }: Props = $props();
+	let { error, testid, compact = false, tries, bare = false, flat = false, tone = 'failure' }: Props = $props();
 
 	// The sentence without the execution service's wrapper, and the reason
 	// code it led with. A run's RUN_FAILED wraps its task's reason: the panel
@@ -70,8 +73,29 @@
 	data-testid={testid}
 	role={failure ? 'alert' : 'status'}
 	data-tone={tone}
-	class="{bare ? '' : failure ? 'rounded-sm bg-red-tint px-3 py-2' : 'note px-3 py-2'} text-sm"
+	class="{bare || flat ? '' : failure ? 'rounded-sm bg-red-tint px-3 py-2' : 'note px-3 py-2'} text-sm"
 >
+	{#if flat}
+		<p class="att-reason">
+			<span class="att-reason-k">Reason</span>
+			{#if reason}<code data-testid="{testid}-reason">{reason}</code>{/if}
+			{#if error.code}<code data-testid="{testid}-code">{error.code}</code>{/if}
+			{#if category !== FailureCategory.UNSPECIFIED}
+				· <span data-testid="{testid}-category" data-category={categoryTestid(category)} data-tip={failureCategoryBlurb(category)}>{failureCategoryLabel(category).toLowerCase()}</span>
+			{/if}
+			{#if retryNote}· <span data-testid="{testid}-retry-state">{retryNote}</span>{/if}
+		</p>
+	{:else}
+	{#if bare && failure && (reason || error.code)}
+		<!-- A card's reason is a plate; the run's own wrapper code stays for assistive technology. -->
+		{#if reason}
+			<Plate key="reason" value={reason} testid="{testid}-reason" />
+			{#if error.code}<span class="sr" data-testid="{testid}-code">{error.code}</span>{/if}
+		{:else}
+			<Plate key="reason" value={error.code} testid="{testid}-code" />
+		{/if}
+		{#if retryNote}<span class="sr" data-testid="{testid}-retry-state">{retryNote}</span>{/if}
+	{:else}
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
 		{#if !failure}<span class="caps text-ink-muted">Note</span>{/if}
 		<!--
@@ -103,15 +127,17 @@
 			<span class="text-xs text-ink-secondary" data-testid="{testid}-retry-state">{retryNote}</span>
 		{/if}
 	</div>
+	{/if}
+	{/if}
 
-	{#if !compact && category !== FailureCategory.UNSPECIFIED}
+	{#if !flat && !compact && category !== FailureCategory.UNSPECIFIED}
 		<p class="mt-2 text-xs text-ink-secondary" data-testid="{testid}-blurb">
 			{failureCategoryBlurb(category)}
 		</p>
 	{/if}
 
 	{#if plain.text}
-		<p class="mt-1.5 max-w-prose break-words whitespace-pre-wrap text-ink" data-testid="{testid}-message">
+		<p class="{flat ? 'mt-1 text-dense text-ink-2' : 'mt-1.5 text-ink'} max-w-prose break-words whitespace-pre-wrap" data-testid="{testid}-message">
 			{plain.text}
 		</p>
 	{/if}
@@ -120,3 +146,21 @@
 		<p class="mt-1.5 font-mono text-xs break-words text-ink-secondary" data-testid="{testid}-details">{error.details}</p>
 	{/if}
 </div>
+
+<style>
+	.att-reason {
+		margin: 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 6px;
+		font-size: 13px;
+		color: var(--ink-2);
+	}
+	.att-reason-k {
+		margin-right: 4px;
+		font-size: 12px;
+		font-weight: 600;
+		color: var(--ink-3);
+	}
+</style>
