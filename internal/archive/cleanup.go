@@ -410,6 +410,20 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 				// Finished, but not yet past ITS namespace's own retention.
 			default:
 				if found {
+					// The history is about to go, so what stands in for it
+					// must be there. An index row with no body is an archive
+					// write that stopped short, which Sweeper finishes.
+					has, err := c.archive.HasRun(ctx, entry.RunID)
+					if err != nil {
+						errs = append(errs, fmt.Errorf("run %q: check its archive body: %w", entry.RunID, err))
+						stats.Errors++
+						c.logger.Error("artifact cleanup archive check failed", "run_id", entry.RunID, "error", err)
+						break
+					}
+					if !has {
+						c.logger.Warn("artifact cleanup left a run its archive body is not written for yet", "run_id", entry.RunID)
+						break
+					}
 					if err := c.cluster.DeleteWorkflow(ctx, c.config.TemporalNamespace, entry.RunID); err != nil {
 						wrapped := fmt.Errorf("run %q: retire execution: %w", entry.RunID, err)
 						errs = append(errs, wrapped)

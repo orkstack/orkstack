@@ -665,3 +665,52 @@ func TestParseRunIndexKey_ASegmentIsReadOnlyInTheSpellingTheWriterUses(t *testin
 		}
 	}
 }
+
+// TestLocalRunArchive_AWriteThatStopsShortLeavesNoBody: a body is PutRun's last
+// write, so one that stops part way reads as not archived, and the retry the
+// archive sweep makes finishes it.
+func TestLocalRunArchive_AWriteThatStopsShortLeavesNoBody(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	archive, err := artifacts.NewLocalRunArchive(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = archive.Close() })
+	record := artifacts.RunRecord{RunID: "ork-short", Orkflow: "hello-ork", Status: "failed",
+		Time: day(t, "2026-08-10T10:00:00Z"), JSONL: []byte("{}\n")}
+	// A file where the index row's directory belongs: every record before it
+	// is written, and the index row cannot be.
+	indexKey, err := artifacts.RunIndexKey(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocked := filepath.Join(root, filepath.Dir(filepath.Dir(indexKey)))
+	if err := os.MkdirAll(filepath.Dir(blocked), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(blocked, nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.PutRun(ctx, record); err == nil {
+		t.Fatal("PutRun succeeded with its index row refused")
+	}
+	if has, err := archive.HasRun(ctx, record.RunID); err != nil || has {
+		t.Fatalf("HasRun after the write stopped = %v (%v), want no body: the run must read as not archived", has, err)
+	}
+
+	// The retry finishes it.
+	if err := os.Remove(blocked); err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.PutRun(ctx, record); err != nil {
+		t.Fatalf("PutRun again: %v", err)
+	}
+	if has, err := archive.HasRun(ctx, record.RunID); err != nil || !has {
+		t.Fatalf("HasRun after the retry = %v (%v), want the body", has, err)
+	}
+	listed, err := archive.ListRuns(ctx, artifacts.RunQuery{})
+	if err != nil || len(listed) != 1 || listed[0].RunID != record.RunID {
+		t.Fatalf("ListRuns = %v (%v), want the run", listed, err)
+	}
+}

@@ -1255,12 +1255,15 @@ way. A run's terminal publish writes its archive, so a run terminated from
 outside the workflow runs nothing that could, and a run whose ending object
 storage refused has that write refused too. Each pass lists the runs the
 cluster holds that closed at least `ORK_CLEANUP_INTERVAL` ago, asks the archive
-whether each has a body (one `HEAD` per run), and builds any missing archive
+whether each has a body, and builds any missing archive
 from the run's history, the same body a run's own write leaves: the run a live
 `GetRun` answers, and its whole stream. It stores nothing, so any replica's pass
 is complete and two replicas converge. From then on the run is an ordinary
 archived run: listed, retired at its namespace's run retention, readable from
-any replica after the cluster lets it go. What cannot be recovered is said:
+any replica after the cluster lets it go. Its cost is one `HEAD` per finished
+run the cluster holds, on every replica, every pass: at one run a second and the
+default 96 hours in the cluster, about 350,000 an hour per replica, and raising
+`ORK_CLEANUP_INTERVAL` lowers it. What cannot be recovered is said:
 
 - events lost from an earlier part of a long run, and numbers the run never
   published, are `gap` lines (`docs/STORAGE.md`);
@@ -1297,9 +1300,10 @@ an upper bound. A longer outage than you can afford calls for a larger
 `ORK_CLEANUP_RETENTION_BUFFER`, which helps only the runs that close after it is
 set.
 
-An archive body whose write stopped before its index rows, on all three
-attempts of the run's own publish, counts as an archive to the sweep: the run
-stays readable by id, but is not listed and is not retired.
+An archive write that stops short, on all three attempts of the run's own
+publish, leaves no body, because the body is its last write. The run reads as
+not archived and the sweep finishes it. Cleanup never retires a run the cluster
+still holds until its body is there.
 
 **Workload artifact bytes are not reclaimed automatically.** The archive
 records which objects each run references, and `DeleteUnreferencedObjects`

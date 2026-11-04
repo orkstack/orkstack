@@ -54,7 +54,8 @@ type FinishedRunLister interface {
 		visit func(runID string, closedAt time.Time) error) error
 }
 
-// RunBodyChecker reports whether a run has an archive body.
+// RunBodyChecker reports whether a run has an archive body. A body is the last
+// thing an archive write leaves, so it means the archive is whole.
 type RunBodyChecker interface {
 	HasRun(ctx context.Context, runID string) (bool, error)
 }
@@ -182,8 +183,10 @@ type atRiskRun struct {
 }
 
 // RunOnce makes one pass. A run that cannot be archived stops no other; once
-// object storage stops answering, the pass asks it nothing more and only counts
-// what is left, so an outage costs one failed request a pass.
+// object storage stops answering whether a run has a body, the pass asks it
+// nothing more and only counts what is left, so that outage costs one failed
+// request a pass. A store that answers that and refuses the rest costs each run
+// with no archive its own try, each within sweepRunBudget.
 func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 	var (
 		result   SweepResult
