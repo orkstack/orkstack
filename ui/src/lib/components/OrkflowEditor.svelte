@@ -586,7 +586,9 @@
 		font-size: 13.5px;
 		color: var(--ink-2);
 	}
+	/* The strip says it on a wide screen; a phone's strip is a screen below this. */
 	.apply-why {
+		display: none;
 		flex-basis: 100%;
 		margin: 0;
 		font-size: 13px;
@@ -760,6 +762,9 @@
 		}
 	}
 	@media (max-width: 640px) {
+		.apply-why {
+			display: block;
+		}
 		.ed-grid.rail-closed :global(.rail) {
 			position: static;
 		}

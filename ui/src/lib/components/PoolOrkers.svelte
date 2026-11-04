@@ -141,7 +141,8 @@
 		{#if actionError}
 			<p class="mx-4 my-2 text-dense text-fail" role="alert" data-testid="pool-orkers-action-error-{pool}">{actionError}</p>
 		{/if}
-		<div class="overflow-x-auto scroll-panel">
+		<!-- Positioned, so a visually hidden header scrolls with the table and never widens the page. -->
+		<div class="relative overflow-x-auto scroll-panel">
 			<!-- svelte-ignore a11y_no_redundant_roles -->
 			<table class="register orkers" role="table" aria-label="Orkers of pool {pool}">
 				<thead>
