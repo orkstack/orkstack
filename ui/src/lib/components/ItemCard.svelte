@@ -219,7 +219,7 @@
 	{#if terminal && digest}
 		<section class="insp-sec" aria-labelledby="item-image-heading">
 			<h3 id="item-image-heading">Image</h3>
-			<div class="insp-pad"><Plate key="sha256" value={shortDigestWords(digest)} tip={digest} copy={digest} copyLabel="Copy digest" small /></div>
+			<div class="insp-pad"><Plate key="sha256" value={shortDigestWords(digest)} tip={digest} copy={digest} copyLabel="Copy digest" /></div>
 		</section>
 	{/if}
 	{#if children}{@render children()}{/if}

@@ -395,6 +395,59 @@ test('at 390 px Import and Export fold into More, a plain disclosure that Escape
 	await shot(page, 'editor-390.png');
 });
 
+test('an Orkflow tab says its count apart from its name, and the Runs table says its order', async ({ page }) => {
+	// Regression: a screen reader read "Versions1", and nothing said the runs were newest first.
+	await page.goto(at(`/orkflows/${FAN}`));
+	await expect(page.getByRole('navigation', { name: 'Orkflow views' }).getByRole('link', { name: 'Versions 1', exact: true })).toBeVisible();
+	await page.goto(at('/runs'));
+	await expect(page.getByRole('columnheader', { name: 'Created' })).toHaveAttribute('aria-sort', 'descending');
+});
+
+test('a failure seen before names its other runs, with a word between them', async ({ page }) => {
+	// Regression: the line read "ork-…560643andork-…560642".
+	test.setTimeout(4 * 60_000);
+	const name = `hb-again-${STAMP}`;
+	await rpc('OrkflowService/ApplyOrkflow', {
+		yaml: [
+			'apiVersion: orkstack/v1',
+			'kind: Orkflow',
+			`name: ${name}`,
+			'version: "1.0.0"',
+			'tasks:',
+			'  - id: refuse',
+			'    uses: shell',
+			'    network: none',
+			'    with: {op: exec, command: [sh, -c, "echo no >&2; exit 1"]}',
+			''
+		].join('\n')
+	});
+	const runs: string[] = [];
+	for (let i = 0; i < 3; i += 1) {
+		const id = (await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: name })).run.id;
+		await waitFor(`${id} failed`, async () => (await runStatus(id)) === 'STATUS_FAILED', 120_000);
+		runs.push(id);
+	}
+	await expect(async () => {
+		await page.goto(at(`/runs/${runs[2]}`));
+		await expect(page.getByTestId('run-seen-before')).toContainText(/Also ork-\S+ and ork-\S+/, { timeout: 5_000 });
+	}).toPass({ timeout: 60_000 });
+});
+
+test('at 390 px Pools gives its title the width, and an Orker stays one row of a table that scrolls in its frame', async ({ page }) => {
+	// Regression: Refresh squeezed the page's sentence to three lines, and each Orker stacked into a 250 px card.
+	await page.setViewportSize({ width: 390, height: 844 });
+	await page.goto(at('/admin/pools'));
+	const table = page.getByRole('table', { name: /^Orkers of / }).first();
+	await expect(table).toBeVisible();
+	const row = await table.getByRole('row').nth(1).boundingBox();
+	expect(row?.height ?? 0, 'an Orker is one row').toBeLessThan(90);
+	const caption = await page.getByTestId('pools-scope-caption').boundingBox();
+	const refresh = await page.getByRole('button', { name: 'Refresh' }).first().boundingBox();
+	expect(refresh?.y ?? 0, 'the actions sit under the sentence').toBeGreaterThanOrEqual((caption?.y ?? 0) + (caption?.height ?? 0));
+	const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+	expect(fits, 'the page itself never scrolls sideways').toBe(true);
+});
+
 test('Cordon… cannot confirm until a reason is given, and Back leaves the Orker serving', async ({ page }) => {
 	// Regression: a cordon went through with no reason, or its confirm drew red (red is a status colour only).
 	await page.goto(at('/admin/pools'));

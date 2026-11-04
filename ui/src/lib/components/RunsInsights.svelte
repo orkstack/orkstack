@@ -108,7 +108,7 @@
 					<p class="big" data-testid="viz-success-rate">
 						{rate === null ? '—' : `${rate}%`}<small>{rate === null ? 'no run finished yet' : `succeeded, ${succeeded} of ${finished} finished`}</small>
 					</p>
-					<svg class="bar" height="14" aria-hidden="true"
+					<svg class="bar bar-round" height="14" aria-hidden="true"
 						><rect class="track" width="100%" height="14" rx="7" />{#each segs as s (s.key)}<rect
 								x="{s.x}%"
 								width="{s.w}%"
@@ -319,6 +319,9 @@
 		font-weight: 500;
 		letter-spacing: 0;
 		color: var(--ink-3);
+	}
+	.bar-round {
+		border-radius: 7px;
 	}
 	:global(.viz svg.bar) {
 		display: block;

@@ -142,7 +142,6 @@
 			<p class="mx-4 my-2 text-dense text-fail" role="alert" data-testid="pool-orkers-action-error-{pool}">{actionError}</p>
 		{/if}
 		<div class="overflow-x-auto scroll-panel">
-			<!-- The phone layout makes rows of blocks: the roles keep it a table for assistive technology. -->
 			<!-- svelte-ignore a11y_no_redundant_roles -->
 			<table class="register orkers" role="table" aria-label="Orkers of pool {pool}">
 				<thead>
@@ -276,42 +275,14 @@
 	.ork-actions > :global(*) {
 		vertical-align: middle;
 	}
+	/* A phone keeps one line per Orker, and the table scrolls sideways. */
 	@media (max-width: 640px) {
-		.orkers thead {
-			display: none;
-		}
-		.orkers,
-		.orkers tbody,
 		.orkers td,
-		.orkers th {
-			display: block;
+		.orkers :global(tbody th) {
+			white-space: nowrap;
 		}
-		.orkers tr {
-			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			gap: 10px 16px;
-			padding: 14px 16px;
-			border-bottom: 1px solid var(--line);
-		}
-		.orkers th {
-			grid-column: 1 / -1;
-		}
-		.orkers td,
-		.orkers th {
-			padding: 0 !important;
-			border: 0 !important;
-		}
-		.orkers td[data-label]::before {
-			content: attr(data-label);
-			display: block;
-			margin-bottom: 3px;
-			font-size: 12.5px;
-			font-weight: 600;
-			color: var(--ink-3);
-		}
-		.ork-actions {
-			grid-column: 1 / -1;
-			text-align: left;
+		.ork-sub {
+			overflow-wrap: normal;
 		}
 	}
 </style>

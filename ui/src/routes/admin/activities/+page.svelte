@@ -100,7 +100,7 @@
 <svelte:head><title>Admin — Activities — OrkStack</title></svelte:head>
 
 <header class="mb-4 flex flex-wrap items-start gap-3">
-	<div class="min-w-0 flex-1">
+	<div class="ph-main min-w-0">
 		<h1 class="page-h1">Activities</h1>
 		<p class="mt-1 text-dense text-ink-2" data-testid="activities-scope-caption">The images tasks name in <code>uses:</code>, resolved to a digest. Deployment-wide: the same whichever namespace is selected.</p>
 	</div>
@@ -165,7 +165,7 @@
 								><ActivityIcon icon={activity.icon} class="size-4 text-navy-text" />{activity.name}</span
 							>
 							{#if activity.docs?.description}
-								<span class="mt-1 block text-dense font-normal text-ink-2"><DocText text={activity.docs.description} limit={160} subject={activity.name} testid="activity-summary-{activity.name}" /></span>
+								<span class="adesc"><DocText text={activity.docs.description} limit={160} subject={activity.name} testid="activity-summary-{activity.name}" /></span>
 							{/if}
 							{#if activity.iconError}
 								<span class="mt-1 block text-dense font-normal text-ink-3" data-testid="activity-icon-error-{activity.name}">Its icon was refused: {activity.iconError}</span>
@@ -174,18 +174,18 @@
 								<span class="mt-1 block text-dense font-normal text-ink-3" data-testid="activity-docs-error-{activity.name}">Its description was refused: {activity.docsError}</span>
 							{/if}
 						</th>
-						<td role="cell" data-label="Image" class="font-mono text-sm text-ink-2" data-testid="activity-reference-{activity.name}">
+						<td role="cell" data-label="Image" class="rid" data-testid="activity-reference-{activity.name}">
 							{#if activity.reference}{#each activity.reference.split(/(?<=\/)|(?=[:@])/) as part, i (i)}{part}<wbr />{/each}{:else}—{/if}
 						</td>
 						<td role="cell" data-label="Digest and platforms">
 							{#if activity.indexDigest}
 								<span data-digest={activity.indexDigest} data-testid="activity-digest-{activity.name}"
-									><Plate key="sha256" value={digestHead(activity.indexDigest)} tip={activity.indexDigest} small /></span
+									><Plate key="sha256" value={digestHead(activity.indexDigest)} tip={activity.indexDigest} /></span
 								>
 							{:else}
 								<span class="text-sm text-ink-3" data-testid="activity-digest-unresolved-{activity.name}">unresolved</span>
 							{/if}
-							<span class="mt-1 block text-xs text-ink-3" data-testid="activity-platforms-{activity.name}"
+							<span class="aplat" data-testid="activity-platforms-{activity.name}"
 								>{activity.platforms.filter((p) => p !== 'unknown/unknown').join(', ') || 'single manifest'}</span
 							>
 							<span class="sr" data-testid="activity-media-type-{activity.name}">{activity.mediaType || '—'}</span>
@@ -361,19 +361,23 @@
 </section>
 
 <style>
+	/* The title takes the row; a phone's actions go under it, not beside it. */
+	.ph-main {
+		flex: 1 1 420px;
+	}
 	/* The catalog's columns: an image's many ops read best on two lines. */
 	@media (min-width: 641px) {
 		.acts :global(thead th:nth-child(1)) {
 			width: 24%;
 		}
 		.acts :global(thead th:nth-child(2)) {
-			width: 23%;
+			width: 20%;
 		}
 		.acts :global(thead th:nth-child(3)) {
-			width: 16%;
+			width: 18%;
 		}
 		.acts :global(thead th:nth-child(4)) {
-			width: 27%;
+			width: 28%;
 		}
 	}
 	.opchip {
@@ -382,6 +386,28 @@
 		border-radius: 4px;
 		background: var(--surface-2);
 		font-size: 12.5px;
+		line-height: 17px;
+	}
+	.adesc {
+		display: block;
+		max-width: 44ch;
+		margin-top: 3px;
+		font-size: 13.5px;
+		font-weight: 400;
+		line-height: 16px;
+		color: var(--ink-3);
+	}
+	.rid {
+		font-family: var(--font-mono);
+		font-size: 13px;
+		line-height: 17px;
+		color: var(--ink-2);
+	}
+	.aplat {
+		display: block;
+		margin-top: 6px;
+		font-size: 13px;
+		color: var(--ink-3);
 	}
 	.kinds {
 		display: grid;

@@ -190,13 +190,13 @@
 
 <svelte:head><title>{data.name} — OrkStack</title></svelte:head>
 
-<SheetHeader title={wf?.name ?? data.name} testid="orkflow-name">
+<SheetHeader title={wf?.name ?? data.name} testid="orkflow-name" actionsFirst>
 	{#snippet meta()}
 		{#if wf}
 			{#snippet version()}<span data-testid="orkflow-version"><Plate key="version" value={wf.version} /></span>{/snippet}
 			{#snippet digest()}{#if wf.definitionDigest}<Plate key="digest" value={wf.definitionDigest.replace(/^sha256:/, '').slice(0, 12).replace(/(.{4})(?=.)/g, '$1 ')} tip={wf.definitionDigest} />{:else}—{/if}{/snippet}
 			{#snippet appliedAt()}<TimeAgo at={wf.createdAt} />{/snippet}
-			<FactsStrip facts={[{ label: 'Current version', value: version }, { label: 'Definition', value: digest }, { label: 'Applied', value: appliedAt }]} />
+			<FactsStrip facts={[{ label: 'Current', value: version }, { label: 'Definition', value: digest }, { label: 'Applied', value: appliedAt }]} />
 			{#if wf.description && data.tab !== 'edit'}<p class="mt-2 max-w-prose">{wf.description}</p>{/if}
 		{/if}
 	{/snippet}
@@ -220,7 +220,7 @@
 			aria-current={data.tab === tab.id ? 'page' : undefined}
 			class="tab"
 		>
-			{tab.label}{#if tab.count !== undefined}<span class="tab-n">{tab.count}</span>{/if}
+			{tab.label}{#if tab.count !== undefined}{' '}<span class="tab-n">{tab.count}</span>{/if}
 		</a>
 	{/each}
 </nav>

@@ -39,7 +39,7 @@ export interface Timeline {
 }
 
 /** The share of a run's timeline a wait must fill to be drawn. */
-const MIN_WAIT = 0.01;
+const MIN_WAIT = 0.004;
 
 const seconds = (ms: number) => {
 	const stamp = (t: number) => ({ seconds: BigInt(Math.floor(t / 1000)), nanos: (t % 1000) * 1e6 });

@@ -439,7 +439,7 @@
 
 	<section class="grid gap-3" aria-labelledby="insights-h" data-testid="runs-insights">
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-			<h2 id="insights-h" class="text-[length:var(--text-md)] font-heading">Last 7 days</h2>
+			<h2 id="insights-h" class="insights-h">Last 7 days</h2>
 			{#await data.insights.week then week}{#if week.value?.computedAt}<span class="text-dense text-ink-3"
 						>namespace {ns} · measured <TimeAgo at={week.value.computedAt} /></span
 					>{/if}{/await}
@@ -527,7 +527,7 @@
 							<th scope="col">Status</th>
 							<th scope="col">Progress</th>
 							<th scope="col">Origin</th>
-							<th scope="col">Created</th>
+							<th scope="col" aria-sort="descending">Created <Icon name="chev" class="size-3 text-ink-3" /></th>
 							<th scope="col" class="text-right"><span data-tip="From submission to finish">Duration</span></th>
 						</tr>
 					</thead>
@@ -603,6 +603,10 @@
 </div>
 
 <style>
+	.insights-h {
+		font-size: 16px;
+		font-weight: 650;
+	}
 	.ph {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;

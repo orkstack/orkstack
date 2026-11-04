@@ -59,7 +59,7 @@
 			{#if others.length}
 				<div class="r2">
 					<Icon name="runs" />
-					<div>Also {#each others as id, i (id)}{#if i > 0} and {/if}<a class="font-mono text-sm underline" href={withNamespace(`/runs/${encodeURIComponent(id)}`, namespace)}>{shortRunId(id)}</a>{/each}</div>
+					<div>Also {#each others as id, i (id)}{#if i > 0}{' and '}{/if}<a class="font-mono text-sm underline" href={withNamespace(`/runs/${encodeURIComponent(id)}`, namespace)}>{shortRunId(id)}</a>{/each}</div>
 				</div>
 			{/if}
 		{/if}

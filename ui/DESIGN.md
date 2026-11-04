@@ -254,7 +254,7 @@ Both are self-hosted `@fontsource-variable` 5.3.0, imported by `app.css`. Inter 
 
 A fixed light sidebar (248 px, `--spacing-side`) beside a sticky top bar (56 px, `--spacing-bar`) and a content column capped at 1480 px (`--spacing-content`) with 28 px sheet padding (`--spacing-sheet`) and 16 px gutters. Below 900 px the sidebar becomes a drawer opened from the top bar's menu button. Spacing is Tailwind's 4 px step (`--spacing`). The editor uses layout C: the YAML editor beside a 340 px docs rail (`--spacing-aside`). A log pane is bounded at `min(60dvh, 30rem)`; the graph card at `clamp(15rem, 42vh, 30rem)` (tall: `clamp(15rem, 65svh, 40rem)`).
 
-Responsive rules, all in components: the facts strip goes to two columns with no rules below 640 px and one below 360 px; registers stack into labelled rows below 640 px; buttons and chips reach a 40 px minimum on phones; everything reflows at 320 px. `scroll-padding-top` keeps a focused control clear of the sticky bar.
+Responsive rules, all in components: the facts strip goes to two columns with no rules below 640 px and one below 360 px; below 640 px the Activities register stacks into labelled rows and a pool's Orkers stay one row each in a table that scrolls in its own frame; buttons and chips reach a 40 px minimum on phones; everything reflows at 320 px. `scroll-padding-top` keeps a focused control clear of the sticky bar.
 
 ## Elevation & Depth
 

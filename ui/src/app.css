@@ -630,6 +630,10 @@
 			forced-color-adjust: none;
 			outline: var(--rule-hair) solid CanvasText;
 		}
+		.mk-fail,
+		.mk-warn {
+			forced-color-adjust: none;
+		}
 	}
 
 	/* ---- Asserted: beside every principal (AGENTS.md §7) ------------- */
@@ -1235,6 +1239,23 @@
 	}
 	/* Severity: an error is a red triangle, a warning an amber one; the word
 	   beside it says which. */
+	.mk-fail,
+	.mk-warn {
+		display: inline-block;
+		flex: none;
+	}
+	.mk-fail {
+		width: calc(var(--spacing) * 2);
+		height: calc(var(--spacing) * 2);
+		background: var(--color-fail-mark);
+		clip-path: polygon(50% 0, 100% 100%, 0 100%);
+	}
+	.mk-warn {
+		width: calc(var(--spacing) * 2.5);
+		height: calc(var(--spacing) * 2.25);
+		background: var(--ink-2);
+		clip-path: polygon(50% 0, 100% 100%, 0 100%, 50% 0, 50% 34%, 20% 86%, 80% 86%, 50% 34%);
+	}
 	.severity-error {
 		color: var(--color-fail);
 	}

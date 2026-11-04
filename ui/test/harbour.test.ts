@@ -254,6 +254,9 @@ test("a task's bars: its wait, its failed attempts, what ran, all on the run's a
 	const quick = taskTimelineBars({ run: span, scheduled: 1000, started: 1030, finished: 5000, running: false, now: 25_000, attempts: [] });
 	expect(quick.bars.map((bar) => bar.kind)).toEqual(['ran']);
 	expect(quick.words).toContain('waited');
+	// Regression: a wait of half a percent of the run, which the design draws, had no head and no key.
+	const seen = taskTimelineBars({ run: span, scheduled: 1000, started: 1125, finished: 5000, running: false, now: 25_000, attempts: [] });
+	expect(seen.bars.map((bar) => bar.kind)).toEqual(['wait', 'ran']);
 	// Regression: a running fan-out drew one blue bar over items that had finished.
 	const fan = taskTimelineBars({ run: span, scheduled: 1000, started: 1000, finished: null, running: true, now: 20_000, attempts: [], doneUntil: 12_000 });
 	expect(fan.bars.map((bar) => bar.kind)).toEqual(['ran', 'running']);

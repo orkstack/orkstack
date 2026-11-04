@@ -2865,9 +2865,7 @@
 						onlegend={(counts) => (legend = counts)}
 					/>
 				</div>
-				<div class="tmap-key">
-					{#if !(isTerminal(runStatus) && tasks.length <= STAGE_ROWS_MAX)}<TaskMapLegend compact={tasks.length <= STAGE_ROWS_MAX} counts={legend} neverStarted={legendNever} onpick={(status) => taskMap?.focusStatus(status)} />{/if}
-				</div>
+				{#if !(isTerminal(runStatus) && tasks.length <= STAGE_ROWS_MAX)}<div class="tmap-key"><TaskMapLegend compact={tasks.length <= STAGE_ROWS_MAX} counts={legend} neverStarted={legendNever} onpick={(status) => taskMap?.focusStatus(status)} /></div>{/if}
 			</section>
 			{#if firstWaiter?.capacityWait}
 				<WaitsFor label={waiterLabel(firstWaiter)} wait={firstWaiter.capacityWait} namespace={data.namespace} ownRunning={poolPeers.running} took={poolPeers.took} />
@@ -2976,7 +2974,7 @@
 					<div class="card-head"><h2 id="run-image-heading">Image of {activeView.id}</h2></div>
 					<div class="pad">
 						<span class="break-all text-ink-3">{activityByTask.get(activeView.id)?.reference || image?.reference}</span>
-						{#if image?.indexDigest}<Plate key="sha256" value={shortDigestWords(image.indexDigest)} tip={image.indexDigest} copy={image.indexDigest} copyLabel="Copy digest" small />{/if}
+						{#if image?.indexDigest}<Plate key="sha256" value={shortDigestWords(image.indexDigest)} tip={image.indexDigest} copy={image.indexDigest} copyLabel="Copy digest" />{/if}
 						<span class="text-ink-3">Resolved from its tag at dispatch; every attempt so far ran this digest.</span>
 					</div>
 				</section>
@@ -3172,6 +3170,8 @@
 		gap: 6px;
 	}
 	.legend-note {
+		display: inline-flex;
+		align-items: center;
 		margin-left: auto;
 	}
 	.legend-note:empty {

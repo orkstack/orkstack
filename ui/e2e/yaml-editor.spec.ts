@@ -207,7 +207,7 @@ test('the editor in both themes: findings, colours and the list (screenshots)', 
 				template: [of('.cm-line .syntax-template'), token('--color-syntax-template')],
 				ground: [getComputedStyle(document.querySelector('.cm-editor')!).backgroundColor, token('--color-surface')],
 				gutter: [getComputedStyle(document.querySelector('.cm-gutters')!).backgroundColor, token('--color-paper-sunken')],
-				mark: [getComputedStyle(document.querySelector('.cm-lint-marker-error')!).backgroundColor, token('--color-red')]
+				mark: [getComputedStyle(document.querySelector('.cm-lint-marker-error')!).backgroundColor, token('--color-fail-mark')]
 			};
 		});
 		for (const [role, [drawn, token]] of Object.entries(colours)) expect(`${theme} ${role}: ${drawn}`).toBe(`${theme} ${role}: ${token}`);
@@ -285,6 +285,33 @@ test('the Orkflow edit tab and the automation document use the same editor, each
 	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(VALID);
 	await expect(page.locator('.cm-line .syntax-template')).toHaveText('{{ .inputs.day }}');
 	await expect(status(page, 'editor-yaml')).toHaveAttribute('data-tone', 'clean');
+
+	// Regression: the list stood open under every document with a problem, and its
+	// sentence was cut off at 390 px. It stays shut, the strip says the first problem
+	// and where it is, and the chip or a Validate opens the list.
+	await fillYaml(page, 'editor-yaml', SEMANTIC);
+	await expect(status(page, 'editor-yaml')).toHaveAttribute('data-tone', 'problems');
+	const first = page.getByTestId('editor-yaml-first-problem');
+	await expect(first).toContainText('setup');
+	await expect(first.getByRole('button', { name: /^8:\d+, go to line 8/ })).toBeVisible();
+	await expect(page.getByTestId('editor-problems')).toHaveCount(0);
+	const chip = page.getByRole('button', { name: /^Problems: \d+ errors?/ });
+	await expect(chip).toHaveAttribute('aria-expanded', 'false');
+	await chip.click();
+	await expect(chip).toHaveAttribute('aria-expanded', 'true');
+	const listed = page.getByTestId('editor-validation-issue').first();
+	await expect(listed).toContainText('setup');
+	await page.setViewportSize({ width: 390, height: 844 });
+	const list = page.getByTestId('editor-problems');
+	await expect(list).toBeVisible();
+	const within = await list.evaluate((el) => el.scrollWidth <= el.clientWidth);
+	expect(within, 'a problem wraps inside the list at 390 px').toBe(true);
+	await page.setViewportSize({ width: 1280, height: 720 });
+	await chip.click();
+	await expect(page.getByTestId('editor-problems')).toHaveCount(0);
+	await page.getByTestId('editor-validate').click();
+	await expect(page.getByTestId('editor-validation-issue').first()).toBeVisible();
+	await shot(page, 'yaml-editor-strip.png');
 
 	// Admin → Automation: an automation document, checked against the
 	// automation schema, and its export coloured as YAML.

@@ -16,13 +16,15 @@
 		short?: string;
 		meta?: Snippet;
 		actions?: Snippet;
+		/** Title and actions on one row with the facts full width below; narrow, the actions come before the facts. */
+		actionsFirst?: boolean;
 	}
 
-	let { title, testid = undefined, mono = false, short = undefined, meta = undefined, actions = undefined }: Props = $props();
+	let { title, testid = undefined, mono = false, short = undefined, meta = undefined, actions = undefined, actionsFirst = false }: Props = $props();
 </script>
 
-<header class="mb-5 flex flex-wrap items-start justify-between gap-x-5 gap-y-3">
-	<div class="min-w-0">
+<header class="ph mb-5 flex flex-wrap items-start justify-between gap-x-5 gap-y-3" class:ph-grid={actionsFirst}>
+	<div class="ph-main min-w-0">
 		<h1
 			data-testid={testid}
 			class="page-h1 text-ink {mono ? 'font-mono break-all' : ''} {short ? 'max-sm:sr-only' : ''}"
@@ -38,7 +40,50 @@
 				{short}
 			</p>
 		{/if}
-		{#if meta}<div class="mt-2 text-dense text-ink-2">{@render meta()}</div>{/if}
+		{#if meta}<div class="ph-meta mt-2 text-dense text-ink-2">{@render meta()}</div>{/if}
 	</div>
-	{#if actions}<div class="flex max-w-full min-w-0 flex-wrap items-center gap-2">{@render actions()}</div>{/if}
+	{#if actions}<div class="ph-actions flex max-w-full min-w-0 flex-wrap items-center gap-2">{@render actions()}</div>{/if}
 </header>
+
+<style>
+	/* The title takes the row; a phone's actions go under it, not beside it. */
+	.ph-main {
+		flex: 1 1 420px;
+	}
+	.ph-grid {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		column-gap: 20px;
+		row-gap: 0;
+	}
+	.ph-grid .ph-main {
+		display: contents;
+	}
+	.ph-grid .page-h1 {
+		grid-column: 1;
+		grid-row: 1;
+		align-self: center;
+	}
+	.ph-grid .ph-actions {
+		grid-column: 2;
+		grid-row: 1;
+		align-self: center;
+	}
+	.ph-grid .ph-meta {
+		grid-column: 1 / -1;
+		grid-row: 2;
+	}
+	@media (max-width: 1099px) {
+		.ph-grid {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.ph-grid .ph-actions {
+			grid-column: 1;
+			grid-row: 2;
+			margin-top: 10px;
+		}
+		.ph-grid .ph-meta {
+			grid-row: 3;
+		}
+	}
+</style>

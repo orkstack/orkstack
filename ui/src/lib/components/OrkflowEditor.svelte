@@ -168,6 +168,8 @@
 		try {
 			const issues = await session.validateNow(validatedYaml, validatedNamespace);
 			if (issues === null || yaml !== validatedYaml || namespace !== validatedNamespace) return false;
+			// The person asked: the answer is the list, not only its first line.
+			if (issues.length > 0) problemsOpen = true;
 			return !issues.some((issue) => issue.severity === ValidationSeverity.ERROR);
 		} catch (err) {
 			applyError = errorMessage(err);
@@ -320,8 +322,8 @@
 	const engineCurrent = $derived(session.engine.kind === 'answered' && session.engine.text === yaml);
 	const engineErrors = $derived(engineCurrent ? session.engineFindings.filter((f) => f.severity === 'error').length : 0);
 	const applyHeld = $derived(engineErrors > 0);
-	// The list is open while there are problems; the chip folds it away.
-	let problemsOpen = $state(true);
+	// The list stays shut, with the first problem in the strip, until the chip or a Validate opens it.
+	let problemsOpen = $state(false);
 	let moreOpen = $state(false);
 	let railOpen = $state(true);
 	onMount(() => {
@@ -387,21 +389,19 @@
 			<section class="card edcard" aria-labelledby="editor-yaml-label">
 				<div class="card-head">
 					<h2 id="editor-yaml-label">Edit</h2>
-					<span class="card-sub">a new version from <span class="figure" data-testid="editor-base-version">{base}</span><span class={base === expectedHead ? 'sr' : ''}>; the newest is <span class="figure" data-testid="editor-head-version">{expectedHead}</span></span></span>
-					{#if problemCount > 0}
-						<button
-							type="button"
-							class="chip"
-							aria-expanded={problemsOpen}
-							aria-controls="editor-problems"
-							data-testid="editor-problems-chip"
-							onclick={() => (problemsOpen = !problemsOpen)}
-							><span>Problems:</span><b
-								>{errorCount} {errorCount === 1 ? 'error' : 'errors'}{#if warningCount}, {warningCount} {warningCount === 1 ? 'warning' : 'warnings'}{/if}</b
-							><Icon name="chev" /></button
-						>
-					{/if}
+					<span class="card-sub">a new version from <span data-testid="editor-base-version">{base}</span><span class={base === expectedHead ? 'sr' : ''}>; the newest is <span class="figure" data-testid="editor-head-version">{expectedHead}</span></span></span>
 					<div class="card-end">
+						{#if problemCount > 0}
+							<button
+								type="button"
+								class="pchip"
+								aria-expanded={problemsOpen}
+								aria-controls="editor-problems"
+								data-testid="editor-problems-chip"
+								onclick={() => (problemsOpen = !problemsOpen)}
+								><span class="sr">Problems:{' '}</span>{#if errorCount}<span class="mk-fail" aria-hidden="true"></span><b>{errorCount}</b>{' '}{errorCount === 1 ? 'error' : 'errors'}{/if}{#if errorCount && warningCount}<span class="sr">,{' '}</span><span class="pdot" aria-hidden="true">·</span>{/if}{#if warningCount}<span class="mk-warn" aria-hidden="true"></span><b>{warningCount}</b>{' '}{warningCount === 1 ? 'warning' : 'warnings'}{/if}</button
+							>
+						{/if}
 						{#if dirty}<span data-testid="editor-unsaved" class="text-sm font-semibold text-ink-3">Unsaved changes</span>{/if}
 						<span class="ie">
 							<label class="btn btn-sm btn-quiet cursor-pointer">Import<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
@@ -455,13 +455,17 @@
 						labelledby="editor-yaml-label"
 						rows={24}
 						oninput={() => (noop = '')}
-					/>
+						strip
+					>
+						{#snippet between()}
+							{#if problemsOpen && problemCount > 0}
+								<section id="editor-problems" class="plist scroll-panel" aria-label="Problems" data-testid="editor-problems">
+									<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" level={3} />
+								</section>
+							{/if}
+						{/snippet}
+					</YamlField>
 				</div>
-				{#if problemsOpen && problemCount > 0}
-					<section id="editor-problems" class="plist scroll-panel" aria-label="Problems" data-testid="editor-problems">
-						<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" level={3} />
-					</section>
-				{/if}
 			</section>
 			<EditorDocsRail task={atCaret} open={railOpen} ontoggle={() => (railOpen = !railOpen)} />
 		</div>
@@ -609,18 +613,74 @@
 		border: 0 !important;
 		border-radius: 0;
 	}
-	.edcard :global(.yaml-field > div:last-child) {
+	/* One strip under the code: what is known on the left, the keys on the right. */
+	.edcard :global(.yaml-foot) {
+		flex-wrap: nowrap;
+		align-items: center;
+		gap: 12px;
+		min-height: 40px;
 		margin: 0;
-		padding: 8px 16px;
+		padding: 6px 16px;
 		border-top: 1px solid var(--line);
+		background: var(--surface);
+		font-size: 13px;
+	}
+	.edcard :global(.yaml-status) {
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.edcard :global(.yaml-status[data-tone='problems']) {
+		flex: none;
+		font-weight: 600;
+	}
+	/* Why the engine could not answer is never cut. */
+	.edcard :global(.yaml-status[data-tone='unavailable']) {
+		white-space: normal;
+	}
+	.edcard :global(.yaml-keys) {
+		flex: none;
+	}
+	.pchip {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		min-height: 32px;
+		padding: 4px 10px;
+		border: 1px solid var(--line-2);
+		border-radius: 99px;
+		background: var(--surface);
+		font-size: 13px;
+		font-variant-numeric: tabular-nums;
+		color: var(--ink-2);
+		cursor: pointer;
+	}
+	.pchip b {
+		color: var(--ink);
+	}
+	.pchip .pdot {
+		margin: 0 2px;
+		color: var(--ink-3);
+	}
+	.pchip:hover {
+		background: var(--hover);
+	}
+	.pchip[aria-expanded='true'] {
+		border-color: var(--ink-3);
 		background: var(--surface-2);
 	}
 	.plist {
+		flex: none;
 		max-height: 196px;
 		overflow-y: auto;
 		scrollbar-gutter: stable;
-		padding: 8px 16px;
+		padding: 0 16px;
 		border-top: 1px solid var(--line);
+		background: var(--surface);
+	}
+	.plist :global(.yp-group:first-child) {
+		border-top: 0;
 	}
 	.more-wrap {
 		position: relative;
@@ -653,6 +713,9 @@
 	@media (max-width: 1359px) {
 		.ed-grid {
 			grid-template-columns: minmax(0, 1fr) 296px;
+		}
+		.edcard :global(.k-long) {
+			display: none;
 		}
 	}
 	@media (min-width: 1181px) and (max-width: 1279px) {
@@ -699,6 +762,32 @@
 	@media (max-width: 640px) {
 		.ed-grid.rail-closed :global(.rail) {
 			position: static;
+		}
+		.card-end {
+			flex: 1 1 100%;
+			min-width: 0;
+			margin-left: 0;
+		}
+		.edcard :global(.cm-lineNumbers .cm-gutterElement) {
+			min-width: 36px;
+		}
+		.edcard :global(.cm-gutter-lint) {
+			width: 12px;
+		}
+		.edcard :global(.yaml-foot) {
+			flex-wrap: wrap;
+		}
+		.edcard :global(.yaml-status),
+		.edcard :global(.ptext) {
+			overflow: visible;
+			white-space: normal;
+		}
+		.edcard :global(.yaml-first) {
+			flex-wrap: wrap;
+		}
+		.edcard :global(.yaml-keys) {
+			margin-left: 0;
+			white-space: normal;
 		}
 		:global(html:has(.ed-grid.rail-closed)) {
 			scroll-padding-bottom: 0;

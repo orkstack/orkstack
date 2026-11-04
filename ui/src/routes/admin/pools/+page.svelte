@@ -128,7 +128,7 @@
 <svelte:head><title>Admin — Pools — OrkStack</title></svelte:head>
 
 <header class="mb-4 flex flex-wrap items-start gap-3">
-	<div class="min-w-0 flex-1">
+	<div class="ph-main min-w-0">
 		<h1 class="page-h1">Pools</h1>
 		<p class="mt-1 text-dense text-ink-2" data-testid="pools-scope-caption">
 			Where a task of namespace <b class="font-semibold text-ink">{namespaceLabel(data.namespace)}</b> can run, and the Orkers serving each pool now
@@ -257,6 +257,10 @@
 {/snippet}
 
 <style>
+	/* The title takes the row; a phone's actions go under it, not beside it. */
+	.ph-main {
+		flex: 1 1 420px;
+	}
 	.phead {
 		display: flex;
 		align-items: center;
