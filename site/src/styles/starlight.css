@@ -597,6 +597,7 @@ h1#_top {
 	overflow-wrap: anywhere;
 }
 .setting p {
+	max-width: calc(72ch + 28px);
 	margin: 0;
 	padding: 4px 14px 12px;
 	font-size: var(--text-md);
