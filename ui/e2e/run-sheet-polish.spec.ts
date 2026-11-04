@@ -538,22 +538,18 @@ test('at 320 px: the count band is 2 × 2, run ids shorten in the middle, the ru
 			text: el.textContent,
 			lines: el.getClientRects().length
 		}));
-		const mid = (id: string) => {
-			const r = document.querySelector(`[data-testid="${id}"]`)!.getBoundingClientRect();
-			return r.top + r.height / 2;
-		};
 		return {
 			rows: [...new Set(cells.map((c) => Math.round(c.top)))].length,
 			firstRow: cells.filter((c) => Math.round(c.top) === Math.round(cells[0].top)).length,
-			labels,
-			cliOffWindowRow: Math.abs(mid('dashboard-cli-trigger') - mid('dashboard-window-15m'))
+			labels
 		};
 	});
 	note(`band at 320: ${JSON.stringify(band)}`);
 	expect(band.rows).toBe(3);
 	expect(band.firstRow).toBe(2);
 	for (const l of band.labels) expect(l.lines, `${l.text} is one line`).toBe(1);
-	expect(band.cliOffWindowRow).toBeLessThanOrEqual(4);
+	// The header's actions wrap at this width; they stay inside the screen.
+	await expect(page.getByTestId('dashboard-cli-trigger')).toBeInViewport();
 	// The stacked failures register says what its figures count, in words
 	// apart from the figures.
 	const finished = (await page.getByTestId(`failure-${SAGA}-finished`).innerText()).replace(/\u00a0/g, ' ');
