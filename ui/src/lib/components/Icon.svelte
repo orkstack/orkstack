@@ -1,21 +1,10 @@
 <script lang="ts">
-	// One authored icon (#lib/icons.ts), drawn in currentColor and hidden from
-	// assistive technology: the control it sits in carries the name.
-	import { ICONS, type IconName } from '#lib/icons.ts';
+	// One icon of the Harbour set (#lib/icons.ts), drawn in currentColor and
+	// hidden from assistive technology: the control it sits in carries the
+	// name. It points at the symbol IconSprite drew once for the whole app.
+	import type { IconName } from '#lib/icons.ts';
 
 	let { name, class: className = 'size-4' }: { name: IconName; class?: string } = $props();
 </script>
 
-<svg
-	viewBox="0 0 16 16"
-	fill="none"
-	stroke="currentColor"
-	stroke-width="1.5"
-	stroke-linecap="round"
-	stroke-linejoin="round"
-	aria-hidden="true"
-	focusable="false"
-	class="shrink-0 {className}"
->
-	{#each ICONS[name] as d (d)}<path {d} />{/each}
-</svg>
+<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="shrink-0 {className}"><use href="#i-{name}" /></svg>

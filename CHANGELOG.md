@@ -108,6 +108,23 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Changed
 
+- The web UI has a new look, Harbour: a light sidebar with the namespace
+  switch, Runs, Orkflows, Apply and the Operate pages; Inter and JetBrains
+  Mono; and the OrkStack mark. Statuses read Running, Succeeded, Failed and
+  Canceled, each with its own mark as well as its colour. The Runs page opens
+  with the last day's counts, which filter the list, and the last 7 days'
+  outcomes, durations, most failing Orkflows, failures by reason and flakiest
+  tasks. A run page shows its progress, who started it and, for a cancel, who
+  asked (always marked asserted, never verified); its tasks on a timeline,
+  a failed task with its reason and stderr, one log and one card that follow the
+  task you select, whether it failed the same way before and what changed since
+  the last run. Task map and graph sit side by side instead of behind tabs, and
+  the `view=` parameter is gone. Updates can be paused and
+  resumed without losing any. Command lines sit behind the terminal icon on
+  each page. Destructive actions (Cancel run…, Cordon…) ask for a reason in a
+  dialog, and a cordon needs one. The Orkflow editor keeps its problems in the
+  editor card and shows the docs of the activity under the caret beside the
+  code. Nothing to do: links and the API are unchanged.
 - **BREAKING:** An Orker's secret floor never admits the Orker's own sources,
   whatever `ORK_ORKER_SECRET_ALLOW` says, empty or not: its OrkStack and
   telemetry settings (`env:ORK_*`, `env:OTEL_*`), its proxy settings, the

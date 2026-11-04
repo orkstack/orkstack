@@ -129,7 +129,7 @@
 			type="button"
 			data-testid="cache-purge"
 			onclick={openPurge}
-			class="btn border-red text-red-strong hover:bg-red-tint"
+			class="btn"
 			>Purge memos</button
 		>
 	{/snippet}
@@ -202,7 +202,7 @@
 							<th scope="col" class="text-right">Misses</th>
 							<th scope="col" class="text-right">Bypassed</th>
 							<th scope="col" class="text-right">Hit rate</th>
-							<th scope="col" class="text-right" title="the producing attempts' duration the hits did not spend again">Reused</th>
+							<th scope="col" class="text-right" data-tip="the producing attempts' duration the hits did not spend again">Reused</th>
 						</tr>
 					</thead>
 					<tbody>

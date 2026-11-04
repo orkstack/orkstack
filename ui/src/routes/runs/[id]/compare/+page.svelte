@@ -1,4 +1,5 @@
 <script lang="ts">
+	import FactsStrip from '#lib/components/FactsStrip.svelte';
 	// Two runs of one namespace, side by side: what differs between them.
 	//
 	// The page renders RunService.DiffRuns and nothing else. The engine decides
@@ -84,9 +85,26 @@
 <svelte:head><title>Compare {data.fromId} — OrkStack</title></svelte:head>
 
 <a href={runHref(data.fromId)} class="link mb-3 inline-flex items-center gap-1 text-sm" data-testid="run-diff-back"
-	><Icon name="chevronLeft" class="size-3.5" />Back to {data.fromId}</a
+	><Icon name="chev-left" class="size-3.5" />Back to {data.fromId}</a
 >
 <SheetHeader title="Compare runs">
+	{#snippet meta()}
+		{@const d = data.diff}
+		{#snippet from()}<StatusPill status={d?.from?.status} testid="compare-fact-from" />{/snippet}
+		{#snippet to()}<StatusPill status={d?.to?.status} testid="compare-fact-to" />{/snippet}
+		<FactsStrip
+			facts={[
+				{ label: 'From', value: from },
+				{ label: 'To', value: to },
+				{ label: 'Orkflow', value: d ? (d.sameOrkflow ? (d.from?.orkflowName ?? '—') : 'different') : '—', testid: 'compare-fact-orkflow' },
+				{
+					label: 'Definition',
+					value: !d ? '—' : !d.fieldsCompared.includes('definition') ? 'not compared' : definitionIdentical ? 'same' : 'different',
+					testid: 'compare-fact-definition'
+				}
+			]}
+		/>
+	{/snippet}
 	{#snippet actions()}
 		{#if diff}
 			<a href={swapHref} data-testid="run-diff-swap" class="btn">Swap</a>
@@ -122,7 +140,7 @@
 				<span>{run?.orkflowName}@{run?.orkflowVersion}</span>
 			</dd>
 			{#if run?.orkflowDefinitionDigest}
-				<dd class="mt-1 font-mono text-xs break-all text-ink-muted" title={run.orkflowDefinitionDigest}>
+				<dd class="mt-1 font-mono text-xs break-all text-ink-muted" data-tip={run.orkflowDefinitionDigest}>
 					{run.orkflowDefinitionDigest.slice(run.orkflowDefinitionDigest.indexOf(':') + 1, run.orkflowDefinitionDigest.indexOf(':') + 13)}
 				</dd>
 			{/if}
@@ -140,7 +158,7 @@
 			<span
 				data-testid="run-diff-definition"
 				class={definitionIdentical ? sameChip : differentChip}
-				title={definitionRow ? `${definitionRow.fromValue} → ${definitionRow.toValue}` : diff.from?.orkflowDefinitionDigest}
+				data-tip={definitionRow ? `${definitionRow.fromValue} → ${definitionRow.toValue}` : diff.from?.orkflowDefinitionDigest}
 				>{definitionIdentical ? 'Definition identical' : 'Definition differs'}</span
 			>
 		{:else}

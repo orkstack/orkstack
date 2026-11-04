@@ -2,16 +2,14 @@ import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { PIN_ACCENTS } from '../src/lib/runDetail';
 
-// The WCAG 2.2 AA floors of the drawing office's colours, read from the
-// ACTUAL tokens (ui/src/tokens.css), in both themes, as a full cross product
-// rather than chosen pairs: a held row, a NOTE, a stamp and a pinned card each
-// put the inks on a ground other than paper.
+// The WCAG 2.2 AA floors of Harbour's colours, read from the ACTUAL tokens
+// (ui/src/tokens.css), in both themes. Each pair is a pair the UI draws: a
+// word on the ground it sits on, a mark or a rule beside its ground. The
+// pairs are the design's own contrast table (121 pairs at the freeze), held
+// here against the shipped values rather than the prototype's.
 //
-//   text      every text token on every ground            ≥ 4.5:1 (1.4.3)
-//   on fills  on-ink on every fill a label sits on        ≥ 4.5:1
-//   non-text  focus and rule-strong on every ground       ≥ 3:1   (1.4.11)
-//             status solids/borders on paper, sheet, own ground
-//             pin lines on paper, sheet and their own fill
+//   text      4.5:1 (1.4.3)
+//   non-text  3:1   (1.4.11): focus, input edges, marks, meters, scrollbars
 //
 // A pair is excused only by a NEVER_ADJACENT entry that says why it cannot
 // occur. There are none.
@@ -19,20 +17,20 @@ const css = readFileSync(`${import.meta.dir}/../src/tokens.css`, 'utf8');
 
 const NEVER_ADJACENT: { fg: string; bg: string; why: string }[] = [];
 
-function block(opening: string): string {
+function slice(opening: string, closing: string): string {
 	const start = css.indexOf(opening);
 	if (start < 0) throw new Error(`tokens.css has no block ${opening}`);
-	return css.slice(start, css.indexOf('\n}', start));
+	return css.slice(start + opening.length, css.indexOf(closing, start));
 }
 
 function decls(body: string): Map<string, string> {
 	return new Map([...body.matchAll(/^\s*(--[a-z0-9-]+)\s*:\s*([^;]+);/gm)].map((m) => [m[1], m[2].trim()]));
 }
 
-const invariant = decls(block(':root {'));
+const invariant = decls(slice(':root {', '\n}'));
 const themes = {
-	light: new Map([...invariant, ...decls(block(":root,\n:root[data-theme='light'] {"))]),
-	dark: new Map([...invariant, ...decls(block(":root[data-theme='dark'] {"))])
+	light: new Map([...invariant, ...decls(slice(":root,\n:root[data-theme='light'] {", '\n}'))]),
+	dark: new Map([...invariant, ...decls(slice(":root[data-theme='dark'] {", '\n}'))])
 };
 
 type RGBA = [number, number, number, number];
@@ -60,7 +58,7 @@ function over(top: RGBA, ground: RGBA): RGBA {
 function luminance([r, g, b]: RGBA): number {
 	const ch = (c: number) => {
 		const s = c / 255;
-		return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+		return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
 	};
 	return 0.2126 * ch(r) + 0.7152 * ch(g) + 0.0722 * ch(b);
 }
@@ -70,74 +68,120 @@ function ratio(a: RGBA, b: RGBA): number {
 	return (hi + 0.05) / (lo + 0.05);
 }
 
-const STATUSES = ['pending', 'running', 'awaiting', 'succeeded', 'failed', 'canceled', 'skipped', 'unspecified'];
-const PIN_FILLS = PIN_ACCENTS.map((p) => `${p}-fill`);
-const GROUNDS = ['paper', 'paper-sunken', 'sheet', 'hover', 'blue-tint', 'red-tint', ...STATUSES.map((s) => `${s}-bg`), ...PIN_FILLS];
-const TEXT = ['ink', 'ink-secondary', 'ink-muted', 'ink-placeholder', 'blue', 'blue-strong', 'red', 'red-strong', ...STATUSES.map((s) => `${s}-fg`)];
-const FILLS = ['ink', 'ink-secondary', 'red', 'red-strong', 'blue', 'blue-strong'];
-// Code is drawn on paper (the editor), sunken paper (read-only listings and
-// the site's code blocks), sheet (a completion or hover popup), the hover wash
-// (the editor's current line) and the blue tint (a selection, and a diff's
-// added line). The syntax pencils must read as text on each.
-const SYNTAX = ['key', 'string', 'number', 'literal', 'template', 'meta', 'comment', 'punctuation'].map((r) => `syntax-${r}`);
-const CODE_GROUNDS = ['paper', 'paper-sunken', 'sheet', 'hover', 'blue-tint'];
+/** fg on bg, by Harbour role name (without the leading dashes). */
+type Pair = [fg: string, bg: string];
+
+const cross = (fgs: string[], bgs: string[]): Pair[] => fgs.flatMap((fg) => bgs.map((bg): Pair => [fg, bg]));
+
+// Words, 4.5:1.
+const TEXT: Pair[] = [
+	// Ink and links on every page ground: the page, a card, a sunken row, a hovered row.
+	...cross(['ink', 'ink-2', 'ink-3', 'link', 'navy-text'], ['bg', 'surface', 'surface-2', 'hover']),
+	['ink-3', 'surface-3'],
+	['navy-text', 'navy-tint'],
+	// A status pill: its word on its own tint; a reason line on a card.
+	['run', 'run-tint'],
+	['ok', 'ok-tint'],
+	['fail', 'fail-tint'],
+	['wait', 'wait-tint'],
+	['await', 'await-tint'],
+	['cancel', 'cancel-tint'],
+	...cross(['run', 'ok', 'fail', 'wait', 'await', 'cancel'], ['surface', 'bg']),
+	['ink-2', 'wait-tint'],
+	['ink', 'fail-tint'],
+	// The sidebar: its words, a hovered row, the active page's navy pill.
+	...cross(['side-ink', 'side-ink-2', 'side-strong'], ['side', 'side-hover', 'side-field']),
+	['side-active-ink', 'side-active'],
+	['side-active-ink-2', 'side-active'],
+	['run', 'run-tint'],
+	// The one orange button, at rest and hovered; a confirm in a reason dialog.
+	['on-accent', 'accent'],
+	['on-accent', 'accent-hover'],
+	['destroy-ink', 'destroy-bg'],
+	['destroy-ink', 'destroy-hover'],
+	// The tooltip: surface words on an ink ground.
+	['surface', 'ink'],
+	// A selected graph node and a selected item: act words on the act fill.
+	['act-ink', 'act'],
+	['act-ink-2', 'act'],
+	// The log pane.
+	['log-ink', 'log-bg'],
+	['log-ink-2', 'log-bg'],
+	['log-err', 'log-bg'],
+	// The landing hero.
+	...cross(['hero-ink', 'hero-ink-2'], ['hero', 'hero-2']),
+	// Code: the editor and every code view, on the grounds code is drawn on.
+	...cross(['syn-key', 'syn-str', 'syn-num', 'syn-lit', 'syn-tpl', 'syn-com'], ['surface', 'surface-2', 'bg', 'hover', 'navy-tint'])
+];
+
+// Marks, edges, meters and focus, 3:1.
+const NON_TEXT: Pair[] = [
+	// A control's edge and the focus ring on every ground they meet.
+	...cross(['line-strong', 'focus'], ['bg', 'surface', 'surface-2']),
+	['focus', 'side'],
+	['side-field-line', 'side-field'],
+	['select', 'surface'],
+	// Status marks on a card and on their own pill.
+	...cross(['run', 'ok-mark', 'fail-mark', 'wait-mark', 'await', 'cancel', 'pend-mark'], ['surface', 'bg']),
+	['pend-mark', 'surface-2'],
+	['wait-mark', 'wait-tint'],
+	['ok-mark', 'ok-tint'],
+	['fail-mark', 'fail-tint'],
+	// Meters and the progress ring on their track.
+	['meter', 'surface-3'],
+	['wait-mark', 'surface-3'],
+	['fail-mark', 'surface-3'],
+	['ink-3', 'surface-3'],
+	// The orange button's edge, and a confirm's fill, against the page.
+	['accent-edge', 'bg'],
+	['accent-edge', 'surface'],
+	['destroy-bg', 'surface'],
+	// Scrollbars: the thumb on its track, at rest and hovered.
+	['sb-thumb', 'sb-track'],
+	['sb-thumb-hover', 'sb-track'],
+	['sb-log-thumb', 'log-bg'],
+	['sb-log-thumb-hover', 'log-bg'],
+	// The mark's orange on the navy hero.
+	['mark-s', 'hero']
+];
 
 function check(theme: keyof typeof themes, fg: string, bg: string, floor: number, failures: string[]): void {
 	if (NEVER_ADJACENT.some((n) => n.fg === fg && n.bg === bg)) return;
 	const t = themes[theme];
-	const ground = over(parse(`var(--color-${bg})`, t), parse('var(--color-paper)', t));
-	const top = over(parse(`var(--color-${fg})`, t), ground);
+	const ground = over(parse(`var(--${bg})`, t), parse('var(--bg)', t));
+	const top = over(parse(`var(--${fg})`, t), ground);
 	const r = ratio(top, ground);
 	if (r < floor) failures.push(`${theme}: ${fg} on ${bg} is ${r.toFixed(2)}:1 (< ${floor})`);
 }
 
-test('the ratio is the WCAG one, and a translucent rule is composited first', () => {
+test('the ratio is the WCAG one, and a translucent colour is composited first', () => {
 	expect(ratio([0, 0, 0, 1], [255, 255, 255, 1]).toFixed(1)).toBe('21.0');
 	expect(over([0, 0, 0, 0.5], [255, 255, 255, 1])[0]).toBe(127.5);
-	expect(parse('var(--color-ink)', themes.light)).toEqual([20, 33, 61, 1]);
+	expect(parse('var(--color-ink)', themes.light)).toEqual([14, 28, 40, 1]);
+	expect(parse('var(--color-ink)', themes.dark)).toEqual([226, 233, 239, 1]);
+});
+
+test('the table covers at least the design’s 121 pairs', () => {
+	expect(TEXT.length + NON_TEXT.length >= 121).toBe(true);
 });
 
 for (const theme of ['light', 'dark'] as const) {
-	test(`${theme}: every status ground is one of the grounds`, () => {
-		for (const s of STATUSES) expect(GROUNDS.includes(`${s}-bg`)).toBe(true);
-	});
-
-	test(`${theme}: every text token reads at 4.5:1 on every ground`, () => {
+	test(`${theme}: every word reads at 4.5:1 on the ground it sits on`, () => {
 		const failures: string[] = [];
-		for (const fg of TEXT) for (const bg of GROUNDS) check(theme, fg, bg, 4.5, failures);
+		for (const [fg, bg] of TEXT) check(theme, fg, bg, 4.5, failures);
 		expect(failures).toEqual([]);
 	});
 
-	test(`${theme}: every syntax colour reads at 4.5:1 on every ground code is drawn on`, () => {
+	test(`${theme}: every mark, edge, meter and focus ring reaches 3:1`, () => {
 		const failures: string[] = [];
-		for (const fg of SYNTAX) for (const bg of CODE_GROUNDS) check(theme, fg, bg, 4.5, failures);
+		for (const [fg, bg] of NON_TEXT) check(theme, fg, bg, 3, failures);
 		expect(failures).toEqual([]);
 	});
 
-	test(`${theme}: on-ink reads at 4.5:1 on every fill a label sits on`, () => {
+	test(`${theme}: pin lines reach 3:1 on the page, a card and their own fill`, () => {
 		const failures: string[] = [];
-		for (const bg of FILLS) check(theme, 'on-ink', bg, 4.5, failures);
-		expect(failures).toEqual([]);
-	});
-
-	test(`${theme}: focus and strong rules reach 3:1 on every ground`, () => {
-		const failures: string[] = [];
-		for (const bg of GROUNDS) {
-			check(theme, 'focus', bg, 3, failures);
-			check(theme, 'rule-strong', bg, 3, failures);
-		}
-		expect(failures).toEqual([]);
-	});
-
-	test(`${theme}: status marks and pin lines reach 3:1 where they are drawn`, () => {
-		const failures: string[] = [];
-		for (const s of STATUSES) {
-			for (const part of ['solid', 'border']) {
-				for (const bg of ['paper', 'sheet', `${s}-bg`]) check(theme, `${s}-${part}`, bg, 3, failures);
-			}
-		}
 		for (const p of PIN_ACCENTS) {
-			for (const bg of ['paper', 'sheet', `${p}-fill`]) check(theme, `${p}-line`, bg, 3, failures);
+			for (const bg of ['bg', 'surface', `color-${p}-fill`]) check(theme, `color-${p}-line`, bg, 3, failures);
 		}
 		expect(failures).toEqual([]);
 	});

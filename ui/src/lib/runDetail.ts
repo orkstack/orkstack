@@ -115,7 +115,8 @@ export function formatDuration(start: { seconds: bigint; nanos: number } | undef
 	const seconds = milliseconds / 1000;
 	if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
 	const minutes = Math.floor(seconds / 60);
-	return `${minutes}m ${Math.floor(seconds % 60)}s`;
+	if (minutes < 60) return `${minutes}m ${Math.floor(seconds % 60)}s`;
+	return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
 /** Serialize protobuf timestamps before JSON export; JSON.stringify cannot encode bigint seconds. */
@@ -161,4 +162,17 @@ export function pinAccent(pin: string): string | undefined {
 export function downloadFilename(name: string): string {
 	const safe = name.replace(/[\\/\u0000-\u001f\u007f]/g, '_').trim();
 	return safe || 'artifact';
+}
+
+/** A digest as the plates draw it: its first and last groups of four. */
+/** A digest's first two groups, for a plate with no room for more: the whole of it is the tip. */
+export function digestHead(digest: string): string {
+	const hex = digest.includes(':') ? digest.slice(digest.indexOf(':') + 1) : digest;
+	return `${hex.slice(0, 4)} ${hex.slice(4, 8)} …`;
+}
+
+export function shortDigestWords(digest: string): string {
+	const hex = digest.includes(':') ? digest.slice(digest.indexOf(':') + 1) : digest;
+	if (hex.length < 16) return hex;
+	return `${hex.slice(0, 4)} ${hex.slice(4, 8)} … ${hex.slice(-8, -4)} ${hex.slice(-4)}`;
 }

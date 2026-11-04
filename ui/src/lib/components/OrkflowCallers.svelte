@@ -131,7 +131,7 @@
 									<a
 										href={callerHref(caller, name, namespace)}
 										class="link font-semibold"
-										title={caller.description || undefined}>{callerLabel(caller)}</a
+										data-tip={caller.description || undefined}>{callerLabel(caller)}</a
 									>
 								</td>
 								<td class="text-ink-secondary">
@@ -146,7 +146,7 @@
 									class="{pinsLabel(caller) === 'current'
 										? 'font-medium text-ink'
 										: 'text-ink-secondary'}"
-									title={caller.unavailableReason || undefined}>{pinsLabel(caller)}</td
+									data-tip={caller.unavailableReason || undefined}>{pinsLabel(caller)}</td
 								>
 								<td class="font-mono text-xs text-ink-secondary"
 									>{caller.outputsRead.length ? caller.outputsRead.join(', ') : '—'}</td

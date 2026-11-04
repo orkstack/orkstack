@@ -57,8 +57,8 @@ test('AWAITING has its own label and tone, is not terminal, and counts as dispat
 	);
 	const { Status } = await import('../src/lib/gen/orkstack/v1/common_pb');
 	const { EventType } = await import('../src/lib/gen/orkstack/v1/run_pb');
-	expect(STATUS_LABEL[Status.AWAITING]).toBe('AWAITING');
-	expect(STATUS_CLASSES[Status.AWAITING]).toBe('border-awaiting-border bg-awaiting-bg text-awaiting-fg');
+	expect(STATUS_LABEL[Status.AWAITING]).toBe('Awaiting');
+	expect(STATUS_CLASSES[Status.AWAITING]).toBe('bg-awaiting-bg text-awaiting-fg');
 	expect(EVENT_TYPE_LABEL[EventType.TASK_AWAITING]).toBe('TASK_AWAITING');
 	expect(EVENT_TYPE_LABEL[EventType.TASK_RESOLVED]).toBe('TASK_RESOLVED');
 	expect(isTerminal(Status.AWAITING)).toBe(false);

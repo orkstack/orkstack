@@ -41,10 +41,17 @@ export interface MapCell {
 export interface Segment {
 	start: number;
 	count: number;
-	/** A fan-out's section carries a label band above its first row. */
+	/** A fan-out's section, or a stage of a small run, carries a label band above its first row. */
 	labelled: boolean;
 	taskId?: string;
+	/** A stage's words: the tasks that can run at that point. */
+	label?: string;
+	/** Drawn with its label in the column beside its cells: that label's lines. */
+	side?: number;
 }
+
+/** Up to this many tasks the map reads row by row, each stage named. */
+export const STAGE_ROWS_MAX = 40;
 
 export interface MapModel {
 	order: 'dag' | 'run';
@@ -57,6 +64,68 @@ export interface MapModel {
 
 const cellKey = (taskId: string, item?: number) => (item === undefined ? taskId : `${taskId}\u0000${item}`);
 
+// How many characters of a stage's label fit one line of its column, and that
+// column's width.
+const SIDE_CHARS = 15;
+export const SIDE_COL = 110;
+const SIDE_LINE_H = 16;
+const SIDE_ROW_GAP = 8;
+
+function sideLines(label: string): number {
+	return Math.max(1, Math.ceil(label.length / SIDE_CHARS));
+}
+
+/** A small run's rows, in the order they can run: one per stage, and one per fan-out with its items. */
+function stageRows(
+	ordered: readonly { id: string; itemCount: number }[],
+	layers: readonly number[]
+): { label: string; taskIds: string[]; fanOut?: string; count: number }[] {
+	const rows: { label: string; taskIds: string[]; fanOut?: string; count: number }[] = [];
+	let open: (typeof rows)[number] | null = null;
+	ordered.forEach((task, i) => {
+		if (i > 0 && layers[i] !== layers[i - 1]) open = null;
+		if (task.itemCount > 0) {
+			rows.push({ label: task.id, taskIds: [], fanOut: task.id, count: task.itemCount });
+			return;
+		}
+		if (open) {
+			open.taskIds.push(task.id);
+			open.label += `, ${task.id}`;
+			open.count++;
+		} else {
+			open = { label: task.id, taskIds: [task.id], count: 1 };
+			rows.push(open);
+		}
+	});
+	return rows;
+}
+
+function stageModel(ordered: readonly MapTask[], layers: readonly number[]): MapModel {
+	const byId = new Map(ordered.map((t) => [t.id, t]));
+	const rows = stageRows(ordered.map((t) => ({ id: t.id, itemCount: t.items?.length ?? 0 })), layers);
+	const cells: MapCell[] = [];
+	const kinds: number[] = [];
+	const segments: Segment[] = [];
+	for (const row of rows) {
+		const start = cells.length;
+		if (row.fanOut) {
+			for (const item of byId.get(row.fanOut)?.items ?? []) {
+				cells.push({ taskId: row.fanOut, item: item.index });
+				kinds.push(KIND_ITEM);
+			}
+		} else {
+			for (const id of row.taskIds) {
+				cells.push({ taskId: id });
+				kinds.push(byId.get(id)?.items !== undefined ? KIND_STACK : KIND_TASK);
+			}
+		}
+		segments.push({ start, count: row.count, labelled: false, taskId: row.fanOut, label: row.label, side: sideLines(row.label) });
+	}
+	const index = new Map<string, number>();
+	cells.forEach((c, i) => index.set(cellKey(c.taskId, c.item), i));
+	return { order: 'dag', cells, kinds: Uint8Array.from(kinds), segments, indexOf: (taskId, item) => index.get(cellKey(taskId, item)) ?? -1 };
+}
+
 /**
  * The cells, in reading order: every task in DAG order (layer, then
  * declaration — layerOrder's order) or, with no definition to order by, the
@@ -66,13 +135,17 @@ const cellKey = (taskId: string, item?: number) => (item === undefined ? taskId 
 export function buildModel(
 	tasks: readonly MapTask[],
 	definition: boolean,
-	layerOrder: (t: readonly Needs[]) => { layer: Int32Array; order: Int32Array } = defaultLayerOrder
+	layerOrder: (t: readonly Needs[]) => { layer: Int32Array; order: Int32Array } = defaultLayerOrder,
+	stages = false
 ): MapModel {
 	let ordered: readonly MapTask[] = tasks;
+	let layers: number[] | null = null;
 	if (definition) {
-		const { order } = layerOrder(tasks.map((t) => ({ id: t.id, needs: t.needs ?? [] })));
+		const { layer, order } = layerOrder(tasks.map((t) => ({ id: t.id, needs: t.needs ?? [] })));
 		ordered = Array.from(order, (i) => tasks[i]);
+		if (stages) layers = Array.from(order, (i) => layer[i]);
 	}
+	if (layers) return stageModel(ordered, layers);
 	const cells: MapCell[] = [];
 	const kinds: number[] = [];
 	for (const t of ordered) {
@@ -98,6 +171,21 @@ export function buildModel(
 		segments,
 		indexOf: (taskId, item) => index.get(cellKey(taskId, item)) ?? -1
 	};
+}
+
+/** The sections a run's map lays out, for sizing its box before it has drawn. */
+export function mapSectionsOf(
+	tasks: readonly { id: string; needs?: readonly string[]; itemCount: number }[],
+	definition: boolean
+): { count: number; labelled: boolean; side?: number }[] {
+	if (definition && tasks.length <= STAGE_ROWS_MAX) {
+		const { layer, order } = defaultLayerOrder(tasks.map((t) => ({ id: t.id, needs: t.needs ?? [] })));
+		const rows = stageRows(Array.from(order, (i) => tasks[i]), Array.from(order, (i) => layer[i]));
+		return rows.map((row) => ({ count: row.count, labelled: false, side: sideLines(row.label) }));
+	}
+	const out: { count: number; labelled: boolean; side?: number }[] = [{ count: tasks.length, labelled: false }];
+	for (const t of tasks) if (t.itemCount > 0) out.push({ count: t.itemCount, labelled: true });
+	return out;
 }
 
 // Worst first: what a person looking at a fan-out's one cell most needs to see.
@@ -134,7 +222,9 @@ export function fillStatuses(model: MapModel, tasks: readonly MapTask[], out: Ui
 	};
 	for (const t of tasks) {
 		if (t.items && t.items.length > 0) {
-			set(model.indexOf(t.id), worstStatus(t.items.map((i) => i.status)) ?? t.status);
+			// A small run's fan-out has no cell of its own: its row is its items.
+			const own = model.indexOf(t.id);
+			if (own >= 0) set(own, worstStatus(t.items.map((i) => i.status)) ?? t.status);
 			for (const item of t.items) set(model.indexOf(t.id, item.index), item.status);
 		} else {
 			set(model.indexOf(t.id), t.status);
@@ -194,6 +284,9 @@ export function mapSummary(counts: Map<Status, number>, _total: number, order: '
 /** The cell pitches, largest first; a cell is the pitch less the gap. */
 export const PITCHES = [16, 14, 12, 10, 8] as const;
 export const CELL_GAP = 2;
+/** A small run's map, row by row, keeps the design's 14 px cell and 3 px gap. */
+export const STAGE_PITCH = 17;
+const gapOf = (pitch: number): number => (pitch === STAGE_PITCH ? 3 : CELL_GAP);
 /** The band above a fan-out section where its label sits (DOM, not canvas). */
 export const LABEL_H = 20;
 
@@ -211,14 +304,17 @@ export interface MapGeometry {
 	columns: number;
 	/** The map's whole height in CSS pixels. */
 	height: number;
+	/** Where the cells start: past the label column of a small run. */
+	x0: number;
 	/** How far the map area scrolls (0 when it fits). */
 	scroll: number;
 	total: number;
 	segments: SegmentGeometry[];
 }
 
-function layout(segments: readonly { count: number; labelled: boolean }[], pitch: number, width: number): MapGeometry {
-	const columns = Math.max(1, Math.floor(width / pitch));
+function layout(segments: readonly { count: number; labelled: boolean; side?: number }[], pitch: number, width: number): MapGeometry {
+	const x0 = segments.some((s) => s.side !== undefined) ? SIDE_COL : 0;
+	const columns = Math.max(1, Math.floor((width - x0) / pitch));
 	let y = 0;
 	let start = 0;
 	const out: SegmentGeometry[] = [];
@@ -226,10 +322,10 @@ function layout(segments: readonly { count: number; labelled: boolean }[], pitch
 		if (s.labelled) y += LABEL_H;
 		const rows = Math.ceil(s.count / columns);
 		out.push({ start, count: s.count, rows, y, labelled: s.labelled });
-		y += rows * pitch;
+		y += s.side === undefined ? rows * pitch : Math.max(rows * pitch, s.side * SIDE_LINE_H) + SIDE_ROW_GAP;
 		start += s.count;
 	}
-	return { pitch, columns, height: y, scroll: 0, total: start, segments: out };
+	return { pitch, columns, height: y, x0, scroll: 0, total: start, segments: out };
 }
 
 /**
@@ -237,8 +333,9 @@ function layout(segments: readonly { count: number; labelled: boolean }[], pitch
  * smallest does not, the smallest, and the area scrolls (inside its frame,
  * never the page).
  */
-export function mapGeometry(segments: readonly { count: number; labelled: boolean }[], width: number, height: number): MapGeometry {
-	for (const pitch of PITCHES) {
+export function mapGeometry(segments: readonly { count: number; labelled: boolean; side?: number }[], width: number, height: number): MapGeometry {
+	const pitches: readonly number[] = segments.some((s) => s.side !== undefined) ? [STAGE_PITCH, ...PITCHES.slice(1)] : PITCHES;
+	for (const pitch of pitches) {
 		const g = layout(segments, pitch, width);
 		if (g.height <= height) return g;
 	}
@@ -262,19 +359,20 @@ export function rectOf(g: MapGeometry, i: number): Rect {
 	const s = segmentOf(g, i);
 	if (!s) return { x: 0, y: 0, w: 0, h: 0 };
 	const local = i - s.start;
-	const size = g.pitch - CELL_GAP;
-	return { x: (local % g.columns) * g.pitch, y: s.y + Math.floor(local / g.columns) * g.pitch, w: size, h: size };
+	const size = g.pitch - gapOf(g.pitch);
+	return { x: g.x0 + (local % g.columns) * g.pitch, y: s.y + Math.floor(local / g.columns) * g.pitch, w: size, h: size };
 }
 
 /** The cell under a point of the map, or -1 (a gap, a label band, past the end). */
 export function cellAt(g: MapGeometry, x: number, y: number): number {
-	if (x < 0 || y < 0) return -1;
-	const col = Math.floor(x / g.pitch);
-	if (col >= g.columns || x - col * g.pitch >= g.pitch - CELL_GAP) return -1;
+	if (x < g.x0 || y < 0) return -1;
+	const cellX = x - g.x0;
+	const col = Math.floor(cellX / g.pitch);
+	if (col >= g.columns || cellX - col * g.pitch >= g.pitch - gapOf(g.pitch)) return -1;
 	for (const s of g.segments) {
 		if (y < s.y || y >= s.y + s.rows * g.pitch) continue;
 		const row = Math.floor((y - s.y) / g.pitch);
-		if (y - s.y - row * g.pitch >= g.pitch - CELL_GAP) return -1;
+		if (y - s.y - row * g.pitch >= g.pitch - gapOf(g.pitch)) return -1;
 		const local = row * g.columns + col;
 		return local < s.count ? s.start + local : -1;
 	}
@@ -432,55 +530,72 @@ function line(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number,
 
 /**
  * Draws one cell's mark — the canvas rendering of the same table the CSS
- * stamps draw from (#lib/statusMarks.ts): filled square, live dot, waiting ring,
- * crossed, struck, hatched, hollow, dotted.
+ * stamps draw from (#lib/statusMarks.ts): filled square, live dot, awaiting
+ * diamond, failed triangle, struck, dashed, hollow, dotted.
  */
+function cellPath(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, inset = 0): void {
+	const side = s - 2 * inset;
+	ctx.beginPath();
+	// The design's corner, where a cell is large enough to show one: rounding
+	// thousands of tiny cells costs paint time and draws nothing a reader sees.
+	if (s >= 12) ctx.roundRect(x + inset, y + inset, side, side, 3);
+	else ctx.rect(x + inset, y + inset, side, side);
+}
+
 function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: number, colors: MapColors): void {
 	const { x, y, w: s } = r;
 	const c = colors.status[status] ?? colors.status[Status.UNSPECIFIED];
-	ctx.lineWidth = 1;
+	const stroke = s >= 12 ? 1.5 : 1;
+	ctx.lineWidth = stroke;
 	switch (statusMark(status).shape) {
 		case 'square':
 			ctx.fillStyle = c.solid;
-			ctx.fillRect(x, y, s, s);
+			cellPath(ctx, x, y, s);
+			ctx.fill();
 			break;
-		case 'dot': {
+		case 'dot':
 			ctx.fillStyle = c.solid;
-			ctx.fillRect(x, y, s, s);
-			const d = Math.max(2, Math.round(s / 3));
-			ctx.fillStyle = colors.paper;
-			ctx.fillRect(x + (s - d) / 2, y + (s - d) / 2, d, d);
+			ctx.beginPath();
+			ctx.arc(x + s / 2, y + s / 2, s / 2, 0, 2 * Math.PI);
+			ctx.fill();
 			break;
-		}
-		case 'ring':
+		case 'diamond':
 			ctx.fillStyle = c.bg;
-			ctx.fillRect(x, y, s, s);
 			ctx.strokeStyle = c.solid;
-			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
+			ctx.beginPath();
+			ctx.moveTo(x + s / 2, y + 0.5);
+			ctx.lineTo(x + s - 0.5, y + s / 2);
+			ctx.lineTo(x + s / 2, y + s - 0.5);
+			ctx.lineTo(x + 0.5, y + s / 2);
+			ctx.closePath();
+			ctx.fill();
+			ctx.stroke();
 			break;
-		case 'cross':
+		case 'triangle':
 			ctx.fillStyle = c.solid;
-			ctx.fillRect(x, y, s, s);
-			ctx.strokeStyle = colors.paper;
-			line(ctx, x + 1, y + 1, x + s - 1, y + s - 1);
-			line(ctx, x + s - 1, y + 1, x + 1, y + s - 1);
+			ctx.beginPath();
+			ctx.moveTo(x + s / 2, y);
+			ctx.lineTo(x + s, y + s);
+			ctx.lineTo(x, y + s);
+			ctx.closePath();
+			ctx.fill();
 			break;
 		case 'strike':
-			ctx.fillStyle = c.bg;
-			ctx.fillRect(x, y, s, s);
 			ctx.strokeStyle = c.solid;
-			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
-			line(ctx, x + s - 1, y + 1, x + 1, y + s - 1);
+			cellPath(ctx, x, y, s, stroke / 2);
+			ctx.stroke();
+			line(ctx, x + s - 2, y + 2, x + 2, y + s - 2);
 			break;
-		case 'hatch':
+		case 'dash':
 			ctx.strokeStyle = c.solid;
-			line(ctx, x, y + s / 2, x + s / 2, y);
-			line(ctx, x + s / 2, y + s, x + s, y + s / 2);
-			line(ctx, x, y + s, x + s, y);
+			cellPath(ctx, x, y, s, stroke / 2);
+			ctx.stroke();
+			line(ctx, x + 3, y + s / 2, x + s - 3, y + s / 2);
 			break;
 		case 'hollow':
 			ctx.strokeStyle = c.solid;
-			ctx.strokeRect(x + 0.5, y + 0.5, s - 1, s - 1);
+			cellPath(ctx, x, y, s, stroke / 2);
+			ctx.stroke();
 			break;
 		case 'dotted':
 			ctx.fillStyle = c.solid;
@@ -511,9 +626,7 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
 /**
  * Paints cells onto a context already scaled to CSS pixels: every cell, or
  * only `only` (a live batch's dirty cells). No computed style is read here —
- * the colours are handed in. `runningAlpha` is how strongly a RUNNING cell's
- * mark is drawn over its paper (the map's pulse, #lib/taskMap.ts runningPulse);
- * every other mark, and every ground, is drawn whole.
+ * the colours are handed in. A cell's ground is the card behind the canvas.
  */
 export function paintCells(
 	ctx: CanvasRenderingContext2D,
@@ -521,38 +634,21 @@ export function paintCells(
 	statuses: Uint8Array,
 	kinds: Uint8Array,
 	colors: MapColors,
-	only?: Iterable<number>,
-	runningAlpha = 1
+	only?: Iterable<number>
 ): void {
 	const paintOne = (i: number) => {
 		const r = rectOf(g, i);
-		ctx.fillStyle = colors.paper;
-		ctx.fillRect(r.x, r.y, r.w, r.h);
-		const running = statuses[i] === Status.RUNNING;
-		if (running) ctx.globalAlpha = runningAlpha;
+		ctx.clearRect(r.x, r.y, r.w, r.h);
 		drawMark(ctx, r, statuses[i] as Status, kinds[i], colors);
-		if (running) ctx.globalAlpha = 1;
 	};
 	if (only) {
 		for (const i of only) if (i >= 0 && i < g.total) paintOne(i);
 		return;
 	}
-	ctx.clearRect(0, 0, g.columns * g.pitch, g.height);
+	ctx.clearRect(0, 0, g.x0 + g.columns * g.pitch, g.height);
 	for (let i = 0; i < g.total; i++) paintOne(i);
 }
 
-/** How long one breath of a running cell takes, and how far it fades. */
-export const PULSE_MS = 2400;
-const PULSE_FLOOR = 0.45;
-
-/**
- * The alpha of a running cell's mark at time `t` (ms): whole at the start of
- * each breath, fading to PULSE_FLOOR halfway and back, on a cosine so it
- * eases at both ends — the same 2.4 s as a running DAG node's ground.
- */
-export function runningPulse(t: number): number {
-	return PULSE_FLOOR + (1 - PULSE_FLOOR) * (0.5 + 0.5 * Math.cos((2 * Math.PI * t) / PULSE_MS));
-}
 
 /** The overlay: the selected cell's ink frame (a paper gap inside it) and the keyboard cursor. */
 export function paintOverlay(

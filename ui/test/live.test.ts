@@ -87,7 +87,7 @@ const rows: Row[] = [
 		stale: false
 	},
 	{
-		name: 'U4 (L4) waiting for an orker',
+		name: 'U4 (L4) waiting, with no capacity read',
 		attempt: attempt({
 			state: LiveAttemptState.SCHEDULED,
 			attemptScheduledAt: at('2026-09-23T09:14:02Z'),
@@ -95,7 +95,7 @@ const rows: Row[] = [
 		}),
 		now: nowAt('2026-09-23T09:16:12Z'),
 		kind: 'waiting',
-		text: 'Waiting for an orker · 2m 10s',
+		text: 'Waiting for capacity · 2m 10s',
 		stale: false
 	},
 	{
@@ -113,7 +113,7 @@ const rows: Row[] = [
 		}),
 		now: nowAt('2026-09-23T09:16:12Z'),
 		kind: 'capacity',
-		text: 'Waiting for capacity · every orker of pool gpu is full (reserved 3.5/4 cpu, 30Gi/32Gi memory) · 2m 10s',
+		text: 'Waiting for capacity · every Orker of pool gpu is full (reserved 3.5/4 cpu, 30Gi/32Gi memory) · 2m 10s',
 		title:
 			'No orker of pool gpu has room for another task: an orker takes one only while its per-task cap still fits beside what it has reserved.',
 		stale: false
@@ -132,7 +132,7 @@ const rows: Row[] = [
 		}),
 		now: nowAt('2026-09-23T09:16:12Z'),
 		kind: 'capacity',
-		text: 'Waiting for capacity · every orker of pool cap is full (reserved 1/1 cpu) · 12s',
+		text: 'Waiting for capacity · every Orker of pool cap is full (reserved 1/1 cpu) · 12s',
 		stale: false
 	},
 	{
@@ -144,7 +144,7 @@ const rows: Row[] = [
 		}),
 		now: nowAt('2026-09-23T09:16:12Z'),
 		kind: 'capacity',
-		text: 'Waiting for capacity · every orker of pool mem is full (reserved 0/1500 memory) · 12s',
+		text: 'Waiting for capacity · every Orker of pool mem is full (reserved 0/1500 memory) · 12s',
 		stale: false
 	},
 	{
@@ -156,7 +156,7 @@ const rows: Row[] = [
 		}),
 		now: nowAt('2026-09-23T09:16:12Z'),
 		kind: 'capacity',
-		text: 'Waiting for capacity · every orker of pool cap is full · 12s',
+		text: 'Waiting for capacity · every Orker of pool cap is full · 12s',
 		stale: false
 	},
 	{

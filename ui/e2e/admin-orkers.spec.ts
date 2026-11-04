@@ -104,7 +104,8 @@ function shot(page: Page, name: string) {
 async function openOrkers(page: Page): Promise<void> {
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=default`);
 	await expect(page.getByTestId('pool-card-main')).toBeVisible();
-	await page.getByTestId('pool-orkers-toggle-main').click();
+	// Every pool's Orkers are shown by default; the toggle only hides them.
+	await expect(page.getByTestId('pool-orkers-toggle-main')).toHaveAttribute('aria-expanded', 'true');
 	await expect(page.getByTestId('pool-orkers-caption-main')).toContainText(
 		'the same whichever namespace is selected'
 	);
@@ -116,7 +117,7 @@ test.beforeAll(async () => {
 	writeFileSync(
 		outPath(TRANSCRIPT),
 		[
-			'# Admin → Pools → Show Orkers: the Orker inventory and the cordon in a browser.',
+			'# Admin → Pools → the Orkers of a pool: the Orker inventory and the cordon in a browser.',
 			'#',
 			'# Written by ui/e2e/admin-orkers.spec.ts against a real engine and two real Orkers',
 			'# on real Temporal + MinIO.',
@@ -210,7 +211,7 @@ test('An Orker that stops answering is unreachable, not idle', async ({ page }) 
 	orkerB!.kill('SIGSTOP');
 	note(`SIGSTOP ${ORKER_B} (pid ${orkerB!.pid})`);
 	try {
-		await page.getByTestId('pool-orkers-refresh-main').click();
+		await page.getByTestId('pools-refresh').click();
 		await expect(page.getByTestId(`orker-state-${ORKER_B}`)).toHaveText('unreachable', { timeout: 60_000 });
 		await expect(page.getByTestId(`orker-unavailable-${ORKER_B}`)).toContainText('Could not be asked');
 		await expect(page.getByTestId(`orker-tasks-${ORKER_B}`)).toHaveCount(0);
@@ -222,7 +223,7 @@ test('An Orker that stops answering is unreachable, not idle', async ({ page }) 
 		note(`SIGCONT ${ORKER_B}`);
 	}
 	await expect(async () => {
-		await page.getByTestId('pool-orkers-refresh-main').click();
+		await page.getByTestId('pools-refresh').click();
 		await expect(page.getByTestId(`orker-state-${ORKER_B}`)).toHaveText('ready', { timeout: 10_000 });
 	}).toPass({ timeout: 90_000 });
 	await shot(page, 'admin-orkers-ready-again.png');

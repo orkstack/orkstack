@@ -187,18 +187,25 @@ test('the run page and the item list at the gated size are interactive within 5 
 	const last = GATED_ITEMS - 1;
 	const measure = async (phase: string) => {
 		const started = Date.now();
-		await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
+		// A fan-out that has finished (here: canceled) opens its item grid when it
+		// is the selection, so the link names it; live, the grid is open anyway.
+		await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&task=spread`);
 		await expect(page.getByTestId('run-status')).toBeVisible({ timeout: 30_000 });
 		const pageReady = Date.now() - started;
 		const cell = page.getByTestId(`task-spread-item-${last}`);
 		await expect(cell).toBeVisible({ timeout: 30_000 });
 		await cell.click();
 		await expect(cell).toHaveAttribute('aria-pressed', 'true', { timeout: 30_000 });
-		await expect(page.getByTestId('task-spread-item-panel-label')).toHaveText(`spread[${last}]`, {
+		await expect(page.getByTestId('task-spread-item-panel-label')).toContainText(`spread[${last}]`, {
 			timeout: 30_000
 		});
 		const listReady = Date.now() - started;
 		await expect(page.getByTestId('task-spread-item-grid').locator('button[data-item]')).toHaveCount(GATED_ITEMS);
+		// A cell of a grid this long shows its index and says the rest; the arrows walk it.
+		await expect(cell).toHaveAccessibleName(new RegExp(`^item ${last}, `));
+		await cell.focus();
+		await page.keyboard.press('ArrowLeft');
+		await expect(page.getByTestId(`task-spread-item-${last - 1}`)).toBeFocused();
 		note(
 			`${phase}: run page interactive ${pageReady} ms, item list of ${GATED_ITEMS} interactive ` +
 				`(item ${last} selected) ${listReady} ms after navigation`
@@ -209,7 +216,7 @@ test('the run page and the item list at the gated size are interactive within 5 
 	};
 
 	await measure('live');
-	await expect(page.getByTestId('run-status')).toHaveText('RUNNING');
+	await expect(page.getByTestId('run-status')).toHaveText('Running');
 
 	await rpc('RunService/CancelRun', { runId: run, reason: 'each-fan-out e2e: gated-size render measured' });
 	await waitFor(`run ${run} finished`, async () => {
@@ -217,14 +224,15 @@ test('the run page and the item list at the gated size are interactive within 5 
 		return answer.run?.status === 'STATUS_CANCELED';
 	});
 	await measure('finished');
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED');
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled');
 
 	// The task map, outside the timed span (UI revamp, stage 2): its section
 	// of the fan-out drew every item's cell after the two tasks' own.
-	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default&view=map`);
+	await page.goto(`${UI_ORIGIN}/runs/${run}?ns=default`);
 	const map = page.getByTestId('task-map');
 	await expect(map).toHaveAttribute('data-painted', 'true', { timeout: 30_000 });
-	await expect(map).toHaveAttribute('data-cells', String(2 + GATED_ITEMS));
+	// A small run's map draws a fan-out as its items: no cell of its own.
+	await expect(map).toHaveAttribute('data-cells', String(1 + GATED_ITEMS));
 	await expect(page.getByTestId('task-map-section-spread')).toContainText(
 		`${new Intl.NumberFormat('en-US').format(GATED_ITEMS)} items`
 	);

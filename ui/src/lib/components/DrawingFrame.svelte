@@ -26,6 +26,7 @@
 	// whose failure handlers follow it — into view.
 	import { tick, type Snippet } from 'svelte';
 	import type { Task } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
+	import type { DeclaredIcon } from '#lib/activityIcon.ts';
 	import DagGraph from './DagGraph.svelte';
 	import Icon from './Icon.svelte';
 	import { DAG_LEGIBLE_LIMIT, chooseDagDirection, dagBound, neighbourhood, type DagDirection, type NodeState } from '#lib/dag.ts';
@@ -71,6 +72,15 @@
 		 * frame (#lib/dag.ts chooseDagDirection).
 		 */
 		direction?: DagDirection | 'auto';
+		/** The card's heading: with one the head is a card head, not the caption band. */
+		title?: string;
+		sub?: string;
+		/** Controls at the head's end, beside Fit. */
+		actions?: Snippet;
+		/** The row under the drawing (its legend). */
+		footer?: Snippet;
+		/** What a task's image declares as its icon. */
+		iconOf?: (id: string) => DeclaredIcon | undefined;
 	}
 
 	let {
@@ -93,11 +103,17 @@
 		largeHint = 'The task register below lists every task and what it needs.',
 		map,
 		mapSections = undefined,
-		direction = 'LR'
+		direction = 'LR',
+		title = undefined,
+		sub = '',
+		actions = undefined,
+		footer = undefined,
+		iconOf = undefined
 	}: Props = $props();
 
 	const uid = $props.id();
 	let drawAll = $state(false);
+	let fit = $state(false);
 	const bound = $derived(tasks ? dagBound(tasks.length) : 'draw');
 	const near = $derived(
 		tasks && bound === 'too-large' && neighbourhoodWhenLarge && selected ? neighbourhood(tasks, selected) : []
@@ -110,6 +126,8 @@
 	);
 	let panel = $state<HTMLDivElement | undefined>(undefined);
 	let hidden = $state({ left: false, right: false, up: false, down: false });
+	// A drawing that does not fit is a scroll region a keyboard can reach (WCAG 2.1.1).
+	const overflowing = $derived(drawn && (hidden.left || hidden.right || hidden.up || hidden.down));
 
 	function measure(): void {
 		if (!panel) return;
@@ -133,7 +151,8 @@
 		observer.observe(el);
 		const drawing = el.querySelector('svg');
 		if (drawing) observer.observe(drawing);
-		measure();
+		// The observer answers for what it was just given, once the page has laid
+		// out: measuring here would make the browser lay it out in mid-render.
 		return () => observer.disconnect();
 	});
 
@@ -151,17 +170,26 @@
 		void tick().then(() => bringIntoView(el));
 	});
 
-	function bringIntoView(el: HTMLDivElement): void {
+	// A drawing that does not fit is centred on the task a reader came for: on
+	// a phone the first view is the one that matters. A later selection is
+	// followed the same way, but only when it is out of view.
+	function bringIntoView(el: HTMLDivElement, onlyIfHidden = false): void {
 		if (el.scrollWidth <= el.clientWidth + 1 && el.scrollHeight <= el.clientHeight + 1) return;
 		const target = el.querySelector('.dag-node.is-selected') ?? el.querySelector('.dag-node.is-failed');
 		if (!target) return;
 		const node = target.getBoundingClientRect();
 		const frame = el.getBoundingClientRect();
-		const margin = Math.min(frame.width * 0.15, 48);
-		el.scrollLeft += node.left - frame.left - margin;
-		if (node.top < frame.top || node.bottom > frame.bottom) el.scrollTop += node.top - frame.top - margin;
+		if (onlyIfHidden && node.left >= frame.left && node.right <= frame.right && node.top >= frame.top && node.bottom <= frame.bottom) return;
+		el.scrollLeft += node.left + node.width / 2 - (frame.left + frame.width / 2);
+		if (node.top < frame.top || node.bottom > frame.bottom) el.scrollTop += node.top + node.height / 2 - (frame.top + frame.height / 2);
 		measure();
 	}
+	$effect(() => {
+		void selected;
+		const el = panel;
+		if (!el || !placed) return;
+		void tick().then(() => bringIntoView(el, true));
+	});
 
 	// The task map's frame: as tall as the map the frame's width lays out at
 	// the largest pitch that fits, plus the 32 px patch, the 16 px padding and
@@ -213,21 +241,35 @@
 	}
 </script>
 
-{#snippet scroller(testid: string, label: string, title: string, icon: 'chevronLeft' | 'chevronRight' | 'chevronUp' | 'chevronDown', more: boolean, go: () => void, last: boolean)}
+{#snippet scroller(testid: string, label: string, title: string, icon: 'chev-left' | 'chev-right' | 'chev-up' | 'chev', more: boolean, go: () => void, last: boolean)}
 	<button
 		type="button"
 		data-testid={testid}
-		class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-muted aria-disabled:opacity-50 {last ? '' : 'border-r border-rule'}"
+		class="inline-flex size-8 items-center justify-center text-ink hover:bg-hover aria-disabled:cursor-default aria-disabled:text-ink-3 {last ? '' : 'border-r border-line'}"
 		aria-label={label}
-		{title}
+		data-tip={title}
 		aria-disabled={!more}
 		onclick={() => more && go()}><Icon name={icon} /></button
 	>
 {/snippet}
 
+{#snippet scrollers()}
+	<!-- A phone swipes its drawing, and a keyboard scrolls its region: the arrows are for a pointer. -->
+	<div class="flex h-8 overflow-hidden rounded-sm border border-line-2 bg-surface max-sm:hidden">
+		{#if hidden.up || hidden.down}
+			{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chev-up', hidden.up, () => scrollBy(-1, 'y'), false)}
+			{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chev', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}
+		{/if}
+		{#if hidden.left || hidden.right}
+			{@render scroller(`${prefix}-scroll-left`, 'Scroll the DAG left', 'More of the DAG to the left', 'chev-left', hidden.left, () => scrollBy(-1), false)}
+			{@render scroller(`${prefix}-scroll-right`, 'Scroll the DAG right', 'More of the DAG to the right', 'chev-right', hidden.right, () => scrollBy(1), true)}
+		{/if}
+	</div>
+{/snippet}
+
 {#snippet note(text: string, testidValue: string, action?: Snippet)}
-	<div data-testid={testidValue} class="note m-4 flex max-w-prose flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2 text-sm">
-		<span class="caps text-ink-muted">Note</span>
+	<div data-testid={testidValue} class="note m-4 flex max-w-prose flex-wrap items-start gap-x-3 gap-y-2 px-3 py-2 text-dense">
+		<span class="font-semibold text-ink-3">Note</span>
 		<p class="min-w-0 flex-1">{text}</p>
 		{#if action}{@render action()}{/if}
 	</div>
@@ -243,11 +285,24 @@
 	bind:this={section}
 	data-testid={testid}
 	aria-label="Tasks of {orkflowLabel}"
-	class="frame relative isolate flex flex-col overflow-hidden max-h-drawing max-sm:max-h-drawing-tall {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
+	class="card relative isolate flex flex-col overflow-hidden max-h-drawing max-sm:max-h-drawing-tall {view === 'dag' || mapHeight !== undefined ? '' : 'h-drawing'}"
 	style:height={mapHeight !== undefined ? `${mapHeight}px` : undefined}
 >
+	{#if title}
+		<div class="card-head shrink-0">
+			<h2>{title}</h2>
+			{#if sub}<span class="card-sub" data-testid="{testid}-sub">{sub}</span>{/if}
+			<div class="card-end">
+				{#if drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}{@render scrollers()}{/if}
+				{#if actions}{@render actions()}{/if}
+				{#if drawn}
+					<button type="button" class="btn btn-sm btn-quiet" data-testid="{prefix}-fit" aria-pressed={fit} onclick={() => (fit = !fit)}>Fit</button>
+				{/if}
+			</div>
+		</div>
+	{:else}
 	<div
-		class="relative z-10 flex h-8 shrink-0 items-stretch self-start border-r border-b border-ink bg-paper {!drawn
+		class="relative z-10 flex min-h-12 shrink-0 flex-wrap items-center gap-3 self-stretch border-b border-line bg-surface px-3 py-2 {!drawn
 			? 'max-w-full'
 			: (hidden.left || hidden.right) && (hidden.up || hidden.down)
 				? 'max-w-[calc(100%-8rem)]'
@@ -256,7 +311,7 @@
 					: 'max-w-full'}"
 	>
 		{#if views.length > 1}
-			<div role="tablist" aria-label="View" class="flex shrink-0">
+			<div role="tablist" aria-label="View" class="seg">
 				{#each views as v, i (v.id)}
 					<button
 						type="button"
@@ -268,26 +323,28 @@
 						tabindex={view === v.id ? 0 : -1}
 						onclick={() => onview?.(v.id)}
 						onkeydown={(e) => onTabKey(e, i)}
-						class="caps border-r border-rule px-3 whitespace-nowrap {view === v.id
-							? 'bg-paper text-ink underline decoration-2 decoration-blue underline-offset-4'
-							: 'text-ink-muted hover:text-ink'}">{v.label}</button
+						>{v.label}</button
 					>
 				{/each}
 			</div>
 		{/if}
 		<!-- The Orkflow's name gives way; its version and task count never do. -->
-		<p class="flex min-w-0 items-center px-3 font-mono text-xs text-ink-secondary" title={caption}>
+		<p class="flex min-w-0 items-center text-dense text-ink-3" data-tip={caption}>
 			{#if captionLead && caption.startsWith(captionLead)}<span class="truncate">{captionLead}</span><span class="shrink-0 whitespace-pre"
 					>{caption.slice(captionLead.length)}</span
 				>{:else}<span class="truncate">{caption}</span>{/if}
 		</p>
 	</div>
+	{/if}
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 	<div
 		bind:this={panel}
 		onscroll={measure}
 		id="{uid}-panel"
-		role={views.length > 1 ? 'tabpanel' : undefined}
+		role={views.length > 1 ? 'tabpanel' : overflowing ? 'region' : undefined}
 		aria-labelledby={views.length > 1 ? `${uid}-tab-${view}` : undefined}
+		aria-label={views.length <= 1 && overflowing ? dagLabel : undefined}
+		tabindex={views.length <= 1 && overflowing ? 0 : undefined}
 		class="min-h-0 flex-1 {view === 'dag' ? 'drafting-grid overflow-auto' : 'overflow-hidden'}"
 	>
 		{#if view === 'map' && map}
@@ -299,7 +356,7 @@
 			)}
 		{:else if bound === 'draw' || (bound === 'on-request' && drawAll)}
 			<div class="p-2">
-				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} />
+				<DagGraph tasks={tasks} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} {iconOf} {fit} />
 			</div>
 		{:else if bound === 'on-request'}
 			{@render note(
@@ -320,23 +377,59 @@
 			)}
 			{#if near.length}
 				<div class="p-2">
-					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} />
+					<DagGraph tasks={near} {on} label={dagLabel} {stateOf} {selected} {hrefOf} {onselect} direction={dagDirection} {iconOf} {fit} />
 				</div>
 			{/if}
 		{/if}
 	</div>
-	{#if drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}
+	{#if !title && drawn && (hidden.left || hidden.right || hidden.up || hidden.down)}
 		<!-- A drawing that does not fit says so on the frame's top band, for
 		     each way it overflows: the pair for a way with more to show. -->
-		<div class="absolute top-0 right-0 z-10 flex h-8 border-b border-l border-ink bg-paper">
-			{#if hidden.up || hidden.down}
-				{@render scroller(`${prefix}-scroll-up`, 'Scroll the DAG up', 'More of the DAG above', 'chevronUp', hidden.up, () => scrollBy(-1, 'y'), false)}
-				{@render scroller(`${prefix}-scroll-down`, 'Scroll the DAG down', 'More of the DAG below', 'chevronDown', hidden.down, () => scrollBy(1, 'y'), !(hidden.left || hidden.right))}
-			{/if}
-			{#if hidden.left || hidden.right}
-				{@render scroller(`${prefix}-scroll-left`, 'Scroll the DAG left', 'More of the DAG to the left', 'chevronLeft', hidden.left, () => scrollBy(-1), false)}
-				{@render scroller(`${prefix}-scroll-right`, 'Scroll the DAG right', 'More of the DAG to the right', 'chevronRight', hidden.right, () => scrollBy(1), true)}
-			{/if}
-		</div>
+		<div class="absolute top-2 right-2 z-10">{@render scrollers()}</div>
 	{/if}
+	{#if footer}{@render footer()}{/if}
 </section>
+
+<style>
+	.seg {
+		display: inline-flex;
+		flex: none;
+		gap: 2px;
+		padding: 3px;
+		border: 1px solid var(--line);
+		border-radius: 8px;
+		background: var(--surface-2);
+	}
+	.seg button {
+		display: inline-flex;
+		align-items: center;
+		height: 28px;
+		padding: 0 12px;
+		border: 0;
+		border-radius: 6px;
+		background: transparent;
+		color: var(--ink-2);
+		font-size: 13.5px;
+		font-weight: 600;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.seg button[aria-selected='true'] {
+		background: var(--surface);
+		color: var(--navy-text);
+		box-shadow:
+			0 0 0 1px var(--line-2),
+			var(--shadow),
+			inset 0 -2px 0 var(--navy-text);
+		font-weight: 700;
+	}
+	.seg button:focus-visible {
+		outline-offset: -2px;
+	}
+	@media (forced-colors: active) {
+		.seg button[aria-selected='true'] {
+			outline: 2px solid Highlight;
+		}
+	}
+</style>
+

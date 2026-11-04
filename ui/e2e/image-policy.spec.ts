@@ -313,7 +313,7 @@ test('4: Validate anchors both refusals to tasks[0].uses; a signed catalog image
 	await expect(page.getByTestId('run-submit-loading')).toHaveCount(0);
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	note(`uses: shell in ${PROD} (cosign:e2e): run ${page.url()} SUCCEEDED`);
 	await page.screenshot({ path: out('screenshot-signed-run-succeeded.png'), fullPage: true });
 });

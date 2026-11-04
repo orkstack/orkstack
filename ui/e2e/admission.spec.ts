@@ -242,7 +242,7 @@ test('4: Release hold reopens the namespace, and a submit reaches SUCCEEDED', as
 	await expect(page.getByTestId('run-submit-submit')).toBeEnabled();
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	note(`after release: ${page.url()} reached SUCCEEDED`);
 });
 
@@ -276,7 +276,7 @@ test('5: at max_running the dialog shows the server’s cap sentence verbatim', 
 	await openSubmitDialog(page, FAST);
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	note(`after the slow run was cancelled: ${page.url()} admitted and SUCCEEDED`);
 });
 

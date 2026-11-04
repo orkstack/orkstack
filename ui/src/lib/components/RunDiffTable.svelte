@@ -56,13 +56,13 @@
 							class="align-top font-mono break-all {cellClass(row.fromAvailable, FROM_TINT)}"
 							data-testid="run-diff-row-{label}-{row.field}-from"
 							data-unavailable={row.fromAvailable ? 'false' : 'true'}
-							title={row.fromAvailable ? undefined : reasonText(row.fromReason)}
+							data-tip={row.fromAvailable ? undefined : reasonText(row.fromReason)}
 						>{renderDiffValue(row.fromValue, row.fromAvailable)}</td>
 						<td
 							class="relative pl-6 align-top font-mono break-all {cellClass(row.toAvailable, TO_TINT)}"
 							data-testid="run-diff-row-{label}-{row.field}-to"
 							data-unavailable={row.toAvailable ? 'false' : 'true'}
-							title={row.toAvailable ? undefined : reasonText(row.toReason)}
+							data-tip={row.toAvailable ? undefined : reasonText(row.toReason)}
 						><Icon name="delta" class="absolute top-2.5 left-2 size-3 text-blue" />{renderDiffValue(row.toValue, row.toAvailable)}</td>
 					</tr>
 				{/each}

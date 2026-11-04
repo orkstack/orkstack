@@ -5,7 +5,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild, uiEnv } from './harness';
-import { selectNamespace } from './uiHelpers';
+import { selectNamespace, selectTask } from './uiHelpers';
 import { fillYaml } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
@@ -316,7 +316,8 @@ async function lineNumbers(page: Page, taskId: string, prefix: string): Promise<
 	const texts = await page.getByTestId(`task-log-${taskId}`).getByTestId('task-log-line').allInnerTexts();
 	const numbers: number[] = [];
 	for (const text of texts) {
-		const match = text.trim().match(new RegExp(`^${prefix} line (\\d+)$`));
+		// A stderr line opens with its stream's name for assistive technology.
+		const match = text.trim().replace(/^stderr: /, '').match(new RegExp(`^${prefix} line (\\d+)$`));
 		if (match) numbers.push(Number(match[1]));
 	}
 	return numbers;
@@ -503,12 +504,12 @@ test('a task log follows live in the browser, in order, from the replica that st
 	note(`engine A started run ${run1} (${ORKFLOW}@0.1.0); engine B was not asked`);
 
 	await page.goto(`${UI_ORIGIN}/runs/${run1}?ns=${ALPHA}`);
-	await expect(page.getByTestId('run-id')).toHaveText(run1);
+	await expect(page.getByTestId('run-id')).toContainText(run1);
 
-	// The pane is collapsed until it is asked for: thirty tasks must not mean
-	// thirty sockets.
-	await expect(page.getByTestId('task-log-talk')).toHaveCount(0);
-	await page.getByTestId('task-log-toggle-talk').click();
+	// There is ONE log pane, following the selection: thirty tasks must not
+	// mean thirty sockets. (The per-row toggles that opened a pane each are gone.)
+	await selectTask(page, 'talk');
+	await expect(page.locator('[data-testid^="task-log-state-"]')).toHaveCount(1);
 
 	// FOLLOWS WHILE THE TASK RUNS. This is the assertion a post-mortem read
 	// cannot pass: lines are on screen while the run's own status pill still
@@ -527,8 +528,8 @@ test('a task log follows live in the browser, in order, from the replica that st
 		`browser saw ${linesWhenLive.length} lines of task talk at B while the run read ` +
 			`${runStatusWhenLive} and the task read ${taskStatusWhenLive}`
 	);
-	expect(runStatusWhenLive).toBe('RUNNING');
-	expect(taskStatusWhenLive).toBe('RUNNING');
+	expect(runStatusWhenLive).toBe('Running');
+	expect(taskStatusWhenLive).toBe('Running');
 	await expect(page.getByTestId('task-log-state-talk')).toHaveText('LIVE');
 	await shot(page, 'screenshot-log-following.png');
 
@@ -567,7 +568,7 @@ test('a task log follows live in the browser, in order, from the replica that st
 	// the instant the output they were reading is completed. Measured on this
 	// tree before the fix: PAUSED scrollTop=500 -> FOLLOWING scrollTop=976.
 	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 180_000 });
-	await expect(page.getByTestId('task-talk-status')).toHaveText('SUCCEEDED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-talk-status')).toHaveText('Succeeded', { timeout: 60_000 });
 	expect((await page.getByTestId('task-log-follow-talk').innerText()).trim()).toBe('PAUSED');
 	expect(await box.evaluate((el) => el.scrollTop)).toBe(parkedAt);
 	note(
@@ -633,7 +634,7 @@ test('a chatty task keeps a bounded scrollback and leaves the tab responsive', a
 	// happened. A pane that appended one DOM node per delivered line would be
 	// inside one long task for that whole window and could answer nothing.
 	const openedAt = Date.now();
-	await page.getByTestId('task-log-toggle-chatter').click();
+	await selectTask(page, 'chatter');
 	const latencies: number[] = [];
 	for (let probe = 0; probe < 25; probe += 1) {
 		const started = Date.now();
@@ -763,8 +764,8 @@ test('a dropped log socket resumes from the last sequence, repeating and losing 
 	});
 
 	await page.goto(`${UI_ORIGIN}/runs/${run2}?ns=${ALPHA}`);
-	await expect(page.getByTestId('run-id')).toHaveText(run2);
-	await page.getByTestId('task-log-toggle-talk').click();
+	await expect(page.getByTestId('run-id')).toContainText(run2);
+	await selectTask(page, 'talk');
 
 	await expect(page.getByTestId('task-log-state-talk')).toHaveText('ENDED', { timeout: 180_000 });
 

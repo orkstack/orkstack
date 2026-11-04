@@ -10,19 +10,20 @@
 //     4 KiB as base64, which put a Cyrillic-ext face into the render-blocking
 //     CSS of every page whether or not a Cyrillic character ever appears
 //     (inlineAsset, used by vite.config.ts);
-//   * the two faces every page does use — Archivo Narrow and Spline Sans
-//     Mono, latin, variable weight — are preloaded from index.html, the page
-//     every route boots from, so they download beside the CSS rather than
-//     after it has been parsed (preloadAsset, used by hooks.server.ts while
-//     the build renders that page).
+//   * the face every page does use — Inter, latin, variable weight — is
+//     preloaded from index.html, the page every route boots from, so it
+//     downloads beside the CSS rather than after it has been parsed
+//     (preloadAsset, used by hooks.server.ts while the build renders that
+//     page). The code face, JetBrains Mono, is left to the first page that
+//     sets code: preloading it would charge every page its 40 KB.
 
 /** Vite's build.assetsInlineLimit: never for a font, the default otherwise. */
 export function inlineAsset(filePath: string): boolean | undefined {
 	return /\.woff2?$/.test(filePath) ? false : undefined;
 }
 
-/** SvelteKit's resolve({ preload }): scripts, styles and the two latin faces. */
+/** SvelteKit's resolve({ preload }): scripts, styles and the latin UI face. */
 export function preloadAsset({ type, path }: { type: 'js' | 'css' | 'font' | 'asset'; path: string }): boolean {
 	if (type === 'js' || type === 'css') return true;
-	return type === 'font' && /-latin-wght-normal\.[^/]*woff2$/.test(path);
+	return type === 'font' && /\/inter-latin-wght-normal\.[^/]*woff2$/.test(path);
 }

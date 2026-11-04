@@ -151,11 +151,11 @@ const compareURL = (from: string, to: string, ns = 'default') => `/runs/${from}/
 
 test('P1: Compare pre-selects the last successful run and opens the comparison', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/runs/${failed}?ns=default`);
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 60_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 60_000 });
 	await page.getByTestId('compare-run').click();
 	await expect(page.getByTestId('compare-dialog')).toBeVisible();
 	await expect(page.getByTestId('compare-target')).toContainText(succeeded);
-	await expect(page.getByTestId('compare-target')).toContainText('SUCCEEDED');
+	await expect(page.getByTestId('compare-target')).toContainText('Succeeded');
 	await expect(page.getByTestId('compare-open')).toBeEnabled();
 	// animations: 'disabled' settles the dialog's entrance before the capture,
 	// so the screenshot shows the dialog rather than a frame of its fade-in.

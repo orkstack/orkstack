@@ -274,9 +274,9 @@ test('Plan answers per draft, starts nothing, and a real run agrees with it', as
 	}
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 180_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 180_000 });
 	for (const [id, outcome] of Object.entries(planned)) {
-		const want = outcome === 'runs' ? 'SUCCEEDED' : 'SKIPPED';
+		const want = outcome === 'runs' ? 'Succeeded' : 'Skipped';
 		await expect(page.getByTestId(`task-${id}-status`)).toHaveText(new RegExp(`^\\s*${want}\\s*$`));
 		note(`P5 ${id}: planned ${outcome}, ran ${want}`);
 	}

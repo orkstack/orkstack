@@ -325,8 +325,8 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 
 	// Navigation preserves it, and every page is scoped by
 	// it: the nav links carry the namespace and each destination reads inside it.
-	const nav = page.locator('nav[aria-label="Primary"]');
-	await nav.getByRole('link', { name: 'Runs', exact: true }).click();
+	const nav = page.getByTestId('sidebar');
+	await nav.getByTestId('nav-runs').click();
 	await page.waitForURL(new RegExp(`/runs\\?.*ns=${ALPHA}`));
 	await expectNamespace(page, ALPHA);
 	await expect(page.getByTestId('runs-empty')).toContainText(ALPHA);
@@ -336,7 +336,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	// same claim as "the list is scoped, and its links carry the namespace":
 	// alpha's list offers alpha's orkflow and not beta's, the link to it keeps
 	// the namespace, and the submit dialog opens on that page.
-	await nav.getByRole('link', { name: 'Orkflows', exact: true }).click();
+	await nav.getByTestId('nav-orkflows').click();
 	await page.waitForURL(new RegExp(`/orkflows\\?.*ns=${ALPHA}`));
 	await expect(page.getByTestId(`orkflow-row-${BETA_ORKFLOW}`)).toHaveCount(0);
 	await page.getByTestId(`orkflow-row-${ORKFLOW}`).getByRole('link').click();
@@ -346,7 +346,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await expect(page.getByTestId('run-submit-panel')).toBeVisible();
 	await page.getByTestId('orkflow-submit-dialog-close').click();
 
-	await nav.getByRole('link', { name: 'Apply Orkflow', exact: true }).click();
+	await nav.getByTestId('nav-apply').click();
 	await page.waitForURL(new RegExp(`/apply\\?.*ns=${ALPHA}`));
 	await expect(page.getByTestId('apply-namespace')).toContainText(ALPHA);
 
@@ -423,17 +423,32 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	await shot(page, 'screenshot-editor.png');
 
 	// 1. A document the compiler rejects: the message is the engine's, and
-	//    nothing is stored.
+	//    nothing is stored. (The engine's verdict on the typed text now holds
+	//    Apply itself: it is aria-disabled with its reason, so the refusal is
+	//    read from Validate rather than from a rejected Apply.)
 	await fillYaml(page, 'editor-yaml', 'apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "9.9.9"\ntasks: []\n');
-	await page.getByTestId('editor-apply').click();
-	await expect(page.getByTestId('editor-error')).toBeVisible();
-	await expect(page.getByTestId('editor-error')).toContainText(/task/i);
+	await page.getByTestId('editor-validate').click();
+	await expect(page.getByTestId('editor-apply')).toHaveAttribute('aria-disabled', 'true');
+	await expect(page.getByTestId('editor-apply-why')).toContainText(/Fix \d+ problems? to apply/);
+	await expect(page.getByTestId('editor-validation-issues')).toContainText(/task/i);
+	await expect(page.getByTestId('editor-error')).toHaveCount(0);
 	await shot(page, 'screenshot-editor-validation-error.png');
 	const afterInvalid = await rpc<{ versions: { version: string }[] }>(
 		'OrkflowService/ListOrkflowVersions',
 		{ name: ORKFLOW, namespace: ALPHA }
 	);
 	expect(afterInvalid.versions.map((v) => v.version)).toEqual(['0.1.0']);
+
+	// A refusal only Apply can give is the engine's own words, in the editor, with the draft kept.
+	const refused = orkflowYaml(ORKFLOW, '0.1.5', 'refused at apply');
+	await fillYaml(page, 'editor-yaml', refused);
+	await page.route('**/orkstack.v1.OrkflowService/ApplyOrkflow', (route) =>
+		route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: 'invalid_argument', message: 'a refusal only apply can make' }) })
+	);
+	await page.getByTestId('editor-apply').click();
+	await expect(page.getByTestId('editor-error')).toContainText('a refusal only apply can make');
+	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/refused at apply/);
+	await page.unroute('**/orkstack.v1.OrkflowService/ApplyOrkflow');
 
 	// 2. A good edit lands as a NEW version; the old one is untouched.
 	await fillYaml(page, 'editor-yaml', orkflowYaml(ORKFLOW, '0.2.0', 'second revision'));

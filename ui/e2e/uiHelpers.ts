@@ -54,14 +54,15 @@ export async function selectOption(page: Page, testid: string, value: string): P
 /**
  * Assert the namespace picker currently displays `name`.
  *
- * The trigger is a button, so `toHaveValue` does not apply to it at all. Its
- * only text is the selected option's label — the chevron beside it is an
- * `aria-hidden` <svg> that contributes none — and toHaveText normalizes
- * whitespace, so the surrounding markup's indentation is not part of the
- * comparison. Exact, not substring: `alpha` must not pass for `alpha-2`.
+ * The trigger is a button whose text is the sidebar switch's: an avatar
+ * letter, a "Namespace" caption, then the selected option's label (the
+ * chevron is an `aria-hidden` <svg> and contributes none). So the match is
+ * the caption followed by exactly `name` to the end of the text: `alpha` must
+ * not pass for `alpha-2`, and a longer name that merely ends in `alpha` does
+ * not either, since only whitespace may sit between the caption and the name.
  */
 export async function expectNamespace(page: Page, name: string): Promise<void> {
-	await expect(page.getByTestId('namespace-picker')).toHaveText(name);
+	await expect(page.getByTestId('namespace-picker')).toHaveText(new RegExp(`Namespace\\s*${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`));
 }
 
 /**
@@ -126,35 +127,75 @@ export async function taskMapCellCenter(page: Page, index: number): Promise<{ x:
 	await expect(map).toHaveAttribute('data-painted', 'true');
 	const pitch = Number(await map.getAttribute('data-pitch'));
 	const columns = Number(await map.getAttribute('data-columns'));
+	const x0 = Number((await map.getAttribute('data-x0')) ?? 0);
+	// A small run's map is drawn stage by stage: where each stage's cells start and stand.
+	const stages = ((await map.getAttribute('data-rows')) ?? '0:0').split(',').map((s) => s.split(':').map(Number));
+	const [start, top] = stages.filter(([first]) => first <= index).at(-1)!;
+	const local = index - start;
 	const area = page.getByTestId('task-map-area');
-	const row = Math.floor(index / columns);
-	const col = index % columns;
-	await area.evaluate((el, top) => (el.scrollTop = Math.max(0, top)), row * pitch - pitch);
+	await area.scrollIntoViewIfNeeded();
+	const row = Math.floor(local / columns);
+	const col = local % columns;
+	await area.evaluate((el, y) => (el.scrollTop = Math.max(0, y)), top + row * pitch - pitch);
 	const box = await area.boundingBox();
 	if (!box) throw new Error('the task map area is not on screen');
 	const scrollTop = await area.evaluate((el) => el.scrollTop);
 	const PAD = 8;
 	const half = (pitch - 2) / 2;
-	return { x: box.x + PAD + col * pitch + half, y: box.y + PAD + row * pitch - scrollTop + half };
+	return { x: box.x + PAD + x0 + col * pitch + half, y: box.y + PAD + top + row * pitch - scrollTop + half };
 }
 
 /**
- * The whole page as one image, as a reader scrolling it would see it. Two
- * things a full-page capture otherwise gets wrong are undone for the capture
+ * The whole page as one image, as a reader scrolling it would see it. One
+ * thing a full-page capture otherwise gets wrong is undone for the capture
  * only, and restored after it: task cards are laid out with
  * `content-visibility: auto`, which leaves every card past the first
- * viewport unpainted in a capture that does not scroll; and the title block
- * is sticky to the viewport's bottom edge, so a capture paints it once,
- * across the middle of the page. During the capture every element is
- * painted and the title block sits where the document ends.
+ * viewport unpainted in a capture that does not scroll. During the capture
+ * every element is painted.
  */
 export async function fullPageShot(page: Page, path: string): Promise<void> {
 	const style = await page.addStyleTag({
-		content: '* { content-visibility: visible !important; } [data-testid="title-block"] { position: static !important; }'
+		content: '* { content-visibility: visible !important; }'
 	});
 	try {
 		await page.screenshot({ path, fullPage: true });
 	} finally {
 		await style.evaluate((el) => el.remove());
 	}
+}
+
+/**
+ * Select task `id` on the run page, as a person does: press its name in the
+ * task list. The name is a toggle (aria-pressed), so it is pressed only when
+ * the task is not already selected — pressing a selected, explicitly chosen
+ * task would clear the selection. A task the page auto-selected (the failed
+ * one, else the first running or awaiting) reads aria-pressed true already.
+ */
+export async function selectTask(page: Page, id: string): Promise<void> {
+	const link = page.getByTestId(`task-deep-link-${id}`);
+	await expect(link).toBeVisible();
+	// The page may have chosen this task by itself (pressed, and not in the
+	// address): pressing it makes it the reader's own choice, which stays.
+	if (new URL(page.url()).searchParams.get('task') !== id) await link.click();
+	await expect(link).toHaveAttribute('aria-pressed', 'true');
+	await expect(page).toHaveURL(new RegExp(`[?&]task=${id}(&|$)`));
+}
+
+/**
+ * Select task `id` and open its Inspect disclosure in the Item card. The
+ * disclosure is one boolean that survives a change of selection, so it is
+ * pressed only when it is not already expanded.
+ */
+/** Chooses one of the Tasks card's secondary actions, from its More. */
+export async function tasksMore(page: Page, id: string): Promise<void> {
+	await page.getByTestId('run-tasks-more').click();
+	await page.getByTestId(id).click();
+}
+
+export async function inspectTask(page: Page, id: string): Promise<void> {
+	await selectTask(page, id);
+	const toggle = page.getByTestId(`task-inspect-toggle-${id}`);
+	await expect(toggle).toBeVisible();
+	if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 }

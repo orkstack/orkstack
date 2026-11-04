@@ -278,12 +278,12 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 			},
 			{ timeout: 90_000, intervals: [50, 100, 200, 500] }
 		)
-		.toBe('SUCCEEDED');
+		.toBe('Succeeded');
 	console.log(`run-status pill sampled states: ${[...seenStatuses].join(' -> ')}`);
 
 	// 6. All three tasks show succeeded — updated in place by the stream.
 	for (const taskId of ['fetch', 'transform', 'verify']) {
-		await expect(page.getByTestId(`task-${taskId}-status`)).toHaveText('SUCCEEDED');
+		await expect(page.getByTestId(`task-${taskId}-status`)).toHaveText('Succeeded');
 	}
 	await expect(page.getByTestId('task-summary')).toHaveText('3/3 succeeded');
 
@@ -352,5 +352,5 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	await page.goto(`${UI_ORIGIN}/runs?ns=${NS}`);
 	const row = page.getByTestId(`run-row-${runId}`);
 	await expect(row).toBeVisible();
-	await expect(row.getByText('SUCCEEDED')).toBeVisible();
+	await expect(row.getByText('Succeeded')).toBeVisible();
 });

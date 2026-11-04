@@ -25,6 +25,15 @@ const DECORATION = / \(type: [A-Za-z0-9_.]+, retryable: (?:true|false)\)/g;
 // A reason code leads the sentence, or the part of it after a ": ".
 const REASON_CODE = /(^|: )([A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+): /;
 
+/**
+ * The engine's `task "charge": the container exited 1` in the words of a page:
+ * "The container of charge exited 1". What it does not recognise, it leaves.
+ */
+export function humanFailure(text: string): string {
+	const said = text.replace(/task "([^"]+)": the container exited (\d+)/, 'the container of $1 exited $2');
+	return said.charAt(0).toUpperCase() + said.slice(1);
+}
+
 export function plainFailure(message: string): PlainFailure {
 	const text = message.trim().replace(WRAPPER, '').replace(DECORATION, '');
 	const found = REASON_CODE.exec(text);

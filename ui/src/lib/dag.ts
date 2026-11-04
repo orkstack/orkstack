@@ -1,5 +1,6 @@
 import type { Status } from './gen/orkstack/v1/common_pb';
 import type { Task } from './gen/orkstack/v1/orkflow_pb';
+import { isFailureHandler } from './join';
 
 /** What the run page says about a DAG node: its status and the line under its id. */
 export interface NodeState {
@@ -8,6 +9,8 @@ export interface NodeState {
 	line: string;
 	/** The task never reached an Orker: drawn faded, with its solid outline. */
 	neverStarted?: boolean;
+	/** A fan-out's items: the node's bottom edge shows how far they have got. */
+	items?: { succeeded: number; running: number; total: number };
 }
 
 export interface DagNode {
@@ -54,10 +57,10 @@ export interface DagLayout {
 // its arrowhead — and no more, so a five-layer Orkflow is drawn whole in
 // the run page's frame at 1440 px (DagGraph scales the drawing down to the
 // frame, never below DAG_MIN_SCALE).
-export const DAG_NODE_W = 190;
-export const DAG_NODE_H = 58;
-const LAYER_GAP = 56;
-const ROW_GAP = 34;
+export const DAG_NODE_W = 150;
+export const DAG_NODE_H = 56;
+const LAYER_GAP = 30;
+const ROW_GAP = 28;
 const PAD = 24;
 // Top to bottom, a layer gap holds a vertical elbow and its arrowhead, and
 // nodes side by side are a column gutter apart.
@@ -70,8 +73,8 @@ const LANE_GAP = 10;
 // A gap's tracks: the clear margin after a source and before a target (the
 // arrowhead's room), the pitch between two tracks, and the widest a gap may
 // grow to give its tracks that pitch.
-const TRACK_LEAD = 10;
-const TRACK_TAIL = 14;
+const TRACK_LEAD = 8;
+const TRACK_TAIL = 8;
 const TRACK_PITCH = 8;
 const GAP_MAX = 216;
 // Barycentre sweeps: each round is one sweep down and one up.
@@ -81,17 +84,18 @@ const SWEEP_ROUNDS = 6;
 // text is too small to read, and the frame scrolls instead.
 export const DAG_MIN_SCALE = 0.6;
 
-// The dash of a failure handler's outline and of every edge into it — ISO
-// 128's hidden line, meaning only "a handler". It is set as the SVG
-// ATTRIBUTE, never the CSS property, because join-policy.spec.ts reads the
-// attribute and the attribute must be the dash drawn.
+// The dash of every edge into a failure handler, and of a handler's outline
+// where no status is drawn (the Orkflow page). It is set as the SVG ATTRIBUTE,
+// never the CSS property, because join-policy.spec.ts reads the attribute and
+// the attribute must be the dash drawn. On a run page a dashed OUTLINE means a
+// task that has not run: a handler's lane says what a handler is.
 export const DAG_DASH = '5 4';
 
 // How many characters a node's second line holds: the node's width less its
-// two text insets, over the mono face's advance (Spline Sans Mono, about
-// 0.64 em, at --text-2xs, 11 px). The face is monospaced, so a count of
-// characters is a width.
-export const DAG_LINE_CHARS = 23;
+// two text insets, over the sans face's average advance at --text-sm (13 px).
+export const DAG_LINE_CHARS = 20;
+// How many characters of a task's id fit beside its mark and the activity icon.
+export const DAG_ID_CHARS = 13;
 
 /**
  * fitDagLine fits a node's second line into `room` characters: it drops
@@ -243,8 +247,94 @@ export function layerOrder(tasks: readonly Needs[]): { layer: Int32Array; order:
 // both. It allocates per node, lane and edge, so it runs only for a DAG that
 // is drawn (at most DAG_LEGIBLE_LIMIT tasks); the task map orders a run of
 // any size with layerOrder alone.
+// The room between the main rows and the handlers' lane, and under the lane for
+// a handler that needs one it does not stand beside.
+const LANE_DROP = 54;
+const LANE_UNDER = 14;
+
+/**
+ * Failure handlers read as one row under the tasks they follow, left to right
+ * in the order they can run, the first ones beneath the task that sets them
+ * off. An edge drops from its need's bottom edge into the handler's top. Null
+ * when the run has no such shape: all handlers, none, or a plain task that
+ * needs a handler, which the layered drawing has to place.
+ */
+function handlerLane(tasks: Task[]): DagLayout | null {
+	const handlerIds = new Set(tasks.filter((t) => isFailureHandler(t.join)).map((t) => t.id));
+	if (handlerIds.size === 0 || handlerIds.size === tasks.length) return null;
+	const main = tasks.filter((t) => !handlerIds.has(t.id));
+	if (main.some((t) => t.needs.some((need) => handlerIds.has(need)))) return null;
+
+	const drawn = layoutDag(main, 'LR');
+	const nodeOf = new Map(drawn.nodes.map((n) => [n.task.id, n]));
+	const columns = [...new Set(drawn.nodes.map((n) => n.x))].sort((a, b) => a - b);
+	const columnX = (c: number) => (c < columns.length ? columns[c] : columns[columns.length - 1] + (c - columns.length + 1) * (DAG_NODE_W + LAYER_GAP));
+
+	const { layer, order } = layerOrder(tasks);
+	const handlers = Array.from(order, (i) => ({ task: tasks[i], layer: layer[i] })).filter((h) => handlerIds.has(h.task.id));
+	const firstNeeds = handlers[0].task.needs.flatMap((need) => {
+		const node = nodeOf.get(need);
+		return node ? [columns.indexOf(node.x)] : [];
+	});
+	const siblings = handlers.filter((h) => h.layer === handlers[0].layer).length;
+	const start = Math.max(0, Math.max(0, ...firstNeeds) - Math.floor(siblings / 2));
+
+	const bottom = Math.max(...drawn.nodes.map((n) => n.y + DAG_NODE_H));
+	const laneY = bottom + LANE_DROP;
+	const gutter = bottom + LANE_DROP / 2;
+	const lane: DagNode[] = handlers.map((h, k) => ({ task: h.task, layer: h.layer, index: k, x: columnX(start + k), y: laneY }));
+	const laneOf = new Map(lane.map((n) => [n.task.id, n]));
+
+	let under = false;
+	const edges: DagEdge[] = [];
+	for (const to of lane) {
+		const tx = to.x + DAG_NODE_W / 2;
+		for (const need of new Set(to.task.needs)) {
+			let points: [number, number][] | null = null;
+			const inLane = laneOf.get(need);
+			const inMain = nodeOf.get(need);
+			if (inLane) {
+				const sx = inLane.x + DAG_NODE_W / 2;
+				if (to.index === inLane.index + 1) {
+					points = [[inLane.x + DAG_NODE_W, laneY + DAG_NODE_H / 2], [to.x, laneY + DAG_NODE_H / 2]];
+				} else {
+					under = true;
+					const y = laneY + DAG_NODE_H + LANE_UNDER;
+					points = [[sx, laneY + DAG_NODE_H], [sx, y], [tx, y], [tx, laneY + DAG_NODE_H]];
+				}
+			} else if (inMain) {
+				const sx = inMain.x + DAG_NODE_W / 2;
+				const blocked = drawn.nodes.some((n) => n.x === inMain.x && n.y > inMain.y);
+				if (blocked) {
+					const gap = inMain.x + DAG_NODE_W + LAYER_GAP / 2;
+					const cy = inMain.y + DAG_NODE_H / 2;
+					points = [[inMain.x + DAG_NODE_W, cy], [gap, cy], [gap, gutter], [tx, gutter], [tx, laneY]];
+				} else {
+					points = [[sx, inMain.y + DAG_NODE_H], [sx, gutter], [tx, gutter], [tx, laneY]];
+				}
+			}
+			if (!points) continue;
+			const route = straighten(points);
+			const [x1, y1] = route[0];
+			const [x2, y2] = route[route.length - 1];
+			edges.push({ fromId: need, toId: to.task.id, x1, y1, x2, y2, points: route });
+		}
+	}
+	return {
+		nodes: [...drawn.nodes, ...lane],
+		edges: [...drawn.edges, ...edges],
+		width: Math.max(drawn.width, Math.max(...lane.map((n) => n.x + DAG_NODE_W)) + PAD),
+		height: laneY + DAG_NODE_H + (under ? LANE_UNDER : 0) + PAD,
+		direction: 'LR'
+	};
+}
+
 export function layoutDag(tasks: Task[], direction: DagDirection = 'LR'): DagLayout {
 	const lr = direction === 'LR';
+	if (lr) {
+		const withLane = handlerLane(tasks);
+		if (withLane) return withLane;
+	}
 	const along = lr ? DAG_NODE_W : DAG_NODE_H;
 	const across = lr ? DAG_NODE_H : DAG_NODE_W;
 	const gutter = lr ? ROW_GAP : TB_COL_GAP;
@@ -338,6 +428,18 @@ export function layoutDag(tasks: Task[], direction: DagDirection = 'LR'): DagLay
 		}
 	}
 	for (let l = 0; l < layers; l++) rows[l] = best[l];
+	// Where the lane cannot be drawn, failure handlers still stand under the tasks they follow.
+	const handlerSide = (v: number): number => {
+		if (!isLane(v)) return isFailureHandler(tasks[v].join) ? 1 : 0;
+		// A long edge's lane stays with the task it leads to.
+		let next = v;
+		while (isLane(next)) next = succ[next][0];
+		return isFailureHandler(tasks[next].join) ? 1 : 0;
+	};
+	for (const row of rows) {
+		const order2 = new Map(row.map((v, k) => [v, k]));
+		row.sort((a, b) => handlerSide(a) - handlerSide(b) || order2.get(a)! - order2.get(b)!);
+	}
 	reRank();
 
 	// ---- 3. Place: stack each layer from the top ----

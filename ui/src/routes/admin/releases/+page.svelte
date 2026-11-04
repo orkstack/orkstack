@@ -311,7 +311,7 @@
 						<td
 							class="figure text-right text-ink"
 							data-testid="release-runs-{build}"
-							title={release.runsUnavailableReason || undefined}>{runsLabel(release)}</td
+							data-tip={release.runsUnavailableReason || undefined}>{runsLabel(release)}</td
 						>
 						<td class="text-ink-secondary" data-testid="release-state-{build}"
 							>{stateLabel(release)}</td

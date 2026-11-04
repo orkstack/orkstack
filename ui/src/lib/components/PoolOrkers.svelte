@@ -7,14 +7,14 @@
 	// explicit Refresh, never cached. An Orker that could not be asked is
 	// UNREACHABLE and none of its numbers are drawn: "not measured" rendered
 	// as "idle" would send an operator to stop a host that may be mid-task.
-	import { onMount } from 'svelte';
+	import { untrack } from 'svelte';
+	import TimeAgo from './TimeAgo.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { activityClient } from '#lib/clients/activities.ts';
 	import { FilterOperator, filterOf } from '#lib/listFilter.ts';
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
 	import { withNamespace } from '#lib/namespace.ts';
 	import {
-		cordonCommand,
 		orkerCommand,
 		orkerLoad,
 		orkerPins,
@@ -22,17 +22,21 @@
 		orkerTasks
 	} from '#lib/orkers.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
-	import CliEquivalent from './CliEquivalent.svelte';
+	import CliPopover from './CliPopover.svelte';
+	import Icon from './Icon.svelte';
+	import { formatBytes } from '#lib/resources.ts';
 	import ConfirmDialog from './ConfirmDialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 
 	interface Props {
 		pool: string;
+		/** Moves when the page's Refresh is pressed. */
+		refresh?: number;
 		/** The selected namespace, carried onto run links. */
 		namespace: string;
 	}
 
-	let { pool, namespace }: Props = $props();
+	let { pool, namespace, refresh = 0 }: Props = $props();
 
 	let orkers = $state<Orker[]>([]);
 	let loaded = $state(false);
@@ -61,8 +65,9 @@
 		}
 	}
 
-	onMount(() => {
-		void load();
+	$effect(() => {
+		void refresh;
+		untrack(() => void load());
 	});
 
 	function openCordon(orker: Orker): void {
@@ -107,27 +112,14 @@
 	}
 
 	const stateClass: Record<string, string> = {
-		ready: 'border-ink text-ink',
-		cordoned: 'border-dashed border-rule-strong text-ink-secondary',
-		unreachable: 'border-red text-red-strong'
+		ready: 'bg-ok-tint text-ok mark-square',
+		cordoned: 'pill-wait',
+		unreachable: 'bg-fail-tint text-fail mark-tri'
 	};
 </script>
 
-<div class="mt-3 border-t border-rule pt-3" data-testid="pool-orkers-{pool}">
-	<div class="mb-2 flex items-center justify-between gap-2">
-		<p class="text-xs text-ink-muted" data-testid="pool-orkers-caption-{pool}">
-			Orkers serving pool {pool} — deployment infrastructure, the same whichever namespace is selected.
-		</p>
-		<button
-			type="button"
-			data-testid="pool-orkers-refresh-{pool}"
-			disabled={loading}
-			onclick={() => void load()}
-			class="btn btn-sm shrink-0"
-		>
-			{loading ? 'Refreshing…' : 'Refresh'}
-		</button>
-	</div>
+<div data-testid="pool-orkers-{pool}">
+	<p class="sr" data-testid="pool-orkers-caption-{pool}">Deployment infrastructure: the same whichever namespace is selected.</p>
 
 	{#if loadError}
 		<ErrorPanel
@@ -139,107 +131,88 @@
 			onretry={() => void load()}
 		/>
 	{:else if !loaded}
-		<p class="text-xs text-ink-muted" data-testid="pool-orkers-loading-{pool}">Asking the Orkers…</p>
+		<p class="px-4 py-3 text-dense text-ink-3" data-testid="pool-orkers-loading-{pool}">Asking the Orkers…</p>
 	{:else if orkers.length === 0}
-		<p class="text-xs text-ink-muted" data-testid="pool-orkers-empty-{pool}">
+		<p class="px-4 py-3 text-dense text-ink-3" data-testid="pool-orkers-empty-{pool}">
 			No Orker answered for this pool. Orkers older than this release are counted above but cannot be
 			listed here.
 		</p>
 	{:else}
 		{#if actionError}
-			<p
-				class="mb-2 border border-red bg-red-tint px-2 py-1.5 text-xs text-red-strong"
-				role="alert"
-				data-testid="pool-orkers-action-error-{pool}"
-			>
-				{actionError}
-			</p>
+			<p class="mx-4 my-2 text-dense text-fail" role="alert" data-testid="pool-orkers-action-error-{pool}">{actionError}</p>
 		{/if}
-		<ul class="border-t-(length:--rule-region) border-ink">
-			{#each orkers as orker (orker.orkerId)}
-				{@const rowState = orkerState(orker)}
-				<li
-					class="border-b border-rule py-2 text-xs"
-					data-testid="orker-row-{orker.orkerId}"
-				>
-					<div class="flex flex-wrap items-center justify-between gap-2">
-						<span class="font-mono font-medium break-all text-ink">{orker.orkerId}</span>
-						<span
-							class="stamp {stateClass[rowState]}"
-							data-testid="orker-state-{orker.orkerId}">{rowState}</span
-						>
-					</div>
-					{#if rowState === 'unreachable'}
-						<p class="mt-1 text-ink-secondary" data-testid="orker-unavailable-{orker.orkerId}">
-							Could not be asked: {orker.unavailableReason}. Its load is <strong>unknown</strong>, not
-							zero.
-						</p>
-					{:else}
-						<dl class="mt-1 grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-ink-secondary sm:grid-cols-[auto_1fr_auto_1fr_auto_1fr]">
-							<dt class="caps text-ink-muted">Build</dt>
-							<dd class="figure" data-testid="orker-build-{orker.orkerId}">{orker.buildId || '-'}</dd>
-							<dt class="caps text-ink-muted">Tasks</dt>
-							<dd class="figure" data-testid="orker-tasks-{orker.orkerId}">{orkerTasks(orker)}</dd>
-							<dt class="caps text-ink-muted">Pins</dt>
-							<dd class="figure" data-testid="orker-pins-{orker.orkerId}">{orkerPins(orker)}</dd>
-						</dl>
-						{#if orker.cordoned}
-							<p class="mt-1 text-ink-secondary" data-testid="orker-reason-{orker.orkerId}">
-								Cordoned since {fmtTimestamp(orker.cordonedAt)}: “{orker.cordonReason}”
-							</p>
-						{/if}
-					{/if}
-					<p class="mt-1 text-ink-muted">
-						Last seen: <span data-testid="orker-last-seen-{orker.orkerId}"
-							>{fmtTimestamp(orker.lastSeen)}</span
-						>
-					</p>
-					{#if orker.pins.length > 0}
-						<ul class="mt-1 space-y-0.5">
-							{#each orker.pins as pin, i (pin.runId + ':' + i)}
-								<li data-testid="orker-pin-{orker.orkerId}-{pin.runId}">
-									pin {pin.pin || '-'} of run
-									<a
-										class="link font-mono"
-										href={withNamespace(`/runs/${pin.runId}`, namespace)}>{pin.runId}</a
-									>
-									— expires {pin.expiresAt ? fmtTimestamp(pin.expiresAt) : '-'}
-								</li>
-							{/each}
-						</ul>
-					{/if}
-					{#if rowState !== 'unreachable'}
-						<div class="mt-2 flex items-center justify-end gap-2">
-							{#if orker.cordoned}
-								<button
-									type="button"
-									data-testid="orker-uncordon-{orker.orkerId}"
-									disabled={uncordonBusy === orker.orkerId}
-									onclick={() => void uncordon(orker)}
-									class="btn btn-sm"
-								>
-									Uncordon
-								</button>
+		<!-- Positioned, so a visually hidden header scrolls with the table and never widens the page. -->
+		<div class="relative overflow-x-auto scroll-panel">
+			<!-- svelte-ignore a11y_no_redundant_roles -->
+			<table class="register orkers" role="table" aria-label="Orkers of pool {pool}">
+				<thead>
+					<tr>
+						<th scope="col">Orker</th>
+						<th scope="col">Status</th>
+						<th scope="col">cpu reserved</th>
+						<th scope="col">memory reserved</th>
+						<th scope="col">Running tasks</th>
+						<th scope="col">Open pins</th>
+						<th scope="col"><span class="sr">Actions</span></th>
+					</tr>
+				</thead>
+				<tbody>
+					{#each orkers as orker (orker.orkerId)}
+						{@const rowState = orkerState(orker)}
+						<!-- svelte-ignore a11y_no_redundant_roles -->
+						<tr role="row" data-testid="orker-row-{orker.orkerId}">
+							<th scope="row" role="rowheader">
+								<span class="font-mono text-sm font-medium break-all text-ink">{orker.orkerId}</span>
+								<small class="ork-sub">
+									{#if rowState !== 'unreachable' && orker.buildId}build <span data-testid="orker-build-{orker.orkerId}">{orker.buildId}</span>{' · '}{/if}last seen <span data-testid="orker-last-seen-{orker.orkerId}"><TimeAgo at={orker.lastSeen} /></span>
+								</small>
+							</th>
+							<td role="cell" data-label="Status">
+								<span class="stamp {stateClass[rowState]} capitalize" data-testid="orker-state-{orker.orkerId}">{rowState}</span>
+								{#if orker.cordoned}
+									<small class="ork-sub" data-testid="orker-reason-{orker.orkerId}">Cordoned since {fmtTimestamp(orker.cordonedAt)}: “{orker.cordonReason}”</small>
+								{/if}
+							</td>
+							{#if rowState === 'unreachable'}
+								<td role="cell" colspan="4" class="text-dense text-ink-2" data-testid="orker-unavailable-{orker.orkerId}">
+									Could not be asked: {orker.unavailableReason}. Its load is <strong>unknown</strong>, not zero.
+								</td>
 							{:else}
-								<button
-									type="button"
-									data-testid="orker-cordon-{orker.orkerId}"
-									onclick={() => openCordon(orker)}
-									class="btn btn-sm border-red text-red-strong"
-								>
-									Cordon
-								</button>
+								<td role="cell" data-label="cpu reserved" class="num">{(orker.capacity?.cpu ?? 0) > 0 ? `${orker.reserved?.cpu ?? 0} of ${orker.capacity?.cpu}` : '—'}</td>
+								<td role="cell" data-label="memory reserved" class="num">{(orker.capacity?.memoryBytes ?? 0n) > 0n ? `${formatBytes(orker.reserved?.memoryBytes ?? 0n)} of ${formatBytes(orker.capacity?.memoryBytes ?? 0n)}` : '—'}</td>
+								<td role="cell" data-label="Running tasks" class="num" data-testid="orker-tasks-{orker.orkerId}">{orkerTasks(orker).replace(/^-$/, '—')}</td>
+								<td role="cell" data-label="Open pins" class="num" data-testid="orker-pins-{orker.orkerId}">{orkerPins(orker).replace(/^-$/, '—')}</td>
 							{/if}
-							<CliEquivalent
-								command={orkerCommand(orker)}
-								testid="orker-cli-{orker.orkerId}"
-								label="CLI equivalent for {orker.orkerId}"
-							/>
-						</div>
-					{/if}
-				</li>
-			{/each}
-		</ul>
+							<td role="cell" class="ork-actions">
+								{#if rowState !== 'unreachable'}
+									{#if orker.cordoned}
+										<button type="button" data-testid="orker-uncordon-{orker.orkerId}" disabled={uncordonBusy === orker.orkerId} onclick={() => void uncordon(orker)} class="btn btn-sm">Uncordon</button>
+									{:else}
+										<button type="button" data-testid="orker-cordon-{orker.orkerId}" onclick={() => openCordon(orker)} class="btn btn-sm"><Icon name="pause" />Cordon…</button>
+									{/if}
+									<CliPopover testid="orker-cli-{orker.orkerId}" title="Command line: {orker.orkerId}" commands={[{ label: 'This Orker', command: orkerCommand(orker) }]} />
+								{/if}
+							</td>
+						</tr>
+						{#if orker.pins.length > 0}
+							<tr>
+								<td colspan="7" class="text-dense">
+									<ul class="grid gap-0.5">
+										{#each orker.pins as pin, i (pin.runId + ':' + i)}
+											<li data-testid="orker-pin-{orker.orkerId}-{pin.runId}">
+												pin {pin.pin || '-'} of run
+												<a class="link font-mono" href={withNamespace(`/runs/${pin.runId}`, namespace)}>{pin.runId}</a>
+												— expires {pin.expiresAt ? fmtTimestamp(pin.expiresAt) : '-'}
+											</li>
+										{/each}
+									</ul>
+								</td>
+							</tr>
+						{/if}
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	{/if}
 </div>
 
@@ -248,11 +221,15 @@
 		testid="orker-cordon-dialog"
 		title="Cordon {cordoning.orkerId}?"
 		acceptLabel="Cordon"
+		cancelLabel="Back"
+		glyph="pause"
+		destructive
 		acceptTestid="orker-cordon-accept"
 		cancelTestid="orker-cordon-cancel"
 		busy={cordonBusy}
 		error={cordonError}
 		acceptDisabled={!reason.trim()}
+		acceptDisabledReason="Give a reason to cordon this Orker."
 		onaccept={() => void acceptCordon()}
 		oncancel={() => {
 			cordoning = null;
@@ -265,23 +242,48 @@
 				{cordoning ? orkerLoad(cordoning) : ''}; they finish where they are. It will take no new task
 				and open no new pin until uncordoned or restarted.
 			</p>
-			<label class="mt-3 block text-sm font-medium text-ink" for="orker-cordon-reason"
-				>Reason <span class="font-normal text-ink-muted">(required)</span></label
+			<label class="text-dense font-semibold text-ink" for="orker-cordon-reason"
+				>Reason <span class="font-normal text-ink-3">(required)</span></label
 			>
 			<input
 				id="orker-cordon-reason"
 				data-testid="orker-cordon-reason"
 				bind:value={reason}
 				maxlength="256"
-				class="field mt-1 h-9 w-full px-3 text-sm"
+				required
+				aria-required="true"
+				aria-invalid={reason.trim() ? undefined : 'true'}
+				class="field h-9 w-full px-3 text-base"
 				placeholder="Why is this Orker leaving the pool?"
 			/>
-			<p
-				class="mt-3 overflow-x-auto border border-rule bg-paper-sunken p-2 font-mono text-xs text-ink-secondary"
-				data-testid="orker-cordon-command"
-			>
-				{cordonCommand(cordoning?.orkerId ?? '', reason.trim() || '<reason>')}
-			</p>
 		{/snippet}
 	</ConfirmDialog>
 {/if}
+
+<style>
+	.ork-sub {
+		display: block;
+		margin-top: 2px;
+		font-size: 12.5px;
+		font-weight: 400;
+		color: var(--ink-3);
+		overflow-wrap: anywhere;
+	}
+	.ork-actions {
+		white-space: nowrap;
+		text-align: right;
+	}
+	.ork-actions > :global(*) {
+		vertical-align: middle;
+	}
+	/* A phone keeps one line per Orker, and the table scrolls sideways. */
+	@media (max-width: 640px) {
+		.orkers td,
+		.orkers :global(tbody th) {
+			white-space: nowrap;
+		}
+		.ork-sub {
+			overflow-wrap: normal;
+		}
+	}
+</style>

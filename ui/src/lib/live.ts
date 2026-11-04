@@ -33,21 +33,8 @@ function ms(ts: Timestamp | undefined): number | undefined {
 	return Number(ts.seconds) * 1000 + Math.floor(ts.nanos / 1e6);
 }
 
-/**
- * formatBytes renders a byte count exactly as the CLI does: whole bytes below
- * 1 KiB, then KiB, MiB and GiB with one decimal. Zero prints `0 B` — a live
- * container that has written nothing is a fact, not an absence.
- */
-export function formatBytes(n: bigint | number): string {
-	const value = typeof n === 'bigint' ? Number(n) : n;
-	if (value < 1024) return `${value} B`;
-	let scaled = value / 1024;
-	for (const suffix of ['KiB', 'MiB']) {
-		if (scaled < 1024) return `${scaled.toFixed(1)} ${suffix}`;
-		scaled /= 1024;
-	}
-	return `${scaled.toFixed(1)} GiB`;
-}
+import { formatBytes } from './resources';
+export { formatBytes };
 
 /**
  * formatMemory is a byte count in the Kubernetes binary spelling an Orker's
@@ -150,14 +137,14 @@ export function liveLine(attempt: LiveAttempt | undefined, nowMs: number): LiveL
 			if (wait) {
 				return {
 					kind: 'capacity',
-					text: `Waiting for capacity · every orker of pool ${wait.pool} is full${reservedOfCapacity(wait)} · ${span(waited)}`,
+					text: `Waiting for capacity · every Orker of pool ${wait.pool} is full${reservedOfCapacity(wait)} · ${span(waited)}`,
 					title: `No orker of pool ${wait.pool} has room for another task: an orker takes one only while its per-task cap still fits beside what it has reserved.`,
 					stale: false
 				};
 			}
 			return {
 				kind: 'waiting',
-				text: `Waiting for an orker · ${span(waited)}`,
+				text: `Waiting for capacity · ${span(waited)}`,
 				title: 'No orker has picked this attempt up yet: the pool has no free orker.',
 				stale: false
 			};

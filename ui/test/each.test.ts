@@ -110,13 +110,13 @@ test('a snapshot never moves an item an event already settled back', () => {
 });
 
 test('a never-started item says so in its accessible name', () => {
-	expect(itemAriaLabel(item(97, Status.SUCCEEDED, 2))).toBe('item 97, SUCCEEDED, attempt 2');
-	expect(itemAriaLabel(item(4, Status.CANCELED, 0))).toBe('item 4, CANCELED (never started), attempt 0');
+	expect(itemAriaLabel(item(97, Status.SUCCEEDED, 2))).toBe('item 97, Succeeded, attempt 2');
+	expect(itemAriaLabel(item(4, Status.CANCELED, 0))).toBe('item 4, Canceled (never started), attempt 0');
 	const ran: ItemView = {
 		...item(5, Status.CANCELED),
 		run: create(TaskRunSchema, { taskId: 'convert', item: 5, scheduledAt: timestampFromMs(1) })
 	};
-	expect(itemAriaLabel(ran)).toBe('item 5, CANCELED, attempt 1');
+	expect(itemAriaLabel(ran)).toBe('item 5, Canceled, attempt 1');
 });
 
 test('itemFromUrl reads a well-formed ?item= only', () => {

@@ -222,7 +222,7 @@
 							max={sinceInputValue(new Date(now).toISOString())}
 							class="field h-9 w-full px-3 text-sm"
 						/>
-						<button type="submit" data-testid="dashboard-window-custom-apply" disabled={!customValid} class="btn btn-primary">Apply</button>
+						<button type="submit" data-testid="dashboard-window-custom-apply" disabled={!customValid} class="btn">Apply</button>
 					</form>
 				{/snippet}
 			</Popover>
@@ -278,7 +278,7 @@
 					<tbody>
 						{#each running as run (run.id)}
 							<tr class="transition-colors hover:bg-hover" data-testid="running-{run.id}">
-								<td><a class="link font-mono text-sm" title={run.id} href={withNamespace(`/runs/${run.id}`, data.namespace)}
+								<td><a class="link font-mono text-sm" data-tip={run.id} href={withNamespace(`/runs/${run.id}`, data.namespace)}
 										><span class="max-sm:sr-only">{run.id}</span><span aria-hidden="true" class="sm:hidden">{shortRunId(run.id)}</span></a
 									></td>
 								<td class="text-ink-secondary">{run.orkflowName}{#if run.orkflowVersion}<span class="font-mono">@{run.orkflowVersion}</span>{/if}</td>

@@ -437,7 +437,7 @@
 							<span class="font-mono text-sm font-semibold text-ink">{schedule.name}</span>
 							<span
 								data-testid="schedule-row-state-{schedule.name}"
-								title={state === 'paused' ? schedule.note : state === 'unavailable' ? schedule.unavailableReason : ''}
+								data-tip={state === 'paused' ? schedule.note : state === 'unavailable' ? schedule.unavailableReason : ''}
 								class="stamp {stateClasses[
 									state
 								]}">{state}</span
@@ -469,7 +469,7 @@
 											class="font-mono link">{outcome.runId}</a
 										>
 									{:else if outcome?.kind === 'refused'}
-										<span class="text-red-strong" title={outcome.refusal}>refused</span>
+										<span class="text-red-strong" data-tip={outcome.refusal}>refused</span>
 									{:else}
 										-
 									{/if}
@@ -536,7 +536,7 @@
 								deleting = schedule.name;
 								actionError = '';
 							}}
-							class="btn btn-sm border-red text-red-strong hover:bg-red-tint"
+							class="btn btn-sm"
 						>
 							Delete
 						</button>

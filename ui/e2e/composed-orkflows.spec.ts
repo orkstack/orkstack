@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { selectTask } from './uiHelpers';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -162,6 +163,9 @@ test('a composed task links to its child run and rolls up its tasks live', async
 	});
 	page.on('websocket', (socket) => childSockets.push(socket.url()));
 	const runId = await submit('composed-release');
+	// A short window keeps the child panel below the fold whatever the page
+	// above the task list grows to: the graph, the facts and the cards.
+	await page.setViewportSize({ width: 1280, height: 400 });
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
 	await expect(page.getByTestId('task-release-child')).toBeAttached();
 	await expect(page.getByTestId('task-release-child-orkflow')).toHaveText('release-block@0.1.0');
@@ -169,6 +173,8 @@ test('a composed task links to its child run and rolls up its tasks live', async
 	await expect(link).toBeAttached({ timeout: 120_000 });
 	const childId = ((await link.textContent()) ?? '').trim();
 	expect(childId).toMatch(/^ork-\d+-\d+$/);
+	// The row names the same child, and links to it.
+	await expect(page.getByTestId('task-release-child-run')).toHaveAttribute('href', new RegExp(`/runs/${childId}\\?`));
 	await expect(page.getByTestId('task-release-child')).not.toBeInViewport();
 	expect(childReads.filter((id) => id === childId), 'no child read before the card is seen').toHaveLength(0);
 	expect(childSockets.filter((url) => url.includes(`/ws/runs/${childId}?`)), 'no child socket before the card is seen').toHaveLength(0);
@@ -179,12 +185,14 @@ test('a composed task links to its child run and rolls up its tasks live', async
 	expect(childSockets.filter((url) => url.includes(`/ws/runs/${childId}?`)).length <= 1).toBe(true);
 	note(`composed card below the fold: 0 child reads and 0 child sockets until scrolled to; then ${childReads.filter((id) => id === childId).length} read(s)`);
 	await page.setViewportSize({ width: 1280, height: 720 });
+	// Chosen, so its panel stays once the page has moved on to the next task.
+	await selectTask(page, 'release');
 	await page.getByTestId('task-release-child').scrollIntoViewIfNeeded();
-	await expect(page.getByTestId('task-release-child-task-sign-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
-	await expect(page.getByTestId('task-release-child-task-publish-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('task-release-child-task-sign-status')).toHaveText('Succeeded', { timeout: 120_000 });
+	await expect(page.getByTestId('task-release-child-task-publish-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await expect(page.getByTestId('task-release-child-rollup')).toHaveText('2 tasks: 2 succeeded');
-	await expect(page.getByTestId('task-release-child-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('task-release-child-status')).toHaveText('Succeeded', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	note(`run ${runId}: release started child ${childId}; the roll-up turned 2 tasks SUCCEEDED`);
 	await shot(page, 'screenshot-child-rollup.png');
 });
@@ -195,22 +203,25 @@ test('the child run names its parent and the parent lists its children', async (
 	const childId = await childRunId(page, 'release');
 	await page.getByTestId('task-release-child-link').click();
 	await page.waitForURL(new RegExp(`/runs/${childId}`));
-	await expect(page.getByTestId('run-origin-kind')).toHaveText('parent-run');
-	await expect(page.getByTestId('run-origin-link')).toHaveText(runId);
+	await expect(page.getByTestId('run-origin-kind')).toHaveText('Parent run');
+	// The link names the parent in its short form (first four and last six characters).
+	await expect(page.getByTestId('run-origin-link')).toHaveText(`${runId.slice(0, 4)}…${runId.slice(-6)}`);
+	await expect(page.getByTestId('run-origin-link')).toHaveAttribute('href', `/runs/${runId}?ns=${NS}`);
 	await shot(page, 'screenshot-child-origin.png');
 	await page.getByTestId('run-origin-link').click();
 	await page.waitForURL(new RegExp(`/runs/${runId}`));
 	// O1: Child runs is the runs list filtered to this run's children, and
-	// its CLI equivalent is the same two filters.
-	await page.getByTestId('run-children-cli-trigger').click();
-	await expect(page.getByTestId('run-children-cli-command')).toContainText(
-		`run list --filter origin.kind=PARENT_RUN --filter origin.id=${runId}`
-	);
-	await page.keyboard.press('Escape');
+	// its CLI equivalent is the same two filters. (The run page no longer
+	// prints that command; the filtered list's own header popover does.)
 	await page.getByTestId('run-children-link').click();
 	await page.waitForURL(/\/runs\?/);
 	expect(new URL(page.url()).searchParams.getAll('filter')).toEqual([`origin.id=${runId}`, 'origin.kind=PARENT_RUN']);
-	await expect(page.getByText(childId)).toBeVisible({ timeout: 30_000 });
+	await page.getByTestId('runs-cli-trigger').click();
+	await expect(page.getByTestId('runs-cli-command-0')).toContainText(`run list`);
+	await expect(page.getByTestId('runs-cli-command-0')).toContainText(`--filter origin.kind=PARENT_RUN`);
+	await expect(page.getByTestId('runs-cli-command-0')).toContainText(`--filter origin.id=${runId}`);
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId(`run-row-${childId}`)).toBeVisible({ timeout: 30_000 });
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(1);
 	note(`child ${childId} names parent ${runId}; the parent's Child runs list shows it`);
 	await shot(page, 'screenshot-children-list.png');
@@ -219,13 +230,13 @@ test('the child run names its parent and the parent lists its children', async (
 test('declared outputs are the run output and a downstream task read them', async ({ page }) => {
 	const runId = await submit('composed-release');
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
-	await expect(page.getByTestId('run-status')).toHaveText('SUCCEEDED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await expect(page.getByTestId('run-output-kind')).toHaveText('Declared outputs');
 	await expect(page.getByTestId('run-output')).toContainText('"digest": "sha256:', { timeout: 60_000 });
 	const output = (await page.getByTestId('run-output').textContent()) ?? '';
 	const digest = /"digest": "(sha256:[0-9a-f]{64})"/.exec(output)?.[1] ?? '';
 	expect(digest).not.toBe('');
-	await page.getByTestId('task-log-toggle-announce').click();
+	await selectTask(page, 'announce');
 	await expect(page.getByTestId('task-log-announce')).toContainText(`released ${digest} at https://registry.example/records/${digest}`, {
 		timeout: 60_000
 	});
@@ -236,12 +247,12 @@ test('declared outputs are the run output and a downstream task read them', asyn
 test('a failed child fails the parent task with its reason and a link', async ({ page }) => {
 	const runId = await submit('composed-failing');
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
-	await expect(page.getByTestId('run-status')).toHaveText('FAILED', { timeout: 120_000 });
+	await expect(page.getByTestId('run-status')).toHaveText('Failed', { timeout: 120_000 });
 	await expect(page.getByTestId('task-release-error')).toContainText('CHILD_RUN_FAILED');
 	await expect(page.getByTestId('task-release-error')).toContainText('(failing-block@0.1.0) failed');
 	await expect(page.getByTestId('task-release-child-link')).toBeVisible();
 	await page.getByTestId('task-release-child').scrollIntoViewIfNeeded();
-	await expect(page.getByTestId('task-release-child-task-attest-status')).toHaveText('FAILED', { timeout: 60_000 });
+	await expect(page.getByTestId('task-release-child-task-attest-status')).toHaveText('Failed', { timeout: 60_000 });
 	note(`run ${runId}: release FAILED CHILD_RUN_FAILED naming failing-block@0.1.0`);
 	await shot(page, 'screenshot-child-failed.png');
 });
@@ -251,12 +262,12 @@ test('cancelling the parent cancels the child', async ({ page }) => {
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
 	const childId = await childRunId(page, 'release');
 	await page.getByTestId('task-release-child').scrollIntoViewIfNeeded();
-	await expect(page.getByTestId('task-release-child-task-wait-status')).toHaveText('RUNNING', { timeout: 120_000 });
+	await expect(page.getByTestId('task-release-child-task-wait-status')).toHaveText('Running', { timeout: 120_000 });
 	await page.getByTestId('cancel-run').click();
 	await expect(page.getByTestId('cancel-run-confirm')).toBeVisible();
 	await page.getByTestId('cancel-run-accept').click();
-	await expect(page.getByTestId('run-status')).toHaveText('CANCELED', { timeout: 120_000 });
-	await expect(page.getByTestId('task-release-status')).toHaveText('CANCELED');
+	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 120_000 });
+	await expect(page.getByTestId('task-release-status')).toHaveText('Canceled');
 	const child = await rpc<{ run: { status: string } }>('RunService/GetRun', { runId: childId, namespace: NS });
 	expect(child.run.status).toBe('STATUS_CANCELED');
 	note(`run ${runId} canceled; child ${childId} ended ${child.run.status}`);
@@ -271,7 +282,7 @@ test('the Orkflow page shows the child reference, its digest and the outputs', a
 	// stays whole, and the full reference is the line's title.
 	const ref = page.getByTestId('dag-node-release-orkflow');
 	await expect(ref.locator('title')).toHaveText('orkflow release-block@0.1.0');
-	expect(await ref.evaluate((el) => el.lastChild?.textContent)).toBe('orkflow release-…@0.1.0');
+	expect(await ref.evaluate((el) => el.lastChild?.textContent)).toBe('orkflow relea…@0.1.0');
 	await expect(page.getByTestId('orkflow-output-digest')).toContainText('{{ .tasks.release.output.digest }}');
 	await shot(page, 'screenshot-orkflow-page.png');
 	await page.getByTestId('task-child-link-release').click();

@@ -587,20 +587,43 @@ writeFileSync(path.join(generated, 'nojs-theme.css'), darkMediaCss(tokens));
 // The UI's icons (ui/src/lib/icons.ts) as data, so the site reads the UI's
 // one icon set without bundling the UI's TypeScript (whose tsconfig needs
 // the UI's generated .svelte-kit directory). Each entry is one line,
-// `name: ['d', …],`; anything else inside the object is refused.
+// `name: [['tag', {attr: 'value', …}], …],` (Harbour's element lists); every
+// element is drawn as path data here, so the site's Icon stays one <path> each.
 {
 	const rel = 'ui/src/lib/icons.ts';
 	const text = readFileSync(path.join(repoRoot, rel), 'utf8');
 	const body = /export const ICONS = \{\n([\s\S]*?)\n\} as const;/.exec(text);
 	if (!body) fail(`${rel}: no \`export const ICONS = { … } as const;\` object`);
 	const icons = {};
+	const n = (v) => Number(v ?? 0);
+	const asPath = (tag, a) => {
+		if (tag === 'path') return a.d;
+		if (tag === 'circle' || tag === 'ellipse') {
+			const rx = n(a.rx ?? a.r), ry = n(a.ry ?? a.r), cx = n(a.cx), cy = n(a.cy);
+			return `M${cx - rx} ${cy}a${rx} ${ry} 0 1 0 ${2 * rx} 0a${rx} ${ry} 0 1 0 ${-2 * rx} 0`;
+		}
+		if (tag === 'rect') {
+			const x = n(a.x), y = n(a.y), w = n(a.width), h = n(a.height), r = Math.min(n(a.rx), w / 2, h / 2);
+			return r > 0
+				? `M${x + r} ${y}h${w - 2 * r}a${r} ${r} 0 0 1 ${r} ${r}v${h - 2 * r}a${r} ${r} 0 0 1 ${-r} ${r}h${-(w - 2 * r)}a${r} ${r} 0 0 1 ${-r} ${-r}v${-(h - 2 * r)}a${r} ${r} 0 0 1 ${r} ${-r}z`
+				: `M${x} ${y}h${w}v${h}h${-w}z`;
+		}
+		return null;
+	};
 	for (const line of body ? body[1].split('\n') : []) {
-		const m = /^\t([a-zA-Z]+): \[((?:'[^']*'(?:, )?)+)\],?$/.exec(line);
+		const m = /^\t'?([a-zA-Z][a-zA-Z0-9-]*)'?: \[(.*)\],?$/.exec(line);
 		if (!m) {
 			fail(`${rel}: cannot read the icon line ${JSON.stringify(line)}`);
 			continue;
 		}
-		icons[m[1]] = [...m[2].matchAll(/'([^']*)'/g)].map((x) => x[1]);
+		const paths = [];
+		for (const el of m[2].matchAll(/\['(\w+)', \{([^}]*)\}\]/g)) {
+			const attrs = Object.fromEntries([...el[2].matchAll(/'([\w-]+)': '([^']*)'/g)].map((x) => [x[1], x[2]]));
+			const d = asPath(el[1], attrs);
+			if (d === null) fail(`${rel}: icon ${m[1]} has an element the site cannot draw: ${el[1]}`);
+			else paths.push(d);
+		}
+		icons[m[1]] = paths;
 	}
 	if (body && Object.keys(icons).length === 0) fail(`${rel}: no icons read`);
 	writeFileSync(path.join(generated, 'icons.json'), JSON.stringify(icons, null, '\t') + '\n');

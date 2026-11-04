@@ -283,7 +283,7 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 				bind:value={triggerName}
 				pattern={SCOPE_SLUG_PATTERN}
 				maxlength={200}
-				title="lowercase letters, digits and hyphens, starting with a letter"
+				data-tip="lowercase letters, digits and hyphens, starting with a letter"
 				placeholder="github-deploy"
 				class="field h-9 w-full px-3 text-sm"
 			/>
@@ -408,7 +408,7 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 								deleting = trigger.id;
 								deleteError = '';
 							}}
-							class="btn btn-sm border-red text-red-strong hover:bg-red-tint"
+							class="btn btn-sm"
 						>
 							Delete
 						</button>
@@ -471,7 +471,7 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 						bind:value={editName}
 						pattern={SCOPE_SLUG_PATTERN}
 						maxlength={200}
-						title="lowercase letters, digits and hyphens, starting with a letter"
+						data-tip="lowercase letters, digits and hyphens, starting with a letter"
 						class="field h-9 w-full px-3 text-sm"
 					/>
 				</div>

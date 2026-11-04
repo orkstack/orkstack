@@ -20,10 +20,62 @@ const fixture = `${import.meta.dir}/fixtures/testid-baseline.txt`;
 
 /** Shape → why it may be gone (and the spec change that goes with it). */
 const ALLOWED_REMOVALS: Record<string, string> = {
+	// A run's row draws its status itself, at thousands of rows: the same id, on its own span.
+	'prop task-{}-status': 'the row draws its status itself',
+	'id pool-orkers-refresh-{}': "The Pools page's one Refresh reads each pool's Orkers again (admin-orkers.spec.ts).",
+	'id task-{}-item-panel-cli': "A selected item's commands joined the run's one terminal icon, run-inspect-cli (each-fan-out.spec.ts).",
+	'prop activity-inspect-cli':
+		"Inspect a reference's command joined the Activities header's popover, activities-cli: one per screen (admin.spec.ts).",
+	'id task-{}-item-panel':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-artifacts':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-attempt':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-exit':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-label':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-live':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-orker':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-item-panel-status':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-live':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-live-orker':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'id task-{}-running-for':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'prop task-{}-item-panel-cache':
+		'The Item card (ItemCard.svelte) derives this from its prefix prop, task-{id} or task-{id}-item-panel: the same id, a shape the baseline cannot see; run-page and each-fan-out specs read it after selecting the task.',
+	'prop task-{}-item-panel-cli-artifacts':
+		'One command-line popover per Item card, task-{}-item-panel-cli, holds what three buttons held.',
+	'prop task-{}-item-panel-cli-attempts':
+		'One command-line popover per Item card, task-{}-item-panel-cli, holds what three buttons held.',
+	'prop task-{}-item-panel-cli-logs':
+		'One command-line popover per Item card, task-{}-item-panel-cli, holds what three buttons held.',
+	'id run-elapsed':
+		'The Timing card went with the frozen design; run-lasted in the facts strip says how long the run took (run-operations, run-sheet-polish).',
 	'id {}-retryable':
 		"FailurePanel no longer prints the error's bare retryable flag: what happened to the retries is one phrase read off the failing task's tries ({testid}-retry-state), so the run's cloud and the task's panel say the same thing (finish review 2026-10-22, run page contradictions). No spec read it; no spec changes.",
 	'id {}-filters-none':
-		"ListFilter's zero-state sentence is gone: the filter toolbar is one row and says nothing while no filter is in force (finish review, list-filter chrome). No spec read it; no spec changes."
+		"ListFilter's zero-state sentence is gone: the filter toolbar is one row and says nothing while no filter is in force (finish review, list-filter chrome). No spec read it; no spec changes.",
+	// Harbour (phase 2 of the UI revamp, 2026-11-01): the command line lives only
+	// behind the terminal icon (brief §6.4), one popover per screen or task row.
+	'id activity-build-command': 'Activities: the local build command is in the page\'s command-line popover (activities-cli), not printed on the page. admin.spec reads the popover.',
+	'id activity-test-command': 'Activities: the contract-test command is in the page\'s command-line popover (activities-cli). admin.spec reads the popover.',
+	'id activity-local-tools': 'Activities: the "Local activity tools" section is gone; its commands are in activities-cli.',
+	'id activity-local-tool-copied': 'Activities: the popover says what was copied in its own status line (activities-cli-status).',
+	'id orker-cordon-command': 'Pools: the cordon dialog no longer prints its orkctl command (brief §6.4); the Orker row\'s popover (orker-cli-{id}) lists it.',
+	'prop run-children-cli': "Run page: listing a run's child runs is the header's \"Child runs\" link; the command is in the run's popover.",
+	'prop run-stability-cli': 'Run page: the retry-history command is in the run popover, not beside the toggle.',
+	'prop run-task-{}-inspect-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	'prop run-task-{}-logs-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	'prop run-task-{}-replay-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	'prop run-task-{}-timing-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	'prop task-{}-cache-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli."
 };
 
 function sources(): string[] {

@@ -148,15 +148,15 @@ function main() {
 	// The faces: the UI's own packages, at the UI's own versions.
 	const uiPkg = JSON.parse(readFileSync(path.join(repoRoot, 'ui', 'package.json'), 'utf8'));
 	const sitePkg = JSON.parse(readFileSync(path.join(siteRoot, 'package.json'), 'utf8'));
-	for (const face of ['@fontsource-variable/archivo-narrow', '@fontsource-variable/spline-sans-mono']) {
+	for (const face of ['@fontsource-variable/inter', '@fontsource-variable/jetbrains-mono']) {
 		const ui = (uiPkg.dependencies?.[face] ?? uiPkg.devDependencies?.[face] ?? '').replace(/^[\^~]/, '');
 		const site = sitePkg.dependencies?.[face] ?? '';
 		if (!ui) problems.push(`ui/package.json no longer installs ${face}; the site's face must follow the UI's`);
 		else if (site !== ui) problems.push(`site/package.json pins ${face}@${site}, the UI ${ui}`);
 	}
 	for (const [name, value] of tokens.invariant) {
-		if (name === '--font-sans' && !/Archivo Narrow Variable/.test(value)) problems.push('tokens.css --font-sans is no longer Archivo Narrow: update the face the site installs');
-		if (name === '--font-mono' && !/Spline Sans Mono Variable/.test(value)) problems.push('tokens.css --font-mono is no longer Spline Sans Mono: update the face the site installs');
+		if (name === '--font-ui' && !/Inter Variable/.test(value)) problems.push('tokens.css --font-ui is no longer Inter: update the face the site installs');
+		if (name === '--font-code' && !/JetBrains Mono Variable/.test(value)) problems.push('tokens.css --font-code is no longer JetBrains Mono: update the face the site installs');
 	}
 
 	// Media budget: what a page may make a visitor download. Screenshots live
