@@ -346,7 +346,7 @@
 			</div>
 			<div class="min-w-0">
 				<dt>Security profile</dt>
-				<dd class="break-words" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
+				<dd class="[overflow-wrap:anywhere]" data-testid="orker-security-profile">{orker.securityProfile || '—'}</dd>
 			</div>
 			<div class="min-w-0">
 				<dt>Max concurrent</dt>

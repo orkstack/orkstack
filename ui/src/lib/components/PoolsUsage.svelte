@@ -148,6 +148,9 @@
 		font-weight: 400;
 		color: var(--ink-3);
 	}
+	.viz figcaption {
+		text-wrap: pretty;
+	}
 	.viz figcaption,
 	.viz-none {
 		margin: 0;

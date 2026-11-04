@@ -194,6 +194,7 @@
 	.is-running {
 		border-color: var(--run);
 		background: var(--run-tint);
+		color: var(--ink-2);
 	}
 	.is-wait::before {
 		width: 9px;

@@ -3473,7 +3473,7 @@
 	.kv-stack :global(dd) {
 		padding: 2px 16px 9px;
 		text-align: left;
-		overflow-wrap: normal;
+		overflow-wrap: anywhere;
 	}
 	.valbox {
 		max-height: 224px;
