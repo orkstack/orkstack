@@ -108,8 +108,9 @@ function finished(id: string): void {
 }
 
 // The HTTP API order-saga and approval-gate call (media/api-stub.mjs): it listens
-// on the default bridge's gateway, which an activity container reaches, and
-// refuses one order's shipment.
+// on the default bridge's gateway, which an activity container reaches as
+// host.docker.internal (CONTRIBUTING.md, "Linux hosts"), and refuses one order's
+// shipment. The name is what a recording shows in a run's inputs.
 const API_PORT = 18099;
 let api = '';
 const REFUSED_ORDER = 'order-1042';
@@ -125,7 +126,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 
 async function startApi(): Promise<ChildProcess> {
 	const gateway = execFileSync('docker', ['network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}'], { encoding: 'utf8' }).trim();
-	api = `http://${gateway}:${API_PORT}`;
+	api = `http://host.docker.internal:${API_PORT}`;
 	const child = spawn('node', [path.join(repo, 'site', 'media', 'api-stub.mjs'), gateway, String(API_PORT), REFUSED_ORDER], { stdio: ['ignore', 'pipe', 'inherit'] });
 	started.push(child);
 	await new Promise((resolve, reject) => {
