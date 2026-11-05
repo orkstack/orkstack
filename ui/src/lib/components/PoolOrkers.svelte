@@ -296,7 +296,7 @@
 	}
 	/* A long status sentence must not squeeze the id into a sliver. */
 	.orkers :global(tbody th) {
-		min-width: 11rem;
+		min-width: 8.5rem;
 	}
 	.ork-actions {
 		white-space: nowrap;

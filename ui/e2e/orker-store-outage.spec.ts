@@ -222,6 +222,15 @@ test.afterAll(async () => {
 	removeBucket(BUCKET);
 });
 
+/** At a desktop width the Orkers table fits its frame: every row's actions show without scrolling. */
+async function expectOrkersFit(page: Page) {
+	const overflow = await page.getByRole('table', { name: 'Orkers of pool main' }).evaluate((table) => {
+		const frame = table.parentElement as HTMLElement;
+		return frame.scrollWidth - frame.clientWidth;
+	});
+	expect(overflow).toBeLessThanOrEqual(0);
+}
+
 test('A store outage reads apart from an operator\'s cordon, and offers no Uncordon', async ({ page }) => {
 	test.setTimeout(180_000);
 	await open(page);
@@ -256,7 +265,8 @@ test('A store outage reads apart from an operator\'s cordon, and offers no Uncor
 	const stamp = await page.getByTestId('pool-card-main').locator('.phead .stamp').boundingBox();
 	expect((stamp?.x ?? Infinity) + (stamp?.width ?? 0)).toBeLessThanOrEqual((card?.x ?? 0) + (card?.width ?? 0));
 	const idCell = await page.getByTestId(`orker-row-${ORKER}`).locator('th').boundingBox();
-	expect(idCell?.width ?? 0).toBeGreaterThanOrEqual(11 * 16);
+	expect(idCell?.width ?? 0).toBeGreaterThanOrEqual(8.5 * 16);
+	await expectOrkersFit(page);
 	await page.setViewportSize({ width: 1440, height: 900 });
 
 	// The top bar's Jump button is not this page's: its name leaves out the
@@ -308,6 +318,8 @@ test('An operator\'s cordon beside an outage shows both, and Uncordon clears onl
 	await expect(page.getByTestId(`orker-outage-stamp-${ORKER}`)).toHaveText('object storage unreachable');
 	await expect(page.getByTestId(`orker-reason-${ORKER}`)).toContainText(REASON);
 	await expect(page.getByTestId(`orker-outage-${ORKER}`)).toContainText("stays cordoned until an operator's cordon is cleared too");
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await expectOrkersFit(page);
 	await shot(page, 'orker-store-outage-and-operator.png');
 
 	await page.getByTestId(`orker-uncordon-${ORKER}`).click();
