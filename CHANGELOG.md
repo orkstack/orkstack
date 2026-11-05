@@ -146,9 +146,9 @@ version's own, and its text is the release's notes on GitHub, word for word.
     steps. It is gone from the Apply page's gallery and from the site's example
     pages; [Build an activity image](https://github.com/orkstack/orkstack/blob/main/site/content/how-to/build-an-activity-image.md)
     links it, and its old address redirects there.
-- The quickstart's Orker and `make up`'s are now pin hosts, one pin at a time
-  (`ORK_ORKER_MAX_PINS: "1"`), so an Orkflow with a pin runs on them with no
-  setting of yours. There is nothing to do.
+- The quickstart's Orker is now a pin host, one pin at a time
+  (`ORK_ORKER_MAX_PINS: "1"`), so an Orkflow with a pin runs on it with no setting
+  of yours. There is nothing to do.
 - The documentation site moved to ten sections, from Get started to Concepts,
   so its pages have new addresses. An old address redirects to the page's new
   one, so there is nothing to do.

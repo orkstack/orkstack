@@ -73,7 +73,7 @@
 			"alt": "A screen recording of a failed run of order-saga: the banner names shipped and its reason, View stderr opens the task’s own output, the side cards say how it failed and how often, the graph shows its failure handlers ran, and Run again opens with the run’s inputs.",
 			"caption": "Open the failed task, read its stderr and how it failed, then run it again.",
 			"title": "Find why a run failed",
-			"duration": "0:31",
+			"duration": "0:32",
 			"width": 1280,
 			"height": 800,
 			"mp4": "video-why-failed-light.mp4",

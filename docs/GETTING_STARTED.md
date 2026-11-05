@@ -119,8 +119,8 @@ orkctl run plan each-fan-out
 orkctl run submit each-fan-out --watch
 ```
 
-Like every example, it needs no inputs: [`examples/README.md`](../examples/README.md)
-lists what each one does need. `run plan` says which tasks would run and in what
+It needs no inputs, and [`examples/README.md`](../examples/README.md) lists what
+each of the other examples does need. `run plan` says which tasks would run and in what
 order, and starts nothing.
 `run submit --watch` starts a run and follows its events until it ends. Each
 task is an ordinary container: it reads its inputs under `/orkstack/input`,
