@@ -69,11 +69,13 @@ text is the release's notes on GitHub, word for word, above a list of the
 release's image digests (see "The changelog" in
 [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).
 
-The entry says what users must do about the change, if anything, and every
-security fix to what a release publishes has one, a vulnerable dependency's
-bump among them. A change that cannot affect users gets none: a documentation,
-test or refactoring change, internal tooling, a dependency bump that cannot
-affect them, or a CI change that leaves what a release publishes as it was.
+The entry is one or two sentences that say what changed and what users must do
+about it, if anything, and link to the docs for the detail. Every security fix
+to what a release publishes has one, a vulnerable dependency's bump among them.
+A change that cannot affect users gets none: a documentation, test or
+refactoring change, a cosmetic change to the UI, internal tooling, a dependency
+bump that cannot affect them, or a CI change that leaves what a release
+publishes as it was.
 
 ## See also
 
