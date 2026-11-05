@@ -2069,9 +2069,10 @@ func (x *LiveAttempt) GetStoreOutageWait() *StoreOutageWait {
 	return nil
 }
 
-// StoreOutageWait says why a SCHEDULED attempt has not started: its pool's
-// Orkers have cordoned themselves because object storage does not answer them
-// (Orker.store_outage; docs/DEPLOY.md, "When object storage goes away"). A
+// StoreOutageWait says why a SCHEDULED attempt has not started: no Orker of its
+// pool takes new tasks, and at least one has cordoned itself because object
+// storage does not answer it and for no other reason (Orker.store_outage;
+// docs/DEPLOY.md, "When object storage goes away"). A
 // reading of the inventory at most five seconds old, never a record.
 type StoreOutageWait struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2079,7 +2080,7 @@ type StoreOutageWait struct {
 	Pool string `protobuf:"bytes,1,opt,name=pool,proto3" json:"pool,omitempty"`
 	// orkers is how many Orkers of the pool are cordoned for that reason alone.
 	Orkers int32 `protobuf:"varint,2,opt,name=orkers,proto3" json:"orkers,omitempty"`
-	// since is when the first of them cordoned itself.
+	// since is when the earliest of those Orkers cordoned itself.
 	Since         *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=since,proto3" json:"since,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

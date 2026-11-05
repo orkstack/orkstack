@@ -429,8 +429,8 @@ reached by is not answered here, and the other way round.
   answer is none it asks the Orker inventory — the presence channel, and each
   Orker on its own control channel, the read `orkctl orker list` makes — and
   refuses the submission only when no uncordoned Orker of the pool answers
-  there either (one waiting out a store outage counts as uncordoned; see "When
-  object storage goes away"), naming the pool, the tasks and the fix:
+  there either (one waiting out a store outage alone counts as uncordoned; see
+  "When object storage goes away"), naming the pool, the tasks and the fix:
 
   ```
   pool "gpu" (namespace "payments", tasks: settle) has no live Orkers, so nothing
@@ -2820,7 +2820,7 @@ What that costs, stated so nobody has to discover it:
   larger of the channel's live pollers and the pool's uncordoned Orkers that
   answer on their own channels, so a pool whose every Orker is busy, and so
   polls nothing on its channel, still reports them. An Orker waiting out a store
-  outage counts as uncordoned here ("When object storage goes away").
+  outage alone counts as uncordoned here ("When object storage goes away").
 - **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
   minutes after its worker died, so a record older than the freshness window is
   dropped before anything is counted or timestamped. A pool whose Orkers have

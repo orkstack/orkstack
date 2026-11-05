@@ -2593,16 +2593,17 @@ release without these checks ever reports.
 
 ### StoreOutageWait
 
-StoreOutageWait says why a SCHEDULED attempt has not started: its pool's
-Orkers have cordoned themselves because object storage does not answer them
-(Orker.store_outage; docs/DEPLOY.md, "When object storage goes away"). A
+StoreOutageWait says why a SCHEDULED attempt has not started: no Orker of its
+pool takes new tasks, and at least one has cordoned itself because object
+storage does not answer it and for no other reason (Orker.store_outage;
+docs/DEPLOY.md, "When object storage goes away"). A
 reading of the inventory at most five seconds old, never a record.
 
 | Field | Type | Description |
 |---|---|---|
 | `pool` | `string` | pool is the pool the attempt waits on, as TaskRun.pool spells it. |
 | `orkers` | `int32` | orkers is how many Orkers of the pool are cordoned for that reason alone. |
-| `since` | `google.protobuf.Timestamp` | since is when the first of them cordoned itself. |
+| `since` | `google.protobuf.Timestamp` | since is when the earliest of those Orkers cordoned itself. |
 
 ### StreamEventsRequest
 

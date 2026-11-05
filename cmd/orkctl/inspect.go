@@ -58,9 +58,10 @@ func newRunInspectCommand(g *globalFlags) *cobra.Command {
 			"An attempt no Orker has started is waiting for an orker on its pool. When\n" +
 			"every Orker of that pool is at its declared capacity, the footer says it\n" +
 			"is waiting for capacity instead, with what stands reserved against what\n" +
-			"the pool's Orkers admit within. When the pool's Orkers have cordoned\n" +
-			"themselves because object storage does not answer, it says it is waiting\n" +
-			"for object storage, which uses no attempt.\n\n" +
+			"the pool's Orkers admit within. When no Orker of that pool takes new\n" +
+			"tasks and at least one has cordoned itself only because object storage\n" +
+			"does not answer, it says it is waiting for object storage, which uses no\n" +
+			"attempt.\n\n" +
 			"With --watch the table is printed again every --interval until the run is\n" +
 			"terminal, and the exit code is the run's (0 succeeded, 2 failed,\n" +
 			"3 canceled). --json prints the raw response; with --watch, one compact\n" +

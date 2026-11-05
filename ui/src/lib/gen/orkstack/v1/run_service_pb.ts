@@ -1075,9 +1075,10 @@ export const LiveAttemptSchema: GenMessage<LiveAttempt> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_run_service, 20);
 
 /**
- * StoreOutageWait says why a SCHEDULED attempt has not started: its pool's
- * Orkers have cordoned themselves because object storage does not answer them
- * (Orker.store_outage; docs/DEPLOY.md, "When object storage goes away"). A
+ * StoreOutageWait says why a SCHEDULED attempt has not started: no Orker of its
+ * pool takes new tasks, and at least one has cordoned itself because object
+ * storage does not answer it and for no other reason (Orker.store_outage;
+ * docs/DEPLOY.md, "When object storage goes away"). A
  * reading of the inventory at most five seconds old, never a record.
  *
  * @generated from message orkstack.v1.StoreOutageWait
@@ -1098,7 +1099,7 @@ export type StoreOutageWait = Message<"orkstack.v1.StoreOutageWait"> & {
   orkers: number;
 
   /**
-   * since is when the first of them cordoned itself.
+   * since is when the earliest of those Orkers cordoned itself.
    *
    * @generated from field: google.protobuf.Timestamp since = 3;
    */

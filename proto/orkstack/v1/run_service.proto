@@ -606,16 +606,17 @@ message LiveAttempt {
   StoreOutageWait store_outage_wait = 21;
 }
 
-// StoreOutageWait says why a SCHEDULED attempt has not started: its pool's
-// Orkers have cordoned themselves because object storage does not answer them
-// (Orker.store_outage; docs/DEPLOY.md, "When object storage goes away"). A
+// StoreOutageWait says why a SCHEDULED attempt has not started: no Orker of its
+// pool takes new tasks, and at least one has cordoned itself because object
+// storage does not answer it and for no other reason (Orker.store_outage;
+// docs/DEPLOY.md, "When object storage goes away"). A
 // reading of the inventory at most five seconds old, never a record.
 message StoreOutageWait {
   // pool is the pool the attempt waits on, as TaskRun.pool spells it.
   string pool = 1;
   // orkers is how many Orkers of the pool are cordoned for that reason alone.
   int32 orkers = 2;
-  // since is when the first of them cordoned itself.
+  // since is when the earliest of those Orkers cordoned itself.
   google.protobuf.Timestamp since = 3;
 }
 

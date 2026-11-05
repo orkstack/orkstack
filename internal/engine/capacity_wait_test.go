@@ -222,6 +222,11 @@ func TestStoreOutageWaits_OnlyWhenNoOrkerOfThePoolTakesNewTasks(t *testing.T) {
 		{"an operator's cordon alone", fleetOf(operator), 0, time.Time{}},
 		{"no Orker", fleetOf(), 0, time.Time{}},
 		{"another pool's outage", fleetOf(editedOrker(outage("cpu-1", early), func(o *orkstackv1.DescribeOrkerResult) { o.Pool = "cpu" })), 0, time.Time{}},
+		{"a live Orker did not answer, and could serve the pool", func() *fakeFleet {
+			fleet := fleetOf(outage("gpu-1", early))
+			fleet.silent = []string{"gpu-2"}
+			return fleet
+		}(), 0, time.Time{}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -20,7 +20,7 @@ A submission refused in this section leaves nothing behind: no run id is minted 
 
 ### "has no live Orkers, so nothing would pick these tasks up"
 
-**Cause.** The pool a task resolves to has no Orker that would take it: nothing polls the pool's channel, and no uncordoned Orker of the pool answers on its own channel (one waiting out a store outage counts as uncordoned). The second check is what keeps a busy pool live, because an Orker whose every task slot is taken stops polling the pool's channel but still answers on its own. An Orker that does not answer within five seconds is not counted, and the engine logs `a pool reads empty while some live Orkers did not answer when asked`. The engine refuses the submit with `failed_precondition`, before a run id exists (`internal/engine/pools.go`, `PoolEmptyError`; `internal/api/service.go`, `poolPlanError`). The rule is in ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
+**Cause.** The pool a task resolves to has no Orker that would take it: nothing polls the pool's channel, and no uncordoned Orker of the pool answers on its own channel (one waiting out a store outage alone counts as uncordoned). The second check is what keeps a busy pool live, because an Orker whose every task slot is taken stops polling the pool's channel but still answers on its own. An Orker that does not answer within five seconds is not counted, and the engine logs `a pool reads empty while some live Orkers did not answer when asked`. The engine refuses the submit with `failed_precondition`, before a run id exists (`internal/engine/pools.go`, `PoolEmptyError`; `internal/api/service.go`, `poolPlanError`). The rule is in ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 
 **Confirm.**
 
