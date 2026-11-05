@@ -27,24 +27,6 @@ const (
 	readmePath  = "../../examples/README.md"
 )
 
-// predatesPatterns names the ten examples that predate
-// docs/ORKFLOW_PATTERNS.md. They keep the versions a deployment may already
-// store rather than be rewritten to follow it (examples/README.md), so they
-// are exempt from the comment-header rules, and from the network and cache
-// rules below; every other rule holds them too.
-var predatesPatterns = map[string]bool{
-	"advanced-demo.ork.yaml":      true,
-	"awaited-approval.ork.yaml":   true,
-	"branch-and-recover.ork.yaml": true,
-	"cached-pipeline.ork.yaml":    true,
-	"composed-release.ork.yaml":   true,
-	"file-read.ork.yaml":          true,
-	"hello.ork.yaml":              true,
-	"pinned-build.ork.yaml":       true,
-	"release-block.ork.yaml":      true,
-	"shell-eval.ork.yaml":         true,
-}
-
 // guideSections are docs/ORKFLOW_PATTERNS.md's `## ` headings, in order. An
 // example's pattern line cites one of them by its exact text.
 var guideSections = []string{
@@ -92,6 +74,26 @@ func orkflowExamples(t *testing.T) []string {
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+// orkflowFixtures are the Orkflows only this repository's tests read
+// (testdata/orkflows/). No reader is pointed at them, so the rules about an
+// example's header, index, network and cache do not hold them; the rules about
+// what compiles and what an image accepts do.
+func orkflowFixtures(t *testing.T) []string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "orkflows", "*.ork.yaml"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("glob fixtures: %v (%d found)", err, len(paths))
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// examplesAndFixtures is every Orkflow this repository keeps.
+func examplesAndFixtures(t *testing.T) []string {
+	t.Helper()
+	return append(orkflowExamples(t), orkflowFixtures(t)...)
 }
 
 func automationExamples(t *testing.T) []string {
@@ -253,9 +255,6 @@ func TestExamples_HeadersFollowTheConvention(t *testing.T) {
 		}
 	}
 	for _, path := range orkflowExamples(t) {
-		if predatesPatterns[filepath.Base(path)] {
-			continue
-		}
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			wf, err := dsl.CompileFile(path)
 			if err != nil {
@@ -410,9 +409,6 @@ func TestExamples_AreIndexed(t *testing.T) {
 func TestExamples_ComputeTasksDeclareNoNetwork(t *testing.T) {
 	compute := map[string]bool{"json": true, "template": true, "file": true}
 	for _, path := range orkflowExamples(t) {
-		if predatesPatterns[filepath.Base(path)] {
-			continue
-		}
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -428,9 +424,6 @@ func TestExamples_ComputeTasksDeclareNoNetwork(t *testing.T) {
 func TestExamples_CachedTasksSetATTLAndMountNoSecret(t *testing.T) {
 	cached := 0
 	for _, path := range orkflowExamples(t) {
-		if predatesPatterns[filepath.Base(path)] {
-			continue
-		}
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -449,13 +442,12 @@ func TestExamples_CachedTasksSetATTLAndMountNoSecret(t *testing.T) {
 		}
 	}
 	if cached == 0 {
-		t.Fatal("no new example caches a task; the rule checked nothing")
+		t.Fatal("no example caches a task; the rule checked nothing")
 	}
 }
 
 // userFacingDocs are the documents a reader of the examples reads: every
-// example file (older ones included), the examples index, the image READMEs
-// and the guide.
+// example file, the examples index, the image READMEs and the guide.
 func userFacingDocs(t *testing.T) []string {
 	t.Helper()
 	docs := append(orkflowExamples(t), automationExamples(t)...)
@@ -664,7 +656,7 @@ func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 	catalog := dsl.BuiltinActivityCatalog()
 	const examplePrefix = "localhost:5001/orkstack-examples/"
 	checked := 0
-	for _, path := range orkflowExamples(t) {
+	for _, path := range examplesAndFixtures(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatal(err)

@@ -687,6 +687,20 @@ func withExampleTag(t *testing.T, src []byte, registry string) []byte {
 	return out
 }
 
+// fixtureFiles is every Orkflow fixture, sorted, relative to the root.
+func fixtureFiles(t *testing.T, root string) []string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(root, orkflowFixtures, "*.ork.yaml"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("glob fixtures: %v (%d found)", err, len(paths))
+	}
+	var files []string
+	for _, p := range paths {
+		files = append(files, orkflowFixtures+"/"+filepath.Base(p))
+	}
+	return files
+}
+
 // exampleFiles is every examples/*.ork.yaml, sorted, relative to the root.
 func exampleFiles(t *testing.T, root string) []string {
 	t.Helper()

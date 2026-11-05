@@ -319,6 +319,15 @@ version's own, and its text is the release's notes on GitHub, word for word.
   --watch`, `activity test`, `webhook`, `run timing`, `config`, `version`
   and evidence output is written by other encoders and is not rewritten.
 
+### Removed
+
+- The ten older examples are gone from `examples/` and from the Apply page's
+  gallery: `advanced-demo`, `awaited-approval`, `branch-and-recover`,
+  `cached-pipeline`, `composed-release`, `file-read`, `hello`, `pinned-build`,
+  `release-block` and `shell-eval`. An Orkflow a deployment already stored from
+  one of them is unaffected, and so are its runs. For a new Orkflow, start from
+  a current example ([`examples/README.md`](examples/README.md)).
+
 ### Fixed
 
 - `GetStats` and `orkctl stats` no longer count a run twice — once as

@@ -37,7 +37,7 @@ import (
 
 // The task-caching integration suite (docs/DSL.md "Caching"):
 // real Temporal, real MinIO and the real Orker running real containers
-// through Docker, on the shape of examples/cached-pipeline.ork.yaml —
+// through Docker, on the shape of internal/dsl/testdata/orkflows/cached-pipeline.ork.yaml —
 // featurize (cached, ttl 86400) and stamp → train (cached) — over the pinned
 // alpine image the commit suite uses, so the containers write their own
 // values.json and artifacts. Every scenario runs in a private Temporal
@@ -119,7 +119,7 @@ type pipelineOpts struct {
 	retry *orkstackv1.RetryPolicy
 }
 
-// cachedPipeline is examples/cached-pipeline.ork.yaml over alpine.
+// cachedPipeline is internal/dsl/testdata/orkflows/cached-pipeline.ork.yaml over alpine.
 func (c *cacheE2E) cachedPipeline(name string, o pipelineOpts) *orkstackv1.Orkflow {
 	image := &orkstackv1.ImageRef{Reference: c.alpine, Pinned: c.alpine, IndexDigest: digestOf(c.alpine)}
 	if o.scope == orkstackv1.CacheScope_CACHE_SCOPE_UNSPECIFIED {
@@ -812,7 +812,7 @@ func TestIntegration_RecordCachedRunHistory(t *testing.T) {
 	}
 	setCurrentVersion(t, ctx, temporalClient, deployment, runQueue, orkerQueue)
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, runQueue, orkerQueue)
-	wf := compileExample(t, "cached-pipeline.ork.yaml")
+	wf := compileFixture(t, "cached-pipeline.ork.yaml")
 	plan := rawPlan(orkerQueue)
 	plan.CommitRoot = "mem://commits"
 	plan.Cache = &engine.CachePlan{MaxTTLSeconds: int64(engine.DefaultCacheMaxTTL / time.Second)}

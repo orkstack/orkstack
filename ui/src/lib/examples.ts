@@ -8,7 +8,7 @@
 // their own; this module is the pure half.
 
 export type OrkflowExample = {
-	/** Basename with `.ork.yaml` stripped — `hello.ork.yaml` is `hello`. Used for test ids. */
+	/** Basename with `.ork.yaml` stripped — `each-fan-out.ork.yaml` is `each-fan-out`. Used for test ids. */
 	slug: string;
 	file: string;
 	name: string;

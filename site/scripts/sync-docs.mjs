@@ -157,18 +157,6 @@ function flatten(groups, out = []) {
 const pages = flatten(manifest.groups);
 
 // Example Orkflows: one generated page each, the page's featured ones first.
-// The docs show the current ones: an example examples/README.md marks older stays
-// in the repository for deployments that stored it, and its old address redirects
-// to the gallery (astro.config.mjs). A table whose shape changed stops the sync:
-// a row this reads wrongly would quietly drop a page or its redirect. A page
-// republished by a mark this no longer sees has no gallery row, which stops it too.
-const exampleTable = readFileSync(path.join(repoRoot, 'examples', 'README.md'), 'utf8');
-const olderExamples = new Set(
-	[...exampleTable.matchAll(/^\|\s*\[[^\]]+\]\(([^)]+\.ork\.yaml)\)\s*\|\s*\*older\*/gm)].map((m) => `examples/${m[1]}`),
-);
-const olderRows = exampleTable.split('\n').filter((line) => line.startsWith('|') && line.includes('*older*')).length;
-if (olderRows !== olderExamples.size) fail(`examples/README.md has ${olderRows} rows that say *older*, and ${olderExamples.size} read as an example's link followed by *older*`);
-for (const rel of olderExamples) if (!existsSync(path.join(repoRoot, rel))) fail(`examples/README.md marks ${rel} older, and that file does not exist`);
 const exampleFiles = [];
 for (const page of pages.filter((p) => p.examples)) {
 	const dirs = ['examples', 'examples/automation'];
@@ -177,7 +165,6 @@ for (const page of pages.filter((p) => p.examples)) {
 		for (const name of readdirSync(path.join(repoRoot, dir)).sort()) {
 			if (!name.endsWith('.ork.yaml')) continue;
 			const rel = `${dir}/${name}`;
-			if (olderExamples.has(rel)) continue;
 			const id = rel.replace(/^examples\//, '').replace(/\.ork\.yaml$/, '').replace(/\//g, '-');
 			const doc = YAML.parseDocument(readFileSync(path.join(repoRoot, rel), 'utf8'));
 			const kind = doc.get('kind');
@@ -891,10 +878,6 @@ mkdirSync(path.join(siteRoot, 'public'), { recursive: true });
 }
 
 // Exported for astro.config.mjs's sidebar.
-writeFileSync(
-	path.join(generated, 'older-examples.json'),
-	JSON.stringify([...olderExamples].map((rel) => rel.replace(/^examples\//, '').replace(/\.ork\.yaml$/, '')).sort(), null, '\t') + '\n',
-);
 writeFileSync(
 	path.join(generated, 'examples.json'),
 	JSON.stringify(exampleFiles.map(({ route, title }) => ({ route, title })), null, '\t') + '\n',

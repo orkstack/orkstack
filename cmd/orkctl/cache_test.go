@@ -28,7 +28,7 @@ const (
 
 func cachedExamplePath(t *testing.T) string {
 	t.Helper()
-	path, err := filepath.Abs(filepath.Join("..", "..", "examples", "cached-pipeline.ork.yaml"))
+	path, err := filepath.Abs(filepath.Join("..", "..", orkflowFixtures, "cached-pipeline.ork.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

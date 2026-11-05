@@ -169,7 +169,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	orkflowClient := orkstackv1connect.NewOrkflowServiceClient(httpClient, baseURL)
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
-	source, err := os.ReadFile("../../examples/hello.ork.yaml")
+	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}

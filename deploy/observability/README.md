@@ -124,7 +124,7 @@ deployment a named sink is a genuinely different destination. See
 ## Evidence
 
 `make proof-observability` (with this profile up) starts `ork` and `orker`
-with telemetry on, runs `examples/hello.ork.yaml`, and queries Loki, Tempo
+with telemetry on, runs `examples/each-fan-out.ork.yaml`, and queries Loki, Tempo
 and Prometheus back to assert the run's signals arrived
 (`scripts/proof-observability.sh`). The full proof runs the same gate whenever
 the tree changes a telemetry path, and a feature proof runs it when the change

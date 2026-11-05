@@ -325,6 +325,19 @@ func compileExample(t *testing.T, name string) *orkstackv1.Orkflow {
 	return wf
 }
 
+// orkflowFixtures is where the Orkflows only this repository's tests read live.
+const orkflowFixtures = "../../internal/dsl/testdata/orkflows"
+
+// compileFixture compiles one of those Orkflows.
+func compileFixture(t *testing.T, name string) *orkstackv1.Orkflow {
+	t.Helper()
+	wf, err := dsl.CompileFile(orkflowFixtures + "/" + name)
+	if err != nil {
+		t.Fatalf("compile %s: %v", name, err)
+	}
+	return wf
+}
+
 // The plan and the real interpreter agree on every task.
 func TestSimulate_AgreesWithTheInterpreter(t *testing.T) {
 	cases := []struct {
@@ -340,9 +353,9 @@ func TestSimulate_AgreesWithTheInterpreter(t *testing.T) {
 		{"http-post status 500", compileExample(t, "http-post.ork.yaml"), nil,
 			map[string]map[string]any{"publish": {"status": 500}}},
 		{"http-post no stub", compileExample(t, "http-post.ork.yaml"), nil, nil},
-		{"advanced-demo defaults, flaky exit 0", compileExample(t, "advanced-demo.ork.yaml"), nil,
+		{"advanced-demo defaults, flaky exit 0", compileFixture(t, "advanced-demo.ork.yaml"), nil,
 			map[string]map[string]any{"flaky": {"exitCode": 0}}},
-		{"advanced-demo secret check, flaky exit 1", compileExample(t, "advanced-demo.ork.yaml"),
+		{"advanced-demo secret check, flaky exit 1", compileFixture(t, "advanced-demo.ork.yaml"),
 			map[string]any{"enable_secret_check": true},
 			map[string]map[string]any{"flaky": {"exitCode": 1}}},
 		{"diamond, c skipped", compile(t, diamondDocument), nil, nil},
@@ -361,7 +374,7 @@ func TestSimulate_AgreesWithTheInterpreter(t *testing.T) {
 			map[string]map[string]any{"list": {"parts": []any{map[string]any{"n": 1}, map[string]any{"n": 2}}}}},
 		{"fan-out over a stubbed upstream, not an array", compile(t, simulateEachTaskDocument), nil,
 			map[string]map[string]any{"list": {"parts": "nope"}}},
-		{"cached pipeline", compileExample(t, "cached-pipeline.ork.yaml"), nil,
+		{"cached pipeline", compileFixture(t, "cached-pipeline.ork.yaml"), nil,
 			map[string]map[string]any{"stamp": {"value": "1759600000000000000"}}},
 		{"decide-and-route canary", compileExample(t, "decide-and-route.ork.yaml"), nil,
 			map[string]map[string]any{"decide": {"result": map[string]any{"route": "canary", "notify": true}}}},
