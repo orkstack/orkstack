@@ -35,6 +35,17 @@ orker-7f3a is drained; it is safe to stop this process.
 
 Each cordon and uncordon is written to the audit trail. See [Audit](/docs/operate/audit/).
 
+## When an Orker cordons itself
+
+An Orker also cordons itself while object storage does not answer it, so tasks wait in the pool instead of using up their retries. `orkctl orker list` shows `cordoned (object storage unreachable)`, and Admin → Pools stamps the row `Object Storage Unreachable`.
+
+- It resumes by itself after a few good checks. You don't need to do anything once the store is back.
+- `orkctl orker uncordon` clears only a cordon an operator set. It can't override an outage that is still failing.
+- `orkctl orker drain` sets an operator's cordon too, so a recovery in the middle of a drain can't put the Orker back to work.
+- While every Orker of a pool holds this cordon, a new run sent there is accepted and waits. `orkctl run inspect` and the run page say it is waiting for object storage. Starting another Orker doesn't help, because it needs the same store.
+
+It can't protect everything: an attempt that reaches the store before the Orker cordons itself still fails and uses an attempt, a task that starts a pin still fails `PIN_UNAVAILABLE`, and runs that close without an Orker, such as a cancel, are not held back. To turn it off, set `ORK_ORKER_STORE_CHECK_ENABLED=false`.
+
 ## Stop the process safely
 
 A stop cancels the tasks still running on the Orker. Each container gets `SIGTERM`, then `SIGKILL` after its cancellation grace period (30 seconds by default). Each cancelled attempt is recorded as `ORKER_STOPPED`, and the task ends `ORKER_HEARTBEAT_TIMEOUT`, or runs again on another Orker if its retry policy allows.
@@ -69,6 +80,7 @@ A cordon is a flag in the Orker process only. A restarted Orker comes back ready
 ## See also
 
 - [DEPLOY.md, "Removing an Orker safely: cordon and drain"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#removing-an-orker-safely-cordon-and-drain): what a cordon does, and why it lives only in the process
+- [DEPLOY.md, "When object storage goes away"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#when-object-storage-goes-away): the check, its settings and its limits
 - [DEPLOY.md, "Pin hosting is a pool-wide setting"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#pin-hosting-is-a-pool-wide-setting): the pin host rules a drain relies on
 - [UPGRADING.md, "Rolling forward"](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#rolling-forward): draining the Orkers of an old release
 - [CLI.md, "orkctl orker drain"](https://github.com/orkstack/orkstack/blob/main/docs/CLI.md#orkctl-orker-drain): flags and exit codes

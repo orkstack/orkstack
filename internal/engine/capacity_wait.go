@@ -37,6 +37,48 @@ func CapacityWaitsOf(orkers []FleetOrker, pools []string) (waits map[string]*ork
 	return waits, 0
 }
 
+// StoreOutageWaitsOf answers, for each pool named, whether a task no Orker of
+// the pool has started is waiting out an object storage outage, over the same
+// inventory: a pool is in the map only when at least one of its Orkers is held
+// by a store outage alone and none takes new tasks. A pool with another Orker
+// still taking is not waiting on the outage, whatever else it waits for, and an
+// Orker an operator has cordoned as well does not resume when the store
+// answers, so it does not count.
+//
+// Like CapacityWaitsOf, it claims nothing while any live Orker did not answer,
+// because that Orker could serve this pool: the map is then empty.
+func StoreOutageWaitsOf(orkers []FleetOrker, pools []string) map[string]*orkstackv1.StoreOutageWait {
+	waits := map[string]*orkstackv1.StoreOutageWait{}
+	census := censusOf(orkers)
+	if len(census.unanswered) > 0 {
+		return waits
+	}
+	for _, pool := range pools {
+		// The census is already read, so taking asks nothing and fails never.
+		if taking, _ := census.taking(context.Background(), pool); len(taking) > 0 {
+			continue
+		}
+		var wait *orkstackv1.StoreOutageWait
+		for _, orker := range census.byPool[pool] {
+			if !pausedForStoreOutage(orker.Described) {
+				continue
+			}
+			outage := orker.Described.GetStoreOutage()
+			if wait == nil {
+				wait = &orkstackv1.StoreOutageWait{Pool: pool, Since: outage.GetSince()}
+			}
+			wait.Orkers++
+			if outage.GetSince().AsTime().Before(wait.GetSince().AsTime()) {
+				wait.Since = outage.GetSince()
+			}
+		}
+		if wait != nil {
+			waits[pool] = wait
+		}
+	}
+	return waits
+}
+
 // capacityWait is the rule for one pool: every Orker counted declares a
 // capacity and is full under it, or the pool is not waiting for capacity.
 //

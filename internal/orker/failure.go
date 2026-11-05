@@ -72,10 +72,14 @@ const (
 	ReasonCommitUndecodable    = "COMMIT_UNDECODABLE"
 	ReasonCommitTooLarge       = "COMMIT_TOO_LARGE"
 	ReasonCommitNotConditional = "COMMIT_STORE_NOT_CONDITIONAL"
-	ReasonOutputNotReadable    = "OUTPUT_NOT_READABLE"
-	ReasonValuesCorrupt        = "VALUES_CORRUPT"
-	ReasonValuesRefetchFailed  = "VALUES_REFETCH_FAILED"
-	ReasonResourceRefused      = "RESOURCE_REQUEST_REFUSED"
+	// ReasonCommitStoreUnavailable refuses boot: the conditional-create probe
+	// got no answer, because the store could not be used at all. It says nothing
+	// about conditional writes, which is what ReasonCommitNotConditional reports.
+	ReasonCommitStoreUnavailable = "COMMIT_STORE_UNAVAILABLE"
+	ReasonOutputNotReadable      = "OUTPUT_NOT_READABLE"
+	ReasonValuesCorrupt          = "VALUES_CORRUPT"
+	ReasonValuesRefetchFailed    = "VALUES_REFETCH_FAILED"
+	ReasonResourceRefused        = "RESOURCE_REQUEST_REFUSED"
 	// ReasonCapacityInvalid refuses boot: orker.capacity cannot be read, or
 	// the per-task cap does not fit within it.
 	ReasonCapacityInvalid    = "ORKER_CAPACITY_INVALID"
@@ -181,6 +185,7 @@ var reasonCategory = map[string]string{
 	ReasonCommitUndecodable:         CategoryContractViolation,
 	ReasonCommitTooLarge:            CategoryContractViolation,
 	ReasonCommitNotConditional:      CategoryInfrastructureError,
+	ReasonCommitStoreUnavailable:    CategoryInfrastructureError,
 	ReasonOutputNotReadable:         CategoryContractViolation,
 	ReasonValuesCorrupt:             CategoryContractViolation,
 	ReasonValuesRefetchFailed:       CategoryInfrastructureError,
@@ -201,7 +206,7 @@ var reasonCategory = map[string]string{
 	ReasonRuntimePostureRefused:     CategoryInfrastructureError,
 }
 
-// retryableReason overrides the category's own default for the four codes
+// retryableReason overrides the category's own default for the five codes
 // where they differ (§8.2).
 //
 // WORKSPACE_NOT_BINDABLE, WORKDIR_NOT_BINDABLE, COMMIT_STORE_NOT_CONDITIONAL
@@ -209,10 +214,13 @@ var reasonCategory = map[string]string{
 // default is "retry" — but all four are host misconfigurations that retrying
 // cannot fix. Retrying them would loop against a deterministic fact, which
 // AGENTS.md §11 forbids as loudly as it forbids a stuck state.
+// COMMIT_STORE_UNAVAILABLE refuses boot, so no attempt exists to retry: the
+// Orker exits, and whatever supervises it decides whether to start it again.
 var retryableReason = map[string]bool{
-	ReasonWorkspaceNotBindable: false,
-	ReasonWorkdirNotBindable:   false,
-	ReasonCommitNotConditional: false,
+	ReasonWorkspaceNotBindable:   false,
+	ReasonWorkdirNotBindable:     false,
+	ReasonCommitNotConditional:   false,
+	ReasonCommitStoreUnavailable: false,
 	// The boot probe's finding, which is the host's and not the moment's.
 	ReasonRunAsOrkerUnavailable: false,
 }
@@ -377,6 +385,10 @@ func (f *Failure) ErrorProto(taskID string) *orkstackv1.Error {
 // NewNonRetryableApplicationError. The constructor's flag always wins over the
 // policy list, so a task whose retry: policy forgot to list the category still
 // cannot loop on a contract violation.
+//
+// f.Cause does not cross: the message already says what it knows, and the SDK
+// would send the cause as a second ApplicationError named after its Go type and
+// marked retryable, whatever RetryableReason answers for this failure.
 func (f *Failure) TemporalError() error {
 	detail := f.Detail
 	if detail == nil {
@@ -388,20 +400,13 @@ func (f *Failure) TemporalError() error {
 	category := f.Category()
 	message := f.Error()
 	if !RetryableReason(f.Reason) {
-		return temporal.NewNonRetryableApplicationError(message, category, f.Cause, detail)
+		return temporal.NewNonRetryableApplicationError(message, category, nil, detail)
 	}
-	// NewApplicationErrorWithCause, NOT NewApplicationError.
-	//
-	// temporal.NewApplicationError's signature is
-	// (message, errType string, details ...interface{}) — it takes NO cause.
-	// Passing one to it puts the cause in details[0] and the real detail in
-	// details[1], so the engine's Details(&detail) decodes the wrong slot and
-	// every RETRYABLE failure loses its artifacts, exit code and scan notes.
-	// That is the most common failure path there is: CONTAINER_EXIT_NONZERO,
-	// where a failing build's test report is exactly what somebody opens the
-	// run to read. Found by
-	// TestIntegration_AFailedTaskStillPublishesWhatItProduced.
-	return temporal.NewApplicationErrorWithCause(message, category, f.Cause, detail)
+	// The detail is the only argument after the type: the engine's
+	// Details(&detail) reads the first slot, and a failed attempt's artifacts,
+	// exit code and scan notes are in it
+	// (TestIntegration_AFailedTaskStillPublishesWhatItProduced).
+	return temporal.NewApplicationError(message, category, detail)
 }
 
 // StampStart records when the attempt began on the failure's transport, so

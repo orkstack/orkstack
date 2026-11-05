@@ -116,6 +116,25 @@ func examplePlanLines(t *testing.T, path string) []string {
 	return lines
 }
 
+// TestExamples_PlanWithNoInputs: a reader's first plan of an example needs
+// nothing they would have to supply. Each is planned through the real CLI with
+// no --input, with only the block the examples compose stored first; a
+// condition that reads a task's output has no value yet, so it stays open.
+func TestExamples_PlanWithNoInputs(t *testing.T) {
+	f := newFixture(t)
+	paths, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.ork.yaml"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("glob examples: %v (%d found)", err, len(paths))
+	}
+	sort.Strings(paths)
+	f.run("apply", filepath.Join("..", "..", "examples", "notify-block.ork.yaml")).requireExit(t, exitOK)
+	for _, path := range paths {
+		if out := f.run("run", "plan", "--file", path); out.code != exitOK {
+			t.Errorf("%s: a plan with no inputs exits %d\nstdout:\n%s\nstderr:\n%s", filepath.Base(path), out.code, out.stdout, out.stderr)
+		}
+	}
+}
+
 // TestExamples_DocumentedPlansHold: every `orkctl run plan --file` line
 // in an example's header is a CI check. Each runs through the real CLI
 // against the real Connect service, exactly as a reader would type it, and

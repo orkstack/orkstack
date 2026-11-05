@@ -25,6 +25,10 @@
 // (docs/STORAGE.md, "Reclaiming space").
 // Archive bodies and indexes are never deleted.
 //
+// A finished run this worker's index walk cannot see, because it never archived
+// itself, gets its archive from Sweeper (sweep.go), which runs whether or not
+// this worker does.
+//
 // The cluster's own retention TTL on the single Temporal namespace behind the
 // deployment is a BACKSTOP, not the mechanism: RetentionController keeps it
 // pinned to the deployment maximum plus an enforcement margin
@@ -395,9 +399,9 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 				c.logger.Error("artifact cleanup workflow lookup failed", "run_id", entry.RunID, "error", err)
 			case found && closedAt.IsZero():
 				// Impossible by construction — the archive is written by the
-				// terminal PublishEvent — and the one case where deletion
-				// would TERMINATE a live execution, so it is refused rather
-				// than risked.
+				// terminal PublishEvent, or by the sweep once the run has
+				// closed — and the one case where deletion would TERMINATE a
+				// live execution, so it is refused rather than risked.
 				wrapped := fmt.Errorf("run %q: archived run still executing; refusing to retire it", entry.RunID)
 				errs = append(errs, wrapped)
 				stats.Errors++
@@ -406,6 +410,20 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 				// Finished, but not yet past ITS namespace's own retention.
 			default:
 				if found {
+					// The history is about to go, so what stands in for it
+					// must be there. An index row with no body is an archive
+					// write that stopped short, which Sweeper finishes.
+					has, err := c.archive.HasRun(ctx, entry.RunID)
+					if err != nil {
+						errs = append(errs, fmt.Errorf("run %q: check its archive body: %w", entry.RunID, err))
+						stats.Errors++
+						c.logger.Error("artifact cleanup archive check failed", "run_id", entry.RunID, "error", err)
+						break
+					}
+					if !has {
+						c.logger.Warn("artifact cleanup left a run its archive body is not written for yet", "run_id", entry.RunID)
+						break
+					}
 					if err := c.cluster.DeleteWorkflow(ctx, c.config.TemporalNamespace, entry.RunID); err != nil {
 						wrapped := fmt.Errorf("run %q: retire execution: %w", entry.RunID, err)
 						errs = append(errs, wrapped)

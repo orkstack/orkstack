@@ -429,7 +429,8 @@ reached by is not answered here, and the other way round.
   answer is none it asks the Orker inventory — the presence channel, and each
   Orker on its own control channel, the read `orkctl orker list` makes — and
   refuses the submission only when no uncordoned Orker of the pool answers
-  there either, naming the pool, the tasks and the fix:
+  there either (one waiting out a store outage alone counts as uncordoned; see
+  "When object storage goes away"), naming the pool, the tasks and the fix:
 
   ```
   pool "gpu" (namespace "payments", tasks: settle) has no live Orkers, so nothing
@@ -599,7 +600,7 @@ then the variable it becomes.
 | `temporal.namespace` | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
 | `pool.name` | `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
 | `pool.queue` | `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
-| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.1` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
+| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.2` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
 | `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
 | `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one — across the whole deployment, not only on one host: it is also the Orker's address for `orkctl orker` (1–200 bytes of UTF-8, no whitespace or control characters; refused at boot otherwise) |
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
@@ -623,6 +624,11 @@ then the variable it becomes.
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat actually reaches Temporal. Two consequences, both real: it is the longest a **cancellation** waits before the Orker acts on it — Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long — and it is the longest **Temporal frontend outage** a running container survives, since the SDK gives up on an activity whose heartbeat RPC keeps failing for a whole interval. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` where Temporal is local or highly available; raise it where the frontend is flaky |
 | `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | `orker` | how many tasks this Orker runs at once — the size of its task worker's activity slots, and the **Max concurrent** Admin → Activities reports. A whole number, 1 or more; anything else is refused at boot. The default fits a 16-CPU, 64 GiB host running default-sized tasks; size it to the host — see "Sizing an Orker's task ceiling" below |
+| `orker.store_check.enabled` | `ORK_ORKER_STORE_CHECK_ENABLED` | `true` | `orker` | whether this Orker checks object storage and cordons itself while the checks keep failing, so tasks wait without using attempts. `false` turns it off, and then an outage fails attempts as they arrive — see §5, "When object storage goes away" |
+| `orker.store_check.interval` | `ORK_ORKER_STORE_CHECK_INTERVAL` | `15s` | `orker` | how often the store is checked: one conditional write the store refuses and one read of one small object, per Orker, per check. `1s` to `1h`; anything else is refused at boot |
+| `orker.store_check.timeout` | `ORK_ORKER_STORE_CHECK_TIMEOUT` | `5s` | `orker` | how long one check may take before it counts as failed. Above zero and at most the interval; anything else is refused at boot |
+| `orker.store_check.failures` | `ORK_ORKER_STORE_CHECK_FAILURES` | `3` | `orker` | how many failed checks in a row cordon this Orker. 1 or more; anything else is refused at boot. A shorter blip cordons nothing |
+| `orker.store_check.recoveries` | `ORK_ORKER_STORE_CHECK_RECOVERIES` | `2` | `orker` | how many good checks in a row end the cordon. 1 or more; anything else is refused at boot |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no extra pollers; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
@@ -657,9 +663,9 @@ then the variable it becomes.
 | `engine.limits.floor_throughput_bytes_per_sec` | `ORK_FLOOR_THROUGHPUT_BYTES_PER_SEC` | `10 MiB/s` | `ork` | the denominator of that derivation. Only read when `ORK_TRANSFER_BUDGET_SECONDS` is unset |
 | `storage.backend` | `ORK_ARTIFACT_BACKEND` | `local` | **both** | where artifacts, the run archive and task logs live. **A replicated deployment must set `s3`** — `local` is a directory on the host, so each replica and each Orker would keep its own (§0) |
 | `engine.cleanup.enabled` | `ORK_CLEANUP_ENABLED` | `false` | `ork` | enables active per-namespace run retention: retires each finished run at its own namespace's run retention and reclaims its run-scoped logs and completion commits. Default-off because it deletes durable data; when off, every run is kept for the deployment maximum plus `ORK_CLEANUP_RETENTION_BUFFER` regardless of any namespace's own value |
-| `engine.cleanup.interval` | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts |
-| `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run |
-| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval) |
+| `engine.cleanup.interval` | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts. Also the archive sweep's interval, and how long a run has been closed before the sweep looks at it, with cleanup on or off ("The archive sweep", below) |
+| `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run. The maximum plus this margin is also how long a run with no archive survives an object-storage outage ("The archive sweep", below) |
+| `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval). Also the archive sweep's listing page size |
 | `storage.dir` | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3-compatible endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
@@ -805,7 +811,8 @@ overshoot is bounded by `ORK_ORKER_MAX_PINS` × what one pin runs at once: leave
 that much headroom on a pin host. A hard bound for pins is not provided.
 
 **The cap is a pool-wide setting**, as pin hosting is. A submit asks every
-uncordoned Orker of a task's pool for its cap, on its own channel, and refuses
+uncordoned Orker of a task's pool (counting one that is only waiting out a store
+outage) for its cap, on its own channel, and refuses
 a task that declares a request above every one of them
 (`RESOURCES_UNSATISFIABLE`), before a run id exists. That read costs a submit
 whose tasks declare `resources:` one describe per live Orker of the deployment,
@@ -1244,10 +1251,72 @@ again, so a run a drain passed before it was due is examined once it is.
 Cleanup **fails closed**: if the retention policy or any namespace's own value
 is unreadable, that iteration deletes nothing; an archived run the cluster
 reports as STILL RUNNING is refused rather than retired (deleting would
-terminate it, and archiving happens only after a terminal event, so it is a
-defect to surface); per-run storage failures are logged and retried by a later
+terminate it, and a run is archived only at its end, so it is a defect to
+surface); per-run storage failures are logged and retried by a later
 pass; a repeated pass is a no-op because the `artifacts_cleaned` sidecar
 records what was done.
+
+**The archive sweep** runs on every `ork` replica whether or not cleanup is
+enabled, because it only writes and the cluster's own retention fires either
+way. A run's terminal publish writes its archive, so a run terminated from
+outside the workflow runs nothing that could, and a run whose ending object
+storage refused has that write refused too. Each pass lists the runs the
+cluster holds that closed at least `ORK_CLEANUP_INTERVAL` ago, asks the archive
+whether each has a body, and builds any missing archive
+from the run's history, the same body a run's own write leaves: the run a live
+`GetRun` answers, and its whole stream. It stores nothing, so any replica's pass
+is complete and two replicas converge. From then on the run is an ordinary
+archived run: listed, retired at its namespace's run retention, readable from
+any replica after the cluster lets it go. Its cost is one `HEAD` per finished
+run the cluster holds, on every replica, every pass: at one run a second and the
+default 96 hours in the cluster, about 350,000 an hour per replica. Raising
+`ORK_CLEANUP_INTERVAL` lowers that, but two intervals must stay well below the
+time a run has in the cluster: a run waits out one interval and then the next
+pass, and one deleted before a pass looks at it leaves nothing to report. Each
+pass logs an error when two intervals reach that time. What cannot be recovered
+is said:
+
+- events lost from an earlier part of a long run, and numbers the run never
+  published, are `gap` lines (`docs/STORAGE.md`);
+- a record of the run's tasks that is gone or does not decode is replaced by the
+  one before it, and the run's `Error.details` says its tasks are shown as of an
+  earlier event; when that one cannot be read either, the run's name, input and
+  outcome come from its history, its tasks are not shown, and `Error.details`
+  says so. A run with no error of its own gets `RUN_RECORD_INCOMPLETE`
+  (`docs/REASONS.md`), and keeps its status: a run that succeeded still reads
+  `SUCCEEDED`.
+
+A read that fails in a way that may heal, such as object storage not answering,
+writes nothing and is tried on the next pass: an archive is immutable, so an
+outage's holes must not be written into one.
+
+**What it cannot do.** The cluster fixes a run's deletion when the run closes,
+as its close plus the cluster's retention at that moment, and nothing a client
+does postpones it afterwards: raising the retention moves only runs that close
+later. (Read in the source of Temporal server 1.32.0, which the
+`temporalio/temporal:1.9.1` image this repository pins bundles:
+`GenerateDeleteHistoryEventTask` and `executeDeleteHistoryEventTask`. It has not
+been tested against a running cluster.) So a
+finished run with no archive is **lost** if object storage is down at every pass
+from a cleanup interval after its close until that deletion: by default 95 hours
+of the 96 the maximum run retention and `ORK_CLEANUP_RETENTION_BUFFER` add up
+to. Nothing is left to say it existed. A run that already has its archive is
+not at risk, and neither is a run that has not finished. While the risk stands,
+every pass logs an error naming the runs nearest to expiry and when the first of
+them expires, and sets `ork.archive.sweep.unconfirmed` and
+`ork.archive.sweep.earliest_expiry` (§7, "Lifecycle metrics"); alert on the
+first. While object storage is down the pass cannot tell an archived run from
+one that is not, so it counts every finished run it holds, and its figures are
+an upper bound. A longer outage than you can afford calls for a larger
+`ORK_CLEANUP_RETENTION_BUFFER`, which helps only the runs that close after it is
+set.
+
+An archive write that stops short, on all three attempts of the run's own
+publish, leaves no body, because the body is its last write. The run reads as
+not archived and the sweep finishes it. Cleanup never retires a run the cluster
+still holds until its body is there. A release before this wrote the body first,
+so a write of that time that stopped short keeps its body: the run reads by id,
+and the sweep does not repair it, so it is not listed and not retired.
 
 **Workload artifact bytes are not reclaimed automatically.** The archive
 records which objects each run references, and `DeleteUnreferencedObjects`
@@ -1872,8 +1941,8 @@ composition, `outputs:`, join policies, caching, schedules) needs the
 preparation in §3, "Releases that add Orkflow constructs" — for join policies
 it is a hold, because the silent outcome is destructive.
 
-**Rolling back below 0.1.1, the release that moved to the Temporal Go SDK
-1.50**, is one-way for the runs it executed. From 0.1.1 the engine records a
+**Rolling back below 0.2.0, the release that moved to the Temporal Go SDK
+1.50**, is one-way for the runs it executed. From 0.2.0 the engine records a
 marker in a run's history (the SDK's flag 9, ordered child cancellation) the
 first time one cancellation reaches more than one of the run's open scopes,
 so that they are canceled in the order they were opened. That happens on an
@@ -1881,18 +1950,18 @@ operator's cancel of a run that declares a failure handler, and on a run that
 fails or is canceled while two or more of its awaits or pins are open. An
 older engine does not know the marker. Handed such a history, it fails the
 run's workflow task on every attempt (`unknown SDK flag: 9` in its log), and
-the run stays `RUNNING`, making no progress, until an engine of 0.1.1 or
+the run stays `RUNNING`, making no progress, until an engine of 0.2.0 or
 later picks it up again. Nothing is lost, but nothing moves. On an unversioned
 fleet any engine may execute a run's next workflow task, so a run that started
 on the older release can record the marker too. So:
 
 - with versioning on, roll back as above: a run stays on the build that
-  started it, so 0.1.1's runs finish on 0.1.1, whose processes keep running
+  started it, so 0.2.0's runs finish on 0.2.0, whose processes keep running
   until `orkctl release wait` reports it drained;
-- with versioning off, roll back below 0.1.1 only when no run is open. Any
-  run that was open while a 0.1.1 engine ran may carry the marker, whenever
+- with versioning off, roll back below 0.2.0 only when no run is open. Any
+  run that was open while a 0.2.0 engine ran may carry the marker, whenever
   it was created, so the check counts every open run, not only those created
-  since 0.1.1. For each namespace that takes runs:
+  since 0.2.0. For each namespace that takes runs:
   1. hold it: `orkctl namespace update NS --hold "rolling back"`;
   2. wait until
      `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run.
@@ -1902,9 +1971,9 @@ on the older release can record the marker too. So:
      wait;
   3. once every namespace is empty, replace the engines, then release each
      hold: `orkctl namespace update NS --release-hold`;
-- an unversioned fleet that mixes older and 0.1.1 engines meets the same
+- an unversioned fleet that mixes older and 0.2.0 engines meets the same
   failure whenever an older engine picks up such a run, so replace every
-  engine replica together when rolling forward to 0.1.1.
+  engine replica together when rolling forward to 0.2.0.
 
 **A release that lets runs carry on into a fresh history** ships after the
 release that reads them (below), and the default turns on only in a release
@@ -1924,9 +1993,9 @@ floor; every release from 0.1.0 contains it:
   generation before any side effect — the run fails, and every reader of this
   release or later reports `RUN_STATE_UNSUPPORTED` ("this run was carried
   forward by a newer release and an older release could not carry it on; roll
-  the engines forward") — but it publishes no terminal event, so the run has
-  no archive body and becomes unreadable once the cluster's retention expires
-  it;
+  the engines forward") — but it publishes no terminal event, so its archive
+  comes from the archive sweep (§1), and under a release older than the sweep
+  it has none and becomes unreadable once the cluster's retention expires it;
 - once any run's archive records a gap in its events (a `gap` line,
   `docs/STORAGE.md`), a rollback below it is forbidden permanently: an older
   release refuses the unknown archive line, so every read of that run fails.
@@ -2063,6 +2132,16 @@ started on it has not yet reached visibility, and every refresh is a
 visibility query and a new run of the version's own workflow on the cluster.
 The quickstart's Temporal (the root `compose.yaml`) and every
 production cluster keep the defaults.
+
+The same service also passes `history.transferProcessorUpdateAckInterval` at
+`5s`, against a default of `30s`. A closed execution's delete runs only once its
+close task reads as acknowledged in the transfer queue's saved state, which this
+setting saves, and which reaches only as far as the oldest task still pending.
+The development server has one shard, so overlapping deletes hold each other
+back: on this image a delete beside others took 31.9 to 136 seconds at the
+default and 3.9 to 11 at `5s`. It is a development and proof setting too, and a
+tradeoff a production cluster has no reason to take: it saves that state six
+times as often to make a delete show sooner.
 
 **Permissions.** A cluster behind an authorizer must grant the engine's
 identity `DescribeWorkerDeployment`, `DescribeWorkerDeploymentVersion`,
@@ -2283,7 +2362,7 @@ follow from the daemon reading paths on the host:
 
 **The activity catalog.** A release's `ork` resolves `uses: shell` and the
 other first-party names by the tag of its release line, for example
-`ghcr.io/orkstack/activity-shell:0.1` for every 0.1 release; that tag moves to
+`ghcr.io/orkstack/activity-shell:0.2` for every 0.2 release; that tag moves to
 each patch release of the line. To pin the exact release instead, set
 `ORK_ACTIVITY_CATALOG` to the images by tag and digest. (The quickstart's
 catalog names the activities it built and pushed to its own registry, by tag;
@@ -2812,7 +2891,8 @@ What that costs, stated so nobody has to discover it:
   `LAST SEEN` come from the pool's channel and from the Orker inventory: the
   larger of the channel's live pollers and the pool's uncordoned Orkers that
   answer on their own channels, so a pool whose every Orker is busy, and so
-  polls nothing on its channel, still reports them.
+  polls nothing on its channel, still reports them. An Orker waiting out a store
+  outage alone counts as uncordoned here ("When object storage goes away").
 - **`LAST SEEN` never dates a dead pool.** Temporal remembers a poller for
   minutes after its worker died, so a record older than the freshness window is
   dropped before anything is counted or timestamped. A pool whose Orkers have
@@ -2892,6 +2972,10 @@ What a cordon does, precisely:
   and zero after it, and a cordoned Orker never keeps a pool live or speaks for
   what it can run.
 
+An Orker also cordons itself, with these same effects on tasks and pins, while
+object storage does not answer it. That cordon does keep its pool live ("When
+object storage goes away", below).
+
 `SIGTERM` (or `SIGINT`) stops polling and cancels in-flight work; the Orker
 does not cordon itself on it. An operator who wants in-flight work to finish
 first cordons and drains. What a stop owes the work it cancels, the Orker
@@ -2943,6 +3027,131 @@ Every cordon and uncordon is an audit record (`orker.cordon`,
 `orker.uncordon`, target the Orker id, the reason in its detail, no
 namespace).
 
+### When object storage goes away
+
+An Orker that cannot reach object storage cannot finish a task: an attempt
+handed to it fails `InfrastructureError` and uses one of the task's retries, so
+a long outage would fail runs that only had to wait. So every Orker checks the
+store on a cadence, and while the checks keep failing it **cordons itself**,
+with the same effects as an operator's cordon (above). Tasks stay queued for
+the pool with no attempt started, and everything in flight is left alone. Good
+checks end it, with no operator step.
+
+With the defaults (`orker.store_check`, §1), an Orker cordons itself 30 to 45
+seconds into an outage, or up to about 50 when a stalled store makes each check
+run out its timeout, and a blip shorter than 30 seconds cordons nothing. It
+resumes 15 to 30 seconds after the store answers again.
+
+**Two independent causes.** An operator's cordon and a store outage are
+separate, and the Orker is cordoned while either holds:
+
+- Recovery never clears an operator's cordon.
+- `orkctl orker uncordon` clears only the operator's. An Orker whose store is
+  still failing stays cordoned, and the command says so.
+- `orkctl orker drain` sets an operator's cordon on an Orker only an outage
+  holds, so a recovery in the middle of a drain cannot put it back to work. An
+  operator's uncordon during a drain ends the drain with exit `1`, even while
+  the outage still holds.
+
+Neither is stored: a restart clears both. While the store is out, though, a
+restarted Orker refuses to boot, because its boot probe needs the store
+(`COMMIT_STORE_UNAVAILABLE`), and whatever restarts it keeps trying.
+
+**Reading it.** The inventory carries the cause: `cordoned` is true for either,
+`cordon_reason` and `cordoned_at` are the operator's alone, and `store_outage`
+(`reason`, `since`) is set while an outage holds. An Orker of a release without
+this check sends no `store_outage`, and reads as it always has.
+
+```text
+$ orkctl orker list
+ORKER       POOL   BUILD  STATE                                  TASKS  PINS  CAPACITY  RESERVED  LAST SEEN
+orker-7f3a  build  -      cordoned (object storage unreachable)  0      -     -         -         2026-11-04T09:14:02Z
+
+1 orker cordoned itself because object storage does not answer; tasks wait, and it resumes by itself once it does:
+  orker-7f3a: object storage unreachable: the last check failed; this Orker's log has the error, since 2026-11-04T09:13:10Z
+```
+
+Admin → Pools stamps the row `Object Storage Unreachable`, apart from an
+operator's `Cordoned`, and offers no Uncordon for it, because none would help.
+The reason is plain words on purpose: the store's own error names endpoints
+and keys, so it goes to the Orker's log, never to the inventory. The log lines
+are `object storage check failed`, `orker cordoned itself: object storage
+unreachable` on entering and `object storage answers again` on leaving; they are
+always on, whatever the telemetry settings, and the metrics below are not. Nothing audits a store
+outage's cordon, because no one asked for it. With metrics on:
+
+| Metric | Labels | What it reads |
+|---|---|---|
+| `ork.orker.store_outage.active` | `ork.orker_id` | 1 while this Orker holds its cordon for a store outage, else 0 |
+| `ork.orker.store_outage.transitions` | `ork.orker_id`, `ork.transition` | each entry (`entered`) and exit (`left`) |
+
+Telemetry can never fail a task or change what the check does.
+
+**What a check is.** One conditional write of the fixed object the boot probe
+already wrote, which a live store refuses, and one read of it, with the Orker's
+own store credentials and its own client. So it exercises writing and reading a
+completion record, and adds no object: if that one object has gone, the write
+puts it back, as the next boot would. A failure that spares that one key, such
+as credentials scoped to some prefixes, goes unseen, and attempts fail as they
+always did. Anything that keeps the
+Orker from getting an answer fails it, revoked credentials included. Each check
+is bounded by `orker.store_check.timeout`, and one that does not answer in time
+counts as failed even when it cannot be interrupted, as on a hung mount, and no
+second check starts behind it.
+
+**The local backend** (`ORK_ARTIFACT_BACKEND=local`) runs the same check on its
+directory: a temporary file written there, a refused link, and a read. It fires
+when that directory cannot be written or read, such as a full or read-only
+disk, or a mount gone away. A check that hangs on a hung mount counts as failed
+as above.
+
+**What it does not cover:**
+
+- **Runs that finished before the outage.** No Orker work is left in them to
+  pause, and what the engine still has to write for them, such as an archive,
+  is the engine's to retry.
+- **Runs that close without an Orker,** such as an operator's cancel or an
+  await whose deadline passes. The engine closes those by itself, and an
+  Orker's cordon does not hold them back.
+- **A task that starts a pin during the outage.** It still fails
+  `PIN_UNAVAILABLE` once every pin host of its pool has refused for about five
+  minutes, as for any cordon ("Removing an Orker safely", above).
+- **The window before the cordon.** An attempt that reaches the store during
+  those seconds fails as it always did, and uses an attempt. So can
+  the at most two tasks a cordon can still be handed (above), per Orker.
+- **Work already in flight.** A running container is left to finish, and a
+  member of an open pin still runs. If either still cannot write its outputs
+  when it ends, that attempt fails `InfrastructureError` and uses an attempt;
+  its retry then waits with everything else.
+
+**Submitting while every Orker of a pool holds it.** A pool whose Orkers are
+waiting out an outage has paused, and is not absent. Such an Orker still keeps
+its pool live, so `SubmitRun` accepts the run, the run waits, and it starts once
+the store answers. `orkctl pool list` keeps counting it, and submit's capability
+probes still ask it. A submit needs the store itself, so during a whole outage it
+fails on the engine's own reads; this acceptance shows when only the Orkers have
+lost the store, and in the seconds after a recovery while they resume.
+
+An operator's cordon says the opposite, that the Orker is leaving, so an Orker
+that holds one does not keep its pool live, whatever else it holds. A pool that
+has only such Orkers refuses a submit `has no live Orkers`, as ever.
+
+While a task waits on such a pool, `orkctl run inspect` prints `waiting for
+object storage` with the pool and since when, and the run page says the same in
+place of `Waiting for capacity`. That wait is said only when no Orker of the
+pool takes new tasks, at least one is cordoned for the outage alone, and every
+live Orker answered when asked; otherwise it reads as any other wait for an
+Orker. So a pool whose only Orkers an operator has cordoned too does not say it:
+those would not resume when the store answers. A pinned task never reads it: it
+is covered by the pin's own wait, above. A waiting run has no deadline of its
+own, because a task's `timeout_seconds` starts with its container, so if the store
+never returns, cancel the runs you no longer want.
+
+A release is a different decision. `orkctl release` counts such an Orker as
+cordoned, so a ramp or promote that needs it reports `POOL_NOT_SERVED`, naming
+the outage's reason: moving new runs onto Orkers that cannot run them can wait
+until the store is back.
+
 ### Fair dispatch across namespaces
 
 When tasks of several namespaces wait for the same pool's Orkers, the cluster
@@ -2960,7 +3169,7 @@ waits for a free pin slot beside other namespaces' requests. A run that
 carries on into a new history keeps its key and weight, and a composed
 task's child run takes its parent's. A pin's request carries the key only
 through the engine's own run worker (`ork` builds it so), and only in a run
-submitted from v0.1.1 on: the submit marks it in the run, and a run submitted
+submitted from v0.2.0 on: the submit marks it in the run, and a run submitted
 before opens every pin unkeyed to its end, whatever release carries it on.
 
 It is Temporal's own task-queue fairness, never an OrkStack queue, and it takes
@@ -3763,7 +3972,7 @@ They catch different halves, and neither is enough alone:
 | `TestRunWorkflow_ReplaysCommittedV1History` | Temporal's own replayer: command types and their order | a reordered, added or deleted activity; a changed scheduling order |
 | `TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream` | the same replayer, run against a body with one extra emit — it must FAIL | the guard above going blind: it is the proof the fixture can reject an inserted command, on the day it is recorded rather than one change later |
 | `TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends` | the payloads, by re-executing the fixture's own input against the recorded ones | a changed `task.ExecuteTaskInput`, a renamed event type, a reworded message, a changed `Run` projection |
-| `TestRunWorkflow_ReplaysCommittedJoinHistory` | the replayer against the join fixture (`run-join-v1.json`, `examples/branch-and-recover.ork.yaml` with a failing `deploy`), plus the order the replay schedules tasks in | a changed join decision, a failure handler dispatched in a different place, a moved failing note or `RUN_FAILED` |
+| `TestRunWorkflow_ReplaysCommittedJoinHistory` | the replayer against the join fixture (`run-join-v1.json`, `internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml` with a failing `deploy`), plus the order the replay schedules tasks in | a changed join decision, a failure handler dispatched in a different place, a moved failing note or `RUN_FAILED` |
 | `TestJoinHistory_ActivityPayloadsMatchWhatCurrentCodeSends` | the join fixture's payloads, re-executed from its own input | a changed `ExecuteTaskInput.join` or failed-need reference, a reworded skip, cancel or failing sentence |
 | `TestJoinHistory_CatchesAHandlerOnTheRunContext` | the replayer, against a body that dispatches failure handlers on the run's own context — it must FAIL | the join guard going blind to where a handler's activities are scheduled |
 | `TestCommittedFixtures_DeclareNoJoin` | every other fixture's `RunWorkflow` input | a fixture that declares `join:`, which would void the premise that no earlier history reaches a join branch |
@@ -3868,23 +4077,21 @@ passed by reference, cannot be used ends in its first generation with
 refuses `RUN_CREATED`'s snapshot, it is written again under the same number,
 so a store that is back for that write leaves both events. When that write
 fails too, the number stays unused and the terminal event is still written at
-2, under a key of its own. Its stream then starts at 2, and both reads say so
-alike: a read of the stream from its start fails `DataLoss`, naming 1 as never
-published, with nothing sent, live and from the archive, which records 1 as a
-gap line (`docs/STORAGE.md`), and the run page's socket closes with a
-shortened form of the same sentence; a read from 1 serves the terminal event.
-Before this, the terminal event was written at 2 the same way, and the stream
-silently began there. The reader recognises the gap from the history alone, so
-a run recorded before the gate, which wrote the terminal event after a single
-refused write, is read and archived the same way. Only these first numbers are
-recognised: a number a run consumes later without an event — an event whose
-snapshot is refused mid-run — is not recorded as a gap. When `RUN_CREATED` is
-written and the terminal write fails, the stream holds `RUN_CREATED` and the
-run's close is read as its terminal event, at 2. When the terminal write fails
-as well as both of `RUN_CREATED`'s, the run publishes nothing and its close is
-read as its one event, at 1. In both of those it publishes no terminal event,
-so, like every run that publishes none, it has no archive body and becomes
-unreadable once the cluster's retention expires it. It records the
+2, under a key of its own. Its stream then starts at 2, and every read says so.
+A live read from its start serves a `STREAM_GAP` event naming 1 and then the
+terminal event; the archive records 1 as a gap line (`docs/STORAGE.md`), and a
+read of the archive from its start fails `DataLoss` naming it, with nothing
+sent, and the run page's socket closes with a shortened form of the same
+sentence; a read from 1 serves the terminal event. Before this, the terminal
+event was written at 2 the same way, and the stream silently began there. The
+reader recognises the gap from the history alone, so a run recorded before the
+gate, which wrote the terminal event after a single refused write, is read and
+archived the same way. When `RUN_CREATED` is written and the terminal write
+fails, the stream holds `RUN_CREATED` and the run's close is read as its
+terminal event, at 2. When the terminal write fails as well as both of
+`RUN_CREATED`'s, the run publishes nothing and its close is read as its one
+event, at 1. In both of those it publishes no terminal event, so, like every run
+that publishes none, its archive comes from the archive sweep (§1). It records the
 `run-created-first` version, asked lazily where `RUN_CREATED`'s write first
 fails: an ending whose writes take records no marker. A history recorded
 before the gate replays its `DefaultVersion` branch, which wrote the terminal
@@ -3894,6 +4101,22 @@ event next; version 1 is the new path. The fixtures
 `run-created-first-legacy-v1.json` (recorded with the gate off) guard it with
 command, behaviour, reader and negative tests
 (`internal/engine/testdata/history/README.md`).
+
+**A number a run uses without an event is recorded wherever it falls.** When
+object storage refuses an event's snapshot, the number stays used and no event
+is published under it; the run's next event takes the next number. The workflow
+is unchanged: the reader finds such numbers from the history alone, at the start
+of the stream, inside an earlier part's event segment or at its end, so runs
+recorded before this are read the same way. A live read of the stream serves a
+`STREAM_GAP` event at the last of them, naming them all, and goes on to the
+run's terminal event: `StreamEvents`, the run page's socket and `orkctl run
+watch` agree, and a resume past that number does not see it again. `STREAM_GAP`
+belongs to the read, and the run's archive holds no such event. It records the
+numbers as a `gap` line with the reason `the run's history holds no event under
+these numbers`, and a read of the archive over them ends `DataLoss`, as it does
+over any gap, after the events below it; a resume past them serves what follows.
+An archive written before this holds no line for such a number, and its stream
+skips it silently.
 
 **A pin's creation timeout is a versioned change.** A run's plan carries
 `engine.pin_creation_timeout` in whole seconds, pinned at submit and copied
@@ -3917,7 +4140,7 @@ version it was answered with the recorded marker. The fixtures
 negative tests.
 
 **A pin's fairness key is a versioned change.** A run whose plan's fairness
-selection says `pin_requests` (set at submit since v0.1.1) asks the
+selection says `pin_requests` (set at submit since v0.2.0) asks the
 `fairness-pin-creation` version once, where its first pin opens, and every pin
 request it then makes carries the plan's key and weight; a run that opens no
 pin, or whose plan carries no such selection — every run submitted before —
@@ -3952,7 +4175,7 @@ coefficient that is not a number is different: the cluster accepts it (the
 same test sends one), so a run may already have scheduled it. It reads as the
 default 2.0 only on the gate's new path, in a run whose plan carries the
 number, and the run asks the gate where it first schedules such a task if it
-has not already; a run submitted before v0.1.1, and a history recorded before
+has not already; a run submitted before v0.2.0, and a history recorded before
 the gate, keep sending the NaN as every earlier build did, so its spacing never
 changes partway through a run. A build that
 predates the field ignores the plan's
@@ -4189,7 +4412,8 @@ workflow task latency, poll counts, failures — arrive via
 `client.Options.MetricsHandler`, and Go's runtime and process collectors ride
 along on the same `/metrics`. An Orker that declares a capacity adds
 `ork.orker.capacity.*` and `ork.orker.admission.*` ("Declaring an Orker's
-capacity", above).
+capacity", above). Every Orker adds `ork.orker.store_outage.*` ("When object
+storage goes away", above).
 
 `ork.audit.records{action,outcome}` (engine) counts every control-plane
 audit write, once per audited write RPC: `outcome` is `written`, or `dropped`
@@ -4223,6 +4447,9 @@ policy names one — they can land on a different sink than the process default
 | `ork.run.continuation.duration` | `ork.namespace`, `phase` | engine, seconds a switch's write (`write`) or a whole restore (`restore`) took |
 | `ork.run.continuation.hold.duration` | `ork.namespace` | engine, seconds a run held new tasks before it carried on (0 when it found a moment with nothing running on its own) |
 | `ork.run.continuation.read.attempts` | `ork.namespace` | engine, the attempt each successful read of a saved state succeeded on |
+| `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), or `expired` (the cluster had already let it go: the run is lost) |
+| `ork.archive.sweep.unconfirmed` | — | engine, each pass: finished runs it could not confirm have an archive. **Alert on this above zero.** While object storage is down it counts every finished run the pass did not reach, archived or not |
+| `ork.archive.sweep.earliest_expiry` | — | engine, each pass that counted any and could date them: seconds left until the first of those runs expires. Read it only while `ork.archive.sweep.unconfirmed` is above zero |
 
 (The rows above omit `ork.namespace` even though every run and task metric
 carries it; `ork.runs.refused` names it explicitly. `ork.cache.outcome` —

@@ -38,7 +38,7 @@ const BUCKET = ownBucket('join-policy');
 // Failing banner appear and the structured error show beside a Running pill,
 // and resolving or cancelling the awaited handler ends the run FAILED.
 //
-// examples/branch-and-recover.ork.yaml is applied AS SHIPPED, and its await
+// internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml is applied AS IT STANDS, and its await
 // variant (rollback an awaited failure handler) beside it, so the failing
 // phase lasts until the test resolves or cancels it. Both are submitted with
 // smoke_seconds=120, so smoke is certainly running when deploy fails.
@@ -59,7 +59,7 @@ const note = noteTo(out('transcript.txt'));
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fullPage: true });
 
-const shipped = () => readFileSync(path.join(repoRoot, 'examples', 'branch-and-recover.ork.yaml'), 'utf8');
+const shipped = () => readFileSync(path.join(repoRoot, 'internal', 'dsl', 'testdata', 'orkflows', 'branch-and-recover.ork.yaml'), 'utf8');
 
 /** The await variant: the shipped file with rollback replaced by an awaited failure handler. */
 function awaitVariant(): string {

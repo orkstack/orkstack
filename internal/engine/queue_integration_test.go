@@ -87,7 +87,7 @@ func dialRoutingCluster(t *testing.T, ctx context.Context, address, namespace st
 
 // TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll is the end of the
 // ORK_ORKER_QUEUE story: an engine configured for a private orker queue must
-// dispatch an ordinary orkflow's tasks there. The orkflow (examples/hello.ork.yaml)
+// dispatch an ordinary orkflow's tasks there. The orkflow (internal/dsl/testdata/orkflows/hello.ork.yaml)
 // names no queue, and nothing in this test polls the shared default queue for
 // activities — so if dispatch ignored the engine's configuration, every task
 // would sit unassigned and the run would never leave RUNNING.
@@ -224,7 +224,7 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		_ = server.Shutdown(shutdownCtx)
 	}()
 
-	source, err := os.ReadFile("../../examples/hello.ork.yaml")
+	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}

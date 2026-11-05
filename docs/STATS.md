@@ -359,8 +359,9 @@ An engine with no attempt store refuses `image` and `phase` with
 **Fail rather than answer from a subset.** More than 5000 failed runs in the
 window (`FailureBreakdownMaxScan`) is `ResourceExhausted` before a single body
 is read, and the message names the population, the bound, and what to narrow.
-An index row whose body is absent — the crash window between the archive's two
-writes — is skipped exactly as `ListRuns` skips it, and shows as
+An index row whose body is absent — an archive write that stopped short, which
+the archive sweep finishes (`docs/DEPLOY.md` §1) — is skipped exactly as
+`ListRuns` skips it, and shows as
 `failed_runs_scanned < failed_runs_in_window`. Any other unreadable body, or an
 attempt store that cannot be reached, fails the call with `Unavailable` naming
 the run: a census with a hole in it is not a census, and "could not read" is

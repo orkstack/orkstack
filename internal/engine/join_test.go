@@ -1674,7 +1674,7 @@ func TestRunWorkflow_EveryTaskIsTerminalWhenAFailingRunEnds(t *testing.T) {
 // shipped example with every join removed and its handlers dropped sends no
 // join on any input, sets none on any row, and emits no failing note.
 func TestRunWorkflow_ADefinitionWithoutJoinSendsTheInputsItAlwaysSent(t *testing.T) {
-	wf := compileExample(t, "branch-and-recover.ork.yaml")
+	wf := compileFixture(t, "branch-and-recover.ork.yaml")
 	var kept []*orkstackv1.Task
 	for _, tk := range wf.GetTasks() {
 		switch tk.GetJoin() {

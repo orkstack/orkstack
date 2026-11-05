@@ -1,0 +1,16 @@
+WEBVTT
+
+00:00.111 --> 00:14.623
+render-configs renders one config file per service, on a pool with room for four at a time.
+
+00:14.623 --> 00:20.331
+The pool is full, so the other items wait for capacity. The note above the graph says why.
+
+00:20.331 --> 00:29.868
+The card beside the tasks says what it waits for: every cpu of pool batch is reserved, by the items that are running.
+
+00:29.868 --> 00:47.901
+An item finishes and frees its reservation, and a waiting item starts at once.
+
+00:47.901 --> 00:51.110
+Nothing was retried and nothing was lost: each item waited for room, then ran.

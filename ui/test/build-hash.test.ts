@@ -37,7 +37,7 @@ const defaultInputFiles = [
 	'tsconfig.json',
 	'package.json',
 	'bun.lock',
-	'../examples/hello.ork.yaml'
+	'../examples/each-fan-out.ork.yaml'
 ];
 
 test('every default input has a file among the edited ones', () => {
@@ -89,10 +89,10 @@ test('an input beside ui/ is walked: an edited example changes the hash', () => 
 		mkdirSync(`${repo}/ui/src`, { recursive: true });
 		mkdirSync(`${repo}/examples`, { recursive: true });
 		writeFileSync(`${repo}/ui/src/app.txt`, 'one');
-		writeFileSync(`${repo}/examples/hello.ork.yaml`, 'name: hello\n');
+		writeFileSync(`${repo}/examples/each-fan-out.ork.yaml`, 'name: hello\n');
 		const before = buildInputsHash(`${repo}/ui`, ['src', '../examples']);
 		const sourcesOnly = buildInputsHash(`${repo}/ui`, ['src']);
-		writeFileSync(`${repo}/examples/hello.ork.yaml`, 'name: hello-again\n');
+		writeFileSync(`${repo}/examples/each-fan-out.ork.yaml`, 'name: hello-again\n');
 		expect(buildInputsHash(`${repo}/ui`, ['src', '../examples']) === before).toBe(false);
 		// The positive control: without the input the same edit is invisible.
 		expect(buildInputsHash(`${repo}/ui`, ['src'])).toBe(sourcesOnly);

@@ -2916,7 +2916,6 @@ func (s *Service) streamCheckedRunEvents(
 	}
 	if binding.Reader != nil {
 		err := binding.Reader.StreamEvents(ctx, runID, fromSequence, send)
-		var unpublished *engine.UnpublishedEventsError
 		switch {
 		case err == nil:
 			return nil
@@ -2924,11 +2923,6 @@ func (s *Service) streamCheckedRunEvents(
 			// The caller went away mid-stream. That is not a failure of the
 			// run, and the old bus path reported it as a clean end too.
 			return nil
-		case errors.As(err, &unpublished):
-			// The range asked for starts below the run's first published
-			// event: DataLoss naming the numbers, as the run's archive
-			// answers the same read (archivedEventsBeforeLoss).
-			return connect.NewError(connect.CodeDataLoss, archivedLossError(runID, unpublished.Gaps))
 		case !errors.Is(err, artifacts.ErrNotFound):
 			return connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("stream run %q: %w", runID, err))

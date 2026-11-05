@@ -7,6 +7,17 @@
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Decide in a task, branch on its value"
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Reuse a block with declared outputs"
 #
+# It composes notify-block, so that block must be stored first, in a command of
+# its own. That is the one thing it asks of you, besides internet access to
+# httpbin.org, or `--input notify_url=…` naming an endpoint that answers a POST:
+#   orkctl apply examples/notify-block.ork.yaml
+#   orkctl apply examples/approval-gate.ork.yaml
+#
+# By default it needs nobody: the default change is not risky, so no approval
+# opens and the change is applied. To see the approval, submit a risky one and
+# resolve it:
+#   orkctl run submit approval-gate --input-json '{"changes":[{"service":"payments","setting":"limit","value":"10"}]}'
+#
 #   assess          a json task decides `risky` (a JSON boolean) from the
 #                   typed `changes` input.
 #   approval        an awaited task, opened only when risky. It starts no
@@ -18,19 +29,18 @@
 #   apply           none_failed: runs after an approval, or when none was
 #                   needed. Its condition reads the approval only behind the
 #                   `index .tasks` guard, because a skipped approval is absent.
-#   announce        the notify-block (apply examples/notify-block.ork.yaml
-#                   first): "applied" or "declined".
+#   announce        the notify-block: "applied" or "declined".
 #   tell-requester  join: any_failed on approval: a rejection or an expired
 #                   deadline fails the run, and the requester hears why.
 #
-#   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":false}}' --assert-skipped approval --assert-runs apply --assert-runs announce --assert-skipped tell-requester
-#   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":true}}' --output approval='{"approved":false,"approver":"dana"}' --assert-runs approval --assert-skipped apply --assert-runs announce
-#   orkctl run plan --file examples/approval-gate.ork.yaml --input notify_url=https://hooks.example.com/changes --output assess='{"result":{"risky":true}}' --assume-failed approval --assert-runs tell-requester
+#   orkctl run plan --file examples/approval-gate.ork.yaml --output assess='{"result":{"risky":false}}' --assert-skipped approval --assert-runs apply --assert-runs announce --assert-skipped tell-requester
+#   orkctl run plan --file examples/approval-gate.ork.yaml --output assess='{"result":{"risky":true}}' --output approval='{"approved":false,"approver":"dana"}' --assert-runs approval --assert-skipped apply --assert-runs announce
+#   orkctl run plan --file examples/approval-gate.ork.yaml --output assess='{"result":{"risky":true}}' --assume-failed approval --assert-runs tell-requester
 apiVersion: orkstack/v1
 kind: Orkflow
 name: approval-gate
-version: "0.1.0"
-description: "Assess a change in a json task, wait for an approval only when it is risky, then apply, decline or report a rejection. Apply notify-block first."
+version: "0.2.0"
+description: "Assess a change in a json task, wait for an approval only when it is risky, then apply, decline or report a rejection. Store notify-block first: orkctl apply examples/notify-block.ork.yaml, then orkctl apply examples/approval-gate.ork.yaml."
 
 inputs:
   changes:
@@ -41,7 +51,7 @@ inputs:
         value: "3"
   notify_url:
     type: string
-    required: true
+    default: "https://httpbin.org/post"
 
 tasks:
   - id: assess
@@ -90,7 +100,7 @@ tasks:
         echo "applying: $1"
 
   - id: announce
-    uses: orkflow:notify-block@0.1.0
+    uses: orkflow:notify-block@0.2.0
     needs:
       - assess
       - apply
@@ -101,7 +111,7 @@ tasks:
       text: '{{ if index .tasks "apply" }}applied{{ else }}declined{{ end }}: {{ .tasks.assess.output.result.summary }}{{ with index .tasks "approval" }} (approver: {{ .output.approver }}){{ end }}'
 
   - id: tell-requester
-    uses: orkflow:notify-block@0.1.0
+    uses: orkflow:notify-block@0.2.0
     needs:
       - approval
     join: any_failed

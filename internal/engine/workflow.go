@@ -2700,15 +2700,12 @@ func (s *runState) snapshot() *orkstackv1.Run {
 // If the snapshot write fails, the sequence number is consumed (burned) and
 // will not appear in the published stream. This is unavoidable for replay
 // consistency: the sequence counter is deterministic state recorded in Temporal
-// history, and a replay must produce identical history. A snapshot write failure
-// is terminal (fails the run), so the gap is visible only to auditors examining
-// the history: the bus and archive contain sequences 1..N-1 and N+1..M, never
-// with a gap that crosses a run boundary. The one exception is
-// emitRunCreatedFirst, which writes an ending before start's RUN_CREATED again
-// under its own number, because nothing about the run moved in between; a
-// number 1 it still cannot write is named as never published, by every read
-// of the stream and in the run's archive (unpublishedStart). No later burned
-// number is named: the reader checks the start of the stream only.
+// history, and a replay must produce identical history. The reader names every
+// burned number that an event follows, from the history alone (noteSkipped): a
+// live read serves a STREAM_GAP event and the archive records a gap. The one
+// exception is emitRunCreatedFirst, which writes an ending before start's
+// RUN_CREATED again under its own number, because nothing about the run moved
+// in between.
 func (s *runState) emit(
 	ctx workflow.Context,
 	eventType orkstackv1.EventType,

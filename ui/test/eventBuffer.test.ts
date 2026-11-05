@@ -31,6 +31,14 @@ function ev(sequence: number, type: EventType, taskId = ''): Event {
 	});
 }
 
+test('a gap in the stream is about the run, not a task, and is not a failure', () => {
+	const gap = ev(4, EventType.STREAM_GAP);
+	expect(matchesFilter(gap, 'run')).toBe(true);
+	expect(matchesFilter(gap, 'tasks')).toBe(false);
+	expect(matchesFilter(gap, 'failures')).toBe(false);
+	expect(isFailureEvent(gap)).toBe(false);
+});
+
 test('the buffer keeps the newest events and counts every one it dropped', () => {
 	let buffer = emptyEventBuffer();
 	for (let i = 1; i <= 2500; i += 1) buffer = appendEvent(buffer, ev(i, EventType.TASK_LOG), 2000);

@@ -445,12 +445,12 @@ func materializeSnapshot(ctx context.Context, store SnapshotStore, bases *Snapsh
 		}
 		run := &orkstackv1.Run{}
 		if err := proto.Unmarshal(data, run); err != nil {
-			return nil, fmt.Errorf("decode snapshot %s: %w", uri, err)
+			return nil, fmt.Errorf("%w %s: %w", errSnapshotUndecodable, uri, err)
 		}
 		return run, nil
 	}
 	if err != nil {
-		return nil, overlayInvalid("its snapshot could not be read: %v", err)
+		return nil, overlayUnreadable("its snapshot could not be read: %v", err)
 	}
 	overlay := &orkstackv1.RunSnapshotOverlay{}
 	if err := proto.Unmarshal(data, overlay); err != nil {
@@ -466,7 +466,7 @@ func materializeSnapshot(ctx context.Context, store SnapshotStore, bases *Snapsh
 	if base == nil {
 		baseData, err := store.ReadSnapshot(ctx, baseURI)
 		if err != nil {
-			return nil, overlayInvalid("the full snapshot it is written against could not be read: %v", err)
+			return nil, overlayUnreadable("the full snapshot it is written against could not be read: %v", err)
 		}
 		if artifacts.ContinuationSHA256(baseData) != overlay.GetBaseSha256() {
 			return nil, overlayInvalid("the full snapshot it is written against has changed since")
@@ -485,6 +485,27 @@ func materializeSnapshot(ctx context.Context, store SnapshotStore, bases *Snapsh
 // error, so it can never read as NotFound.
 func overlayInvalid(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrSnapshotOverlayInvalid, fmt.Sprintf(format, args...))
+}
+
+// errSnapshotUndecodable reports a snapshot object that was read and does not
+// decode. Reading it again cannot help.
+var errSnapshotUndecodable = errors.New("decode snapshot")
+
+// errSnapshotStoreFailed marks an overlay assembly that failed on a read that
+// may heal, so what is archived from a run's history never takes an outage
+// for a loss (snapshotLost). It joins ErrSnapshotOverlayInvalid rather than
+// replacing it: every other reader answers the two alike.
+var errSnapshotStoreFailed = errors.New("object storage did not answer")
+
+// overlayUnreadable is overlayInvalid for a failed read of the store, whose
+// error is the last argument. An object that is gone is a plain assembly
+// failure; any other failed read is marked errSnapshotStoreFailed. As in
+// overlayInvalid, the text never wraps the store's error.
+func overlayUnreadable(format string, err error) error {
+	if errors.Is(err, artifacts.ErrNotFound) {
+		return overlayInvalid(format, err)
+	}
+	return fmt.Errorf("%w: %w: %s", ErrSnapshotOverlayInvalid, errSnapshotStoreFailed, fmt.Sprintf(format, err))
 }
 
 // uriDir is uri up to and including its last slash.

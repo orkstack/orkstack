@@ -4,10 +4,10 @@ Mark a task `cache:` to reuse the result of an identical earlier task. The conta
 
 ## Example
 
-In [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/config-from-git.ork.yaml), `tmpl` cuts one template out of a cloned repository. Its result is cached for a day:
+In [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/config-from-git.ork.yaml), `readme` cuts one file out of a cloned repository. Its result is cached for a day:
 
 ```yaml
-  - id: tmpl
+  - id: readme
     uses: file
     needs:
       - clone
@@ -18,18 +18,18 @@ In [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/bl
     with:
       op: untar
       src: '{{ artifact "clone/src.tar.gz" }}'
-      member: '{{ .inputs.template_path }}'
-      as: app.conf.tmpl
+      member: '{{ .inputs.readme_path }}'
+      as: README
 ```
 
-`clone` is not cached. It mounts the Git token, and a revoked token must fail the next run.
+`clone` is not cached, so each run fetches the commit. If you give it a Git token, it must stay that way: a task that mounts a secret is never cached, and a revoked token must fail the next run.
 
-The example needs a Git repository that the Orker can reach, and `GIT_TOKEN` in the Orker's environment. Run it twice with the same input:
+The example reads a small public repository, so it needs internet access to GitHub and nothing else. Run it twice with the same input:
 
 ```bash
 orkctl apply examples/config-from-git.ork.yaml
-orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.git --input environment=prod --watch
-orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.git --input environment=prod --watch
+orkctl run submit config-from-git --watch
+orkctl run submit config-from-git --watch
 ```
 
 If the commit has not moved, the cached tasks finish as `SUCCEEDED (cached)` in `orkctl run get`.

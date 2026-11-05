@@ -4,11 +4,11 @@ Learn what an activity container can reach, what OrkStack refuses to run, and wh
 
 ```yaml
     secrets:
-      - name: demo-token
-        source: "env:ADVANCED_DEMO_TOKEN"
+      - name: git-token
+        source: env:GIT_TOKEN
 ```
 
-This excerpt is from [`examples/advanced-demo.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/advanced-demo.ork.yaml). The Orker reads the token from its own environment and gives the container a read-only file. The container never sees the source.
+This is what the header of [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/config-from-git.ork.yaml) tells you to add for a private repository. The Orker reads the token from its own environment and gives the container a read-only file. The container never sees the source.
 
 ## The Orker is the boundary
 

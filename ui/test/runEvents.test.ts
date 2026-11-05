@@ -122,6 +122,20 @@ test('the backoff doubles until a frame arrives, and a frame resets the count', 
 	expect(w.events).toEqual([1n]);
 });
 
+test('a gap in the stream is delivered and the stream goes on to the run end', () => {
+	const w = watcher();
+	const socket = w.socket();
+	socket.open();
+	socket.frame(1);
+	socket.frame(4, 'STREAM_GAP');
+	expect(w.events).toEqual([1n, 4n]);
+	expect(socket.closed).toBe(false);
+	socket.frame(5, 'RUN_FAILED');
+	expect(w.events).toEqual([1n, 4n, 5n]);
+	expect(socket.closed).toBe(true);
+	expect(w.states.at(-1)).toBe('closed');
+});
+
 test('a reconnect resumes from the last sequence, and dedupes', () => {
 	const w = watcher();
 	w.socket().frame(1);

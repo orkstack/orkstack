@@ -83,7 +83,8 @@ func (f *scriptedFleet) CordonOrker(_ context.Context, id string, in *orkstackv1
 	defer f.mu.Unlock()
 	f.cordons = append(f.cordons, in)
 	out := proto.Clone(f.described[id]).(*orkstackv1.DescribeOrkerResult)
-	out.Cordoned, out.CordonReason, out.CordonedAt = in.GetCordoned(), "", nil
+	// As the Orker does: the operator's cordon is cleared, a store outage is not.
+	out.Cordoned, out.CordonReason, out.CordonedAt = in.GetCordoned() || out.GetStoreOutage() != nil, "", nil
 	if in.GetCordoned() {
 		out.CordonReason = in.GetReason()
 		out.CordonedAt = timestamppb.New(cordonedAt)
@@ -395,5 +396,122 @@ func TestOrkerCommands_IgnoreNamespace(t *testing.T) {
 	if a.stdout != b.stdout || strings.Join(plain.observed, ",") != strings.Join(scoped.observed, ",") ||
 		strings.Join(orkerRequests(fp), ",") != strings.Join(orkerRequests(fs), ",") {
 		t.Fatalf("-n payments changed the command:\n%s\n---\n%s", a.stdout, b.stdout)
+	}
+}
+
+// storeOutageFleet is one Orker per cordon cause, and one holding both.
+func storeOutageFleet() *scriptedFleet {
+	outage := func() *orkstackv1.StoreOutage {
+		return &orkstackv1.StoreOutage{
+			Reason: "object storage unreachable: the last check failed; this Orker's log has the error",
+			Since:  timestamppb.New(cordonedAt.Add(time.Minute)),
+		}
+	}
+	return &scriptedFleet{
+		presence: []engine.OrkerPresence{
+			{Identity: "orker-both", LastSeen: fleetSeen},
+			{Identity: "orker-op", LastSeen: fleetSeen},
+			{Identity: "orker-out", LastSeen: fleetSeen},
+		},
+		described: map[string]*orkstackv1.DescribeOrkerResult{
+			"orker-both": {OrkerId: "orker-both", Pool: "build", Cordoned: true, CordonReason: "patching",
+				CordonedAt: timestamppb.New(cordonedAt), StoreOutage: outage()},
+			"orker-op": {OrkerId: "orker-op", Pool: "build", Cordoned: true, CordonReason: "patching",
+				CordonedAt: timestamppb.New(cordonedAt)},
+			"orker-out": {OrkerId: "orker-out", Pool: "build", Cordoned: true, StoreOutage: outage()},
+		},
+		failures: map[string]error{},
+		script:   map[string][]*orkstackv1.DescribeOrkerResult{},
+	}
+}
+
+func TestOrkerList_ShowsAStoreOutageApartFromAnOperatorsCordon(t *testing.T) {
+	f := newOrkerFixture(t, storeOutageFleet())
+	out := f.run("orker", "list").requireExit(t, exitOK)
+	requireGolden(t, "orker-list-store-outage.golden", out.stdout)
+}
+
+func TestOrkerGet_SaysWhichCauseHolds(t *testing.T) {
+	f := newOrkerFixture(t, storeOutageFleet())
+	requireGolden(t, "orker-get-store-outage.golden", f.run("orker", "get", "orker-out").requireExit(t, exitOK).stdout)
+	both := f.run("orker", "get", "orker-both").requireExit(t, exitOK).stdout
+	for _, want := range []string{`"patching"`, "store outage", "object storage unreachable", "by itself once object storage answers"} {
+		if !strings.Contains(both, want) {
+			t.Errorf("orker get with both causes lacks %q:\n%s", want, both)
+		}
+	}
+	plain := f.run("orker", "get", "orker-op").requireExit(t, exitOK).stdout
+	if strings.Contains(plain, "store outage") || strings.Contains(plain, "object storage") {
+		t.Errorf("an operator's cordon alone speaks of an outage:\n%s", plain)
+	}
+}
+
+func TestOrkerList_JSONCarriesTheStoreOutage(t *testing.T) {
+	f := newOrkerFixture(t, storeOutageFleet())
+	out := f.run("orker", "list", "--json").requireExit(t, exitOK)
+	var got struct {
+		Orkers []struct {
+			OrkerID      string `json:"orkerId"`
+			Cordoned     bool   `json:"cordoned"`
+			CordonReason string `json:"cordonReason"`
+			StoreOutage  *struct {
+				Reason string `json:"reason"`
+				Since  string `json:"since"`
+			} `json:"storeOutage"`
+		} `json:"orkers"`
+	}
+	if err := json.Unmarshal([]byte(out.stdout), &got); err != nil {
+		t.Fatalf("%v\n%s", err, out.stdout)
+	}
+	byID := map[string]int{}
+	for i, row := range got.Orkers {
+		byID[row.OrkerID] = i
+	}
+	outage := got.Orkers[byID["orker-out"]]
+	if !outage.Cordoned || outage.CordonReason != "" || outage.StoreOutage == nil ||
+		!strings.HasPrefix(outage.StoreOutage.Reason, "object storage unreachable") || outage.StoreOutage.Since == "" {
+		t.Fatalf("store outage row = %+v", outage)
+	}
+	if operator := got.Orkers[byID["orker-op"]]; operator.StoreOutage != nil || operator.CordonReason != "patching" {
+		t.Fatalf("operator row = %+v", operator)
+	}
+}
+
+func TestOrkerUncordon_SaysAStoreOutageStillHolds(t *testing.T) {
+	fleet := storeOutageFleet()
+	f := newOrkerFixture(t, fleet)
+	out := f.run("orker", "uncordon", "orker-both").requireExit(t, exitOK).stdout
+	if strings.Contains(out, "accepting work again") || !strings.Contains(out, "resumes by itself once object storage answers") {
+		t.Fatalf("uncordon during an outage said:\n%s", out)
+	}
+}
+
+// A drain of an Orker only an outage holds sets the operator's cordon, so a
+// recovery in the middle of the drain cannot put it back to work.
+func TestOrkerDrain_SetsAnOperatorsCordonOverAStoreOutage(t *testing.T) {
+	useFakeDrainClock(t, drainStart, 5*time.Second)
+	fleet := storeOutageFleet()
+	f := newOrkerFixture(t, fleet)
+	out := f.run("orker", "drain", "orker-out").requireExit(t, exitOK)
+	if len(fleet.cordons) != 1 || !fleet.cordons[0].GetCordoned() || fleet.cordons[0].GetReason() != defaultDrainReason {
+		t.Fatalf("drain delivered %v, want the operator's cordon with its default reason", fleet.cordons)
+	}
+	if !strings.Contains(out.stdout, "is drained") {
+		t.Fatalf("stdout = %q", out.stdout)
+	}
+}
+
+// An operator's uncordon in the middle of a drain ends it even while an outage
+// still holds: the outage ends by itself, and the Orker then takes work with
+// the drain having called it safe to stop.
+func TestOrkerDrain_StopsWhenOnlyAStoreOutageIsLeft(t *testing.T) {
+	useFakeDrainClock(t, drainStart, 5*time.Second)
+	outageOnly := drainStep(1, 0, true)
+	outageOnly.CordonReason, outageOnly.CordonedAt = "", nil
+	outageOnly.StoreOutage = &orkstackv1.StoreOutage{Reason: "object storage unreachable", Since: timestamppb.New(cordonedAt)}
+	f := newOrkerFixture(t, drainFleet(drainStep(1, 0, true), outageOnly))
+	out := f.run("orker", "drain", "orker-7f3a").requireExit(t, exitError)
+	if strings.Contains(out.stdout, "is drained") || !strings.Contains(out.stderr, "was uncordoned by an operator") {
+		t.Fatalf("stdout=%q stderr=%q", out.stdout, out.stderr)
 	}
 }

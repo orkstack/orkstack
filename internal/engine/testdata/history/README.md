@@ -121,7 +121,7 @@ without their own snapshot, and the `EachUpstream` reference.
 
 ### `run-composed-parent-v1.json`, `run-composed-child-v1.json` — composition
 
-The shipped `composed-release` example composing `release-block@0.1.0`,
+The `composed-release` fixture (`internal/dsl/testdata/orkflows/`) composing `release-block@0.1.0`,
 recorded together. Pins `ExecuteChildWorkflow`, the `RenderComposedValues`
 and `StoreComposedValues` markers, and the declared-outputs render.
 
@@ -135,7 +135,7 @@ and `StoreComposedValues` markers, and the declared-outputs render.
 
 ### `run-cached-v1.json` — caching
 
-The second run of `examples/cached-pipeline.ork.yaml`: `featurize` a hit on
+The second run of `internal/dsl/testdata/orkflows/cached-pipeline.ork.yaml`: `featurize` a hit on
 the first run's memo, `stamp` uncached, `train` a miss. Pins
 `ExecuteTaskInput.cache`, `ExecuteTaskResult.cache` and the
 `task succeeded (cached from run …)` event. A run with no cached task sends no
@@ -150,7 +150,7 @@ cache context, so `run-succeeded-v1.json` is unaffected.
 
 ### `run-join-v1.json` — joins and failure handlers
 
-`examples/branch-and-recover.ork.yaml` with `route=full`, `fail_deploy=true`,
+`internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml` with `route=full`, `fail_deploy=true`,
 `smoke_seconds=120`: `full` and `verify` run, `canary` skipped, `deploy` fails
 after two attempts, `smoke` stopped, `announce` never started, `rollback` and
 `notify` run, `escalate` skipped. Pins a `none_failed` decision, a failure
@@ -457,7 +457,7 @@ asked where the write first fails), `RUN_CREATED` written again under sequence
 1, and then `RUN_FAILED` at 2. The `gap` fixture is recorded by today's code
 with both writes refused: the marker, two failed writes, then `RUN_FAILED` at
 2, so the reader names 1 as never published, and archives the run with it as a
-gap (`unpublishedStart`).
+gap (`noteSkipped`).
 The `legacy` fixture is recorded with the gate switched off
 (`DisableRunCreatedFirstGateForTest`), which is the command sequence of every
 build before it: no marker, and `RUN_FAILED` written at 2 right after the

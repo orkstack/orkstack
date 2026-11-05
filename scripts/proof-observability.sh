@@ -261,14 +261,14 @@ say "== namespace $NS =="
 "${ORKCTL[@]}" namespace create "$NS" --telemetry-attribute team=proof \
 	>"$OUT/namespace-create.txt" 2>&1 || fail "namespace create: see $OUT/namespace-create.txt"
 
-ORKFLOW_FILE="$OUT/hello-$STAMP.ork.yaml"
-sed "s/^version: .*/version: \"$STAMP\"/" "$REPO/examples/hello.ork.yaml" >"$ORKFLOW_FILE"
+ORKFLOW_FILE="$OUT/each-fan-out-$STAMP.ork.yaml"
+sed "s/^version: .*/version: \"$STAMP\"/" "$REPO/examples/each-fan-out.ork.yaml" >"$ORKFLOW_FILE"
 grep -q "version: \"$STAMP\"" "$ORKFLOW_FILE" || fail "could not stamp a unique version into $ORKFLOW_FILE"
 
 "${ORKCTL[@]}" -n "$NS" apply "$ORKFLOW_FILE" >"$OUT/apply.txt" 2>&1 \
 	|| fail "apply: see $OUT/apply.txt"
 
-"${ORKCTL[@]}" -n "$NS" run submit hello-ork --json >"$OUT/submit.json" 2>"$OUT/submit.log" \
+"${ORKCTL[@]}" -n "$NS" run submit each-fan-out --json >"$OUT/submit.json" 2>"$OUT/submit.log" \
 	|| fail "run submit: see $OUT/submit.log"
 RUN_ID="$(jq -r '.run.id // empty' "$OUT/submit.json")"
 [ -n "$RUN_ID" ] || fail "run submit produced no run id: see $OUT/submit.json"
@@ -371,10 +371,10 @@ jq '[.batches[]?, .resourceSpans[]?] | map({
 ATTEMPT_SPANS="$(jq '[.[].spans[] | select(. == "ork.task.attempt")] | length' "$OUT/tempo-trace-summary.json")"
 PHASE_SPANS="$(jq '[.[].spans[] | select(. == "ork.task.phase")] | length' "$OUT/tempo-trace-summary.json")"
 TRACE_SERVICES="$(jq '[.[].service] | unique | length' "$OUT/tempo-trace-summary.json")"
-assert "Tempo trace $TRACE_ID: 3 ork.task.attempt spans (found $ATTEMPT_SPANS)" \
-	bash -c "[ '$ATTEMPT_SPANS' = 3 ]"
-assert "Tempo trace $TRACE_ID: >=30 ork.task.phase spans (found $PHASE_SPANS)" \
-	bash -c "[ '$PHASE_SPANS' -ge 30 ]"
+assert "Tempo trace $TRACE_ID: 6 ork.task.attempt spans (found $ATTEMPT_SPANS)" \
+	bash -c "[ '$ATTEMPT_SPANS' = 6 ]"
+assert "Tempo trace $TRACE_ID: >=60 ork.task.phase spans (found $PHASE_SPANS)" \
+	bash -c "[ '$PHASE_SPANS' -ge 60 ]"
 assert "Tempo trace $TRACE_ID: spans from both ork and orker (found $TRACE_SERVICES)" \
 	bash -c "[ '$TRACE_SERVICES' -ge 2 ]"
 
@@ -460,7 +460,7 @@ fi
 assert "zero-config: ork.log's first line is text (time=...), not JSON" \
 	bash -c "head -n1 '$OUT/ork-plain.log' | grep -qE '^time='"
 
-"${ORKCTL[@]}" -n "$NS" run submit hello-ork --json >"$OUT/submit-plain.json" 2>"$OUT/submit-plain.log" \
+"${ORKCTL[@]}" -n "$NS" run submit each-fan-out --json >"$OUT/submit-plain.json" 2>"$OUT/submit-plain.log" \
 	|| fail "zero-config run submit: see $OUT/submit-plain.log"
 PLAIN_RUN_ID="$(jq -r '.run.id // empty' "$OUT/submit-plain.json")"
 [ -n "$PLAIN_RUN_ID" ] || fail "zero-config run submit produced no run id: see $OUT/submit-plain.json"

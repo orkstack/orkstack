@@ -54,7 +54,7 @@ Some rollbacks need preparation first. Each one below names what to change, then
 - a fan-out maximum above 1,000 items: lower `engine.each_max_items` to 1,000;
 - definitions passed by reference: set `engine.definition_by_reference` to `false` on every replica, then wait for the runs started that way to finish;
 - snapshot overlays: set `engine.snapshot_overlays` to `false` on every replica, then wait for the runs started while it was on to finish;
-- the Temporal Go SDK 1.50, which is release 0.1.1, with versioning off: hold each namespace that takes runs, wait until `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run, roll back, then release each hold with `orkctl namespace update NS --release-hold`. Count every open run, however old. Resolve or cancel an awaited task rather than wait for its deadline. With versioning on, this case needs nothing more: a run that 0.1.1 started finishes on 0.1.1.
+- the Temporal Go SDK 1.50, which is release 0.2.0, with versioning off: hold each namespace that takes runs, wait until `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run, roll back, then release each hold with `orkctl namespace update NS --release-hold`. Count every open run, however old. Resolve or cancel an awaited task rather than wait for its deadline. With versioning on, this case needs nothing more: a run that 0.2.0 started finishes on 0.2.0.
 
 Do not roll back below the release that introduced reading runs carried into a fresh history. Every release from 0.1.0 contains it.
 
@@ -80,12 +80,14 @@ Set any key yourself if you need an older value.
 
 ## Upgrading from 0.1.0
 
-Four things differ on a deployment that runs 0.1.0. Check each one before you upgrade it.
+These are the changes most likely to stop a deployment that runs 0.1.0. Check each one before you upgrade it. [UPGRADING.md, "Upgrading from 0.1.0 to 0.2.0"](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#upgrading-from-010-to-020) has every breaking change and its step, including the `file:` source format, jq 1.8, gomplate 5 and the `retry:` policies now refused.
 
-- **Signatures.** The images of v0.1.0 are signed in cosign's legacy `.sig` layout. Later releases sign in cosign 3's bundle layout. An engine or Orker of v0.1.0 cannot read the bundle layout, so it refuses such an image with `IMAGE_NOT_SIGNED`.
-- **Catalog names.** The built-in catalog names the first-party images by their `0.1` tag, and that tag moves to each patch release. A v0.1.0 deployment whose namespace requires `cosign:orkstack` refuses `uses: shell`, and the other first-party activities, at its next apply or submit once a later 0.1 release is out. Upgrade every engine and Orker to that release. Until then, name the v0.1.0 images by digest in `ORK_ACTIVITY_CATALOG`.
+- **Signatures.** The images of v0.1.0 are signed in cosign's legacy `.sig` layout. 0.2.0 and later sign in cosign 3's bundle layout. An engine or Orker of v0.1.0 cannot read the bundle layout, so it refuses such an image with `IMAGE_NOT_SIGNED`.
+- **Catalog names.** The built-in catalog of 0.2.0 names the first-party images by their `0.2` tag, when an Orkflow is applied. A version already applied keeps the image it pinned. 0.2.0 leaves the `0.1` tag on the v0.1.0 images, so a deployment that stays on v0.1.0 is unaffected by it.
 - **Orkers.** Upgrade the Orkers together with the engines. Once an engine is upgraded, it accepts a bundle-signed image at apply and at submit. A v0.1.0 Orker that still polls refuses that run's task with `IMAGE_NOT_SIGNED` when the run's namespace requires a signer. That refusal is a contract violation, which is never retried, so the run fails. A namespace that requires no signer is not affected.
-- **Boot probe.** v0.1.0 runs its boot probe on Alpine 3.20. The release after 0.1.0 moves it to Alpine 3.24. An Orker that cannot pull `docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a` refuses to start with `BIND_PROBE_IMAGE_UNAVAILABLE`. On an air-gapped or rate-limited host, mirror or load that image before the Orkers start.
+- **Boot probe.** v0.1.0 runs its boot probe on Alpine 3.20. 0.2.0 moves it to Alpine 3.24. An Orker that cannot pull `docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a` refuses to start with `BIND_PROBE_IMAGE_UNAVAILABLE`. On an air-gapped or rate-limited host, mirror or load that image before the Orkers start.
+- **Secrets.** No secret floor admits an Orker's own sources, an empty one included: a task that names `env:ORK_*`, `env:AWS_*`, `file:/run/secrets/...` or a file under its work root fails with `SECRET_NOT_PERMITTED`. Give each such task a source of its own, name those sources in `ORK_ORKER_SECRET_ALLOW`, and drop any floor entry that can match only the Orker's own sources, which stops the Orker at boot.
+- **Names.** Both listeners answer `403` to a `Host` they do not admit. Set `ORK_ALLOWED_HOSTS` to each name with a dot the engine is reached by, and `ORK_ADMIN_ALLOWED_HOSTS` to each one a scraper dials.
 
 ## See also
 

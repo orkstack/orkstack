@@ -13,7 +13,7 @@ import (
 const CatalogFile = "internal/dsl/activity_catalog.go"
 
 // BuiltinCatalogTag is the one tag every reference of the engine's built-in
-// activity catalog carries, such as "0.1". It is read from the catalog the
+// activity catalog carries, such as "0.2". It is read from the catalog the
 // engine compiles in, not from a copy.
 func BuiltinCatalogTag() (string, error) {
 	return CatalogTag(dsl.BuiltinActivityCatalog())

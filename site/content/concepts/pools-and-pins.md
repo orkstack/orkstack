@@ -4,18 +4,18 @@ Learn which Orkers may run a task, and when a group of tasks must run on one Ork
 
 ```yaml
 pins:
-  build:                    # declared once, by name
-    timeout_seconds: 900    # optional; 0 or absent means derived from the members
+  workspace:                # declared once, by name
+    timeout_seconds: 1800   # optional; 0 or absent means derived from the members
 
 tasks:
   # ...
-  - id: write
-    uses: shell
-    pin: build
+  - id: checkout
+    uses: git
+    pin: workspace
     run_as_orker_user: true
 ```
 
-The full example is [`examples/pinned-build.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/pinned-build.ork.yaml). Two tasks join `build`, and they run on the same Orker.
+The full example is [`examples/pinned-checkout.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/pinned-checkout.ork.yaml). Four tasks join `workspace`, and they run on the same Orker.
 
 ## Pools: which Orkers may run a task
 

@@ -38,6 +38,12 @@ The archived run record stays, so a retired run is still listed and readable. A 
 
 Without cleanup, every run is kept for the deployment maximum plus a margin (24 hours by default). `orkctl admin retention get` says `not enforced` in that case.
 
+## Runs that did not archive themselves
+
+A run normally archives itself as it ends. A run terminated from outside cannot, and neither can one whose ending object storage refused. The engine archives those from their history about an hour after they close, with cleanup on or off.
+
+That needs object storage. A run is kept for the deployment maximum plus the margin, 96 hours after it closed by default. If object storage stays down for all of that time, the run is lost, and nothing can postpone that. Alert on `ork.archive.sweep.unconfirmed` above zero, and raise the margin if you must survive a longer outage. A larger margin helps only runs that close after you raise it.
+
 ## Lower the maximum safely
 
 `orkctl admin retention set` states what the next cleanup pass will remove, and asks first. Read it before you confirm. A script passes `--yes`:

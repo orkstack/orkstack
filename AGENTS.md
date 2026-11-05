@@ -247,10 +247,10 @@ when its own commit write fails. Deleting any memo changes no result.
 Caching is the author's assertion that a task is safe to reuse; OrkStack
 cannot verify it.
 
-An accepted execution must not disappear. A durably committed activity result
-must not become pending again. Object-storage failures must not silently produce
-success. Every terminal failure must have a machine-readable reason and a
-human-readable explanation.
+An accepted execution must not disappear, with the one exception §15 states. A
+durably committed activity result must not become pending again. Object-storage
+failures must not silently produce success. Every terminal failure must have a
+machine-readable reason and a human-readable explanation.
 
 ## 5. Image resolution and Orker runtime boundary
 
@@ -575,12 +575,17 @@ internal never appears on any of those surfaces.
   runs. It is **drained** when the cluster reports that no run executing on
   it remains and no Orker of it hosts an open pin; a drained release's
   processes may be stopped.
-- **Cordon** means a process-local flag on one Orker that stops it accepting
-  new tasks and opening new pins while leaving everything in flight alone. It
-  is delivered over the Orker's own control channel and is lost when the
-  process exits.
-- **Drain** means cordoning an Orker and waiting until it reports no running
-  task and no open pin. It is a client-side wait over the inventory read
+- **Cordon** means a process-local state of one Orker that stops it accepting
+  new tasks and opening new pins while leaving everything in flight alone. Two
+  independent causes hold it, and it stands while either does: an operator's,
+  delivered over the Orker's own control channel, and a store outage, which
+  the Orker declares itself after consecutive failed object-storage checks and
+  ends itself after consecutive good ones. Clearing one never touches the
+  other, and neither is stored: both are lost when the process exits. A store
+  outage only pauses an Orker, so unlike an operator's cordon it still keeps its
+  pool live: a run sent there is accepted and waits.
+- **Drain** means setting an operator's cordon on an Orker and waiting until it
+  reports no running task and no open pin. It is a client-side wait over the inventory read
   (`orkctl orker drain`); nothing server-side holds drain state.
 - **Control channel** and **presence channel** are internal, exactly as
   **queue** is: the Temporal task queue `ork-orker-<orker_id>` that one Orker
@@ -1002,7 +1007,13 @@ commit (`scripts/quickstart-smoke.sh`) as a job of its own too, because no
 proof runs the getting-started path: a stack that no longer builds or starts
 from a clone fails that run like any other nightly failure. `release.yml`
 runs the same smoke itself before it publishes anything, so for a release
-that one is a check, not a rule.
+that one is a check, not a rule. It runs every shipped example on such a stack
+as a job of its own (`scripts/quickstart-smoke.sh --examples`): applied, submitted
+with no inputs, ending where `examples/README.md` says. Those examples reach
+`httpbin.org` and `github.com`, so no proof runs that job and `release.yml` does
+not require it: the merge gate runs them against stand-ins
+(`TestIntegration_ExamplesRunWithNoInputs`), and a failure of the job is a
+regression on `main` unless its log shows one of those services was down.
 
 A failing nightly (the latest completed `nightly.yml` run on `main`) is a
 regression on `main`, not a merge freeze (decided 2026-10-28): fixing it, or
@@ -1111,17 +1122,19 @@ Every code change follows this order:
    API and its error reasons, configuration, the activity contract, storage
    layout, what a release publishes and any security fix to it, a
    deprecation, a breaking change. Such a change adds an entry under
-   CHANGELOG.md's `[Unreleased]` section (Keep a Changelog 1.1.0) that says
-   what they must do about it, if anything; a breaking change's entry is
-   marked **BREAKING**. A change that cannot affect them gets no entry,
-   however large: documentation edits; CI, workflows and the proof harness,
-   unless the change alters what a release publishes; tests; refactors;
-   internal tooling, such as the development stack (`make up`); and a
-   dependency bump that cannot affect them. A bump that changes what they
-   see, such as an activity image's tools, gets one, and so does every
-   security fix to what a release publishes, a vulnerable dependency's bump
-   among them, even when they see nothing change. A change with no entry
-   still updates the reference doc that describes it.
+   CHANGELOG.md's `[Unreleased]` section (Keep a Changelog 1.1.0), always in
+   one format: a sentence or two on what changed and what they must do about
+   it, if anything; an absolute link to the doc, where one holds more detail;
+   and, once changes land through pull requests, a link to its pull request. A
+   breaking change's entry is marked **BREAKING**. A change that cannot affect
+   them gets no entry, however large: documentation edits; CI, workflows and the
+   proof harness, unless the change alters what a release publishes; tests;
+   refactors; a cosmetic change to the UI; internal tooling, such as the
+   development stack (`make up`); and a dependency bump that cannot affect
+   them. A bump that changes what they see, such as an activity image's tools,
+   gets one, and so does every security fix to what a release publishes, a
+   vulnerable dependency's bump among them, even when they see nothing change.
+   A change with no entry still updates the reference doc that describes it.
 8. Optionally, check the change's evidence with
    `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'` (§11.2). It is a
    scoped check on the branch and gates nothing (decided 2026-10-28): the
@@ -1531,7 +1544,7 @@ internal/orker/        Orker runtime and OCI activity dispatch; the runtime file
 internal/task/         Temporal namespace, pool routing, and deployment identity
 internal/config/       Configuration file schema and loader
 internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation
-internal/archive/      Run retirement and the cluster retention controller
+internal/archive/      Run retirement, the archive sweep and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
@@ -1675,6 +1688,14 @@ Unless an accepted contract explicitly changes one, these are non-negotiable:
 - no Temporal workflow state exists exclusively inside an OrkStack process;
 - every terminal failure has machine-readable and human-readable reasons;
 - an engineer must never edit a database record to unstick an execution.
+
+The first has one stated exception (accepted 2026-11-04): a finished run with no
+archive is lost if object storage stays down until the cluster's delete time for
+that run, which is fixed when the run closes and cannot be postponed. While that
+risk stands, every pass of the archive sweep logs an error and reports a metric
+with the runs at risk and when the first of them expires; that is what the
+operator gets (`docs/DEPLOY.md`, "The archive sweep"). A run with an archive, and
+a run not yet finished, are outside it.
 
 The objective is not feature count. It is the smallest durable execution
 substrate engineers can trust with consequential production operations.

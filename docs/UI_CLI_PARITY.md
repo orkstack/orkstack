@@ -749,7 +749,11 @@ what they reserve against what they admit within, summed. It is derived from
 the Orker inventory, read only when such an attempt waits and shared by the
 engine replica's callers, at most once every five seconds
 ([DEPLOY.md](DEPLOY.md), "Declaring an Orker's capacity"); both clients then
-say the attempt is waiting for capacity rather than for an Orker.
+say the attempt is waiting for capacity rather than for an Orker. An attempt on
+a pool no Orker of which takes new tasks, with at least one cordoned only because
+object storage does not answer it, carries `store_outage_wait` from the same
+read instead, and both clients say it is waiting for object storage
+([DEPLOY.md](DEPLOY.md), "When object storage goes away").
 
 CLI: `run inspect RUN [--task TASK] [--item N] [--watch] [--interval D]`
 prints `STATE`, `PHASE`, `ORKER`, `CONTAINER`, `LOGGED`, `RUNNING`,
@@ -766,7 +770,9 @@ Orker of pool … is full (reserved 1/1 cpu) · …`, `… — STALE`, `Attempt 
 scheduled for …`, `Cancelling · phase …`, `Phase unavailable · <reason>`) and
 the Orker. A task or item waiting for room reads `Waiting for capacity` on its
 row, and the page opens with one note naming the first such task and its pool,
-where the CLI says `waiting for an orker` or `waiting for capacity`.
+where the CLI says `waiting for an orker` or `waiting for capacity`. A task or
+item waiting out a store outage reads `Waiting for object storage` in each of
+those places, and the CLI says `waiting for object storage`.
 
 The run page's live updates come from the run's event socket, which resumes
 from the last event it applied after a dropped connection. Six reconnects in
@@ -1276,9 +1282,14 @@ namespace filter, `Every namespace unless a namespace filter narrows it.`. UI:
 `ActivityService.ListOrkers` lists every live Orker from the cluster's poller
 information plus each Orker's own answer, so any replica answers the same; an
 Orker that could not be asked is `unreachable` with its reason and no numbers,
-never idle. `CordonOrker` sets or clears a cordon, which lives only in the
-Orker process. Semantics, exit codes and the `ORK_ORKER_ID` uniqueness rule
-are [DEPLOY.md](DEPLOY.md), "Removing an Orker safely: cordon and drain".
+never idle. `CordonOrker` sets or clears an operator's cordon, which lives only
+in the Orker process. Semantics, exit codes and the `ORK_ORKER_ID` uniqueness
+rule are [DEPLOY.md](DEPLOY.md), "Removing an Orker safely: cordon and drain".
+An Orker also cordons itself while object storage does not answer it, which no
+command clears ([DEPLOY.md](DEPLOY.md), "When object storage goes away"); both
+surfaces show that cause apart from an operator's, with its reason and since.
+A task waiting on such a pool reads `waiting for object storage` in `orkctl run
+inspect` and `Waiting for object storage` on the run page.
 
 CLI: `orker list [--filter F…]` (`--filter pool=build`), `orker get ID`
 (an `orker_id=ID` filter: that Orker alone is asked), `orker cordon ID --reason TEXT`
@@ -1288,9 +1299,10 @@ drained, 4 timed out naming what remains, 1 unreachable, uncordoned or
 restarted. Orker commands ignore `--namespace`. UI: **Admin → Pools**, the
 filter form over the pool register (`pool list [--filter F…]`), a
 per-pool **Show Orkers** disclosure with a state stamp (`ready`, `cordoned`,
-`unreachable`), tasks, pins, last seen and open pins linking to their runs;
-**Cordon** through a dialog that requires a reason and shows a server error in
-place; one-click **Uncordon**.
+`object storage unreachable`, `unreachable`), tasks, pins, last seen and open
+pins linking to their runs; **Cordon** through a dialog that requires a reason
+and shows a server error in place; one-click **Uncordon** while an operator's
+cordon holds. The CLI's `STATE` says `cordoned (object storage unreachable)`.
 
 ### Releases
 

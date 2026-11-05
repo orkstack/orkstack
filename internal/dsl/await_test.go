@@ -13,7 +13,7 @@ import (
 )
 
 func TestCompile_AwaitTaskCompiles(t *testing.T) {
-	wf, err := dsl.CompileFile("../../examples/awaited-approval.ork.yaml")
+	wf, err := dsl.CompileFile("testdata/orkflows/awaited-approval.ork.yaml")
 	if err != nil {
 		t.Fatalf("compile the example: %v", err)
 	}

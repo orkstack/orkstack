@@ -102,7 +102,7 @@ func blockStyleProblems(path, text string) []string {
 func TestDocs_YAMLExamplesUseBlockStyle(t *testing.T) {
 	root := repoRoot(t)
 	files := markdownFiles(t)
-	for _, dir := range []string{"examples", filepath.Join("deploy", "kubernetes")} {
+	for _, dir := range []string{"examples", filepath.Join("internal", "dsl", "testdata", "orkflows"), filepath.Join("deploy", "kubernetes")} {
 		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d fs.DirEntry, err error) error {
 			if err != nil {
 				return err

@@ -1,7 +1,8 @@
 # examples/custom-image/Dockerfile — a user's own activity image, in Go. It is
 # not a first-party activity: it has no catalog name and imports nothing of
-# OrkStack's. Build, push and pin it with:
-#   orkctl activity build examples/custom-image --tag localhost:5001/orkstack-examples/custom-image:dev
+# OrkStack's. Build, push and pin it with (the quickstart's registry; make up's
+# is at localhost:5001):
+#   orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev
 FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS build
 WORKDIR /src
 COPY main.go ./

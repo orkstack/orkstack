@@ -16,7 +16,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
-const examplePath = "../../examples/hello.ork.yaml"
+const examplePath = "testdata/orkflows/hello.ork.yaml"
 
 func TestCompile_AcceptsHelloExample(t *testing.T) {
 	source, err := os.ReadFile(examplePath)
@@ -89,16 +89,13 @@ func TestCompileFile_AcceptsHelloExample(t *testing.T) {
 //
 // `op` is a convention of the first-party images, not of the OCI contract: a
 // task whose `uses` is a registry reference (an image of the author's own,
-// examples/custom-image.ork.yaml) has its own configuration shape and is
+// examples/custom-image/custom-image.ork.yaml) has its own configuration shape and is
 // exempt. An awaited task runs no activity and a composed task's with: is
 // its child run's input, so neither names an `op` either.
 func TestCompile_AcceptsEveryShippedExample(t *testing.T) {
-	paths, err := filepath.Glob("../../examples/*.ork.yaml")
-	if err != nil {
-		t.Fatalf("glob examples: %v", err)
-	}
+	paths := examplesAndFixtures(t)
 	if len(paths) < 4 {
-		t.Fatalf("found %d examples (%v), want hello, http-post, file-read and shell-eval", len(paths), paths)
+		t.Fatalf("found %d Orkflows (%v), want at least hello, http-post, file-read and shell-eval", len(paths), paths)
 	}
 	catalog := dsl.BuiltinActivityCatalog()
 
@@ -1030,7 +1027,7 @@ tasks:
 // orkflow and the membership on each task. The shipped-examples sweep only
 // proves it compiles; this proves it compiles to the pin it documents.
 func TestCompile_AcceptsThePinnedBuildExample(t *testing.T) {
-	wf, err := dsl.CompileFile("../../examples/pinned-build.ork.yaml")
+	wf, err := dsl.CompileFile("testdata/orkflows/pinned-build.ork.yaml")
 	if err != nil {
 		t.Fatalf("CompileFile(pinned-build.ork.yaml) = error %v, want success", err)
 	}

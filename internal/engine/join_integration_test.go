@@ -33,7 +33,7 @@ import (
 
 // The join-policy integration suite (docs/DSL.md "Joins and failure handlers"): real
 // Temporal, real MinIO and real Orkers running the first-party shell image
-// in Docker, on examples/branch-and-recover.ork.yaml AS SHIPPED — driven only
+// in Docker, on internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml AS IT STANDS — driven only
 // by its inputs — except the two named variants, each defined by the one
 // change it makes to rollback (a no-retry variant and an await variant).
 // A phase the test must act inside is held open by the example's own
@@ -42,7 +42,7 @@ import (
 // own. Every scenario runs in a private Temporal namespace on private
 // channels (AGENTS.md §11.1).
 
-const branchAndRecover = "../../examples/branch-and-recover.ork.yaml"
+const branchAndRecover = "../../internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml"
 
 // joinE2E is the cache suite's deployment (a run worker, real Orkers with a
 // memo store, an event worker) plus the local activity catalog the shipped

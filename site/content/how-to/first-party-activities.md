@@ -4,47 +4,37 @@ Use the six images that ship with OrkStack by their short names: `http`, `shell`
 
 ## Example
 
-An excerpt from [`examples/hello.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/hello.ork.yaml), with its comments removed. `fetch` makes one request and keeps the body. `transform` runs a command on that body. `verify` checksums the result:
+An excerpt from [`examples/http-post.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/http-post.ork.yaml), with its comments removed. `publish` makes one request and keeps the response. `archive` copies the response under a name you choose. Each task names one image and one op:
 
 ```yaml
-  - id: fetch
+  - id: publish
     uses: http
     with:
-      op: get
+      op: post
       url: "{{ .inputs.url }}"
-      captureBodyAs: body
+      body:
+        message: "{{ .inputs.message }}"
+      captureBodyAs: response
 
-  - id: transform
-    uses: shell
-    needs:
-      - fetch
-    with:
-      op: exec
-      command:
-        - sh
-        - -c
-        - >-
-          tr -d '\n' < "{{ artifact "fetch/body" }}"
-          | head -c 512
-          > /orkstack/output/artifacts/summary.txt
-
-  - id: verify
+  - id: archive
     uses: file
     needs:
-      - transform
+      - publish
+    network: none
     with:
-      op: checksum
-      src: '{{ artifact "transform/summary.txt" }}'
+      op: copy
+      src: '{{ artifact "publish/response" }}'
+      as: response.json
 ```
 
 Apply the file and run it:
 
 ```bash
-orkctl apply examples/hello.ork.yaml
-orkctl run submit hello-ork --watch
+orkctl apply examples/http-post.ork.yaml
+orkctl run submit http-post --watch
 ```
 
-The example fetches from `httpbin.org`. Pass `--input url=<your URL>` to use another endpoint.
+The example posts to `httpbin.org`. Pass `--input url=<your URL>` to use another endpoint.
 
 ## Pick a name
 
@@ -80,7 +70,7 @@ Each image writes `values.json`. A later task reads a key with `{{ .tasks.<id>.o
 
 ## Pass files between tasks
 
-An artifact is a file. Give it a name with `as:`, where the image accepts one. A later task reads it with `{{ artifact "<task>/<name>" }}` in `with:`, as `transform` does above.
+An artifact is a file. Give it a name where the image accepts one: `as:`, or `captureBodyAs:` on `http`. A later task reads it with `{{ artifact "<task>/<name>" }}` in `with:`, as `archive` does above.
 
 ## Use a private repository
 

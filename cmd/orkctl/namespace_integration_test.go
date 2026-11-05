@@ -176,7 +176,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	}
 	// By NAME column, not substring: the default namespace holds whatever
 	// this process's other suites applied, and a description may say
-	// "deploy" (examples/branch-and-recover.ork.yaml's does).
+	// "deploy" (internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml's does).
 	if listed, _, _ := cli("orkflow", "list"); listsName(listed, orkflowName) {
 		t.Fatalf("the default namespace lists another namespace's orkflow:\n%s", listed)
 	}

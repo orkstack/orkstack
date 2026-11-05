@@ -195,8 +195,8 @@ export type GetCacheStatsResponse = Message<"orkstack.v1.GetCacheStatsResponse">
   /**
    * runs_in_window counts the archive index's finished runs in the window
    * (of orkflow_name, when set); runs_scanned how many had a body to read —
-   * less only for an index row whose body is absent (the crash window
-   * between the archive's two writes, which ListRuns already skips).
+   * less only for an index row whose body is absent (an archive write that
+   * stopped short, which ListRuns already skips).
    *
    * @generated from field: int64 runs_in_window = 3;
    */

@@ -194,7 +194,7 @@ func (c *awaitCLI) post(i int, path, token, body string) (int, string) {
 // run finish, read the values back byte for byte, and repeat.
 func TestIntegration_CLISubmitCallbackAndWatchAnAwaitedRun(t *testing.T) {
 	c := newAwaitCLI(t, 1, true)
-	example := filepath.Join(c.repoRoot, "examples", "awaited-approval.ork.yaml")
+	example := filepath.Join(c.repoRoot, orkflowFixtures, "awaited-approval.ork.yaml")
 	c.must(0, "apply", example)
 	var submitted submitJSON
 	if err := json.Unmarshal([]byte(c.must(0, "run", "submit", "awaited-approval", "--json")), &submitted); err != nil {

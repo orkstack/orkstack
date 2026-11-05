@@ -24,24 +24,20 @@ pins:
     retry:
       maximum_attempts: 3
       initial_interval_seconds: 2
-    secrets:
-      - name: git-token
-        source: env:GIT_TOKEN
     with:
       op: clone
       url: '{{ .inputs.repo }}'
       ref: '{{ .tasks.resolve.output.commit }}'
-      tokenSecret: git-token
       dest: /orkstack/shared/src
 ```
 
 `validate`, `merge` and `package` also name `pin: workspace`. `checksum` runs outside the pin. It reads the one artifact the pin wrote.
 
-Run it. The pool needs a pin host, which an operator starts with `ORK_ORKER_MAX_PINS` above zero:
+Run it. The pool needs a pin host, which an operator starts with `ORK_ORKER_MAX_PINS` above zero. The quickstart's Orker is one, and so is `make up`'s. The default repository is small and public, so the run needs no input:
 
 ```bash
 orkctl apply examples/pinned-checkout.ork.yaml
-orkctl run submit pinned-checkout --input repo=https://git.example.com/acme/app.git --input environment=prod --watch
+orkctl run submit pinned-checkout --watch
 ```
 
 ## Send a task to a pool

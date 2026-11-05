@@ -1,12 +1,15 @@
 {
-	"$comment": "Written by make site-media (site/media/). Do not edit. tour-* and video-* are interim crops of the frozen design until make site-media records the real UI; video-* gain mp4, mp4Dark and captions then.",
-	"sourceCommit": "906036278462df6a0dc4b742c95de6a328ef9d84",
+	"$comment": "Written by make site-media (site/media/). Do not edit.",
+	"sourceCommit": "7d3779999650d283fdfc498ae8ff587b5baadfeb",
 	"orkflows": [
 		"examples/each-fan-out.ork.yaml",
-		"examples/awaited-approval.ork.yaml",
-		"examples/branch-and-recover.ork.yaml"
+		"examples/notify-block.ork.yaml",
+		"examples/order-saga.ork.yaml",
+		"examples/approval-gate.ork.yaml",
+		"site/media/orkflows/greet.ork.yaml",
+		"site/media/orkflows/render-configs.ork.yaml"
 	],
-	"browserImage": "mcr.microsoft.com/playwright:v1.62.1-noble@sha256:dcc5531e97840b9b5e794f2814476b21571c5124a3fca2267d73041f56e7580e",
+	"browserImage": "mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea",
 	"items": {
 		"cli-quickstart": {
 			"alt": "A terminal recording: orkctl applies each-fan-out, plans it, submits it and watches it to SUCCEEDED, then prints the merge task’s log.",
@@ -38,179 +41,187 @@
 			"mp4": "cli-schedules-triggers-light.mp4",
 			"poster": "cli-schedules-triggers-light.webp"
 		},
+		"video-task-waits": {
+			"alt": "A screen recording of render-configs on a pool with room for four 1-cpu tasks: four items run and the rest wait, the note above the graph says the pool is full, a card beside the tasks says every cpu of the pool is reserved, and each waiting item starts as a running one ends.",
+			"caption": "A full pool holds items back; each one starts the moment an Orker has room.",
+			"title": "A task waits for room, then runs",
+			"duration": "0:51",
+			"width": 1280,
+			"height": 800,
+			"mp4": "video-task-waits-light.mp4",
+			"poster": "video-task-waits-light.webp",
+			"captions": "video-task-waits-light.vtt",
+			"mp4Dark": "video-task-waits-dark.mp4",
+			"posterDark": "video-task-waits-dark.webp",
+			"captionsDark": "video-task-waits-dark.vtt"
+		},
+		"video-yaml-to-run": {
+			"alt": "A screen recording of the Orkflow editor on greet: a key is added with the suggestions, the engine flags a needs entry that names no task and the fix clears it, the panel beside the code lists the shell activity’s keys, a new version is applied, a plan shows which tasks would run, and the run is submitted and followed until it succeeds.",
+			"caption": "Edit, apply, plan and run, then watch the graph fill in.",
+			"title": "From YAML to a running Orkflow",
+			"duration": "0:58",
+			"width": 1280,
+			"height": 800,
+			"mp4": "video-yaml-to-run-light.mp4",
+			"poster": "video-yaml-to-run-light.webp",
+			"captions": "video-yaml-to-run-light.vtt",
+			"mp4Dark": "video-yaml-to-run-dark.mp4",
+			"posterDark": "video-yaml-to-run-dark.webp",
+			"captionsDark": "video-yaml-to-run-dark.vtt"
+		},
+		"video-why-failed": {
+			"alt": "A screen recording of a failed run of order-saga: the banner names shipped and its reason, View stderr opens the task’s own output, the side cards say how it failed and how often, the graph shows its failure handlers ran, and Run again opens with the run’s inputs.",
+			"caption": "Open the failed task, read its stderr and how it failed, then run it again.",
+			"title": "Find why a run failed",
+			"duration": "0:32",
+			"width": 1280,
+			"height": 800,
+			"mp4": "video-why-failed-light.mp4",
+			"poster": "video-why-failed-light.webp",
+			"captions": "video-why-failed-light.vtt",
+			"mp4Dark": "video-why-failed-dark.mp4",
+			"posterDark": "video-why-failed-dark.webp",
+			"captionsDark": "video-why-failed-dark.vtt"
+		},
 		"e2e-demo": {
-			"alt": "A screen recording of the OrkStack UI: the each-fan-out example is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task’s merged.txt artifact is opened with its provenance.",
-			"caption": "Apply, plan and submit, watch, open the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.",
+			"alt": "A screen recording of the OrkStack UI: the each-fan-out example is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task’s merged.txt artifact is shown with its provenance.",
+			"caption": "Apply, plan and submit, watch, find the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.",
 			"width": 1280,
 			"height": 800,
 			"mp4": "e2e-demo-light.mp4",
 			"poster": "e2e-demo-light.webp",
+			"captions": "e2e-demo-light.vtt",
 			"mp4Dark": "e2e-demo-dark.mp4",
-			"posterDark": "e2e-demo-dark.webp"
+			"posterDark": "e2e-demo-dark.webp",
+			"captionsDark": "e2e-demo-dark.vtt"
 		},
 		"ui-editor": {
-			"alt": "A screen recording of the Apply page’s YAML editor: a task’s needs is changed to name a task that does not exist, the engine’s diagnostic appears at that line and in the problems list, and the fix clears it.",
+			"alt": "A screen recording of the Orkflow editor: a task’s needs is changed to name a task that does not exist, the engine’s finding appears at that line and in the strip under the code, the problems list opens, and the fix clears it.",
 			"caption": "The editor asks the engine as you type: an unknown task in needs is flagged at its line, and fixing it clears the problem.",
 			"width": 1280,
 			"height": 800,
 			"mp4": "ui-editor-light.mp4",
 			"poster": "ui-editor-light.webp",
+			"captions": "ui-editor-light.vtt",
 			"mp4Dark": "ui-editor-dark.mp4",
-			"posterDark": "ui-editor-dark.webp"
+			"posterDark": "ui-editor-dark.webp",
+			"captionsDark": "ui-editor-dark.vtt"
 		},
 		"ui-fanout-run": {
-			"alt": "A screen recording of a run of each-fan-out: list finishes, convert runs its four items two at a time, merge follows, and one item is opened to show its attempt, timing and log.",
+			"alt": "A screen recording of a run of each-fan-out: list finishes, convert runs its four items two at a time, merge follows, and one item is opened to show its log and its card.",
 			"caption": "A fan-out runs one durable item per element, two at a time here; each item has its own attempts and log.",
 			"width": 1280,
 			"height": 800,
 			"mp4": "ui-fanout-run-light.mp4",
 			"poster": "ui-fanout-run-light.webp",
+			"captions": "ui-fanout-run-light.vtt",
 			"mp4Dark": "ui-fanout-run-dark.mp4",
-			"posterDark": "ui-fanout-run-dark.webp"
+			"posterDark": "ui-fanout-run-dark.webp",
+			"captionsDark": "ui-fanout-run-dark.vtt"
 		},
 		"ui-await-run": {
-			"alt": "A screen recording of an awaited task: the run is submitted and its callback token shown once, the run waits at approval, the resolve dialog is opened, approved is checked and an approver typed, and once it is completed the next task runs and the run succeeds.",
-			"caption": "An awaited task holds the run until a person or a system resolves it; completing it starts the next task. Its callback token is shown once, at submit.",
+			"alt": "A screen recording of an awaited task: approval-gate is submitted with a change to the payments service, the run waits at approval, the resolve dialog is opened, approved is checked and an approver typed, and once it is completed the next task runs and the run succeeds.",
+			"caption": "An awaited task holds the run until a person or a system resolves it; completing it starts the next task.",
 			"width": 1280,
 			"height": 800,
 			"mp4": "ui-await-run-light.mp4",
 			"poster": "ui-await-run-light.webp",
+			"captions": "ui-await-run-light.vtt",
 			"mp4Dark": "ui-await-run-dark.mp4",
-			"posterDark": "ui-await-run-dark.webp"
+			"posterDark": "ui-await-run-dark.webp",
+			"captionsDark": "ui-await-run-dark.vtt"
 		},
 		"ui-failure": {
-			"alt": "A screen recording of branch-and-recover submitted with fail_deploy checked in its input form: deploy fails on both of its attempts, the rollback and notify failure handlers run, and the run ends FAILED with deploy’s reason, whose two attempts are then inspected.",
-			"caption": "Submitted with fail_deploy set: deploy fails twice, the failure handlers run, and the run still ends FAILED with deploy’s reason.",
+			"alt": "A screen recording of order-saga submitted with an order whose shipment the API refuses: shipped fails, the release, refund, report and notify failure handlers run, and the run ends Failed with shipped’s reason, whose failure block and log are then shown.",
+			"caption": "The API refuses the shipment: shipped fails, the failure handlers release and refund the order, and the run still ends Failed with shipped’s reason.",
 			"width": 1280,
 			"height": 800,
 			"mp4": "ui-failure-light.mp4",
 			"poster": "ui-failure-light.webp",
+			"captions": "ui-failure-light.vtt",
 			"mp4Dark": "ui-failure-dark.mp4",
-			"posterDark": "ui-failure-dark.webp"
+			"posterDark": "ui-failure-dark.webp",
+			"captionsDark": "ui-failure-dark.vtt"
 		},
-		"ui-run-hero": {
-			"alt": "A run of each-fan-out in the OrkStack UI while it runs: the DAG of list, convert and merge, with list done, convert running and merge waiting, beside the run’s version and timing.",
-			"caption": "A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.",
-			"width": 1616,
-			"height": 507,
-			"light": "ui-run-hero-light.webp",
-			"light2x": "ui-run-hero-light-2x.webp",
-			"dark": "ui-run-hero-dark.webp",
-			"dark2x": "ui-run-hero-dark-2x.webp"
+		"tour-run": {
+			"alt": "The run page of render-configs: a note above the graph says items of render are waiting for capacity because every Orker of pool batch is full, and the graph shows services done, render running and manifest pending.",
+			"caption": "A real run on a pool at its capacity: the note says what holds it up.",
+			"width": 1150,
+			"height": 301,
+			"light": "tour-run-light.webp",
+			"light2x": "tour-run-light-2x.webp",
+			"dark": "tour-run-dark.webp",
+			"dark2x": "tour-run-dark-2x.webp"
 		},
-		"ui-run-page": {
-			"alt": "The finished run of each-fan-out in the OrkStack UI: list, convert and merge all SUCCEEDED, the leaf task’s values, and the run’s versions, timing and reproduce commands in the aside.",
-			"caption": "The same Orkflow’s run, finished.",
-			"width": 1616,
-			"height": 1010,
-			"light": "ui-run-page-light.webp",
-			"light2x": "ui-run-page-light-2x.webp",
-			"dark": "ui-run-page-dark.webp",
-			"dark2x": "ui-run-page-dark-2x.webp"
+		"tour-failed": {
+			"alt": "The failed run page of order-saga: its header, a banner naming the shipped task and its reason, and the graph with shipped failed and the release, refund, report and notify failure handlers run.",
+			"caption": "A real failed run: the failed task, its reason and its failure handlers.",
+			"width": 1150,
+			"height": 521,
+			"light": "tour-failed-light.webp",
+			"light2x": "tour-failed-light-2x.webp",
+			"dark": "tour-failed-dark.webp",
+			"dark2x": "tour-failed-dark-2x.webp"
+		},
+		"tour-editor": {
+			"alt": "The Orkflow editor on each-fan-out: a needs entry that names no task is underlined, the strip under the code says to fix one problem and gives its line, and the panel beside the code lists the shell activity’s keys with their types and descriptions.",
+			"caption": "The editor beside the keys of the activity the cursor is in.",
+			"width": 1150,
+			"height": 835,
+			"light": "tour-editor-light.webp",
+			"light2x": "tour-editor-light-2x.webp",
+			"dark": "tour-editor-dark.webp",
+			"dark2x": "tour-editor-dark-2x.webp"
 		},
 		"ui-orkflow": {
 			"alt": "The each-fan-out Orkflow’s page in the OrkStack UI after an apply: its graph of list, convert and merge, its stored version, and its three tasks with their image digests.",
 			"caption": "An applied Orkflow: an immutable version, every image pinned to a digest.",
-			"width": 1280,
-			"height": 649,
+			"width": 990,
+			"height": 644,
 			"light": "ui-orkflow-light.webp",
 			"light2x": "ui-orkflow-light-2x.webp",
 			"dark": "ui-orkflow-dark.webp",
 			"dark2x": "ui-orkflow-dark-2x.webp"
 		},
 		"ui-run-live": {
-			"alt": "The run’s graph in the OrkStack UI while it runs: list done, convert running its items, merge waiting.",
+			"alt": "A run of each-fan-out while it runs: the graph with list done, convert running and merge pending, and the Tasks card with a row for each task and a grid of convert’s items.",
 			"caption": "A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.",
-			"width": 872,
-			"height": 180,
+			"width": 830,
+			"height": 779,
 			"light": "ui-run-live-light.webp",
 			"light2x": "ui-run-live-light-2x.webp",
 			"dark": "ui-run-live-dark.webp",
 			"dark2x": "ui-run-live-dark-2x.webp"
 		},
 		"ui-run-finished": {
-			"alt": "The merge task of a finished each-fan-out run, inspected in the run page: SUCCEEDED, its attempt and timing, its log and its artifacts, merged.txt among them.",
-			"caption": "The same Orkflow’s run, finished: a task’s attempts, timing, log and artifacts.",
-			"width": 872,
-			"height": 757,
+			"alt": "The merge task of a finished each-fan-out run selected on the run page: its row and log in the Tasks card, and beside them its card with its attempts, Orker, pool, what it reserved, its timing and its phases.",
+			"caption": "A finished run’s task: its log, attempts, timing and phases. Inspect, on the same card, lists its artifacts.",
+			"width": 990,
+			"height": 857,
 			"light": "ui-run-finished-light.webp",
 			"light2x": "ui-run-finished-light-2x.webp",
 			"dark": "ui-run-finished-dark.webp",
 			"dark2x": "ui-run-finished-dark-2x.webp"
 		},
 		"ui-fanout": {
-			"alt": "The convert task’s fan-out in the run page: four items, item 2 opened with its attempt, its timing, its log line and its artifacts.",
+			"alt": "The convert task’s fan-out in the Tasks card: a grid of four items, convert[2] selected, and its log below.",
 			"caption": "Each fan-out item is its own durable activity, with its own attempts and logs.",
-			"width": 872,
-			"height": 629,
+			"width": 830,
+			"height": 503,
 			"light": "ui-fanout-light.webp",
 			"light2x": "ui-fanout-light-2x.webp",
 			"dark": "ui-fanout-dark.webp",
 			"dark2x": "ui-fanout-dark-2x.webp"
 		},
 		"ui-await": {
-			"alt": "An awaited task in the run page, with the dialog that resolves it: approved checked, the approver filled in, ready to complete.",
+			"alt": "An awaited task’s Resolve dialog over the run page: approved checked and the approver filled in, ready to complete.",
 			"caption": "An awaited task waits for a person or a system; resolving it starts the next task.",
 			"width": 600,
-			"height": 418,
+			"height": 409,
 			"light": "ui-await-light.webp",
 			"light2x": "ui-await-light-2x.webp",
 			"dark": "ui-await-dark.webp",
 			"dark2x": "ui-await-dark-2x.webp"
-		},
-		"tour-run": {
-			"alt": "The run page of config-from-git: a capacity note, the graph with the selected task, the task timeline and the task map",
-			"caption": "A running run; one item waits for room.",
-			"width": 1152,
-			"height": 409,
-			"light": "tour-run-light.webp",
-			"dark": "tour-run-dark.webp"
-		},
-		"tour-failed": {
-			"alt": "The failed run page of order-saga: the failure line, the graph with its failure handlers, and the cards Why it failed and How it failed",
-			"caption": "A failed run, with its failure handlers.",
-			"width": 1152,
-			"height": 601,
-			"light": "tour-failed-light.webp",
-			"dark": "tour-failed-dark.webp"
-		},
-		"tour-editor": {
-			"alt": "The Orkflow editor with a problem underlined and the template activity's keys in a side panel",
-			"caption": "The editor beside the template activity's keys.",
-			"width": 1152,
-			"height": 615,
-			"light": "tour-editor-light.webp",
-			"dark": "tour-editor-dark.webp"
-		},
-		"video-task-waits": {
-			"title": "A task waits for room, then runs",
-			"alt": "A task waits for room, then runs",
-			"caption": "A full pool holds one item back; it starts the moment an Orker has room.",
-			"duration": "0:45",
-			"width": 1280,
-			"height": 800,
-			"poster": "video-task-waits-light.webp",
-			"posterDark": "video-task-waits-dark.webp"
-		},
-		"video-yaml-to-run": {
-			"title": "From YAML to a running Orkflow",
-			"alt": "From YAML to a running Orkflow",
-			"caption": "Write, plan, apply and run, then watch the graph fill in.",
-			"duration": "0:55",
-			"width": 1280,
-			"height": 800,
-			"poster": "video-yaml-to-run-light.webp",
-			"posterDark": "video-yaml-to-run-dark.webp"
-		},
-		"video-why-failed": {
-			"title": "Find why a run failed",
-			"alt": "Find why a run failed",
-			"caption": "Open the failed task, read its stderr and how it failed, then run it again.",
-			"duration": "0:40",
-			"width": 1280,
-			"height": 800,
-			"poster": "video-why-failed-light.webp",
-			"posterDark": "video-why-failed-dark.webp"
 		}
 	},
 	"vhsImage": "ghcr.io/charmbracelet/vhs:v0.12.1@sha256:ea49a6a1c529be83153e88321892b5585964418f0b9055e8c1e0d732194234a3"

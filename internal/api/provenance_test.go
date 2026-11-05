@@ -374,7 +374,7 @@ func TestGetArtifactProvenance_StoreFailureIsUnavailableNotFalse(t *testing.T) {
 }
 
 // writeMarker writes a bare reference marker, as a crash between the marker
-// writes and the index publish would leave it.
+// writes and the body's would leave it.
 func (f *provenanceFixture) writeMarker(t *testing.T, ref *orkstackv1.ArtifactRef, runID string) {
 	t.Helper()
 	objectID, ok := artifacts.ObjectIDFromURI(ref.GetUri())

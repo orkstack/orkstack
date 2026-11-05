@@ -181,8 +181,8 @@ reset-force: ## reset without the confirmation prompt
 
 ## ---- infra ----
 .PHONY: infra-up
-infra-up: ## Start Temporal + SeaweedFS (the dev S3 store)
-	$(COMPOSE) up -d
+infra-up: ## Start Temporal + SeaweedFS (the dev S3 store), and wait until they are healthy
+	$(COMPOSE) up -d --wait
 	@echo "Temporal UI: http://localhost:8233  |  SeaweedFS filer: http://localhost:8888"
 
 .PHONY: infra-down
@@ -194,8 +194,8 @@ infra-logs: ## Tail infrastructure logs
 	$(COMPOSE) logs -f
 
 .PHONY: infra-up-observability
-infra-up-observability: ## Start Temporal + SeaweedFS + the observability profile: collector, Loki, Tempo, Prometheus, Grafana
-	$(COMPOSE) --profile observability up -d
+infra-up-observability: ## Start Temporal + SeaweedFS + the observability profile: collector, Loki, Tempo, Prometheus, Grafana, and wait for them
+	$(COMPOSE) --profile observability up -d --wait
 	@echo "Temporal UI: http://localhost:8233  |  SeaweedFS filer: http://localhost:8888  |  Grafana: http://localhost:3000"
 	@echo "Point ork/orker at it: see docs/DEPLOY.md, \"Telemetry\", for the OTEL_*/ORK_ADMIN_ADDR env recipe."
 
@@ -367,6 +367,8 @@ proof-release: ## The pre-release gate: every gate, observability always -> proo
 #                         those images and requires a finished run
 #   make quickstart-smoke runs the README's Quickstart as written on a fresh
 #                         clone of this working tree (no VERSION)
+#   make examples-smoke   the same, then every shipped example with no inputs;
+#                         reaches httpbin.org and github.com
 DIST ?= dist
 PLATFORMS ?=
 RELEASE_IMAGES := ork orker orkctl
@@ -402,6 +404,10 @@ release-smoke: ## Build the release for this machine and run compose.yaml on its
 .PHONY: quickstart-smoke
 quickstart-smoke: ## Run the README's Quickstart as written on a fresh clone of this working tree, end to end
 	@scripts/quickstart-smoke.sh
+
+.PHONY: examples-smoke
+examples-smoke: ## Run the Quickstart, then every shipped example with no inputs on that fresh stack (reaches httpbin.org and github.com)
+	@scripts/quickstart-smoke.sh --examples
 
 .PHONY: release-tag
 release-tag: ## Tag HEAD only after a passing release proof of it: VERSION=vX.Y.Z PROOF=proof/<name>

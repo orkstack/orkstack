@@ -715,6 +715,9 @@ Orkers, cordons one so it takes no new task and opens no new pin, and waits
 for one to drain. Orkers are deployment infrastructure, not namespace
 objects: these commands ignore --namespace.
 
+An Orker also cordons itself while object storage does not answer it, and
+resumes by itself; the list says which cause holds.
+
 A cordon is a flag in the Orker process and nowhere else: it touches nothing
 already running, and a restarted Orker comes back ready.
 
@@ -755,6 +758,9 @@ until it reports no running task and no open pin.
 Exit 0 means the Orker measured zero: it is safe to stop the process.
 Exit 4 means --timeout passed first; what is still running is printed, and
 stopping the process then fails any open pin's run with PIN_HOST_LOST.
+An Orker cordoned only because object storage does not answer gets an
+operator's cordon too, so it does not resume in the middle of the drain.
+
 Exit 1 means the Orker stopped answering, or was uncordoned or restarted
 (a restart clears the cordon, so it is taking work again).
 
@@ -822,7 +828,11 @@ Inherited flags:
 
 ## `orkctl orker uncordon`
 
-Let a cordoned Orker take work again
+Clear an operator's cordon so the Orker can take work again
+
+Clear the operator's cordon on one Orker. An Orker that has cordoned itself
+because object storage does not answer stays cordoned until the store answers
+again, then resumes by itself; this command cannot override that.
 
 Inherited flags:
 
@@ -1568,7 +1578,10 @@ attempt out.
 An attempt no Orker has started is waiting for an orker on its pool. When
 every Orker of that pool is at its declared capacity, the footer says it
 is waiting for capacity instead, with what stands reserved against what
-the pool's Orkers admit within.
+the pool's Orkers admit within. When no Orker of that pool takes new
+tasks and at least one has cordoned itself only because object storage
+does not answer, it says it is waiting for object storage, which uses no
+attempt.
 
 With --watch the table is printed again every --interval until the run is
 terminal, and the exit code is the run's (0 succeeded, 2 failed,
@@ -1826,6 +1839,11 @@ is said on stderr. A connection that ends partway through the stream
 ends the watch with that error. After
 6 resumes in a row that deliver no event, watch gives up with the
 engine's error.
+
+Numbers the run used without publishing an event are printed as a
+STREAM_GAP event naming them, and watch goes on to the run's end. A run
+read from its archive ends the watch at such a gap with an error naming
+them; --from-sequence past the gap reads on.
 
 The run is addressed inside the namespace this command acts in; a run of
 another namespace is not found here.

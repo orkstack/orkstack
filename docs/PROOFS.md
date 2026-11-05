@@ -103,11 +103,13 @@ the observability gate unconditionally.
 The proof's own Temporal is the `temporal` service of
 `deploy/docker-compose.yml`: its image and its command, read by `proofrun
 temporal-args` and started on a port of its own, never a second copy of them
-in a script. The command carries two `--dynamic-config-value` settings that
+in a script. The command carries three `--dynamic-config-value` settings. Two
 make a worker-deployment version report `Drained` in seconds rather than in
 the cluster's default minutes, so the integration tests that wait for a
 release to drain (`orkctl release wait`, the continuation chain's rollout) wait
-seconds (docs/DEPLOY.md §4, "Underneath"). They are development and proof
+seconds. The third saves the transfer queue's state every 5 seconds, so tests
+that wait for a delete beside one another's deletes wait seconds rather than
+minutes (docs/DEPLOY.md §4, "Underneath"). They are development and proof
 settings, not a deployment's. The container runs with `--rm`, so stopping it
 would remove its log: before the stop, `proofrun temporal-log -container NAME
 -out FILE` keeps the server's log, both of its streams, gzip-compressed as
@@ -744,11 +746,12 @@ Orker bases ([DEPLOY.md](DEPLOY.md), "Orkers on Kubernetes"):
 |---|---|
 | `kind-orker.yml` › `kind-orker` | on a push or pull request that touches `deploy/kubernetes/`, either script, `internal/orker/`, `cmd/orker/`, the source build (`deploy/source/`), the release `deploy/Dockerfile`, the shell or file activity, or the workflow, at 06:29 UTC every day, and by dispatch. It first lifts the runner's AppArmor restriction on unprivileged user namespaces, which the rootless engine the script measures needs, and records the kernel and that setting in its summary. The script pins every tool: kind's and kubectl's release binaries by SHA-256, the node image and crane's image by digest. The check refuses a missing prerequisite with exit 77 before it deploys anything, so on kind a refusal fails the lane like a failed check. Both shapes run artifacts, both network modes, a cancel, the Orker's declared capacity, the per-task cap (a task above it refused at submit, one at it run with it as its limit), an out-of-memory task and a pod deletion; the Orker must refuse a mismatched work root, the user-namespaced engine must refuse to start without its RuntimeClass, and Docker's rootless engine must be seen to drop a container's limits. Its summary names the check that failed and the last of the namespace's and the cluster's state then; the artifact `kind-orker-<run>-a<attempt>` holds both scripts' logs, the check's evidence and that state in full, without the throwaway cluster's kubeconfig or the registry's keys |
 
-`nightly.yml` holds six jobs, scheduled at 05:17 UTC on the default branch:
+`nightly.yml` holds seven jobs, scheduled at 05:17 UTC on the default branch:
 `nightly.yml` › `nightly` runs the nightly tier, `nightly.yml` › `vuln` runs
 `make vuln`, `nightly.yml` › `vuln-js` runs `make vuln-js`,
 `nightly.yml` › `vuln-images` runs `make vuln-images`,
 `nightly.yml` › `quickstart` runs `scripts/quickstart-smoke.sh`,
+`nightly.yml` › `examples` runs `scripts/quickstart-smoke.sh --examples`,
 and `nightly.yml` › `flakes`
 downloads the last 30 days of proof artifacts and reports same-tree flips and
 suspect failures (`proofrun flakes`); it edits no list. `flakes` waits for
@@ -807,6 +810,14 @@ that fails in `deploy/source/Dockerfile`, a `compose.yaml` key the runner's
 Compose refuses, or a stack that never turns healthy. It needs only what the
 runner image has (Docker with Compose, git, curl and python3), and a failure
 is a regression on `main` like any red nightly (§6).
+`examples` does the same, then runs every shipped example on that stack as a
+reader does: applied, submitted with no inputs, ending where
+`examples/README.md` says (`make examples-smoke`). The merge gate runs them
+against stand-ins for those services (`TestIntegration_ExamplesRunWithNoInputs`);
+this job is the one that reaches the real ones, `httpbin.org` and `github.com`, so
+no proof runs it and `release.yml` does not require it. A failure here is a
+regression on `main` unless the job's log shows that one of those services
+was down.
 `release.yml` holds six, and a dispatch names only a `version`:
 `release.yml` › `validate` runs first on every
 dispatch, refuses a version that is not `vMAJOR.MINOR.PATCH`, refuses a
@@ -1690,6 +1701,11 @@ git rev-parse main
   job's log names the Quickstart command that failed, or the check, and on a
   failure ends with the last 80 lines of the stack's `activities`, `ork` and
   `orker` logs. `make quickstart-smoke` on that commit reproduces it.
+- Only `nightly.yml` › `examples` failed: a shipped example no longer reaches
+  its stated result on a fresh quickstart. The job's log names the example, the
+  run and what ended differently. If `httpbin.org` or `github.com` was down, it is
+  no regression and the next run clears it; otherwise it is one. `make
+  examples-smoke` on that commit reproduces it.
 - Only `runner-degraded` parts failed: a runner failure, not a regression
   (§5, `AGENTS.md` §11). That part runs again as a new part of the same tree:
   `proof-rerun.yml` asks for it where `PROOF_AUTO_RERUN` is on, and "Re-run
@@ -1720,7 +1736,11 @@ the version without its `v` and the day the section is cut, puts an empty
 those people (a security fix to what a release publishes always can), and
 edits the rest into what the release page should say, under Keep a
 Changelog's `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
-`### Fixed` and `### Security`, each breaking change marked **BREAKING**.
+`### Fixed` and `### Security`, each in the format AGENTS.md §11.1, step 7,
+states: a sentence or two on what changed and what to do, an absolute link to
+the doc where one holds more detail and, once changes land through pull
+requests, a link to its pull request, with each breaking change marked
+**BREAKING**.
 Nothing writes the date at tag time: the tag names a commit a proof passed
 on, so the heading is already in that commit. `dist notes -version vX.Y.Z
 -images FILE` prints exactly what the page will show: the section without its
@@ -1955,6 +1975,7 @@ listing with no bucket at all.
 | `make release-images` | the release images as OCI layouts under `OUT`, for `PLATFORMS` |
 | `make release-smoke` | build both for this machine and run `compose.yaml` on those images |
 | `make quickstart-smoke` | run the README's Quickstart as written on a fresh clone of the working tree; `nightly.yml` › `quickstart` and `release.yml` › `artifacts` run it (§5) |
+| `make examples-smoke` | the same, then every shipped example with no inputs on that stack, reaching `httpbin.org` and `github.com`; `nightly.yml` › `examples` runs it (§5) |
 | `make proof-flakes` | derive per-test flake rates from the ledgers |
 | `make proof-slow-list` | regenerate the costs and the slow list from a proof |
 | `make proof-overhead` | report where a proof's wall-clock went, from its directory, running nothing |
@@ -2269,9 +2290,9 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   re-running the failed jobs, kept that tag and published everything. The
   one-approval job graph, `artifacts` and its release smoke, the `nightly`
   job and its wait, and the tag made through the API have therefore all run
-  there. `nightly.yml` has six jobs, `nightly`, `vuln`, `vuln-js`,
-  `vuln-images`, `quickstart` and `flakes`; `vuln-js` and `vuln-images` have
-  not run on GitHub yet, and the other four have, as has `proof.yml` as a
+  there. `nightly.yml` has seven jobs, `nightly`, `vuln`, `vuln-js`,
+  `vuln-images`, `quickstart`, `examples` and `flakes`; `vuln-js`, `vuln-images`
+  and `examples` have not run on GitHub yet, and the other four have, as has `proof.yml` as a
   reusable workflow through them (`workflow_call`; the flakes job passed in
   run 40555387388); `quickstart` passed in nightly 41080705584 in 2 min 11 s,
   under the 40 minutes its job allows (5 minutes cold on the 16-CPU reference host). The

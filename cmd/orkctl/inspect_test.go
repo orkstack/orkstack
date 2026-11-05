@@ -193,6 +193,22 @@ func TestRunInspect_EveryUnavailableReasonAndStateHasAGolden(t *testing.T) {
 			t.Fatalf("output:\n%s", res.stdout)
 		}
 	})
+	t.Run("waiting for object storage", func(t *testing.T) {
+		run := trainRun(orkstackv1.Status_STATUS_RUNNING)
+		run.TaskRuns[0].Status = orkstackv1.Status_STATUS_SUCCEEDED
+		run.TaskRuns[1].Status = orkstackv1.Status_STATUS_RUNNING
+		res := inspectOne(t, "run-inspect-waiting-store-outage.golden", run, &orkstackv1.LiveAttempt{
+			TaskId: "eval", Attempt: 1, State: stScheduled,
+			AttemptScheduledAt: liveAt(-2*time.Minute - 10*time.Second), TimeoutSeconds: 600, CancellationGracePeriodSeconds: 30,
+			HeartbeatUnavailableReason: orkstackv1.HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED,
+			StoreOutageWait:            &orkstackv1.StoreOutageWait{Pool: "gpu", Orkers: 2, Since: liveAt(-5 * time.Minute)},
+		})
+		if !strings.Contains(res.stdout, "eval: waiting for object storage for 2m10s") ||
+			!strings.Contains(res.stdout, "2 orkers of pool gpu cannot reach it") ||
+			strings.Contains(res.stdout, "waiting for an orker") {
+			t.Fatalf("output:\n%s", res.stdout)
+		}
+	})
 	t.Run("waiting for capacity", func(t *testing.T) {
 		run := trainRun(orkstackv1.Status_STATUS_RUNNING)
 		run.TaskRuns[0].Status = orkstackv1.Status_STATUS_SUCCEEDED

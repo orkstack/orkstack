@@ -182,6 +182,7 @@ func orkerRow(presence engine.OrkerPresence, described *orkstackv1.DescribeOrker
 	row.Cordoned = described.GetCordoned()
 	row.CordonReason = described.GetCordonReason()
 	row.CordonedAt = described.GetCordonedAt()
+	row.StoreOutage = described.GetStoreOutage()
 	row.Pins = described.GetPins()
 	row.Capacity = described.GetCapacity()
 	row.Reserved = described.GetReserved()

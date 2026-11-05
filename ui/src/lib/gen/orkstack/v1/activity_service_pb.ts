@@ -108,7 +108,7 @@ export type ActivityInfo = Message<"orkstack.v1.ActivityInfo"> & {
   name: string;
 
   /**
-   * as configured, e.g. ghcr.io/orkstack/activity-shell:0.1
+   * as configured, e.g. ghcr.io/orkstack/activity-shell:0.2
    *
    * @generated from field: string reference = 2;
    */
@@ -725,7 +725,10 @@ export const ActivityService: GenService<{
    * delivered to that Orker alone, lost when the process exits.
    * A cordoned Orker takes no new task and opens no new pin; everything
    * already in flight on it is untouched. The response is the Orker's
-   * state AFTER the change, as the Orker itself reported it.
+   * state AFTER the change, as the Orker itself reported it. This is the
+   * operator's cordon: it neither sets nor clears the cordon an Orker holds
+   * on itself during a store outage (Orker.store_outage), so an Orker cleared
+   * here can still answer cordoned.
    *
    * @generated from rpc orkstack.v1.ActivityService.CordonOrker
    */

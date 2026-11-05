@@ -1,7 +1,7 @@
 // Moves the terminal recordings into site/public/media with their poster
 // frames, and records them in the media manifest beside the screenshots.
 // Called by media/run.sh with the VHS output directory and image.
-import { readFileSync, writeFileSync, copyFileSync, readdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, copyFileSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import sharp from 'sharp';
@@ -49,6 +49,8 @@ for (const file of readdirSync(out).sort()) {
 		continue;
 	}
 	if (ext === 'png') {
+		// A screenshot taken at the wrong moment is a nearly empty terminal.
+		if (statSync(path.join(out, file)).size < 50 * 1024) throw new Error(`${file} is nearly empty: the tape took its poster at the wrong moment`);
 		const poster = `${name}-${theme}.webp`;
 		await sharp(path.join(out, file)).webp({ lossless: true, effort: 6 }).toFile(path.join(pub, poster));
 		item[`poster${suffix}`] = poster;

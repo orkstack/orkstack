@@ -22,8 +22,8 @@ import (
 // the cursor and stops once the page is full and the boundary instant's ties
 // are collected, so a page costs the page rather than the namespace.
 //
-// It is written beside the run-index row in PutRun, before it, so the run
-// index stays the last key published. It is never deleted, like the run
+// It is written beside the run-index row in PutRun, before it. It is never
+// deleted, like the run
 // index. A run archived before this family existed has no row in it, and is
 // readable by id but absent from a default list (there is no backfill:
 // OrkStack has no deployment to stay compatible with).

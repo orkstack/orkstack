@@ -32,7 +32,7 @@ Defined in `proto/orkstack/v1/activity_service.proto`.
 | `ListActivities` | [`ListActivitiesRequest`](#listactivitiesrequest) | [`ListActivitiesResponse`](#listactivitiesresponse) |  |
 | `DescribeOrker` | [`DescribeOrkerRequest`](#describeorkerrequest) | [`DescribeOrkerResponse`](#describeorkerresponse) | DescribeOrker is the pool-liveness probe (§6.5). It is answered by an Orker of that pool, so it answers only when an Orker is actually polling that pool. |
 | `ListOrkers` | [`ListOrkersRequest`](#listorkersrequest) | [`ListOrkersResponse`](#listorkersresponse) | ListOrkers is the fleet: one row per live Orker of the deployment, derived on read. Like Pool, nothing WRITES an Orker — the list comes from the cluster's own poller records and each Orker's own answer, so any replica answers and none holds state of its own (AGENTS.md §7). It NARROWS rather than refusing: an Orker that did not answer keeps its row and carries unavailable_reason. Two conditions are distinct: a known poller whose describe failed is a row with unavailable_reason; an orker_id that NO live poller answers to is an EMPTY list, never NOT_FOUND — a read for an id nothing polls is an empty answer, and the drain loop relies on it (CordonOrker, a write, is the one that answers NOT_FOUND for that id).<br><br>An orker_id EQUALS filter asks exactly that one Orker, and no other, and returns at most one row: it is what `orkctl orker get` and the drain loop send, so a drain costs one activity per poll and not one per Orker of the fleet. Every other filter is applied to the inventory; an unreachable row is kept under a pool, build_id or cordoned filter, since none of those was measured on it. A malformed orker_id in an equals, not-equals or in filter is INVALID_ARGUMENT before any read. |
-| `CordonOrker` | [`CordonOrkerRequest`](#cordonorkerrequest) | [`CordonOrkerResponse`](#cordonorkerresponse) | CordonOrker sets or clears ONE Orker's cordon: a process-local flag delivered to that Orker alone, lost when the process exits. A cordoned Orker takes no new task and opens no new pin; everything already in flight on it is untouched. The response is the Orker's state AFTER the change, as the Orker itself reported it. |
+| `CordonOrker` | [`CordonOrkerRequest`](#cordonorkerrequest) | [`CordonOrkerResponse`](#cordonorkerresponse) | CordonOrker sets or clears ONE Orker's cordon: a process-local flag delivered to that Orker alone, lost when the process exits. A cordoned Orker takes no new task and opens no new pin; everything already in flight on it is untouched. The response is the Orker's state AFTER the change, as the Orker itself reported it. This is the operator's cordon: it neither sets nor clears the cordon an Orker holds on itself during a store outage (Orker.store_outage), so an Orker cleared here can still answer cordoned. |
 | `InspectActivity` | [`InspectActivityRequest`](#inspectactivityrequest) | [`InspectActivityResponse`](#inspectactivityresponse) | InspectActivity resolves ONE reference on demand — a catalog name or any registry reference `uses:` would accept — and reports it as ListActivities would: the pinned digest, platforms, and the interface, icon and docs the image declares. It resolves afresh on every call, unless the request sets allow_cached for a reference that pins a digest. It reads engine configuration and the registry only, never asks an Orker, and writes nothing. |
 
 ### AuditService
@@ -145,7 +145,7 @@ Defined in `proto/orkstack/v1/run_service.proto`.
 | `GetRun` | [`GetRunRequest`](#getrunrequest) | [`GetRunResponse`](#getrunresponse) |  |
 | `ListRuns` | [`ListRunsRequest`](#listrunsrequest) | [`ListRunsResponse`](#listrunsresponse) |  |
 | `CancelRun` | [`CancelRunRequest`](#cancelrunrequest) | [`CancelRunResponse`](#cancelrunresponse) |  |
-| `StreamEvents` | [`StreamEventsRequest`](#streameventsrequest) | stream [`Event`](#event) | StreamEvents server-streams realtime events for a run. from_sequence allows resuming after a disconnect (0 = from start): the stream continues after that event, so a client that passes the last sequence it received sees nothing repeated and nothing skipped, from any replica. A stream that ends Unavailable is resumed that way; `orkctl run watch` and the UI's run page do it, a bounded number of times in a row. A stream that reaches a gap in the run's events ends DataLoss, after the events before it, naming the range and its cause: numbers the run never published (a run whose definition could not be used, its RUN_CREATED refused by object storage), read live or from the archive; or events lost from object storage before the run was archived, read from the archive, since a live read that meets lost events ends Unavailable. Resuming past a DataLoss gap's last number serves what follows it. |
+| `StreamEvents` | [`StreamEventsRequest`](#streameventsrequest) | stream [`Event`](#event) | StreamEvents server-streams realtime events for a run. from_sequence allows resuming after a disconnect (0 = from start): the stream continues after that event, so a client that passes the last sequence it received sees nothing repeated and nothing skipped, from any replica. A stream that ends Unavailable is resumed that way; `orkctl run watch` and the UI's run page do it, a bounded number of times in a row. Numbers the run never published (an event whose record object storage refused) read two ways. Read live, the stream serves a STREAM_GAP event naming them and goes on to the run's terminal event. Read from the archive, they are a gap in the run's events, as are events lost from object storage before the run was archived: the stream ends DataLoss, after the events before the gap, naming the range and its cause. A live read that meets lost events ends Unavailable. Resuming past a DataLoss gap's last number serves what follows it. |
 | `StreamTaskLogs` | [`StreamTaskLogsRequest`](#streamtasklogsrequest) | stream [`TaskLogChunk`](#tasklogchunk) | StreamTaskLogs server-streams one task attempt's output: every chunk already written, in order, then each new one as it lands.<br><br>Logs are a SEPARATE stream from Event on purpose. Task output is bytes, and bytes never enter a Temporal payload or the event stream (a run's history is replayed forever, and a chatty task would bloat it forever too). The Orker writes numbered chunks to the artifact store while the task runs; this RPC reads them back from there. EventType gains nothing: EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no task output in it.<br><br>Any replica answers for any run, on the same terms as StreamEvents: the chunks are in the shared store and the task's state comes from the shared cluster, so a replica that started nothing serves a run to completion. |
 | `ListRunArtifacts` | [`ListRunArtifactsRequest`](#listrunartifactsrequest) | [`ListRunArtifactsResponse`](#listrunartifactsresponse) |  |
 | `ReadArtifact` | [`ReadArtifactRequest`](#readartifactrequest) | stream [`ArtifactChunk`](#artifactchunk) |  |
@@ -335,7 +335,7 @@ it is never stored in a version document.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `string` | catalog key, e.g. "shell"; empty for InspectActivity of a raw reference |
-| `reference` | `string` | as configured, e.g. ghcr.io/orkstack/activity-shell:0.1 |
+| `reference` | `string` | as configured, e.g. ghcr.io/orkstack/activity-shell:0.2 |
 | `index_digest` | `string` | resolved, "sha256:&lt;64 hex>" |
 | `media_type` | `string` |  |
 | `platforms` | repeated `string` |  |
@@ -866,9 +866,9 @@ is alive by answering DescribeOrker (§6.5).
 | `max_concurrent` | `int32` | max_concurrent is ORK_ORKER_MAX_CONCURRENT: how many tasks this Orker runs at once, the size of its task worker's activity slots. |
 | `rootless` | `bool` |  |
 | `max_concurrent_pins` | `int32` | max_concurrent_pins is ORK_ORKER_MAX_PINS: how many pins this Orker hosts at once. 0 means it hosts none, and a submit that pins a task to this Orker's pool is refused at submit rather than left waiting. |
-| `cordoned` | `bool` | cordoned is this Orker's process-local cordon flag. It is NEVER stored anywhere but the process: a restarted Orker answers false. |
-| `cordon_reason` | `string` | cordon_reason is the reason given to CordonOrker; empty when not cordoned. |
-| `cordoned_at` | `google.protobuf.Timestamp` | cordoned_at is when the flag was last set; unset when not cordoned. |
+| `cordoned` | `bool` | cordoned is this Orker's process-local cordon: true while an operator's cordon or a store outage holds it (store_outage). It is NEVER stored anywhere but the process: a restarted Orker answers false. |
+| `cordon_reason` | `string` | cordon_reason is the reason given to CordonOrker: the operator's cordon. Empty when no operator's cordon holds, even while store_outage does. |
+| `cordoned_at` | `google.protobuf.Timestamp` | cordoned_at is when the operator's cordon was last set; unset when none holds. |
 | `running_tasks` | `int32` | running_tasks is how many ExecuteTask activities this Orker has in flight right now, pinned members included. Counted in the process; it is a measurement, not a projection. |
 | `open_pins` | `int32` | open_pins is how many pins this Orker currently hosts: pins it accepted and has not closed. Counted from the pin openings in flight, so it is exact from the instant a pin is accepted, before its first member arrives. It never exceeds max_concurrent_pins. |
 | `pins` | repeated [`OpenPin`](#openpin) | pins details each open pin, ordered by run_id. len(pins) == open_pins. |
@@ -879,6 +879,7 @@ is alive by answering DescribeOrker (§6.5).
 | `reserved` | [`ResourceQuantity`](#resourcequantity) | reserved is what stands reserved against capacity now: the per-task cap of every outstanding poll for a task, the request of every task it holds, pinned members included, and every container it has not yet removed. Unset when capacity is. A pinned member is counted but never made to wait, so reserved can exceed capacity by what open pins run. |
 | `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is the per-task cap (orker.resources.max_cpu and max_memory): the largest request this Orker runs. Submit refuses a task whose request no answering Orker of its pool could hold (RESOURCES_UNSATISFIABLE). Unset on an Orker built before it existed. |
 | `default_request` | [`ResourceQuantity`](#resourcequantity) | default_request is what a task that requests nothing is given (orker.resources.default_cpu and default_memory). |
+| `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage (Orker.store_outage). cordoned is true beside it. |
 
 ### DiffOrkflowVersionsRequest
 
@@ -1138,7 +1139,7 @@ in runs_evidence_missing instead.
 | `own_reference` | [`ReferenceState`](#referencestate) |  |
 | `released_at` | `google.protobuf.Timestamp` | released_at is set only with REFERENCE_STATE_RELEASED. |
 | `references` | repeated [`ArtifactReference`](#artifactreference) | references is every marker on this object whose run is in the calling namespace, newest run_created_at first. It includes the addressed run when own_reference is HELD. Runs of other namespaces are omitted and not counted. |
-| `references_unreadable` | `int64` | references_unreadable counts markers whose run body is not in the archive (the crash window between the marker writes and the index publish, docs/STORAGE.md). Such a marker's namespace cannot be known, so it is counted here and listed nowhere. A body that fails to read for any other reason fails the call. |
+| `references_unreadable` | `int64` | references_unreadable counts markers whose run body is not in the archive (an archive write that stopped short of its body, which a later write finishes, docs/STORAGE.md). Such a marker's namespace cannot be known, so it is counted here and listed nowhere. A body that fails to read for any other reason fails the call. |
 | `computed_at` | `google.protobuf.Timestamp` |  |
 
 ### GetCacheStatsRequest
@@ -1157,7 +1158,7 @@ in runs_evidence_missing instead.
 |---|---|---|
 | `usage` | repeated [`CacheUsageRow`](#cacheusagerow) | usage: orkflow ascending, then task ascending. |
 | `inventory` | repeated [`CacheInventoryRow`](#cacheinventoryrow) | inventory: ORKFLOW scope before NAMESPACE, then orkflow, then task. |
-| `runs_in_window` | `int64` | runs_in_window counts the archive index's finished runs in the window (of orkflow_name, when set); runs_scanned how many had a body to read — less only for an index row whose body is absent (the crash window between the archive's two writes, which ListRuns already skips). |
+| `runs_in_window` | `int64` | runs_in_window counts the archive index's finished runs in the window (of orkflow_name, when set); runs_scanned how many had a body to read — less only for an index row whose body is absent (an archive write that stopped short, which ListRuns already skips). |
 | `runs_scanned` | `int64` |  |
 | `namespace` | `string` | The question answered, and when — exactly as GetStatsResponse carries them. |
 | `window_since` | `google.protobuf.Timestamp` |  |
@@ -1195,7 +1196,7 @@ in runs_evidence_missing instead.
 |---|---|---|
 | `groups` | repeated [`FailureGroup`](#failuregroup) |  |
 | `failed_runs_in_window` | `int64` | failed_runs_in_window is the population: index keys under the namespace's `failed` status inside the window — the same count GetStats reports as runs_by_status["failed"] for the same window. |
-| `failed_runs_scanned` | `int64` | failed_runs_scanned is how many of those had a body to read. It is less than failed_runs_in_window only for an index row whose body is absent — the crash window between the archive's two writes, which ListRuns already skips. Any OTHER unreadable body fails the call. |
+| `failed_runs_scanned` | `int64` | failed_runs_scanned is how many of those had a body to read. It is less than failed_runs_in_window only for an index row whose body is absent — an archive write that stopped short, which ListRuns already skips. Any OTHER unreadable body fails the call. |
 | `failed_runs_grouped` | `int64` | failed_runs_grouped is sum(run_count) over EVERY group, before limit. It equals failed_runs_scanned unless category narrowed the answer. |
 | `groups_total` | `int64` | groups_total is how many groups there were before limit, so a client can say "showing 50 of 212". |
 | `attempt_evidence_missing` | `int64` | attempt_evidence_missing is the total across groups. |
@@ -1388,7 +1389,7 @@ No fields.
 | `rows` | repeated [`UsageRow`](#usagerow) | rows is one per group, ordered by cpu_seconds desc, gib_seconds desc, task_seconds desc, then each keyed dimension ascending in group_by's enum order — total and clock-free, so two replicas produce the same table from the same bytes. Empty when group_by is. |
 | `group_by` | repeated [`FailureGroupBy`](#failuregroupby) | group_by is the dimensions actually grouped by, TASK's implied ORKFLOW made explicit at the front. A client cannot label its columns without it. |
 | `runs_in_window` | `int64` | THE POPULATION AND ITS EVIDENCE — the same definitions GetFlakeIndexResponse uses, over the same set.<br><br>runs_in_window is the population: archive index keys of this namespace inside the window, every finished status — the count GetStats reports as runs_by_status succeeded + failed + canceled for the same window. Runs still in flight are not in it; they are counted once they finish. |
-| `runs_scanned` | `int64` | runs_scanned is how many of those had a body to read; less only for an index row whose body is absent (the crash window between the archive's two writes, which ListRuns already skips). Any other unreadable body fails the call. |
+| `runs_scanned` | `int64` | runs_scanned is how many of those had a body to read; less only for an index row whose body is absent (an archive write that stopped short, which ListRuns already skips). Any other unreadable body fails the call. |
 | `runs_dispatched` | `int64` | runs_dispatched is how many scanned runs dispatched at least one task. |
 | `runs_evidence_complete` | `int64` | runs_evidence_complete counts dispatched runs holding at least one attempt record for every task they dispatched; runs_evidence_missing counts those holding none for at least one. They sum to runs_dispatched. The consumption of a task with no record is NOT in any sum above: reclaimed on the run's retention schedule, removed by a lifecycle rule, or never written by a best-effort Orker write — the reader cannot tell which, and says "missing". |
 | `runs_evidence_missing` | `int64` |  |
@@ -1814,6 +1815,7 @@ answer is the TaskAttempt record the Orker writes.
 | `orker_id` | `string` | orker_id is the Orker that sent the heartbeat, as it names itself (ORK_ORKER_ID) — the same value TaskRun.orker_id and TaskAttempt.orker_id carry. Empty when the beat came from an Orker built before the detail carried it. |
 | `item` | optional `int32` | item is set when the pending activity is one item of a fan-out (read off the scheduled ExecuteTaskInput.each.index). |
 | `capacity_wait` | [`CapacityWait`](#capacitywait) | capacity_wait is set when this attempt is waiting for capacity: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, and every Orker of its pool that takes new tasks declares a capacity, runs a task, and has no room for another task within it. Derived on read from the Orker inventory ListOrkers reports, in a reading at most five seconds old that one engine replica shares among every caller. Unset otherwise — including when the inventory could not be read in time, when any live Orker did not answer (it could serve this pool, with room), when one of the pool's Orkers declares no capacity, runs nothing (what it reserves is then its own polls, which take the next task), or has room but every task slot (max_concurrent) taken. The attempt is then waiting for an Orker, as it always was. |
+| `store_outage_wait` | [`StoreOutageWait`](#storeoutagewait) | store_outage_wait is set when this attempt is waiting out an object storage outage: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, at least one Orker of its pool is cordoned only because the store does not answer it, and no Orker of the pool takes new tasks. Derived on read like capacity_wait, and unset for the same reasons. The attempt has used nothing while it waits, and starts once the store answers. |
 
 ### Namespace
 
@@ -1908,15 +1910,16 @@ Orker is one execution process, observed live.
 | `running_tasks` | `int32` |  |
 | `open_pins` | `int32` |  |
 | `max_concurrent_pins` | `int32` | ORK_ORKER_MAX_PINS; 0 means not a pin host |
-| `cordoned` | `bool` |  |
-| `cordon_reason` | `string` | empty when not cordoned |
-| `cordoned_at` | `google.protobuf.Timestamp` |  |
+| `cordoned` | `bool` | cordoned is true while this Orker takes no new task and opens no new pin, whichever cause holds it: an operator's cordon (cordon_reason), a store outage (store_outage), or both. |
+| `cordon_reason` | `string` | cordon_reason is the operator's reason; empty when no operator's cordon holds, even while store_outage does. |
+| `cordoned_at` | `google.protobuf.Timestamp` | cordoned_at is when the operator's cordon was set; unset when none holds. |
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment this Orker was observed polling. It answers "how fresh is this row", never "when did this Orker die". |
 | `unavailable_reason` | `string` | unavailable_reason says this Orker COULD NOT BE ASKED, and why — the same three-state distinction Pool.unavailable_reason makes, for the same reason: "not measured" rendered as "measured zero" sends an operator to stop a host that may be mid-task. When set, fields 2–9 and 12 are unset: nothing was measured, so there is no number to report. |
 | `pins` | repeated [`OpenPin`](#openpin) |  |
 | `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity and reserved are DescribeOrkerResult's: what this Orker admits tasks within, and what stands reserved against it, each outstanding poll counted at the per-task cap. Both unset when it declares no capacity. |
 | `reserved` | [`ResourceQuantity`](#resourcequantity) |  |
 | `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is DescribeOrkerResult's: the per-task cap, the largest request this Orker runs, which submit holds a task's declared request to. |
+| `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage. It clears by itself once the store answers again; CordonOrker neither sets nor clears it. Unset from an Orker of a release without these checks. |
 
 ### Orkflow
 
@@ -2170,7 +2173,7 @@ one that started nothing and holds no state of its own.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `string` | name is the pool a task's `pool:` names. "main" is built in and is where a task runs when neither it nor its namespace names one. |
-| `live_orker_count` | `int32` | live_orker_count is how many Orkers were serving this pool when the answer was computed. Zero means a task sent here would wait for an Orker that is not there, which is what a submit refuses. |
+| `live_orker_count` | `int32` | live_orker_count is how many Orkers were serving this pool when the answer was computed, an Orker waiting out an object storage outage included. Zero means a task sent here would wait for an Orker that is not there, which is what a submit refuses. |
 | `is_default` | `bool` | is_default marks the pool a task of this namespace runs on when it names none. |
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment an Orker of this pool was observed STILL POLLING.<br><br>Temporal remembers a poller for minutes after its worker died, so the probe drops a record older than the freshness window before counting or timestamping anything (internal/engine/pool_probe.go). One consequence is load-bearing and stated here rather than discovered: a pool whose Orkers have all gone quiet reports NO last_seen at all, not the moment the last of them was heard. This field answers "how fresh is the number beside it", never "when did this pool die". |
 | `unavailable_reason` | `string` | unavailable_reason says that this pool COULD NOT BE ASKED, and why.<br><br>Empty is the normal case: live_orker_count is a measurement. Non-empty means nothing was measured — the cluster did not answer for this pool — and live_orker_count is 0 because there is no number to report, NOT because nobody is serving it. The two need opposite reactions: an empty pool is fixed by starting an Orker, an unreachable one by asking again, and a renderer that showed them alike would tell an operator to scale a pool that may be perfectly healthy.<br><br>It exists so that ListPools can NARROW instead of refusing. One pool the cluster could not answer for used to fail the whole call, hiding every healthy pool beside it — and an admin read is opened precisely when something is already wrong. Each pool carries its own verdict now. |
@@ -2575,6 +2578,32 @@ bucket it was submitted in, whenever it ends.
 | `until` | `google.protobuf.Timestamp` | exclusive |
 | `runs_by_status` | map&lt;`string`, `int64`&gt; | runs_by_status has the window's four keys, always present. succeeded, failed and canceled count the bucket's runs that have finished; running counts the bucket's runs not finished when the answer was computed. The four sum to how many runs the bucket created, up to one skew: a run still going is placed by the cluster's record of its start, a finished one by the archive's stamp of its creation, and the two differ by the milliseconds a submission takes, so a run submitted that close to a boundary can change buckets when it finishes.<br><br>Across the series, succeeded, failed and canceled sum EXACTLY to the window's runs_by_status: both come from one scan of the archive index. running sums to at most the window's running, and the difference is the runs still going that were created before window_since. The window's running is a fact about now and counts them; no bucket can, because none of them was created in one. |
 | `partial` | `bool` | partial is true when the window cut this bucket short, so it spans less than its whole hour or day: the first bucket of a window that starts mid-day, and the last bucket of one that ends now ("today, so far"). |
+
+### StoreOutage
+
+StoreOutage says an Orker has cordoned itself because its object storage
+checks keep failing. It clears by itself once they pass again, and no
+operator can clear it. Unset means no outage holds, and is all an Orker of a
+release without these checks ever reports.
+
+| Field | Type | Description |
+|---|---|---|
+| `reason` | `string` | reason says in plain words what the Orker saw, starting "object storage unreachable". |
+| `since` | `google.protobuf.Timestamp` | since is when this Orker cordoned itself. |
+
+### StoreOutageWait
+
+StoreOutageWait says why a SCHEDULED attempt has not started: no Orker of its
+pool takes new tasks, and at least one has cordoned itself because object
+storage does not answer it and for no other reason (Orker.store_outage;
+docs/DEPLOY.md, "When object storage goes away"). A
+reading of the inventory at most five seconds old, never a record.
+
+| Field | Type | Description |
+|---|---|---|
+| `pool` | `string` | pool is the pool the attempt waits on, as TaskRun.pool spells it. |
+| `orkers` | `int32` | orkers is how many Orkers of the pool are cordoned for that reason alone. |
+| `since` | `google.protobuf.Timestamp` | since is when the earliest of those Orkers cordoned itself. |
 
 ### StreamEventsRequest
 
@@ -3088,6 +3117,7 @@ EventType classifies a run event on the realtime stream.
 | `EVENT_TYPE_RUN_CANCELED` | 10 |  |
 | `EVENT_TYPE_TASK_AWAITING` | 11 | TASK_AWAITING: an awaited task started waiting. Status AWAITING; the message names the deadline. |
 | `EVENT_TYPE_TASK_RESOLVED` | 12 | TASK_RESOLVED: an awaited task was resolved from outside the run. Status is the outcome it decided — SUCCEEDED for a completion, FAILED for a rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same status, so a reader that only knows the older task events still sees the task end. |
+| `EVENT_TYPE_STREAM_GAP` | 13 | STREAM_GAP: numbers of the run's event sequence hold no event, because the run used them without publishing one (an event whose record object storage refused). Its sequence is the last of those numbers and its message names them all; no run or task changed state. Only a live read of the stream serves it, and the read goes on to the run's terminal event. It is part of the read, not of the run's events: the run's archive records the same numbers as a gap in its stream instead, and a read over that gap ends DataLoss. |
 
 ### FailureCategory
 

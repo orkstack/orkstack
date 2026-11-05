@@ -1,0 +1,30 @@
+apiVersion: orkstack/v1
+kind: Orkflow
+name: greet
+version: "0.2.0"
+
+inputs:
+  who:
+    type: string
+    default: world
+
+tasks:
+  - id: hello
+    uses: shell
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo hello {{ sh .inputs.who }}
+
+  - id: goodbye
+    uses: shell
+    needs:
+      - hello
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo goodbye {{ sh .inputs.who }}

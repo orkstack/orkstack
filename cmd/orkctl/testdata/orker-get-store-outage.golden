@@ -1,0 +1,12 @@
+orker         orker-out
+pool          build
+build         -
+state         cordoned (object storage unreachable)
+reason        -
+since         -
+store outage  object storage unreachable: the last check failed; this Orker's log has the error
+outage since  2026-09-22T08:53:10Z
+resumes       by itself once object storage answers
+tasks         0
+pins          -
+last seen     2026-09-22T09:14:02Z

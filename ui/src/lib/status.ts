@@ -97,7 +97,8 @@ export const EVENT_TYPE_LABEL: Record<EventType, string> = {
 	[EventType.RUN_FAILED]: 'RUN_FAILED',
 	[EventType.RUN_CANCELED]: 'RUN_CANCELED',
 	[EventType.TASK_AWAITING]: 'TASK_AWAITING',
-	[EventType.TASK_RESOLVED]: 'TASK_RESOLVED'
+	[EventType.TASK_RESOLVED]: 'TASK_RESOLVED',
+	[EventType.STREAM_GAP]: 'STREAM_GAP'
 };
 
 export function eventTypeLabel(t: EventType | undefined): string {

@@ -251,8 +251,9 @@ func (h *CacheHandler) inventory(ctx context.Context, namespace, orkflow string)
 }
 
 // loadRuns reads every entry's archived body through a bounded worker pool
-// of failureScanConcurrency, in index order. An index row with no body is the
-// crash window between the archive's two writes and is skipped; any other
+// of failureScanConcurrency, in index order. An index row with no body is an
+// archive write that stopped short, which the sweep finishes, and is skipped;
+// any other
 // error fails the whole answer, naming the run — a subset is never reported
 // as the whole.
 func (h *CacheHandler) loadRuns(parent context.Context, entries []artifacts.RunIndexEntry) ([]*orkstackv1.Run, error) {

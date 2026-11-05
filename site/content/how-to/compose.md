@@ -4,44 +4,40 @@ Add a task with `uses: orkflow:<name>@<version>` to start a child run of that Or
 
 ## Example
 
-In [`examples/composed-release.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/composed-release.ork.yaml), the `release` task runs the `release-block` Orkflow at version `0.1.0`. `announce` reads two of the block's outputs:
+In [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/approval-gate.ork.yaml), the `announce` task runs the `notify-block` Orkflow at version `0.2.0`:
 
 ```yaml
-  - id: release
-    uses: orkflow:release-block@0.1.0
-    needs:
-      - build
-    with:
-      image: '{{ .tasks.build.output.value }}'
-
   - id: announce
-    uses: shell
+    uses: orkflow:notify-block@0.2.0
     needs:
-      - release
+      - assess
+      - apply
+    join: none_failed
     with:
-      op: exec
-      command:
-        - sh
-        - -c
-        - "echo released {{ sh .tasks.release.output.digest }} at {{ sh .tasks.release.output.url }}"
+      url: '{{ .inputs.notify_url }}'
+      subject: change
+      text: '{{ if index .tasks "apply" }}applied{{ else }}declined{{ end }}: {{ .tasks.assess.output.result.summary }}{{ with index .tasks "approval" }} (approver: {{ .output.approver }}){{ end }}'
 ```
 
-The block declares those two outputs in [`examples/release-block.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/release-block.ork.yaml):
+The block declares one output in [`examples/notify-block.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/notify-block.ork.yaml):
 
 ```yaml
 outputs:
-  digest: '{{ .tasks.sign.output.value }}'
-  url: '{{ .tasks.publish.output.value }}'
+  status: '{{ .tasks.post.output.status }}'
 ```
 
-Apply the block first, in the same namespace:
+A task that needs `announce` reads it as `{{ .tasks.announce.output.status }}`. No task in this example does.
+
+Apply the block first, in the same namespace, in a command of its own. `notify_url` defaults to a public test service, so the run needs internet access and no input:
 
 ```bash
-orkctl apply examples/release-block.ork.yaml
-orkctl apply examples/composed-release.ork.yaml
-orkctl run submit composed-release --watch
+orkctl apply examples/notify-block.ork.yaml
+orkctl apply examples/approval-gate.ork.yaml
+orkctl run submit approval-gate --watch
 orkctl run get <run-id> --tree
 ```
+
+The default change needs no approval, so the run applies it and `announce` starts the child.
 
 ## Pin the version
 
@@ -53,7 +49,7 @@ orkctl run get <run-id> --tree
 
 - `with:` is the child's input. The engine renders it. A child run receives values, never files. Pass a reference that the child can fetch, such as a digest or a URL.
 - Apply checks `with:` against the child's `inputs:`.
-- The child's `outputs:` become the task's values. Read them as `{{ .tasks.<id>.output.<name> }}`. Every value is a string.
+- The child's `outputs:` become the task's values. Read them as `{{ .tasks.<id>.output.<name> }}`, or `{{ index .tasks "<id>" "output" "<name>" }}` when the id has a hyphen. Every value is a string.
 - A child with no `outputs:` gives `{}`. Reading an output the child does not declare fails at apply.
 
 ## What a composed task allows

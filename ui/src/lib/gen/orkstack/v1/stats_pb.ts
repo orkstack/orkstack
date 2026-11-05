@@ -590,8 +590,8 @@ export type GetFailureBreakdownResponse = Message<"orkstack.v1.GetFailureBreakdo
   /**
    * failed_runs_scanned is how many of those had a body to read. It is less
    * than failed_runs_in_window only for an index row whose body is absent —
-   * the crash window between the archive's two writes, which ListRuns
-   * already skips. Any OTHER unreadable body fails the call.
+   * an archive write that stopped short, which ListRuns already skips. Any
+   * OTHER unreadable body fails the call.
    *
    * @generated from field: int64 failed_runs_scanned = 3;
    */
@@ -1243,9 +1243,8 @@ export type GetUsageResponse = Message<"orkstack.v1.GetUsageResponse"> & {
 
   /**
    * runs_scanned is how many of those had a body to read; less only for an
-   * index row whose body is absent (the crash window between the archive's
-   * two writes, which ListRuns already skips). Any other unreadable body
-   * fails the call.
+   * index row whose body is absent (an archive write that stopped short,
+   * which ListRuns already skips). Any other unreadable body fails the call.
    *
    * @generated from field: int64 runs_scanned = 5;
    */

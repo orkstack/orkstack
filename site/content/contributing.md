@@ -22,8 +22,9 @@ make -C images push    # build the first-party activity images into that registr
 make up                # build ork, orker and orkctl; start them and the UI's dev server
 ```
 
-The stack publishes its ports on `127.0.0.1` only: it is reachable from
-this machine and from no other.
+The stack listens on loopback only, the engine included: it is reachable from
+this machine and from no other. `ORK_HTTP_ADDR=:8080 make up` opens the engine
+to other machines.
 
 The UI is at http://localhost:5173, served by its dev server with hot reload;
 its API and live-stream calls go to the engine on 8080. Use `./bin/orkctl`
@@ -68,11 +69,15 @@ text is the release's notes on GitHub, word for word, above a list of the
 release's image digests (see "The changelog" in
 [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).
 
-The entry says what users must do about the change, if anything, and every
-security fix to what a release publishes has one, a vulnerable dependency's
-bump among them. A change that cannot affect users gets none: a documentation,
-test or refactoring change, internal tooling, a dependency bump that cannot
-affect them, or a CI change that leaves what a release publishes as it was.
+The entry is a sentence or two on what changed and what users must do about it,
+if anything, with an absolute link to the doc where one holds more detail and,
+once changes land through pull requests, a link to its pull request. Every
+security fix to what a release publishes has one, a vulnerable dependency's bump
+among them.
+A change that cannot affect users gets none: a documentation, test or
+refactoring change, a cosmetic change to the UI, internal tooling, a dependency
+bump that cannot affect them, or a CI change that leaves what a release
+publishes as it was.
 
 ## See also
 

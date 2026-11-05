@@ -8,6 +8,18 @@
 # Pattern: docs/ORKFLOW_PATTERNS.md, "A non-2xx answer is data"
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Reuse a block with declared outputs"
 #
+# It composes notify-block, so that block must be stored first, in a command of
+# its own. That is the one thing it asks of you, besides internet access to
+# httpbin.org, or `--input` naming endpoints of your own:
+#   orkctl apply examples/notify-block.ork.yaml
+#   orkctl apply examples/order-saga.ork.yaml
+#
+# By default every step succeeds: httpbin.org answers any request under
+# /anything with 200. A 5xx from httpbin.org is data here, so an outage of it
+# takes this example's failure path. To see that path, have the shipping service
+# refuse: the shipment fails, and the reservation and the payment are undone:
+#   orkctl run submit order-saga --input shipping_api=https://httpbin.org/absent --watch
+#
 #   prepare      validates the order and builds every request body ONCE.
 #   reserve,     the requests. Each PUTs to a URL keyed by the order id, so a
 #   charge, ship retried request is the same request (at-least-once).
@@ -24,8 +36,7 @@
 #   report       join: all_done, after prepare, every step and both
 #                compensations: it reads how each ended from task.json's
 #                `join` object, and runs in a run that succeeds too.
-#   notify       join: all_done, the reusable notify-block (apply
-#                examples/notify-block.ork.yaml first).
+#   notify       join: all_done, the reusable notify-block.
 #
 # A failure handler never rescues the run: when a step fails, the run still
 # ends FAILED with that step's error, after release, refund, report and notify
@@ -39,19 +50,27 @@
 apiVersion: orkstack/v1
 kind: Orkflow
 name: order-saga
-version: "0.1.0"
-description: "Reserve, charge and ship an order over HTTP; release and refund when a later step fails; report either way. Apply notify-block first."
+version: "0.2.0"
+description: "Reserve, charge and ship an order over HTTP; release and refund when a later step fails; report either way. Store notify-block first: orkctl apply examples/notify-block.ork.yaml, then orkctl apply examples/order-saga.ork.yaml."
 
 inputs:
   api:
     type: string
-    required: true
+    default: "https://httpbin.org/anything"
+  shipping_api:
+    type: string
+    default: "https://httpbin.org/anything"
   notify_url:
     type: string
-    required: true
+    default: "https://httpbin.org/post"
   order:
     type: object
-    required: true
+    default:
+      id: ord-1001
+      sku: kb-01
+      quantity: 2
+      amount: "49.90"
+      address: "1 Main St"
 
 tasks:
   # 1. Validate once and build every body once. A malformed order fails here,
@@ -133,7 +152,7 @@ tasks:
       initial_interval_seconds: 2
     with:
       op: put
-      url: '{{ .inputs.api }}/orders/{{ .tasks.prepare.output.result.id }}/shipment'
+      url: '{{ .inputs.shipping_api }}/orders/{{ .tasks.prepare.output.result.id }}/shipment'
       headers:
         content-type: application/json
       body: '{{ .tasks.prepare.output.result.shipment }}'
@@ -218,7 +237,7 @@ tasks:
           end
 
   - id: notify
-    uses: orkflow:notify-block@0.1.0
+    uses: orkflow:notify-block@0.2.0
     needs:
       - report
     join: all_done

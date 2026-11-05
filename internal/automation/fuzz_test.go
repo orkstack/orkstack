@@ -58,8 +58,14 @@ func FuzzParseAndPlan(f *testing.F) {
 			}
 		}
 		for _, step := range steps {
-			switch step.GetAction() {
-			case orkstackv1.AutomationAction_AUTOMATION_ACTION_CREATE, orkstackv1.AutomationAction_AUTOMATION_ACTION_UNCHANGED:
+			switch {
+			case step.GetAction() == orkstackv1.AutomationAction_AUTOMATION_ACTION_CREATE,
+				step.GetAction() == orkstackv1.AutomationAction_AUTOMATION_ACTION_UNCHANGED:
+			case step.GetAction() == orkstackv1.AutomationAction_AUTOMATION_ACTION_UPDATE &&
+				step.GetKind() == orkstackv1.AutomationObjectKind_AUTOMATION_OBJECT_KIND_NAMESPACE &&
+				step.GetName() == "default":
+				// `default` always resolves, so settings declared for it
+				// update it even on an empty deployment.
 			default:
 				t.Fatalf("Plan(%q) against an empty deployment planned %v for %s %s", source, step.GetAction(), step.GetKind(), step.GetName())
 			}

@@ -103,7 +103,7 @@ orkctl run logs <run-id> --task greet
 
 The log reads `hello Ada from my own image`. Leave out `--input who=Ada` and the task greets `world`.
 
-The output is the task's `values.json`. Open the run in the UI. Its run page shows each task's values, and the `greet` task's `values.json` holds the greeting, `{"greeting":"hello Ada"}`.
+The output is the task's `values.json`. Open the run in the UI. The run page's **Leaf task values** card shows it under the task's name: `"greet": {"greeting": "hello Ada"}`.
 
 **If you installed orkctl.** The alias cannot write files, so save the output with the installed binary, called as `./orkctl` because the alias wins over it. [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains how to install it.
 
@@ -128,3 +128,4 @@ The file holds one JSON object, `{"greeting":"hello Ada"}`.
 - [docs/ACTIVITY_IMAGES.md, "The op convention"](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#the-op-convention): a task that puts a registry reference directly in `uses:`.
 - [docs/CLI.md, "orkctl run artifact download"](https://github.com/orkstack/orkstack/blob/main/docs/CLI.md#orkctl-run-artifact-download): every flag of the download.
 - [examples/custom-image-shell/README.md](https://github.com/orkstack/orkstack/blob/main/examples/custom-image-shell/README.md): a larger image of the same kind, in POSIX shell.
+- [examples/custom-image/custom-image.ork.yaml](https://github.com/orkstack/orkstack/blob/main/examples/custom-image/custom-image.ork.yaml): a recipe that runs that image and its twin in Go.

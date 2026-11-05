@@ -22,12 +22,12 @@ In [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob
           required: true
 ```
 
-Submit a risky change. Do not use `--watch`, because the run waits for the approval:
+The default change is not risky, so a run with no inputs opens no approval and finishes by itself. To see the approval, submit a risky change. Do not use `--watch`, because the run waits for the approval:
 
 ```bash
 orkctl apply examples/notify-block.ork.yaml
 orkctl apply examples/approval-gate.ork.yaml
-orkctl run submit approval-gate --input notify_url=https://hooks.example.com/changes --input 'changes=[{"service":"payments","setting":"replicas","value":"3"}]'
+orkctl run submit approval-gate --input 'changes=[{"service":"payments","setting":"replicas","value":"3"}]'
 orkctl run get <run-id>
 ```
 
@@ -49,7 +49,7 @@ orkctl run resolve <run-id> --task approval --values '{"approved":true,"approver
 
 <!-- site-media: ui-await -->
 
-The same in motion, with [`examples/awaited-approval.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/awaited-approval.ork.yaml), from submit to the next task:
+The same in motion, with [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/approval-gate.ork.yaml), from submit to the next task:
 
 <!-- site-media: ui-await-run -->
 

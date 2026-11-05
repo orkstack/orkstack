@@ -106,7 +106,8 @@ old histories replay unchanged. Submit asks the task's pool what it can run
 no pins (`max_concurrent_pins` 0), and a fan-out, a cached task or a container
 failure handler on a pool whose Orker predates the feature (`each_supported`,
 `cache_supported`, `join_supported` false) and could not decode its context.
-The probe asks every uncordoned Orker of the pool, and one that lacks the
+The probe asks every uncordoned Orker of the pool, counting one only waiting
+out a store outage, and one that lacks the
 feature refuses the pool, so every Orker of a pool must run a release that
 supports what the pool is sent (`docs/DEPLOY.md`, §1).
 
@@ -763,7 +764,7 @@ key; `HOSTNAME` is not (`docs/DSL.md`, "Caching").
 ```
 APPLY TIME (engine, internal/api, once per version)
   uses: "shell"                      catalog lookup
-     └─> ghcr.io/orkstack/activity-shell:0.1   registry GET /v2/<repo>/manifests/<tag>
+     └─> ghcr.io/orkstack/activity-shell:0.2   registry GET /v2/<repo>/manifests/<tag>
           └─> sha256:9ab2…            sha256 of the response body
                └─> ImageRef{pinned: "ghcr.io/orkstack/activity-shell@sha256:9ab2…"}
                     └─> stamped into the immutable Orkflow version document
@@ -787,12 +788,12 @@ probe and not a marketplace. The built-in table:
 
 ```yaml
 activities:
-  shell:    ghcr.io/orkstack/activity-shell:0.1
-  http:     ghcr.io/orkstack/activity-http:0.1
-  file:     ghcr.io/orkstack/activity-file:0.1
-  json:     ghcr.io/orkstack/activity-json:0.1
-  git:      ghcr.io/orkstack/activity-git:0.1
-  template: ghcr.io/orkstack/activity-template:0.1
+  shell:    ghcr.io/orkstack/activity-shell:0.2
+  http:     ghcr.io/orkstack/activity-http:0.2
+  file:     ghcr.io/orkstack/activity-file:0.2
+  json:     ghcr.io/orkstack/activity-json:0.2
+  git:      ghcr.io/orkstack/activity-git:0.2
+  template: ghcr.io/orkstack/activity-template:0.2
 ```
 
 `uses:` resolution order, applied in `internal/dsl` validation and then in
@@ -1137,7 +1138,14 @@ writes, require both to be refused, and read back the exact candidate.
 Versioning the key means a newer build never strands every Orker on an older
 schema's winner. Any other outcome refuses to start with
 `InfrastructureError/COMMIT_STORE_NOT_CONDITIONAL`, naming the endpoint — the
-alternative is a deployment that silently loses immutability.
+alternative is a deployment that silently loses immutability. The exception is
+a probe that gets no answer about conditional writes because the store could
+not be used at all: no response, a 401 or 403, a 404 for the bucket, or a server
+error other than 501. That proves nothing about conditional writes, so the Orker
+refuses to start with `InfrastructureError/COMMIT_STORE_UNAVAILABLE`, carrying
+the store's own answer. Either way it exits without waiting or retrying: whatever
+starts it decides when the store is ready, so a stack's health check on its store
+must pass only once its bucket answers (`compose.yaml`).
 
 ### 5.4 The sequence
 
@@ -1312,6 +1320,7 @@ containers run.
 | Torn `commit.json` | the torn object | `link(2)` publication cannot produce one; an existing one is reread once, then `COMMIT_UNDECODABLE`. | explicit failure |
 | Two attempts upload different bytes under one name | both objects | Different bytes are a different key, so the committed `sha256` still resolves. | correct |
 | Object store without conditional PUT | — | Boot-time two-writer race fails → Orker refuses to start (`COMMIT_STORE_NOT_CONDITIONAL`). | refuses to run, never runs unsafely |
+| Object store unusable at boot: unreachable, credential refused, no such bucket | — | The boot probe gets no answer → Orker refuses to start (`COMMIT_STORE_UNAVAILABLE`). | refuses to run, never runs unsafely |
 | Container exceeds its own timeout | logs, no commit | SIGTERM → grace → SIGKILL, `TimedOut/CONTAINER_TIMEOUT`, terminal by default (§8.1). | explicit failure |
 | Cancellation, or SIGTERM ignored | logs, no commit | SIGTERM → grace → SIGKILL (§14.5); the Orker returns `ctx.Err()`. | canceled, never auto-retried |
 | Orker stopped (`SIGTERM`, `SIGINT`) mid-container | logs to the last line, the attempt record (`ORKER_STOPPED`), no commit | SIGTERM → grace → SIGKILL, then the process exits (§6.3); Temporal is told nothing, so the heartbeat timeout retries per the task's policy, as for a dead Orker. | correct, container ran twice (at-least-once) |
@@ -1749,6 +1758,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `COMMIT_UNDECODABLE` | ContractViolation | no | an object at `commit_uri` is still not valid `ActivityCommit` JSON after the in-attempt reread |
 | `COMMIT_TOO_LARGE` | ContractViolation | no | the projected `ActivityCommit` exceeds `limits.commitMaxBytes`, measured before any upload |
 | `COMMIT_STORE_NOT_CONDITIONAL` | InfrastructureError | **no** | the boot-time two-writer race proved the store lacks conditional create; the Orker refuses to start (§5.3) |
+| `COMMIT_STORE_UNAVAILABLE` | InfrastructureError | **no** | the boot-time probe got no answer about conditional writes, because the store could not be used at all; the Orker refuses to start (§5.3) |
 | `VALUES_CORRUPT` | ContractViolation | no | on adoption, the refetched `values.json` does not match `commit.values.sha256` |
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
 
@@ -1792,16 +1802,18 @@ run's own. When it stops before its first task, it publishes `RUN_CREATED` at
 1 and the terminal event at 2. What object storage refuses changes that:
 
 - `RUN_CREATED` refused (twice; once, for a run an earlier release recorded):
-  the terminal event is published alone, at 2. A read of the run's stream from
-  its start fails `DataLoss`, naming 1 as never published, live and from its
-  archive alike; a read from 1 serves the terminal event.
+  the terminal event is published alone, at 2. A live read of the run's stream
+  from its start serves a `STREAM_GAP` event naming 1 as never published, then
+  the terminal event; a read of its archive from its start fails `DataLoss`
+  naming the same number; a read from 1 serves the terminal event.
 - The terminal event refused: the stream holds `RUN_CREATED`, and the run's
   close is read as its terminal event, at 2, with its code.
 - Both refused: the run publishes nothing, and its close is read as its one
   event, at 1, with its code.
 
-A run that publishes no terminal event, as in the last two, has no archive,
-so it can no longer be read once it is retired.
+A run that publishes no terminal event, as in the last two, is archived from
+its history by the archive sweep (`docs/DEPLOY.md` §1, "The archive sweep"), so
+it can still be read once it is retired.
 
 Codes that belong to one construct — pins (`PIN_HOST_LOST`,
 `PIN_UNAVAILABLE`, `PIN_TIMEOUT`, …), joins (`CONDITION_FAILED`), awaits,

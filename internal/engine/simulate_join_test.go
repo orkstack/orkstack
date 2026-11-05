@@ -150,9 +150,9 @@ func TestSimulate_AssumeFailedAgreesWithARunWhereThatTaskFails(t *testing.T) {
 		fail    []string
 	}{
 		{"join-fail, deploy", compile(t, joinFailDocument), nil, nil, []string{"deploy"}},
-		{"branch-and-recover, deploy", compileExample(t, "branch-and-recover.ork.yaml"),
+		{"branch-and-recover, deploy", compileFixture(t, "branch-and-recover.ork.yaml"),
 			map[string]any{"route": "full"}, map[string]map[string]any{"decide": {"value": "full"}}, []string{"deploy"}},
-		{"branch-and-recover, deploy and rollback", compileExample(t, "branch-and-recover.ork.yaml"),
+		{"branch-and-recover, deploy and rollback", compileFixture(t, "branch-and-recover.ork.yaml"),
 			map[string]any{"route": "canary"}, map[string]map[string]any{"decide": {"value": "canary"}},
 			[]string{"deploy", "rollback"}},
 		{"escalate, rollback never runs", compile(t, escalateDocument), nil, nil, []string{"rollback"}},
@@ -255,7 +255,7 @@ tasks:
 func TestSimulate_NoAssumptionIsProtoEqualToBefore(t *testing.T) {
 	docs := []*orkstackv1.Orkflow{
 		compile(t, diamondDocument), compile(t, wavesDocument), compile(t, smokeDocument),
-		compileExample(t, "http-post.ork.yaml"), compileExample(t, "cached-pipeline.ork.yaml"),
+		compileExample(t, "http-post.ork.yaml"), compileFixture(t, "cached-pipeline.ork.yaml"),
 	}
 	for _, wf := range docs {
 		withNil := simulateAssuming(t, wf, nil, nil, nil)

@@ -23,7 +23,7 @@ tasks:
 }
 
 func TestCompile_CacheCompiles(t *testing.T) {
-	wf, err := dsl.CompileFile("../../examples/cached-pipeline.ork.yaml")
+	wf, err := dsl.CompileFile("testdata/orkflows/cached-pipeline.ork.yaml")
 	if err != nil {
 		t.Fatalf("compile the example: %v", err)
 	}

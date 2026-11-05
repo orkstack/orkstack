@@ -457,7 +457,7 @@ A negative interval, a `maximum_interval_seconds` set below
 `initial_interval_seconds`, and a `backoff_coefficient` below 1 or not finite,
 are refused (rule 47).
 The 60 s is decided when the run is submitted and kept for the whole run: a
-run submitted by a release before v0.1.1 keeps the 100 s it started with.
+run submitted by a release before v0.2.0 keeps the 100 s it started with.
 
 `uses:` is the only image selector. A catalog name is resolved at apply time;
 a registry tag or digest may be written directly. In every case the applied
@@ -872,7 +872,8 @@ no loop, no `continue_on_error` and no Orkflow-level `on_failure:` hook: the
 graph stays a DAG that `run plan` sees whole, a handler lists the needs it
 handles (the DAG is the one place edges are declared), and a failure that
 should not fail the run is the workload's to report as data, which a
-`condition:` reads. See `examples/branch-and-recover.ork.yaml`.
+`condition:` reads. See `examples/order-saga.ork.yaml` for failure handlers,
+and `examples/http-post.ork.yaml` for a status a `condition:` reads.
 
 ## Pins
 
@@ -941,8 +942,8 @@ tasks:
 "`dest` — a working tree for a pin"); `golang` is illustrative — a
 deployment's catalog decides what such a name resolves to. For a pin written
 against the first-party activity images and compiled by the test suite, see
-`examples/pinned-build.ork.yaml`. `examples/pinned-checkout.ork.yaml` clones
-with the `git` activity into a pin.
+`examples/pinned-checkout.ork.yaml`, which clones with the `git` activity into
+a pin.
 
 `pins:` is a top-level map from pin name to a (possibly empty) options object;
 a pin named `build` with an empty options object is legal. `pin:` on a task is
@@ -1152,7 +1153,7 @@ there would mean storing the plaintext or sharing a key with every Orker. Do
 not set `callback: true` on an approval whose approver must differ from
 whoever submits the run: the submitter receives the token.
 
-See `examples/awaited-approval.ork.yaml`.
+See `examples/approval-gate.ork.yaml`.
 
 ## Fan-out (`each:`)
 
@@ -1307,7 +1308,7 @@ tasks:
   - id: build
     uses: ghcr.io/acme/build:4
   - id: release
-    uses: orkflow:release-block@2.1.0     # version REQUIRED, never floating
+    uses: orkflow:deploy-block@2.1.0      # version REQUIRED, never floating
     needs:
       - build
     with:                                  # the child run's input
@@ -1390,7 +1391,7 @@ tasks:
 lists one parent's children; a
 child is read, watched and cancelled on its own id. `orkctl run logs` points a
 composed task at its child's logs, and `orkctl task run` refuses one by name.
-See `examples/release-block.ork.yaml` and `examples/composed-release.ork.yaml`.
+See `examples/notify-block.ork.yaml` and `examples/approval-gate.ork.yaml`.
 
 ## Caching (`cache:`)
 
@@ -1519,7 +1520,7 @@ whenever that run changes.
 - **No per-trigger or per-schedule bypass.** An Orkflow whose runs must never
   reuse a result declares no `cache:`.
 
-See `examples/cached-pipeline.ork.yaml`.
+See `examples/config-from-git.ork.yaml`.
 
 ## Templating
 
@@ -1813,7 +1814,7 @@ How each node reads:
     before this rule keeps starting: its task is scheduled with the nearest
     policy the cluster accepts, the maximum raised to the initial interval and
     a coefficient between 0 and 1 raised to 1, and, in a run submitted from
-    v0.1.1 on, a coefficient that is not a number read as the default 2.0 (a
+    v0.2.0 on, a coefficient that is not a number read as the default 2.0 (a
     negative coefficient reads as the default too, a negative initial interval as 1 s and a negative maximum as
     unset, as they always have).
 
@@ -1858,8 +1859,8 @@ only the one that sorts first.
 
 ## Example
 
-See `examples/hello.ork.yaml` for a fetch → transform → checksum pipeline that
-uses the first-party `http`, `shell`, and `file` OCI activity images with
+See `examples/http-post.ork.yaml` for a post → archive → summarize pipeline that
+uses the first-party `http`, `file`, and `shell` OCI activity images with
 artifact hand-off. Every shipped example carries the document header after its
 comment header. Every shipped example is compiled by
 `TestCompile_AcceptsEveryShippedExample`. `examples/README.md` lists every

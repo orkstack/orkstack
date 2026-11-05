@@ -15,7 +15,7 @@ USER 65532:65532
 ENTRYPOINT ["/report"]
 ```
 
-A task that runs it, from [`examples/custom-image.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/custom-image.ork.yaml):
+A task that runs it, from the recipe beside it, [`examples/custom-image/custom-image.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/custom-image/custom-image.ork.yaml):
 
 ```yaml
   - id: probe
@@ -23,16 +23,19 @@ A task that runs it, from [`examples/custom-image.ork.yaml`](https://github.com/
     network: none
 ```
 
-Build, push and apply the example:
+Build and push both images, because the recipe names both. `orkctl activity build` runs Docker, which the quickstart's `orkctl` image does not have, so use an `orkctl` on your own machine. The tags below name the quickstart's registry, at `127.0.0.1:5002`; `make up`'s is at `localhost:5001`, the one the recipe's tags name:
 
 ```bash
-orkctl activity build examples/custom-image --tag localhost:5001/orkstack-examples/custom-image:dev
-orkctl activity build examples/custom-image-shell --tag localhost:5001/orkstack-examples/custom-image-shell:dev
-orkctl apply examples/custom-image.ork.yaml
-orkctl run submit custom-image --watch
+orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev
+orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
 ```
 
-The example names both images, so build both. `orkctl activity build` pushes each image and prints its pinned reference.
+Each command pushes its image and prints its pinned reference. Paste each one over its tag in the recipe, then apply and run it:
+
+```bash
+orkctl apply examples/custom-image/custom-image.ork.yaml
+orkctl run submit custom-image --watch
+```
 
 The `probe` task has no `with:` block. The image reads its context, writes `values.json` and exits `0`.
 

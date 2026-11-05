@@ -37,13 +37,14 @@ make up              # build ork, orker and orkctl; start them and the UI's dev 
 `make infra-up` starts [`deploy/docker-compose.yml`](./deploy/docker-compose.yml):
 a Temporal development server (set to see a drained release in seconds, not
 the default minutes: docs/DEPLOY.md §4, "Underneath"), SeaweedFS as the
-S3-compatible object store, and a local OCI registry on `localhost:5001`.
-`make -C images push` builds the first-party activities (`http`, `shell`,
+S3-compatible object store, and a local OCI registry on `localhost:5001`. It
+returns once each passes its health check, which for the store means its bucket
+is ready. `make -C images push` builds the first-party activities (`http`, `shell`,
 `file`, `json`, `git`, `template`) and pushes them to that registry; the stack
 points the activity catalog at them, so an Orkflow that `uses: shell` runs
 the images this checkout built.
 `make up` builds `bin/ork`, `bin/orker` and `bin/orkctl`, starts the engine,
-one Orker and the UI's dev server (Vite, with hot reload), and waits until
+one Orker, which is a pin host, and the UI's dev server (Vite, with hot reload), and waits until
 each one answers: the engine's API, an Orker polling its pool, the dev server
 and a live-event socket opened through it. When it prints "OrkStack is up":
 
@@ -63,6 +64,14 @@ activity container reaches only a test's own server on the host, by
 `host.docker.internal` ("Linux hosts" below), and the observability
 profile's services reach each other on the compose network.
 `TestDevCompose_PublishesOnlyOnLoopback` holds the rule.
+
+`make up` starts the engine on `127.0.0.1:8080` for the same reason: its API
+has no login, and whatever reaches it can start a run on this machine's Docker.
+`orkctl` and the UI's dev server reach it on loopback, and the suites and the
+proofs start engines of their own, at addresses of their own.
+`ORK_HTTP_ADDR=:8080 make up` opens it to other machines; an engine already
+running keeps its address until `make down`.
+`TestDevStack_EngineListensOnlyOnLoopback` holds the default.
 
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl apply examples/each-fan-out.ork.yaml` and the
@@ -124,6 +133,9 @@ signs each image with a throwaway key, by the cosign image and flags the
 release signs with (`deploy/cosign-image.txt`), and runs an Orkflow in a
 namespace that requires that key, so OrkStack's own verifier accepts what a
 release signs.
+`make examples-smoke` runs what `make quickstart-smoke` runs, then every shipped
+example with no inputs on that stack; it reaches `httpbin.org` and `github.com`,
+so it runs as a nightly job of its own.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
 runs both before it publishes anything, and `nightly.yml` runs the quickstart
@@ -341,19 +353,23 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 CHANGELOG.md follows Keep a Changelog 1.1.0 and is written for the people
 who run or use OrkStack. A change that cannot affect them gets no entry,
 however large: documentation edits; CI, workflows and the proof harness,
-unless the change alters what a release publishes; tests; refactors; internal
-tooling, such as the development stack (`make up`); and a dependency bump
-that cannot affect them. A change that may affect them (behaviour, the DSL,
+unless the change alters what a release publishes; tests; refactors; a
+cosmetic change to the UI; internal tooling, such as the development stack
+(`make up`); and a dependency bump that cannot affect them. A change that may
+affect them (behaviour, the DSL,
 the CLI, the API and its error reasons, configuration, the activity contract,
 storage layout, what a release publishes and any security fix to it, a
 vulnerable dependency's bump among them even when they see nothing change, a
 dependency bump that changes what they see, a deprecation, a breaking change)
 adds an entry under `## [Unreleased]` in the same pull request, in the
 subsection of its kind (`### Added`, `### Changed`, `### Deprecated`,
-`### Removed`, `### Fixed` or `### Security`); the entry says what they must
-do about it, if anything, and a breaking change's entry is marked **BREAKING**
-(AGENTS.md §11.1, step 7). Write it for the people who read the release: at a
-release the `[Unreleased]` section becomes the version's own,
+`### Removed`, `### Fixed` or `### Security`). An entry is always in one
+format: a sentence or two on what changed and what they must do about it, if
+anything; an absolute link to the doc, where one holds more detail; and, once
+changes land through pull requests, a link to its pull request. A breaking
+change's entry is marked **BREAKING** (AGENTS.md §11.1, step 7). Write it for
+the people who read the release: at a release the `[Unreleased]` section becomes
+the version's own,
 `## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
 section's text is the GitHub release's notes, word for word, above a footer
 the release adds with each image's digest. Link to a document by its absolute

@@ -356,6 +356,10 @@ func (n noBodies) DeleteUnreferencedObjects(ctx context.Context, objectIDs []str
 	return n.inner.DeleteUnreferencedObjects(ctx, objectIDs)
 }
 
+func (n noBodies) HasRun(ctx context.Context, runID string) (bool, error) {
+	return n.inner.HasRun(ctx, runID)
+}
+
 func (n noBodies) MarkArtifactsCleaned(ctx context.Context, runID string, at time.Time) error {
 	return n.inner.MarkArtifactsCleaned(ctx, runID, at)
 }

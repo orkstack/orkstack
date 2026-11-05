@@ -18,6 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dist"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // compose.yaml, at the repository root, is the quickstart a user runs from a
@@ -531,6 +532,55 @@ func TestQuickstartCompose_EngineAndOrkerShareOneStore(t *testing.T) {
 	}
 	if len(doc.Services["seaweedfs"].Ports) != 0 {
 		t.Errorf("the object store publishes %v; it is reachable from the compose network only", doc.Services["seaweedfs"].Ports)
+	}
+}
+
+// TestStoreHealthcheck_PassesOnlyOnceTheBucketServes: on an empty volume `weed
+// mini` serves S3 for seconds before it creates its -bucket, and in that gap the
+// Orker's boot probe is refused 403 and the engine's first read finds no bucket;
+// each exits. A health check that only asks whether a port answers let the
+// quickstart's first starts run into that. So in both stacks it asks for the
+// bucket the services use, failing on the 404 (-f), signed as they sign; `make
+// up`, which has no depends_on, waits for the same bucket itself.
+func TestStoreHealthcheck_PassesOnlyOnceTheBucketServes(t *testing.T) {
+	t.Parallel()
+	quickstart := loadCompose(t)
+	dev := parseCompose(t, devComposePath, readRepoFile(t, devComposePath))
+	engine := quickstart.service(t, "ork").Environment
+	tests := []struct {
+		doc                    composeFile
+		bucket, access, secret string
+	}{
+		{quickstart, engine["ORK_S3_BUCKET"], engine["ORK_S3_ACCESS_KEY"], engine["ORK_S3_SECRET_KEY"]},
+		// `make up` sets none of them: the services take the code's defaults.
+		{dev, artifacts.DefaultS3Bucket, artifacts.DefaultS3AccessKey, artifacts.DefaultS3SecretKey},
+	}
+	for _, tt := range tests {
+		store := tt.doc.service(t, "seaweedfs")
+		if !slices.Contains(store.Command, "-bucket="+tt.bucket) {
+			t.Errorf("%s: the store runs %v, which does not create the bucket %q the services use", tt.doc.source, store.Command, tt.bucket)
+		}
+		want := []string{
+			"CMD", "curl", "-fsS", "-o", "/dev/null", "--head",
+			"--aws-sigv4", "aws:amz:" + artifacts.DefaultS3Region + ":s3",
+			"--user", tt.access + ":" + tt.secret,
+			"http://localhost:8333/" + tt.bucket,
+		}
+		if store.Healthcheck == nil || !slices.Equal(store.Healthcheck.Test, want) {
+			t.Errorf("%s: the store's health check is %+v, want %v: anything less passes before the bucket exists", tt.doc.source, store.Healthcheck, want)
+		}
+	}
+	wait := "curl -fs -o /dev/null --head http://localhost:9000/" + artifacts.DefaultS3Bucket
+	if !strings.Contains(string(readRepoFile(t, "scripts/stack.sh")), wait) {
+		t.Errorf("scripts/stack.sh does not wait for the store with %q: it starts the engine and the Orker itself, so nothing else makes them wait for the bucket", wait)
+	}
+	// `make run-ork` and `make run-orker` follow these by hand, with no
+	// depends_on either, so the targets return only once that check has passed.
+	makefile := string(readRepoFile(t, "Makefile"))
+	for _, recipe := range []string{"\t$(COMPOSE) up -d --wait\n", "\t$(COMPOSE) --profile observability up -d --wait\n"} {
+		if !strings.Contains(makefile, recipe) {
+			t.Errorf("the Makefile has no recipe %q: `make infra-up` would return before the store's bucket exists", recipe)
+		}
 	}
 }
 

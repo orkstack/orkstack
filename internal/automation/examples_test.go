@@ -1,6 +1,7 @@
 package automation_test
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -23,8 +24,11 @@ func TestParse_TheShippedAutomationExample(t *testing.T) {
 	if len(issues) != 0 {
 		t.Fatalf("Parse issues = %v, want none", issues)
 	}
-	if doc.Namespace != "examples" {
-		t.Errorf("namespace = %q, want examples", doc.Namespace)
+	if doc.Namespace != "default" {
+		t.Errorf("namespace = %q, want default, which a reader need not create", doc.Namespace)
+	}
+	if bytes.Contains(source, []byte("example.com")) {
+		t.Error("the document names an example.com URL, which a reader would have to replace")
 	}
 	schedule, ok := doc.Schedules["poll-exports"]
 	if !ok {
@@ -33,8 +37,11 @@ func TestParse_TheShippedAutomationExample(t *testing.T) {
 	if schedule.Orkflow != "poll-until-ready" {
 		t.Errorf("poll-exports orkflow = %q, want poll-until-ready", schedule.Orkflow)
 	}
-	if got := schedule.Spec.GetCron(); !reflect.DeepEqual(got, []string{"*/15 * * * *"}) {
-		t.Errorf("poll-exports cron = %v, want */15 * * * *", got)
+	if got := schedule.Spec.GetCron(); !reflect.DeepEqual(got, []string{"0 6 * * *"}) {
+		t.Errorf("poll-exports cron = %v, want 0 6 * * *", got)
+	}
+	if !schedule.Spec.GetPauseOnFailure() {
+		t.Error("poll-exports does not pause on failure, so it would keep firing at a service that is down")
 	}
 	if got := schedule.Spec.GetOverlap(); got != orkstackv1.OverlapPolicy_OVERLAP_POLICY_SKIP {
 		t.Errorf("poll-exports overlap = %v, want skip", got)

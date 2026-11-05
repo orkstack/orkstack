@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -17,7 +19,34 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
+
+// TestCommitProbeRefusal_NamesWhatTheProbeFound: the operator reads the reason
+// first, so a store the probe could not use must not read as a store that lacks
+// conditional writes.
+func TestCommitProbeRefusal_NamesWhatTheProbeFound(t *testing.T) {
+	cause := errors.New("api error AccessDenied: Access Denied")
+	tests := []struct {
+		name  string
+		probe error
+		want  string
+	}{
+		{"the probe could not ask", fmt.Errorf("%w: %w", artifacts.ErrCommitStoreUnavailable, cause), orker.ReasonCommitStoreUnavailable},
+		{"the store answered and failed it", cause, orker.ReasonCommitNotConditional},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := commitProbeRefusal(tt.probe)
+			if !strings.HasPrefix(got.Error(), tt.want+": ") {
+				t.Errorf("refusal %q, want the reason %s first", got, tt.want)
+			}
+			if !errors.Is(got, cause) {
+				t.Errorf("refusal %q lost the store's own answer", got)
+			}
+		})
+	}
+}
 
 // TestWorkerOptions_StayActivityOnly guards the property the shared queue
 // depends on: an Orker never competes with the engine for workflow tasks.
@@ -641,4 +670,58 @@ func TestLoadConfig_MaxConcurrent(t *testing.T) {
 			t.Fatalf("activity slots = %d; want 3", got)
 		}
 	})
+}
+
+func TestEnvStoreWatch(t *testing.T) {
+	cases := []struct {
+		name    string
+		env     map[string]string
+		want    orker.StoreWatchConfig
+		wantErr string
+	}{
+		{name: "unset is on with the defaults", want: orker.DefaultStoreWatchConfig()},
+		{
+			name: "every setting is read",
+			env: map[string]string{
+				orker.StoreCheckIntervalVar: "1m", orker.StoreCheckTimeoutVar: "10s",
+				orker.StoreCheckFailuresVar: "5", orker.StoreCheckRecoveriesVar: "4",
+			},
+			want: orker.StoreWatchConfig{Enabled: true, Interval: time.Minute, Timeout: 10 * time.Second, FailureThreshold: 5, RecoveryThreshold: 4},
+		},
+		{
+			name: "off",
+			env:  map[string]string{orker.StoreCheckEnabledVar: "false"},
+			want: func() orker.StoreWatchConfig {
+				cfg := orker.DefaultStoreWatchConfig()
+				cfg.Enabled = false
+				return cfg
+			}(),
+		},
+		{name: "a typo in the switch is refused", env: map[string]string{orker.StoreCheckEnabledVar: "flase"}, wantErr: orker.StoreCheckEnabledVar},
+		{name: "a malformed interval is refused", env: map[string]string{orker.StoreCheckIntervalVar: "soon"}, wantErr: orker.StoreCheckIntervalVar},
+		{name: "a malformed timeout is refused", env: map[string]string{orker.StoreCheckTimeoutVar: "5"}, wantErr: orker.StoreCheckTimeoutVar},
+		{name: "a malformed threshold is refused", env: map[string]string{orker.StoreCheckFailuresVar: "many"}, wantErr: orker.StoreCheckFailuresVar},
+		{name: "a zero threshold is refused", env: map[string]string{orker.StoreCheckRecoveriesVar: "0"}, wantErr: orker.StoreCheckRecoveriesVar},
+		{name: "a timeout above the interval is refused", env: map[string]string{orker.StoreCheckTimeoutVar: "1m"}, wantErr: orker.StoreCheckTimeoutVar},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for key, value := range tc.env {
+				t.Setenv(key, value)
+			}
+			got, err := envStoreWatch()
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("envStoreWatch() error = %v, want it to name %s", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("envStoreWatch() = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
 }

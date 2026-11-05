@@ -38,7 +38,11 @@ orkctl run plan order-saga --assume-failed reserve --assert-runs release --asser
 
 `--assume-failed` plans the run as if `reserve` had failed.
 
-[`examples/branch-and-recover.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/branch-and-recover.ork.yaml) has a `deploy` step that fails when its `fail_deploy` input is set. Run that way, `deploy` fails twice, its two failure handlers run, and the run ends `FAILED` with `deploy`'s error:
+With no inputs, every step succeeds against a public test service. Point the shipping service somewhere that refuses it, and `shipped` fails, the `release`, `refund`, `report` and `notify` handlers run, and the run ends `FAILED` with `shipped`'s error:
+
+```bash
+orkctl run submit order-saga --input shipping_api=https://httpbin.org/absent --watch
+```
 
 <!-- site-media: ui-failure -->
 

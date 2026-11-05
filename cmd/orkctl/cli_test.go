@@ -238,13 +238,13 @@ func TestActivityList_ReturnsTheEnginesCatalog(t *testing.T) {
 	f := newFixture(t,
 		&orkstackv1.ActivityInfo{
 			Name:        "http",
-			Reference:   "ghcr.io/orkstack/activity-http:0.1",
+			Reference:   "ghcr.io/orkstack/activity-http:0.2",
 			IndexDigest: "sha256:" + strings.Repeat("a", 64),
 			Platforms:   []string{"linux/amd64", "linux/arm64"},
 		},
 		&orkstackv1.ActivityInfo{
 			Name:        "shell",
-			Reference:   "ghcr.io/orkstack/activity-shell:0.1",
+			Reference:   "ghcr.io/orkstack/activity-shell:0.2",
 			IndexDigest: "sha256:" + strings.Repeat("b", 64),
 		},
 	)
@@ -252,7 +252,7 @@ func TestActivityList_ReturnsTheEnginesCatalog(t *testing.T) {
 	f.run("activity", "list").
 		requireExit(t, exitOK).
 		requireContains(t, "NAME", "REFERENCE", "DIGEST",
-			"http", "shell", "ghcr.io/orkstack/activity-http:0.1", "sha256:aaaaaaaaaaaa")
+			"http", "shell", "ghcr.io/orkstack/activity-http:0.2", "sha256:aaaaaaaaaaaa")
 }
 
 // TestActivityList_OrdersByName pins the ordering, which §2.3 makes part of
@@ -261,9 +261,9 @@ func TestActivityList_ReturnsTheEnginesCatalog(t *testing.T) {
 // the catalog had changed.
 func TestActivityList_OrdersByName(t *testing.T) {
 	f := newFixture(t,
-		&orkstackv1.ActivityInfo{Name: "shell", Reference: "ghcr.io/orkstack/activity-shell:0.1"},
-		&orkstackv1.ActivityInfo{Name: "file", Reference: "ghcr.io/orkstack/activity-file:0.1"},
-		&orkstackv1.ActivityInfo{Name: "http", Reference: "ghcr.io/orkstack/activity-http:0.1"},
+		&orkstackv1.ActivityInfo{Name: "shell", Reference: "ghcr.io/orkstack/activity-shell:0.2"},
+		&orkstackv1.ActivityInfo{Name: "file", Reference: "ghcr.io/orkstack/activity-file:0.2"},
+		&orkstackv1.ActivityInfo{Name: "http", Reference: "ghcr.io/orkstack/activity-http:0.2"},
 	)
 
 	out := f.run("activity", "list").requireExit(t, exitOK).stdout
@@ -579,7 +579,7 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 			Orkers:   map[string]int{task.DefaultPool: 1},
 			LastSeen: fixedNow,
 		}
-	}, &orkstackv1.ActivityInfo{Name: "http", Reference: "ghcr.io/orkstack/activity-http:0.1"})
+	}, &orkstackv1.ActivityInfo{Name: "http", Reference: "ghcr.io/orkstack/activity-http:0.2"})
 	f.applyExample().requireExit(t, exitOK)
 
 	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {

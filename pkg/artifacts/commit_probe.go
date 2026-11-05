@@ -9,6 +9,12 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
+// ErrCommitStoreUnavailable marks a probe that got no answer about conditional
+// writes, because the store could not be used at all: no response, a refused
+// credential, no such bucket, or a server error. It proves nothing about the
+// store's conditional create, so the caller must not report it as such.
+var ErrCommitStoreUnavailable = errors.New("the store could not answer whether it supports conditional writes")
+
 // ProbeCommitStore checks the configured backend's conditional-create
 // behavior before accepting activity work. The first caller for one commit
 // schema version races two writers against that version's absent probe key and
@@ -19,6 +25,9 @@ import (
 // proof. One key per schema version bounds storage across upgrades without
 // making an older durable winner a boot blocker, and the dedicated prefix
 // keeps capability probes out of activity completions.
+//
+// An error matching ErrCommitStoreUnavailable means the probe could not ask;
+// any other error means the store answered and failed it.
 func ProbeCommitStore(ctx context.Context, store CommitStore) error {
 	if store == nil {
 		return fmt.Errorf("commit store is not configured")
@@ -46,7 +55,7 @@ func ProbeCommitStore(ctx context.Context, store CommitStore) error {
 		case errors.Is(err, ErrPreconditionFailed):
 			conflicts++
 		default:
-			return fmt.Errorf("conditional commit probe %s: unexpected writer result: %w", uri, err)
+			return commitProbeError(uri, "unexpected writer result", err)
 		}
 	}
 	if !((wins == 1 && conflicts == 1) || (wins == 0 && conflicts == 2)) {
@@ -54,13 +63,46 @@ func ProbeCommitStore(ctx context.Context, store CommitStore) error {
 	}
 	record, err := store.Get(ctx, uri)
 	if err != nil {
-		return fmt.Errorf("conditional commit probe %s: winner is unreadable: %w", uri, err)
+		return commitProbeError(uri, "winner is unreadable", err)
 	}
 	got := record.Commit
 	if got == nil || got.GetSchemaVersion() != candidate.GetSchemaVersion() || got.GetNamespace() != candidate.GetNamespace() || got.GetRunId() != candidate.GetRunId() || got.GetTaskId() != candidate.GetTaskId() {
 		return fmt.Errorf("conditional commit probe %s: stored winner does not match the fixed probe candidate", uri)
 	}
 	return nil
+}
+
+// CheckCommitStore asks whether the store still answers this process, for an
+// Orker's store watch: one conditional create against the probe key, which a
+// live store refuses because the boot probe's winner is there, and one read of
+// that winner. So it exercises the write path and the read path a task's
+// completion needs, with the Orker's own credentials, and stores nothing new:
+// should the key be gone, the create writes that same fixed object again, as
+// the next boot would. A store that answered is reachable whatever it answered
+// about the key, and any other failure is an error.
+func CheckCommitStore(ctx context.Context, store CommitStore) error {
+	if store == nil {
+		return fmt.Errorf("commit store is not configured")
+	}
+	provider, ok := store.(interface{ commitProbeURI() string })
+	if !ok {
+		return nil
+	} // in-memory/custom stores prove their own contract
+	uri := provider.commitProbeURI()
+	if _, err := store.Create(ctx, uri, commitProbeCandidate()); err != nil && !errors.Is(err, ErrPreconditionFailed) {
+		return fmt.Errorf("commit store check %s: create: %w", uri, err)
+	}
+	if _, err := store.Get(ctx, uri); err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrCommitUndecodable) {
+		return fmt.Errorf("commit store check %s: read: %w", uri, err)
+	}
+	return nil
+}
+
+func commitProbeError(uri, what string, err error) error {
+	if isStoreUnavailable(err) {
+		return fmt.Errorf("%w: conditional commit probe %s: %s: %w", ErrCommitStoreUnavailable, uri, what, err)
+	}
+	return fmt.Errorf("conditional commit probe %s: %s: %w", uri, what, err)
 }
 
 func commitProbeCandidate() *orkstackv1.ActivityCommit {

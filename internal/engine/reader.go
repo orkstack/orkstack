@@ -498,10 +498,9 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 // The stream is answered from history and segments alone: no snapshot object
 // is fetched, so an event read succeeds even when a snapshot is unreadable or
 // no snapshot store is wired at all. A segment that cannot be read is an error
-// wrapping ErrEventSegmentUnavailable — never NotFound: the run exists. A read
-// whose range starts below the run's first published event, when that is not
-// 1, fails with an *UnpublishedEventsError naming the numbers, the gap its
-// archive records.
+// wrapping ErrEventSegmentUnavailable — never NotFound: the run exists. Numbers
+// the run used without publishing an event are named by a STREAM_GAP event
+// (noteSkipped), as a stream of the run names them.
 func (r *TemporalRunReader) Events(
 	ctx context.Context,
 	runID string,
@@ -516,11 +515,11 @@ func (r *TemporalRunReader) Events(
 
 // EventsForArchive is Events(runID, 0) for the archive write: an earlier
 // generation's event segment that is permanently lost — missing, or failing
-// verification — and numbers below the run's first published event, never
-// published (unpublishedStart), are returned as EventGaps and the read
-// continues, so the run is archived with what is missing recorded
-// explicitly. A transient failure is still an error. The same walk reads who
-// canceled the run, so the archived run says it without a second read.
+// verification — and numbers the run never published (noteSkipped) are
+// returned as EventGaps and the read continues, so the run is archived with
+// what is missing recorded explicitly. A transient failure is still an error.
+// The same walk reads who canceled the run, so the archived run says it
+// without a second read.
 func (r *TemporalRunReader) EventsForArchive(
 	ctx context.Context,
 	runID string,
@@ -533,22 +532,9 @@ func (r *TemporalRunReader) EventsForArchive(
 	return ArchiveRead{Events: projection.events, Gaps: st.gaps, CanceledBy: projection.canceledBy}, nil
 }
 
-// PublishedTerminalEvent reports whether a run published its terminal event,
-// rather than ending with a close the reader reads as one (closeRun): a run
-// that did not — its ending's snapshot refused, or terminated from outside —
-// is never archived, since only that publish archives a run. Gaps and lost
-// segments are tolerated, as on the archive path.
-func (r *TemporalRunReader) PublishedTerminalEvent(ctx context.Context, runID string) (bool, error) {
-	st := newScanState(true)
-	projection, err := r.scanWith(ctx, runID, false, 0, false, nil, st)
-	if err != nil {
-		return false, err
-	}
-	return projection.sawTerminal, nil
-}
-
 // StreamEvents delivers a run's events after fromSequence to send, and ends at
-// the run's terminal event.
+// the run's terminal event. Numbers the run used without publishing an event
+// are named by a STREAM_GAP event where they fall (noteSkipped).
 //
 // A live run blocks in the iterator rather than polling: GetWorkflowHistory
 // with isLongPoll=true does not finish until the workflow does (SDK v1.50.0
@@ -1262,17 +1248,6 @@ func (r *TemporalRunReader) scanExecution(
 			if event == nil {
 				continue
 			}
-			if gap, ok := st.unpublishedStart(event); ok {
-				switch {
-				case st.tolerateLostSegments:
-					st.gaps = append(st.gaps, gap)
-				case (send != nil || !wantRun) && gap.Last > fromSequence:
-					// An event read over numbers the run never published
-					// fails, naming them, as its archive will: the stream
-					// is never served as if it began later.
-					return "", &UnpublishedEventsError{RunID: runID, Gaps: []EventGap{gap}}
-				}
-			}
 			if isTerminalRunEvent(event) {
 				projection.sawTerminal = true
 			}
@@ -1302,7 +1277,15 @@ func (r *TemporalRunReader) scanExecution(
 					return "", err
 				}
 			}
+			if st.forArchive {
+				if err := r.loadRecordForArchive(ctx, runID, st); err != nil {
+					return "", err
+				}
+			}
 			terminal := r.closeRun(projection, runID, historyEvent, status, cause, st.lastSequence)
+			if st.forArchive {
+				settleRunForArchive(projection, st, status, cause)
+			}
 			if terminal == nil || terminal.GetSequence() <= fromSequence {
 				continue
 			}

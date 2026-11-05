@@ -185,7 +185,7 @@ func (x *ListActivitiesRequest) GetFilters() []*FieldFilter {
 type ActivityInfo struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`                                  // catalog key, e.g. "shell"; empty for InspectActivity of a raw reference
-	Reference   string                 `protobuf:"bytes,2,opt,name=reference,proto3" json:"reference,omitempty"`                        // as configured, e.g. ghcr.io/orkstack/activity-shell:0.1
+	Reference   string                 `protobuf:"bytes,2,opt,name=reference,proto3" json:"reference,omitempty"`                        // as configured, e.g. ghcr.io/orkstack/activity-shell:0.2
 	IndexDigest string                 `protobuf:"bytes,3,opt,name=index_digest,json=indexDigest,proto3" json:"index_digest,omitempty"` // resolved, "sha256:<64 hex>"
 	MediaType   string                 `protobuf:"bytes,4,opt,name=media_type,json=mediaType,proto3" json:"media_type,omitempty"`
 	Platforms   []string               `protobuf:"bytes,5,rep,name=platforms,proto3" json:"platforms,omitempty"`

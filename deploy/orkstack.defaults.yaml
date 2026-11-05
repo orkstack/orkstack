@@ -86,7 +86,7 @@ engine:
     retention_buffer: 24h  # ork
     batch_size: 100  # ork
 
-# activities: {}  # ork; built-in shell/http/file/json/git/template → ghcr.io/orkstack/activity-*:0.1
+# activities: {}  # ork; built-in shell/http/file/json/git/template → ghcr.io/orkstack/activity-*:0.2
 
 orker:
   # id: ""  # orker; hostname-<hash of the work dir>
@@ -101,6 +101,12 @@ orker:
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
   max_concurrent: 16  # orker
+  store_check:
+    enabled: true  # orker
+    interval: 15s  # orker
+    timeout: 5s  # orker
+    failures: 3  # orker
+    recoveries: 2  # orker
   capacity:
     cpu: ""  # orker
     memory: ""  # orker

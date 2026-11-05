@@ -216,8 +216,8 @@ func (h *StatsHandler) computeFlakes(
 // store can (artifacts.ReadRunAttempts), and one listing per dispatched row
 // otherwise.
 //
-// An index row with no body is the crash window between the archive's two
-// writes and is skipped (runs_scanned < runs_in_window). Any OTHER error —
+// An index row with no body is an archive write that stopped short and is
+// skipped (runs_scanned < runs_in_window). Any OTHER error —
 // an unreadable body, an attempt listing that errors — fails the whole
 // answer, naming the run: "could not read" and "was reclaimed" are different
 // facts, and only the second is a number.

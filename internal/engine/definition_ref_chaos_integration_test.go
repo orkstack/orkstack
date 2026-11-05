@@ -391,8 +391,9 @@ func TestIntegration_DefinitionChaosC36_CancelDuringTheLoad(t *testing.T) {
 //     archive holds it with 1 recorded as an explicit gap, which a read of
 //     the archive over 1 names (DataLoss);
 //   - cut through every write: nothing is published, the run reads canceled
-//     from its close, at 1, and nothing archives it (as for any run that
-//     publishes no terminal event).
+//     from its close, at 1, and only the archive sweep can archive it (as for
+//     any run that publishes no terminal event;
+//     TestIntegration_ArchiveSweep_AnEndingStorageRefusedIsArchived).
 //
 // Before that gate the next write after a refused RUN_CREATED was
 // RUN_CANCELED at 2, archived with no word of the missing 1.
@@ -476,10 +477,10 @@ func TestIntegration_DefinitionChaosC36_StoreStillCutAtTheEnding(t *testing.T) {
 }
 
 // requireStreamed reads the run's stream through the API's StreamRunEvents
-// and returns what it served. When gap is set the run never published 1: a
-// read from 0 is DataLoss naming 1 as never published, with nothing sent —
-// as its archive answers — and want is what a read from 1 serves; otherwise
-// want is what a read from 0 serves.
+// and returns what a read from past any gap serves. When gap is set the run
+// never published 1: a read from 0 serves a STREAM_GAP event naming it and then
+// what a read from 1 serves, which is want; otherwise want is what a read from
+// 0 serves.
 func (s *chaosStack) requireStreamed(t *testing.T, a *chaosAPI, runID, want string, gap bool) []*orkstackv1.Event {
 	t.Helper()
 	stream := func(from int64) ([]*orkstackv1.Event, error) {
@@ -493,10 +494,13 @@ func (s *chaosStack) requireStreamed(t *testing.T, a *chaosAPI, runID, want stri
 	from := int64(0)
 	if gap {
 		sent, err := stream(0)
-		if connect.CodeOf(err) != connect.CodeDataLoss || !strings.Contains(err.Error(), "events 1–1 of run "+runID+" were never published") ||
-			len(sent) != 0 {
-			t.Fatalf("StreamRunEvents from 0 = %v (%v), want DataLoss naming 1–1 as never published, with nothing sent",
+		if err != nil || len(sent) < 2 || sent[0].GetType() != orkstackv1.EventType_EVENT_TYPE_STREAM_GAP ||
+			sent[0].GetSequence() != 1 || !strings.Contains(sent[0].GetMessage(), "events 1–1 of this run were never published") {
+			t.Fatalf("StreamRunEvents from 0 = %v (%v), want a STREAM_GAP naming 1–1 and then the rest of the stream",
 				definitionEventTypes(sent), err)
+		}
+		if got := fmt.Sprint(definitionEventTypes(sent[1:])); got != want {
+			t.Fatalf("StreamRunEvents from 0 went on to %s, want %s", got, want)
 		}
 		from = 1
 	}

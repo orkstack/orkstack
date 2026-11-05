@@ -299,3 +299,44 @@ func TestInspectRun_AnAttemptIsAskedAboutOnceNoPollCouldBeAboutToTakeIt(t *testi
 		})
 	}
 }
+
+// A waiting attempt names an object storage outage only when every Orker of its
+// pool is held and at least one is held by the outage, and it says so from the
+// same read of the inventory.
+func TestInspectRun_AnAttemptOnAPoolPausedForAStoreOutageSaysSo(t *testing.T) {
+	since := fleetSeen.Add(-time.Minute)
+	run := inspectRun("ork-outage-1", orkstackv1.Status_STATUS_RUNNING, "paused", "shared")
+	routeTasksTo(run, "build", "paused")
+	routeTasksTo(run, "gpu", "shared")
+	fleet := capacityFleet()
+	fleet.presence = append(fleet.presence, engine.OrkerPresence{Identity: "orker-g2", LastSeen: fleetSeen})
+	outage := func(id, pool string) *orkstackv1.DescribeOrkerResult {
+		return &orkstackv1.DescribeOrkerResult{OrkerId: id, Pool: pool, MaxConcurrent: 16, Cordoned: true,
+			StoreOutage: &orkstackv1.StoreOutage{Reason: "object storage unreachable", Since: timestamppb.New(since)}}
+	}
+	fleet.described["orker-b1"] = outage("orker-b1", "build")
+	// gpu keeps one Orker taking tasks, so a task there is not waiting on the outage.
+	fleet.described["orker-g2"] = outage("orker-g2", "gpu")
+	f := newCapacityInspectFixture(t, run, []*orkstackv1.LiveAttempt{waitingAttempt("paused"), waitingAttempt("shared")}, fleet)
+
+	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
+	if err != nil {
+		t.Fatalf("InspectRun: %v", err)
+	}
+	for _, attempt := range resp.GetAttempts() {
+		wait := attempt.GetStoreOutageWait()
+		switch attempt.GetTaskId() {
+		case "paused":
+			if wait.GetPool() != "build" || wait.GetOrkers() != 1 || !wait.GetSince().AsTime().Equal(since) {
+				t.Errorf("paused: store_outage_wait = %v", wait)
+			}
+			if attempt.GetCapacityWait() != nil {
+				t.Errorf("paused: capacity_wait = %v beside an outage", attempt.GetCapacityWait())
+			}
+		case "shared":
+			if wait != nil {
+				t.Errorf("shared: store_outage_wait = %v with a sibling still taking tasks", wait)
+			}
+		}
+	}
+}

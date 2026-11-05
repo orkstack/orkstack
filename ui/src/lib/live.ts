@@ -17,7 +17,7 @@ import {
 // look dead. The sentences match `orkctl run inspect` (cmd/orkctl/inspect.go).
 
 /** The kind of live line a task card shows. */
-export type LiveKind = 'started' | 'waiting' | 'capacity' | 'retry' | 'cancelling' | 'unavailable';
+export type LiveKind = 'started' | 'waiting' | 'capacity' | 'store-outage' | 'retry' | 'cancelling' | 'unavailable';
 
 export interface LiveLine {
 	kind: LiveKind;
@@ -139,6 +139,15 @@ export function liveLine(attempt: LiveAttempt | undefined, nowMs: number): LiveL
 					kind: 'capacity',
 					text: `Waiting for capacity · every Orker of pool ${wait.pool} is full${reservedOfCapacity(wait)} · ${span(waited)}`,
 					title: `No orker of pool ${wait.pool} has room for another task: an orker takes one only while its per-task cap still fits beside what it has reserved.`,
+					stale: false
+				};
+			}
+			const outage = attempt.storeOutageWait;
+			if (outage) {
+				return {
+					kind: 'store-outage',
+					text: `Waiting for object storage · the Orkers of pool ${outage.pool} cannot reach it · ${span(waited)}`,
+					title: `The Orkers of pool ${outage.pool} have cordoned themselves until object storage answers. This task uses no attempt while it waits, and starts by itself once it does.`,
 					stale: false
 				};
 			}

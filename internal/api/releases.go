@@ -482,8 +482,12 @@ func judgeRelease(target string, obs engine.ReleaseObservation, inventory []*ork
 		for _, pool := range inUse {
 			nobody := "no Orker of release " + target + " serves it"
 			if row := cordonedIn[pool]; row != nil {
+				why := row.GetCordonReason()
+				if why == "" {
+					why = row.GetStoreOutage().GetReason()
+				}
 				nobody = fmt.Sprintf("no uncordoned Orker of release %s serves it (%s of release %s is cordoned: %s)",
-					target, row.GetOrkerId(), target, strconv.Quote(row.GetCordonReason()))
+					target, row.GetOrkerId(), target, strconv.Quote(why))
 			}
 			add(orkstackv1.ReleaseBlockerKind_RELEASE_BLOCKER_KIND_POOL_NOT_SERVED, pool, fmt.Sprintf(
 				"pool %q is in use (%s) and %s, so tasks its runs send there would not run on its own Orkers. "+
@@ -573,7 +577,10 @@ func orkerServesEvidence(row *orkstackv1.Orker) string {
 	if row.GetBuildId() == "" {
 		text = row.GetOrkerId() + ", started without ORK_BUILD_ID, serves it"
 	}
-	if row.GetCordoned() {
+	switch {
+	case row.GetStoreOutage() != nil:
+		text += " (cordoned: object storage unreachable)"
+	case row.GetCordoned():
 		text += " (cordoned)"
 	}
 	return text

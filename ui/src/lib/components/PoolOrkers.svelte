@@ -7,7 +7,7 @@
 	// explicit Refresh, never cached. An Orker that could not be asked is
 	// UNREACHABLE and none of its numbers are drawn: "not measured" rendered
 	// as "idle" would send an operator to stop a host that may be mid-task.
-	import { untrack } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import TimeAgo from './TimeAgo.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { activityClient } from '#lib/clients/activities.ts';
@@ -15,11 +15,14 @@
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
 	import { withNamespace } from '#lib/namespace.ts';
 	import {
+		operatorCordoned,
 		orkerCommand,
 		orkerLoad,
 		orkerPins,
 		orkerState,
-		orkerTasks
+		orkerStateLabel,
+		orkerTasks,
+		STORE_OUTAGE_LABEL
 	} from '#lib/orkers.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
 	import CliPopover from './CliPopover.svelte';
@@ -49,6 +52,8 @@
 	let cordonError = $state('');
 	let uncordonBusy = $state('');
 	let actionError = $state('');
+	/** Said to a screen reader after Uncordon: the row can stay cordoned for another cause. */
+	let notice = $state('');
 
 	async function load(): Promise<void> {
 		loading = true;
@@ -101,25 +106,38 @@
 	async function uncordon(orker: Orker): Promise<void> {
 		uncordonBusy = orker.orkerId;
 		actionError = '';
+		notice = '';
+		let cleared = false;
 		try {
-			await activityClient(fetch).cordonOrker({ orkerId: orker.orkerId, cordoned: false });
+			const res = await activityClient(fetch).cordonOrker({ orkerId: orker.orkerId, cordoned: false });
+			notice = res.orker?.storeOutage
+				? `Cleared the operator's cordon on ${orker.orkerId}. It stays cordoned because it cannot reach object storage.`
+				: `Uncordoned ${orker.orkerId}.`;
+			cleared = true;
 		} catch (err) {
 			actionError = `Uncordon ${orker.orkerId}: ${errorMessage(err)}`;
 		} finally {
 			uncordonBusy = '';
 			await load();
+			// The button that had focus is gone: Cordon… stands in its place.
+			if (cleared) {
+				await tick();
+				document.querySelector<HTMLElement>(`[data-testid="orker-cordon-${orker.orkerId}"]`)?.focus();
+			}
 		}
 	}
 
 	const stateClass: Record<string, string> = {
 		ready: 'bg-ok-tint text-ok mark-square',
 		cordoned: 'pill-wait',
+		'store-outage': 'bg-fail-tint text-fail mark-tri',
 		unreachable: 'bg-fail-tint text-fail mark-tri'
 	};
 </script>
 
 <div data-testid="pool-orkers-{pool}">
 	<p class="sr" data-testid="pool-orkers-caption-{pool}">Deployment infrastructure: the same whichever namespace is selected.</p>
+	<p class="sr" role="status" data-testid="pool-orkers-notice-{pool}">{notice}</p>
 
 	{#if loadError}
 		<ErrorPanel
@@ -168,9 +186,16 @@
 								</small>
 							</th>
 							<td role="cell" data-label="Status">
-								<span class="stamp {stateClass[rowState]} capitalize" data-testid="orker-state-{orker.orkerId}">{rowState}</span>
-								{#if orker.cordoned}
-									<small class="ork-sub" data-testid="orker-reason-{orker.orkerId}">Cordoned since {fmtTimestamp(orker.cordonedAt)}: “{orker.cordonReason}”</small>
+								<span class="stamp {stateClass[rowState]} capitalize" data-testid="orker-state-{orker.orkerId}">{orkerStateLabel(rowState)}</span>
+								{#if rowState === 'cordoned' && orker.storeOutage}
+									<span class="sr">, </span>
+									<span class="stamp {stateClass['store-outage']} capitalize" data-testid="orker-outage-stamp-{orker.orkerId}">{STORE_OUTAGE_LABEL}</span>
+								{/if}
+								{#if operatorCordoned(orker)}
+									<small class="ork-sub ork-note" data-testid="orker-reason-{orker.orkerId}">Cordoned since {fmtTimestamp(orker.cordonedAt)}: “{orker.cordonReason}”</small>
+								{/if}
+								{#if orker.storeOutage}
+									<small class="ork-sub ork-note" data-testid="orker-outage-{orker.orkerId}">Cordoned itself since {fmtTimestamp(orker.storeOutage.since)}: {orker.storeOutage.reason}. Tasks wait for it without using an attempt. It resumes by itself once object storage answers{#if operatorCordoned(orker)}, and stays cordoned until an operator's cordon is cleared too{/if}.</small>
 								{/if}
 							</td>
 							{#if rowState === 'unreachable'}
@@ -185,7 +210,7 @@
 							{/if}
 							<td role="cell" class="ork-actions">
 								{#if rowState !== 'unreachable'}
-									{#if orker.cordoned}
+									{#if operatorCordoned(orker)}
 										<button type="button" data-testid="orker-uncordon-{orker.orkerId}" disabled={uncordonBusy === orker.orkerId} onclick={() => void uncordon(orker)} class="btn btn-sm">Uncordon</button>
 									{:else}
 										<button type="button" data-testid="orker-cordon-{orker.orkerId}" onclick={() => openCordon(orker)} class="btn btn-sm"><Icon name="pause" />Cordon…</button>
@@ -269,6 +294,14 @@
 		color: var(--ink-3);
 		overflow-wrap: anywhere;
 	}
+	/* A long status sentence must not squeeze the id into a sliver, and the
+	   headers give it the room, so every row's actions stay in the frame. */
+	.orkers :global(tbody th) {
+		min-width: 8.5rem;
+	}
+	.orkers :global(thead th) {
+		white-space: normal;
+	}
 	.ork-actions {
 		white-space: nowrap;
 		text-align: right;
@@ -284,6 +317,13 @@
 		}
 		.ork-sub {
 			overflow-wrap: normal;
+		}
+		/* A sentence is not a figure: it wraps in its cell, so it reads without scrolling. */
+		.ork-note {
+			min-width: 14rem;
+			max-width: 18rem;
+			white-space: normal;
+			overflow-wrap: anywhere;
 		}
 	}
 </style>

@@ -37,6 +37,8 @@ orkctl run get <run-id> --tree              # the child runs a composed task sta
 
 If the engine drops the stream, `run watch` picks up after the last event it printed, and says so on stderr.
 
+A `STREAM_GAP` line names event numbers the run used without publishing an event, because object storage refused that event's record. The run goes on, and `run watch` still reaches its end. Once a run is retired, the same read stops at the gap with an error naming the numbers; `--from-sequence` past them reads on.
+
 ## Read the task states
 
 Each task shows one of these states. A run is `Running`, `Succeeded`, `Failed` or `Canceled`.
@@ -45,6 +47,7 @@ Each task shows one of these states. A run is `Running`, `Succeeded`, `Failed` o
 |---|---|---|
 | Pending | The engine has not started the task yet. The run is at its in-flight limit, its history is near its limit, or a pin is opening. | Nothing. The run continues as its running work finishes. |
 | Waiting for capacity | The task is ready, and every Orker of its pool is at the capacity it declared. | Wait, or add an Orker to the pool, or raise an Orker's declared capacity. `run inspect` shows what is reserved against what is admitted. |
+| Waiting for object storage | The Orkers of the task's pool can't reach object storage, so they have paused. The task uses no attempt while it waits. | Restore object storage. The task starts by itself once it answers. |
 | Waiting for an Orker | No Orker has picked the task up. | Check that an Orker serves the pool: `orkctl pool list` and `orkctl orker list`. |
 | Running | An Orker is running the task's container. | Read its log, or `run inspect` for its heartbeat. |
 | Awaiting | The task waits for someone outside the run to complete or reject it, or for its deadline. | Resolve it, as below. |

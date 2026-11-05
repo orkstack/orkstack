@@ -43,7 +43,7 @@ func newApplyCommand(g *globalFlags) *cobra.Command {
 			"whose digest differs from the one reviewed. A trigger token or a generated\n" +
 			"webhook secret is shown once; --secrets-out writes them to a new 0600 file\n" +
 			"instead.",
-		Example: "  orkctl apply hello.ork.yaml\n" +
+		Example: "  orkctl apply each-fan-out.ork.yaml\n" +
 			"  orkctl apply environments/prod/ --dry-run\n" +
 			"  orkctl apply automation.ork.yaml --prune --expect-plan sha256:3f9a… --secrets-out secrets.json",
 		Args: cobra.MinimumNArgs(1),

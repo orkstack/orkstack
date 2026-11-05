@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -26,24 +29,6 @@ const (
 	guidePath   = "../../docs/ORKFLOW_PATTERNS.md"
 	readmePath  = "../../examples/README.md"
 )
-
-// predatesPatterns names the ten examples that predate
-// docs/ORKFLOW_PATTERNS.md. They keep the versions a deployment may already
-// store rather than be rewritten to follow it (examples/README.md), so they
-// are exempt from the comment-header rules, and from the network and cache
-// rules below; every other rule holds them too.
-var predatesPatterns = map[string]bool{
-	"advanced-demo.ork.yaml":      true,
-	"awaited-approval.ork.yaml":   true,
-	"branch-and-recover.ork.yaml": true,
-	"cached-pipeline.ork.yaml":    true,
-	"composed-release.ork.yaml":   true,
-	"file-read.ork.yaml":          true,
-	"hello.ork.yaml":              true,
-	"pinned-build.ork.yaml":       true,
-	"release-block.ork.yaml":      true,
-	"shell-eval.ork.yaml":         true,
-}
 
 // guideSections are docs/ORKFLOW_PATTERNS.md's `## ` headings, in order. An
 // example's pattern line cites one of them by its exact text.
@@ -92,6 +77,40 @@ func orkflowExamples(t *testing.T) []string {
 	}
 	sort.Strings(paths)
 	return paths
+}
+
+// customImageRecipe is the one shipped Orkflow that is not an example of the
+// gallery: it runs images a reader builds, so it lives beside their build, and
+// the rules about what an example asks of a reader do not hold it.
+const customImageRecipe = "../../examples/custom-image/custom-image.ork.yaml"
+
+// shippedOrkflows is every Orkflow a reader is pointed at, sorted by file name:
+// the gallery's and the recipe.
+func shippedOrkflows(t *testing.T) []string {
+	t.Helper()
+	paths := append(orkflowExamples(t), customImageRecipe)
+	sort.Slice(paths, func(i, j int) bool { return filepath.Base(paths[i]) < filepath.Base(paths[j]) })
+	return paths
+}
+
+// orkflowFixtures are the Orkflows only this repository's tests read
+// (testdata/orkflows/). No reader is pointed at them, so the rules about an
+// example's header, index, network and cache do not hold them; the rules about
+// what compiles and what an image accepts do.
+func orkflowFixtures(t *testing.T) []string {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join("testdata", "orkflows", "*.ork.yaml"))
+	if err != nil || len(paths) == 0 {
+		t.Fatalf("glob fixtures: %v (%d found)", err, len(paths))
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// examplesAndFixtures is every Orkflow this repository keeps.
+func examplesAndFixtures(t *testing.T) []string {
+	t.Helper()
+	return append(shippedOrkflows(t), orkflowFixtures(t)...)
 }
 
 func automationExamples(t *testing.T) []string {
@@ -252,10 +271,7 @@ func TestExamples_HeadersFollowTheConvention(t *testing.T) {
 			t.Errorf("a condition, join or await, and no plan line")
 		}
 	}
-	for _, path := range orkflowExamples(t) {
-		if predatesPatterns[filepath.Base(path)] {
-			continue
-		}
+	for _, path := range shippedOrkflows(t) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			wf, err := dsl.CompileFile(path)
 			if err != nil {
@@ -407,12 +423,235 @@ func TestExamples_AreIndexed(t *testing.T) {
 	}
 }
 
+// An example of the gallery asks nothing of a reader: they apply it, submit it
+// with no inputs, and see its stated result (examples/README.md, "What these
+// are"). composesFirst is the only exception among them, and each one's header
+// and both examples tables state what it asks. customImageRecipe is the other
+// stated exception, and it is not in the gallery at all.
+var (
+	// composesFirst names each example that composes a block a reader must
+	// store first, and that block.
+	composesFirst = map[string]string{"approval-gate": "notify-block", "order-saga": "notify-block"}
+	// defaultHosts are the only hosts an example may name.
+	defaultHosts = map[string]bool{"httpbin.org": true, "github.com": true}
+)
+
+// exampleURLs collects every http(s) URL held in a value: an input's default.
+func exampleURLs(t *testing.T, value *structpb.Value, into map[string]bool) {
+	t.Helper()
+	switch kind := value.GetKind().(type) {
+	case *structpb.Value_StringValue:
+		if !strings.HasPrefix(kind.StringValue, "http://") && !strings.HasPrefix(kind.StringValue, "https://") {
+			return
+		}
+		parsed, err := url.Parse(kind.StringValue)
+		if err != nil {
+			t.Errorf("default %q is not a URL: %v", kind.StringValue, err)
+			return
+		}
+		into[parsed.Host] = true
+	case *structpb.Value_ListValue:
+		for _, item := range kind.ListValue.GetValues() {
+			exampleURLs(t, item, into)
+		}
+	case *structpb.Value_StructValue:
+		for _, field := range kind.StructValue.GetFields() {
+			exampleURLs(t, field, into)
+		}
+	}
+}
+
+// exampleNeeds is what a reader needs for a compiled example, in the words both
+// examples tables use.
+func exampleNeeds(name string, hosts map[string]bool) string {
+	var needs []string
+	if block, ok := composesFirst[name]; ok {
+		needs = append(needs, fmt.Sprintf("`%s` applied first", block))
+	}
+	var sorted []string
+	for host := range hosts {
+		sorted = append(sorted, "`"+host+"`")
+	}
+	sort.Strings(sorted)
+	if len(sorted) > 0 {
+		needs = append(needs, "internet access to "+strings.Join(sorted, " and "))
+	}
+	if len(needs) == 0 {
+		return "nothing"
+	}
+	return strings.Join(needs, "; ")
+}
+
+// needsColumn reads a table's last column, keyed by the name its first column
+// links. A document may hold other tables: only rows linking a name count.
+func needsColumn(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := map[string]string{}
+	row := regexp.MustCompile(`^\| \[([a-z0-9-]+)\]\([^)]*\) \|.*\| ([^|]+) \|$`)
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := row.FindStringSubmatch(line); m != nil {
+			cells[m[1]] = m[2]
+		}
+	}
+	return cells
+}
+
+// TestExamples_AskNothingOfAReader is the guard on that rule: it refuses an
+// input with no default, a secret, an endpoint only a reader could supply, a
+// person on the default path, an image a reader must build, and any exception
+// that is not named above or not stated where a reader looks.
+func TestExamples_AskNothingOfAReader(t *testing.T) {
+	const sitePath = "../../site/content/examples.md"
+	readmeNeeds, siteNeeds := needsColumn(t, readmePath), needsColumn(t, sitePath)
+	readme, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site, err := os.ReadFile(sitePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composing, pinned := map[string]string{}, false
+	for _, path := range orkflowExamples(t) {
+		file := filepath.Base(path)
+		wf, err := dsl.CompileFile(path)
+		if err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		name := wf.GetName()
+
+		hosts := map[string]bool{}
+		for input, decl := range wf.GetInputs().GetFields() {
+			read := dsl.ReadInput(decl)
+			if read.Default == nil {
+				t.Errorf("%s: input %s has no default, so a run with no inputs cannot render it", file, input)
+				continue
+			}
+			exampleURLs(t, read.Default, hosts)
+		}
+
+		for _, task := range wf.GetTasks() {
+			id := task.GetId()
+			exampleURLs(t, structpb.NewStructValue(task.GetWith()), hosts)
+			if len(task.GetSecrets()) > 0 {
+				t.Errorf("%s: task %s mounts a secret, which a reader would have to supply", file, id)
+			}
+			if task.GetAwait() != nil && task.GetCondition() == "" {
+				t.Errorf("%s: task %s always waits for a person; its default path must not", file, id)
+			}
+			if task.GetPin() != "" {
+				pinned = true
+			}
+			if ref := task.GetOrkflow(); ref != nil {
+				composing[name] = ref.GetName()
+				continue
+			}
+			if strings.ContainsAny(task.GetUses(), "/:") {
+				t.Errorf("%s: task %s names the image %s, which a reader would have to build; that is a recipe, beside its build", file, id, task.GetUses())
+			}
+		}
+		for host := range hosts {
+			if !defaultHosts[host] {
+				t.Errorf("%s: it names a URL on %s, which is not one of the hosts a reader can count on", file, host)
+			}
+		}
+
+		want := exampleNeeds(name, hosts)
+		if got := readmeNeeds[name]; got != want {
+			t.Errorf("examples/README.md says %s needs %q, want %q", name, got, want)
+		}
+		if got := siteNeeds[name]; got != want {
+			t.Errorf("site/content/examples.md says %s needs %q, want %q", name, got, want)
+		}
+
+		// A composing example states the two commands wherever a reader
+		// meets it: its header, its description (the gallery's card) and the
+		// section both tables point to.
+		if block, ok := composesFirst[name]; ok {
+			source, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, command := range []string{"orkctl apply examples/" + block + ".ork.yaml", "orkctl apply examples/" + file} {
+				if !bytes.Contains(source, []byte("#   "+command+"\n")) {
+					t.Errorf("%s: the header does not state %q", file, command)
+				}
+				if !strings.Contains(wf.GetDescription(), command) {
+					t.Errorf("%s: the description does not state %q", file, command)
+				}
+				if !bytes.Contains(readme, []byte(command)) {
+					t.Errorf("examples/README.md does not state %q", command)
+				}
+				if !bytes.Contains(site, []byte(command)) {
+					t.Errorf("site/content/examples.md does not state %q", command)
+				}
+			}
+		}
+	}
+	if !reflect.DeepEqual(composing, composesFirst) {
+		t.Errorf("the examples that compose a block are %v, want exactly the named exceptions %v", composing, composesFirst)
+	}
+
+	// The recipe states its steps in its own header, and the docs that teach
+	// building an image link it, because the gallery no longer shows it.
+	recipe, err := os.ReadFile(customImageRecipe)
+	if err != nil {
+		t.Fatalf("the custom-image recipe: %v", err)
+	}
+	for _, step := range []string{
+		"THIS IS A RECIPE",
+		"an orkctl on your own machine",
+		"orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev",
+		"orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev",
+		"orkctl apply examples/custom-image/custom-image.ork.yaml",
+	} {
+		if !bytes.Contains(recipe, []byte(step)) {
+			t.Errorf("the custom-image recipe's header does not state %q", step)
+		}
+	}
+	for _, doc := range []string{
+		readmePath, guidePath, sitePath,
+		"../../docs/ACTIVITY_IMAGES.md",
+		"../../examples/custom-image/README.md",
+		"../../examples/custom-image-shell/README.md",
+		"../../site/content/how-to/build-an-activity-image.md",
+		"../../site/content/tutorials/first-activity.md",
+	} {
+		raw, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(raw, []byte("custom-image/custom-image.ork.yaml")) {
+			t.Errorf("%s teaches building an image and does not link the recipe", doc)
+		}
+	}
+
+	// A pinned example runs on the quickstart and on `make up` only because
+	// each makes its Orker a pin host.
+	if !pinned {
+		t.Fatal("no example declares a pin; the pin host rule checked nothing")
+	}
+	for path, setting := range map[string]string{
+		"../../compose.yaml":     `ORK_ORKER_MAX_PINS: "1"`,
+		"../../scripts/stack.sh": "max_concurrent: 1",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(raw, []byte(setting)) {
+			t.Errorf("%s does not make its Orker a pin host (%s), so a pinned example is refused there", path, setting)
+		}
+	}
+}
+
 func TestExamples_ComputeTasksDeclareNoNetwork(t *testing.T) {
 	compute := map[string]bool{"json": true, "template": true, "file": true}
-	for _, path := range orkflowExamples(t) {
-		if predatesPatterns[filepath.Base(path)] {
-			continue
-		}
+	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -427,10 +666,7 @@ func TestExamples_ComputeTasksDeclareNoNetwork(t *testing.T) {
 
 func TestExamples_CachedTasksSetATTLAndMountNoSecret(t *testing.T) {
 	cached := 0
-	for _, path := range orkflowExamples(t) {
-		if predatesPatterns[filepath.Base(path)] {
-			continue
-		}
+	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -449,16 +685,15 @@ func TestExamples_CachedTasksSetATTLAndMountNoSecret(t *testing.T) {
 		}
 	}
 	if cached == 0 {
-		t.Fatal("no new example caches a task; the rule checked nothing")
+		t.Fatal("no example caches a task; the rule checked nothing")
 	}
 }
 
 // userFacingDocs are the documents a reader of the examples reads: every
-// example file (older ones included), the examples index, the image READMEs
-// and the guide.
+// example file, the examples index, the image READMEs and the guide.
 func userFacingDocs(t *testing.T) []string {
 	t.Helper()
-	docs := append(orkflowExamples(t), automationExamples(t)...)
+	docs := append(shippedOrkflows(t), automationExamples(t)...)
 	docs = append(docs, readmePath, guidePath)
 	for _, d := range imageDirs(t) {
 		docs = append(docs, filepath.Join(d, "README.md"))
@@ -468,7 +703,7 @@ func userFacingDocs(t *testing.T) []string {
 
 func TestExamples_UseUserFacingVocabulary(t *testing.T) {
 	internalWord := regexp.MustCompile(`(?i)\b(queues?|sessions?|search attributes?|worker deployments?)\b`)
-	for _, doc := range userFacingDocs(t) {
+	for _, doc := range append(userFacingDocs(t), orkflowFixtures(t)...) {
 		raw, err := os.ReadFile(doc)
 		if err != nil {
 			t.Fatal(err)
@@ -664,7 +899,7 @@ func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 	catalog := dsl.BuiltinActivityCatalog()
 	const examplePrefix = "localhost:5001/orkstack-examples/"
 	checked := 0
-	for _, path := range orkflowExamples(t) {
+	for _, path := range examplesAndFixtures(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -700,7 +935,7 @@ func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 func TestExamples_KeepTheirDefinitionDigests(t *testing.T) {
 	const golden = "testdata/example-digests.golden"
 	var got strings.Builder
-	for _, path := range orkflowExamples(t) {
+	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)

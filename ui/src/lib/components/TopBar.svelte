@@ -47,7 +47,6 @@
 		type="button"
 		class="jump"
 		aria-haspopup="dialog"
-		aria-label="Jump to a run, Orkflow or page"
 		aria-keyshortcuts={shortcutAria}
 		data-testid="command-palette-open"
 		onclick={onpalette}
@@ -137,7 +136,15 @@
 			min-width: 40px;
 			justify-content: center;
 		}
-		.jump-l,
+		/* Only the icon shows, and the words still name the button. */
+		.jump-l {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip-path: inset(50%);
+			white-space: nowrap;
+		}
 		.jump-k {
 			display: none;
 		}

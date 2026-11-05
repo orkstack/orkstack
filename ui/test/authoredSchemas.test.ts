@@ -57,6 +57,12 @@ test('every shipped document validates against the dispatcher and its kind', () 
 		expectValid(`examples/${file}`, Bun.YAML.parse(read(`examples/${file}`)), 'orkflow.v1.json');
 		count++;
 	}
+	expectValid('the custom-image recipe', Bun.YAML.parse(read('examples/custom-image/custom-image.ork.yaml')), 'orkflow.v1.json');
+	count++;
+	for (const file of readdirSync(`${repo}/internal/dsl/testdata/orkflows`).filter((f) => f.endsWith('.ork.yaml')).sort()) {
+		expectValid(`internal/dsl/testdata/orkflows/${file}`, Bun.YAML.parse(read(`internal/dsl/testdata/orkflows/${file}`)), 'orkflow.v1.json');
+		count++;
+	}
 	for (const file of readdirSync(`${repo}/examples/automation`).filter((f) => f.endsWith('.ork.yaml')).sort()) {
 		expectValid(`examples/automation/${file}`, Bun.YAML.parse(read(`examples/automation/${file}`)), 'automation.v1.json');
 		count++;

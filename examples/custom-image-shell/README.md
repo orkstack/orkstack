@@ -109,14 +109,18 @@ There are no `ops`, so the whole `with:` block is its `fields`, and
 ## Build, push and pin
 
 The image is published nowhere. Build and push it to a registry your Orkers
-can pull from, then pin it:
+can pull from, then pin it. On the quickstart that registry is at
+`127.0.0.1:5002` (`make up`'s is at `localhost:5001`), and the `orkctl` is one on
+your own machine, because its own image has no Docker to build with:
 
 ```sh
-orkctl activity build examples/custom-image-shell --tag localhost:5001/orkstack-examples/custom-image-shell:dev
+orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
 ```
 
 The command prints the pinned reference (`…@sha256:…`); paste it over the tag
-in `examples/custom-image.ork.yaml`. A tag is resolved to a digest at apply
+in the recipe beside the Go image,
+[`examples/custom-image/custom-image.ork.yaml`](../custom-image/custom-image.ork.yaml),
+whose header gives every step. A tag is resolved to a digest at apply
 anyway, but writing the digest makes the document say the same thing
 tomorrow. A locally built image that was never pushed has no registry digest,
 and apply refuses it.
@@ -134,7 +138,7 @@ one of its keys.
 Run one task locally, without a run, against a supplied upstream:
 
 ```sh
-orkctl task run --file examples/custom-image.ork.yaml --task report --output probe='{"idempotencyKey":"x","attempt":1,"taskId":"probe","argv":[]}'
+orkctl task run --file examples/custom-image/custom-image.ork.yaml --task report --output probe='{"idempotencyKey":"x","attempt":1,"taskId":"probe","argv":[]}'
 ```
 
 `orkctl activity test` drives an image through the first-party `op: exec`

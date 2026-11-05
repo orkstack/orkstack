@@ -96,7 +96,11 @@ export function eachSummary(expanded: boolean, items: ItemView[], spec?: EachSpe
 
 /** isCachedItem is true for an item whose result was reused (a cache hit). */
 /** A grid's line while its fan-out has items: its counts by state, the words of the marks. */
-export function eachCounts(items: ItemView[], waiting: (item: number) => boolean = () => false): string {
+export function eachCounts(
+	items: ItemView[],
+	waiting: (item: number) => boolean = () => false,
+	waitingWord = 'waiting for capacity'
+): string {
 	const n = { succeeded: 0, failed: 0, running: 0, waiting: 0, canceled: 0, skipped: 0, pending: 0 };
 	for (const item of items) {
 		if (item.status === Status.RUNNING && waiting(item.index)) n.waiting++;
@@ -111,7 +115,7 @@ export function eachCounts(items: ItemView[], waiting: (item: number) => boolean
 	if (n.succeeded) parts.push(`${n.succeeded} succeeded`);
 	if (n.failed) parts.push(`${n.failed} failed`);
 	if (n.running) parts.push(`${n.running} running`);
-	if (n.waiting) parts.push(`${n.waiting} waiting for capacity`);
+	if (n.waiting) parts.push(`${n.waiting} ${waitingWord}`);
 	if (n.pending) parts.push(`${n.pending} pending`);
 	if (n.canceled) parts.push(`${n.canceled} canceled`);
 	if (n.skipped) parts.push(`${n.skipped} skipped`);

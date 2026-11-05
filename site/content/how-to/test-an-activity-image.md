@@ -11,7 +11,7 @@ orkctl activity build ./my-image --tag localhost:5001/acme/my-image:dev
 orkctl activity test localhost:5001/acme/my-image:dev
 ```
 
-The test needs a pushed image, because it runs the digest the registry returns. It prints each check as `PASS`, `FAIL` or `SKIP`, and it exits non-zero when a check fails.
+The tag names the registry of `make up`, at `localhost:5001`; the quickstart's is at `127.0.0.1:5002`. The test needs a pushed image, because it runs the digest the registry returns. It prints each check as `PASS`, `FAIL` or `SKIP`, and it exits non-zero when a check fails.
 
 `activity test` drives the image with `op: exec` and a `command`, as [activity-shell](/docs/reference/first-party-activities/#shell) does. The image needs `sh` and `jq`, and it must accept that config. An image with its own `with:` keys is refused before any check runs, with the message "cannot be driven". Test such an image with `orkctl task run`, below.
 
@@ -36,14 +36,14 @@ The report also shows the `with:` interface the image declares in its `org.orkst
 
 `orkctl task run` runs one task of an Orkflow on your machine. It uses the same dispatcher, renderer and workspace as an Orker. It writes nothing to the deployment.
 
-The example Orkflow [`examples/custom-image.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/custom-image.ork.yaml) reads an upstream file. Supply that file's values by hand:
+The recipe [`examples/custom-image/custom-image.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/custom-image/custom-image.ork.yaml) reads an upstream file. Supply that file's values by hand:
 
 ```bash
-orkctl task run --file examples/custom-image.ork.yaml --task report \
+orkctl task run --file examples/custom-image/custom-image.ork.yaml --task report \
   --output probe='{"idempotencyKey":"x","attempt":1,"taskId":"probe","argv":[]}'
 ```
 
-Build and push the example images first, because `--file` is validated by the engine. The engine answers at `--server`, which defaults to `http://localhost:8080`.
+Build and push its images first, as [Build an activity image](/docs/activities/build-an-image/) shows, because `--file` is validated by the engine. The engine answers at `--server`, which defaults to `http://localhost:8080`.
 
 | Flag | Meaning |
 |---|---|

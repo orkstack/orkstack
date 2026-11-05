@@ -24,7 +24,7 @@ const views = [v.light, v.dark];
 					<video controls playsinline preload="none" poster={view.poster} width={v.width} height={v.height} aria-label={v.alt}>
 						{view.webm && <source src={view.webm} type="video/webm" />}
 						{view.mp4 && <source src={view.mp4} type="video/mp4" />}
-						{v.captions && <track kind="captions" src={v.captions} srclang="en" label="English" />}
+						{view.captions && <track kind="captions" src={view.captions} srclang="en" label="English" />}
 					</video>
 				))}
 			</div>

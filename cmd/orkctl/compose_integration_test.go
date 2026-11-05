@@ -28,7 +28,7 @@ func composedNamespace(t *testing.T, server string) string {
 	planCLI(t, server, "namespace", "create", ns).requireExit(t, exitOK)
 	root := repoRoot(t)
 	for _, file := range []string{"release-block.ork.yaml", "composed-release.ork.yaml"} {
-		planCLI(t, server, "-n", ns, "apply", filepath.Join(root, "examples", file)).requireExit(t, exitOK)
+		planCLI(t, server, "-n", ns, "apply", filepath.Join(root, orkflowFixtures, file)).requireExit(t, exitOK)
 	}
 	return ns
 }

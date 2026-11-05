@@ -4,13 +4,11 @@ Start runs without a person in the loop. A **schedule** starts runs of one Orkfl
 
 ## Run on a schedule
 
-Apply the Orkflow first. Then create a schedule that runs `poll-until-ready` every 15 minutes. It starts paused, so you can check the next fire times first:
+Apply the Orkflow first. Then create a schedule that runs `poll-until-ready` once a day. It starts paused, so you can check the next fire times first:
 
 ```bash
 orkctl schedule create poll-exports --orkflow poll-until-ready \
-  --cron '*/15 * * * *' --timezone UTC --overlap skip --paused \
-  --input status_url=https://exports.example.com/status \
-  --input export_url=https://exports.example.com/latest.json
+  --cron '0 6 * * *' --timezone UTC --overlap skip --paused
 
 orkctl schedule get poll-exports     # the next fire times, before anything fires
 orkctl schedule resume poll-exports  # let it fire
@@ -94,7 +92,7 @@ orkctl schedule backfill poll-exports --start 2026-10-01T00:00:00Z --end 2026-10
 A trigger is an inbound starter. Create one for an Orkflow, then send one `POST` with its token. A CI job, a cron host or `curl` can do it, and no client library is needed.
 
 ```bash
-orkctl trigger create --orkflow hello-ork --name hello --description 'nightly kickoff'
+orkctl trigger create --orkflow each-fan-out --name ci-kickoff --description 'CI kickoff'
 ```
 
 The command prints the token once, with a ready-to-run `curl` command. Replace `trg-…` and `<token>` with the printed values:
@@ -106,7 +104,7 @@ curl -X POST http://localhost:8080/v1/triggers/trg-… \
   -d '{}'
 ```
 
-The body is the run's input, as one JSON object. `{}` starts a run with no input, so the Orkflow's defaults apply. `{"count": 3}` sets the input `count` to `3`. The body can be at most 1 MiB. A `201` response holds the new run's `id`.
+The body is the run's input, as one JSON object. `{}` starts a run with no input, so the Orkflow's defaults apply, and `each-fan-out` declares no inputs. For an Orkflow that declares `count`, `{"count": 3}` sets it to `3`. The body can be at most 1 MiB. A `201` response holds the new run's `id`.
 
 ### Create and manage a trigger
 

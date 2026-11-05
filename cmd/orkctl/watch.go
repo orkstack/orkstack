@@ -26,6 +26,10 @@ func newRunWatchCommand(g *globalFlags) *cobra.Command {
 			"ends the watch with that error. After\n" +
 			fmt.Sprintf("%d resumes in a row that deliver no event, watch gives up with the\n", watchResumeLimit) +
 			"engine's error.\n\n" +
+			"Numbers the run used without publishing an event are printed as a\n" +
+			"STREAM_GAP event naming them, and watch goes on to the run's end. A run\n" +
+			"read from its archive ends the watch at such a gap with an error naming\n" +
+			"them; --from-sequence past the gap reads on.\n\n" +
 			"The run is addressed inside the namespace this command acts in; a run of\n" +
 			"another namespace is not found here.",
 		Args: cobra.ExactArgs(1),

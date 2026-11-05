@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -102,6 +103,12 @@ type config struct {
 	// maxConcurrentErr is a malformed or non-positive ceiling, refused at boot
 	// by the same rule as the errors above.
 	maxConcurrentErr error
+	// storeWatch is orker.store_check: how this Orker checks object storage,
+	// and when it cordons itself over what it finds.
+	storeWatch orker.StoreWatchConfig
+	// storeWatchErr is a malformed or out-of-range setting of it, refused at
+	// boot by the same rule as the errors above.
+	storeWatchErr error
 	// capacityCPU and capacityMemory are orker.capacity: what this Orker
 	// admits tasks within, read and refused by orker.Activities.Boot. Both
 	// empty declare none.
@@ -140,6 +147,7 @@ func loadConfig() config {
 	heartbeatInterval, heartbeatErr := envHeartbeatInterval()
 	maxPins, maxPinsErr := envMaxPins()
 	maxConcurrent, maxConcurrentErr := envMaxConcurrent()
+	storeWatch, storeWatchErr := envStoreWatch()
 	return config{
 		imageLayoutRoot:   env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
 		registryAuthFile:  env(orker.RegistryAuthFileVar, ""),
@@ -157,6 +165,8 @@ func loadConfig() config {
 		maxPinsErr:        maxPinsErr,
 		maxConcurrent:     maxConcurrent,
 		maxConcurrentErr:  maxConcurrentErr,
+		storeWatch:        storeWatch,
+		storeWatchErr:     storeWatchErr,
 		capacityCPU:       env(orker.CapacityCPUVar, ""),
 		capacityMemory:    env(orker.CapacityMemoryVar, ""),
 		deployment:        task.DeploymentFromEnv(),
@@ -207,6 +217,55 @@ func envMaxConcurrent() (int32, error) {
 			MaxConcurrentVar, raw, orker.DefaultMaxConcurrent)
 	}
 	return int32(parsed), nil
+}
+
+// envStoreWatch reads orker.store_check. Unset is the default for each. A value
+// this process cannot read, or one the watch could not honor, comes back as an
+// error for run() to refuse boot with: a typo silently read as the default
+// would leave an operator who turned the check off with an Orker that can still
+// cordon itself.
+func envStoreWatch() (orker.StoreWatchConfig, error) {
+	cfg := orker.DefaultStoreWatchConfig()
+	enabled, err := envBool(orker.StoreCheckEnabledVar, cfg.Enabled)
+	if err != nil {
+		return cfg, err
+	}
+	cfg.Enabled = enabled
+	for _, setting := range []struct {
+		name string
+		into *time.Duration
+	}{
+		{orker.StoreCheckIntervalVar, &cfg.Interval},
+		{orker.StoreCheckTimeoutVar, &cfg.Timeout},
+	} {
+		raw := env(setting.name, "")
+		if raw == "" {
+			continue
+		}
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			return cfg, fmt.Errorf("%s=%q is not a duration (want e.g. 15s, 1m)", setting.name, raw)
+		}
+		*setting.into = parsed
+	}
+	for _, setting := range []struct {
+		name string
+		into *int
+	}{
+		{orker.StoreCheckFailuresVar, &cfg.FailureThreshold},
+		{orker.StoreCheckRecoveriesVar, &cfg.RecoveryThreshold},
+	} {
+		raw := env(setting.name, "")
+		if raw == "" {
+			continue
+		}
+		parsed, err := strconv.Atoi(raw)
+		if err != nil {
+			return cfg, fmt.Errorf("%s=%q must be a whole number of checks, 1 or more", setting.name, raw)
+		}
+		*setting.into = parsed
+	}
+	return cfg, cfg.Validate()
 }
 
 // envHeartbeatInterval reads ORK_ORKER_HEARTBEAT_INTERVAL.
@@ -539,6 +598,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return cfg.maxConcurrentErr
 	}
 
+	// And for the store check.
+	if cfg.storeWatchErr != nil {
+		return cfg.storeWatchErr
+	}
+
 	store, err := artifacts.NewFromEnv()
 	if err != nil {
 		return err
@@ -550,7 +614,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// Prove the backend's conditional create with simultaneous writers before
 	// accepting activity work; "S3-compatible" alone does not promise this.
 	if err := artifacts.ProbeCommitStore(ctx, commitStore); err != nil {
-		return fmt.Errorf("COMMIT_STORE_NOT_CONDITIONAL: %w", err)
+		return commitProbeRefusal(err)
 	}
 	refPredictor, ok := store.(artifacts.RefPredictor)
 	if !ok {
@@ -618,6 +682,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// leave the one case nothing else collects — a pinned input that reached a
 	// non-pin-hosting Orker's ordinary queue — with no collector at all.
 	go activities.SweepPinLeases(ctx)
+	// The store watch: while object storage does not answer this Orker it holds
+	// its own cordon, so tasks wait for it without using an attempt. It ticks on
+	// the same signal context, and it is one goroutine and one small request
+	// pair per tick (docs/DEPLOY.md "When object storage goes away").
+	if cfg.storeWatch.Enabled {
+		check := func(ctx context.Context) error { return artifacts.CheckCommitStore(ctx, commitStore) }
+		go activities.NewStoreWatch(check, cfg.storeWatch, storeOutageObserver(tcfg, sinks, activities, logger)).Run(ctx)
+	}
 	taskOptions, err := taskWorkerOptions(cfg, activities)
 	if err != nil {
 		return err
@@ -695,6 +767,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"max_pins", cfg.maxPins,
 		// How many tasks this Orker runs at once (orker.max_concurrent).
 		"max_concurrent", cfg.maxConcurrent,
+		// Whether this Orker cordons itself while object storage does not
+		// answer, and how soon.
+		"store_check", cfg.storeWatch.Enabled,
+		"store_check_interval", cfg.storeWatch.Interval,
+		"store_check_failures", cfg.storeWatch.FailureThreshold,
+		"store_check_recoveries", cfg.storeWatch.RecoveryThreshold,
 		// The cancellation latency an operator is running with, said out loud:
 		// this is how long a running container can keep running after the
 		// engine asks for it to stop, and the longest Temporal outage one
@@ -727,6 +805,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	sinks.Default().Ready.Set(false)
 	logger.Info("shutting down", "running_tasks", activities.RunningTasks())
 	return nil
+}
+
+// commitProbeRefusal names why the Orker will not start after its boot probe of
+// the commit store. It exits either way, and it neither waits nor retries: the
+// stack's own start order decides when the store is ready, and a store that is
+// wrong must say so. But a probe that got no answer proves nothing about
+// conditional writes, so it is not reported as if it had.
+func commitProbeRefusal(err error) error {
+	if errors.Is(err, artifacts.ErrCommitStoreUnavailable) {
+		return fmt.Errorf("%s: %w", orker.ReasonCommitStoreUnavailable, err)
+	}
+	return fmt.Errorf("%s: %w", orker.ReasonCommitNotConditional, err)
 }
 
 // awaitStoppedTasks waits until every task the task worker's Stop cancelled
@@ -825,6 +915,28 @@ func orkerPolicy(cfg config, tcfg telemetry.Config) orker.SecurityPolicy {
 		vars = append(vars, orker.OwnVar{Name: name, Why: "its telemetry credentials"})
 	}
 	return orker.SecurityPolicyFromEnv().WithOwnPaths(paths...).WithOwnVars(vars...)
+}
+
+// storeOutageObserver is the store watch's metrics
+// (ork.orker.store_outage.*): the default sink's, and only when metrics are
+// exported at all. Nil exports nothing, and a metric that could not be built is
+// logged and leaves the watch running.
+func storeOutageObserver(
+	tcfg telemetry.Config, sinks *telemetry.Sinks, activities *orker.Activities, logger *slog.Logger,
+) orker.StoreOutageObserver {
+	if !tcfg.MetricsEnabled() {
+		return nil
+	}
+	active := func() bool {
+		_, outage := activities.Cordon().Causes()
+		return outage != nil
+	}
+	metrics, err := telemetry.NewStoreOutageMetrics(sinks.Default(), activities.Dispatcher().OrkerID, active, logger)
+	if err != nil {
+		logger.Warn("telemetry: the Orker's store outage metrics could not be built; they are not exported", "error", err)
+		return nil
+	}
+	return metrics
 }
 
 // orkerOptions builds the orker.Options this Orker's activities run with,

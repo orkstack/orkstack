@@ -37,12 +37,12 @@ export async function stage(ctx: BrowserContext): Promise<void> {
 			const style = document.createElement('style');
 			style.textContent = `
 				#demo-caption { margin: 0; inset: auto; overflow: visible; position: fixed; left: 50%;
-					bottom: calc(var(--spacing-titleblock, 52px) + 20px); transform: translateX(-50%);
+					bottom: 28px; transform: translateX(-50%);
 					pointer-events: none; transition: opacity 240ms;
-					padding: 10px 18px; border: var(--rule-region, 2px) solid var(--color-ink);
-					background: var(--color-paper); color: var(--color-ink);
-					font: 600 15px/1.3 var(--font-sans); letter-spacing: 0.01em; white-space: nowrap; }
-				#demo-caption b { font: 600 12px/1.3 var(--font-mono); color: var(--color-ink-muted); margin-right: 10px; }
+					padding: 10px 18px; border: 1px solid var(--line-strong); border-radius: var(--r);
+					background: var(--surface); color: var(--ink); box-shadow: var(--shadow);
+					font: 600 18px/1.3 var(--font-ui); white-space: nowrap; }
+				#demo-caption b { font: 600 14px/1.3 var(--font-code); color: var(--ink-3); margin-right: 10px; }
 				#demo-caption:empty { opacity: 0; }`;
 			document.head.append(style);
 			const caption = document.createElement('div');
@@ -93,6 +93,9 @@ export class Take {
 	/** When the last capture that began after it was asked for began (s). */
 	private steadyAt = 0;
 	private ended = 0;
+	/** The sentence each step adds to the recording's captions, and when. */
+	private cues: { t: number; text: string }[] = [];
+	private posterAt?: number;
 	private art: { cursor: string; ring: string } = { cursor: '', ring: '' };
 
 	constructor(
@@ -116,8 +119,8 @@ export class Take {
 			box.setAttribute('popover', 'manual');
 			box.style.cssText = 'margin:0;padding:6px;border:0;inset:auto;left:0;top:0;position:fixed;background:transparent;display:flex;gap:6px';
 			box.innerHTML =
-				'<svg id="demo-art-cursor" width="24" height="24" viewBox="0 0 24 24"><path d="M4 2.5 L19.5 12.3 L12.2 13.4 L8.6 20.6 Z" fill="var(--color-paper)" stroke="var(--color-ink)" stroke-width="1.6" stroke-linejoin="round"/></svg>' +
-				'<svg id="demo-art-ring" width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" fill="none" stroke="var(--color-blue-strong)" stroke-width="2.5" opacity="0.85"/></svg>';
+				'<svg id="demo-art-cursor" width="24" height="24" viewBox="0 0 24 24"><path d="M4 2.5 L19.5 12.3 L12.2 13.4 L8.6 20.6 Z" fill="var(--surface)" stroke="var(--ink)" stroke-width="1.6" stroke-linejoin="round"/></svg>' +
+				'<svg id="demo-art-ring" width="36" height="36" viewBox="0 0 36 36"><circle cx="18" cy="18" r="15" fill="none" stroke="var(--navy-text)" stroke-width="2.5" opacity="0.85"/></svg>';
 			const clear = document.createElement('style');
 			clear.id = 'demo-art-clear';
 			clear.textContent = 'html, body { background: transparent !important; } html { visibility: hidden; } #demo-art { visibility: visible; }';
@@ -185,8 +188,12 @@ export class Take {
 		}
 	}
 
-	/** Name the step on screen ("2", "Submit a run"), or clear it. */
-	async say(step: string, words = ''): Promise<void> {
+	/**
+	 * Name the step on screen ("2", "Submit a run"), or clear it. `sentence` is
+	 * what the recording's captions say from here on; it defaults to the words.
+	 */
+	async say(step: string, words = '', sentence = words): Promise<void> {
+		this.cues.push({ t: Date.now() / 1000, text: sentence });
 		await this.page.evaluate(
 			([s, t]) => {
 				const esc = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;');
@@ -201,6 +208,40 @@ export class Take {
 
 	async hold(ms: number): Promise<void> {
 		await this.page.waitForTimeout(ms);
+	}
+
+	/** This moment's frame is the recording's poster (by default, its last frame). */
+	poster(): void {
+		this.posterAt = Date.now() / 1000;
+	}
+
+	/** Where the poster frame is, in seconds of the recording. */
+	posterSeconds(): number | undefined {
+		return this.posterAt === undefined || this.frames.length === 0 ? undefined : Math.max(0, this.posterAt - this.frames[0].t);
+	}
+
+	/** The steps as WebVTT, each cue lasting until the next, timed to this take. */
+	captions(): string {
+		if (this.frames.length === 0 || !this.ended) throw new Error('cut the take before reading its captions');
+		const start = this.frames[0].t;
+		const stamp = (t: number) => {
+			const s = Math.max(0, t - start);
+			const whole = Math.floor(s);
+			const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+			return `${pad(Math.floor(whole / 60))}:${pad(whole % 60)}.${pad(Math.floor((s - whole) * 1000), 3)}`;
+		};
+		const blocks = ['WEBVTT'];
+		for (const [i, c] of this.cues.entries()) {
+			if (!c.text) continue;
+			blocks.push(`${stamp(c.t)} --> ${stamp(i + 1 < this.cues.length ? this.cues[i + 1].t : this.ended)}\n${c.text}`);
+		}
+		return blocks.join('\n\n') + '\n';
+	}
+
+	/** Press a key in what has focus, then give the reader a beat. */
+	async key(name: string, after = 240): Promise<void> {
+		await this.page.keyboard.press(name);
+		await this.page.waitForTimeout(after);
 	}
 
 	/**
@@ -302,6 +343,23 @@ export class Take {
 		this.clicks.push(Date.now() / 1000);
 		await target.click({ position: { x: x - box.x - edge.left, y: y - box.y - edge.top } });
 		await this.page.waitForTimeout(after);
+	}
+
+	/**
+	 * Press a line of the editor where the cursor points. A line is as wide as
+	 * the editor's longest, so a click through Playwright would first scroll the
+	 * editor sideways to bring all of it into view.
+	 */
+	async pressLine(line: Locator, after = BEAT): Promise<void> {
+		const { x, y } = await this.glide(line);
+		this.clicks.push(Date.now() / 1000);
+		await this.page.mouse.click(x, y);
+		await this.page.waitForTimeout(after);
+	}
+
+	/** Move the cursor off the page's controls, so no tooltip or hover doc opens under it. */
+	async rest(): Promise<void> {
+		await this.glideTo(this.size.width - 40, this.size.height - 36);
 	}
 
 	/** Type at a typist's pace into what has focus. */
