@@ -103,11 +103,13 @@ the observability gate unconditionally.
 The proof's own Temporal is the `temporal` service of
 `deploy/docker-compose.yml`: its image and its command, read by `proofrun
 temporal-args` and started on a port of its own, never a second copy of them
-in a script. The command carries two `--dynamic-config-value` settings that
+in a script. The command carries three `--dynamic-config-value` settings. Two
 make a worker-deployment version report `Drained` in seconds rather than in
 the cluster's default minutes, so the integration tests that wait for a
 release to drain (`orkctl release wait`, the continuation chain's rollout) wait
-seconds (docs/DEPLOY.md §4, "Underneath"). They are development and proof
+seconds. The third saves the transfer queue's state every 5 seconds, so tests
+that wait for a delete beside one another's deletes wait seconds rather than
+minutes (docs/DEPLOY.md §4, "Underneath"). They are development and proof
 settings, not a deployment's. The container runs with `--rm`, so stopping it
 would remove its log: before the stop, `proofrun temporal-log -container NAME
 -out FILE` keeps the server's log, both of its streams, gzip-compressed as

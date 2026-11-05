@@ -29,8 +29,10 @@ services:
   # scripts/proof.sh and scripts/proof-part.sh run THIS service's image and
   # command (`proofrun temporal-args`), so a flag added here reaches both.
   #
-  # The two --dynamic-config-value settings are for development and proof
-  # only, never a recommendation for a deployment. The cluster decides that a
+  # The --dynamic-config-value settings are for development and proof only,
+  # never a recommendation for a deployment.
+  #
+  # The two matching.wv settings: the cluster decides that a
   # worker-deployment version that stopped taking new runs has drained by
   # counting its running pinned workflows, on a delay: the grace period
   # before the first count (which lets a workflow that started on the version
@@ -39,7 +41,16 @@ services:
   # Temporal server 1.32 (the server of this image), which is what every test
   # that waits for a release to drain used to wait out. Shortened to seconds,
   # the grace period stays well above the dev server's visibility lag; it is
-  # not removed. Values are JSON, so a duration string keeps its quotes
+  # not removed.
+  #
+  # history.transferProcessorUpdateAckInterval: a closed execution's delete runs
+  # only once its close task reads as acknowledged in the transfer queue's saved
+  # state, saved every 30 s by default and only as far as the oldest task still
+  # pending. This server has one shard, so overlapping deletes hold each other
+  # back, and at the default a delete beside others took 31.9 to 136 s on this
+  # image. At 5s the same deletes took 3.9 to 11 s.
+  #
+  # Values are JSON, so a duration string keeps its quotes
   # (docs/DEPLOY.md §4, "Underneath"; TestDevCompose_Temporal...).
   temporal:
     image: temporalio/temporal:1.9.1@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
@@ -56,6 +67,8 @@ services:
       - 'matching.wv.VersionDrainageStatusVisibilityGracePeriod="10s"'
       - --dynamic-config-value
       - 'matching.wv.VersionDrainageStatusRefreshInterval="3s"'
+      - --dynamic-config-value
+      - 'history.transferProcessorUpdateAckInterval="5s"'
     ports:
       - "127.0.0.1:7233:7233"   # gRPC frontend
       - "127.0.0.1:8233:8233"   # Temporal Web UI
