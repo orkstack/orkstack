@@ -321,6 +321,11 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- A failed task's `error.message` says the Orker's sentence once. It used to
+  repeat it after the failure's category, usually marked `retryable: true`
+  whatever the failure's own `retryable` said. The field `retryable` and how a
+  task is retried are unchanged, and a run already recorded keeps its text. A
+  script that matches the repeated part of a message needs updating.
 - `GetStats` and `orkctl stats` no longer count a run twice — once as
   finished, once as running — in the moment after it ends, before the
   cluster's index of executions catches up with its close. A run the archive
