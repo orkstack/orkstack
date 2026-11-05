@@ -2133,6 +2133,16 @@ visibility query and a new run of the version's own workflow on the cluster.
 The quickstart's Temporal (the root `compose.yaml`) and every
 production cluster keep the defaults.
 
+The same service also passes `history.transferProcessorUpdateAckInterval` at
+`5s`, against a default of `30s`. A closed execution's delete runs only once its
+close task reads as acknowledged in the transfer queue's saved state, which this
+setting saves, and which reaches only as far as the oldest task still pending.
+The development server has one shard, so overlapping deletes hold each other
+back: on this image a delete beside others took 31.9 to 136 seconds at the
+default and 3.9 to 11 at `5s`. It is a development and proof setting too, and a
+tradeoff a production cluster has no reason to take: it saves that state six
+times as often to make a delete show sooner.
+
 **Permissions.** A cluster behind an authorizer must grant the engine's
 identity `DescribeWorkerDeployment`, `DescribeWorkerDeploymentVersion`,
 `SetWorkerDeploymentCurrentVersion`, `SetWorkerDeploymentRampingVersion` and

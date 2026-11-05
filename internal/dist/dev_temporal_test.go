@@ -9,20 +9,29 @@ import (
 
 // The development stack's Temporal, and every proof's own (scripts/proof.sh
 // and scripts/proof-part.sh run the image and command of this one service,
-// through `proofrun temporal-args`), is started with two dynamic-config
-// values that bring the cluster's worker-deployment drainage checks from
-// minutes to seconds (docs/DEPLOY.md §4, "Underneath"). They are development
-// and proof settings, never a production recommendation: a production cluster
-// keeps its defaults, and nothing in the quickstart carries them.
+// through `proofrun temporal-args`), is started with three dynamic-config
+// values. Two bring the cluster's worker-deployment drainage checks from
+// minutes to seconds (docs/DEPLOY.md §4, "Underneath"), and one keeps
+// overlapping deletes from holding each other up for minutes. They are
+// development and proof settings, never a production recommendation: a
+// production cluster keeps its defaults, and nothing in the quickstart carries
+// them.
 //
-// Both are read, per version that stopped taking new runs, by the cluster's
-// version workflow: the first drainage check waits the grace period (the
-// allowance for a workflow that started on the version just before it
-// stopped being current to show up in visibility), and each later check waits
-// the refresh interval.
+// The two drainage settings are read, per version that stopped taking new runs,
+// by the cluster's version workflow: the first drainage check waits the grace
+// period (the allowance for a workflow that started on the version just before
+// it stopped being current to show up in visibility), and each later check
+// waits the refresh interval.
+//
+// The third is how often the transfer queue saves its state. A closed
+// execution's delete runs only once its close task reads as acknowledged in
+// that saved state, which reaches only as far as the oldest task still pending,
+// and this server has one shard, so one test's pending delete holds back
+// another's.
 const (
 	drainageRefreshKey = "matching.wv.VersionDrainageStatusRefreshInterval"
 	drainageGraceKey   = "matching.wv.VersionDrainageStatusVisibilityGracePeriod"
+	queueStateSaveKey  = "history.transferProcessorUpdateAckInterval"
 
 	dynamicConfigFlag = "--dynamic-config-value"
 )
@@ -102,10 +111,17 @@ func TestDevCompose_TemporalDrainsWorkerDeploymentVersionsInSeconds(t *testing.T
 		t.Errorf("%s is %s, want between 5s and 30s: short enough for a test to wait out, long enough for visibility to catch up on a loaded host", drainageGraceKey, grace)
 	}
 
-	// Nothing else is set by dynamic config: a second knob is a second way
-	// for the development server to differ from the one an operator runs.
-	if len(pairs) != 2 {
-		t.Errorf("the temporal command passes %d dynamic-config values %q, want exactly the two drainage settings", len(pairs), pairs)
+	// The cluster's default is 30 seconds. With deletes overlapping, that made
+	// a delete wait 31.9 to 136 seconds on this image and 5 seconds made it 3.9
+	// to 11, so a test that gives a delete a minute can pass beside another one.
+	if save := dynamicConfigDuration(t, pairs, queueStateSaveKey); save != 5*time.Second {
+		t.Errorf("%s is %s, want 5s, the value measured", queueStateSaveKey, save)
+	}
+
+	// Nothing else is set by dynamic config: another knob is another way for
+	// the development server to differ from the one an operator runs.
+	if len(pairs) != 3 {
+		t.Errorf("the temporal command passes %d dynamic-config values %q, want exactly the two drainage settings and %s", len(pairs), pairs, queueStateSaveKey)
 	}
 }
 
