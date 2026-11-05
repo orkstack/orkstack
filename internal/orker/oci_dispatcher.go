@@ -1039,8 +1039,8 @@ func (d *OCIDispatcher) adopt(
 			if errors.Is(err, artifacts.ErrCommitUndecodable) {
 				return nil, FailCause(ReasonCommitUndecodable, err,
 					"an object exists at %s but is still not a valid ActivityCommit after an "+
-						"in-attempt reread (%d bytes); the stored bytes are corrupt, not in flight",
-					uri, record.Bytes)
+						"in-attempt reread (%d bytes); the stored bytes are corrupt, not in flight: %v",
+					uri, record.Bytes, err)
 			}
 			return nil, FailCause(ReasonCommitReadFailed, err, "read the commit at %s: %v", uri, err)
 		}

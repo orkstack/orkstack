@@ -2,6 +2,7 @@ package orker
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 
 	"go.temporal.io/sdk/temporal"
@@ -177,6 +178,53 @@ func TestFailure_TemporalErrorCarriesTheCategoryAsItsType(t *testing.T) {
 	}
 	if detail.GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION {
 		t.Errorf("detail category = %v, want CONTRACT_VIOLATION", detail.GetCategory())
+	}
+}
+
+// TestFailure_TemporalErrorSaysItsSentenceOnce: what the engine receives is the
+// failure's own sentence under its category, retried or not, with its detail.
+// The error the sentence came from stays on the Failure for this Orker; sent
+// along, it comes back as a second error named after its Go type, marked
+// retryable whatever the failure's own answer, saying the sentence again.
+func TestFailure_TemporalErrorSaysItsSentenceOnce(t *testing.T) {
+	cause := errors.New("the store said no")
+	wire := temporal.GetDefaultFailureConverter()
+	for _, tc := range []struct {
+		reason, category string
+		retryable        bool
+	}{
+		{ReasonSecretNotPermitted, CategoryContractViolation, false},
+		{ReasonRuntimeRefused, CategoryInfrastructureError, true},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			failure := FailCause(tc.reason, cause, "read it: %v", cause).
+				WithDetail(&orkstackv1.ActivityFailureDetail{ExitCode: 3})
+			if !errors.Is(failure, cause) {
+				t.Errorf("the Failure lost its cause: %v", failure)
+			}
+
+			sent := wire.ErrorToFailure(failure.TemporalError())
+			if sent.GetCause() != nil {
+				t.Errorf("a second error crossed beneath the failure: %v", sent.GetCause())
+			}
+			got := wire.FailureToError(sent)
+			want := fmt.Sprintf("%s: read it: the store said no (type: %s, retryable: %t)", tc.reason, tc.category, tc.retryable)
+			if got.Error() != want {
+				t.Errorf("the engine reads %q, want %q", got.Error(), want)
+			}
+
+			var applicationErr *temporal.ApplicationError
+			if !errors.As(got, &applicationErr) {
+				t.Fatalf("the engine reads a %T, want *temporal.ApplicationError", got)
+			}
+			var detail *orkstackv1.ActivityFailureDetail
+			if err := applicationErr.Details(&detail); err != nil {
+				t.Fatalf("decode failure detail: %v", err)
+			}
+			if detail.GetReasonCode() != tc.reason || detail.GetExitCode() != 3 {
+				t.Errorf("detail = %v, want reason %s and exit code 3", detail, tc.reason)
+			}
+		})
 	}
 }
 

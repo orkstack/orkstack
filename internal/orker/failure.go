@@ -377,6 +377,10 @@ func (f *Failure) ErrorProto(taskID string) *orkstackv1.Error {
 // NewNonRetryableApplicationError. The constructor's flag always wins over the
 // policy list, so a task whose retry: policy forgot to list the category still
 // cannot loop on a contract violation.
+//
+// f.Cause does not cross: the message already says what it knows, and the SDK
+// would send the cause as a second ApplicationError named after its Go type and
+// marked retryable, whatever RetryableReason answers for this failure.
 func (f *Failure) TemporalError() error {
 	detail := f.Detail
 	if detail == nil {
@@ -388,20 +392,13 @@ func (f *Failure) TemporalError() error {
 	category := f.Category()
 	message := f.Error()
 	if !RetryableReason(f.Reason) {
-		return temporal.NewNonRetryableApplicationError(message, category, f.Cause, detail)
+		return temporal.NewNonRetryableApplicationError(message, category, nil, detail)
 	}
-	// NewApplicationErrorWithCause, NOT NewApplicationError.
-	//
-	// temporal.NewApplicationError's signature is
-	// (message, errType string, details ...interface{}) — it takes NO cause.
-	// Passing one to it puts the cause in details[0] and the real detail in
-	// details[1], so the engine's Details(&detail) decodes the wrong slot and
-	// every RETRYABLE failure loses its artifacts, exit code and scan notes.
-	// That is the most common failure path there is: CONTAINER_EXIT_NONZERO,
-	// where a failing build's test report is exactly what somebody opens the
-	// run to read. Found by
-	// TestIntegration_AFailedTaskStillPublishesWhatItProduced.
-	return temporal.NewApplicationErrorWithCause(message, category, f.Cause, detail)
+	// The detail is the only argument after the type: the engine's
+	// Details(&detail) reads the first slot, and a failed attempt's artifacts,
+	// exit code and scan notes are in it
+	// (TestIntegration_AFailedTaskStillPublishesWhatItProduced).
+	return temporal.NewApplicationError(message, category, detail)
 }
 
 // StampStart records when the attempt began on the failure's transport, so

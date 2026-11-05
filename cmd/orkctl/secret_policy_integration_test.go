@@ -431,8 +431,11 @@ func TestIntegration_TheOrkerFloorRefusesWhatTheNamespaceAllows(t *testing.T) {
 		t.Fatalf("task = %+v, want FAILED / SECRET_NOT_PERMITTED / CONTRACT_VIOLATION", task)
 	}
 	want := `secret "db": "env:PROD_DB_PASSWORD" matches none of env:SANDBOX_*, env:ANALYTICS_* (this orker's ORK_ORKER_SECRET_ALLOW)`
-	if !strings.Contains(task.Error.Message, want) {
-		t.Errorf("task error message = %q, want it to carry %q", task.Error.Message, want)
+	if strings.Count(task.Error.Message, want) != 1 {
+		t.Errorf("task error message = %q, want it to say %q exactly once", task.Error.Message, want)
+	}
+	if strings.Contains(task.Error.Message, "retryable: true") {
+		t.Errorf("task error message = %q, which calls part of a refusal retryable", task.Error.Message)
 	}
 
 	attempts, _ := s.cli(t, s.b, exitOK, "--json", "run", "attempts", runID, "--task", "grab", "-n", s.namespace)

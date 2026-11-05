@@ -160,7 +160,7 @@ func (d *OCIDispatcher) readItemCommit(
 			"fan-out task %q item %d has no commit at %s", producer, i, uri)
 	case errors.Is(err, artifacts.ErrCommitUndecodable):
 		return nil, FailCause(ReasonCommitUndecodable, err,
-			"fan-out task %q item %d: the object at %s is not a valid ActivityCommit", producer, i, uri)
+			"fan-out task %q item %d: the object at %s is not a valid ActivityCommit: %v", producer, i, uri, err)
 	default:
 		return nil, FailCause(ReasonCommitReadFailed, err,
 			"fan-out task %q item %d: read the commit at %s: %v", producer, i, uri, err)
