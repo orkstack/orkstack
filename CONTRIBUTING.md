@@ -365,11 +365,11 @@ adds an entry under `## [Unreleased]` in the same pull request, in the
 subsection of its kind (`### Added`, `### Changed`, `### Deprecated`,
 `### Removed`, `### Fixed` or `### Security`). An entry is always in one
 format: a sentence or two on what changed and what they must do about it, if
-anything; an absolute link to the doc for the detail; and, once changes land
-through pull requests, a link to its pull request. A breaking change's entry
-is marked **BREAKING** (AGENTS.md §11.1, step 7). Write it for the people who
-read the release: at a release the `[Unreleased]` section becomes the version's
-own,
+anything; an absolute link to the doc, where one holds more detail; and, once
+changes land through pull requests, a link to its pull request. A breaking
+change's entry is marked **BREAKING** (AGENTS.md §11.1, step 7). Write it for
+the people who read the release: at a release the `[Unreleased]` section becomes
+the version's own,
 `## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
 section's text is the GitHub release's notes, word for word, above a footer
 the release adds with each image's digest. Link to a document by its absolute

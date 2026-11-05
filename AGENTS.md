@@ -1124,10 +1124,10 @@ Every code change follows this order:
    deprecation, a breaking change. Such a change adds an entry under
    CHANGELOG.md's `[Unreleased]` section (Keep a Changelog 1.1.0), always in
    one format: a sentence or two on what changed and what they must do about
-   it, if anything; an absolute link to the doc for the detail; and, once
-   changes land through pull requests, a link to its pull request. A breaking
-   change's entry is marked **BREAKING**. A change that cannot affect them
-   gets no entry, however large: documentation edits; CI, workflows and the
+   it, if anything; an absolute link to the doc, where one holds more detail;
+   and, once changes land through pull requests, a link to its pull request. A
+   breaking change's entry is marked **BREAKING**. A change that cannot affect
+   them gets no entry, however large: documentation edits; CI, workflows and the
    proof harness, unless the change alters what a release publishes; tests;
    refactors; a cosmetic change to the UI; internal tooling, such as the
    development stack (`make up`); and a dependency bump that cannot affect

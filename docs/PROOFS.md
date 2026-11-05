@@ -1738,8 +1738,9 @@ edits the rest into what the release page should say, under Keep a
 Changelog's `### Added`, `### Changed`, `### Deprecated`, `### Removed`,
 `### Fixed` and `### Security`, each in the format AGENTS.md §11.1, step 7,
 states: a sentence or two on what changed and what to do, an absolute link to
-the doc for the detail and, once changes land through pull requests, a link to
-its pull request, with each breaking change marked **BREAKING**.
+the doc where one holds more detail and, once changes land through pull
+requests, a link to its pull request, with each breaking change marked
+**BREAKING**.
 Nothing writes the date at tag time: the tag names a commit a proof passed
 on, so the heading is already in that commit. `dist notes -version vX.Y.Z
 -images FILE` prints exactly what the page will show: the section without its

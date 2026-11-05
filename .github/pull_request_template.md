@@ -29,12 +29,12 @@ Proof-specs:
   contract, storage layout, what a release publishes and any security fix to
   it, including a vulnerable dependency's bump, a deprecation)? Then add its
   CHANGELOG.md `[Unreleased]` entry: a sentence or two on what changed and what
-  they must do, if anything, an absolute link to the doc for the detail, and a
-  link to this pull request; a breaking change is marked **BREAKING**. A change
-  that cannot affect them gets none: documentation, tests, refactors, a
-  cosmetic change to the UI, internal tooling, a dependency bump that cannot
-  affect them, and CI or proof changes that leave what a release publishes as
-  it was.
+  they must do, if anything, an absolute link to the doc where one holds more
+  detail, and a link to this pull request; a breaking change is marked
+  **BREAKING**. A change that cannot affect them gets none: documentation,
+  tests, refactors, a cosmetic change to the UI, internal tooling, a dependency
+  bump that cannot affect them, and CI or proof changes that leave what a
+  release publishes as it was.
 
 ## Checklist
 

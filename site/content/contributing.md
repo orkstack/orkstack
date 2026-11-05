@@ -70,9 +70,10 @@ release's image digests (see "The changelog" in
 [CONTRIBUTING.md](https://github.com/orkstack/orkstack/blob/main/CONTRIBUTING.md)).
 
 The entry is a sentence or two on what changed and what users must do about it,
-if anything, with an absolute link to the doc for the detail and, once changes
-land through pull requests, a link to its pull request. Every security fix
-to what a release publishes has one, a vulnerable dependency's bump among them.
+if anything, with an absolute link to the doc where one holds more detail and,
+once changes land through pull requests, a link to its pull request. Every
+security fix to what a release publishes has one, a vulnerable dependency's bump
+among them.
 A change that cannot affect users gets none: a documentation, test or
 refactoring change, a cosmetic change to the UI, internal tooling, a dependency
 bump that cannot affect them, or a CI change that leaves what a release
