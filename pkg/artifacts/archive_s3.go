@@ -55,9 +55,11 @@ func (a *S3RunArchive) URI(runID string) (string, error) {
 	return "s3://" + a.bucket + "/" + key, nil
 }
 
-// PutRun writes the body and object references before publishing the index key.
-// An interrupted write can be retried without advertising a run whose body or
-// reference accounting is incomplete.
+// PutRun writes the object references before publishing the index key, and the
+// body after it. An interrupted write can be retried without advertising a run
+// whose reference accounting is incomplete, and a body means every other record
+// of the run was written (HasRun): an index row with no body is an interrupted
+// write, which every reader of the index skips and the archive sweep finishes.
 //
 // The body is immutable. A run that already has one keeps it — this is what
 // makes an activity retry, a workflow replay and a second engine writing the
@@ -101,17 +103,6 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err != nil {
 		return fmt.Errorf("artifacts: s3 archive run %q: %w", rec.RunID, err)
 	}
-	if !exists {
-		if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(a.bucket),
-			Key:           aws.String(bodyKey),
-			Body:          bytes.NewReader(rec.JSONL),
-			ContentLength: aws.Int64(int64(len(rec.JSONL))),
-			ContentType:   aws.String(RunArchiveContentType),
-		}); err != nil {
-			return fmt.Errorf("artifacts: s3 archive run %q: write body %q: %w", rec.RunID, bodyKey, err)
-		}
-	}
 
 	// The list keeps exact object ids out of marker-key components and makes
 	// deletion proportional to this run's references rather than the archive.
@@ -125,7 +116,7 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return fmt.Errorf("artifacts: s3 archive run %q: %w", rec.RunID, err)
 	}
 	// The origin row is one more zero-byte key, written before the run-index
-	// row so the run index stays the last thing published.
+	// row so the run index is published after every record but the body.
 	if hasOrigin {
 		if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(a.bucket), Key: aws.String(originKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
@@ -141,11 +132,24 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return fmt.Errorf("artifacts: s3 archive run %q: write recent index %q: %w", rec.RunID, recentKey, err)
 	}
 	// The index carries everything in its key, so its body is empty. Publishing
-	// it last makes all prior durable records visible to cleanup first.
+	// it after them makes every record but the archive body visible to cleanup
+	// first; cleanup checks for the body itself before it retires a run.
 	if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(a.bucket), Key: aws.String(indexKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
 	}); err != nil {
 		return fmt.Errorf("artifacts: s3 archive run %q: write index %q: %w", rec.RunID, indexKey, err)
+	}
+	// The body last: it is what says the archive is whole (HasRun).
+	if !exists {
+		if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket:        aws.String(a.bucket),
+			Key:           aws.String(bodyKey),
+			Body:          bytes.NewReader(rec.JSONL),
+			ContentLength: aws.Int64(int64(len(rec.JSONL))),
+			ContentType:   aws.String(RunArchiveContentType),
+		}); err != nil {
+			return fmt.Errorf("artifacts: s3 archive run %q: write body %q: %w", rec.RunID, bodyKey, err)
+		}
 	}
 	return nil
 }
@@ -635,6 +639,20 @@ func (a *S3RunArchive) finishList(q RunQuery, entries []RunIndexEntry) []RunInde
 // scan-cost contract: a bounded page is only bounded if the backend stops at
 // the page boundary. Tests assert on it; nothing in the running system reads it.
 func (a *S3RunArchive) IndexKeysScanned() int64 { return a.indexKeysScanned.Load() }
+
+// HasRun reports whether runID has an archive body, with one HEAD. PutRun writes
+// the body last, so a body means the run's archive is whole.
+func (a *S3RunArchive) HasRun(ctx context.Context, runID string) (bool, error) {
+	key, err := RunArchiveKey(runID)
+	if err != nil {
+		return false, err
+	}
+	exists, err := a.exists(ctx, key)
+	if err != nil {
+		return false, fmt.Errorf("artifacts: s3 archive has %q: %w", runID, err)
+	}
+	return exists, nil
+}
 
 func (a *S3RunArchive) exists(ctx context.Context, key string) (bool, error) {
 	_, err := a.client.HeadObject(ctx, &s3.HeadObjectInput{

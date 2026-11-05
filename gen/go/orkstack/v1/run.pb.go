@@ -311,6 +311,15 @@ const (
 	// status, so a reader that only knows the older task events still sees the
 	// task end.
 	EventType_EVENT_TYPE_TASK_RESOLVED EventType = 12
+	// STREAM_GAP: numbers of the run's event sequence hold no event, because
+	// the run used them without publishing one (an event whose record object
+	// storage refused). Its sequence is the last of those numbers and its
+	// message names them all; no run or task changed state. Only a live read of
+	// the stream serves it, and the read goes on to the run's terminal event.
+	// It is part of the read, not of the run's events: the run's archive records
+	// the same numbers as a gap in its stream instead, and a read over that gap
+	// ends DataLoss.
+	EventType_EVENT_TYPE_STREAM_GAP EventType = 13
 )
 
 // Enum value maps for EventType.
@@ -329,6 +338,7 @@ var (
 		10: "EVENT_TYPE_RUN_CANCELED",
 		11: "EVENT_TYPE_TASK_AWAITING",
 		12: "EVENT_TYPE_TASK_RESOLVED",
+		13: "EVENT_TYPE_STREAM_GAP",
 	}
 	EventType_value = map[string]int32{
 		"EVENT_TYPE_UNSPECIFIED":    0,
@@ -344,6 +354,7 @@ var (
 		"EVENT_TYPE_RUN_CANCELED":   10,
 		"EVENT_TYPE_TASK_AWAITING":  11,
 		"EVENT_TYPE_TASK_RESOLVED":  12,
+		"EVENT_TYPE_STREAM_GAP":     13,
 	}
 )
 
@@ -2091,7 +2102,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x17RUN_ORIGIN_KIND_TRIGGER\x10\x02\x12\x1c\n" +
 	"\x18RUN_ORIGIN_KIND_SCHEDULE\x10\x03\x12\x1e\n" +
 	"\x1aRUN_ORIGIN_KIND_PARENT_RUN\x10\x04\x12\x1d\n" +
-	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05*\x81\x03\n" +
+	"\x19RUN_ORIGIN_KIND_RUN_AGAIN\x10\x05*\x9c\x03\n" +
 	"\tEventType\x12\x1a\n" +
 	"\x16EVENT_TYPE_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16EVENT_TYPE_RUN_CREATED\x10\x01\x12\x1a\n" +
@@ -2106,7 +2117,8 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x17EVENT_TYPE_RUN_CANCELED\x10\n" +
 	"\x12\x1c\n" +
 	"\x18EVENT_TYPE_TASK_AWAITING\x10\v\x12\x1c\n" +
-	"\x18EVENT_TYPE_TASK_RESOLVED\x10\fB\xa4\x01\n" +
+	"\x18EVENT_TYPE_TASK_RESOLVED\x10\f\x12\x19\n" +
+	"\x15EVENT_TYPE_STREAM_GAP\x10\rB\xa4\x01\n" +
 	"\x0fcom.orkstack.v1B\bRunProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (

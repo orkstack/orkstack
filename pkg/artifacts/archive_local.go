@@ -62,9 +62,12 @@ func (a *LocalRunArchive) Dir() string { return a.dir }
 // Close releases the directory handle held by the archive.
 func (a *LocalRunArchive) Close() error { return a.root.Close() }
 
-// PutRun writes the body and object references before publishing the index key,
-// and leaves an already-archived body untouched. An interrupted write can be
-// retried without advertising a run whose reference accounting is incomplete.
+// PutRun writes the object references before publishing the index key and the
+// body after it, and leaves an already-archived body untouched. An interrupted
+// write can be retried without advertising a run whose reference accounting is
+// incomplete, and a body means every other record of the run was written
+// (HasRun): an index row with no body is an interrupted write, which every
+// reader of the index skips and the archive sweep finishes.
 func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	bodyKey, err := RunArchiveKey(rec.RunID)
 	if err != nil {
@@ -103,14 +106,9 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return err
 	}
 
-	switch _, err := a.root.Stat(bodyKey); {
-	case err == nil: // already archived; the body is immutable
-	case errors.Is(err, fs.ErrNotExist):
-		if err := a.writeAtomic(bodyKey, rec.JSONL); err != nil {
-			return fmt.Errorf("artifacts: local archive run %q: %w", rec.RunID, err)
-		}
-	default:
-		return fmt.Errorf("artifacts: local archive run %q: stat body: %w", rec.RunID, err)
+	_, statErr := a.root.Stat(bodyKey)
+	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
+		return fmt.Errorf("artifacts: local archive run %q: stat body: %w", rec.RunID, statErr)
 	}
 
 	// The list keeps exact object ids out of marker-key components and makes
@@ -123,9 +121,9 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 			return fmt.Errorf("artifacts: local archive run %q: write object reference: %w", rec.RunID, err)
 		}
 	}
-	// The origin row goes before the run-index row so the run index stays the
-	// last key published, which is what lets cleanup see every other record
-	// of a run before it sees the run.
+	// The origin row goes before the run-index row, which is what lets cleanup
+	// see every record but the body before it sees the run. It checks for the
+	// body itself before it retires one.
 	if hasOrigin {
 		if err := a.writeAtomic(originKey, nil); err != nil {
 			return fmt.Errorf("artifacts: local archive run %q: write origin index: %w", rec.RunID, err)
@@ -137,7 +135,32 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err := a.writeAtomic(indexKey, nil); err != nil {
 		return fmt.Errorf("artifacts: local archive run %q: %w", rec.RunID, err)
 	}
+	// The body last: it is what says the archive is whole (HasRun). A body
+	// already there is immutable.
+	if statErr != nil {
+		if err := a.writeAtomic(bodyKey, rec.JSONL); err != nil {
+			return fmt.Errorf("artifacts: local archive run %q: %w", rec.RunID, err)
+		}
+	}
 	return nil
+}
+
+// HasRun reports whether runID has an archive body.
+func (a *LocalRunArchive) HasRun(ctx context.Context, runID string) (bool, error) {
+	key, err := RunArchiveKey(runID)
+	if err != nil {
+		return false, err
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
+	if _, err := a.root.Stat(key); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		return false, fmt.Errorf("artifacts: local archive has %q: %w", runID, err)
+	}
+	return true, nil
 }
 
 // GetRun returns the archived JSONL body for runID.

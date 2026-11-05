@@ -308,8 +308,8 @@ type GetCacheStatsResponse struct {
 	Inventory []*CacheInventoryRow `protobuf:"bytes,2,rep,name=inventory,proto3" json:"inventory,omitempty"`
 	// runs_in_window counts the archive index's finished runs in the window
 	// (of orkflow_name, when set); runs_scanned how many had a body to read —
-	// less only for an index row whose body is absent (the crash window
-	// between the archive's two writes, which ListRuns already skips).
+	// less only for an index row whose body is absent (an archive write that
+	// stopped short, which ListRuns already skips).
 	RunsInWindow int64 `protobuf:"varint,3,opt,name=runs_in_window,json=runsInWindow,proto3" json:"runs_in_window,omitempty"`
 	RunsScanned  int64 `protobuf:"varint,4,opt,name=runs_scanned,json=runsScanned,proto3" json:"runs_scanned,omitempty"`
 	// The question answered, and when — exactly as GetStatsResponse carries them.

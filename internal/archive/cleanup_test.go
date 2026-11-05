@@ -132,12 +132,16 @@ func (f *fakeNamespaces) List(context.Context) ([]*orkstackv1.Namespace, error) 
 }
 
 type fakeArchive struct {
-	entries     []artifacts.RunIndexEntry
-	states      map[string]artifacts.RunCleanupState
-	deleteErr   map[string]error
-	markErr     map[string]error
-	deletes     map[string]int
-	queries     []artifacts.RunQuery
+	entries   []artifacts.RunIndexEntry
+	states    map[string]artifacts.RunCleanupState
+	deleteErr map[string]error
+	markErr   map[string]error
+	deletes   map[string]int
+	queries   []artifacts.RunQuery
+	// noBody and hasErr answer HasRun: an index row whose body was not written,
+	// and a store that did not answer.
+	noBody      map[string]bool
+	hasErr      map[string]error
 	pages       [][]string
 	afterDelete func(runID string)
 	// keysEnumerated counts index keys this archive walked past, which is what
@@ -266,6 +270,15 @@ func (f *fakeArchive) DeleteRunArtifacts(_ context.Context, _, id string) (artif
 func (f *fakeArchive) DeleteUnreferencedObjects(context.Context, []string) (artifacts.CleanupResult, error) {
 	return artifacts.CleanupResult{}, nil
 }
+
+// HasRun: every run has its body unless a test said otherwise.
+func (f *fakeArchive) HasRun(_ context.Context, id string) (bool, error) {
+	if err := f.hasErr[id]; err != nil {
+		return false, err
+	}
+	return !f.noBody[id], nil
+}
+
 func (f *fakeArchive) MarkArtifactsCleaned(_ context.Context, id string, at time.Time) error {
 	if err := f.markErr[id]; err != nil {
 		return err
@@ -1032,5 +1045,48 @@ func TestRun_DrainsABacklogWithoutWaitingForTheTicker(t *testing.T) {
 		if q.StartAfterKey == "" {
 			t.Errorf("query %d of the drain restarted the walk from the start", i+1)
 		}
+	}
+}
+
+// TestRunOnce_NeverRetiresARunWhoseArchiveHasNoBody: an index row with no body
+// is an archive write that stopped short. The history is the run's only record
+// then, so the run stays until its body is there, and a store that cannot say
+// is no answer. Once the body is there the run is retired as any other.
+func TestRunOnce_NeverRetiresARunWhoseArchiveHasNoBody(t *testing.T) {
+	now := time.Date(2026, 8, 20, 0, 0, 0, 0, time.UTC)
+	closed := now.Add(-100 * time.Hour)
+	for _, tc := range []struct {
+		name    string
+		noBody  bool
+		hasErr  error
+		retired int
+		wantErr bool
+	}{
+		{name: "no body", noBody: true},
+		{name: "the store does not answer", hasErr: errInjected, wantErr: true},
+		{name: "its body is there", retired: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			entry := artifacts.RunIndexEntry{RunID: "ork-1", Orkflow: "flow", Status: "failed", Time: closed}
+			archive := newFakeArchive(entry)
+			archive.noBody = map[string]bool{"ork-1": tc.noBody}
+			archive.hasErr = map[string]error{"ork-1": tc.hasErr}
+			cluster := newFakeCluster()
+			cluster.found["ork-1"] = true
+			cluster.closeTime["ork-1"] = closed
+			stats, err := testCleaner(archive, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
+			if (err != nil) != tc.wantErr || (tc.wantErr && !errors.Is(err, errInjected)) {
+				t.Fatalf("RunOnce = %v, want error %v", err, tc.wantErr)
+			}
+			if got := cluster.deleteCalls["ork-1"]; got != tc.retired {
+				t.Fatalf("the execution was deleted %d times, want %d", got, tc.retired)
+			}
+			if stats.RunsCleaned != tc.retired {
+				t.Fatalf("cleaned %d runs, want %d", stats.RunsCleaned, tc.retired)
+			}
+			if tc.retired == 0 && archive.deletes["ork-1"] != 0 {
+				t.Fatalf("its storage was reclaimed with no body to stand in for it")
+			}
+		})
 	}
 }

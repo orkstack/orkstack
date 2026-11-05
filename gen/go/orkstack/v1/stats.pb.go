@@ -967,8 +967,8 @@ type GetFailureBreakdownResponse struct {
 	FailedRunsInWindow int64 `protobuf:"varint,2,opt,name=failed_runs_in_window,json=failedRunsInWindow,proto3" json:"failed_runs_in_window,omitempty"`
 	// failed_runs_scanned is how many of those had a body to read. It is less
 	// than failed_runs_in_window only for an index row whose body is absent —
-	// the crash window between the archive's two writes, which ListRuns
-	// already skips. Any OTHER unreadable body fails the call.
+	// an archive write that stopped short, which ListRuns already skips. Any
+	// OTHER unreadable body fails the call.
 	FailedRunsScanned int64 `protobuf:"varint,3,opt,name=failed_runs_scanned,json=failedRunsScanned,proto3" json:"failed_runs_scanned,omitempty"`
 	// failed_runs_grouped is sum(run_count) over EVERY group, before limit. It
 	// equals failed_runs_scanned unless category narrowed the answer.
@@ -1909,9 +1909,8 @@ type GetUsageResponse struct {
 	// Runs still in flight are not in it; they are counted once they finish.
 	RunsInWindow int64 `protobuf:"varint,4,opt,name=runs_in_window,json=runsInWindow,proto3" json:"runs_in_window,omitempty"`
 	// runs_scanned is how many of those had a body to read; less only for an
-	// index row whose body is absent (the crash window between the archive's
-	// two writes, which ListRuns already skips). Any other unreadable body
-	// fails the call.
+	// index row whose body is absent (an archive write that stopped short,
+	// which ListRuns already skips). Any other unreadable body fails the call.
 	RunsScanned int64 `protobuf:"varint,5,opt,name=runs_scanned,json=runsScanned,proto3" json:"runs_scanned,omitempty"`
 	// runs_dispatched is how many scanned runs dispatched at least one task.
 	RunsDispatched int64 `protobuf:"varint,6,opt,name=runs_dispatched,json=runsDispatched,proto3" json:"runs_dispatched,omitempty"`

@@ -111,3 +111,27 @@ func TestS3RunArchive_ARefusedKeyFailsCleanupAndIsNotCounted(t *testing.T) {
 		t.Error("the refused key is gone")
 	}
 }
+
+// TestS3RunArchive_HasRunTellsAMissingBodyFromAStoreThatDidNotAnswer: only the
+// store's own "not found" means no body. A store that does not answer is an
+// error, which the archive sweep must never read as a run to archive.
+func TestS3RunArchive_HasRunTellsAMissingBodyFromAStoreThatDidNotAnswer(t *testing.T) {
+	ctx := context.Background()
+	d := newS3Double(t)
+	archive := s3CleanupArchive(t, d)
+	if has, err := archive.HasRun(ctx, "ork-1"); err != nil || has {
+		t.Fatalf("HasRun of no body = %v (%v), want false", has, err)
+	}
+	key, err := RunArchiveKey("ork-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d.objects[key] = []byte("{}\n")
+	if has, err := archive.HasRun(ctx, "ork-1"); err != nil || !has {
+		t.Fatalf("HasRun of a body = %v (%v), want true", has, err)
+	}
+	d.server.Close()
+	if has, err := archive.HasRun(ctx, "ork-1"); err == nil || has {
+		t.Fatalf("HasRun of a store that does not answer = %v (%v), want an error", has, err)
+	}
+}

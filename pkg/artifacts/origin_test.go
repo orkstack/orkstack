@@ -306,7 +306,8 @@ func TestS3RunArchive_PutRunWritesOriginRowAndListsByOrigin(t *testing.T) {
 
 // TestRunArchive_OriginRowBeforeIndexRow pins the write order on both
 // backends: the origin row and the newest-first row are published before the
-// run-index row, so the run index stays the last key PutRun writes.
+// run-index row, and the body after it, so a body means the whole of the
+// archive was written.
 func TestRunArchive_OriginRowBeforeIndexRow(t *testing.T) {
 	rec := artifacts.RunRecord{
 		RunID: "ork-9", Orkflow: "deploy-service", Status: "succeeded", Time: day(t, "2026-08-14T01:00:00Z"),
@@ -326,6 +327,10 @@ func TestRunArchive_OriginRowBeforeIndexRow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	bodyKey, err := artifacts.RunArchiveKey(rec.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	t.Run("s3", func(t *testing.T) {
 		fake := newFakeS3(t)
@@ -333,11 +338,11 @@ func TestRunArchive_OriginRowBeforeIndexRow(t *testing.T) {
 			t.Fatalf("PutRun: %v", err)
 		}
 		order := fake.putOrder()
-		if len(order) == 0 || order[len(order)-1] != indexKey {
-			t.Fatalf("the run-index row must be the last put; order = %v", order)
+		if len(order) < 2 || order[len(order)-1] != bodyKey || order[len(order)-2] != indexKey {
+			t.Fatalf("the body must be the last put and the run-index row the one before it; order = %v", order)
 		}
 		for _, key := range []string{originKey, recentKey} {
-			if !slices.Contains(order[:len(order)-1], key) {
+			if !slices.Contains(order[:len(order)-2], key) {
 				t.Fatalf("row %q must be put before the run-index row; order = %v", key, order)
 			}
 		}
@@ -363,6 +368,9 @@ func TestRunArchive_OriginRowBeforeIndexRow(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Join(archive.Dir(), recentKey)); err != nil {
 			t.Fatalf("the newest-first row was not written before the run-index row: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(archive.Dir(), bodyKey)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the body was written with the run-index row refused: %v", err)
 		}
 	})
 }

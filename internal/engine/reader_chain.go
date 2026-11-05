@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	historypb "go.temporal.io/api/history/v1"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -47,6 +48,15 @@ type scanState struct {
 	// recorded as a gap rather than returned as an error.
 	tolerateLostSegments bool
 	gaps                 []EventGap
+	// lastEventAt is when the last event the walk handled happened.
+	lastEventAt *timestamppb.Timestamp
+	// forArchive is the archive built from a run's history (readForArchive):
+	// the closing event also loads the run's record, tolerating what is lost.
+	forArchive bool
+	// carryRefused: a carry failed verification, so nothing it names was read.
+	carryRefused bool
+	// recordLoss says what of the run's record could not be recovered.
+	recordLoss string
 }
 
 func newScanState(tolerateLostSegments bool) *scanState {
@@ -57,20 +67,42 @@ func newScanState(tolerateLostSegments bool) *scanState {
 	}
 }
 
-// unpublishedStart reports the numbers below the first event a run's first
-// execution published, when that event is not 1, as a gap. Every run
-// publishes RUN_CREATED at 1 first, so a first execution whose first event
-// comes later holds nothing under the numbers below it: they were consumed
-// without an event (today, only by an ending before start whose RUN_CREATED
-// snapshot could not be written, emitRunCreatedFirst). Only this start of
-// the stream is checked; a number a run consumes later without an event is
-// not. The archive path records the gap; a live event read over it fails
-// with it (scanWith).
-func (st *scanState) unpublishedStart(event *orkstackv1.Event) (EventGap, bool) {
-	if st.carried || st.lastSequence != 0 || len(st.seen) != 0 || event.GetSequence() <= 1 {
-		return EventGap{}, false
+// noteSkipped handles the numbers after the last one the walk reached, up to
+// and including through: the run used them without publishing an event (emit,
+// when object storage refuses an event's record). Every emit runs in the main
+// coroutine, so history holds a run's events in sequence order and a number
+// passed over is never published later.
+//
+// The archive path records them as a gap. A live event read serves a
+// STREAM_GAP event naming those it has not passed, and carries on. A run read
+// looks at no events.
+func (st *scanState) noteSkipped(
+	runID string,
+	through int64,
+	at *timestamppb.Timestamp,
+	fromSequence int64,
+	wantRun bool,
+	send func(*orkstackv1.Event) error,
+) error {
+	first := st.lastSequence + 1
+	if through < first {
+		return nil
 	}
-	return EventGap{First: 1, Last: event.GetSequence() - 1, Reason: UnpublishedEventsReason}, true
+	if st.tolerateLostSegments {
+		st.gaps = append(st.gaps, EventGap{First: first, Last: through, Reason: UnpublishedEventsReason})
+		return nil
+	}
+	if first = max(first, fromSequence+1); through < first {
+		return nil
+	}
+	gap := StreamGapEvent(runID, first, through, at)
+	if send != nil {
+		return send(gap)
+	}
+	if !wantRun {
+		st.projection.events = append(st.projection.events, gap)
+	}
+	return nil
 }
 
 // deliver hands one decoded event to the caller — send, or the projection's
@@ -86,8 +118,12 @@ func (st *scanState) deliver(
 		return false, nil
 	}
 	st.seen[event.GetSequence()] = struct{}{}
+	if err := st.noteSkipped(event.GetRunId(), event.GetSequence()-1, event.GetTimestamp(), fromSequence, wantRun, send); err != nil {
+		return false, err
+	}
 	if event.GetSequence() > st.lastSequence {
 		st.lastSequence = event.GetSequence()
+		st.lastEventAt = event.GetTimestamp()
 	}
 	if event.GetSequence() <= fromSequence {
 		if send != nil && isTerminalRunEvent(event) {
@@ -159,6 +195,7 @@ func (r *TemporalRunReader) adoptCarry(
 				Reason: "the run's saved-state references failed verification: " + err.Error()})
 			st.lastSequence = last
 		}
+		st.carryRefused = true
 	} else if eventRead {
 		if err := r.replaySegments(ctx, runID, carry, fromSequence, send, st); err != nil {
 			return err
@@ -166,14 +203,25 @@ func (r *TemporalRunReader) adoptCarry(
 		if st.stopped {
 			return nil
 		}
+		// A whole segment of skipped numbers holds no event for the replay to
+		// reach, so what is left of the carried numbers is checked here.
+		if err := st.noteSkipped(runID, carry.GetEventSequence(), st.lastEventAt, fromSequence, false, send); err != nil {
+			return err
+		}
 	}
 	st.lastSequence = max(st.lastSequence, carry.GetEventSequence())
 	projection := st.projection
+	projection.snapshotLoaded = false
+	if st.carryRefused {
+		// Nothing a refused carry names is ever read.
+		projection.checkpoint, projection.switchSnapshot = nil, nil
+		projection.snapshotURI, projection.priorSnapshotURI = "", ""
+		return nil
+	}
 	projection.checkpoint = carry.GetCheckpoint()
 	projection.switchSnapshot = carry.GetSnapshot()
 	projection.snapshotURI = carry.GetCheckpoint().GetUri()
 	projection.priorSnapshotURI = carry.GetSnapshot().GetUri()
-	projection.snapshotLoaded = false
 	return nil
 }
 
@@ -294,6 +342,9 @@ func (r *TemporalRunReader) replaySegments(
 			if stop {
 				return nil
 			}
+		}
+		if err := st.noteSkipped(runID, seg.GetLastSequence(), st.lastEventAt, fromSequence, false, send); err != nil {
+			return err
 		}
 		st.lastSequence = max(st.lastSequence, seg.GetLastSequence())
 	}

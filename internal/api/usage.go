@@ -368,8 +368,8 @@ func (m *UsageMeter) compute(
 
 // scan measures every entry through a pool of usageScanConcurrency and
 // returns how many had a body and each one's facts, in index order. An index
-// row with no body is skipped (the crash window between the archive's two
-// writes); any other failure fails the whole measurement, naming the run.
+// row with no body is skipped (an archive write that stopped short); any
+// other failure fails the whole measurement, naming the run.
 func (m *UsageMeter) scan(parent context.Context, entries []artifacts.RunIndexEntry) (int64, []engine.UsageRun, error) {
 	ctx, stop := context.WithCancel(parent)
 	defer stop()

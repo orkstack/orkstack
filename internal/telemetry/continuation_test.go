@@ -96,6 +96,52 @@ func TestEngineObserver_RecordsContinuationInstruments(t *testing.T) {
 	}
 }
 
+// TestEngineObserver_RecordArchiveSweep: a pass's outcomes are counted, and its
+// unconfirmed runs and their expiry are the gauges an alert reads. A pass that
+// could not date them leaves the expiry as it was, and a nil observer records
+// nothing.
+func TestEngineObserver_RecordArchiveSweep(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	var buf bytes.Buffer
+	observer := newTestEngineObserver(t, reader, &buf, false)
+	ctx := context.Background()
+	observer.RecordArchiveSweep(ctx, 2, 1, 1, 7, 3600, true)
+	observer.RecordArchiveSweep(ctx, 1, 0, 0, 3, 0, false)
+	var none *EngineObserver
+	none.RecordArchiveSweep(ctx, 9, 9, 9, 9, 9, true)
+
+	counts := map[string]int64{}
+	var unconfirmed int64
+	var expiry float64
+	for _, sm := range collect(t, reader).ScopeMetrics {
+		for _, m := range sm.Metrics {
+			switch data := m.Data.(type) {
+			case metricdata.Sum[int64]:
+				if m.Name == "ork.archive.sweep.runs" {
+					for _, dp := range data.DataPoints {
+						outcome, _ := dp.Attributes.Value(AttrOutcome)
+						counts[outcome.AsString()] += dp.Value
+					}
+				}
+			case metricdata.Gauge[int64]:
+				if m.Name == "ork.archive.sweep.unconfirmed" {
+					unconfirmed = data.DataPoints[0].Value
+				}
+			case metricdata.Gauge[float64]:
+				if m.Name == "ork.archive.sweep.earliest_expiry" {
+					expiry = data.DataPoints[0].Value
+				}
+			}
+		}
+	}
+	if counts["archived"] != 3 || counts["failed"] != 1 || counts["expired"] != 1 {
+		t.Fatalf("counted %v, want 3 archived, 1 failed, 1 expired", counts)
+	}
+	if unconfirmed != 3 || expiry != 3600 {
+		t.Fatalf("gauges = %d unconfirmed and %v s to expiry, want 3 and 3600", unconfirmed, expiry)
+	}
+}
+
 // TestEngineObserver_ContinuationRecordsAreNilSafe: a nil observer records
 // nothing, through any reader, and never panics.
 func TestEngineObserver_ContinuationRecordsAreNilSafe(t *testing.T) {

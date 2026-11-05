@@ -1316,6 +1316,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// activities (registered above, on this same instance).
 		snapshotActivities.WithContinuationObserver(continuationObserver{observer})
 	}
+	// The archive sweep: a finished run that did not archive itself gets its
+	// archive from its history. It only writes, and the cluster's own
+	// retention fires whether or not cleanup is enabled, so it always runs.
+	var archiveSweepObserver archivecleanup.SweepObserver
+	if wireEventObserver(tcfg) {
+		archiveSweepObserver = sweepObserver{o: observer, now: time.Now}
+	}
+	go archivecleanup.NewSweeper(cfg.cleanup, reader, archiveStore, engine.NewHistoryArchiver(reader, archive),
+		reader, archiveSweepObserver, logger).Run(ctx)
 	// The audit counter: ork.audit.records on the default providers, a no-op
 	// when telemetry is off.
 	auditInstruments, err := telemetry.NewAuditInstruments(sinks.Default())

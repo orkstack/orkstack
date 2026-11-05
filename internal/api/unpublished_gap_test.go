@@ -6,11 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -41,140 +40,201 @@ func unpublishedRunEvents() []*orkstackv1.Event {
 }
 
 // unpublishedReader serves the run as engine.TemporalRunReader does
-// (TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap):
-// a stream read from below 2 fails with the numbers the run never published.
+// (TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap): a
+// stream read from below 2 is told the numbers the run never published, and
+// goes on.
 type unpublishedReader struct{ *fakeReader }
 
 func (r unpublishedReader) StreamEvents(ctx context.Context, runID string, fromSequence int64,
 	send func(*orkstackv1.Event) error,
 ) error {
 	if runID == unpublishedRunID && fromSequence < unpublishedGap.Last {
-		r.mu.Lock()
-		r.streamCount++
-		r.mu.Unlock()
-		return fmt.Errorf("engine: stream: %w",
-			&engine.UnpublishedEventsError{RunID: runID, Gaps: []engine.EventGap{unpublishedGap}})
+		if err := send(engine.StreamGapEvent(runID, unpublishedGap.First, unpublishedGap.Last, nil)); err != nil {
+			return err
+		}
 	}
 	return r.fakeReader.StreamEvents(ctx, runID, fromSequence, send)
 }
 
-// TestUnpublishedStart_LiveAndArchivedReadsAgree: the run's stream read live
-// (StreamRunEvents, from the system of record) and read from its archive
-// (ArchivedEvents) answer alike. From 0 both are DataLoss with the one
-// sentence that names 1 as never published, and nothing is sent; from 1
-// both serve RUN_FAILED at 2.
-func TestUnpublishedStart_LiveAndArchivedReadsAgree(t *testing.T) {
+func unpublishedRun() *orkstackv1.Run {
+	return &orkstackv1.Run{Id: unpublishedRunID, Namespace: "default", OrkflowName: "broken",
+		Status: orkstackv1.Status_STATUS_FAILED, Error: &orkstackv1.Error{Code: engine.RunDefinitionCorruptCode},
+		CreatedAt: timestamppb.Now(), FinishedAt: timestamppb.Now()}
+}
+
+func newUnpublishedReader() unpublishedReader {
+	return unpublishedReader{&fakeReader{
+		runs:   map[string]*orkstackv1.Run{unpublishedRunID: unpublishedRun()},
+		events: map[string][]*orkstackv1.Event{unpublishedRunID: unpublishedRunEvents()},
+	}}
+}
+
+// sequencesAndTypes renders a stream as "2:RUN_FAILED", one for each event.
+func sequencesAndTypes(events []*orkstackv1.Event) string {
+	parts := make([]string, 0, len(events))
+	for _, e := range events {
+		parts = append(parts, fmt.Sprintf("%d:%s", e.GetSequence(), strings.TrimPrefix(e.GetType().String(), "EVENT_TYPE_")))
+	}
+	return strings.Join(parts, " ")
+}
+
+// TestSkippedNumbers_EveryLiveReadShowsThemAndEveryArchivedReadEndsDataLoss:
+// the run's stream read live — the Service, the StreamEvents RPC and the
+// WebSocket bridge alike — names the numbers the run never published and
+// reaches the run's terminal event, with a clean end. Read from its archive,
+// the same numbers are the existing DataLoss, with nothing sent before a gap
+// at the start. From past the numbers, every read serves the terminal event.
+func TestSkippedNumbers_EveryLiveReadShowsThemAndEveryArchivedReadEndsDataLoss(t *testing.T) {
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
-	run := &orkstackv1.Run{Id: unpublishedRunID, Namespace: "default", OrkflowName: "broken",
-		Status: orkstackv1.Status_STATUS_FAILED, Error: &orkstackv1.Error{Code: engine.RunDefinitionCorruptCode},
-		CreatedAt: timestamppb.Now(), FinishedAt: timestamppb.Now()}
-	if err := archiver.Archive(context.Background(), run, unpublishedRunEvents(), unpublishedGap); err != nil {
+	if err := archiver.Archive(context.Background(), unpublishedRun(), unpublishedRunEvents(), unpublishedGap); err != nil {
 		t.Fatal(err)
 	}
-	reader := unpublishedReader{&fakeReader{
-		runs:   map[string]*orkstackv1.Run{unpublishedRunID: run},
-		events: map[string][]*orkstackv1.Event{unpublishedRunID: unpublishedRunEvents()},
-	}}
-	svc := api.NewService(api.Config{Reader: reader, Archive: archiver})
-	ctx := context.Background()
+	svc := api.NewService(api.Config{Reader: newUnpublishedReader(), Archive: archiver})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
+	t.Cleanup(server.Close)
+	client := orkstackv1connect.NewRunServiceClient(server.Client(), server.URL)
 
-	reads := map[string]func(from int64) ([]*orkstackv1.Event, error){
-		"live": func(from int64) ([]*orkstackv1.Event, error) {
-			reader.mu.Lock()
-			before := reader.streamCount
-			reader.mu.Unlock()
+	const fromStart, pastTheNumbers = "1:STREAM_GAP 2:RUN_FAILED", "2:RUN_FAILED"
+	for name, read := range map[string]func(from int64) ([]*orkstackv1.Event, error){
+		"the service": func(from int64) ([]*orkstackv1.Event, error) {
 			var sent []*orkstackv1.Event
 			err := svc.StreamRunEvents(ctx, unpublishedRunID, "", from, func(e *orkstackv1.Event) error {
 				sent = append(sent, e)
 				return nil
 			})
-			// The read reached the system of record, never the archive
-			// behind it, whose answer is the same sentence.
-			reader.mu.Lock()
-			defer reader.mu.Unlock()
-			if reader.streamCount != before+1 {
-				t.Fatalf("from %d: the live read streamed from the reader %d times, want once", from, reader.streamCount-before)
-			}
 			return sent, err
 		},
-		"archived": func(from int64) ([]*orkstackv1.Event, error) {
-			return svc.ArchivedEvents(ctx, unpublishedRunID, from)
+		"the StreamEvents RPC": func(from int64) ([]*orkstackv1.Event, error) {
+			stream, err := client.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
+				RunId: unpublishedRunID, FromSequence: from}))
+			if err != nil {
+				return nil, err
+			}
+			defer stream.Close()
+			var sent []*orkstackv1.Event
+			for stream.Receive() {
+				sent = append(sent, stream.Msg())
+			}
+			return sent, stream.Err()
 		},
-	}
-	for name, read := range reads {
+		"the WebSocket bridge": func(from int64) ([]*orkstackv1.Event, error) {
+			url := fmt.Sprintf("ws%s/ws/runs/%s?from_sequence=%d", strings.TrimPrefix(server.URL, "http"), unpublishedRunID, from)
+			conn, _, err := websocket.Dial(ctx, url, nil)
+			if err != nil {
+				return nil, err
+			}
+			defer conn.CloseNow()
+			var sent []*orkstackv1.Event
+			for {
+				_, frame, err := conn.Read(ctx)
+				if err != nil {
+					var closed websocket.CloseError
+					if !errors.As(err, &closed) || closed.Code != websocket.StatusNormalClosure || closed.Reason != "run finished" {
+						return sent, fmt.Errorf("the socket ended %w, want a normal close at the run's end", err)
+					}
+					return sent, nil
+				}
+				var decoded struct {
+					Sequence string `json:"sequence"`
+					Type     string `json:"type"`
+					Message  string `json:"message"`
+				}
+				if err := json.Unmarshal(frame, &decoded); err != nil {
+					return sent, fmt.Errorf("frame %q: %w", frame, err)
+				}
+				sequence, err := strconv.ParseInt(decoded.Sequence, 10, 64)
+				if err != nil {
+					return sent, fmt.Errorf("frame %q: %w", frame, err)
+				}
+				sent = append(sent, &orkstackv1.Event{Sequence: sequence, Message: decoded.Message,
+					Type: orkstackv1.EventType(orkstackv1.EventType_value["EVENT_TYPE_"+decoded.Type])})
+			}
+		},
+	} {
 		t.Run(name, func(t *testing.T) {
 			sent, err := read(0)
-			var connectErr *connect.Error
-			if connect.CodeOf(err) != connect.CodeDataLoss || !errors.As(err, &connectErr) ||
-				connectErr.Message() != unpublishedSentence {
-				t.Fatalf("from 0: err = %v, want DataLoss %q", err, unpublishedSentence)
+			if err != nil || sequencesAndTypes(sent) != fromStart {
+				t.Fatalf("from 0: %s (%v), want %s", sequencesAndTypes(sent), err, fromStart)
 			}
-			if len(sent) != 0 {
-				t.Fatalf("from 0: sent %d events before the gap, want none: the gap is the start", len(sent))
+			if !strings.HasPrefix(sent[0].GetMessage(), "events 1–1 of this run were never published") {
+				t.Fatalf("the gap event says %q", sent[0].GetMessage())
 			}
 			sent, err = read(1)
-			if err != nil || len(sent) != 1 || sent[0].GetSequence() != 2 ||
-				sent[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
-				t.Fatalf("from 1: %v (%v), want RUN_FAILED at 2", sent, err)
+			if err != nil || sequencesAndTypes(sent) != pastTheNumbers {
+				t.Fatalf("from 1: %s (%v), want %s", sequencesAndTypes(sent), err, pastTheNumbers)
 			}
 		})
 	}
+
+	t.Run("the archive", func(t *testing.T) {
+		sent, err := svc.ArchivedEvents(ctx, unpublishedRunID, 0)
+		var connectErr *connect.Error
+		if connect.CodeOf(err) != connect.CodeDataLoss || !errors.As(err, &connectErr) || connectErr.Message() != unpublishedSentence {
+			t.Fatalf("from 0: err = %v, want DataLoss %q", err, unpublishedSentence)
+		}
+		if len(sent) != 0 {
+			t.Fatalf("from 0: sent %d events before the gap, want none: the gap is the start", len(sent))
+		}
+		sent, err = svc.ArchivedEvents(ctx, unpublishedRunID, 1)
+		if err != nil || sequencesAndTypes(sent) != pastTheNumbers {
+			t.Fatalf("from 1: %s (%v), want %s", sequencesAndTypes(sent), err, pastTheNumbers)
+		}
+	})
 }
 
-// TestUnpublishedStart_TheStreamEventsRPCEndsInDataLoss: a client of the
-// StreamEvents RPC, over the real handler, reads the same answer the Service
-// method gives: from 0 the stream ends DataLoss with the sentence that names
-// 1 as never published and has sent nothing, and from 1 it serves RUN_FAILED
-// at 2 and ends cleanly.
-func TestUnpublishedStart_TheStreamEventsRPCEndsInDataLoss(t *testing.T) {
-	run := &orkstackv1.Run{Id: unpublishedRunID, Namespace: "default", OrkflowName: "broken",
-		Status: orkstackv1.Status_STATUS_FAILED, Error: &orkstackv1.Error{Code: engine.RunDefinitionCorruptCode},
-		CreatedAt: timestamppb.Now(), FinishedAt: timestamppb.Now()}
-	svc := api.NewService(api.Config{Reader: unpublishedReader{&fakeReader{
-		runs:   map[string]*orkstackv1.Run{unpublishedRunID: run},
-		events: map[string][]*orkstackv1.Event{unpublishedRunID: unpublishedRunEvents()},
-	}}})
-	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
-	t.Cleanup(server.Close)
-	client := orkstackv1connect.NewRunServiceClient(server.Client(), server.URL)
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	read := func(from int64) ([]*orkstackv1.Event, error) {
-		stream, err := client.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: unpublishedRunID, FromSequence: from}))
-		if err != nil {
-			return nil, err
-		}
-		defer stream.Close()
-		var sent []*orkstackv1.Event
-		for stream.Receive() {
-			sent = append(sent, stream.Msg())
-		}
-		return sent, stream.Err()
+// TestRetiredRun_AnyReplicaReadsItFromTheArchive: a run the cluster no longer
+// holds, read through a service that never saw it, answers from the shared
+// archive: its outcome and its stream. That is how a run archived from its
+// history is read once it is retired.
+func TestRetiredRun_AnyReplicaReadsItFromTheArchive(t *testing.T) {
+	ctx := context.Background()
+	store, err := artifacts.NewLocalRunArchive(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	sent, err := read(0)
-	var connectErr *connect.Error
-	if connect.CodeOf(err) != connect.CodeDataLoss || !errors.As(err, &connectErr) || connectErr.Message() != unpublishedSentence {
-		t.Fatalf("from 0: err = %v, want DataLoss %q", err, unpublishedSentence)
+	t.Cleanup(func() { _ = store.Close() })
+	archiver := engine.NewRunArchiver(store)
+	run := &orkstackv1.Run{Id: "ork-retired", Namespace: "default", OrkflowName: "hello", Status: orkstackv1.Status_STATUS_CANCELED,
+		Error: &orkstackv1.Error{Code: "RUN_TERMINATED"}, CreatedAt: timestamppb.Now(), FinishedAt: timestamppb.Now()}
+	if err := archiver.Archive(ctx, run, []*orkstackv1.Event{
+		{RunId: "ork-retired", Sequence: 1, Type: orkstackv1.EventType_EVENT_TYPE_RUN_CREATED},
+		{RunId: "ork-retired", Sequence: 2, Type: orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED},
+	}); err != nil {
+		t.Fatal(err)
 	}
-	if len(sent) != 0 {
-		t.Fatalf("from 0: sent %d events before the gap, want none: the gap is the start", len(sent))
+	// The cluster answers nothing for it: the fake holds no runs.
+	replica := api.NewService(api.Config{Reader: &fakeReader{runs: map[string]*orkstackv1.Run{}, events: map[string][]*orkstackv1.Event{}},
+		Archive: engine.NewRunArchiver(store)})
+	got, err := replica.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: "ork-retired"}))
+	if err != nil {
+		t.Fatalf("GetRun: %v", err)
 	}
-	sent, err = read(1)
-	if err != nil || len(sent) != 1 || sent[0].GetSequence() != 2 || sent[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
-		t.Fatalf("from 1: %v (%v), want RUN_FAILED at 2", sent, err)
+	if got.Msg.GetRun().GetStatus() != orkstackv1.Status_STATUS_CANCELED || got.Msg.GetRun().GetError().GetCode() != "RUN_TERMINATED" {
+		t.Fatalf("GetRun = %v", got.Msg.GetRun())
+	}
+	var sent []*orkstackv1.Event
+	if err := replica.StreamRunEvents(ctx, "ork-retired", "", 0, func(e *orkstackv1.Event) error {
+		sent = append(sent, e)
+		return nil
+	}); err != nil {
+		t.Fatalf("StreamRunEvents: %v", err)
+	}
+	if got := sequencesAndTypes(sent); got != "1:RUN_CREATED 2:RUN_CANCELED" {
+		t.Fatalf("stream = %s", got)
 	}
 }
 
 // TestUnpublishedEventsReason_NamesTheGapInEveryNotice: the engine and the
 // evidence bundle carry one reason for numbers a run never published, and
 // every notice the engine builds on it — the archive's error and a live
-// read's error — says never published, never lost from object storage. A
+// read's gap event — says never published, never lost from object storage. A
 // lost segment's notice keeps its own wording. The bundle's notice
 // (evidence.EventGap.Sentence) is held to the same by the evidence package's
 // TestEventGapSentence_NamesTheCause, which is where that sentence lives.
@@ -185,13 +245,13 @@ func TestUnpublishedEventsReason_NamesTheGapInEveryNotice(t *testing.T) {
 	}
 	lost := engine.EventGap{First: 1201, Last: 2400, Reason: "segment object missing"}
 	for _, tc := range []struct{ got, want string }{
+		{engine.StreamGapEvent("r", 1, 1, nil).GetMessage(),
+			"events 1–1 of this run were never published (the run's history holds no event under these numbers)"},
 		{(&engine.ArchivedEventsLostError{RunID: "r", Gaps: []engine.EventGap{unpublishedGap}}).Error(),
 			"events 1–1 of run r were never published (the run's history holds no event under these numbers)"},
 		{(&engine.ArchivedEventsLostError{RunID: "r", Gaps: []engine.EventGap{unpublishedGap, lost}}).Error(),
 			"events 1201–2400 (segment object missing) of run r were lost from object storage before the run was archived; " +
 				"events 1–1 of run r were never published (the run's history holds no event under these numbers)"},
-		{(&engine.UnpublishedEventsError{RunID: "r", Gaps: []engine.EventGap{unpublishedGap}}).Error(),
-			"events 1–1 of run r were never published (the run's history holds no event under these numbers)"},
 	} {
 		if tc.got != tc.want {
 			t.Errorf("notice = %q,\nwant     %q", tc.got, tc.want)
@@ -250,22 +310,21 @@ func TestEvidenceExport_AnUnpublishedStartIsSchemaTwo(t *testing.T) {
 }
 
 // TestWebSocketBridge_ClosesWithTheGapItReached: the bridge ends a socket
-// whose stream reached a gap with a close that says which events and why,
-// within a close frame's 123 bytes, never a bare "event stream failed": a
-// run that never published 1, read live from the start, and a run that lost
-// 1201–2400 from object storage, read from its archive.
+// whose stream reached a gap in an archived run with a close that says which
+// events and why, within a close frame's 123 bytes, never a bare "event stream
+// failed": a run that never published 1 and a run that lost 1201–2400 from
+// object storage, both read from their archives.
 func TestWebSocketBridge_ClosesWithTheGapItReached(t *testing.T) {
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	run := &orkstackv1.Run{Id: unpublishedRunID, Namespace: "default", OrkflowName: "broken",
-		Status: orkstackv1.Status_STATUS_FAILED, CreatedAt: timestamppb.Now(), FinishedAt: timestamppb.Now()}
-	live := api.NewService(api.Config{Reader: unpublishedReader{&fakeReader{
-		runs:   map[string]*orkstackv1.Run{unpublishedRunID: run},
-		events: map[string][]*orkstackv1.Event{unpublishedRunID: unpublishedRunEvents()},
-	}}, Archive: engine.NewRunArchiver(store)})
+	unpublished := engine.NewRunArchiver(store)
+	if err := unpublished.Archive(context.Background(), unpublishedRun(), unpublishedRunEvents(), unpublishedGap); err != nil {
+		t.Fatal(err)
+	}
+	neverPublished := api.NewService(api.Config{Archive: unpublished})
 	archived := api.NewService(api.Config{Archive: gappedArchive(t)})
 	for _, tc := range []struct {
 		name   string
@@ -274,7 +333,7 @@ func TestWebSocketBridge_ClosesWithTheGapItReached(t *testing.T) {
 		frames int
 		reason string
 	}{
-		{"never published, live", live, "/ws/runs/" + unpublishedRunID + "?from_sequence=0", 0,
+		{"never published, from the archive", neverPublished, "/ws/runs/" + unpublishedRunID + "?from_sequence=0", 0,
 			"events 1–1 of this run were never published; its outcome and other events are intact"},
 		{"lost, from the archive", archived, "/ws/runs/ork-gap?from_sequence=1000", 200,
 			"events 1201–2400 of this run were lost from object storage before the run was archived"},
@@ -307,92 +366,17 @@ func TestWebSocketBridge_ClosesWithTheGapItReached(t *testing.T) {
 	}
 }
 
-// terminalReader is the system of record answering whether a run published
-// its terminal event (engine.TemporalRunReader.PublishedTerminalEvent).
-type terminalReader struct {
-	*fakeReader
-	published bool
-	err       error
-}
-
-func (r terminalReader) PublishedTerminalEvent(context.Context, string) (bool, error) {
-	return r.published, r.err
-}
-
-// locateFailsAfterFirst is a router whose first Locate answers and every
-// later one fails: the export finds the run, and then cannot locate it again
-// to ask whether it published its terminal event.
-type locateFailsAfterFirst struct {
-	engine.NamespaceRouter
-	calls atomic.Int32
-}
-
-func (r *locateFailsAfterFirst) Locate(ctx context.Context, runID string) (engine.Binding, error) {
-	if r.calls.Add(1) > 1 {
-		return engine.Binding{}, errors.New("cluster unreachable")
-	}
-	return r.NamespaceRouter.Locate(ctx, runID)
-}
-
-// TestEvidenceExport_ARunNeverArchivedSaysSo: a finished run with no archive
-// body is "not yet archived; retry shortly" only while an archive can still
-// come. A run whose history shows it published no terminal event — its
-// ending's snapshot refused, or terminated — never gets one, and the export
-// says that instead of asking for a retry that cannot help. A run that did
-// publish it, a history that cannot be read and a run that cannot be located
-// again still answer retry; the last two are logged at warn with the run and
-// the error.
-func TestEvidenceExport_ARunNeverArchivedSaysSo(t *testing.T) {
-	const never = `run "ork-never" has no archive and will never have one: it published no terminal event`
-	const retry = `run "ork-never" is finished but not yet archived; retry shortly`
-	for _, tc := range []struct {
-		name      string
-		published bool
-		err       error
-		// locateFails is whether the run cannot be located a second time.
-		locateFails bool
-		want        string
-		// cause is the error the warn must carry, or "" for no warn at all.
-		cause string
-	}{
-		{"it published no terminal event", false, nil, false, never, ""},
-		{"it published its terminal event", true, nil, false, retry, ""},
-		{"its history cannot be read", false, errors.New("history unavailable"), false, retry, "history unavailable"},
-		{"it cannot be located again", false, nil, true, retry, "cluster unreachable"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var logs bytes.Buffer
-			f := newEvidenceFixture(t, withConfig(func(cfg *api.Config) {
-				cfg.Reader = terminalReader{cfg.Reader.(*fakeReader), tc.published, tc.err}
-				cfg.Logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
-				if tc.locateFails {
-					cfg.Router = &locateFailsAfterFirst{NamespaceRouter: engine.NewSingleRouter(engine.Binding{Reader: cfg.Reader})}
-				}
-			}))
-			f.reader.setRun(&orkstackv1.Run{Id: "ork-never", OrkflowName: "evidence", Status: orkstackv1.Status_STATUS_FAILED})
-			r := f.collectEvidence(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-never"})
-			if connect.CodeOf(r.err) != connect.CodeFailedPrecondition || !strings.Contains(r.err.Error(), tc.want) {
-				t.Fatalf("export = %v, want FailedPrecondition saying %q", r.err, tc.want)
-			}
-			if tc.want == never && strings.Contains(r.err.Error(), "retry") {
-				t.Fatalf("export = %v, want no retry for a run that is never archived", r.err)
-			}
-			// A cause the export could not read is a warning of its own, at
-			// WARN, naming the run and carrying the cause: the only trace of
-			// why the answer is "retry". The cause appears only where the
-			// failing call is made (the second locate, the history read), so
-			// finding it also shows that call was reached.
-			records := logRecords(t, logs.String())
-			if tc.cause == "" {
-				if len(records) != 0 {
-					t.Fatalf("export logged %v, want nothing at warn", records)
-				}
-				return
-			}
-			if len(records) != 1 || records[0]["level"] != "WARN" || records[0]["run_id"] != "ork-never" ||
-				!strings.Contains(fmt.Sprint(records[0]["error"]), tc.cause) {
-				t.Fatalf("export logged %v, want one WARN record for run ork-never whose error carries %q", records, tc.cause)
-			}
-		})
+// TestEvidenceExport_ARunNotYetArchivedAsksForARetry: a finished run with no
+// archive body will have one: its own terminal publish writes it, or the sweep
+// does from its history. Until then the export asks for a retry and says when
+// one can help.
+func TestEvidenceExport_ARunNotYetArchivedAsksForARetry(t *testing.T) {
+	f := newEvidenceFixture(t)
+	f.reader.setRun(&orkstackv1.Run{Id: "ork-pending", OrkflowName: "evidence", Status: orkstackv1.Status_STATUS_FAILED})
+	r := f.collectEvidence(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-pending"})
+	if connect.CodeOf(r.err) != connect.CodeFailedPrecondition ||
+		!strings.Contains(r.err.Error(), `run "ork-pending" is finished but not yet archived; retry shortly`) ||
+		!strings.Contains(r.err.Error(), "within the cleanup interval") {
+		t.Fatalf("export = %v, want FailedPrecondition asking for a retry", r.err)
 	}
 }

@@ -247,10 +247,10 @@ when its own commit write fails. Deleting any memo changes no result.
 Caching is the author's assertion that a task is safe to reuse; OrkStack
 cannot verify it.
 
-An accepted execution must not disappear. A durably committed activity result
-must not become pending again. Object-storage failures must not silently produce
-success. Every terminal failure must have a machine-readable reason and a
-human-readable explanation.
+An accepted execution must not disappear, with the one exception §15 states. A
+durably committed activity result must not become pending again. Object-storage
+failures must not silently produce success. Every terminal failure must have a
+machine-readable reason and a human-readable explanation.
 
 ## 5. Image resolution and Orker runtime boundary
 
@@ -1536,7 +1536,7 @@ internal/orker/        Orker runtime and OCI activity dispatch; the runtime file
 internal/task/         Temporal namespace, pool routing, and deployment identity
 internal/config/       Configuration file schema and loader
 internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation
-internal/archive/      Run retirement and the cluster retention controller
+internal/archive/      Run retirement, the archive sweep and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
@@ -1680,6 +1680,14 @@ Unless an accepted contract explicitly changes one, these are non-negotiable:
 - no Temporal workflow state exists exclusively inside an OrkStack process;
 - every terminal failure has machine-readable and human-readable reasons;
 - an engineer must never edit a database record to unstick an execution.
+
+The first has one stated exception (accepted 2026-11-04): a finished run with no
+archive is lost if object storage stays down until the cluster's delete time for
+that run, which is fixed when the run closes and cannot be postponed. While that
+risk stands, every pass of the archive sweep logs an error and reports a metric
+with the runs at risk and when the first of them expires; that is what the
+operator gets (`docs/DEPLOY.md`, "The archive sweep"). A run with an archive, and
+a run not yet finished, are outside it.
 
 The objective is not feature count. It is the smallest durable execution
 substrate engineers can trust with consequential production operations.

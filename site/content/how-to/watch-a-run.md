@@ -37,6 +37,8 @@ orkctl run get <run-id> --tree              # the child runs a composed task sta
 
 If the engine drops the stream, `run watch` picks up after the last event it printed, and says so on stderr.
 
+A `STREAM_GAP` line names event numbers the run used without publishing an event, because object storage refused that event's record. The run goes on, and `run watch` still reaches its end. Once a run is retired, the same read stops at the gap with an error naming the numbers; `--from-sequence` past them reads on.
+
 ## Read the task states
 
 Each task shows one of these states. A run is `Running`, `Succeeded`, `Failed` or `Canceled`.

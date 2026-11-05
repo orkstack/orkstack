@@ -238,8 +238,8 @@ func (h *StatsHandler) computeBreakdown(
 // task's attempt records — through a bounded worker pool, and returns one
 // fingerprint per run that had a body, in the index's own order.
 //
-// An index row with no body is the crash window between the archive's two
-// writes, and is skipped as RunArchiver.ListRuns skips it; the response shows
+// An index row with no body is an archive write that stopped short, and is
+// skipped as RunArchiver.ListRuns skips it; the response shows
 // it as failed_runs_scanned < failed_runs_in_window. Any OTHER error fails the
 // whole answer, naming the run: a census with a hole in it is not a census.
 func (h *StatsHandler) scanFailures(
