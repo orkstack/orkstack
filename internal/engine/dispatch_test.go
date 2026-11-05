@@ -41,7 +41,7 @@ func TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask(t *testing.T) {
 	// tag, because workflow code may not reach a registry and a run must
 	// execute what its definition pinned (§4.1).
 	wf.Tasks[0].Image = &orkstackv1.ImageRef{
-		Reference:   "ghcr.io/orkstack/activity-shell:0.1",
+		Reference:   "ghcr.io/orkstack/activity-shell:0.2",
 		Pinned:      "ghcr.io/orkstack/activity-shell@sha256:" + strings.Repeat("a", 64),
 		IndexDigest: "sha256:" + strings.Repeat("a", 64),
 	}

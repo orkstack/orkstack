@@ -600,7 +600,7 @@ then the variable it becomes.
 | `temporal.namespace` | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
 | `pool.name` | `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
 | `pool.queue` | `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
-| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.1` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
+| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.2` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
 | `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
 | `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one — across the whole deployment, not only on one host: it is also the Orker's address for `orkctl orker` (1–200 bytes of UTF-8, no whitespace or control characters; refused at boot otherwise) |
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
@@ -1941,8 +1941,8 @@ composition, `outputs:`, join policies, caching, schedules) needs the
 preparation in §3, "Releases that add Orkflow constructs" — for join policies
 it is a hold, because the silent outcome is destructive.
 
-**Rolling back below 0.1.1, the release that moved to the Temporal Go SDK
-1.50**, is one-way for the runs it executed. From 0.1.1 the engine records a
+**Rolling back below 0.2.0, the release that moved to the Temporal Go SDK
+1.50**, is one-way for the runs it executed. From 0.2.0 the engine records a
 marker in a run's history (the SDK's flag 9, ordered child cancellation) the
 first time one cancellation reaches more than one of the run's open scopes,
 so that they are canceled in the order they were opened. That happens on an
@@ -1950,18 +1950,18 @@ operator's cancel of a run that declares a failure handler, and on a run that
 fails or is canceled while two or more of its awaits or pins are open. An
 older engine does not know the marker. Handed such a history, it fails the
 run's workflow task on every attempt (`unknown SDK flag: 9` in its log), and
-the run stays `RUNNING`, making no progress, until an engine of 0.1.1 or
+the run stays `RUNNING`, making no progress, until an engine of 0.2.0 or
 later picks it up again. Nothing is lost, but nothing moves. On an unversioned
 fleet any engine may execute a run's next workflow task, so a run that started
 on the older release can record the marker too. So:
 
 - with versioning on, roll back as above: a run stays on the build that
-  started it, so 0.1.1's runs finish on 0.1.1, whose processes keep running
+  started it, so 0.2.0's runs finish on 0.2.0, whose processes keep running
   until `orkctl release wait` reports it drained;
-- with versioning off, roll back below 0.1.1 only when no run is open. Any
-  run that was open while a 0.1.1 engine ran may carry the marker, whenever
+- with versioning off, roll back below 0.2.0 only when no run is open. Any
+  run that was open while a 0.2.0 engine ran may carry the marker, whenever
   it was created, so the check counts every open run, not only those created
-  since 0.1.1. For each namespace that takes runs:
+  since 0.2.0. For each namespace that takes runs:
   1. hold it: `orkctl namespace update NS --hold "rolling back"`;
   2. wait until
      `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run.
@@ -1971,9 +1971,9 @@ on the older release can record the marker too. So:
      wait;
   3. once every namespace is empty, replace the engines, then release each
      hold: `orkctl namespace update NS --release-hold`;
-- an unversioned fleet that mixes older and 0.1.1 engines meets the same
+- an unversioned fleet that mixes older and 0.2.0 engines meets the same
   failure whenever an older engine picks up such a run, so replace every
-  engine replica together when rolling forward to 0.1.1.
+  engine replica together when rolling forward to 0.2.0.
 
 **A release that lets runs carry on into a fresh history** ships after the
 release that reads them (below), and the default turns on only in a release
@@ -2362,7 +2362,7 @@ follow from the daemon reading paths on the host:
 
 **The activity catalog.** A release's `ork` resolves `uses: shell` and the
 other first-party names by the tag of its release line, for example
-`ghcr.io/orkstack/activity-shell:0.1` for every 0.1 release; that tag moves to
+`ghcr.io/orkstack/activity-shell:0.2` for every 0.2 release; that tag moves to
 each patch release of the line. To pin the exact release instead, set
 `ORK_ACTIVITY_CATALOG` to the images by tag and digest. (The quickstart's
 catalog names the activities it built and pushed to its own registry, by tag;
@@ -3169,7 +3169,7 @@ waits for a free pin slot beside other namespaces' requests. A run that
 carries on into a new history keeps its key and weight, and a composed
 task's child run takes its parent's. A pin's request carries the key only
 through the engine's own run worker (`ork` builds it so), and only in a run
-submitted from v0.1.1 on: the submit marks it in the run, and a run submitted
+submitted from v0.2.0 on: the submit marks it in the run, and a run submitted
 before opens every pin unkeyed to its end, whatever release carries it on.
 
 It is Temporal's own task-queue fairness, never an OrkStack queue, and it takes
@@ -4140,7 +4140,7 @@ version it was answered with the recorded marker. The fixtures
 negative tests.
 
 **A pin's fairness key is a versioned change.** A run whose plan's fairness
-selection says `pin_requests` (set at submit since v0.1.1) asks the
+selection says `pin_requests` (set at submit since v0.2.0) asks the
 `fairness-pin-creation` version once, where its first pin opens, and every pin
 request it then makes carries the plan's key and weight; a run that opens no
 pin, or whose plan carries no such selection — every run submitted before —
@@ -4175,7 +4175,7 @@ coefficient that is not a number is different: the cluster accepts it (the
 same test sends one), so a run may already have scheduled it. It reads as the
 default 2.0 only on the gate's new path, in a run whose plan carries the
 number, and the run asks the gate where it first schedules such a task if it
-has not already; a run submitted before v0.1.1, and a history recorded before
+has not already; a run submitted before v0.2.0, and a history recorded before
 the gate, keep sending the NaN as every earlier build did, so its spacing never
 changes partway through a run. A build that
 predates the field ignores the plan's

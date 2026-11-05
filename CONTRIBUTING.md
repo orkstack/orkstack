@@ -353,19 +353,23 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 CHANGELOG.md follows Keep a Changelog 1.1.0 and is written for the people
 who run or use OrkStack. A change that cannot affect them gets no entry,
 however large: documentation edits; CI, workflows and the proof harness,
-unless the change alters what a release publishes; tests; refactors; internal
-tooling, such as the development stack (`make up`); and a dependency bump
-that cannot affect them. A change that may affect them (behaviour, the DSL,
+unless the change alters what a release publishes; tests; refactors; a
+cosmetic change to the UI; internal tooling, such as the development stack
+(`make up`); and a dependency bump that cannot affect them. A change that may
+affect them (behaviour, the DSL,
 the CLI, the API and its error reasons, configuration, the activity contract,
 storage layout, what a release publishes and any security fix to it, a
 vulnerable dependency's bump among them even when they see nothing change, a
 dependency bump that changes what they see, a deprecation, a breaking change)
 adds an entry under `## [Unreleased]` in the same pull request, in the
 subsection of its kind (`### Added`, `### Changed`, `### Deprecated`,
-`### Removed`, `### Fixed` or `### Security`); the entry says what they must
-do about it, if anything, and a breaking change's entry is marked **BREAKING**
-(AGENTS.md §11.1, step 7). Write it for the people who read the release: at a
-release the `[Unreleased]` section becomes the version's own,
+`### Removed`, `### Fixed` or `### Security`). An entry is always in one
+format: a sentence or two on what changed and what they must do about it, if
+anything; an absolute link to the doc, where one holds more detail; and, once
+changes land through pull requests, a link to its pull request. A breaking
+change's entry is marked **BREAKING** (AGENTS.md §11.1, step 7). Write it for
+the people who read the release: at a release the `[Unreleased]` section becomes
+the version's own,
 `## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
 section's text is the GitHub release's notes, word for word, above a footer
 the release adds with each image's digest. Link to a document by its absolute
