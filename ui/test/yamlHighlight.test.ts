@@ -45,6 +45,7 @@ test('the segments are the text, byte for byte, for every shipped example', () =
 	const repo = `${import.meta.dir}/../..`;
 	const files = [
 		...readdirSync(`${repo}/examples`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `examples/${f}`),
+		...readdirSync(`${repo}/internal/dsl/testdata/orkflows`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `internal/dsl/testdata/orkflows/${f}`),
 		...readdirSync(`${repo}/examples/automation`).filter((f) => f.endsWith('.ork.yaml')).map((f) => `examples/automation/${f}`)
 	];
 	expect(files.length > 20).toBe(true);
