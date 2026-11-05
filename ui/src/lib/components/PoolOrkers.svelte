@@ -294,9 +294,13 @@
 		color: var(--ink-3);
 		overflow-wrap: anywhere;
 	}
-	/* A long status sentence must not squeeze the id into a sliver. */
+	/* A long status sentence must not squeeze the id into a sliver, and the
+	   headers give it the room, so every row's actions stay in the frame. */
 	.orkers :global(tbody th) {
 		min-width: 8.5rem;
+	}
+	.orkers :global(thead th) {
+		white-space: normal;
 	}
 	.ork-actions {
 		white-space: nowrap;
