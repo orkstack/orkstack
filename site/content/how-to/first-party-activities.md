@@ -70,7 +70,7 @@ Each image writes `values.json`. A later task reads a key with `{{ .tasks.<id>.o
 
 ## Pass files between tasks
 
-An artifact is a file. Give it a name with `as:`, where the image accepts one. A later task reads it with `{{ artifact "<task>/<name>" }}` in `with:`, as `transform` does above.
+An artifact is a file. Give it a name where the image accepts one: `as:`, or `captureBodyAs:` on `http`. A later task reads it with `{{ artifact "<task>/<name>" }}` in `with:`, as `archive` does above.
 
 ## Use a private repository
 
