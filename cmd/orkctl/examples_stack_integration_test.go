@@ -661,10 +661,10 @@ func requireOnlyGitAccessAdded(t *testing.T, shipped, variant []byte) {
 }
 
 // examplesRegistryPrefix is the registry prefix the shipped custom-image
-// example names.
+// recipe names.
 const examplesRegistryPrefix = "localhost:5001/orkstack-examples/"
 
-// withRegistry points the custom-image example at the suite's registry when
+// withRegistry points the custom-image recipe at the suite's registry when
 // it is not localhost:5001; undoing the substitution must give back the
 // shipped bytes.
 func withRegistry(t *testing.T, src []byte, registry string) []byte {
@@ -759,11 +759,15 @@ func ensureExampleImages(ctx context.Context, t *testing.T, orkctlPath, root str
 	return exampleImagesRefs
 }
 
-// customImageDocument is examples/custom-image.ork.yaml, pointed at the
-// suite's registry when it is not the shipped one.
+// customImageRecipe is the shipped Orkflow that is not an example of the
+// gallery: it runs images a reader builds, so it lives beside their build.
+const customImageRecipe = "examples/custom-image/custom-image.ork.yaml"
+
+// customImageDocument is the custom-image recipe, pointed at the suite's
+// registry when it is not the shipped one.
 func customImageDocument(t *testing.T, root string) []byte {
 	t.Helper()
-	src, err := os.ReadFile(filepath.Join(root, "examples", "custom-image.ork.yaml"))
+	src, err := os.ReadFile(filepath.Join(root, customImageRecipe))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -132,9 +132,9 @@ signs each image with a throwaway key, by the cosign image and flags the
 release signs with (`deploy/cosign-image.txt`), and runs an Orkflow in a
 namespace that requires that key, so OrkStack's own verifier accepts what a
 release signs.
-`make examples-smoke` runs the same Quickstart, then every shipped example with
-no inputs on that stack; it reaches `httpbin.org` and `github.com`, so it runs as
-a nightly job of its own.
+`make examples-smoke` runs what `make quickstart-smoke` runs, then every shipped
+example with no inputs on that stack; it reaches `httpbin.org` and `github.com`,
+so it runs as a nightly job of its own.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
 runs both before it publishes anything, and `nightly.yml` runs the quickstart

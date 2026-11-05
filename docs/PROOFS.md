@@ -2284,9 +2284,9 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   re-running the failed jobs, kept that tag and published everything. The
   one-approval job graph, `artifacts` and its release smoke, the `nightly`
   job and its wait, and the tag made through the API have therefore all run
-  there. `nightly.yml` has six jobs, `nightly`, `vuln`, `vuln-js`,
-  `vuln-images`, `quickstart` and `flakes`; `vuln-js` and `vuln-images` have
-  not run on GitHub yet, and the other four have, as has `proof.yml` as a
+  there. `nightly.yml` has seven jobs, `nightly`, `vuln`, `vuln-js`,
+  `vuln-images`, `quickstart`, `examples` and `flakes`; `vuln-js`, `vuln-images`
+  and `examples` have not run on GitHub yet, and the other four have, as has `proof.yml` as a
   reusable workflow through them (`workflow_call`; the flakes job passed in
   run 40555387388); `quickstart` passed in nightly 41080705584 in 2 min 11 s,
   under the 40 minutes its job allows (5 minutes cold on the 16-CPU reference host). The

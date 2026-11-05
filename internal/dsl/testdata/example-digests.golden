@@ -8,4 +8,4 @@ inputs-and-escaping.ork.yaml sha256:743cea7728635efb91d779f8fa8252d01df5b4ee12f6
 notify-block.ork.yaml sha256:fc9efd609d6e0576ecea876c1fe71900a16afc6ffee97bad23b6bb49ed412bb3 0.2.0
 order-saga.ork.yaml sha256:000eead38671c158ef1a23fbd92adca3d49b0110abe5975a9b52b482010f743d 0.2.0
 pinned-checkout.ork.yaml sha256:ab37d80ff27ffaf40a23ce0ad5766b66ea22fc606f1e74af38da9afa2ed03a49 0.2.0
-poll-until-ready.ork.yaml sha256:8d609d413b0bba30585043e30d3b1d0feadd70bc962fb47ae9e8b9d2553d67ed 0.2.0
+poll-until-ready.ork.yaml sha256:4d72b92b609d8c05bbc665276cf880417b8bfc458db8d512372135ae84ca4214 0.2.0

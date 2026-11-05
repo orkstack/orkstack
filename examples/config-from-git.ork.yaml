@@ -30,7 +30,10 @@
 #             activity as written.
 #   prepare   computes every service's values ONCE, formatted as strings,
 #             before the fan-out — not once per item.
-#   render    one template rendering per service (each:), cached per item.
+#   render    one template rendering per service (each:), cached per item. Its
+#             template reads README with file.Read, which is safe to cache only
+#             because that file is a declared input of the task, by `artifact`,
+#             so its digest is in the key.
 #   manifest  gathers the items' values into one list.
 #
 # A private repository needs a token: to both git tasks add `tokenSecret:

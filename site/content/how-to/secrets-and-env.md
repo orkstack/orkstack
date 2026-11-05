@@ -22,7 +22,7 @@ Give a task a secret as a file under `/orkstack/input/secrets/`, and plain setti
       tokenSecret: git-token
 ```
 
-Set `GIT_TOKEN` in the environment of every Orker that runs `resolve`. Do not put it in the Orkflow. Then apply your copy and run it against your repository, naming the branch and a file it holds:
+Set `GIT_TOKEN` in the environment of every Orker that runs `resolve`. Do not put it in the Orkflow. Then give your copy a `version:` of its own, because a store refuses different bytes under one it holds, apply it, and run it against your repository, naming the branch and a file it holds:
 
 ```bash
 orkctl apply config-from-git.ork.yaml

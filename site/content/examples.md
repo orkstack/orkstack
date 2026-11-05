@@ -19,7 +19,6 @@ Tasks reach the internet, not your stack, so an example that talks to a service 
 |---|---|---|
 | [approval-gate](/docs/examples/approval-gate/) | an approval only when a change is risky; apply, decline, or report a rejection | `notify-block` applied first; internet access to `httpbin.org` |
 | [config-from-git](/docs/examples/config-from-git/) | resolve a branch to a commit, render one config per service, cached while the commit holds | internet access to `github.com` |
-| [custom-image](/docs/examples/custom-image/) | two images of your own, Go and POSIX shell, as durable activities | your own images, built and pushed |
 | [decide-and-route](/docs/examples/decide-and-route/) | decide in a json task, branch three ways, re-join | nothing |
 | [each-fan-out](/docs/examples/each-fan-out/) | a fan-out over a list a json task computes | nothing |
 | [http-post](/docs/examples/http-post/) | a POST whose JSON body is a YAML mapping, and a condition on its status | internet access to `httpbin.org` |
@@ -67,9 +66,9 @@ orkctl schedule fire poll-exports
 
 See [Automation documents](/docs/operate/automation/) for how to apply one.
 
-## The custom images
+## Your own images
 
-[`custom-image`](/docs/examples/custom-image/) uses two activity images built from this repository: one in Go, and one in POSIX shell. Nothing publishes them. Build and push them first, as [Build an activity image](/docs/activities/build-an-image/) shows.
+An Orkflow that runs images you build asks more of you than the examples here, so it is a recipe and not one of them. [`examples/custom-image/custom-image.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/custom-image/custom-image.ork.yaml) runs two activity images built from this repository: one in Go, and one in POSIX shell. Nothing publishes them. [Build an activity image](/docs/activities/build-an-image/) gives the steps.
 
 The shell image's folder is [`examples/custom-image-shell/`](https://github.com/orkstack/orkstack/tree/main/examples/custom-image-shell). The Go image is in [`examples/custom-image/`](https://github.com/orkstack/orkstack/tree/main/examples/custom-image).
 

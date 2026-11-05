@@ -177,7 +177,15 @@ for (const page of pages.filter((p) => p.examples)) {
 			const required = Object.entries(inputs)
 				.filter(([, spec]) => spec && spec.required === true && spec.default === undefined)
 				.map(([k]) => k);
-			found.push({ rel, id, route: `${page.examples}/${id}`, title: rel.replace(/^examples\//, '').replace(/\.ork\.yaml$/, ''), description, kind, name: doc.get('name'), required });
+			// A block it composes: its page's commands must store that first.
+			const composes = [
+				...new Set(
+					(doc.toJS().tasks ?? [])
+						.map((task) => /^orkflow:([a-z0-9-]+)@/.exec(task.uses ?? '')?.[1])
+						.filter(Boolean),
+				),
+			];
+			found.push({ rel, id, route: `${page.examples}/${id}`, title: rel.replace(/^examples\//, '').replace(/\.ork\.yaml$/, ''), description, kind, name: doc.get('name'), required, composes });
 		}
 	}
 	const featured = page.featuredExamples ?? [];
@@ -731,6 +739,7 @@ for (const ex of exampleFiles) {
 			? [`This is an automation document: [Automation documents](${url('docs/operate/automation')}) shows how to plan and apply it.`]
 			: [
 					'```bash',
+					...ex.composes.map((block) => `orkctl apply examples/${block}.ork.yaml`),
 					`orkctl apply ${ex.rel}`,
 					`orkctl run submit ${ex.name}${inputFlags} --watch`,
 					'```',

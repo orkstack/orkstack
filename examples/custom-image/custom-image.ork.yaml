@@ -6,16 +6,23 @@
 #
 # Pattern: docs/ORKFLOW_PATTERNS.md, "When to write your own image"
 #
-# BUILD AND PUSH THE IMAGES FIRST. They are published nowhere, and a locally
-# built image that was never pushed has no registry digest to pin. On the
-# quickstart, whose registry is 127.0.0.1:5002, with an orkctl on your own
-# machine (its own image has no Docker to build with):
-#   orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev
-#   orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
-# Each prints the pinned reference (…@sha256:…) to paste over the tag below,
-# which names the registry of `make up`, at localhost:5001. A deployment whose
-# image policy sets require_digest refuses the tags; one with allowed_registries
-# must list the registry they name.
+# THIS IS A RECIPE, not an example of the gallery: it runs images you build, so
+# it asks these steps of you. They are published nowhere, and a locally built
+# image that was never pushed has no registry digest to pin.
+#
+#   1. Build and push both, with an orkctl on your own machine: the quickstart's
+#      orkctl image has no Docker to build with. 127.0.0.1:5002 is the
+#      quickstart's registry; `make up`'s is at localhost:5001.
+#        orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev
+#        orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
+#   2. Each prints the pinned reference (…@sha256:…). Paste each one over its tag
+#      below, which names `make up`'s registry.
+#   3. Apply it and run it:
+#        orkctl apply examples/custom-image/custom-image.ork.yaml
+#        orkctl run submit custom-image --watch
+#
+# A deployment whose image policy sets require_digest refuses tags; one with
+# allowed_registries must list the registry they name.
 #
 #   probe         the whole ABI with no `with:`: read task.json, write
 #                 values.json, exit 0.

@@ -79,6 +79,20 @@ func orkflowExamples(t *testing.T) []string {
 	return paths
 }
 
+// customImageRecipe is the one shipped Orkflow that is not an example of the
+// gallery: it runs images a reader builds, so it lives beside their build, and
+// the rules about what an example asks of a reader do not hold it.
+const customImageRecipe = "../../examples/custom-image/custom-image.ork.yaml"
+
+// shippedOrkflows is every Orkflow a reader is pointed at, sorted by file name:
+// the gallery's and the recipe.
+func shippedOrkflows(t *testing.T) []string {
+	t.Helper()
+	paths := append(orkflowExamples(t), customImageRecipe)
+	sort.Slice(paths, func(i, j int) bool { return filepath.Base(paths[i]) < filepath.Base(paths[j]) })
+	return paths
+}
+
 // orkflowFixtures are the Orkflows only this repository's tests read
 // (testdata/orkflows/). No reader is pointed at them, so the rules about an
 // example's header, index, network and cache do not hold them; the rules about
@@ -96,7 +110,7 @@ func orkflowFixtures(t *testing.T) []string {
 // examplesAndFixtures is every Orkflow this repository keeps.
 func examplesAndFixtures(t *testing.T) []string {
 	t.Helper()
-	return append(orkflowExamples(t), orkflowFixtures(t)...)
+	return append(shippedOrkflows(t), orkflowFixtures(t)...)
 }
 
 func automationExamples(t *testing.T) []string {
@@ -257,7 +271,7 @@ func TestExamples_HeadersFollowTheConvention(t *testing.T) {
 			t.Errorf("a condition, join or await, and no plan line")
 		}
 	}
-	for _, path := range orkflowExamples(t) {
+	for _, path := range shippedOrkflows(t) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			wf, err := dsl.CompileFile(path)
 			if err != nil {
@@ -409,17 +423,16 @@ func TestExamples_AreIndexed(t *testing.T) {
 	}
 }
 
-// A shipped example asks nothing of a reader: they apply it, submit it with no
-// inputs, and see its stated result (examples/README.md, "What these are").
-// These are the only exceptions, and each one's header and both examples tables
-// state what it asks.
+// An example of the gallery asks nothing of a reader: they apply it, submit it
+// with no inputs, and see its stated result (examples/README.md, "What these
+// are"). composesFirst is the only exception among them, and each one's header
+// and both examples tables state what it asks. customImageRecipe is the other
+// stated exception, and it is not in the gallery at all.
 var (
 	// composesFirst names each example that composes a block a reader must
 	// store first, and that block.
 	composesFirst = map[string]string{"approval-gate": "notify-block", "order-saga": "notify-block"}
-	// needsOwnImages names each example that runs images a reader builds.
-	needsOwnImages = map[string]bool{"custom-image": true}
-	// defaultHosts are the only hosts an example's input defaults may name.
+	// defaultHosts are the only hosts an example may name.
 	defaultHosts = map[string]bool{"httpbin.org": true, "github.com": true}
 )
 
@@ -451,9 +464,6 @@ func exampleURLs(t *testing.T, value *structpb.Value, into map[string]bool) {
 // exampleNeeds is what a reader needs for a compiled example, in the words both
 // examples tables use.
 func exampleNeeds(name string, hosts map[string]bool) string {
-	if needsOwnImages[name] {
-		return "your own images, built and pushed"
-	}
 	var needs []string
 	if block, ok := composesFirst[name]; ok {
 		needs = append(needs, fmt.Sprintf("`%s` applied first", block))
@@ -490,10 +500,10 @@ func needsColumn(t *testing.T, path string) map[string]string {
 	return cells
 }
 
-// TestExamples_AskNothingOfAReader is the guard on that rule: it refuses a
-// required input with no default, a secret, a default endpoint only a reader
-// could supply, a person on the default path, and any exception that is not
-// named above or not stated where a reader looks.
+// TestExamples_AskNothingOfAReader is the guard on that rule: it refuses an
+// input with no default, a secret, an endpoint only a reader could supply, a
+// person on the default path, an image a reader must build, and any exception
+// that is not named above or not stated where a reader looks.
 func TestExamples_AskNothingOfAReader(t *testing.T) {
 	const sitePath = "../../site/content/examples.md"
 	readmeNeeds, siteNeeds := needsColumn(t, readmePath), needsColumn(t, sitePath)
@@ -505,7 +515,7 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	composing, ownImages, pinned := map[string]string{}, map[string]bool{}, false
+	composing, pinned := map[string]string{}, false
 	for _, path := range orkflowExamples(t) {
 		file := filepath.Base(path)
 		wf, err := dsl.CompileFile(path)
@@ -517,21 +527,16 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 		hosts := map[string]bool{}
 		for input, decl := range wf.GetInputs().GetFields() {
 			read := dsl.ReadInput(decl)
-			if read.Required {
-				t.Errorf("%s: input %s is required and has no default", file, input)
+			if read.Default == nil {
+				t.Errorf("%s: input %s has no default, so a run with no inputs cannot render it", file, input)
+				continue
 			}
-			if read.Default != nil {
-				exampleURLs(t, read.Default, hosts)
-			}
-		}
-		for host := range hosts {
-			if !defaultHosts[host] {
-				t.Errorf("%s: an input defaults to a URL on %s, which is not one of the hosts a reader can count on", file, host)
-			}
+			exampleURLs(t, read.Default, hosts)
 		}
 
 		for _, task := range wf.GetTasks() {
 			id := task.GetId()
+			exampleURLs(t, structpb.NewStructValue(task.GetWith()), hosts)
 			if len(task.GetSecrets()) > 0 {
 				t.Errorf("%s: task %s mounts a secret, which a reader would have to supply", file, id)
 			}
@@ -546,7 +551,12 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 				continue
 			}
 			if strings.ContainsAny(task.GetUses(), "/:") {
-				ownImages[name] = true
+				t.Errorf("%s: task %s names the image %s, which a reader would have to build; that is a recipe, beside its build", file, id, task.GetUses())
+			}
+		}
+		for host := range hosts {
+			if !defaultHosts[host] {
+				t.Errorf("%s: it names a URL on %s, which is not one of the hosts a reader can count on", file, host)
 			}
 		}
 
@@ -585,8 +595,39 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 	if !reflect.DeepEqual(composing, composesFirst) {
 		t.Errorf("the examples that compose a block are %v, want exactly the named exceptions %v", composing, composesFirst)
 	}
-	if !reflect.DeepEqual(ownImages, needsOwnImages) {
-		t.Errorf("the examples that name an image are %v, want exactly the named exceptions %v", ownImages, needsOwnImages)
+
+	// The recipe states its steps in its own header, and the docs that teach
+	// building an image link it, because the gallery no longer shows it.
+	recipe, err := os.ReadFile(customImageRecipe)
+	if err != nil {
+		t.Fatalf("the custom-image recipe: %v", err)
+	}
+	for _, step := range []string{
+		"THIS IS A RECIPE",
+		"an orkctl on your own machine",
+		"orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev",
+		"orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev",
+		"orkctl apply examples/custom-image/custom-image.ork.yaml",
+	} {
+		if !bytes.Contains(recipe, []byte(step)) {
+			t.Errorf("the custom-image recipe's header does not state %q", step)
+		}
+	}
+	for _, doc := range []string{
+		readmePath, guidePath, sitePath,
+		"../../docs/ACTIVITY_IMAGES.md",
+		"../../examples/custom-image/README.md",
+		"../../examples/custom-image-shell/README.md",
+		"../../site/content/how-to/build-an-activity-image.md",
+		"../../site/content/tutorials/first-activity.md",
+	} {
+		raw, err := os.ReadFile(doc)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(raw, []byte("custom-image/custom-image.ork.yaml")) {
+			t.Errorf("%s teaches building an image and does not link the recipe", doc)
+		}
 	}
 
 	// A pinned example runs on the quickstart and on `make up` only because
@@ -610,7 +651,7 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 
 func TestExamples_ComputeTasksDeclareNoNetwork(t *testing.T) {
 	compute := map[string]bool{"json": true, "template": true, "file": true}
-	for _, path := range orkflowExamples(t) {
+	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -625,7 +666,7 @@ func TestExamples_ComputeTasksDeclareNoNetwork(t *testing.T) {
 
 func TestExamples_CachedTasksSetATTLAndMountNoSecret(t *testing.T) {
 	cached := 0
-	for _, path := range orkflowExamples(t) {
+	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatal(err)
@@ -652,7 +693,7 @@ func TestExamples_CachedTasksSetATTLAndMountNoSecret(t *testing.T) {
 // example file, the examples index, the image READMEs and the guide.
 func userFacingDocs(t *testing.T) []string {
 	t.Helper()
-	docs := append(orkflowExamples(t), automationExamples(t)...)
+	docs := append(shippedOrkflows(t), automationExamples(t)...)
 	docs = append(docs, readmePath, guidePath)
 	for _, d := range imageDirs(t) {
 		docs = append(docs, filepath.Join(d, "README.md"))
@@ -894,7 +935,7 @@ func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 func TestExamples_KeepTheirDefinitionDigests(t *testing.T) {
 	const golden = "testdata/example-digests.golden"
 	var got strings.Builder
-	for _, path := range orkflowExamples(t) {
+	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatalf("%s: %v", path, err)

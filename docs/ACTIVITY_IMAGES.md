@@ -9,8 +9,10 @@ an activity, build an image that reads `/orkstack/input`, writes
 `/orkstack/output`, logs to stdout/stderr, and exits normally — following the
 Dockerfile and entry-script rules of the contract's §10.1.
 `examples/custom-image` and `examples/custom-image-shell` are two such images,
-in Go and in POSIX shell; `docs/ORKFLOW_PATTERNS.md`, "When to write your own
-image", says when to write one.
+in Go and in POSIX shell, and
+[`examples/custom-image/custom-image.ork.yaml`](../examples/custom-image/custom-image.ork.yaml)
+is the recipe that builds and runs them; `docs/ORKFLOW_PATTERNS.md`, "When to
+write your own image", says when to write one.
 
 This page documents the conventions the first-party reference images share:
 the `op` selector, the interface label, `env:` handling, and when caching

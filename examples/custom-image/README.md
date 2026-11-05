@@ -120,7 +120,8 @@ orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-exampl
 ```
 
 The command prints the pinned reference (`…@sha256:…`); paste it over the tag
-in `examples/custom-image.ork.yaml`. A tag is resolved to a digest at apply
+in the recipe beside this file, [`custom-image.ork.yaml`](custom-image.ork.yaml),
+whose header gives every step (`examples/custom-image/custom-image.ork.yaml`). A tag is resolved to a digest at apply
 anyway, but writing the digest makes the document say the same thing
 tomorrow. A locally built image that was never pushed has no registry digest,
 and apply refuses it.
@@ -138,7 +139,7 @@ one of its keys.
 Run one task locally, without a run, against a supplied upstream:
 
 ```sh
-orkctl task run --file examples/custom-image.ork.yaml --task report --output probe='{"idempotencyKey":"x","attempt":1,"taskId":"probe","argv":[]}'
+orkctl task run --file examples/custom-image/custom-image.ork.yaml --task report --output probe='{"idempotencyKey":"x","attempt":1,"taskId":"probe","argv":[]}'
 ```
 
 `orkctl activity test` drives an image through the first-party `op: exec`

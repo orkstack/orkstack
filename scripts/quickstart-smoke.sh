@@ -322,7 +322,9 @@ if [ -n "$EXAMPLES" ]; then
 		log="$WORK/example-$name.log"
 		# --watch exits non-zero for a failed run, which one of these means to be.
 		orkctl run submit "$name" "$@" --watch >"$log" 2>&1 || true
-		run="$(grep -oE '^Submitted run ork-[0-9]+-[0-9]+' "$log" | head -1 | cut -d' ' -f3)"
+		# A refused submit prints no run id, which grep must not turn into a
+		# silent exit before the log below is shown.
+		run="$({ grep -oE '^Submitted run ork-[0-9]+-[0-9]+' "$log" || true; } | head -1 | cut -d' ' -f3)"
 		[ -n "$run" ] || { cat "$log" >&2; fail "$name: no run id"; }
 		orkctl --json run get "$run" >"$WORK/example-$name.json" || fail "$name: run get $run"
 		python3 - "$WORK/example-$name.json" "$want" "$tasks" <<'PY' || { tail -40 "$log" >&2; fail "$name: run $run"; }
@@ -365,10 +367,6 @@ PY
 	S=SUCCEEDED
 	for file in "$STACK"/examples/*.ork.yaml; do
 		name="$(basename "$file" .ork.yaml)"
-		if [ "$name" = custom-image ]; then
-			say "  custom-image: not run, a reader builds its images first"
-			continue
-		fi
 		[ "$name" = notify-block ] || apply_example "$name"
 		case "$name" in
 		approval-gate) check_example "$name" "$S" "assess=$S approval=SKIPPED apply=$S announce=$S tell-requester=SKIPPED" ;;

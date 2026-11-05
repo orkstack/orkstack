@@ -5,8 +5,10 @@
 Every Orkflow here runs as it stands: apply it, submit it with no inputs, and it
 reaches the result its comment header states. There is no input to find out, no
 secret to supply and no service to stand up. The table's *Needs* column lists
-what each one does need. Three are exceptions: `order-saga` and `approval-gate`
-compose a block you store first, and `custom-image` runs images you build first.
+what each one does need. Two ask one thing more: `order-saga` and `approval-gate`
+compose a block you store first. The one Orkflow that runs images you build is a
+recipe beside their build, [`custom-image/custom-image.ork.yaml`](custom-image/custom-image.ork.yaml),
+and not one of these.
 
 Each is a runnable reference document: the test suite compiles each one, runs
 every `orkctl run plan --file` line in its comment header as a CI check, and runs
@@ -23,7 +25,8 @@ header"). On 2026-10-27 every example's YAML was rewritten in block style,
 one `- item` or `key: value` per line, and no definition changed: each
 compiles to the digest it had. A store that applied an example before then
 refuses the new file under the same version, so apply it to a fresh store
-or under another version.
+or under another version. An example changed since then has a new version, and
+applies beside the one a store already holds.
 
 ## Running them
 
@@ -59,7 +62,6 @@ keeps polling until its retries run out.
 |---|---|---|---|
 | [approval-gate](approval-gate.ork.yaml) | an approval only when a change is risky; apply, decline, or report a rejection | `json`, `shell`, an awaited task, `notify-block` | `notify-block` applied first; internet access to `httpbin.org` |
 | [config-from-git](config-from-git.ork.yaml) | resolve a branch to a commit, render one config per service, cached while the commit holds | `git`, `file`, `shell`, `json`, `template` | internet access to `github.com` |
-| [custom-image](custom-image.ork.yaml) | two images of your own, Go and POSIX shell, as durable activities | your own images, `json`, `file` | your own images, built and pushed |
 | [decide-and-route](decide-and-route.ork.yaml) | decide in a json task, branch three ways, re-join | `json`, `shell` | nothing |
 | [each-fan-out](each-fan-out.ork.yaml) | a fan-out over a list a json task computes | `json`, `shell` | nothing |
 | [http-post](http-post.ork.yaml) | a POST whose JSON body is a YAML mapping, and a condition on its status | `http`, `file`, `shell` | internet access to `httpbin.org` |
@@ -69,7 +71,7 @@ keeps polling until its retries run out.
 | [pinned-checkout](pinned-checkout.ork.yaml) | a git checkout into a pin, validated and packaged in place | `git`, `shell`, `json`, `file` | internet access to `github.com` |
 | [poll-until-ready](poll-until-ready.ork.yaml) | polling through a retry policy, with no loop | `shell`, `http`, `json` | internet access to `httpbin.org` |
 | [automation/examples.ork.yaml](automation/examples.ork.yaml) | the namespace's settings, a schedule and a trigger, declared | an automation document | the recipe below |
-| [custom-image/](custom-image/) | an activity image in Go, `FROM scratch` | — | Docker, to build it |
+| [custom-image/](custom-image/) | an activity image in Go, `FROM scratch`, and the recipe that runs it with its shell twin | the recipe, your own images, `json`, `file` | Docker, to build it; the recipe below |
 | [custom-image-shell/](custom-image-shell/) | the same activity in POSIX shell | — | Docker, to build it |
 
 ## Composing examples
@@ -124,15 +126,25 @@ in the document.
 
 ## The custom images
 
-They are published nowhere: build, push and pin them first, then paste each
-printed `…@sha256:…` reference over the tag in `custom-image.ork.yaml`. The
-registry is the quickstart's own, at `127.0.0.1:5002`; `make up`'s is at
+A recipe, not an example of the gallery:
+[`custom-image/custom-image.ork.yaml`](custom-image/custom-image.ork.yaml) runs two
+images of your own, in Go and in POSIX shell, as durable activities, so it asks
+these steps of you. Nothing publishes the images, so build, push and pin them
+first. The registry is the quickstart's own, at `127.0.0.1:5002`; `make up`'s is at
 `localhost:5001`. `orkctl activity build` runs Docker, which the quickstart's
 `orkctl` image does not have, so use an `orkctl` on your own machine.
 
 ```sh
 orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev
 orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
+```
+
+Each prints its pinned `…@sha256:…` reference. Paste each one over its tag in the
+recipe, then:
+
+```sh
+orkctl apply examples/custom-image/custom-image.ork.yaml
+orkctl run submit custom-image --watch
 ```
 
 Each image's README ([Go](custom-image/README.md),

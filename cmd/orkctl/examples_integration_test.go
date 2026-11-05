@@ -91,13 +91,13 @@ func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 	// The whole of the documented exceptions: cached-pipeline's train sets
 	// no TTL on purpose (TestCompile_CacheCompiles asserts it).
 	expectedWarnings := map[string]string{orkflowFixtures + "/cached-pipeline.ork.yaml": "tasks[2].cache.ttl_seconds"}
-	for _, file := range append(exampleFiles(t, x.root), fixtureFiles(t, x.root)...) {
+	for _, file := range append(append(exampleFiles(t, x.root), customImageRecipe), fixtureFiles(t, x.root)...) {
 		wf, err := dsl.CompileFile(filepath.Join(x.root, file))
 		if err != nil {
 			t.Fatalf("compile %s: %v", file, err)
 		}
 		path := file
-		if file == "examples/custom-image.ork.yaml" {
+		if file == customImageRecipe {
 			// The shipped document names the `:dev` tags; this process
 			// pushed its own (exampleImageTag).
 			path = x.variantFile("custom-image.ork.yaml", customImageDocument(t, x.root))
@@ -696,13 +696,13 @@ func TestIntegration_ConfigFromGitExampleRunsAsShipped(t *testing.T) {
 	})
 }
 
-// E13: every shipped example that asks nothing of a reader, run the way they
-// run it: applied, submitted with no --input, and holding the result
-// examples/README.md states. The one thing changed is where its defaults point:
-// the suite's services stand in for httpbin.org and the suite's git server for
-// GitHub, so a proof never depends on them (scripts/quickstart-smoke.sh
-// --examples runs the same with the real ones). custom-image is the one
-// exception: a reader builds its images first, and E10 runs it.
+// E13: every example of the gallery, run the way a reader runs it: applied,
+// submitted with no --input, and holding the result examples/README.md states.
+// The one thing changed is where its defaults point: the suite's services stand
+// in for httpbin.org and the suite's git server for GitHub, so a proof never
+// depends on them (scripts/quickstart-smoke.sh --examples runs the same with the
+// real ones). The custom-image recipe is not in the gallery: a reader builds its
+// images first, and E10 runs it.
 func TestIntegration_ExamplesRunWithNoInputs(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
@@ -861,9 +861,6 @@ func TestIntegration_ExamplesRunWithNoInputs(t *testing.T) {
 		for _, path := range exampleFiles(t, x.root) {
 			file := filepath.Base(path)
 			name := strings.TrimSuffix(file, ".ork.yaml")
-			if name == "custom-image" {
-				continue
-			}
 			result, ok := results[name]
 			if !ok {
 				t.Fatalf("%s has no stated result here: add it, so a new example is run with no inputs too", file)

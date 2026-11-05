@@ -65,7 +65,7 @@ template values.
 
 Examples: [config-from-git](../examples/config-from-git.ork.yaml),
 [notify-block](../examples/notify-block.ork.yaml),
-[custom-image](../examples/custom-image.ork.yaml).
+[the custom-image recipe](../examples/custom-image/custom-image.ork.yaml).
 
 ## Decide in a task, branch on its value
 
@@ -415,8 +415,8 @@ and handle SIGTERM if the work is long.
 - `orkctl activity test` drives only images that implement the `op: exec`
   convention.
 
-Examples: [custom-image](../examples/custom-image.ork.yaml),
-[the Go image](../examples/custom-image/),
+Examples: [the custom-image recipe](../examples/custom-image/custom-image.ork.yaml),
+whose header gives every step, [the Go image](../examples/custom-image/),
 [the shell image](../examples/custom-image-shell/).
 
 ## Declare what surrounds your Orkflows
@@ -459,7 +459,6 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 |---|---|---|
 | [`examples/approval-gate.ork.yaml`](../examples/approval-gate.ork.yaml) | an approval only when a change is risky | "Wait for a person or a system", "Decide in a task, branch on its value", "Reuse a block with declared outputs" |
 | [`examples/config-from-git.ork.yaml`](../examples/config-from-git.ork.yaml) | one commit rendered per service, cached | "Pin moving inputs: resolve, then use the commit", "Batch transforms into one prepare task", "Cache only what you assert is reusable", "jq, a template, or your own image" |
-| [`examples/custom-image.ork.yaml`](../examples/custom-image.ork.yaml) | two images of your own as activities | "When to write your own image" |
 | [`examples/decide-and-route.ork.yaml`](../examples/decide-and-route.ork.yaml) | decide, branch three ways, re-join | "Decide in a task, branch on its value", "Branch and re-join", "Plan before you run" |
 | [`examples/each-fan-out.ork.yaml`](../examples/each-fan-out.ork.yaml) | a fan-out over a computed list | "Batch transforms into one prepare task" |
 | [`examples/http-post.ork.yaml`](../examples/http-post.ork.yaml) | a POST whose JSON body is a YAML mapping, and its status | "Pass values as data, never as code", "A non-2xx answer is data" |
@@ -469,5 +468,5 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 | [`examples/pinned-checkout.ork.yaml`](../examples/pinned-checkout.ork.yaml) | a git checkout in a pin | "Share a working tree: pins", "Pin moving inputs: resolve, then use the commit" |
 | [`examples/poll-until-ready.ork.yaml`](../examples/poll-until-ready.ork.yaml) | polling through a retry policy | "Repeat without loops", "Environment variables are configuration" |
 | [`examples/automation/examples.ork.yaml`](../examples/automation/examples.ork.yaml) | settings, a schedule and a trigger | "Declare what surrounds your Orkflows", "Repeat without loops" |
-| [`examples/custom-image/`](../examples/custom-image/) | an activity image in Go, `FROM scratch` | "When to write your own image" |
+| [`examples/custom-image/`](../examples/custom-image/) | an activity image in Go, `FROM scratch`, and the recipe that runs it with its shell twin | "When to write your own image" |
 | [`examples/custom-image-shell/`](../examples/custom-image-shell/) | the same activity in POSIX shell | "When to write your own image" |

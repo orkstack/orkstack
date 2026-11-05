@@ -129,8 +129,8 @@ version's own, and its text is the release's notes on GitHub, word for word.
 - Every example in `examples/` now runs as it stands: apply it and submit it with
   no inputs. Its defaults reach `httpbin.org` and `github.com`, so it needs
   internet access; `--input` points it at your own. `order-saga` and
-  `approval-gate` still need `notify-block` stored first, in a command of its own,
-  and `custom-image` still needs your own images. The changed examples have new
+  `approval-gate` still need `notify-block` stored first, in a command of its own.
+  The changed examples have new
   versions, and a store keeps any older one it holds, so a composing Orkflow of
   yours that names `notify-block@0.1.0` is unaffected. If you adapted one, or
   submit one with your own inputs:
@@ -141,6 +141,11 @@ version's own, and its text is the release's notes on GitHub, word for word.
     now. Their headers say how to add a token for a private repository.
   - `examples/automation/examples.ork.yaml` declares `default`, not `examples`,
     and fires once a day, not every 15 minutes, pausing itself after a failure.
+  - `custom-image` runs images you build, so it is now a recipe beside their
+    build, `examples/custom-image/custom-image.ork.yaml`, whose header gives the
+    steps. It is gone from the Apply page's gallery and from the site's example
+    pages; [Build an activity image](https://github.com/orkstack/orkstack/blob/main/site/content/how-to/build-an-activity-image.md)
+    links it, and its old address redirects there.
 - The quickstart's Orker and `make up`'s are now pin hosts, one pin at a time
   (`ORK_ORKER_MAX_PINS: "1"`), so an Orkflow with a pin runs on them with no
   setting of yours. There is nothing to do.

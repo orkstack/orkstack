@@ -8,9 +8,10 @@
 #
 # It needs internet access to httpbin.org and nothing else, or `--input` naming
 # endpoints of your own. By default the status endpoint answers 503 or 200 at
-# random, so a run really polls: expect failed attempts of wait-ready, then
-# success. The default export is a fixed document inside its URL, which httpbin
-# decodes:
+# random, so about half of all runs show failed attempts of wait-ready before
+# the one that succeeds (`orkctl run attempts <run> --task wait-ready`), and the
+# others succeed at once. The default export is a fixed document inside its URL,
+# which httpbin decodes:
 #   {"generated_at":"2026-01-02T03:04:05Z","rows":[{"amount":10},{"amount":2.5}]}
 #
 #   wait-ready  ONE check per attempt: it exits non-zero until the status
@@ -44,6 +45,8 @@ inputs:
     default: "https://httpbin.org/base64/eyJnZW5lcmF0ZWRfYXQiOiIyMDI2LTAxLTAyVDAzOjA0OjA1WiIsInJvd3MiOlt7ImFtb3VudCI6MTB9LHsiYW1vdW50IjoyLjV9XX0="
 
 tasks:
+  # wget's own timeout is shorter than the task's, so a request that hangs fails
+  # this attempt and is retried; a task that exceeds its own timeout is not.
   # The URL reaches the shell as a positional argument ("$1"): a rendered value
   # is one argv element, never text inside the shell program.
   - id: wait-ready
@@ -59,7 +62,7 @@ tasks:
       command:
         - sh
         - -c
-        - 'wget -q -O /dev/null "$1"'
+        - 'wget -q -T 20 -O /dev/null "$1"'
         - wait-ready
         - '{{ .inputs.status_url }}'
 
