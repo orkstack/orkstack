@@ -10,11 +10,12 @@ output on a laptop. It never starts on its own: plain `docker compose up`,
 
 ```bash
 make infra-up-observability
-# or: docker compose -f deploy/docker-compose.yml --profile observability up -d
+# or: docker compose -f deploy/docker-compose.yml --profile observability up -d --wait
 ```
 
 This also starts Temporal, SeaweedFS and the registry, as `make infra-up` does.
-`make infra-down-observability` stops everything, including the profile.
+It returns once those three pass their health checks and the profile's services,
+which have none, are running. `make infra-down-observability` stops everything, including the profile.
 
 ## Point `ork` and `orker` at it
 

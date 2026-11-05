@@ -37,8 +37,9 @@ make up              # build ork, orker and orkctl; start them and the UI's dev 
 `make infra-up` starts [`deploy/docker-compose.yml`](./deploy/docker-compose.yml):
 a Temporal development server (set to see a drained release in seconds, not
 the default minutes: docs/DEPLOY.md §4, "Underneath"), SeaweedFS as the
-S3-compatible object store, and a local OCI registry on `localhost:5001`.
-`make -C images push` builds the first-party activities (`http`, `shell`,
+S3-compatible object store, and a local OCI registry on `localhost:5001`. It
+returns once each passes its health check, which for the store means its bucket
+is ready. `make -C images push` builds the first-party activities (`http`, `shell`,
 `file`, `json`, `git`, `template`) and pushes them to that registry; the stack
 points the activity catalog at them, so an Orkflow that `uses: shell` runs
 the images this checkout built.

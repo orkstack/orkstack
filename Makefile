@@ -181,8 +181,8 @@ reset-force: ## reset without the confirmation prompt
 
 ## ---- infra ----
 .PHONY: infra-up
-infra-up: ## Start Temporal + SeaweedFS (the dev S3 store)
-	$(COMPOSE) up -d
+infra-up: ## Start Temporal + SeaweedFS (the dev S3 store), and wait until they are healthy
+	$(COMPOSE) up -d --wait
 	@echo "Temporal UI: http://localhost:8233  |  SeaweedFS filer: http://localhost:8888"
 
 .PHONY: infra-down
@@ -194,8 +194,8 @@ infra-logs: ## Tail infrastructure logs
 	$(COMPOSE) logs -f
 
 .PHONY: infra-up-observability
-infra-up-observability: ## Start Temporal + SeaweedFS + the observability profile: collector, Loki, Tempo, Prometheus, Grafana
-	$(COMPOSE) --profile observability up -d
+infra-up-observability: ## Start Temporal + SeaweedFS + the observability profile: collector, Loki, Tempo, Prometheus, Grafana, and wait for them
+	$(COMPOSE) --profile observability up -d --wait
 	@echo "Temporal UI: http://localhost:8233  |  SeaweedFS filer: http://localhost:8888  |  Grafana: http://localhost:3000"
 	@echo "Point ork/orker at it: see docs/DEPLOY.md, \"Telemetry\", for the OTEL_*/ORK_ADMIN_ADDR env recipe."
 
