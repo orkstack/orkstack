@@ -462,6 +462,24 @@ prints the socket the `docker` command uses.
 **Fix.** Set `ORKSTACK_DOCKER_SOCKET` in `.env` to that path without its
 `unix://` prefix.
 
+### The Orker stops at boot with `COMMIT_STORE_UNAVAILABLE`
+
+**Cause.** The Orker tests its object store at boot, and the store could not be
+used at all: it did not respond, refused the credential, has no such bucket, or
+answered with a server error. This says nothing about the store's conditional
+writes; `COMMIT_STORE_NOT_CONDITIONAL` is the reason for that
+([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "5.3 The store"). The
+quickstart's store is healthy only once its bucket answers, so a stack whose
+files are current does not reach this on a first start.
+
+**Confirm.** `docker compose logs orker` carries the store's own answer after
+the reason, for example `403` and `AccessDenied`. `docker compose logs seaweedfs`
+shows the store's side.
+
+**Fix.** Fix what the message names. If you changed `ORK_S3_BUCKET` or the
+credentials, change the store to match. Then run the `up` command again; the
+Orker does not retry by itself.
+
 ### Runs are gone after `docker compose down`
 
 **Cause.** The quickstart's Temporal keeps its history in memory, as a
@@ -479,7 +497,7 @@ These entries apply to `make up`, which runs `scripts/stack.sh up` ([Makefile](.
 
 ### `make up` times out or stops with "timed out waiting for …"
 
-**Cause.** The script waits for each stage in turn, and gives up when one does not answer in time. The waits are: the Temporal server (60 seconds), the object store (60 seconds), the engine API (60 seconds), the Orker's own answer to the engine (60 seconds), the UI's dev server (90 seconds), and finally one check of the browser's socket, opened through the dev server. A process that exits within two seconds of starting is restarted up to three times, and its last log line is printed each time. The script's comment notes that an Orker losing a race to reach Temporal is the failure it sees most in practice ([stack.sh](../scripts/stack.sh), `start`).
+**Cause.** The script waits for each stage in turn, and gives up when one does not answer in time. The waits are: the Temporal server (60 seconds), the object store's bucket (60 seconds), the engine API (60 seconds), the Orker's own answer to the engine (60 seconds), the UI's dev server (90 seconds), and finally one check of the browser's socket, opened through the dev server. A process that exits within two seconds of starting is restarted up to three times, and its last log line is printed each time. The script's comment notes that an Orker losing a race to reach Temporal is the failure it sees most in practice ([stack.sh](../scripts/stack.sh), `start`).
 
 **Confirm.** `make status` shows which processes are running and the state of the containers. Infrastructure has no `.run` log, so use `make infra-logs`. Process logs are `.run/ork.log`, `.run/orker.log` and `.run/ui.log`, and `make logs` follows them.
 

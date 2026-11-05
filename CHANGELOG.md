@@ -353,6 +353,17 @@ version's own, and its text is the release's notes on GitHub, word for word.
   whatever the failure's own `retryable` said. The field `retryable` and how a
   task is retried are unchanged, and a run already recorded keeps its text. A
   script that matches the repeated part of a message needs updating.
+- The quickstart's first start no longer stops with the Orker exited on a `403
+  AccessDenied`, which about half of first starts from clean volumes did. On an
+  empty volume the object store answered its health check seconds before it had
+  created its bucket. Its health check now asks for the bucket. Running `docker
+  compose up` twice is no longer needed.
+- An Orker that cannot use its object store at boot now stops with
+  `COMMIT_STORE_UNAVAILABLE` and the store's own answer: no response, a refused
+  credential, no such bucket, or a server error. It used to report
+  `COMMIT_STORE_NOT_CONDITIONAL`, which sent you looking for a store without
+  conditional writes; that reason now means the store answered and cannot do them.
+  An alert on the old reason for these causes needs the new one too.
 - `GetStats` and `orkctl stats` no longer count a run twice — once as
   finished, once as running — in the moment after it ends, before the
   cluster's index of executions catches up with its close. A run the archive

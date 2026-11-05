@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -613,7 +614,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// Prove the backend's conditional create with simultaneous writers before
 	// accepting activity work; "S3-compatible" alone does not promise this.
 	if err := artifacts.ProbeCommitStore(ctx, commitStore); err != nil {
-		return fmt.Errorf("COMMIT_STORE_NOT_CONDITIONAL: %w", err)
+		return commitProbeRefusal(err)
 	}
 	refPredictor, ok := store.(artifacts.RefPredictor)
 	if !ok {
@@ -804,6 +805,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	sinks.Default().Ready.Set(false)
 	logger.Info("shutting down", "running_tasks", activities.RunningTasks())
 	return nil
+}
+
+// commitProbeRefusal names why the Orker will not start after its boot probe of
+// the commit store. It exits either way, and it neither waits nor retries: the
+// stack's own start order decides when the store is ready, and a store that is
+// wrong must say so. But a probe that got no answer proves nothing about
+// conditional writes, so it is not reported as if it had.
+func commitProbeRefusal(err error) error {
+	if errors.Is(err, artifacts.ErrCommitStoreUnavailable) {
+		return fmt.Errorf("%s: %w", orker.ReasonCommitStoreUnavailable, err)
+	}
+	return fmt.Errorf("%s: %w", orker.ReasonCommitNotConditional, err)
 }
 
 // awaitStoppedTasks waits until every task the task worker's Stop cancelled

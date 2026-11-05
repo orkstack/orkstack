@@ -1138,7 +1138,14 @@ writes, require both to be refused, and read back the exact candidate.
 Versioning the key means a newer build never strands every Orker on an older
 schema's winner. Any other outcome refuses to start with
 `InfrastructureError/COMMIT_STORE_NOT_CONDITIONAL`, naming the endpoint — the
-alternative is a deployment that silently loses immutability.
+alternative is a deployment that silently loses immutability. The exception is
+a probe that gets no answer about conditional writes because the store could
+not be used at all: no response, a 401 or 403, a 404 for the bucket, or a server
+error other than 501. That proves nothing about conditional writes, so the Orker
+refuses to start with `InfrastructureError/COMMIT_STORE_UNAVAILABLE`, carrying
+the store's own answer. Either way it exits without waiting or retrying: whatever
+starts it decides when the store is ready, so a stack's health check on its store
+must pass only once its bucket answers (`compose.yaml`).
 
 ### 5.4 The sequence
 
@@ -1313,6 +1320,7 @@ containers run.
 | Torn `commit.json` | the torn object | `link(2)` publication cannot produce one; an existing one is reread once, then `COMMIT_UNDECODABLE`. | explicit failure |
 | Two attempts upload different bytes under one name | both objects | Different bytes are a different key, so the committed `sha256` still resolves. | correct |
 | Object store without conditional PUT | — | Boot-time two-writer race fails → Orker refuses to start (`COMMIT_STORE_NOT_CONDITIONAL`). | refuses to run, never runs unsafely |
+| Object store unusable at boot: unreachable, credential refused, no such bucket | — | The boot probe gets no answer → Orker refuses to start (`COMMIT_STORE_UNAVAILABLE`). | refuses to run, never runs unsafely |
 | Container exceeds its own timeout | logs, no commit | SIGTERM → grace → SIGKILL, `TimedOut/CONTAINER_TIMEOUT`, terminal by default (§8.1). | explicit failure |
 | Cancellation, or SIGTERM ignored | logs, no commit | SIGTERM → grace → SIGKILL (§14.5); the Orker returns `ctx.Err()`. | canceled, never auto-retried |
 | Orker stopped (`SIGTERM`, `SIGINT`) mid-container | logs to the last line, the attempt record (`ORKER_STOPPED`), no commit | SIGTERM → grace → SIGKILL, then the process exits (§6.3); Temporal is told nothing, so the heartbeat timeout retries per the task's policy, as for a dead Orker. | correct, container ran twice (at-least-once) |
@@ -1750,6 +1758,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `COMMIT_UNDECODABLE` | ContractViolation | no | an object at `commit_uri` is still not valid `ActivityCommit` JSON after the in-attempt reread |
 | `COMMIT_TOO_LARGE` | ContractViolation | no | the projected `ActivityCommit` exceeds `limits.commitMaxBytes`, measured before any upload |
 | `COMMIT_STORE_NOT_CONDITIONAL` | InfrastructureError | **no** | the boot-time two-writer race proved the store lacks conditional create; the Orker refuses to start (§5.3) |
+| `COMMIT_STORE_UNAVAILABLE` | InfrastructureError | **no** | the boot-time probe got no answer about conditional writes, because the store could not be used at all; the Orker refuses to start (§5.3) |
 | `VALUES_CORRUPT` | ContractViolation | no | on adoption, the refetched `values.json` does not match `commit.values.sha256` |
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
 

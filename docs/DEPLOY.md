@@ -3045,7 +3045,7 @@ separate, and the Orker is cordoned while either holds:
 
 Neither is stored: a restart clears both. While the store is out, though, a
 restarted Orker refuses to boot, because its boot probe needs the store
-(`COMMIT_STORE_NOT_CONDITIONAL`), and whatever restarts it keeps trying.
+(`COMMIT_STORE_UNAVAILABLE`), and whatever restarts it keeps trying.
 
 **Reading it.** The inventory carries the cause: `cordoned` is true for either,
 `cordon_reason` and `cordoned_at` are the operator's alone, and `store_outage`
