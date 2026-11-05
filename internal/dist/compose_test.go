@@ -574,6 +574,14 @@ func TestStoreHealthcheck_PassesOnlyOnceTheBucketServes(t *testing.T) {
 	if !strings.Contains(string(readRepoFile(t, "scripts/stack.sh")), wait) {
 		t.Errorf("scripts/stack.sh does not wait for the store with %q: it starts the engine and the Orker itself, so nothing else makes them wait for the bucket", wait)
 	}
+	// `make run-ork` and `make run-orker` follow these by hand, with no
+	// depends_on either, so the targets return only once that check has passed.
+	makefile := string(readRepoFile(t, "Makefile"))
+	for _, recipe := range []string{"\t$(COMPOSE) up -d --wait\n", "\t$(COMPOSE) --profile observability up -d --wait\n"} {
+		if !strings.Contains(makefile, recipe) {
+			t.Errorf("the Makefile has no recipe %q: `make infra-up` would return before the store's bucket exists", recipe)
+		}
+	}
 }
 
 func sortedKeys(m map[string]string) []string {
