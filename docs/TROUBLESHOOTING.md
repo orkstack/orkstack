@@ -167,6 +167,8 @@ The Orker's log line `object storage check failed` carries the store's own error
 
 While every Orker of a pool holds this cordon, a new run is still accepted and waits, and `orkctl run inspect` says `waiting for object storage`. Starting another Orker does not help, because it needs the same store.
 
+A waiting run has no deadline of its own, because a task's `timeout_seconds` starts with its container. If the store will not come back soon, cancel the runs you no longer want with `orkctl run cancel <run-id>`; the rest start by themselves once it answers.
+
 ### I stopped an Orker and its tasks failed
 
 **Cause.** `SIGTERM` stops an Orker from polling and cancels its in-flight work. The Orker does not cordon itself first, so an operator who wants in-flight work to finish cordons and drains first ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain"). Stopping an Orker that hosts an open pin fails that pin's run with `PIN_HOST_LOST`, and the stop command says so (`cmd/orkctl/orker.go`).
