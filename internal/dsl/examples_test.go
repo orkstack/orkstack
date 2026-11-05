@@ -460,7 +460,7 @@ func userFacingDocs(t *testing.T) []string {
 
 func TestExamples_UseUserFacingVocabulary(t *testing.T) {
 	internalWord := regexp.MustCompile(`(?i)\b(queues?|sessions?|search attributes?|worker deployments?)\b`)
-	for _, doc := range userFacingDocs(t) {
+	for _, doc := range append(userFacingDocs(t), orkflowFixtures(t)...) {
 		raw, err := os.ReadFile(doc)
 		if err != nil {
 			t.Fatal(err)

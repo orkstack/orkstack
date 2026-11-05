@@ -872,7 +872,8 @@ no loop, no `continue_on_error` and no Orkflow-level `on_failure:` hook: the
 graph stays a DAG that `run plan` sees whole, a handler lists the needs it
 handles (the DAG is the one place edges are declared), and a failure that
 should not fail the run is the workload's to report as data, which a
-`condition:` reads. See `examples/order-saga.ork.yaml`.
+`condition:` reads. See `examples/order-saga.ork.yaml` for failure handlers,
+and `examples/http-post.ork.yaml` for a status a `condition:` reads.
 
 ## Pins
 
