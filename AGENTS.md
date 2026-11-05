@@ -1122,18 +1122,19 @@ Every code change follows this order:
    API and its error reasons, configuration, the activity contract, storage
    layout, what a release publishes and any security fix to it, a
    deprecation, a breaking change. Such a change adds an entry under
-   CHANGELOG.md's `[Unreleased]` section (Keep a Changelog 1.1.0): one or two
-   sentences that say what changed and what they must do about it, if
-   anything, linking to the docs for the detail; a breaking change's entry is
-   marked **BREAKING**. A change that cannot affect them gets no entry,
-   however large: documentation edits; CI, workflows and the proof harness,
-   unless the change alters what a release publishes; tests; refactors; a
-   cosmetic change to the UI; internal tooling, such as the development stack
-   (`make up`); and a dependency bump that cannot affect them. A bump that changes what they
-   see, such as an activity image's tools, gets one, and so does every
-   security fix to what a release publishes, a vulnerable dependency's bump
-   among them, even when they see nothing change. A change with no entry
-   still updates the reference doc that describes it.
+   CHANGELOG.md's `[Unreleased]` section (Keep a Changelog 1.1.0), always in
+   one format: a sentence or two on what changed and what they must do about
+   it, if anything; an absolute link to the doc for the detail; and, once
+   changes land through pull requests, a link to its pull request. A breaking
+   change's entry is marked **BREAKING**. A change that cannot affect them
+   gets no entry, however large: documentation edits; CI, workflows and the
+   proof harness, unless the change alters what a release publishes; tests;
+   refactors; a cosmetic change to the UI; internal tooling, such as the
+   development stack (`make up`); and a dependency bump that cannot affect
+   them. A bump that changes what they see, such as an activity image's tools,
+   gets one, and so does every security fix to what a release publishes, a
+   vulnerable dependency's bump among them, even when they see nothing change.
+   A change with no entry still updates the reference doc that describes it.
 8. Optionally, check the change's evidence with
    `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'` (§11.2). It is a
    scoped check on the branch and gates nothing (decided 2026-10-28): the
