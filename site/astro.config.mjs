@@ -38,12 +38,14 @@ function sidebarItems(pages) {
 	});
 }
 
-/** A page's old routes keep working: each redirects to where the page is now. */
-const redirects = Object.fromEntries(
-	manifest.groups.flatMap((/** @type {ManifestGroup} */ g) =>
+/**
+ * A page's old routes keep working: each redirects to where the page is now.
+ */
+const redirects = Object.fromEntries([
+	...manifest.groups.flatMap((/** @type {ManifestGroup} */ g) =>
 		g.pages.flatMap((p) => (p.aliases ?? []).map((a) => [`/${a}`, `${BASE_PATH}/${p.route}/`])),
 	),
-);
+]);
 
 export default defineConfig({
 	site: SITE,

@@ -1,0 +1,68 @@
+# The Orkflow behind the site's "A task waits for room" recording and its run
+# page screenshot (make site-media, site/media/capture.ts).
+#
+# One config file per service, on the pool `batch`. The capture starts one
+# Orker for that pool, with a declared capacity of 4 cpu and a per-task cap of
+# 1 cpu, so four items run and the rest wait for room. The items sleep so that
+# a reader can watch it: the wait is the point of this Orkflow.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: render-configs
+version: "0.3.0"
+description: "Render one config file per service, on a pool with room for four at a time."
+
+tasks:
+  - id: services
+    uses: json
+    network: none
+    with:
+      op: query
+      nullInput: true
+      vars:
+        services:
+          - name: api
+          - name: auth
+          - name: billing
+          - name: catalog
+          - name: checkout
+          - name: gateway
+          - name: inventory
+          - name: notify
+          - name: orders
+          - name: reports
+          - name: search
+          - name: web
+      filter: '$vars.services'
+
+  - id: render
+    uses: shell
+    pool: batch
+    needs:
+      - services
+    network: none
+    resources:
+      cpu: "1"
+    each:
+      over: '{{ .tasks.services.output.result }}'
+      as: service
+      max_items: 50
+      max_parallel: 8
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo rendering {{ sh .each.service.name }}
+        sleep 8
+        printf 'service = %s\n' {{ sh .each.service.name }} > /orkstack/output/artifacts/{{ sh .each.service.name }}.conf
+        echo wrote {{ sh .each.service.name }}.conf
+
+  - id: manifest
+    uses: json
+    needs:
+      - render
+    network: none
+    with:
+      op: query
+      gather: render
+      filter: '{rendered: length}'

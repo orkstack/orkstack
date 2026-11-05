@@ -14,7 +14,7 @@ import (
 )
 
 // branchAndRecoverPath is relative on purpose: goldens stay machine-independent.
-const branchAndRecoverPath = "../../examples/branch-and-recover.ork.yaml"
+const branchAndRecoverPath = "../../internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml"
 
 func applyBranchAndRecover(t *testing.T, f *fixture) {
 	t.Helper()

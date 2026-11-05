@@ -32,7 +32,7 @@ func build() fstest.MapFS {
 		"_app/version.json":                    file(`{"version":"1"}`),
 		"_app/env.js":                          file("export const env={}"),
 		"apply/examples.json":                  file("[]"),
-		"apply/examples/hello.ork.yaml":        file("name: hello\n"),
+		"apply/examples/each-fan-out.ork.yaml": file("name: hello\n"),
 		".orkstack-build-hash":                 file("0123\n"),
 	}
 }
@@ -101,7 +101,7 @@ func TestHandler_ServesTheBuild(t *testing.T) {
 			contentType: "application/json", cacheControl: noCache, body: `{"version":"1"}`},
 		{name: "the gallery", method: "GET", path: "/apply/examples.json", status: 200,
 			contentType: "application/json", cacheControl: noCache, body: "[]"},
-		{name: "an example", method: "GET", path: "/apply/examples/hello.ork.yaml", status: 200,
+		{name: "an example", method: "GET", path: "/apply/examples/each-fan-out.ork.yaml", status: 200,
 			contentType: "text/yaml; charset=utf-8", cacheControl: noCache, body: "name: hello\n"},
 		{name: "a HEAD has no body", method: "HEAD", path: "/", status: 200,
 			contentType: "text/html; charset=utf-8", cacheControl: noCache, body: ""},
@@ -565,7 +565,7 @@ func TestHandler_EveryOtherResponseForbidsEverything(t *testing.T) {
 	for _, tc := range []struct{ method, path string }{
 		{"GET", "/_app/immutable/entry/start.abc.js"},
 		{"GET", "/_app/version.json"},
-		{"GET", "/apply/examples/hello.ork.yaml"},
+		{"GET", "/apply/examples/each-fan-out.ork.yaml"},
 		{"GET", "/_app/immutable/entry/start.old.js"},
 		{"GET", "/orkstack.v1.RunService/GetRun"},
 		{"POST", "/runs"},

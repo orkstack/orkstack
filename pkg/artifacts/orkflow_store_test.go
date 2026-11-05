@@ -17,7 +17,7 @@ import (
 )
 
 // helloOrkflow is a compiled orkflow shaped like the one internal/dsl produces
-// for examples/hello.ork.yaml: a templated `with` block, a declared input, and
+// for internal/dsl/testdata/orkflows/hello.ork.yaml: a templated `with` block, a declared input, and
 // the original document kept for audit.
 func helloOrkflow(t *testing.T, version string) *orkstackv1.Orkflow {
 	t.Helper()

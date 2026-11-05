@@ -254,7 +254,7 @@ func TestRunWorkflow_CachedFanOutItemsCarryCache(t *testing.T) {
 }
 
 func TestSimulate_CachedTaskCarriesItsSpec(t *testing.T) {
-	wf := compileExample(t, "cached-pipeline.ork.yaml")
+	wf := compileFixture(t, "cached-pipeline.ork.yaml")
 	plan := simulate(t, wf, payload(t, nil), assumedPayloads(t, map[string]map[string]any{"stamp": {"value": "1"}}))
 	for _, pt := range plan.GetTasks() {
 		switch pt.GetTaskId() {

@@ -23,7 +23,7 @@ orkctl apply examples/each-fan-out.ork.yaml
 orkctl run submit each-fan-out --watch
 ```
 
-The first `up` builds every image from your clone, which takes a few minutes. Later runs reuse Docker's build cache. The command returns once every service passes its health check.
+The first `up` builds every image from your clone, which takes a few minutes. Later runs reuse Docker's build cache. The command returns once every service passes its health check. On a busy machine the first start can stop with `container orkstack-quickstart-orker-1 exited (1)`, when the Orker starts before the object store is ready. Run the same command again.
 
 The `alias` runs `orkctl` from the image the stack built, so you install nothing else. The container sees the clone's folder read-only, which is enough for `orkctl apply examples/...`.
 

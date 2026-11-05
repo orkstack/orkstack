@@ -435,21 +435,25 @@ func (f *fixture) runTo(out io.Writer, args ...string) result {
 	return result{stderr: stderr.String(), code: code}
 }
 
-// applyExample registers examples/hello.ork.yaml through the CLI.
+// applyExample registers internal/dsl/testdata/orkflows/hello.ork.yaml through the CLI.
 func (f *fixture) applyExample() result {
 	f.t.Helper()
 	return f.run("apply", examplePath(f.t))
 }
 
-// examplePath resolves the repo's example orkflow from cmd/orkctl.
+// orkflowFixtures is where the Orkflows only this repository's tests read live,
+// relative to the repository's root.
+const orkflowFixtures = "internal/dsl/testdata/orkflows"
+
+// examplePath resolves the Orkflow these tests apply, from cmd/orkctl.
 func examplePath(t *testing.T) string {
 	t.Helper()
-	path, err := filepath.Abs(filepath.Join("..", "..", "examples", "hello.ork.yaml"))
+	path, err := filepath.Abs(filepath.Join("..", "..", orkflowFixtures, "hello.ork.yaml"))
 	if err != nil {
-		t.Fatalf("resolve example path: %v", err)
+		t.Fatalf("resolve fixture path: %v", err)
 	}
 	if _, err := os.Stat(path); err != nil {
-		t.Fatalf("example orkflow missing: %v", err)
+		t.Fatalf("fixture orkflow missing: %v", err)
 	}
 	return path
 }

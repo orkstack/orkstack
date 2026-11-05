@@ -186,7 +186,7 @@ test.beforeAll(async () => {
 	// into the spec's own namespace, created first. The namespace is new on
 	// every run, so the example applies exactly as written: no version this
 	// namespace already holds can collide with it.
-	const yaml = readFileSync(path.join(repoRoot, 'examples', 'hello.ork.yaml'), 'utf8');
+	const yaml = readFileSync(path.join(repoRoot, 'internal', 'dsl', 'testdata', 'orkflows', 'hello.ork.yaml'), 'utf8');
 	const created = await fetch(`${UI_ORIGIN}/orkstack.v1.NamespaceService/CreateNamespace`, {
 		method: 'POST',
 		headers: { 'content-type': 'application/json' },

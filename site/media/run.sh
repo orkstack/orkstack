@@ -5,12 +5,14 @@
 #
 #   1. checks the local stack is up with the first-party images (it starts
 #      nothing: make infra-up, make -C images push, make up come first);
-#   2. media/capture.ts: the UI screenshots, at one and two device pixels
-#      per CSS pixel, and the end-to-end recording, driven by Playwright in
-#      the UI e2e suite's pinned browser image;
-#   3. media/tapes/*.tape: the terminal recordings, rendered by VHS in its
+#   2. media/tapes/*.tape: the terminal recordings, rendered by VHS in its
 #      image pinned by digest (media/vhs-image.txt), with a terminal theme
-#      made from ui/src/tokens.css for each site theme.
+#      made from ui/src/tokens.css for each site theme. They come first: the
+#      quickstart's shows a first apply in the default namespace, where the
+#      UI captures run too;
+#   3. media/capture.ts: the UI screenshots, at one and two device pixels
+#      per CSS pixel, and the recordings, driven by Playwright in the UI e2e
+#      suite's pinned browser image.
 #
 # Exit 77 when a prerequisite is missing, as the proofs do.
 set -euo pipefail
@@ -38,8 +40,8 @@ command -v ffmpeg >/dev/null || need "ffmpeg is not installed"
 # The README's animation of the UI: the end-to-end recording as an animated
 # WebP, which GitHub shows inline where it cannot play a video (a video file
 # in the repository is only a link there). The README draws it 880 CSS
-# pixels wide, so it is 1760 pixels wide: two device pixels per CSS pixel.
-# Ten frames a second; a frame no different from the one before is dropped
+# pixels wide, and it is as wide as the recording, 1600 pixels: nearly two
+# device pixels per CSS pixel. Ten frames a second; a frame no different from the one before is dropped
 # (its predecessor lasts longer, up to two seconds), and libwebp's animation
 # encoder stores each frame as its change from the last, so the held screens
 # cost next to nothing. It needs only ffmpeg and the recordings, so
@@ -47,7 +49,7 @@ command -v ffmpeg >/dev/null || need "ffmpeg is not installed"
 readme_ui_demo() {
 	for theme in light dark; do
 		ffmpeg -y -loglevel error -i "$SITE/public/media/e2e-demo-$theme.mp4" \
-			-vf "fps=10,scale=1760:-2:flags=lanczos,mpdecimate=hi=768:lo=320:frac=0.1:max=20" -fps_mode vfr \
+			-vf "fps=10,mpdecimate=hi=768:lo=320:frac=0.1:max=20" -fps_mode vfr \
 			-loop 0 -c:v libwebp_anim -quality 72 -compression_level 4 \
 			-an "$REPO/docs/images/ui-demo-$theme.webp"
 		echo "  docs/images/ui-demo-$theme.webp ($(du -h "$REPO/docs/images/ui-demo-$theme.webp" | cut -f1))"
@@ -64,6 +66,17 @@ fi
 
 { command -v docker >/dev/null && docker info >/dev/null 2>&1; } || need "Docker is not running"
 
+# What this run redoes. A selector says it: SITE_MEDIA_TAKES or SITE_MEDIA_SHOTS
+# the UI's items alone, SITE_MEDIA_TAPES the terminal's alone, all of them both.
+# SITE_MEDIA_ONLY=ui or terminal says it outright.
+ONLY="${SITE_MEDIA_ONLY:-}"
+ui_selected="${SITE_MEDIA_TAKES:-}${SITE_MEDIA_SHOTS:-}"
+if [ -z "$ONLY" ] && [ -n "$ui_selected" ] && [ -z "${SITE_MEDIA_TAPES:-}" ]; then
+	ONLY=ui
+elif [ -z "$ONLY" ] && [ -z "$ui_selected" ] && [ -n "${SITE_MEDIA_TAPES:-}" ]; then
+	ONLY=terminal
+fi
+
 
 command -v bun >/dev/null || need "bun is not installed"
 command -v node >/dev/null || need "node is not installed"
@@ -75,11 +88,12 @@ command -v go >/dev/null || need "go is not installed (the recordings use a stat
 ui_pw="$(node -p "require('$REPO/ui/node_modules/playwright-core/package.json').version")"
 site_pw="$(node -p "require('$SITE/node_modules/@playwright/test/package.json').version")"
 [ "$ui_pw" = "$site_pw" ] || need "Playwright differs: the UI runs $ui_pw, the site $site_pw; pin site/package.json's @playwright/test to $ui_pw"
-[ -x "$REPO/bin/orkctl" ] || need "bin/orkctl is missing: run make up"
+[ -x "$REPO/bin/orkctl" ] || need "bin/orkctl is missing: run make build"
+[ "$ONLY" = terminal ] || [ -x "$REPO/bin/orker" ] || need "bin/orker is missing: run make build (the capture starts an Orker of its own for the capacity recording)"
 "$REPO/bin/orkctl" --server "$ENGINE" pool list --json 2>/dev/null | grep -q '"liveOrkerCount": [1-9]' ||
 	need "no engine with a live Orker at $ENGINE: run make infra-up, make -C images push, make up"
 ! curl -s -o /dev/null "$UI/" || need "something already answers at $UI; set SITE_MEDIA_UI_PORT to a free port"
-docker image inspect "$VHS_IMAGE" >/dev/null 2>&1 || need "the VHS image is not on this host: docker pull $VHS_IMAGE"
+[ "$ONLY" = ui ] || docker image inspect "$VHS_IMAGE" >/dev/null 2>&1 || need "the VHS image is not on this host: docker pull $VHS_IMAGE"
 # No frame may show a real host name, and an Orker's default id embeds this
 # host's (internal/orker defaultOrkerID). Start the stack with a neutral id:
 #   make down && ORK_ORKER_ID=orker-example make up
@@ -96,37 +110,31 @@ for name in ${selected//,/ }; do
 	TAPES+=("$name")
 done
 
-# The quickstart recording shows a first apply, in the namespace the
-# quickstart uses. An Orkflow version is immutable and pins the images it was
-# applied against, so a second apply after the images were rebuilt is
-# refused: record it on a stack that has not stored each-fan-out yet.
-if [[ " ${TAPES[*]} " == *" quickstart "* ]] &&
+# The quickstart recording shows an apply, in the namespace the quickstart
+# uses. An Orkflow version is immutable and pins the images it was applied
+# against, so a second apply after the images were rebuilt is refused: record it
+# on a stack that has not stored each-fan-out yet. SITE_MEDIA_REAPPLY=1 says the
+# images have not changed since it was stored; the apply then prints the same.
+if [ "$ONLY" != ui ] && [ -z "${SITE_MEDIA_REAPPLY:-}" ] && [[ " ${TAPES[*]} " == *" quickstart "* ]] &&
 	"$REPO/bin/orkctl" --server "$ENGINE" -n default orkflow get each-fan-out >/dev/null 2>&1; then
-	need "each-fan-out is already stored in the default namespace, and the recording shows a first apply; record on a fresh stack (make reset, make infra-up, make -C images push, make up)"
+	need "each-fan-out is already stored in the default namespace; record on a fresh stack (make reset, make infra-up, make -C images push, make up), or set SITE_MEDIA_REAPPLY=1 if the images have not been rebuilt since"
 fi
 
 WORK="$SITE/.media-work"
 # The scratch directory goes whatever happens, so a failed run leaves no copy
-# of a binary or a half-made recording behind.
-trap 'rm -rf -- "$WORK"' EXIT
+# of a binary or a half-made recording behind, and so does the UI's server. A
+# terminal recording's workspaces are root's, so a container removes those.
+cleanup() {
+	if [ -n "${UI_PID:-}" ]; then kill "$UI_PID" 2>/dev/null || true; fi
+	if [ -d "$WORK/vhs/tmp" ]; then
+		docker run --rm -v "$WORK/vhs/tmp:/t" --entrypoint sh "$VHS_IMAGE" -c "rm -rf /t/* /t/.[!.]*" >/dev/null 2>&1 || true
+	fi
+	rm -rf -- "$WORK"
+}
+trap cleanup EXIT
 mkdir -p "$WORK"
 
-# SITE_MEDIA_ONLY=terminal redoes the recordings alone, keeping the UI captures.
-if [ "${SITE_MEDIA_ONLY:-}" != terminal ]; then
-echo "== UI build =="
-(cd "$REPO/ui" && bun run build >/dev/null)
-(cd "$REPO/ui" && ORK_SERVER="$ENGINE" \
-	exec bun run preview --host 127.0.0.1 --port "$UI_PORT" --strictPort >"$WORK/ui.log" 2>&1) &
-UI_PID=$!
-trap 'kill "$UI_PID" 2>/dev/null || true; rm -rf -- "$WORK"' EXIT
-for _ in $(seq 1 60); do curl -sf -o /dev/null "$UI/orkflows" && break; sleep 0.5; done
-curl -sf -o /dev/null "$UI/orkflows" || { cat "$WORK/ui.log" >&2; exit 1; }
-
-echo "== UI (Playwright) =="
-(cd "$SITE" && ORK_UI_URL="$UI" bun media/capture.ts)
-kill "$UI_PID" 2>/dev/null || true
-fi
-
+if [ "$ONLY" != ui ]; then
 echo "== terminal (VHS) =="
 VHS="$WORK/vhs"
 mkdir -p "$VHS/bin" "$VHS/host" "$VHS/out" "$VHS/tapes" "$VHS/tmp"
@@ -163,10 +171,8 @@ esac
 # The activity test's workspaces are bind-mounted into the containers it
 # starts by the host's daemon, so they live at a path the host and the VHS
 # container share; a tape's hidden setup reads that path from host/tmpdir
-# into its shell's ORK_ORKER_WORKDIR, the root orkctl takes first. It runs
-# as root there; its leftovers are removed by a container too.
+# into its shell's ORK_ORKER_WORKDIR, the root orkctl takes first.
 printf '%s\n' "$VHS/tmp" >"$VHS/host/tmpdir"
-trap 'docker run --rm -v "$VHS/tmp:/t" --entrypoint sh "$VHS_IMAGE" -c "rm -rf /t/* /t/.[!.]*" >/dev/null 2>&1 || true; kill "${UI_PID:-}" 2>/dev/null || true; rm -rf -- "$WORK"' EXIT
 for theme in light dark; do
 	theme_json="$(node "$SITE/media/vhs-theme.mjs" "$theme")"
 	for tape in "${TAPES[@]/#/$SITE/media/tapes/}"; do
@@ -197,6 +203,22 @@ for theme in light dark; do
 	done
 done
 (cd "$SITE" && node media/finish.mjs "$VHS/out" "$VHS_IMAGE")
+fi
+
+if [ "$ONLY" != terminal ]; then
+echo "== UI build =="
+(cd "$REPO/ui" && bun run build >/dev/null)
+(cd "$REPO/ui" && ORK_SERVER="$ENGINE" \
+	exec bun run preview --host 127.0.0.1 --port "$UI_PORT" --strictPort >"$WORK/ui.log" 2>&1) &
+UI_PID=$!
+for _ in $(seq 1 60); do curl -sf -o /dev/null "$UI/orkflows" && break; sleep 0.5; done
+curl -sf -o /dev/null "$UI/orkflows" || { cat "$WORK/ui.log" >&2; exit 1; }
+
+echo "== UI (Playwright) =="
+(cd "$SITE" && ORK_UI_URL="$UI" bun media/capture.ts)
+kill "$UI_PID" 2>/dev/null || true
+fi
+
 echo "== README animations =="
 readme_ui_demo
 echo "site-media: done. Look at every asset before committing it (site/src/assets/media, site/public/media)."

@@ -17,11 +17,11 @@ import (
 
 // The task-caching CLI scenarios (docs/DSL.md "Caching"): real
 // engines, a real Orker, real Temporal and MinIO, and the BUILT orkctl, over
-// examples/cached-pipeline.ork.yaml applied under a stamped name.
+// internal/dsl/testdata/orkflows/cached-pipeline.ork.yaml applied under a stamped name.
 
 func cachedCLIDoc(t *testing.T, name string) string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "examples", "cached-pipeline.ork.yaml"))
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), orkflowFixtures, "cached-pipeline.ork.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -259,6 +259,9 @@ pre.showcase-code {
 	gap: 40px;
 	align-items: center;
 }
+.tour-item.flip {
+	grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.8fr);
+}
 .tour-item.flip .tour-text {
 	order: 2;
 }
@@ -607,7 +610,8 @@ pre.showcase-code {
 	.section {
 		gap: 24px;
 	}
-	.tour-item {
+	.tour-item,
+	.tour-item.flip {
 		grid-template-columns: minmax(0, 1fr);
 		gap: 18px;
 	}

@@ -17,6 +17,10 @@ Set FontSize 22
 Set Width 2400
 Set Height 1500
 Set Padding 48
+# A frame this size takes VHS longer to capture than its default 50 a second
+# allows, and a frame it misses shortens the recording: at 10 a second it plays
+# in real time.
+Set Framerate 10
 Set TypingSpeed 30ms
 Set CursorBlink false
 
@@ -59,3 +63,10 @@ Sleep 4s
 # The poster: both runs listed with their origins, lossless.
 Screenshot out/poster.png
 Sleep 1s
+
+# This take's schedule and trigger do not stay on the stack: a nightly schedule
+# would keep firing, and the UI's captures in this namespace would count them.
+Hide
+Type "command orkctl schedule delete nightly >/dev/null; command orkctl trigger delete ${URL##*/} >/dev/null"
+Enter
+Sleep 2s

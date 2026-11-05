@@ -210,7 +210,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	// ---- engine process 1: execute a real run --------------------------------
 	first := startEngine(t, temporalClient, archive, true)
 
-	source, err := os.ReadFile("../../examples/hello.ork.yaml")
+	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}

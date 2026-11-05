@@ -127,7 +127,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	// Apply the repository's example orkflow exactly as a user would — but into
 	// a namespace this run owns.
 	//
-	// examples/hello.ork.yaml pins `version: "0.2.0"`, and a definition also
+	// internal/dsl/testdata/orkflows/hello.ork.yaml pins `version: "0.2.0"`, and a definition also
 	// carries the digests apply resolved (§4.4). Two trees that
 	// resolved `uses: shell` to different images therefore compile two
 	// different definitions of one IMMUTABLE version, and the second apply is
@@ -141,7 +141,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		t.Fatalf("namespace create %s exit = %d, want 0\nstderr:\n%s", exampleNamespace, code, stderr)
 	}
 	stdout, stderr, code := cli("--namespace", exampleNamespace,
-		"apply", filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
+		"apply", filepath.Join(repoRoot, orkflowFixtures, "hello.ork.yaml"))
 	if code != 0 {
 		t.Fatalf("apply exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
@@ -537,7 +537,7 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 	return "", "", -1
 }
 
-// writePoolPinnedOrkflow rewrites examples/hello.ork.yaml under a new name
+// writePoolPinnedOrkflow rewrites internal/dsl/testdata/orkflows/hello.ork.yaml under a new name
 // with every task assigned to pool, and returns the file's path. The failing
 // variant keeps the same shape but runs one command that exits non-zero.
 //
@@ -553,7 +553,7 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 // recently applied.
 func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {
 	t.Helper()
-	source, err := os.ReadFile(filepath.Join(repoRoot, "examples", "hello.ork.yaml"))
+	source, err := os.ReadFile(filepath.Join(repoRoot, orkflowFixtures, "hello.ork.yaml"))
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}

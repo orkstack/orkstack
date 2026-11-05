@@ -94,7 +94,7 @@ orkctl schedule backfill poll-exports --start 2026-10-01T00:00:00Z --end 2026-10
 A trigger is an inbound starter. Create one for an Orkflow, then send one `POST` with its token. A CI job, a cron host or `curl` can do it, and no client library is needed.
 
 ```bash
-orkctl trigger create --orkflow hello-ork --name hello --description 'nightly kickoff'
+orkctl trigger create --orkflow each-fan-out --name ci-kickoff --description 'CI kickoff'
 ```
 
 The command prints the token once, with a ready-to-run `curl` command. Replace `trg-…` and `<token>` with the printed values:
@@ -106,7 +106,7 @@ curl -X POST http://localhost:8080/v1/triggers/trg-… \
   -d '{}'
 ```
 
-The body is the run's input, as one JSON object. `{}` starts a run with no input, so the Orkflow's defaults apply. `{"count": 3}` sets the input `count` to `3`. The body can be at most 1 MiB. A `201` response holds the new run's `id`.
+The body is the run's input, as one JSON object. `{}` starts a run with no input, so the Orkflow's defaults apply, and `each-fan-out` declares no inputs. For an Orkflow that declares `count`, `{"count": 3}` sets it to `3`. The body can be at most 1 MiB. A `201` response holds the new run's `id`.
 
 ### Create and manage a trigger
 

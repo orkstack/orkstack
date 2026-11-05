@@ -52,7 +52,7 @@ const note = noteTo(out('transcript.txt'));
 const rpc = <T>(method: string, body: unknown): Promise<T> => callEngine<T>(ENGINE, method, body);
 const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fullPage: true });
 
-const example = (file: string) => readFileSync(path.join(repoRoot, 'examples', file), 'utf8');
+const example = (file: string) => readFileSync(path.join(repoRoot, 'internal', 'dsl', 'testdata', 'orkflows', file), 'utf8');
 // Every scenario gets its own stamped Orkflow, so one test's memos never feed
 // another's.
 const pipeline = (name: string) => example('cached-pipeline.ork.yaml').replace('name: cached-pipeline', `name: ${name}`);

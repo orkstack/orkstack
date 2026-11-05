@@ -159,9 +159,8 @@ function main() {
 		if (name === '--font-code' && !/JetBrains Mono Variable/.test(value)) problems.push('tokens.css --font-code is no longer JetBrains Mono: update the face the site installs');
 	}
 
-	// Media budget: what a page may make a visitor download. Screenshots live
-	// in src/assets/media (Astro re-encodes them), recordings and their poster
-	// frames in public/media (served as they are); both count.
+	// Media budget: what a page may make a visitor download. Screenshots,
+	// recordings and their poster frames live in public/media, served as they are.
 	const budget = { image: 900 * 1024, video: 2.5 * 1024 * 1024, total: 24 * 1024 * 1024 };
 	let total = 0;
 	for (const dir of [path.join(srcRoot, 'assets', 'media'), path.join(siteRoot, 'public', 'media')]) {

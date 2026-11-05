@@ -103,7 +103,7 @@ func (u unreachableStore) SetCurrentVersion(context.Context, string, string, str
 
 func exampleYAML(t *testing.T) string {
 	t.Helper()
-	source, err := os.ReadFile("../../examples/hello.ork.yaml")
+	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}

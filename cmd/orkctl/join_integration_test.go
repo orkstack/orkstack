@@ -17,13 +17,13 @@ import (
 
 // The join-policy CLI scenarios (docs/DSL.md "Joins and failure handlers"): real `ork` and
 // `orker` binaries, real Temporal and MinIO, and the BUILT orkctl, on
-// examples/branch-and-recover.ork.yaml as shipped (applied under a stamped
+// internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml as it stands (applied under a stamped
 // name so parallel suites never share a definition).
 
-// branchAndRecoverDoc is the shipped example under name.
+// branchAndRecoverDoc is the fixture under name.
 func branchAndRecoverDoc(t *testing.T, name string) string {
 	t.Helper()
-	raw, err := os.ReadFile("../../examples/branch-and-recover.ork.yaml")
+	raw, err := os.ReadFile("../../internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -721,6 +721,18 @@
 							"source": "site/content/examples.md"
 						}
 					],
+					"aliases": [
+						"docs/examples/advanced-demo",
+						"docs/examples/awaited-approval",
+						"docs/examples/branch-and-recover",
+						"docs/examples/cached-pipeline",
+						"docs/examples/composed-release",
+						"docs/examples/file-read",
+						"docs/examples/hello",
+						"docs/examples/pinned-build",
+						"docs/examples/release-block",
+						"docs/examples/shell-eval"
+					],
 					"examples": "docs/examples",
 					"featuredExamples": [
 						"config-from-git",

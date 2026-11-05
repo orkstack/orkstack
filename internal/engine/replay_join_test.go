@@ -26,7 +26,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 )
 
-// joinHistory is the join fixture: examples/branch-and-recover.ork.yaml with
+// joinHistory is the join fixture: internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml with
 // route=full, fail_deploy=true and smoke_seconds=120, recorded by a versioned
 // worker against a real cluster by TestIntegration_RecordJoinRunHistory
 // and never hand-edited (testdata/history/README.md). It holds still the

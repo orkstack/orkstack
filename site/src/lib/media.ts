@@ -11,8 +11,9 @@ interface Item {
 	/** A planned or finished recording's name and length, as the page prints them. */
 	title?: string;
 	duration?: string;
-	/** A recording's WebVTT captions, in public/media. */
+	/** A recording's WebVTT captions, in public/media: each theme is its own take, timed to itself. */
 	captions?: string;
+	captionsDark?: string;
 	/** A screenshot's size in CSS pixels: its one-x file's, half its two-x file's. */
 	width?: number;
 	height?: number;
@@ -79,6 +80,7 @@ export interface ClipTheme {
 	webm?: string;
 	mp4?: string;
 	poster?: string;
+	captions?: string;
 }
 export interface Clip {
 	alt: string;
@@ -116,7 +118,6 @@ export interface Video {
 	height: number;
 	/** The recording exists: without it, the page shows the poster and says it is planned. */
 	recorded: boolean;
-	captions?: string;
 	light: ClipTheme;
 	dark: ClipTheme;
 }
@@ -127,11 +128,10 @@ export function video(name: string): Video {
 	if (!item) throw new Error(`media ${name} has no entry in src/assets/media/manifest.json`);
 	const { width, height, title, duration } = item;
 	if (!width || !height || !title || !duration) throw new Error(`media ${name} needs a width, height, title and duration in src/assets/media/manifest.json`);
-	const light = { webm: served(item.webm, name), mp4: served(item.mp4, name), poster: served(item.poster, name) };
-	const dark = { webm: served(item.webmDark, name), mp4: served(item.mp4Dark, name), poster: served(item.posterDark, name) };
+	const light = { webm: served(item.webm, name), mp4: served(item.mp4, name), poster: served(item.poster, name), captions: served(item.captions, name) };
+	const dark = { webm: served(item.webmDark, name), mp4: served(item.mp4Dark, name), poster: served(item.posterDark, name), captions: served(item.captionsDark, name) };
 	const recorded = Boolean((light.webm || light.mp4) && (dark.webm || dark.mp4));
-	// A recording never ships without its captions (AGENTS' site rules, the brief's §11).
-	const captions = served(item.captions, name);
-	if (recorded && !captions) throw new Error(`media ${name} is recorded but has no captions file`);
-	return { title, alt: item.alt, caption: item.caption, duration, width, height, recorded, captions, light, dark };
+	// A recording never ships without its captions.
+	if (recorded && !(light.captions && dark.captions)) throw new Error(`media ${name} is recorded but has no captions file for each theme`);
+	return { title, alt: item.alt, caption: item.caption, duration, width, height, recorded, light, dark };
 }

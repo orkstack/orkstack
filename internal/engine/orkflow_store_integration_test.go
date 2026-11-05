@@ -58,7 +58,7 @@ func probeOrkflowName(t *testing.T, kind string) string {
 // test owns its own orkflow in the shared bucket.
 func helloYAMLNamed(t *testing.T, name string) string {
 	t.Helper()
-	source, err := os.ReadFile("../../examples/hello.ork.yaml")
+	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
 	if err != nil {
 		t.Fatalf("read example: %v", err)
 	}

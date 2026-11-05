@@ -12,7 +12,7 @@ import (
 
 // advancedDemoPath is relative on purpose: the file-form header prints the
 // path it was given, and a relative one keeps the golden machine-independent.
-const advancedDemoPath = "../../examples/advanced-demo.ork.yaml"
+const advancedDemoPath = "../../internal/dsl/testdata/orkflows/advanced-demo.ork.yaml"
 
 const planFailsDocument = `apiVersion: orkstack/v1
 kind: Orkflow

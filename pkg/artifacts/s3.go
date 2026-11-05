@@ -60,7 +60,7 @@ type S3Store struct {
 // artifact contract — Store, PutOptions and ArtifactRef — unchanged, and makes
 // every object state its own origin in S3 user metadata.
 type Provenance struct {
-	// Orkflow is the orkflow name, e.g. "hello-ork".
+	// Orkflow is the orkflow name, e.g. "each-fan-out".
 	Orkflow string
 	// TaskID is the task that produced the artifact, e.g. "fetch".
 	TaskID string

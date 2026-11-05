@@ -1,0 +1,16 @@
+WEBVTT
+
+00:00.082 --> 00:05.041
+order-saga failed. The banner names the task and the reason, as a code and in words.
+
+00:05.041 --> 00:12.257
+View stderr opens the failed task’s own output: the API answered 503.
+
+00:12.257 --> 00:19.228
+How it failed lists what ran and what never started. Seen before counts failures like it.
+
+00:19.228 --> 00:24.966
+The failure handlers released and refunded the order. The run still ends Failed.
+
+00:24.966 --> 00:30.689
+Fix the cause, then Run again.

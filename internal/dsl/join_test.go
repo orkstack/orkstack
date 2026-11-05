@@ -437,11 +437,7 @@ tasks:
 }
 
 func TestSureAncestors_IsTheClosureWithoutJoins(t *testing.T) {
-	paths, err := filepath.Glob("../../examples/*.ork.yaml")
-	if err != nil {
-		t.Fatalf("glob: %v", err)
-	}
-	for _, path := range paths {
+	for _, path := range examplesAndFixtures(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatalf("compile %s: %v", path, err)
@@ -473,15 +469,11 @@ func TestSureAncestors_IsTheClosureWithoutJoins(t *testing.T) {
 	}
 }
 
-// TestJoinWarnings_EveryShippedExampleHasNone holds every shipped example —
-// the ones that join and the ones that do not — to apply's W1 warning: no
-// example reads a task that may be absent outside an `index .tasks` guard.
+// TestJoinWarnings_EveryShippedExampleHasNone holds every example and fixture —
+// the ones that join and the ones that do not — to apply's W1 warning: none
+// reads a task that may be absent outside an `index .tasks` guard.
 func TestJoinWarnings_EveryShippedExampleHasNone(t *testing.T) {
-	paths, err := filepath.Glob("../../examples/*.ork.yaml")
-	if err != nil || len(paths) == 0 {
-		t.Fatalf("glob: %v (%d found)", err, len(paths))
-	}
-	for _, path := range paths {
+	for _, path := range examplesAndFixtures(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil {
 			t.Fatalf("compile %s: %v", path, err)
@@ -694,7 +686,7 @@ tasks:
 }
 
 func TestJoinWarnings_TheShippedExampleHasNone(t *testing.T) {
-	wf, err := dsl.CompileFile("../../examples/branch-and-recover.ork.yaml")
+	wf, err := dsl.CompileFile("testdata/orkflows/branch-and-recover.ork.yaml")
 	if err != nil {
 		t.Fatalf("compile: %v", err)
 	}

@@ -86,13 +86,15 @@ to the end, and its merged artifact opened:
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/ui-demo-dark.webp">
-  <img alt="The OrkStack UI: the each-fan-out Orkflow is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task's merged.txt artifact is opened with its provenance." src="docs/images/ui-demo-light.webp" width="880">
+  <img alt="The OrkStack UI: the each-fan-out Orkflow is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task's merged.txt artifact is shown with its provenance." src="docs/images/ui-demo-light.webp" width="880">
 </picture>
 </p>
 
 The [landing page](https://orkstack.github.io/orkstack/#reel-title) has
-recordings of the YAML editor's live checks, a fan-out, an awaited task, a
-failure handler, `orkctl activity test`, and schedules and triggers.
+recordings of a task waiting for capacity, an Orkflow going from YAML to a run,
+and finding why a run failed. The [docs](https://orkstack.github.io/orkstack/docs/)
+show more: a fan-out, an awaited task, a failure handler, `orkctl activity test`,
+and schedules and triggers.
 
 ## Core concepts
 

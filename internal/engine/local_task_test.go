@@ -254,12 +254,7 @@ func parityCorpus(t *testing.T) []parityCase {
 		{name: "fan-out-over-the-floor", wf: compile(t, localParityWideFanOut), continued: true,
 			input: payload(t, map[string]any{"parts": []any{"a", "b", "c"}})},
 	}
-	paths, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.ork.yaml"))
-	if err != nil || len(paths) == 0 {
-		t.Fatalf("glob examples: %v (%d found)", err, len(paths))
-	}
-	sort.Strings(paths)
-	for _, path := range paths {
+	for _, path := range parityDocuments(t) {
 		source, err := os.ReadFile(path)
 		if err != nil {
 			t.Fatalf("read %s: %v", path, err)
@@ -354,15 +349,27 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	return own, run
 }
 
-// exampleOrkflow compiles the shipped example named name@version, with its
+// parityDocuments is every example and fixture Orkflow, sorted.
+func parityDocuments(t *testing.T) []string {
+	t.Helper()
+	examples, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.ork.yaml"))
+	if err != nil || len(examples) == 0 {
+		t.Fatalf("glob examples: %v (%d found)", err, len(examples))
+	}
+	fixtures, err := filepath.Glob(filepath.Join(orkflowFixtures, "*.ork.yaml"))
+	if err != nil || len(fixtures) == 0 {
+		t.Fatalf("glob fixtures: %v (%d found)", err, len(fixtures))
+	}
+	paths := append(examples, fixtures...)
+	sort.Strings(paths)
+	return paths
+}
+
+// exampleOrkflow compiles the example or fixture named name@version, with its
 // own digest stamped as apply would.
 func exampleOrkflow(t *testing.T, name, version string) *orkstackv1.Orkflow {
 	t.Helper()
-	paths, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, path := range paths {
+	for _, path := range parityDocuments(t) {
 		wf, err := dsl.CompileFile(path)
 		if err != nil || wf.GetName() != name || wf.GetVersion() != version {
 			continue
@@ -375,12 +382,12 @@ func exampleOrkflow(t *testing.T, name, version string) *orkstackv1.Orkflow {
 		wf.DefinitionDigest = digest
 		return wf
 	}
-	t.Fatalf("no shipped example is %s@%s", name, version)
+	t.Fatalf("no example or fixture is %s@%s", name, version)
 	return nil
 }
 
 // stampExampleChildren stamps every composed task's definition digest from
-// the shipped example it names.
+// the example or fixture it names.
 func stampExampleChildren(t *testing.T, wf *orkstackv1.Orkflow) {
 	t.Helper()
 	for _, task := range wf.GetTasks() {
@@ -391,7 +398,7 @@ func stampExampleChildren(t *testing.T, wf *orkstackv1.Orkflow) {
 }
 
 // parityChildren plans every composed task of wf as a child run of the
-// shipped example it names.
+// example or fixture it names.
 func parityChildren(t *testing.T, wf *orkstackv1.Orkflow) map[string]*engine.ChildRunPlan {
 	t.Helper()
 	var children map[string]*engine.ChildRunPlan

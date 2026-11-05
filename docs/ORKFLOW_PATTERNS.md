@@ -13,7 +13,7 @@ document header (`apiVersion: orkstack/v1`, `kind: Orkflow`; [the DSL
 reference](DSL.md), "The document header") follows them. The test suite compiles
 every example, runs every `orkctl run plan --file` line in its comment header, and
 runs it end to end
-against a real stack (all but `advanced-demo`, which needs the internet).
+against a real stack.
 
 ## The rule: the platform moves data, tasks compute
 
@@ -116,8 +116,7 @@ ran with an `if … else if … else` chain. Apply warns about every unguarded
 read of an ancestor a join can leave absent.
 
 Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
-[approval-gate](../examples/approval-gate.ork.yaml),
-[branch-and-recover](../examples/branch-and-recover.ork.yaml).
+[approval-gate](../examples/approval-gate.ork.yaml).
 
 ## Batch transforms into one prepare task
 
@@ -248,8 +247,7 @@ images"](ACTIVITY_IMAGES.md#network-and-caching-of-the-first-party-images),
 and are not restated here.
 
 Examples: [config-from-git](../examples/config-from-git.ork.yaml),
-[poll-until-ready](../examples/poll-until-ready.ork.yaml),
-[cached-pipeline](../examples/cached-pipeline.ork.yaml).
+[poll-until-ready](../examples/poll-until-ready.ork.yaml).
 
 ## Pin moving inputs: resolve, then use the commit
 
@@ -323,8 +321,7 @@ Report either way with an `all_done` task that reads `task.json`'s `join`
 object, and notify through a composed block. What does not exist: loops,
 `continue_on_error`, an Orkflow-level `on_failure:`.
 
-Examples: [order-saga](../examples/order-saga.ork.yaml),
-[branch-and-recover](../examples/branch-and-recover.ork.yaml).
+Example: [order-saga](../examples/order-saga.ork.yaml).
 
 ## Repeat without loops
 
@@ -360,8 +357,7 @@ no container and holds no Orker while it waits.
 - `orkctl run resolve <run> --task <id> --values '<json>'` and the run page
   resolve it.
 
-Examples: [approval-gate](../examples/approval-gate.ork.yaml),
-[awaited-approval](../examples/awaited-approval.ork.yaml).
+Example: [approval-gate](../examples/approval-gate.ork.yaml).
 
 ## Share a working tree: pins
 
@@ -379,8 +375,7 @@ in place; otherwise hand files on as artifacts.
   `/orkstack/shared` does.
 - The pool needs a pin host, an Orker with `ORK_ORKER_MAX_PINS` above zero.
 
-Examples: [pinned-checkout](../examples/pinned-checkout.ork.yaml),
-[pinned-build](../examples/pinned-build.ork.yaml).
+Example: [pinned-checkout](../examples/pinned-checkout.ork.yaml).
 
 ## Reuse a block with declared outputs
 
@@ -394,8 +389,7 @@ Examples: [pinned-checkout](../examples/pinned-checkout.ork.yaml),
 
 Examples: [notify-block](../examples/notify-block.ork.yaml),
 [order-saga](../examples/order-saga.ork.yaml),
-[approval-gate](../examples/approval-gate.ork.yaml),
-[composed-release](../examples/composed-release.ork.yaml).
+[approval-gate](../examples/approval-gate.ork.yaml).
 
 ## When to write your own image
 
@@ -458,33 +452,19 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 
 ## Examples index
 
-Examples marked *older* do not follow every rule of this guide; see
-[`examples/README.md`](../examples/README.md) for which, and why they keep
-their versions rather than follow it. Follow the guide, not them.
-
 | Example | Shows | Sections |
 |---|---|---|
-| [`examples/advanced-demo.ork.yaml`](../examples/advanced-demo.ork.yaml) | *older* — retries, conditions, a secret, streamed logs | "Decide in a task, branch on its value" |
 | [`examples/approval-gate.ork.yaml`](../examples/approval-gate.ork.yaml) | an approval only when a change is risky | "Wait for a person or a system", "Decide in a task, branch on its value", "Reuse a block with declared outputs" |
-| [`examples/awaited-approval.ork.yaml`](../examples/awaited-approval.ork.yaml) | *older* — an awaited task | "Wait for a person or a system" |
-| [`examples/branch-and-recover.ork.yaml`](../examples/branch-and-recover.ork.yaml) | *older* — branch, re-join, roll back | "Branch and re-join", "Undo what was done: failure handlers and sagas" |
-| [`examples/cached-pipeline.ork.yaml`](../examples/cached-pipeline.ork.yaml) | *older* — a cached task | "Cache only what you assert is reusable" |
-| [`examples/composed-release.ork.yaml`](../examples/composed-release.ork.yaml) | *older* — composing a block | "Reuse a block with declared outputs" |
 | [`examples/config-from-git.ork.yaml`](../examples/config-from-git.ork.yaml) | one commit rendered per service, cached | "Pin moving inputs: resolve, then use the commit", "Batch transforms into one prepare task", "Cache only what you assert is reusable", "jq, a template, or your own image" |
 | [`examples/custom-image.ork.yaml`](../examples/custom-image.ork.yaml) | two images of your own as activities | "When to write your own image" |
 | [`examples/decide-and-route.ork.yaml`](../examples/decide-and-route.ork.yaml) | decide, branch three ways, re-join | "Decide in a task, branch on its value", "Branch and re-join", "Plan before you run" |
 | [`examples/each-fan-out.ork.yaml`](../examples/each-fan-out.ork.yaml) | a fan-out over a computed list | "Batch transforms into one prepare task" |
-| [`examples/file-read.ork.yaml`](../examples/file-read.ork.yaml) | *older* — the file activity | "jq, a template, or your own image" |
-| [`examples/hello.ork.yaml`](../examples/hello.ork.yaml) | *older* — fetch, transform, checksum | "The rule: the platform moves data, tasks compute" |
 | [`examples/http-post.ork.yaml`](../examples/http-post.ork.yaml) | a POST whose JSON body is a YAML mapping, and its status | "Pass values as data, never as code", "A non-2xx answer is data" |
 | [`examples/inputs-and-escaping.ork.yaml`](../examples/inputs-and-escaping.ork.yaml) | typed inputs and escaping | "Pass values as data, never as code" |
 | [`examples/notify-block.ork.yaml`](../examples/notify-block.ork.yaml) | a reusable notification block | "Reuse a block with declared outputs", "Pass values as data, never as code" |
 | [`examples/order-saga.ork.yaml`](../examples/order-saga.ork.yaml) | a saga over an HTTP API | "Undo what was done: failure handlers and sagas", "Side effects are at-least-once", "A non-2xx answer is data", "Reuse a block with declared outputs" |
-| [`examples/pinned-build.ork.yaml`](../examples/pinned-build.ork.yaml) | *older* — a pin | "Share a working tree: pins" |
 | [`examples/pinned-checkout.ork.yaml`](../examples/pinned-checkout.ork.yaml) | a git checkout in a pin | "Share a working tree: pins", "Pin moving inputs: resolve, then use the commit" |
 | [`examples/poll-until-ready.ork.yaml`](../examples/poll-until-ready.ork.yaml) | polling through a retry policy | "Repeat without loops", "Environment variables are configuration" |
-| [`examples/release-block.ork.yaml`](../examples/release-block.ork.yaml) | *older* — the block composed-release composes | "Reuse a block with declared outputs" |
-| [`examples/shell-eval.ork.yaml`](../examples/shell-eval.ork.yaml) | *older* — the shell activity's ops | "jq, a template, or your own image" |
 | [`examples/automation/examples.ork.yaml`](../examples/automation/examples.ork.yaml) | settings, a schedule and a trigger | "Declare what surrounds your Orkflows", "Repeat without loops" |
 | [`examples/custom-image/`](../examples/custom-image/) | an activity image in Go, `FROM scratch` | "When to write your own image" |
 | [`examples/custom-image-shell/`](../examples/custom-image-shell/) | the same activity in POSIX shell | "When to write your own image" |

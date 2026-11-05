@@ -21,7 +21,7 @@ import (
 )
 
 // cachedHistory is the caching fixture: the SECOND run of
-// examples/cached-pipeline.ork.yaml — featurize a hit, stamp uncached, train a
+// internal/dsl/testdata/orkflows/cached-pipeline.ork.yaml — featurize a hit, stamp uncached, train a
 // miss — recorded by a versioned worker against a real cluster by
 // TestIntegration_RecordCachedRunHistory, never hand-edited
 // (testdata/history/README.md). It holds still the first CacheContext an

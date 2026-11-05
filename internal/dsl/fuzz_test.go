@@ -353,7 +353,11 @@ func FuzzCompile_Orkflow(f *testing.F) {
 	if err != nil || len(examples) == 0 {
 		f.Fatalf("no example Orkflows found: %v", err)
 	}
-	for _, path := range examples {
+	fixtures, err := filepath.Glob("testdata/orkflows/*.ork.yaml")
+	if err != nil || len(fixtures) == 0 {
+		f.Fatalf("no fixture Orkflows found: %v", err)
+	}
+	for _, path := range append(examples, fixtures...) {
 		source, err := os.ReadFile(path)
 		if err != nil {
 			f.Fatal(err)

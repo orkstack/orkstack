@@ -85,13 +85,13 @@ func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 	x := newExamplesStack(ctx, t, examplesOptions{})
 	defer x.finish(t, "E1")
 	ensureExampleImages(ctx, t, x.orkctlPath, x.root)
-	x.apply("examples/release-block.ork.yaml")
+	x.apply(orkflowFixtures + "/release-block.ork.yaml")
 	x.apply("examples/notify-block.ork.yaml")
 
 	// The whole of the documented exceptions: cached-pipeline's train sets
 	// no TTL on purpose (TestCompile_CacheCompiles asserts it).
-	expectedWarnings := map[string]string{"examples/cached-pipeline.ork.yaml": "tasks[2].cache.ttl_seconds"}
-	for _, file := range exampleFiles(t, x.root) {
+	expectedWarnings := map[string]string{orkflowFixtures + "/cached-pipeline.ork.yaml": "tasks[2].cache.ttl_seconds"}
+	for _, file := range append(exampleFiles(t, x.root), fixtureFiles(t, x.root)...) {
 		wf, err := dsl.CompileFile(filepath.Join(x.root, file))
 		if err != nil {
 			t.Fatalf("compile %s: %v", file, err)
@@ -150,7 +150,7 @@ func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 	if !reflect.DeepEqual(planned, want) {
 		t.Fatalf("automation plan = %v, want %v", planned, want)
 	}
-	x.note("every example validated with no warning but cached-pipeline's documented one; the automation plan is %v", planned)
+	x.note("every example and fixture validated with no warning but cached-pipeline's documented one; the automation plan is %v", planned)
 }
 
 // E2: the decide-and-route example.
@@ -484,15 +484,15 @@ func TestIntegration_PollUntilReadyExampleRunsAsShipped(t *testing.T) {
 	})
 }
 
-// E12: the file-read, shell-eval, http-post and pinned-build examples.
+// E12: the http-post example, and the file-read, shell-eval and pinned-build fixtures.
 func TestIntegration_SmallExamplesRunAsShipped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 	defer cancel()
 	x := newExamplesStack(ctx, t, examplesOptions{})
 	base := x.services.base
 	x.scenario(t, "E12", func(t *testing.T) {
-		for _, file := range []string{"file-read", "shell-eval", "http-post", "pinned-build"} {
-			x.apply("examples/" + file + ".ork.yaml")
+		for _, file := range []string{orkflowFixtures + "/file-read", orkflowFixtures + "/shell-eval", "examples/http-post", orkflowFixtures + "/pinned-build"} {
+			x.apply(file + ".ork.yaml")
 		}
 		run := x.runToEnd("file-read")
 		requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)

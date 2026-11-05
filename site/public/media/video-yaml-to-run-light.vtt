@@ -1,0 +1,16 @@
+WEBVTT
+
+00:00.150 --> 00:10.194
+Edit an Orkflow in the editor. Ctrl Space suggests keys and values.
+
+00:10.194 --> 00:23.324
+The engine checks the document as you type. A problem is underlined; fix it to apply.
+
+00:23.324 --> 00:27.719
+The panel beside the code shows the keys of the activity the cursor is in.
+
+00:27.719 --> 00:49.096
+Apply version stores an immutable version and its digest. A plan shows which tasks would run.
+
+00:49.096 --> 00:57.551
+Submit a run, and watch the graph fill in as each task starts and ends.
