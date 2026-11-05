@@ -101,6 +101,12 @@ orker:
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
   max_concurrent: 16  # orker
+  store_check:
+    enabled: true  # orker
+    interval: 15s  # orker
+    timeout: 5s  # orker
+    failures: 3  # orker
+    recoveries: 2  # orker
   capacity:
     cpu: ""  # orker
     memory: ""  # orker

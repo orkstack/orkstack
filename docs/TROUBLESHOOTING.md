@@ -20,7 +20,7 @@ A submission refused in this section leaves nothing behind: no run id is minted 
 
 ### "has no live Orkers, so nothing would pick these tasks up"
 
-**Cause.** The pool a task resolves to has no Orker that would take it: nothing polls the pool's channel, and no uncordoned Orker of the pool answers on its own channel. The second check is what keeps a busy pool live, because an Orker whose every task slot is taken stops polling the pool's channel but still answers on its own. An Orker that does not answer within five seconds is not counted, and the engine logs `a pool reads empty while some live Orkers did not answer when asked`. The engine refuses the submit with `failed_precondition`, before a run id exists (`internal/engine/pools.go`, `PoolEmptyError`; `internal/api/service.go`, `poolPlanError`). The rule is in ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
+**Cause.** The pool a task resolves to has no Orker that would take it: nothing polls the pool's channel, and no uncordoned Orker of the pool answers on its own channel (one waiting out a store outage alone counts as uncordoned). The second check is what keeps a busy pool live, because an Orker whose every task slot is taken stops polling the pool's channel but still answers on its own. An Orker that does not answer within five seconds is not counted, and the engine logs `a pool reads empty while some live Orkers did not answer when asked`. The engine refuses the submit with `failed_precondition`, before a run id exists (`internal/engine/pools.go`, `PoolEmptyError`; `internal/api/service.go`, `poolPlanError`). The rule is in ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 
 **Confirm.**
 
@@ -134,6 +134,7 @@ A task waiting for a free slot on a busy pool is not one of them: the engine has
 
 - Every Orker of the pool is busy. Each runs at most `ORK_ORKER_MAX_CONCURRENT` tasks at once (16 by default), and, when it declares a capacity, polls only while a whole per-task cap is free beside what it has reserved; a task beyond that waits in the pool. `orkctl orker list` shows each Orker's `TASKS`, `CAPACITY` and `RESERVED`. The task is `RUNNING` from the moment it is dispatched: `orkctl run inspect` says `waiting for an orker on pool <pool> for <time>`, and the run page says `Waiting for an orker` (`internal/engine/workflow.go`; `internal/orker/cordon.go`, `DefaultMaxConcurrent`; [DEPLOY.md](./DEPLOY.md), "Sizing an Orker's task ceiling"). When every Orker of the pool is at its declared capacity, they say so instead: `orkctl run inspect` prints `waiting for capacity for <time> (scheduled …): every orker of pool <pool> is full (reserved 4/4 cpu)`, and the run page `Waiting for capacity` (`internal/engine/capacity_wait.go`; [DEPLOY.md](./DEPLOY.md), "Declaring an Orker's capacity").
 - No Orker serves the pool, or the ones that do are cordoned. A cordoned Orker takes no new task and opens no new pin, and a restart clears the cordon ([CLI.md](./CLI.md), "`orkctl orker cordon`").
+- The pool's Orkers cannot reach object storage, and have cordoned themselves. `orkctl run inspect` says `waiting for object storage`, and the task uses no attempt while it waits. See the next section.
 - An Orker died while it held an attempt. Its heartbeat stops, `orkctl run inspect` reports the heartbeat as `STALE`, and the attempt times out as `ORKER_HEARTBEAT_TIMEOUT` (`internal/engine/workflow.go`). A heartbeat timeout is retryable under the task's `retry:` policy ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.1 The five categories").
 - A pinned task's host was lost. See `PIN_HOST_LOST` below.
 
@@ -146,6 +147,27 @@ orkctl run attempts <run-id>     # an attempt its Orker never filed shows as UNR
 ```
 
 **Fix.** If the pool is busy, the task starts when a slot frees. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load. If it waits for capacity, the task starts once a running task's container is removed: add Orkers, raise `orker.capacity` where the host has room, or lower the per-task cap (`orker.resources.max_cpu`, `max_memory`), which every poll reserves. Restart a dead Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
+
+
+### An Orker reads `cordoned (object storage unreachable)`
+
+**Symptom.** `orkctl orker list` shows `cordoned (object storage unreachable)`, Admin → Pools stamps the row `Object Storage Unreachable`, tasks of its pool wait, and the Orker's log says `orker cordoned itself: object storage unreachable`.
+
+**Cause.** The Orker's object storage checks failed several times in a row, so it stopped taking new tasks and opening new pins to keep an outage from using up tasks' retries. Everything already running on it continues (`internal/orker/store_watch.go`; [DEPLOY.md](./DEPLOY.md), "When object storage goes away").
+
+**Confirm.**
+
+```bash
+orkctl orker get <orker-id>   # the store outage's reason and since
+```
+
+The Orker's log line `object storage check failed` carries the store's own error. Revoked credentials and a store that refuses writes count as failing, as does a store that cannot be reached.
+
+**Fix.** Restore object storage, or this Orker's way to it. The Orker resumes by itself after a few good checks, and the waiting tasks then run. `orkctl orker uncordon` cannot override it, and only clears a cordon an operator set. To stop an Orker from cordoning itself at all, set `ORK_ORKER_STORE_CHECK_ENABLED=false`; an outage then fails attempts as they arrive.
+
+While every Orker of a pool holds this cordon, a new run is still accepted and waits, and `orkctl run inspect` says `waiting for object storage`. Starting another Orker does not help, because it needs the same store.
+
+A waiting run has no deadline of its own, because a task's `timeout_seconds` starts with its container. If the store will not come back soon, cancel the runs you no longer want with `orkctl run cancel <run-id>`; the rest start by themselves once it answers.
 
 ### I stopped an Orker and its tasks failed
 

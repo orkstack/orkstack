@@ -668,13 +668,15 @@ message DescribeOrkerResult {
   // Orker's pool is refused at submit rather than left waiting.
   int32 max_concurrent_pins = 9;
 
-  // cordoned is this Orker's process-local cordon flag. It is NEVER stored
+  // cordoned is this Orker's process-local cordon: true while an operator's
+  // cordon or a store outage holds it (store_outage). It is NEVER stored
   // anywhere but the process: a restarted Orker answers false.
   bool cordoned = 10;
-  // cordon_reason is the reason given to CordonOrker; empty when not
-  // cordoned.
+  // cordon_reason is the reason given to CordonOrker: the operator's cordon.
+  // Empty when no operator's cordon holds, even while store_outage does.
   string cordon_reason = 11;
-  // cordoned_at is when the flag was last set; unset when not cordoned.
+  // cordoned_at is when the operator's cordon was last set; unset when none
+  // holds.
   google.protobuf.Timestamp cordoned_at = 12;
   // running_tasks is how many ExecuteTask activities this Orker has in
   // flight right now, pinned members included. Counted in the process; it
@@ -726,6 +728,9 @@ message DescribeOrkerResult {
   // default_request is what a task that requests nothing is given
   // (orker.resources.default_cpu and default_memory).
   ResourceQuantity default_request = 22;
+  // store_outage is set while this Orker has cordoned itself because it cannot
+  // reach object storage (Orker.store_outage). cordoned is true beside it.
+  StoreOutage store_outage = 23;
 }
 
 // ResourceQuantity is an amount of each resource an Orker reserves for a
@@ -755,9 +760,21 @@ message OpenPin {
   google.protobuf.Timestamp expires_at = 4;
 }
 
+// StoreOutage says an Orker has cordoned itself because its object storage
+// checks keep failing. It clears by itself once they pass again, and no
+// operator can clear it. Unset means no outage holds, and is all an Orker of a
+// release without these checks ever reports.
+message StoreOutage {
+  // reason says in plain words what the Orker saw, starting
+  // "object storage unreachable".
+  string reason = 1;
+  // since is when this Orker cordoned itself.
+  google.protobuf.Timestamp since = 2;
+}
+
 // CordonOrkerInput is the argument of the CordonOrker activity, dispatched
-// on ONE Orker's control channel. `cordoned = false` clears the flag; then
-// reason is ignored.
+// on ONE Orker's control channel. `cordoned = false` clears the operator's
+// cordon, and then reason is ignored; it never clears a store outage.
 message CordonOrkerInput {
   bool cordoned = 1;
   // reason is required when cordoned is true; at most 256 bytes, no control
@@ -775,8 +792,14 @@ message Orker {
   int32 running_tasks = 4;
   int32 open_pins = 5;
   int32 max_concurrent_pins = 6;     // ORK_ORKER_MAX_PINS; 0 means not a pin host
+  // cordoned is true while this Orker takes no new task and opens no new pin,
+  // whichever cause holds it: an operator's cordon (cordon_reason), a store
+  // outage (store_outage), or both.
   bool cordoned = 7;
-  string cordon_reason = 8;          // empty when not cordoned
+  // cordon_reason is the operator's reason; empty when no operator's cordon
+  // holds, even while store_outage does.
+  string cordon_reason = 8;
+  // cordoned_at is when the operator's cordon was set; unset when none holds.
   google.protobuf.Timestamp cordoned_at = 9;
   // last_seen is the most recent moment this Orker was observed polling.
   // It answers "how fresh is this row", never "when did this Orker die".
@@ -796,4 +819,9 @@ message Orker {
   // max_request is DescribeOrkerResult's: the per-task cap, the largest
   // request this Orker runs, which submit holds a task's declared request to.
   ResourceQuantity max_request = 15;
+  // store_outage is set while this Orker has cordoned itself because it cannot
+  // reach object storage. It clears by itself once the store answers again;
+  // CordonOrker neither sets nor clears it. Unset from an Orker of a release
+  // without these checks.
+  StoreOutage store_outage = 16;
 }

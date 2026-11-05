@@ -19,6 +19,7 @@
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
+	import { operatorCordoned } from '#lib/orkers.ts';
 	import { formatBytes } from '#lib/resources.ts';
 	import type { Pool } from '#lib/gen/orkstack/v1/namespace_pb.ts';
 	import { namespaceLabel } from '#lib/namespace.ts';
@@ -73,6 +74,10 @@
 	interface PoolLoad {
 		orkers: number;
 		cordoned: number;
+		/** Orkers an operator cordoned; the rest of `cordoned` hold it for a store outage alone. */
+		operatorCordons: number;
+		/** Orkers cordoned because object storage does not answer them. */
+		storeOutages: number;
 		tasks: number;
 		pins: number;
 		cpu: { reserved: number; capacity: number };
@@ -84,6 +89,8 @@
 		return {
 			orkers: mine.length,
 			cordoned: mine.filter((o) => o.cordoned).length,
+			operatorCordons: mine.filter(operatorCordoned).length,
+			storeOutages: mine.filter((o) => o.storeOutage).length,
 			tasks: sum((o) => o.runningTasks),
 			pins: sum((o) => o.openPins),
 			cpu: { reserved: sum((o) => o.reserved?.cpu ?? 0), capacity: sum((o) => o.capacity?.cpu ?? 0) },
@@ -93,10 +100,12 @@
 	/** Ready, Full or Cordoned, in words; colour only beside the word. */
 	function stateOf(pool: Pool, load: PoolLoad | null): { word: string; tone: 'ok' | 'wait' | 'fail' | 'plain' } {
 		if (pool.unavailableReason) return { word: 'Unknown', tone: 'plain' };
+		if (load && load.orkers > 0 && load.storeOutages === load.orkers) return { word: 'Object storage unreachable', tone: 'fail' };
 		if (pool.liveOrkerCount === 0) return { word: 'No Orkers', tone: 'fail' };
+		if (load && load.storeOutages > 0) return { word: `${load.storeOutages} cannot reach object storage`, tone: 'fail' };
 		if (load && load.orkers > 0 && load.cordoned === load.orkers) return { word: 'Cordoned', tone: 'wait' };
 		if (load && isFull(load)) return { word: 'Full', tone: 'wait' };
-		if (load && load.cordoned > 0) return { word: `${load.cordoned} cordoned`, tone: 'wait' };
+		if (load && load.operatorCordons > 0) return { word: `${load.operatorCordons} cordoned`, tone: 'wait' };
 		return { word: 'Ready', tone: 'ok' };
 	}
 	/** Every Orker has reserved all it declared, in a dimension their capacity bounds. */
@@ -225,7 +234,9 @@
 				Could not be reached: {pool.unavailableReason}. Orker count is <strong>unknown</strong>, not zero — ask again rather than scaling.
 			</p>
 		{:else}
-			{#if pool.liveOrkerCount === 0}
+			{#if load && load.orkers > 0 && load.storeOutages === load.orkers}
+				<p class="text-sm text-fail" data-testid="pool-all-store-outage-{pool.name}">Every Orker here has cordoned itself because object storage does not answer. Runs sent here are accepted and wait without using an attempt, and these Orkers resume by themselves once it answers.</p>
+			{:else if pool.liveOrkerCount === 0}
 				<p class="text-sm text-fail" data-testid="pool-no-orkers-{pool.name}">No live Orkers; a task sent here waits.</p>
 				<p class="text-sm text-ink-3">Last seen <span data-testid="pool-last-seen-{pool.name}">{#if pool.lastSeen}<TimeAgo at={pool.lastSeen} />{:else}never (or gone quiet){/if}</span></p>
 			{/if}
@@ -243,7 +254,7 @@
 	</div>
 	<div class="mt-auto flex items-center gap-3 px-4 pt-1 pb-3.5 text-dense text-ink-2">
 		{#if !pool.unavailableReason}
-			<span class="min-w-0"><span class="num" data-testid="pool-orker-count-{pool.name}">{orkerLabel(pool)}</span> {pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}{#if load}{' · '}{load.tasks} running {load.tasks === 1 ? 'task' : 'tasks'}{' · '}{load.pins} open {load.pins === 1 ? 'pin' : 'pins'}{/if}{#if load && load.cordoned > 0}{' · '}{load.cordoned} cordoned{/if}</span>
+			<span class="min-w-0"><span class="num" data-testid="pool-orker-count-{pool.name}">{orkerLabel(pool)}</span> {pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}{#if load}{' · '}{load.tasks} running {load.tasks === 1 ? 'task' : 'tasks'}{' · '}{load.pins} open {load.pins === 1 ? 'pin' : 'pins'}{/if}{#if load && load.operatorCordons > 0}{' · '}{load.operatorCordons} cordoned{/if}{#if load && load.storeOutages > 0}{' · '}<span data-testid="pool-store-outages-{pool.name}">{load.storeOutages} cannot reach object storage</span>{/if}</span>
 			<button
 				type="button"
 				class="btn btn-sm ml-auto shrink-0"
@@ -263,6 +274,7 @@
 	}
 	.phead {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 8px;
 		padding: 14px 16px 10px;

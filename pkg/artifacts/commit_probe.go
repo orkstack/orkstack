@@ -63,6 +63,32 @@ func ProbeCommitStore(ctx context.Context, store CommitStore) error {
 	return nil
 }
 
+// CheckCommitStore asks whether the store still answers this process, for an
+// Orker's store watch: one conditional create against the probe key, which a
+// live store refuses because the boot probe's winner is there, and one read of
+// that winner. So it exercises the write path and the read path a task's
+// completion needs, with the Orker's own credentials, and stores nothing new:
+// should the key be gone, the create writes that same fixed object again, as
+// the next boot would. A store that answered is reachable whatever it answered
+// about the key, and any other failure is an error.
+func CheckCommitStore(ctx context.Context, store CommitStore) error {
+	if store == nil {
+		return fmt.Errorf("commit store is not configured")
+	}
+	provider, ok := store.(interface{ commitProbeURI() string })
+	if !ok {
+		return nil
+	} // in-memory/custom stores prove their own contract
+	uri := provider.commitProbeURI()
+	if _, err := store.Create(ctx, uri, commitProbeCandidate()); err != nil && !errors.Is(err, ErrPreconditionFailed) {
+		return fmt.Errorf("commit store check %s: create: %w", uri, err)
+	}
+	if _, err := store.Get(ctx, uri); err != nil && !errors.Is(err, ErrNotFound) && !errors.Is(err, ErrCommitUndecodable) {
+		return fmt.Errorf("commit store check %s: read: %w", uri, err)
+	}
+	return nil
+}
+
 func commitProbeCandidate() *orkstackv1.ActivityCommit {
 	return &orkstackv1.ActivityCommit{
 		SchemaVersion: CommitSchemaVersion,

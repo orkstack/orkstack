@@ -33,17 +33,29 @@ import (
 //     has its own, plain slot supplier and the interceptor passes ExecuteTask
 //     through.
 //
-// The flag lives in this process and nowhere else. A restarted Orker is ready.
+// An operator's cordon and a store outage's (store_watch.go) are two causes of
+// one state, and use these same seams. The state lives in this process and
+// nowhere else. A restarted Orker is ready.
+
+// CordonCause is one reason an Orker holds its cordon, and since when.
+type CordonCause struct {
+	Reason string
+	Since  time.Time
+}
 
 // Cordon is one Orker's process-local cordon. It is the only place the flag
 // exists: not on disk, not in the bucket, not in the engine.
+//
+// Two causes hold it independently: an operator's (Set, Clear) and a store
+// outage the Orker found itself (SetStoreOutage, ClearStoreOutage,
+// store_watch.go). The Orker is cordoned while either holds, and neither
+// cause's clearing touches the other.
 type Cordon struct {
 	mu       sync.Mutex
-	cordoned bool
-	reason   string
-	since    time.Time
-	// changed is closed and replaced on every Clear, so a blocked slot
-	// reservation wakes without polling.
+	operator *CordonCause
+	outage   *CordonCause
+	// changed is closed and replaced whenever the last cause clears, so a
+	// blocked slot reservation wakes without polling.
 	changed chan struct{}
 }
 
@@ -52,46 +64,93 @@ func NewCordon() *Cordon {
 	return &Cordon{changed: make(chan struct{})}
 }
 
-// Set cordons the Orker. Setting an already-set cordon replaces the reason and
-// since.
+// Set sets the operator's cordon. Setting an already-set one replaces its
+// reason and since.
 func (c *Cordon) Set(reason string, now time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cordoned = true
-	c.reason = reason
-	c.since = now
+	c.operator = &CordonCause{Reason: reason, Since: now}
 }
 
-// Clear uncordons the Orker and wakes every blocked reservation. Clearing a
-// clear cordon is a no-op.
+// Clear clears the operator's cordon and, when no store outage holds, wakes
+// every blocked reservation. Clearing a clear one is a no-op.
 func (c *Cordon) Clear() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if !c.cordoned {
+	if c.operator == nil {
 		return
 	}
-	c.cordoned = false
-	c.reason = ""
-	c.since = time.Time{}
+	c.operator = nil
+	c.wakeIfClear()
+}
+
+// SetStoreOutage holds the cordon for a store outage. Only the watch calls it,
+// once per outage, so its since is the moment the outage was declared.
+func (c *Cordon) SetStoreOutage(reason string, now time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.outage = &CordonCause{Reason: reason, Since: now}
+}
+
+// ClearStoreOutage ends a store outage and, when no operator's cordon holds,
+// wakes every blocked reservation. Ending none is a no-op.
+func (c *Cordon) ClearStoreOutage() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.outage == nil {
+		return
+	}
+	c.outage = nil
+	c.wakeIfClear()
+}
+
+// wakeIfClear wakes the blocked reservations once no cause holds. The caller
+// holds the lock.
+func (c *Cordon) wakeIfClear() {
+	if c.operator != nil || c.outage != nil {
+		return
+	}
 	close(c.changed)
 	c.changed = make(chan struct{})
 }
 
-// State is (cordoned, reason, since) as one read under the lock.
+// State is (cordoned, reason, since) as one read under the lock: whether any
+// cause holds, and the one a refusal should name, the operator's first.
 func (c *Cordon) State() (bool, string, time.Time) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.cordoned, c.reason, c.since
+	switch {
+	case c.operator != nil:
+		return true, c.operator.Reason, c.operator.Since
+	case c.outage != nil:
+		return true, c.outage.Reason, c.outage.Since
+	}
+	return false, "", time.Time{}
 }
 
-// Wait blocks until the cordon is cleared or ctx is done, returning ctx.Err()
-// in the second case. The SDK passes the worker's own context to ReserveSlot
+// Causes is each cause as one read under the lock, nil where it does not hold.
+func (c *Cordon) Causes() (operator, storeOutage *CordonCause) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.operator != nil {
+		cause := *c.operator
+		operator = &cause
+	}
+	if c.outage != nil {
+		cause := *c.outage
+		storeOutage = &cause
+	}
+	return operator, storeOutage
+}
+
+// Wait blocks until no cause holds the cordon or ctx is done, returning
+// ctx.Err() in the second case. The SDK passes the worker's own context to ReserveSlot
 // and treats context.Canceled as a quiet stop, so worker.Stop never hangs on a
 // cordoned Orker.
 func (c *Cordon) Wait(ctx context.Context) error {
 	for {
 		c.mu.Lock()
-		cordoned, changed := c.cordoned, c.changed
+		cordoned, changed := c.operator != nil || c.outage != nil, c.changed
 		c.mu.Unlock()
 		if !cordoned {
 			return nil
@@ -464,9 +523,10 @@ func validateCordonInput(in *orkstackv1.CordonOrkerInput) error {
 	return task.ValidCordonReason(in.GetReason())
 }
 
-// CordonOrker sets or clears this Orker's cordon and answers with its state
-// afterwards. Registered on the control channel only, so it can never land on
-// a different process. Idempotent: setting an already-set cordon replaces the
+// CordonOrker sets or clears the operator's cordon on this Orker and answers
+// with its state afterwards, which still says cordoned while a store outage
+// holds. Registered on the control channel only, so it can never land on a
+// different process. Idempotent: setting an already-set cordon replaces the
 // reason, clearing a clear one still answers.
 func (a *Activities) CordonOrker(ctx context.Context, in *orkstackv1.CordonOrkerInput) (*orkstackv1.DescribeOrkerResult, error) {
 	if err := validateCordonInput(in); err != nil {
@@ -481,10 +541,12 @@ func (a *Activities) CordonOrker(ctx context.Context, in *orkstackv1.CordonOrker
 			"running_tasks", a.running.load(),
 			"open_pins", len(a.pins.snapshot()))
 	} else {
-		was, _, since := a.cordon.State()
+		operator, outage := a.cordon.Causes()
 		a.cordon.Clear()
-		if was {
-			logger.Info("orker uncordoned", "was_cordoned_for", time.Since(since).Round(time.Second))
+		if operator != nil {
+			logger.Info("orker uncordoned",
+				"was_cordoned_for", time.Since(operator.Since).Round(time.Second),
+				"store_outage_holds", outage != nil)
 		}
 	}
 	return a.DescribeOrker(ctx)

@@ -106,7 +106,8 @@ old histories replay unchanged. Submit asks the task's pool what it can run
 no pins (`max_concurrent_pins` 0), and a fan-out, a cached task or a container
 failure handler on a pool whose Orker predates the feature (`each_supported`,
 `cache_supported`, `join_supported` false) and could not decode its context.
-The probe asks every uncordoned Orker of the pool, and one that lacks the
+The probe asks every uncordoned Orker of the pool, counting one only waiting
+out a store outage, and one that lacks the
 feature refuses the pool, so every Orker of a pool must run a release that
 supports what the pool is sent (`docs/DEPLOY.md`, §1).
 

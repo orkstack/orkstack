@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"sync"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
 // poolCensus is the Orker inventory (ReadFleet) grouped by the pool each Orker
@@ -98,6 +100,31 @@ func (c *poolCensus) taking(ctx context.Context, pool string) ([]FleetOrker, err
 		}
 	}
 	return orkers, nil
+}
+
+// serving is the Orkers of one pool that answered on their own channel and
+// either take a new task now or will once object storage answers them. An
+// Orker waiting out a store outage has only paused: work sent to its pool waits
+// and then runs, so it keeps the pool live and speaks for what the pool can
+// run. An operator's cordon says the opposite, that this Orker is leaving, so
+// one that holds both does not count. In identity order.
+func (c *poolCensus) serving(ctx context.Context, pool string) ([]FleetOrker, error) {
+	if err := c.read(ctx); err != nil {
+		return nil, err
+	}
+	var orkers []FleetOrker
+	for _, orker := range c.byPool[pool] {
+		if !orker.Described.GetCordoned() || pausedForStoreOutage(orker.Described) {
+			orkers = append(orkers, orker)
+		}
+	}
+	return orkers, nil
+}
+
+// pausedForStoreOutage says a store outage alone holds this Orker's cordon: an
+// operator's cordon always carries a reason.
+func pausedForStoreOutage(o *orkstackv1.DescribeOrkerResult) bool {
+	return o.GetStoreOutage() != nil && o.GetCordonReason() == ""
 }
 
 // unansweredCount is how many live Orkers did not answer on their own

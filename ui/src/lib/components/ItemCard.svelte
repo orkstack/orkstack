@@ -30,6 +30,8 @@
 		status: Status;
 		/** A running attempt no Orker has started, for want of room. */
 		waiting?: boolean;
+		/** What it waits for, when that is object storage rather than capacity. */
+		waitingFor?: string;
 		attempts: TaskAttempt[];
 		attempt: number;
 		orkerId: string;
@@ -56,6 +58,7 @@
 		prefix,
 		status,
 		waiting = false,
+		waitingFor = 'Waiting for capacity',
 		attempts,
 		attempt,
 		orkerId,
@@ -107,7 +110,7 @@
 		<h2 id="item-card-heading" data-testid="{prefix}-label">{title}</h2>
 		<div class="card-end">
 			{#if waiting}
-				<span class="stamp pill-wait" data-testid="{prefix}-card-status"><span class="mark-wait" aria-hidden="true"></span>Waiting for capacity</span>
+				<span class="stamp pill-wait" data-testid="{prefix}-card-status"><span class="mark-wait" aria-hidden="true"></span>{waitingFor}</span>
 			{:else}
 				<StatusPill {status} testid="{prefix}-card-status" />
 			{/if}

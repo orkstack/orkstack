@@ -253,8 +253,9 @@ message Pool {
   // task runs when neither it nor its namespace names one.
   string name = 1;
   // live_orker_count is how many Orkers were serving this pool when the answer
-  // was computed. Zero means a task sent here would wait for an Orker that is
-  // not there, which is what a submit refuses.
+  // was computed, an Orker waiting out an object storage outage included. Zero
+  // means a task sent here would wait for an Orker that is not there, which is
+  // what a submit refuses.
   int32 live_orker_count = 2;
   // 3 held `plugins`, the per-pool plugin inventory. Under the OCI Activity
   // Contract an activity is an image and which images exist is engine

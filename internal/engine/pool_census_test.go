@@ -355,3 +355,39 @@ func TestPoolResolver_ARequestMustFitOneOrkerInEveryDimension(t *testing.T) {
 		t.Fatalf("Plan = %v; 12 cpu and 32Gi fit gpu-1's cpu and gpu-2's memory, never one Orker", err)
 	}
 }
+
+// An Orker waiting out a store outage has paused, so it keeps its pool live and
+// answers for it; an operator's cordon, alone or beside the outage, does not.
+func TestPoolResolver_APoolPausedForAStoreOutageIsLive(t *testing.T) {
+	storeOutage := func(o *orkstackv1.DescribeOrkerResult) *orkstackv1.DescribeOrkerResult {
+		o.Cordoned = true
+		o.StoreOutage = &orkstackv1.StoreOutage{Reason: "object storage unreachable"}
+		return o
+	}
+	operator := func(o *orkstackv1.DescribeOrkerResult) *orkstackv1.DescribeOrkerResult {
+		o.Cordoned = true
+		o.CordonReason = "patching"
+		return o
+	}
+	cases := []struct {
+		name      string
+		fleet     *fakeFleet
+		wantEmpty bool
+	}{
+		{"a store outage alone", fleetOf(storeOutage(currentOrker("gpu-1", "gpu", 0))), false},
+		{"a store outage beside a cordoned sibling", fleetOf(storeOutage(currentOrker("gpu-1", "gpu", 0)), operator(currentOrker("gpu-2", "gpu", 0))), false},
+		{"an operator's cordon alone", fleetOf(operator(currentOrker("gpu-1", "gpu", 0))), true},
+		{"an operator's cordon beside a store outage on one Orker", fleetOf(storeOutage(operator(currentOrker("gpu-1", "gpu", 0)))), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resolver := &engine.PoolResolver{Probe: livePools{}, Fleet: tc.fleet}
+			_, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "ml"},
+				compile(t, gpuOnlyDocument), false)
+			var empty *engine.PoolEmptyError
+			if got := errors.As(err, &empty); got != tc.wantEmpty {
+				t.Fatalf("Plan = %v, want refused for an empty pool = %v", err, tc.wantEmpty)
+			}
+		})
+	}
+}

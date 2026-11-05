@@ -14,7 +14,7 @@ Look up a word that OrkStack uses in its interface and its docs. The words are i
 | **Carries on** | A long run continues under the same run ID, from its saved state. It stays one run in every list. |
 | **Commit** | The record that a task succeeded and its outputs are stored. A retry that finds it returns the stored result. |
 | **Composed task** | A task whose `uses:` is `orkflow:<name>@<version>`. It starts a child run of that Orkflow, and waits for it. |
-| **Cordon** | Stops an Orker from taking new tasks or opening new pins. Work already running continues. A restarted Orker is ready again. |
+| **Cordon** | Stops an Orker from taking new tasks or opening new pins. Work already running continues. An operator sets one, and an Orker also holds one by itself while object storage does not answer it. A restarted Orker is ready again. |
 | **Current version** | The version of an Orkflow that new runs use, unless a run names another version. |
 | **Drain** | Cordons an Orker and waits until it runs no task and hosts no pin. |
 | **Failure handler** | A task whose `join:` is `any_failed` or `all_done`. It runs in a failing run, and the run still ends `FAILED` with its original reason. |

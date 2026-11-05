@@ -515,8 +515,9 @@ type Pool struct {
 	// task runs when neither it nor its namespace names one.
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// live_orker_count is how many Orkers were serving this pool when the answer
-	// was computed. Zero means a task sent here would wait for an Orker that is
-	// not there, which is what a submit refuses.
+	// was computed, an Orker waiting out an object storage outage included. Zero
+	// means a task sent here would wait for an Orker that is not there, which is
+	// what a submit refuses.
 	LiveOrkerCount int32 `protobuf:"varint,2,opt,name=live_orker_count,json=liveOrkerCount,proto3" json:"live_orker_count,omitempty"`
 	// is_default marks the pool a task of this namespace runs on when it names
 	// none.

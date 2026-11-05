@@ -15,6 +15,24 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- An Orker now cordons itself during an object storage outage, so tasks wait
+  in the pool instead of using up their retries, and resumes by itself once the
+  store answers again. It is on by default: an Orker checks the store every 15 s
+  with one conditional write the store refuses and one read, cordons after 3
+  failed checks in a row and resumes after 2 good ones
+  (`orker.store_check`, `ORK_ORKER_STORE_CHECK_*`; `ORK_ORKER_STORE_CHECK_ENABLED=false`
+  turns it off). Work in flight is left alone. It is separate from an operator's
+  cordon: recovery never clears an operator's, and `orkctl orker uncordon` never
+  overrides an outage still failing. `ListOrkers` adds `store_outage` (`reason`,
+  `since`); `cordoned` is true for either cause, while `cordon_reason` and
+  `cordoned_at` stay the operator's alone, so a client that reads a reason from
+  `cordoned` alone should read `store_outage` too. `orkctl orker list` and Admin →
+  Pools show it as `object storage unreachable`, with metrics
+  `ork.orker.store_outage.active` and `.transitions`. An Orker holding it still
+  keeps its pool live, so a new run is accepted and waits; `InspectRun` adds
+  `store_outage_wait`, and `orkctl run inspect` and the run page say the task is
+  waiting for object storage. The limits are in `docs/DEPLOY.md`, "When object
+  storage goes away".
 - Runs created per day or per hour, on the viewer's own calendar. `GetStats`
   takes `bucket_width` (`HOUR` or `DAY`), an IANA `timezone` and
   `bucket_count`, and adds `buckets` to the window it already answers: each

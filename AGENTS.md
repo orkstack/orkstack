@@ -575,12 +575,17 @@ internal never appears on any of those surfaces.
   runs. It is **drained** when the cluster reports that no run executing on
   it remains and no Orker of it hosts an open pin; a drained release's
   processes may be stopped.
-- **Cordon** means a process-local flag on one Orker that stops it accepting
-  new tasks and opening new pins while leaving everything in flight alone. It
-  is delivered over the Orker's own control channel and is lost when the
-  process exits.
-- **Drain** means cordoning an Orker and waiting until it reports no running
-  task and no open pin. It is a client-side wait over the inventory read
+- **Cordon** means a process-local state of one Orker that stops it accepting
+  new tasks and opening new pins while leaving everything in flight alone. Two
+  independent causes hold it, and it stands while either does: an operator's,
+  delivered over the Orker's own control channel, and a store outage, which
+  the Orker declares itself after consecutive failed object-storage checks and
+  ends itself after consecutive good ones. Clearing one never touches the
+  other, and neither is stored: both are lost when the process exits. A store
+  outage only pauses an Orker, so unlike an operator's cordon it still keeps its
+  pool live: a run sent there is accepted and waits.
+- **Drain** means setting an operator's cordon on an Orker and waiting until it
+  reports no running task and no open pin. It is a client-side wait over the inventory read
   (`orkctl orker drain`); nothing server-side holds drain state.
 - **Control channel** and **presence channel** are internal, exactly as
   **queue** is: the Temporal task queue `ork-orker-<orker_id>` that one Orker

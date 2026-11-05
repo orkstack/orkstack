@@ -139,7 +139,10 @@ func (s *Service) InspectRun(
 const capacityWaitAfter = 2 * time.Second
 
 // markCapacityWaits sets capacity_wait on every attempt that is waiting for
-// capacity rather than for an Orker (engine.CapacityWaitsOf).
+// capacity rather than for an Orker (engine.CapacityWaitsOf), and
+// store_outage_wait on every one waiting out an object storage outage
+// (engine.StoreOutageWaitsOf). A pool has one or the other: capacity counts
+// Orkers that take new tasks, and an outage's wait needs there to be none.
 //
 // Its cost is bounded, because the run page and `run inspect --watch` call
 // InspectRun on a timer: nothing is read unless an attempt is waiting for an
@@ -186,13 +189,15 @@ func (s *Service) markCapacityWaits(
 			"reported as waiting for capacity", "run_id", run.GetId(), "unanswered", unanswered)
 		return
 	}
+	outages := engine.StoreOutageWaitsOf(orkers, pools)
 	for pool, list := range waiting {
-		wait := waits[pool]
-		if wait == nil {
-			continue
-		}
 		for _, attempt := range list {
-			attempt.CapacityWait = proto.Clone(wait).(*orkstackv1.CapacityWait)
+			if wait := waits[pool]; wait != nil {
+				attempt.CapacityWait = proto.Clone(wait).(*orkstackv1.CapacityWait)
+			}
+			if outage := outages[pool]; outage != nil {
+				attempt.StoreOutageWait = proto.Clone(outage).(*orkstackv1.StoreOutageWait)
+			}
 		}
 	}
 }

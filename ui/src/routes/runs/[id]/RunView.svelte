@@ -1958,7 +1958,7 @@
 		return {
 			pill:
 				task.status === Status.RUNNING && waitingFor(liveByTask.get(task.id))
-					? { cls: 'stamp pill-wait', mark: 'mark-wait', word: 'Waiting for capacity' }
+					? { cls: 'stamp pill-wait', mark: 'mark-wait', word: liveByTask.get(task.id)?.storeOutageWait ? 'Waiting for object storage' : 'Waiting for capacity' }
 					: waiting
 						? { cls: 'stamp pill-outline text-ink-2', mark: '', word: 'Pending' }
 						: {
@@ -2080,6 +2080,8 @@
 	// ---- The capacity note and What X waits for ----
 	const capacityWaiters = $derived([...liveByTask.values()].filter((live) => waitingFor(live) && live.capacityWait));
 	const firstWaiter = $derived(capacityWaiters[0]);
+	const outageWaiters = $derived([...liveByTask.values()].filter((live) => waitingFor(live) && live.storeOutageWait));
+	const firstOutageWaiter = $derived(outageWaiters[0]);
 	const waiterLabel = (live: LiveAttempt) => (live.item !== undefined ? itemLabel(live.taskId, live.item) : live.taskId);
 	const waiterSeconds = (live: LiveAttempt): string => {
 		const from = timestampMs(live.attemptScheduledAt);
@@ -2371,6 +2373,16 @@
 			<b role="status" class="font-semibold text-wait">{waiterLabel(firstWaiter)} is waiting for capacity{#if capacityWaiters.length > 1}, and {capacityWaiters.length - 1} more{/if}</b>
 			<span class="min-w-0 text-ink-2">every Orker of pool {wait.pool} is full{#if reserved}, {reserved} reserved{/if} · {waiterSeconds(firstWaiter)}</span>
 			<a class="ml-auto font-semibold whitespace-nowrap" data-testid="run-capacity-pool" href={withNamespace(`/admin/pools#pool-${encodeURIComponent(wait.pool)}`, data.namespace)}>View pool {wait.pool}</a>
+		</div>
+	{/if}
+	{#if firstOutageWaiter?.storeOutageWait}
+		<!-- Why something that should be running is not: the same amber line, naming the outage. -->
+		{@const outage = firstOutageWaiter.storeOutageWait}
+		<div class="capline mb-4" data-testid="run-store-outage-note">
+			<span class="mark-wait" aria-hidden="true"></span>
+			<b role="status" class="font-semibold text-wait">{waiterLabel(firstOutageWaiter)} is waiting for object storage{#if outageWaiters.length > 1}, and {outageWaiters.length - 1} more{/if}</b>
+			<span class="min-w-0 text-ink-2">the Orkers of pool {outage.pool} cannot reach it, so no attempt is being used · {waiterSeconds(firstOutageWaiter)}</span>
+			<a class="ml-auto font-semibold whitespace-nowrap" data-testid="run-store-outage-pool" href={withNamespace(`/admin/pools#pool-${encodeURIComponent(outage.pool)}`, data.namespace)}>View pool {outage.pool}</a>
 		</div>
 	{/if}
 	{#if runStatus === Status.FAILED && failedTask}
@@ -2705,6 +2717,7 @@
 								selected={task.id === activeTask ? activeItem : undefined}
 								onSelect={(item) => selectItem(task.id, item)}
 								waitingOf={(item) => waitingFor(liveByTask.get(attemptsKey(task.id, item)))}
+								waitingWord={task.items.some((i) => liveByTask.get(attemptsKey(task.id, i.index))?.storeOutageWait) ? 'waiting for object storage' : undefined}
 							/>
 						{/if}
 							{/if}
@@ -2867,7 +2880,9 @@
 				</div>
 				{#if !(isTerminal(runStatus) && tasks.length <= STAGE_ROWS_MAX)}<div class="tmap-key"><TaskMapLegend compact={tasks.length <= STAGE_ROWS_MAX} counts={legend} neverStarted={legendNever} onpick={(status) => taskMap?.focusStatus(status)} /></div>{/if}
 			</section>
-			{#if firstWaiter?.capacityWait}
+			{#if firstOutageWaiter?.storeOutageWait}
+				<WaitsFor label={waiterLabel(firstOutageWaiter)} outage={firstOutageWaiter.storeOutageWait} namespace={data.namespace} />
+			{:else if firstWaiter?.capacityWait}
 				<WaitsFor label={waiterLabel(firstWaiter)} wait={firstWaiter.capacityWait} namespace={data.namespace} ownRunning={poolPeers.running} took={poolPeers.took} />
 			{/if}
 			{#if activeView && !(activeView.status === Status.FAILED && task_isContainer(activeView))}
@@ -2886,6 +2901,7 @@
 					panelTestid={current ? panel : 'item-card'}
 					status={current ? (liveNow?.state === LiveAttemptState.STARTED && !isTerminal(current.status) ? Status.RUNNING : current.status) : activeView.status}
 					waiting={waitingFor(liveNow)}
+					waitingFor={liveNow?.storeOutageWait ? 'Waiting for object storage' : undefined}
 					attempts={facts}
 					attempt={current ? current.attempt : activeView.attempt}
 					orkerId={current ? (itemRun?.orkerId ?? '') : activeView.orkerId}

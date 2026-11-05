@@ -224,6 +224,11 @@ var Schema = []Var{
 	{Path: "orker.task_log_export", Env: "ORK_ORKER_TASK_LOG_EXPORT", Binaries: usesOrker, Kind: KindBool, Default: "false"},
 	{Path: "orker.heartbeat_interval", Env: "ORK_ORKER_HEARTBEAT_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultHeartbeatInterval)},
 	{Path: "orker.max_concurrent", Env: orker.MaxConcurrentVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(int64(orker.DefaultMaxConcurrent))},
+	{Path: "orker.store_check.enabled", Env: orker.StoreCheckEnabledVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultStoreCheckEnabled)},
+	{Path: "orker.store_check.interval", Env: orker.StoreCheckIntervalVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultStoreCheckInterval)},
+	{Path: "orker.store_check.timeout", Env: orker.StoreCheckTimeoutVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultStoreCheckTimeout)},
+	{Path: "orker.store_check.failures", Env: orker.StoreCheckFailuresVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(int64(orker.DefaultStoreCheckFailures))},
+	{Path: "orker.store_check.recoveries", Env: orker.StoreCheckRecoveriesVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(int64(orker.DefaultStoreCheckRecoveries))},
 	// orker.capacity is empty by default: no declared capacity admits by
 	// max_concurrent alone, as every Orker did before capacity existed.
 	{Path: "orker.capacity.cpu", Env: orker.CapacityCPUVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},

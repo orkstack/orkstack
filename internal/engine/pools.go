@@ -834,7 +834,8 @@ func (r *PoolResolver) Plan(
 // idle pool, so such a submit asks nothing more. A channel with no poller is
 // also what a pool whose every Orker is busy looks like (poolCensus), so it is
 // asked of the inventory before the pool is called empty: an Orker of the pool
-// that answered on its own channel and is not cordoned keeps it live.
+// that answered on its own channel and is not cordoned, or has only paused for
+// a store outage, keeps it live.
 //
 // Only a failed presence read is an error — nothing was measured, the same
 // verdict a failed channel read gets. An Orker that does not answer says
@@ -855,7 +856,7 @@ func (r *PoolResolver) present(ctx context.Context, census *poolCensus, pool str
 	if r.Fleet == nil {
 		return false, nil
 	}
-	orkers, err := census.taking(ctx, pool)
+	orkers, err := census.serving(ctx, pool)
 	if err != nil {
 		return false, err
 	}
@@ -863,8 +864,8 @@ func (r *PoolResolver) present(ctx context.Context, census *poolCensus, pool str
 }
 
 // probeOrkers is a live pool's Orkers for one capability probe: the census's
-// Orkers of the pool that would take a new task, each of which answered on
-// its own channel. That channel has its own slots, so a pool whose every task
+// Orkers of the pool that would take a new task, now or once a store outage
+// ends, each of which answered on its own channel. That channel has its own slots, so a pool whose every task
 // slot is taken still answers.
 //
 // Nil means there is nothing to judge, and the probe declines to refuse:
@@ -874,7 +875,7 @@ func (r *PoolResolver) present(ctx context.Context, census *poolCensus, pool str
 // what the probe could not learn, because a narrowed answer that says nothing
 // is indistinguishable from a complete one.
 func (r *PoolResolver) probeOrkers(ctx context.Context, census *poolCensus, probe capabilityProbe) []*orkstackv1.DescribeOrkerResult {
-	orkers, err := census.taking(ctx, probe.pool)
+	orkers, err := census.serving(ctx, probe.pool)
 	if err == nil && len(orkers) > 0 {
 		described := make([]*orkstackv1.DescribeOrkerResult, len(orkers))
 		for i, orker := range orkers {
@@ -1328,7 +1329,7 @@ func (r *PoolResolver) observedPool(
 	// channel's poller that is not an Orker the inventory lists, a busy Orker
 	// the channel no longer shows. A census that could not be read narrows the
 	// row to the channel's count, and Pools logs it once.
-	orkers, err := census.taking(ctx, name)
+	orkers, err := census.serving(ctx, name)
 	if err != nil || len(orkers) <= int(pool.GetLiveOrkerCount()) {
 		return pool
 	}
