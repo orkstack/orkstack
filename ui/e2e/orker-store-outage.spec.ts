@@ -248,6 +248,15 @@ test('A store outage reads apart from an operator\'s cordon, and offers no Uncor
 	await page.setViewportSize({ width: 375, height: 812 });
 	const noteBox = await outage.boundingBox();
 	expect(noteBox?.width ?? Infinity).toBeLessThanOrEqual(18 * 16);
+
+	// A desktop that leaves the card narrow: the stamp stays in its card, and the
+	// long sentence does not squeeze the Orker's id into a sliver.
+	await page.setViewportSize({ width: 1280, height: 900 });
+	const card = await page.getByTestId('pool-card-main').boundingBox();
+	const stamp = await page.getByTestId('pool-card-main').locator('.phead .stamp').boundingBox();
+	expect((stamp?.x ?? Infinity) + (stamp?.width ?? 0)).toBeLessThanOrEqual((card?.x ?? 0) + (card?.width ?? 0));
+	const idCell = await page.getByTestId(`orker-row-${ORKER}`).locator('th').boundingBox();
+	expect(idCell?.width ?? 0).toBeGreaterThanOrEqual(11 * 16);
 	await page.setViewportSize({ width: 1440, height: 900 });
 
 	// The top bar's Jump button is not this page's: its name leaves out the

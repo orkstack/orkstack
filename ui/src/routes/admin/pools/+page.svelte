@@ -274,6 +274,7 @@
 	}
 	.phead {
 		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
 		gap: 8px;
 		padding: 14px 16px 10px;

@@ -294,6 +294,10 @@
 		color: var(--ink-3);
 		overflow-wrap: anywhere;
 	}
+	/* A long status sentence must not squeeze the id into a sliver. */
+	.orkers :global(tbody th) {
+		min-width: 11rem;
+	}
 	.ork-actions {
 		white-space: nowrap;
 		text-align: right;
