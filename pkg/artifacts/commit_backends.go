@@ -253,3 +253,23 @@ func isConditionalConflict(err error) bool {
 	var response *smithyhttp.ResponseError
 	return errors.As(err, &response) && response.HTTPStatusCode() == http.StatusConflict
 }
+
+// isStoreUnavailable reports whether an S3 call failed without the store saying
+// anything about the request itself: no response at all, a refused credential,
+// no such bucket, or a server error. A 400, 405 or 501 is left out: a store that
+// cannot do a conditional create may answer one of those to If-None-Match.
+func isStoreUnavailable(err error) bool {
+	var response *smithyhttp.ResponseError
+	if errors.As(err, &response) {
+		switch status := response.HTTPStatusCode(); status {
+		case http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+			return true
+		case http.StatusNotImplemented:
+			return false
+		default:
+			return status >= http.StatusInternalServerError
+		}
+	}
+	var operation *smithy.OperationError
+	return errors.As(err, &operation)
+}

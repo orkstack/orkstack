@@ -287,7 +287,10 @@ cmd_up() {
 	"${COMPOSE[@]}" up -d
 	wait_for "temporal" 60 docker exec orkstack-temporal-1 \
 		temporal operator cluster health --address 127.0.0.1:7233
-	wait_for "object store (SeaweedFS)" 60 sh -c 'code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/); [ "$code" = 200 ] || [ "$code" = 403 ]'
+	# The bucket, not just the port: on an empty volume the store serves S3 for
+	# seconds before it creates its -bucket, and the engine and the Orker each
+	# exit in that gap (deploy/docker-compose.yml).
+	wait_for "object store (SeaweedFS)" 60 curl -fs -o /dev/null --head http://localhost:9000/orkstack-artifacts
 
 	say "== binaries =="
 	make build >/dev/null

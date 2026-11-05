@@ -49,6 +49,24 @@ func TestS3CommitStoreConditionalTwoWriterProbe(t *testing.T) {
 	}
 }
 
+// TestS3CommitStoreProbeOfAMissingBucketIsUnavailable: what a real store answers
+// a probe of a bucket that does not exist, which is the state a stack's first
+// start is in until the store has created its bucket. It is not a finding about
+// conditional writes.
+func TestS3CommitStoreProbeOfAMissingBucketIsUnavailable(t *testing.T) {
+	cfg := s3TestConfig()
+	requireObjectStore(t, cfg)
+	cfg.S3Bucket = "orkstack-no-such-bucket-" + uniqueToken(t)
+	ctx := context.Background()
+	store, err := artifacts.NewS3CommitStore(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifacts.ProbeCommitStore(ctx, store); !errors.Is(err, artifacts.ErrCommitStoreUnavailable) {
+		t.Fatalf("probe of a missing bucket = %v, want ErrCommitStoreUnavailable", err)
+	}
+}
+
 func TestS3CommitStoreExactlyOneWriterAndStoredBytesWin(t *testing.T) {
 	cfg := s3TestConfig()
 	requireObjectStore(t, cfg)

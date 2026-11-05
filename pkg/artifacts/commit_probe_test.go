@@ -5,12 +5,16 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/aws/smithy-go"
+	smithyhttp "github.com/aws/smithy-go/transport/http"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -60,9 +64,91 @@ func TestProbeCommitStoreRepeatedCallsUseOneObjectOutsideCommitPrefix(t *testing
 
 func TestProbeCommitStoreStillRejectsBackendWithoutConditionalCreate(t *testing.T) {
 	store := &nonConditionalProbeStore{}
-	if err := ProbeCommitStore(context.Background(), store); err == nil {
+	err := ProbeCommitStore(context.Background(), store)
+	if err == nil {
 		t.Fatal("ProbeCommitStore accepted a backend where both writers overwrite")
 	}
+	if errors.Is(err, ErrCommitStoreUnavailable) {
+		t.Fatalf("two winners are the store's answer, not a store that could not answer: %v", err)
+	}
+}
+
+// s3Answer is the error an S3 call returns when the store answers with status.
+func s3Answer(status int) error {
+	return &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: &smithyhttp.ResponseError{
+		Response: &smithyhttp.Response{Response: &http.Response{StatusCode: status}},
+		Err:      fmt.Errorf("status %d", status),
+	}}
+}
+
+// TestProbeCommitStoreSaysWhetherTheStoreAnswered: a probe that could not use
+// the store has proved nothing about conditional writes, and the first start of
+// a stack is exactly that case: its store refuses a write with 403 until it has
+// created its bucket. A store that answers the conditional write with a refusal
+// of the request itself may simply not support it, so that stays its own answer.
+func TestProbeCommitStoreSaysWhetherTheStoreAnswered(t *testing.T) {
+	conflict := fmt.Errorf("create: %w", ErrPreconditionFailed)
+	tests := []struct {
+		name            string
+		createErr       error
+		getErr          error
+		wantUnavailable bool
+	}{
+		{name: "a write refused 403, as before the store has its bucket", createErr: s3Answer(http.StatusForbidden), wantUnavailable: true},
+		{name: "a write refused 401", createErr: s3Answer(http.StatusUnauthorized), wantUnavailable: true},
+		{name: "no such bucket", createErr: s3Answer(http.StatusNotFound), wantUnavailable: true},
+		{name: "a server error", createErr: s3Answer(http.StatusInternalServerError), wantUnavailable: true},
+		{name: "a store that is overloaded", createErr: s3Answer(http.StatusServiceUnavailable), wantUnavailable: true},
+		{
+			name:            "no response at all",
+			createErr:       &smithy.OperationError{ServiceID: "S3", OperationName: "PutObject", Err: errors.New("connection refused")},
+			wantUnavailable: true,
+		},
+		{name: "the winner cannot be read back", createErr: conflict, getErr: s3Answer(http.StatusForbidden), wantUnavailable: true},
+
+		{name: "If-None-Match not implemented", createErr: s3Answer(http.StatusNotImplemented)},
+		{name: "If-None-Match refused as a bad request", createErr: s3Answer(http.StatusBadRequest)},
+		{name: "a method the store does not allow", createErr: s3Answer(http.StatusMethodNotAllowed)},
+		{name: "a failure that is not the S3 client's", createErr: errors.New("link: operation not supported")},
+		{name: "both writers refused, and no winner stored", createErr: conflict, getErr: ErrNotFound},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := &failingProbeStore{createErr: tt.createErr, getErr: tt.getErr}
+			err := ProbeCommitStore(context.Background(), store)
+			if err == nil {
+				t.Fatal("ProbeCommitStore accepted the store")
+			}
+			if got := errors.Is(err, ErrCommitStoreUnavailable); got != tt.wantUnavailable {
+				t.Errorf("unavailable = %v, want %v: %v", got, tt.wantUnavailable, err)
+			}
+			// The store's own answer stays in the message, whichever it was.
+			cause := tt.getErr
+			if cause == nil {
+				cause = tt.createErr
+			}
+			if !errors.Is(err, cause) {
+				t.Errorf("the refusal lost the store's answer %v: %v", cause, err)
+			}
+		})
+	}
+}
+
+type failingProbeStore struct {
+	createErr error
+	getErr    error
+}
+
+func (s *failingProbeStore) commitProbeURI() string {
+	return "memory://probe/" + CommitProbeKey
+}
+
+func (s *failingProbeStore) Create(context.Context, string, *orkstackv1.ActivityCommit) (CommitRecord, error) {
+	return CommitRecord{}, s.createErr
+}
+
+func (s *failingProbeStore) Get(context.Context, string) (CommitRecord, error) {
+	return CommitRecord{}, s.getErr
 }
 
 type nonConditionalProbeStore struct {

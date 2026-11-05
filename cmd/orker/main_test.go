@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"strings"
@@ -17,7 +19,34 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
+
+// TestCommitProbeRefusal_NamesWhatTheProbeFound: the operator reads the reason
+// first, so a store the probe could not use must not read as a store that lacks
+// conditional writes.
+func TestCommitProbeRefusal_NamesWhatTheProbeFound(t *testing.T) {
+	cause := errors.New("api error AccessDenied: Access Denied")
+	tests := []struct {
+		name  string
+		probe error
+		want  string
+	}{
+		{"the probe could not ask", fmt.Errorf("%w: %w", artifacts.ErrCommitStoreUnavailable, cause), orker.ReasonCommitStoreUnavailable},
+		{"the store answered and failed it", cause, orker.ReasonCommitNotConditional},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := commitProbeRefusal(tt.probe)
+			if !strings.HasPrefix(got.Error(), tt.want+": ") {
+				t.Errorf("refusal %q, want the reason %s first", got, tt.want)
+			}
+			if !errors.Is(got, cause) {
+				t.Errorf("refusal %q lost the store's own answer", got)
+			}
+		})
+	}
+}
 
 // TestWorkerOptions_StayActivityOnly guards the property the shared queue
 // depends on: an Orker never competes with the engine for workflow tasks.
