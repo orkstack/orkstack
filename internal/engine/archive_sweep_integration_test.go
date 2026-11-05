@@ -144,11 +144,12 @@ func TestIntegration_ArchiveSweep_ATerminatedRunIsArchivedRetiredAndStillRead(t 
 		WithClock(func() time.Time { return time.Now().Add(1000 * time.Hour) })
 	sweepUntil(t, ctx, sweepOver(s, s.reader, store, s.archive), func(r archivecleanup.SweepResult) bool { return r.Archived == 1 })
 
-	if _, err := cleaner.RunOnce(ctx); err != nil {
+	stats, err := cleaner.RunOnce(ctx)
+	if err != nil {
 		t.Fatalf("cleanup after the sweep: %v", err)
 	}
-	if found, _, err := s.reader.LookupWorkflow(ctx, s.namespace, runID); err != nil || found {
-		t.Fatalf("cleanup did not retire the archived run: found %v (%v)", found, err)
+	if stats.RunsCleaned != 1 {
+		t.Fatalf("cleanup metrics = %+v, want the archived run retired", stats)
 	}
 	awaitWorkflowGone(t, ctx, s.reader, s.namespace, runID)
 
