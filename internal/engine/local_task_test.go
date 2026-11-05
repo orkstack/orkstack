@@ -349,7 +349,7 @@ func runParity(t *testing.T, c parityCase, runID string) ([]*orkstackv1.ExecuteT
 	return own, run
 }
 
-// parityDocuments is every example and fixture Orkflow, sorted.
+// parityDocuments is every example, recipe and fixture Orkflow, sorted.
 func parityDocuments(t *testing.T) []string {
 	t.Helper()
 	examples, err := filepath.Glob(filepath.Join("..", "..", "examples", "*.ork.yaml"))
@@ -361,6 +361,7 @@ func parityDocuments(t *testing.T) []string {
 		t.Fatalf("glob fixtures: %v (%d found)", err, len(fixtures))
 	}
 	paths := append(examples, fixtures...)
+	paths = append(paths, filepath.Join("..", "..", "examples", "custom-image", "custom-image.ork.yaml"))
 	sort.Strings(paths)
 	return paths
 }

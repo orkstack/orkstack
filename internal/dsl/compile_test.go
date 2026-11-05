@@ -89,7 +89,7 @@ func TestCompileFile_AcceptsHelloExample(t *testing.T) {
 //
 // `op` is a convention of the first-party images, not of the OCI contract: a
 // task whose `uses` is a registry reference (an image of the author's own,
-// examples/custom-image.ork.yaml) has its own configuration shape and is
+// examples/custom-image/custom-image.ork.yaml) has its own configuration shape and is
 // exempt. An awaited task runs no activity and a composed task's with: is
 // its child run's input, so neither names an `op` either.
 func TestCompile_AcceptsEveryShippedExample(t *testing.T) {

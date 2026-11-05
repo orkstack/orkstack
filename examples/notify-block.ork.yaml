@@ -5,9 +5,12 @@
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Reuse a block with declared outputs"
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Pass values as data, never as code"
 #
+# It needs internet access to httpbin.org and nothing else, or `--input url=…`
+# naming an endpoint that answers a POST. Run alone, it posts its default text.
+#
 # `outputs:` is its interface: the one thing a composing Orkflow may read
 # (`.tasks.<id>.output.status`). Other Orkflows compose it with
-#   uses: orkflow:notify-block@0.1.0
+#   uses: orkflow:notify-block@0.2.0
 # so apply this file before examples/order-saga.ork.yaml and
 # examples/approval-gate.ork.yaml.
 #
@@ -19,19 +22,19 @@
 apiVersion: orkstack/v1
 kind: Orkflow
 name: notify-block
-version: "0.1.0"
+version: "0.2.0"
 description: "Post one JSON notification built by a json task; its declared output is the HTTP status."
 
 inputs:
   url:
     type: string
-    required: true
+    default: "https://httpbin.org/post"
   subject:
     type: string
     default: ""
   text:
     type: string
-    required: true
+    default: "hello from notify-block"
 
 outputs:
   status: '{{ .tasks.post.output.status }}'

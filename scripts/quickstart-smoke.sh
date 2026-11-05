@@ -31,6 +31,11 @@
 #      and digest instead of building any, starts with `up -d --wait`;
 #      orkctl's image reports VERSION and applies each-fan-out, and the
 #      archive's orkctl submits it and watches it to the end.
+# With --examples (make examples-smoke, the quickstart only): every shipped
+# example too, as a reader runs it: applied, submitted with no inputs, ending
+# where examples/README.md says, and the automation document applied and its
+# schedule fired. These reach httpbin.org and github.com, so this is a nightly
+# job of its own (nightly.yml, `examples`), which no release waits on.
 # Then, either way: the run SUCCEEDED and merge logged a to d; for a release,
 # OrkStack's own verifier accepts those signatures: with the throwaway key in
 # the image policy, each-fan-out runs to SUCCEEDED in a namespace that
@@ -52,18 +57,24 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO="$PWD"
 
 usage() {
-	echo "usage: scripts/quickstart-smoke.sh [--release vMAJOR.MINOR.PATCH [--layouts DIR]]" >&2
+	echo "usage: scripts/quickstart-smoke.sh [--examples | --release vMAJOR.MINOR.PATCH [--layouts DIR]]" >&2
 	exit 2
 }
 VERSION=""
 LAYOUTS=""
+EXAMPLES=""
 while [ $# -gt 0 ]; do
 	case "$1" in
 	--release) [ $# -ge 2 ] || usage; VERSION="$2"; shift 2 ;;
 	--layouts) [ $# -ge 2 ] && [ -n "$2" ] || usage; LAYOUTS="$2"; shift 2 ;;
+	--examples) EXAMPLES=1; shift ;;
 	*) usage ;;
 	esac
 done
+if [ -n "$EXAMPLES" ] && [ -n "$VERSION" ]; then
+	echo "quickstart-smoke: --examples runs on the quickstart, not with --release" >&2
+	exit 2
+fi
 if [ -n "$VERSION" ]; then
 	[[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "quickstart-smoke: $VERSION is not vMAJOR.MINOR.PATCH" >&2; exit 2; }
 elif [ -n "$LAYOUTS" ]; then
@@ -300,6 +311,101 @@ say "  $run SUCCEEDED"
 orkctl run logs "$run" --task merge >"$WORK/merge.log"
 [ "$(tr -d '\r' <"$WORK/merge.log" | grep -xE '[abcd]' | tr -d '\n')" = "abcd" ] || fail "merge's log is: $(cat "$WORK/merge.log")"
 say "  merge logged a b c d"
+
+if [ -n "$EXAMPLES" ]; then
+	say "== every shipped example, with no inputs"
+	# check_example NAME STATUS 'TASK=WANT ...' [submit flags ...]: a run of NAME
+	# ends STATUS and each TASK ends WANT, where HIT means it succeeded from a memo.
+	check_example() {
+		local name="$1" want="$2" tasks="$3" log run
+		shift 3
+		log="$WORK/example-$name.log"
+		# --watch exits non-zero for a failed run, which one of these means to be.
+		orkctl run submit "$name" "$@" --watch >"$log" 2>&1 || true
+		# A refused submit prints no run id, which grep must not turn into a
+		# silent exit before the log below is shown.
+		run="$({ grep -oE '^Submitted run ork-[0-9]+-[0-9]+' "$log" || true; } | head -1 | cut -d' ' -f3)"
+		[ -n "$run" ] || { cat "$log" >&2; fail "$name: no run id"; }
+		orkctl --json run get "$run" >"$WORK/example-$name.json" || fail "$name: run get $run"
+		python3 - "$WORK/example-$name.json" "$want" "$tasks" <<'PY' || { tail -40 "$log" >&2; fail "$name: run $run"; }
+import json
+import sys
+
+path, want, tasks = sys.argv[1:]
+doc = json.load(open(path))
+run = doc.get("run", doc)
+
+
+def status(value):
+    return value.removeprefix("STATUS_")
+
+
+problems = []
+if status(run.get("status", "")) != want:
+    problems.append(f"the run ended {run.get('status')}, want {want}")
+by_id = {t["taskId"]: t for t in run.get("taskRuns", [])}
+for pair in tasks.split():
+    task, expected = pair.split("=")
+    got = by_id.get(task, {})
+    if expected == "HIT":
+        if "HIT" not in got.get("cache", {}).get("outcome", ""):
+            problems.append(f"{task} did not hit its memo: {got.get('cache')}")
+    elif status(got.get("status", "")) != expected:
+        problems.append(f"{task} ended {got.get('status')}, want {expected}")
+if problems:
+    print("\n".join(problems), file=sys.stderr)
+    sys.exit(1)
+PY
+		say "  $name: $want"
+	}
+	apply_example() {
+		orkctl apply "examples/$1.ork.yaml" >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "apply $1"; }
+	}
+	# The one block two examples compose goes first, in a command of its own, as
+	# their headers say.
+	apply_example notify-block
+	S=SUCCEEDED
+	for file in "$STACK"/examples/*.ork.yaml; do
+		name="$(basename "$file" .ork.yaml)"
+		[ "$name" = notify-block ] || apply_example "$name"
+		case "$name" in
+		approval-gate) check_example "$name" "$S" "assess=$S approval=SKIPPED apply=$S announce=$S tell-requester=SKIPPED" ;;
+		config-from-git)
+			check_example "$name" "$S" "resolve=$S clone=$S readme=$S tmpl=$S prepare=$S render=$S manifest=$S"
+			check_example "$name" "$S" "readme=HIT tmpl=HIT prepare=HIT manifest=HIT"
+			;;
+		decide-and-route) check_example "$name" "$S" "decide=$S direct=$S canary=SKIPPED hold=SKIPPED notify-owner=SKIPPED report=$S" ;;
+		each-fan-out) check_example "$name" "$S" "list=$S convert=$S merge=$S" ;;
+		http-post) check_example "$name" "$S" "publish=$S archive=$S summarize=$S" ;;
+		inputs-and-escaping) check_example "$name" "$S" "regional=$S publish=SKIPPED archive=$S" ;;
+		notify-block) check_example "$name" "$S" "body=$S post=$S" ;;
+		order-saga)
+			check_example "$name" "$S" "shipped=$S release=SKIPPED refund=SKIPPED report=$S notify=$S"
+			check_example "$name" FAILED "shipped=FAILED release=$S refund=$S report=$S notify=$S" --input shipping_api=https://httpbin.org/absent
+			;;
+		pinned-checkout) check_example "$name" "$S" "resolve=$S checkout=$S validate=$S merge=$S package=$S checksum=$S" ;;
+		poll-until-ready) check_example "$name" "$S" "wait-ready=$S fetch=$S summarize=$S" ;;
+		*) fail "$name has no stated result here: add it, so a new example runs with no inputs too" ;;
+		esac
+	done
+
+	say "== the automation document"
+	automation=(examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml)
+	orkctl apply "${automation[@]}" >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "apply the automation document"; }
+	orkctl apply examples/automation/examples.ork.yaml --check >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "the automation document drifted"; }
+	orkctl schedule fire poll-exports >"$WORK/fire.log" 2>&1 || { cat "$WORK/fire.log" >&2; fail "schedule fire"; }
+	scheduled=""
+	for _ in $(seq 1 60); do
+		orkctl --json run list --filter origin.kind=SCHEDULE >"$WORK/scheduled.json"
+		scheduled="$(python3 -c 'import json, sys; runs = json.load(open(sys.argv[1])).get("runs", []); print(runs[0]["id"] if runs else "")' "$WORK/scheduled.json")"
+		[ -z "$scheduled" ] || break
+		sleep 2
+	done
+	[ -n "$scheduled" ] || fail "the fired schedule started no run"
+	orkctl run watch "$scheduled" >"$WORK/scheduled.log" 2>&1 || { tail -40 "$WORK/scheduled.log" >&2; fail "the scheduled run $scheduled did not succeed"; }
+	orkctl schedule delete poll-exports >/dev/null
+	say "  applied with no namespace to create; the fired schedule's run $scheduled SUCCEEDED"
+fi
 
 if [ -n "$VERSION" ]; then
 	say "== signatures: OrkStack's own verifier, at apply, submit and dispatch"

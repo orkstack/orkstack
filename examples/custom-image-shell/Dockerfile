@@ -1,5 +1,7 @@
 # examples/custom-image-shell/Dockerfile — the same activity in POSIX shell.
-#   orkctl activity build examples/custom-image-shell --tag localhost:5001/orkstack-examples/custom-image-shell:dev
+# Build, push and pin it with (the quickstart's registry; make up's is at
+# localhost:5001):
+#   orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
 FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 # jq is this script's JSON library, as encoding/json is main.go's
 RUN apk add --no-cache 'jq~1.8'

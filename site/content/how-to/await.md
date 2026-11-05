@@ -22,12 +22,12 @@ In [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob
           required: true
 ```
 
-Submit a risky change. Do not use `--watch`, because the run waits for the approval:
+The default change is not risky, so a run with no inputs opens no approval and finishes by itself. To see the approval, submit a risky change. Do not use `--watch`, because the run waits for the approval:
 
 ```bash
 orkctl apply examples/notify-block.ork.yaml
 orkctl apply examples/approval-gate.ork.yaml
-orkctl run submit approval-gate --input notify_url=https://hooks.example.com/changes --input 'changes=[{"service":"payments","setting":"replicas","value":"3"}]'
+orkctl run submit approval-gate --input 'changes=[{"service":"payments","setting":"replicas","value":"3"}]'
 orkctl run get <run-id>
 ```
 

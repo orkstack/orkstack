@@ -367,6 +367,8 @@ proof-release: ## The pre-release gate: every gate, observability always -> proo
 #                         those images and requires a finished run
 #   make quickstart-smoke runs the README's Quickstart as written on a fresh
 #                         clone of this working tree (no VERSION)
+#   make examples-smoke   the same, then every shipped example with no inputs;
+#                         reaches httpbin.org and github.com
 DIST ?= dist
 PLATFORMS ?=
 RELEASE_IMAGES := ork orker orkctl
@@ -402,6 +404,10 @@ release-smoke: ## Build the release for this machine and run compose.yaml on its
 .PHONY: quickstart-smoke
 quickstart-smoke: ## Run the README's Quickstart as written on a fresh clone of this working tree, end to end
 	@scripts/quickstart-smoke.sh
+
+.PHONY: examples-smoke
+examples-smoke: ## Run the Quickstart, then every shipped example with no inputs on that fresh stack (reaches httpbin.org and github.com)
+	@scripts/quickstart-smoke.sh --examples
 
 .PHONY: release-tag
 release-tag: ## Tag HEAD only after a passing release proof of it: VERSION=vX.Y.Z PROOF=proof/<name>

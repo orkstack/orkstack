@@ -128,3 +128,4 @@ The file holds one JSON object, `{"greeting":"hello Ada"}`.
 - [docs/ACTIVITY_IMAGES.md, "The op convention"](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#the-op-convention): a task that puts a registry reference directly in `uses:`.
 - [docs/CLI.md, "orkctl run artifact download"](https://github.com/orkstack/orkstack/blob/main/docs/CLI.md#orkctl-run-artifact-download): every flag of the download.
 - [examples/custom-image-shell/README.md](https://github.com/orkstack/orkstack/blob/main/examples/custom-image-shell/README.md): a larger image of the same kind, in POSIX shell.
+- [examples/custom-image/custom-image.ork.yaml](https://github.com/orkstack/orkstack/blob/main/examples/custom-image/custom-image.ork.yaml): a recipe that runs that image and its twin in Go.

@@ -138,6 +138,7 @@ test('every document this repository ships lints clean', () => {
 	};
 	for (const f of readdirSync(`${repo}/examples`).filter((f) => f.endsWith('.ork.yaml')))
 		clean(`examples/${f}`, read(`examples/${f}`), 'Orkflow');
+	clean('the custom-image recipe', read('examples/custom-image/custom-image.ork.yaml'), 'Orkflow');
 	for (const f of readdirSync(`${repo}/internal/dsl/testdata/orkflows`).filter((f) => f.endsWith('.ork.yaml')))
 		clean(`internal/dsl/testdata/orkflows/${f}`, read(`internal/dsl/testdata/orkflows/${f}`), 'Orkflow');
 	for (const f of readdirSync(`${repo}/examples/automation`).filter((f) => f.endsWith('.ork.yaml')))

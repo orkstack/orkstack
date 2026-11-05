@@ -139,6 +139,7 @@ async function startApi(): Promise<ChildProcess> {
 /** A run's input as JSON: order-saga's, for an order the API takes or refuses. */
 const sagaInput = (id: string) => ({
 	api,
+	shipping_api: api,
 	notify_url: `${api}/notify`,
 	order: { id, sku: 'sku-7', quantity: 2, amount: '129.00', address: '1 Main St' },
 });

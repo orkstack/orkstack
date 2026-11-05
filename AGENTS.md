@@ -1007,7 +1007,13 @@ commit (`scripts/quickstart-smoke.sh`) as a job of its own too, because no
 proof runs the getting-started path: a stack that no longer builds or starts
 from a clone fails that run like any other nightly failure. `release.yml`
 runs the same smoke itself before it publishes anything, so for a release
-that one is a check, not a rule.
+that one is a check, not a rule. It runs every shipped example on such a stack
+as a job of its own (`scripts/quickstart-smoke.sh --examples`): applied, submitted
+with no inputs, ending where `examples/README.md` says. Those examples reach
+`httpbin.org` and `github.com`, so no proof runs that job and `release.yml` does
+not require it: the merge gate runs them against stand-ins
+(`TestIntegration_ExamplesRunWithNoInputs`), and a failure of the job is a
+regression on `main` unless its log shows one of those services was down.
 
 A failing nightly (the latest completed `nightly.yml` run on `main`) is a
 regression on `main`, not a merge freeze (decided 2026-10-28): fixing it, or

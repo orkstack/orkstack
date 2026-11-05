@@ -254,7 +254,8 @@
 						}
 					],
 					"aliases": [
-						"docs/how-to/build-an-activity-image"
+						"docs/how-to/build-an-activity-image",
+						"docs/examples/custom-image"
 					]
 				},
 				{
