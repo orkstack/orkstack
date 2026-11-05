@@ -248,9 +248,9 @@ Caching is the author's assertion that a task is safe to reuse; OrkStack
 cannot verify it.
 
 An accepted execution must not disappear, with the one exception §15 states. A
-durably committed activity result must not become pending again. Object-storage failures must not silently produce
-success. Every terminal failure must have a machine-readable reason and a
-human-readable explanation.
+durably committed activity result must not become pending again. Object-storage
+failures must not silently produce success. Every terminal failure must have a
+machine-readable reason and a human-readable explanation.
 
 ## 5. Image resolution and Orker runtime boundary
 
