@@ -106,7 +106,7 @@ curl -X POST http://localhost:8080/v1/triggers/trg-… \
   -d '{}'
 ```
 
-The body is the run's input, as one JSON object. `{}` starts a run with no input, so the Orkflow's defaults apply. `{"count": 3}` sets the input `count` to `3`. The body can be at most 1 MiB. A `201` response holds the new run's `id`.
+The body is the run's input, as one JSON object. `{}` starts a run with no input, so the Orkflow's defaults apply, and `each-fan-out` declares no inputs. For an Orkflow that declares `count`, `{"count": 3}` sets it to `3`. The body can be at most 1 MiB. A `201` response holds the new run's `id`.
 
 ### Create and manage a trigger
 

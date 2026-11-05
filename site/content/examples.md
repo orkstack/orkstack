@@ -51,5 +51,5 @@ The shell image's folder is [`examples/custom-image-shell/`](https://github.com/
 
 ## See also
 
-- [examples/README.md](https://github.com/orkstack/orkstack/blob/main/examples/README.md#the-table): the full table, the commands for each example, and the notes on older examples.
-- [docs/ORKFLOW_PATTERNS.md](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_PATTERNS.md): the patterns the newer examples follow.
+- [examples/README.md](https://github.com/orkstack/orkstack/blob/main/examples/README.md#the-table): the full table and the commands for each example.
+- [docs/ORKFLOW_PATTERNS.md](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_PATTERNS.md): the patterns these examples follow.

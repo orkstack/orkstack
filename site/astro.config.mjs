@@ -38,7 +38,9 @@ function sidebarItems(pages) {
 	});
 }
 
-const olderExamples = JSON.parse(readFileSync(new URL('./src/styles/generated/older-examples.json', import.meta.url), 'utf8'));
+const olderExamplesFile = new URL('./src/styles/generated/older-examples.json', import.meta.url);
+if (!existsSync(olderExamplesFile)) throw new Error('src/styles/generated/older-examples.json is missing: run node scripts/sync-docs.mjs first');
+const olderExamples = JSON.parse(readFileSync(olderExamplesFile, 'utf8'));
 
 /**
  * A page's old routes keep working: each redirects to where the page is now. So

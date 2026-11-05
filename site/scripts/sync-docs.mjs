@@ -159,10 +159,16 @@ const pages = flatten(manifest.groups);
 // Example Orkflows: one generated page each, the page's featured ones first.
 // The docs show the current ones: an example examples/README.md marks older stays
 // in the repository for deployments that stored it, and its old address redirects
-// to the gallery (astro.config.mjs).
+// to the gallery (astro.config.mjs). A table whose shape changed stops the sync:
+// a row this reads wrongly would quietly drop a page or its redirect. A page
+// republished by a mark this no longer sees has no gallery row, which stops it too.
+const exampleTable = readFileSync(path.join(repoRoot, 'examples', 'README.md'), 'utf8');
 const olderExamples = new Set(
-	[...readFileSync(path.join(repoRoot, 'examples', 'README.md'), 'utf8').matchAll(/^\|\s*\[[^\]]+\]\(([^)]+\.ork\.yaml)\)\s*\|\s*\*older\*/gm)].map((m) => `examples/${m[1]}`),
+	[...exampleTable.matchAll(/^\|\s*\[[^\]]+\]\(([^)]+\.ork\.yaml)\)\s*\|\s*\*older\*/gm)].map((m) => `examples/${m[1]}`),
 );
+const olderRows = exampleTable.split('\n').filter((line) => line.startsWith('|') && line.includes('*older*')).length;
+if (olderRows !== olderExamples.size) fail(`examples/README.md has ${olderRows} rows that say *older*, and ${olderExamples.size} read as an example's link followed by *older*`);
+for (const rel of olderExamples) if (!existsSync(path.join(repoRoot, rel))) fail(`examples/README.md marks ${rel} older, and that file does not exist`);
 const exampleFiles = [];
 for (const page of pages.filter((p) => p.examples)) {
 	const dirs = ['examples', 'examples/automation'];
@@ -724,6 +730,7 @@ const galleryRows = new Map();
 		if (m) galleryRows.set(m[1], { shows: m[2].trim(), needs: m[3].trim() });
 	}
 }
+for (const id of galleryRows.keys()) if (!exampleFiles.some((ex) => ex.id === id)) fail(`the Example gallery's table has a row for ${id}, which has no page`);
 
 for (const ex of exampleFiles) {
 	const outFile = outFileFor(ex.route);
