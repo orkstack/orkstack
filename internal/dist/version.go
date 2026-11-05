@@ -41,7 +41,7 @@ func (v Version) String() string {
 }
 
 // Series is "MAJOR.MINOR", the tag a release publishes the activity images
-// under: every 0.1.z release serves the built-in catalog's ":0.1".
+// under: every 0.2.z release serves the built-in catalog's ":0.2".
 func (v Version) Series() string {
 	return fmt.Sprintf("%d.%d", v.Major, v.Minor)
 }

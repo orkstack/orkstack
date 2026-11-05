@@ -87,7 +87,7 @@ func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task) *tem
 }
 
 // retryMaxIntervalPath says whether the run takes the retry-max-interval
-// path: its plan carries a number (every plan submitted from v0.1.1 on) and
+// path: its plan carries a number (every plan submitted from v0.2.0 on) and
 // the gate says so. A plan without the number asks nothing, so a run
 // submitted before the field never meets the gate, whatever release carries
 // it on; a history recorded before the gate, or by a build that ignored the

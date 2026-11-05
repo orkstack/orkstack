@@ -457,7 +457,7 @@ A negative interval, a `maximum_interval_seconds` set below
 `initial_interval_seconds`, and a `backoff_coefficient` below 1 or not finite,
 are refused (rule 47).
 The 60 s is decided when the run is submitted and kept for the whole run: a
-run submitted by a release before v0.1.1 keeps the 100 s it started with.
+run submitted by a release before v0.2.0 keeps the 100 s it started with.
 
 `uses:` is the only image selector. A catalog name is resolved at apply time;
 a registry tag or digest may be written directly. In every case the applied
@@ -1814,7 +1814,7 @@ How each node reads:
     before this rule keeps starting: its task is scheduled with the nearest
     policy the cluster accepts, the maximum raised to the initial interval and
     a coefficient between 0 and 1 raised to 1, and, in a run submitted from
-    v0.1.1 on, a coefficient that is not a number read as the default 2.0 (a
+    v0.2.0 on, a coefficient that is not a number read as the default 2.0 (a
     negative coefficient reads as the default too, a negative initial interval as 1 s and a negative maximum as
     unset, as they always have).
 

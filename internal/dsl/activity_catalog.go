@@ -29,12 +29,12 @@ import (
 // workload names the image it wants directly.
 func BuiltinActivityCatalog() Catalog {
 	return Catalog{
-		"shell":    "ghcr.io/orkstack/activity-shell:0.1",
-		"http":     "ghcr.io/orkstack/activity-http:0.1",
-		"file":     "ghcr.io/orkstack/activity-file:0.1",
-		"json":     "ghcr.io/orkstack/activity-json:0.1",
-		"git":      "ghcr.io/orkstack/activity-git:0.1",
-		"template": "ghcr.io/orkstack/activity-template:0.1",
+		"shell":    "ghcr.io/orkstack/activity-shell:0.2",
+		"http":     "ghcr.io/orkstack/activity-http:0.2",
+		"file":     "ghcr.io/orkstack/activity-file:0.2",
+		"json":     "ghcr.io/orkstack/activity-json:0.2",
+		"git":      "ghcr.io/orkstack/activity-git:0.2",
+		"template": "ghcr.io/orkstack/activity-template:0.2",
 	}
 }
 
