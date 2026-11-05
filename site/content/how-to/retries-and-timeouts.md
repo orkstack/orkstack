@@ -4,7 +4,7 @@ Give a task more than one attempt with `retry:`. Set how long each attempt may r
 
 ## Example
 
-In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/poll-until-ready.ork.yaml), `wait-ready` checks a status endpoint on each attempt. It exits non-zero until the endpoint reports ready:
+In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/poll-until-ready.ork.yaml), `wait-ready` checks a status endpoint on each attempt. It exits non-zero until the endpoint answers 2xx:
 
 ```yaml
   - id: wait-ready
@@ -20,16 +20,16 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
       command:
         - sh
         - -c
-        - 'wget -q -O - "$1" | jq -e ".ready == true" > /dev/null'
+        - 'wget -q -O /dev/null "$1"'
         - wait-ready
         - '{{ .inputs.status_url }}'
 ```
 
-Run it:
+Run it. By default the status endpoint is a public test service that answers 503 or 200 at random, so `run attempts` usually shows failed attempts before the one that succeeded:
 
 ```bash
 orkctl apply examples/poll-until-ready.ork.yaml
-orkctl run submit poll-until-ready --input status_url=https://status.example.com/exports/42 --input export_url=https://files.example.com/exports/42.json --watch
+orkctl run submit poll-until-ready --watch
 orkctl run attempts <run-id>
 ```
 

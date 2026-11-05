@@ -4,11 +4,11 @@ Add a task with `uses: orkflow:<name>@<version>` to start a child run of that Or
 
 ## Example
 
-In [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/approval-gate.ork.yaml), the `announce` task runs the `notify-block` Orkflow at version `0.1.0`:
+In [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/approval-gate.ork.yaml), the `announce` task runs the `notify-block` Orkflow at version `0.2.0`:
 
 ```yaml
   - id: announce
-    uses: orkflow:notify-block@0.1.0
+    uses: orkflow:notify-block@0.2.0
     needs:
       - assess
       - apply
@@ -28,12 +28,12 @@ outputs:
 
 A task that needs `announce` reads it as `{{ .tasks.announce.output.status }}`. No task in this example does.
 
-Apply the block first, in the same namespace. Give `notify_url` an address that takes a POST:
+Apply the block first, in the same namespace, in a command of its own. `notify_url` defaults to a public test service, so the run needs internet access and no input:
 
 ```bash
 orkctl apply examples/notify-block.ork.yaml
 orkctl apply examples/approval-gate.ork.yaml
-orkctl run submit approval-gate --input notify_url=https://hooks.example.com/change --watch
+orkctl run submit approval-gate --watch
 orkctl run get <run-id> --tree
 ```
 

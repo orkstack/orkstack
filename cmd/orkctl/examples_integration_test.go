@@ -236,6 +236,7 @@ func TestIntegration_InputsAndEscapingExampleRunsAsShipped(t *testing.T) {
 	x := newExamplesStack(ctx, t, examplesOptions{})
 	x.scenario(t, "E4", func(t *testing.T) {
 		x.apply("examples/inputs-and-escaping.ork.yaml")
+		x.apply(x.variantFile("inputs-required.ork.yaml", requiredReleaseVariant(t, x.root)))
 		run := x.runToEnd("inputs-and-escaping", "--input", "release=1.4.2")
 		requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
 		const note = "it's a test; echo unsafe"
@@ -264,9 +265,10 @@ func TestIntegration_InputsAndEscapingExampleRunsAsShipped(t *testing.T) {
 		requireTaskStatus(t, run, "regional", orkstackv1.Status_STATUS_SUCCEEDED)
 		requireTaskStatus(t, run, "publish", orkstackv1.Status_STATUS_SKIPPED)
 
-		// Without the required input, the first task that renders it fails
+		// Without a required input (the shipped example declares a default,
+		// so this variant declares none), the first task that renders it fails
 		// RENDER_FAILED, a ContractViolation, and nothing that renders it ran.
-		run = x.runToEnd("inputs-and-escaping")
+		run = x.runToEnd("inputs-required")
 		requireRunStatus(t, run, orkstackv1.Status_STATUS_FAILED)
 		failedAt := strings.Trim(strings.TrimPrefix(run.GetError().GetDetails(), "task "), `"`)
 		taskErr := taskRunOf(t, run, failedAt).GetError()
@@ -291,7 +293,7 @@ func TestIntegration_OrderSagaExampleRunsAsShipped(t *testing.T) {
 		x.apply("examples/notify-block.ork.yaml")
 		x.apply("examples/order-saga.ork.yaml")
 		saga := func(order string) *orkstackv1.Run {
-			return x.runToEnd("order-saga", "--input", "api="+base, "--input", "notify_url="+base+"/notify",
+			return x.runToEnd("order-saga", "--input", "api="+base, "--input", "shipping_api="+base, "--input", "notify_url="+base+"/notify",
 				"--input-json", `{"order":`+order+`}`)
 		}
 
@@ -542,17 +544,18 @@ func newGitExamplesStack(ctx context.Context, t *testing.T) (*examplesStack, str
 	return x, x.git.URL("private/examples.git"), x.git.AddRepository(t, "private/examples.git", examplesRepoFiles)
 }
 
-// gitVariant is the shipped file with the test git server's CA added and
-// nothing else changed.
+// gitVariant is the shipped file with the test git server's CA and token added
+// and nothing else changed: the shipped example reads a public repository, and
+// the scenarios that use this also prove a private one works as its header says.
 func (x *examplesStack) gitVariant(t *testing.T, file string) string {
 	t.Helper()
 	shipped, err := os.ReadFile(filepath.Join(x.root, "examples", file))
 	if err != nil {
 		t.Fatal(err)
 	}
-	withCA := withExampleGitCA(t, shipped)
-	requireOnlyGitCAAdded(t, shipped, withCA)
-	return x.variantFile(file, withCA)
+	withAccess := withExampleGitToken(t, withExampleGitCA(t, shipped))
+	requireOnlyGitAccessAdded(t, shipped, withAccess)
+	return x.variantFile(file, withAccess)
 }
 
 // E9: the pinned-checkout example.
@@ -562,7 +565,7 @@ func TestIntegration_PinnedCheckoutExampleRunsAsShipped(t *testing.T) {
 	x, repo, first := newGitExamplesStack(ctx, t)
 	x.scenario(t, "E9", func(t *testing.T) {
 		x.apply(x.gitVariant(t, "pinned-checkout.ork.yaml"))
-		run := x.runToEnd("pinned-checkout", "--input", "repo="+repo, "--input", "environment=prod")
+		run := x.runToEnd("pinned-checkout", "--input", "repo="+repo, "--input", "ref=main", "--input", "environment=prod")
 		requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
 		checkout := taskRunOf(t, run, "checkout")
 		if checkout.GetPin() == "" || checkout.GetOrkerId() == "" {
@@ -579,8 +582,8 @@ func TestIntegration_PinnedCheckoutExampleRunsAsShipped(t *testing.T) {
 		}
 		bundle := x.download(run.GetId(), "package", "bundle.tar.gz", -1)
 		members := untarGz(t, bundle)
-		if len(members) != 3 || members["COMMIT"] != first+"\n" || members["VERSION"] != "1.4.2\n" {
-			t.Fatalf("bundle.tar.gz members = %v, want COMMIT %s, VERSION 1.4.2 and config.json", members, first)
+		if len(members) != 3 || members["COMMIT"] != first+"\n" || members["README"] != "Hello World!\n" {
+			t.Fatalf("bundle.tar.gz members = %v, want COMMIT %s, README and config.json", members, first)
 		}
 		if got, want := mustJSON(t, members["config.json"]), mustJSON(t, `{"log":{"level":"info","format":"text"},"replicas":3}`); !reflect.DeepEqual(got, want) {
 			t.Fatalf("config.json = %v, want %v", got, want)
@@ -599,8 +602,8 @@ func TestIntegration_ConfigFromGitExampleRunsAsShipped(t *testing.T) {
 	x, repo, first := newGitExamplesStack(ctx, t)
 	x.scenario(t, "E8", func(t *testing.T) {
 		x.apply(x.gitVariant(t, "config-from-git.ork.yaml"))
-		input := []string{"--input", "repo=" + repo, "--input", "environment=prod"}
-		cached := []string{"tmpl", "services", "prepare", "manifest"}
+		input := []string{"--input", "repo=" + repo, "--input", "ref=main", "--input", "environment=prod"}
+		cached := []string{"readme", "tmpl", "prepare", "manifest"}
 		outcomes := func(label string, run *orkstackv1.Run) {
 			var parts []string
 			for _, tr := range run.GetTaskRuns() {
@@ -617,7 +620,7 @@ func TestIntegration_ConfigFromGitExampleRunsAsShipped(t *testing.T) {
 			x.note("%s cache outcomes: %s", label, strings.Join(parts, " "))
 		}
 		apiConf := func(commit string) string {
-			return "# api, rendered from commit " + commit[:12] + "\nservice api {\n  listen   8080;\n  replicas 4;\n  env      prod;\n}\n"
+			return "# api, rendered from commit " + commit[:12] + "\n# Hello World!\nservice api {\n  listen   8080;\n  replicas 4;\n  env      prod;\n}\n"
 		}
 
 		// Run 1.
@@ -690,6 +693,186 @@ func TestIntegration_ConfigFromGitExampleRunsAsShipped(t *testing.T) {
 			t.Fatalf("run 3 api.conf = %q, want %q", got, apiConf(second))
 		}
 		outcomes("run 3", run3)
+	})
+}
+
+// E13: every shipped example that asks nothing of a reader, run the way they
+// run it: applied, submitted with no --input, and holding the result
+// examples/README.md states. The one thing changed is where its defaults point:
+// the suite's services stand in for httpbin.org and the suite's git server for
+// GitHub, so a proof never depends on them (scripts/quickstart-smoke.sh
+// --examples runs the same with the real ones). custom-image is the one
+// exception: a reader builds its images first, and E10 runs it.
+func TestIntegration_ExamplesRunWithNoInputs(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	x := newExamplesStack(ctx, t, examplesOptions{git: true})
+	x.git.AddRepository(t, helloWorldRepo, map[string]string{"README": "Hello World!\n"})
+	x.git.inWork(helloWorldRepo, "push", "--quiet", "origin", "main:refs/heads/master")
+	commit := x.git.Commit(helloWorldRepo, "refs/heads/master")
+	base := x.services.base
+	posted := func(t *testing.T, mark int) []notification {
+		t.Helper()
+		var out []notification
+		for _, r := range x.services.Requests("/post")[mark:] {
+			var n notification
+			if err := json.Unmarshal(r.Body, &n); err != nil {
+				t.Fatalf("a posted body is not JSON: %v\n%s", err, r.Body)
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+
+	results := map[string]func(t *testing.T){
+		"approval-gate": func(t *testing.T) {
+			mark := len(x.services.Requests("/post"))
+			run := x.runToEnd("approval-gate")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			requireStatuses(t, run, orkstackv1.Status_STATUS_SKIPPED, "approval", "tell-requester")
+			requireStatuses(t, run, orkstackv1.Status_STATUS_SUCCEEDED, "apply", "announce")
+			if notes := posted(t, mark); len(notes) != 1 || notes[0] != (notification{Subject: "change", Text: "applied: web: replicas = 3"}) {
+				t.Fatalf("notifications = %+v", notes)
+			}
+		},
+		"config-from-git": func(t *testing.T) {
+			run := x.runToEnd("config-from-git")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			if got := taskOutput(t, run, "resolve"); got["commit"] != commit || got["ref"] != "refs/heads/master" {
+				t.Fatalf("resolve = %v, want commit %s ref refs/heads/master", got, commit)
+			}
+			wantConf := "# api, rendered from commit " + commit[:12] + "\n# Hello World!\nservice api {\n  listen   8080;\n  replicas 2;\n  env      staging;\n}\n"
+			if got := string(x.download(run.GetId(), "render", "api.conf", 0)); got != wantConf {
+				t.Fatalf("api.conf = %q, want %q", got, wantConf)
+			}
+			again := x.runToEnd("config-from-git")
+			requireRunStatus(t, again, orkstackv1.Status_STATUS_SUCCEEDED)
+			for _, id := range []string{"readme", "tmpl", "prepare", "manifest"} {
+				requireCacheOutcome(t, again, id, orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT)
+			}
+			for _, item := range taskRunOf(t, again, "render").GetItems() {
+				if got := item.GetCache().GetOutcome(); got != orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT {
+					t.Fatalf("the second run's render item %d cache = %s, want HIT", item.GetItem(), got)
+				}
+			}
+		},
+		"decide-and-route": func(t *testing.T) {
+			run := x.runToEnd("decide-and-route")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			requireStatuses(t, run, orkstackv1.Status_STATUS_SKIPPED, "canary", "hold", "notify-owner")
+			if got, want := taskOutput(t, run, "report"), mustJSON(t, `{"result":{"plan":"direct: all traffic at once"}}`); !reflect.DeepEqual(got, want) {
+				t.Fatalf("report = %v, want %v", got, want)
+			}
+		},
+		"each-fan-out": func(t *testing.T) {
+			run := x.runToEnd("each-fan-out")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			if got := string(x.download(run.GetId(), "merge", "merged.txt", -1)); got != "a\nb\nc\nd\n" {
+				t.Fatalf("merged.txt = %q", got)
+			}
+		},
+		"http-post": func(t *testing.T) {
+			run := x.runToEnd("http-post")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			requireTaskStatus(t, run, "summarize", orkstackv1.Status_STATUS_SUCCEEDED)
+		},
+		"inputs-and-escaping": func(t *testing.T) {
+			run := x.runToEnd("inputs-and-escaping")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			requireTaskStatus(t, run, "regional", orkstackv1.Status_STATUS_SUCCEEDED)
+			requireTaskStatus(t, run, "publish", orkstackv1.Status_STATUS_SKIPPED)
+			if got := string(x.download(run.GetId(), "stamp", "stamp.txt", -1)); !strings.HasPrefix(got, "release: 1.4.2\n") {
+				t.Fatalf("stamp.txt = %q", got)
+			}
+		},
+		"notify-block": func(t *testing.T) {
+			mark := len(x.services.Requests("/post"))
+			run := x.runToEnd("notify-block")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			if notes := posted(t, mark); len(notes) != 1 || notes[0] != (notification{Text: "hello from notify-block"}) {
+				t.Fatalf("notifications = %+v", notes)
+			}
+		},
+		"order-saga": func(t *testing.T) {
+			mark := len(x.services.Requests("/post"))
+			run := x.runToEnd("order-saga")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			requireStatuses(t, run, orkstackv1.Status_STATUS_SKIPPED, "release", "refund")
+			var seen []string
+			for _, r := range x.services.Requests("/anything/orders/ord-1001/") {
+				seen = append(seen, r.Method+" "+r.Path)
+			}
+			want := []string{"PUT /anything/orders/ord-1001/reservation", "PUT /anything/orders/ord-1001/payment", "PUT /anything/orders/ord-1001/shipment"}
+			if !reflect.DeepEqual(seen, want) {
+				t.Fatalf("the order service saw %v, want %v", seen, want)
+			}
+			if notes := posted(t, mark); len(notes) != 1 || notes[0].Text != "order ord-1001: reserved, charged and shipped" {
+				t.Fatalf("notifications = %+v", notes)
+			}
+
+			// The failure path its header names: the shipping service refuses.
+			mark = len(x.services.Requests("/post"))
+			run = x.runToEnd("order-saga", "--input", "shipping_api="+base+"/absent")
+			requireRunFailedAt(t, run, "shipped")
+			requireStatuses(t, run, orkstackv1.Status_STATUS_SUCCEEDED, "release", "refund", "report", "notify")
+			if notes := posted(t, mark); len(notes) != 1 || !strings.HasPrefix(notes[0].Text, "order ord-1001 failed at shipped (") {
+				t.Fatalf("notifications = %+v", notes)
+			}
+		},
+		"pinned-checkout": func(t *testing.T) {
+			run := x.runToEnd("pinned-checkout")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			checkout := taskRunOf(t, run, "checkout")
+			for _, id := range []string{"validate", "merge", "package"} {
+				member := taskRunOf(t, run, id)
+				if member.GetPin() == "" || member.GetPin() != checkout.GetPin() || member.GetOrkerId() != checkout.GetOrkerId() {
+					t.Fatalf("%s ran in pin %q on %q, want checkout's %q on %q", id, member.GetPin(), member.GetOrkerId(), checkout.GetPin(), checkout.GetOrkerId())
+				}
+			}
+			members := untarGz(t, x.download(run.GetId(), "package", "bundle.tar.gz", -1))
+			if len(members) != 3 || members["COMMIT"] != commit+"\n" || members["README"] != "Hello World!\n" {
+				t.Fatalf("bundle.tar.gz members = %v, want COMMIT %s, README and config.json", members, commit)
+			}
+			if got, want := mustJSON(t, members["config.json"]), mustJSON(t, `{"log":{"level":"debug","format":"json"},"replicas":1}`); !reflect.DeepEqual(got, want) {
+				t.Fatalf("config.json = %v, want %v", got, want)
+			}
+		},
+		"poll-until-ready": func(t *testing.T) {
+			// httpbin answers 503 or 200 at random; the stand-in answers 503
+			// twice, so the run's polling is observed rather than likely.
+			x.services.SetNotReady(2)
+			run := x.runToEnd("poll-until-ready")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			var resp orkstackv1.ListTaskAttemptsResponse
+			if err := api.UnmarshalJSON([]byte(x.in("--json", "run", "attempts", run.GetId(), "--task", "wait-ready")), &resp); err != nil {
+				t.Fatalf("decode run attempts: %v", err)
+			}
+			if got := len(resp.GetAttempts()); got != 3 {
+				t.Fatalf("wait-ready made %d attempts, want two failed polls and one that succeeded", got)
+			}
+			if got, want := taskOutput(t, run, "summarize"), mustJSON(t, `{"result":{"rows":2,"total":12.5,"generated_local":"2026-01-02 04:04"}}`); !reflect.DeepEqual(got, want) {
+				t.Fatalf("summarize = %v, want %v", got, want)
+			}
+		},
+	}
+
+	x.scenario(t, "E13", func(t *testing.T) {
+		x.apply(x.noInputVariant(t, "notify-block.ork.yaml"))
+		for _, path := range exampleFiles(t, x.root) {
+			file := filepath.Base(path)
+			name := strings.TrimSuffix(file, ".ork.yaml")
+			if name == "custom-image" {
+				continue
+			}
+			result, ok := results[name]
+			if !ok {
+				t.Fatalf("%s has no stated result here: add it, so a new example is run with no inputs too", file)
+			}
+			if name != "notify-block" {
+				x.apply(x.noInputVariant(t, file))
+			}
+			result(t)
+		}
 	})
 }
 

@@ -267,6 +267,9 @@ write_run_config() {
 		echo "  backend: $backend"
 		echo "orker:"
 		echo "  workdir: $workdir"
+		# A pin host, so examples/pinned-checkout.ork.yaml runs here as shipped.
+		echo "  pins:"
+		echo "    max_concurrent: 1"
 		echo "engine:"
 		echo "  http_addr: \"$http_addr\""
 		echo "  ws_allowed_origins: $ws_yaml_list"

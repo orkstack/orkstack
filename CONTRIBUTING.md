@@ -43,7 +43,7 @@ S3-compatible object store, and a local OCI registry on `localhost:5001`.
 points the activity catalog at them, so an Orkflow that `uses: shell` runs
 the images this checkout built.
 `make up` builds `bin/ork`, `bin/orker` and `bin/orkctl`, starts the engine,
-one Orker and the UI's dev server (Vite, with hot reload), and waits until
+one Orker, which is a pin host, and the UI's dev server (Vite, with hot reload), and waits until
 each one answers: the engine's API, an Orker polling its pool, the dev server
 and a live-event socket opened through it. When it prints "OrkStack is up":
 
@@ -132,6 +132,9 @@ signs each image with a throwaway key, by the cosign image and flags the
 release signs with (`deploy/cosign-image.txt`), and runs an Orkflow in a
 namespace that requires that key, so OrkStack's own verifier accepts what a
 release signs.
+`make examples-smoke` runs the same Quickstart, then every shipped example with
+no inputs on that stack; it reaches `httpbin.org` and `github.com`, so it runs as
+a nightly job of its own.
 `make quickstart-smoke` runs the README's Quickstart as written on a fresh
 clone of the working tree, which builds the stack from source; `release.yml`
 runs both before it publishes anything, and `nightly.yml` runs the quickstart

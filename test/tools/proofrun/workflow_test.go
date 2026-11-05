@@ -1718,6 +1718,71 @@ func TestWorkflows_TheNightlyRunsTheQuickstart(t *testing.T) {
 	})
 }
 
+func isExamplesSmoke(s wfStep) bool {
+	return strings.TrimSpace(s.Run) == "scripts/quickstart-smoke.sh --examples"
+}
+
+// TestWorkflows_TheNightlyRunsTheExamples: `examples` runs every shipped example
+// with no inputs on every night the nightly runs, beside the proof, with nothing
+// that lets a broken one pass. It reaches third parties, so what a release waits
+// on leaves it out: a third party's outage must not hold a release.
+func TestWorkflows_TheNightlyRunsTheExamples(t *testing.T) {
+	for _, job := range nightlyRunJobs {
+		if job == "examples" {
+			t.Errorf("a release waits on nightly job %q, which reaches third parties", job)
+		}
+	}
+	rule := func(w *wfFile) []string {
+		job, ok := w.Jobs["examples"]
+		if !ok {
+			return []string{"nightly.yml has no examples job"}
+		}
+		var p []string
+		if job.ContinueOnError != nil {
+			p = append(p, "jobs.examples continues on error, so a broken example would not fail the nightly")
+		}
+		if len(job.needs()) > 0 {
+			p = append(p, fmt.Sprintf("jobs.examples.needs = %v; it runs beside the proof, whatever the proof's result", job.needs()))
+		}
+		if nightly, ok := w.Jobs["nightly"]; !ok || normalizeIf(job.If) != normalizeIf(nightly.If) {
+			p = append(p, fmt.Sprintf("jobs.examples.if = %q, want the nightly's own, so it runs every night the nightly does", job.If))
+		}
+		ran := false
+		for i, s := range job.Steps {
+			if s.ContinueOnError != nil {
+				p = append(p, fmt.Sprintf("jobs.examples %s continues on error", s.label(i)))
+			}
+			if isExamplesSmoke(s) {
+				ran = true
+				if s.If != "" {
+					p = append(p, fmt.Sprintf("jobs.examples %s is conditional, so the smoke can be skipped", s.label(i)))
+				}
+			}
+		}
+		if !ran {
+			p = append(p, "jobs.examples never runs the shipped examples (scripts/quickstart-smoke.sh --examples)")
+		}
+		return p
+	}
+	smoke := func(w *wfFile) *wfStep {
+		for i := range w.Jobs["examples"].Steps {
+			if isExamplesSmoke(w.Jobs["examples"].Steps[i]) {
+				return &w.Jobs["examples"].Steps[i]
+			}
+		}
+		return &wfStep{}
+	}
+	expectEachMutationRefused(t, "nightly.yml", rule, []mutation{
+		{"no examples job", func(w *wfFile) { delete(w.Jobs, "examples") }},
+		{"a job that continues on error", func(w *wfFile) { w.Jobs["examples"].ContinueOnError = true }},
+		{"a smoke that continues on error", func(w *wfFile) { smoke(w).ContinueOnError = true }},
+		{"a skippable smoke", func(w *wfFile) { smoke(w).If = "false" }},
+		{"the plain smoke instead", func(w *wfFile) { smoke(w).Run = "scripts/quickstart-smoke.sh" }},
+		{"waiting for the proof", func(w *wfFile) { w.Jobs["examples"].Needs = "nightly" }},
+		{"by dispatch only", func(w *wfFile) { w.Jobs["examples"].If = "${{ github.event_name == 'workflow_dispatch' }}" }},
+	})
+}
+
 // ---- release ---------------------------------------------------------------------
 
 // releaseVersionRE is plan §3.1's version rule.

@@ -194,6 +194,9 @@ services:
       ORK_ADMIN_ADDR: 127.0.0.1:9465
       ORK_ORKER_ID: ${ORKSTACK_ORKER_ID-quickstart}
       ORK_ORKER_WORKDIR: ${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}
+      # A pin host, so examples/pinned-checkout.ork.yaml runs here as shipped:
+      # one pin at a time (docs/DEPLOY.md, "Pin hosting is a pool-wide setting").
+      ORK_ORKER_MAX_PINS: "1"
     # The work directory is under your home, never a shared /tmp: whoever owns
     # it could swap a task's directories for links to the host's, and the
     # daemon would mount them. It is mounted at the same path, because the

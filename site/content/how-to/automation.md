@@ -9,24 +9,19 @@ This is [`examples/automation/examples.ork.yaml`](https://github.com/orkstack/or
 ```yaml
 apiVersion: orkstack/v1
 kind: Automation
-namespace: examples
+namespace: default
 
 settings:
   description: "The shipped example Orkflows (examples/README.md)"
-  run_retention: 48h
-  allowed_secrets:
-    - "env:GIT_TOKEN"
 
 schedules:
   poll-exports:
     orkflow: poll-until-ready
-    description: "Fetch and summarize the export every 15 minutes, once it is ready"
-    cron: "*/15 * * * *"
+    description: "Fetch and summarize the export once a day, once it is ready"
+    cron: "0 6 * * *"
     timezone: UTC
     overlap: skip
-    input:
-      status_url: https://exports.example.com/status
-      export_url: https://exports.example.com/latest.json
+    pause_on_failure: true
 
 triggers:
   change-from-ci:
@@ -34,15 +29,18 @@ triggers:
     description: "CI submits a change for assessment and, when risky, approval"
 ```
 
-The schedule and the trigger name Orkflows. Each one must be stored, or applied in the same command. The [examples guide](https://github.com/orkstack/orkstack/blob/main/examples/README.md#the-automation-document) lists the steps in order.
+The schedule and the trigger name Orkflows. Each one must be stored, or applied in the same command. `approval-gate` composes `notify-block`, so that block is stored first, in a command of its own. The [examples guide](https://github.com/orkstack/orkstack/blob/main/examples/README.md#the-automation-document) lists the steps in order.
 
-Preview the plan, apply it, then check for drift:
+Store the block, preview the plan, apply it, then check for drift:
 
 ```bash
-orkctl apply examples/automation/examples.ork.yaml --dry-run
-orkctl apply examples/automation/examples.ork.yaml
+orkctl apply examples/notify-block.ork.yaml
+orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml --dry-run
+orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml
 orkctl apply examples/automation/examples.ork.yaml --check
 ```
+
+The schedule fires once a day and pauses itself after a failure. Delete it when you are done with it: `orkctl schedule delete poll-exports`.
 
 ## Document keys
 

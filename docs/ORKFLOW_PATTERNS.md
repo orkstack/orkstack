@@ -374,6 +374,7 @@ in place; otherwise hand files on as artifacts.
 - Commit what must outlive the pin as an artifact: nothing under
   `/orkstack/shared` does.
 - The pool needs a pin host, an Orker with `ORK_ORKER_MAX_PINS` above zero.
+  The quickstart's Orker is one, and so is `make up`'s.
 
 Example: [pinned-checkout](../examples/pinned-checkout.ork.yaml).
 
@@ -385,7 +386,9 @@ Example: [pinned-checkout](../examples/pinned-checkout.ork.yaml).
 - `orkctl orkflow compat` and the promote gate compare interfaces.
 - A composed failure handler runs its child in a failing parent.
 - Apply a child, in its own `orkctl apply`, before the Orkflows that compose
-  it: a composing document is validated against what is already stored.
+  it: a composing document is validated against what is already stored. That
+  is why `order-saga` and `approval-gate` ask you to store `notify-block` first,
+  the one thing either asks of you beyond internet access.
 
 Examples: [notify-block](../examples/notify-block.ork.yaml),
 [order-saga](../examples/order-saga.ork.yaml),

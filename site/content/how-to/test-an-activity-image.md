@@ -11,7 +11,7 @@ orkctl activity build ./my-image --tag localhost:5001/acme/my-image:dev
 orkctl activity test localhost:5001/acme/my-image:dev
 ```
 
-The test needs a pushed image, because it runs the digest the registry returns. It prints each check as `PASS`, `FAIL` or `SKIP`, and it exits non-zero when a check fails.
+The tag names the registry of `make up`, at `localhost:5001`; the quickstart's is at `127.0.0.1:5002`. The test needs a pushed image, because it runs the digest the registry returns. It prints each check as `PASS`, `FAIL` or `SKIP`, and it exits non-zero when a check fails.
 
 `activity test` drives the image with `op: exec` and a `command`, as [activity-shell](/docs/reference/first-party-activities/#shell) does. The image needs `sh` and `jq`, and it must accept that config. An image with its own `with:` keys is refused before any check runs, with the message "cannot be driven". Test such an image with `orkctl task run`, below.
 

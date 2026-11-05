@@ -4,13 +4,13 @@ Declare the values a run takes with `inputs:`. Declare the values it returns wit
 
 ## Example
 
-In [`examples/inputs-and-escaping.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/inputs-and-escaping.ork.yaml), the run needs a `release`. The other inputs have defaults:
+In [`examples/inputs-and-escaping.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/inputs-and-escaping.ork.yaml), every input has a default, so a run needs none of them:
 
 ```yaml
 inputs:
   release:
     type: string
-    required: true
+    default: "1.4.2"
   note:
     type: string
     default: "it's a test; echo unsafe"
@@ -22,14 +22,14 @@ inputs:
     default: true
 ```
 
-Submit it:
+Submit it, overriding two of them:
 
 ```bash
 orkctl apply examples/inputs-and-escaping.ork.yaml
-orkctl run submit inputs-and-escaping --input release=1.4.2 --input dry_run=false --watch
+orkctl run submit inputs-and-escaping --input release=1.4.3 --input dry_run=false --watch
 ```
 
-A value that is valid JSON keeps its type. `dry_run=false` is a boolean. `release=1.4.2` is text.
+A value that is valid JSON keeps its type. `dry_run=false` is a boolean. `release=1.4.3` is text.
 
 ## Declare an input
 

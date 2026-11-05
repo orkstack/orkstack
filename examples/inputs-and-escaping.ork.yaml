@@ -22,12 +22,12 @@
 #                  filter, and JSON is BUILT by jq, never by string splicing.
 #
 # `note` defaults to a value with a quote and a semicolon in it on purpose.
-#   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --input release=1.4.2 --assert-runs regional --assert-skipped publish
-#   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --input release=1.4.2 --input dry_run=false --assert-runs publish
+#   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --assert-runs regional --assert-skipped publish
+#   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --input dry_run=false --assert-runs publish
 apiVersion: orkstack/v1
 kind: Orkflow
 name: inputs-and-escaping
-version: "0.1.0"
+version: "0.2.0"
 description: "Object, array, number and boolean inputs; argv, positional arguments, the sh helper and jq $vars against a hostile default."
 
 inputs:
@@ -44,7 +44,7 @@ inputs:
       - package
   release:
     type: string
-    required: true
+    default: "1.4.2"
   note:
     type: string
     default: "it's a test; echo unsafe"

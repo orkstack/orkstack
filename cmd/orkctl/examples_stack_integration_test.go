@@ -5,6 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -374,19 +375,32 @@ func (s *exampleServices) serve(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	case r.URL.Path == "/notify" && r.Method == http.MethodPost:
 		w.WriteHeader(http.StatusOK)
-	case r.URL.Path == "/exports/status" && r.Method == http.MethodGet:
+	case (r.URL.Path == "/exports/status" || r.URL.Path == "/status/503,200") && r.Method == http.MethodGet:
 		s.mu.Lock()
 		s.polled++
 		ready := s.polled > s.notReady
 		s.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w, `{"ready": %t}`, ready)
+		if !ready {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
 	case r.URL.Path == "/exports/latest.json" && r.Method == http.MethodGet:
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, exampleExport)
 	case r.URL.Path == "/post" && r.Method == http.MethodPost:
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = fmt.Fprintf(w, `{"json": %s}`, jsonOrString(body))
+	case strings.HasPrefix(r.URL.Path, "/anything/"):
+		// httpbin's: any method, any path.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{}`)
+	case strings.HasPrefix(r.URL.Path, "/base64/") && r.Method == http.MethodGet:
+		// httpbin's: the path's value, decoded.
+		decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(r.URL.Path, "/base64/"))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write(decoded)
 	default:
 		http.NotFound(w, r)
 	}
@@ -407,7 +421,7 @@ func (s *exampleServices) SetStatus(path string, code int) {
 	s.statuses[path] = code
 }
 
-// SetNotReady makes the next n status polls answer {"ready": false}.
+// SetNotReady makes the next n status polls answer 503.
 func (s *exampleServices) SetNotReady(n int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -453,17 +467,16 @@ func (s *exampleServices) Notifications(t *testing.T, mark int) []notification {
 
 // ======================================================== the git server
 
-// examplesRepoFiles is what E8 and E9 seed private/examples.git with: what
-// examples/config-from-git.ork.yaml and examples/pinned-checkout.ork.yaml say
-// the repository must hold.
+// examplesRepoFiles is what E8 and E9 seed private/examples.git with: what the
+// default repository of examples/config-from-git.ork.yaml and
+// examples/pinned-checkout.ork.yaml holds.
 var examplesRepoFiles = map[string]string{
-	"VERSION":              "1.4.2\n",
-	"deploy/app.conf.tmpl": "# {{ .name }}, rendered from commit {{ .commit }}\nservice {{ .name }} {\n  listen   {{ .port }};\n  replicas {{ .replicas }};\n  env      {{ .environment }};\n}\n",
-	"deploy/services.json": `{"services":[{"name":"api","port":8080,"replicas":2},{"name":"web","port":8081,"replicas":1}]}`,
-	"config/base.json":     `{"log":{"level":"info","format":"json"},"replicas":1}`,
-	"config/staging.json":  `{"log":{"level":"debug"}}`,
-	"config/prod.json":     `{"replicas":3,"log":{"format":"text"}}`,
+	"README": "Hello World!\n",
 }
+
+// helloWorldRepo stands in for those examples' default repository in E13: not
+// under private/, because the default asks for no credential.
+const helloWorldRepo = "public/Hello-World.git"
 
 // ========================================================== the variants
 
@@ -506,6 +519,85 @@ func withExampleGitCA(t *testing.T, src []byte) []byte {
 	return out
 }
 
+// withExampleGitToken adds, to every `uses: git` task, `tokenSecret: git-token`
+// under with: and a secret git-token from env:GIT_TOKEN, as the headers of the
+// shipped git examples tell the reader of a private repository to. Nothing else
+// changes.
+func withExampleGitToken(t *testing.T, src []byte) []byte {
+	t.Helper()
+	var doc yaml.Node
+	if err := yaml.Unmarshal(src, &doc); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	tasks := mappingValue(doc.Content[0], "tasks")
+	if tasks == nil {
+		t.Fatal("the document has no tasks")
+	}
+	for _, task := range tasks.Content {
+		if uses := mappingValue(task, "uses"); uses == nil || uses.Value != "git" {
+			continue
+		}
+		with := mappingValue(task, "with")
+		with.Content = append(with.Content, scalar("tokenSecret"), scalar("git-token"))
+		secrets := mappingValue(task, "secrets")
+		if secrets == nil {
+			secrets = &yaml.Node{Kind: yaml.SequenceNode}
+			task.Content = append(task.Content, scalar("secrets"), secrets)
+		}
+		secrets.Content = append(secrets.Content, &yaml.Node{Kind: yaml.MappingNode, Content: []*yaml.Node{
+			scalar("name"), scalar("git-token"), scalar("source"), scalar("env:GIT_TOKEN"),
+		}})
+	}
+	out, err := yaml.Marshal(&doc)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	return out
+}
+
+// requiredReleaseVariant is examples/inputs-and-escaping.ork.yaml under a name of
+// its own with `release` required and no default: the one combination nothing
+// fills, which the shipped example no longer declares.
+func requiredReleaseVariant(t *testing.T, root string) []byte {
+	t.Helper()
+	src, err := os.ReadFile(filepath.Join(root, "examples", "inputs-and-escaping.ork.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const shippedName, shippedRelease = "name: inputs-and-escaping\n", "  release:\n    type: string\n    default: \"1.4.2\"\n"
+	if bytes.Count(src, []byte(shippedName)) != 1 || bytes.Count(src, []byte(shippedRelease)) != 1 {
+		t.Fatal("the shipped example no longer has the name and release lines this variant replaces")
+	}
+	out := bytes.Replace(src, []byte(shippedName), []byte("name: inputs-required\n"), 1)
+	return bytes.Replace(out, []byte(shippedRelease), []byte("  release:\n    type: string\n    required: true\n"), 1)
+}
+
+// noInputVariant is the shipped file with only where its defaults point changed:
+// the suite's services for httpbin.org and, with its CA, the suite's git server
+// for GitHub. Undoing those substitutions gives back the shipped bytes.
+func (x *examplesStack) noInputVariant(t *testing.T, file string) string {
+	t.Helper()
+	const shippedHTTP, shippedRepo = "https://httpbin.org", "https://github.com/octocat/Hello-World.git"
+	shipped, err := os.ReadFile(filepath.Join(x.root, "examples", file))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := x.git.URL(helloWorldRepo)
+	out := bytes.ReplaceAll(shipped, []byte(shippedHTTP), []byte(x.services.base))
+	out = bytes.ReplaceAll(out, []byte(shippedRepo), []byte(repo))
+	back := bytes.ReplaceAll(out, []byte(x.services.base), []byte(shippedHTTP))
+	back = bytes.ReplaceAll(back, []byte(repo), []byte(shippedRepo))
+	if !bytes.Equal(back, shipped) {
+		t.Fatalf("the no-input variant of %s does not undo to the shipped document", file)
+	}
+	if bytes.Contains(out, []byte(repo)) {
+		withCA := withExampleGitCA(t, out)
+		requireOnlyGitAccessAdded(t, out, withCA)
+		out = withCA
+	}
+	return x.variantFile(file, out)
+}
+
 func mappingValue(node *yaml.Node, key string) *yaml.Node {
 	if node.Kind != yaml.MappingNode {
 		return nil
@@ -522,9 +614,10 @@ func scalar(value string) *yaml.Node {
 	return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}
 }
 
-// requireOnlyGitCAAdded compiles both documents, deletes exactly the two
-// additions from the variant, and requires the two definitions be equal.
-func requireOnlyGitCAAdded(t *testing.T, shipped, variant []byte) {
+// requireOnlyGitAccessAdded compiles both documents, deletes exactly the
+// additions from the variant (the CA, and the token when it has one), and
+// requires the two definitions be equal.
+func requireOnlyGitAccessAdded(t *testing.T, shipped, variant []byte) {
 	t.Helper()
 	want, err := dsl.Compile(shipped)
 	if err != nil {
@@ -544,10 +637,14 @@ func requireOnlyGitCAAdded(t *testing.T, shipped, variant []byte) {
 			t.Fatalf("variant task %s has no caFile", task.GetId())
 		}
 		delete(fields, "caFile")
+		delete(fields, "tokenSecret")
 		var kept []*orkstackv1.SecretRef
 		for _, secret := range task.GetSecrets() {
-			if secret.GetName() == "git-ca" {
+			switch secret.GetName() {
+			case "git-ca":
 				added++
+				continue
+			case "git-token":
 				continue
 			}
 			kept = append(kept, secret)
@@ -559,7 +656,7 @@ func requireOnlyGitCAAdded(t *testing.T, shipped, variant []byte) {
 	}
 	want.SourceYaml, got.SourceYaml = "", ""
 	if !proto.Equal(want, got) {
-		t.Fatalf("the CA variant differs from the shipped document by more than the CA:\nshipped %v\nvariant %v", want, got)
+		t.Fatalf("the git variant differs from the shipped document by more than its access:\nshipped %v\nvariant %v", want, got)
 	}
 }
 
@@ -584,19 +681,20 @@ func withRegistry(t *testing.T, src []byte, registry string) []byte {
 }
 
 // automationVariant points the shipped automation document at the stack's
-// namespace and the suite's export service. Both parse with no issue, and
-// undoing exactly those substitutions gives back the shipped bytes.
+// namespace and gives its schedule the suite's export service, in place of the
+// defaults it would otherwise fire with. Both parse with no issue, and undoing
+// exactly those substitutions gives back the shipped bytes.
 func automationVariant(t *testing.T, src []byte, ns, base string) []byte {
 	t.Helper()
-	const shippedNamespace, shippedExports = "namespace: examples\n", "https://exports.example.com"
-	if bytes.Count(src, []byte(shippedNamespace)) != 1 || !bytes.Contains(src, []byte(shippedExports)) {
-		t.Fatal("the shipped automation document no longer has the namespace line and export URLs this variant replaces")
+	const shippedNamespace, shippedSchedule = "namespace: default\n", "    pause_on_failure: true\n"
+	if bytes.Count(src, []byte(shippedNamespace)) != 1 || bytes.Count(src, []byte(shippedSchedule)) != 1 {
+		t.Fatal("the shipped automation document no longer has the namespace and schedule lines this variant replaces")
 	}
-	exports := base + "/exports"
+	withInput := shippedSchedule + "    input:\n      status_url: " + base + "/exports/status\n      export_url: " + base + "/exports/latest.json\n"
 	out := bytes.Replace(src, []byte(shippedNamespace), []byte("namespace: "+ns+"\n"), 1)
-	out = bytes.ReplaceAll(out, []byte(shippedExports), []byte(exports))
+	out = bytes.Replace(out, []byte(shippedSchedule), []byte(withInput), 1)
 	back := bytes.Replace(out, []byte("namespace: "+ns+"\n"), []byte(shippedNamespace), 1)
-	back = bytes.ReplaceAll(back, []byte(exports), []byte(shippedExports))
+	back = bytes.Replace(back, []byte(withInput), []byte(shippedSchedule), 1)
 	if !bytes.Equal(back, src) {
 		t.Fatal("the automation variant does not undo to the shipped document")
 	}

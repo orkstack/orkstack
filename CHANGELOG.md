@@ -126,6 +126,24 @@ version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Changed
 
+- Every example in `examples/` now runs as it stands: apply it and submit it with
+  no inputs. Its defaults reach `httpbin.org` and `github.com`, so it needs
+  internet access; `--input` points it at your own. `order-saga` and
+  `approval-gate` still need `notify-block` stored first, in a command of its own,
+  and `custom-image` still needs your own images. The changed examples have new
+  versions, and a store keeps any older one it holds, so a composing Orkflow of
+  yours that names `notify-block@0.1.0` is unaffected. If you adapted one, or
+  submit one with your own inputs:
+  - `order-saga` sends the shipment to a new input, `shipping_api`. Pass it too.
+  - `poll-until-ready` now waits for a 2xx answer, not for `{"ready": true}`.
+  - `config-from-git` and `pinned-checkout` no longer mount `GIT_TOKEN` or read
+    their template, services and config from the repository: those are inputs
+    now. Their headers say how to add a token for a private repository.
+  - `examples/automation/examples.ork.yaml` declares `default`, not `examples`,
+    and fires once a day, not every 15 minutes, pausing itself after a failure.
+- The quickstart's Orker and `make up`'s are now pin hosts, one pin at a time
+  (`ORK_ORKER_MAX_PINS: "1"`), so an Orkflow with a pin runs on them with no
+  setting of yours. There is nothing to do.
 - The documentation site moved to ten sections, from Get started to Concepts,
   so its pages have new addresses. An old address redirects to the page's new
   one, so there is nothing to do.

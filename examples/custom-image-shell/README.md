@@ -109,10 +109,12 @@ There are no `ops`, so the whole `with:` block is its `fields`, and
 ## Build, push and pin
 
 The image is published nowhere. Build and push it to a registry your Orkers
-can pull from, then pin it:
+can pull from, then pin it. On the quickstart that registry is at
+`127.0.0.1:5002` (`make up`'s is at `localhost:5001`), and the `orkctl` is one on
+your own machine, because its own image has no Docker to build with:
 
 ```sh
-orkctl activity build examples/custom-image-shell --tag localhost:5001/orkstack-examples/custom-image-shell:dev
+orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
 ```
 
 The command prints the pinned reference (`…@sha256:…`); paste it over the tag

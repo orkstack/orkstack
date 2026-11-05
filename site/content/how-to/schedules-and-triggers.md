@@ -4,13 +4,11 @@ Start runs without a person in the loop. A **schedule** starts runs of one Orkfl
 
 ## Run on a schedule
 
-Apply the Orkflow first. Then create a schedule that runs `poll-until-ready` every 15 minutes. It starts paused, so you can check the next fire times first:
+Apply the Orkflow first. Then create a schedule that runs `poll-until-ready` once a day. It starts paused, so you can check the next fire times first:
 
 ```bash
 orkctl schedule create poll-exports --orkflow poll-until-ready \
-  --cron '*/15 * * * *' --timezone UTC --overlap skip --paused \
-  --input status_url=https://exports.example.com/status \
-  --input export_url=https://exports.example.com/latest.json
+  --cron '0 6 * * *' --timezone UTC --overlap skip --paused
 
 orkctl schedule get poll-exports     # the next fire times, before anything fires
 orkctl schedule resume poll-exports  # let it fire

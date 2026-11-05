@@ -4,7 +4,7 @@ Give a task a secret as a file under `/orkstack/input/secrets/`, and plain setti
 
 ## Example
 
-In [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/config-from-git.ork.yaml), `resolve` reads a Git token from the Orker's environment:
+[`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/config-from-git.ork.yaml) reads a public repository, so it needs no secret. To read a private one, copy it and give both git tasks a token from the Orker's environment, as its header says. Its `resolve` task then looks like this:
 
 ```yaml
   - id: resolve
@@ -22,11 +22,11 @@ In [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/bl
       tokenSecret: git-token
 ```
 
-Set `GIT_TOKEN` in the environment of every Orker that runs `resolve`. Do not put it in the Orkflow. Then apply and run:
+Set `GIT_TOKEN` in the environment of every Orker that runs `resolve`. Do not put it in the Orkflow. Then apply your copy and run it against your repository, naming the branch and a file it holds:
 
 ```bash
-orkctl apply examples/config-from-git.ork.yaml
-orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.git --input environment=prod --watch
+orkctl apply config-from-git.ork.yaml
+orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.git --input ref=main --input readme_path=README.md --watch
 ```
 
 `tokenSecret: git-token` names the secret whose file holds the token. The Orker reads `GIT_TOKEN` and writes the file, and the `git` activity reads that file.

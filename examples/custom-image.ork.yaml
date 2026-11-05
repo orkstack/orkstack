@@ -7,12 +7,15 @@
 # Pattern: docs/ORKFLOW_PATTERNS.md, "When to write your own image"
 #
 # BUILD AND PUSH THE IMAGES FIRST. They are published nowhere, and a locally
-# built image that was never pushed has no registry digest to pin:
-#   orkctl activity build examples/custom-image --tag localhost:5001/orkstack-examples/custom-image:dev
-#   orkctl activity build examples/custom-image-shell --tag localhost:5001/orkstack-examples/custom-image-shell:dev
-# Each prints the pinned reference (…@sha256:…) to paste over the tag below.
-# A deployment whose image policy sets require_digest refuses the tags; one
-# with allowed_registries must list localhost:5001.
+# built image that was never pushed has no registry digest to pin. On the
+# quickstart, whose registry is 127.0.0.1:5002, with an orkctl on your own
+# machine (its own image has no Docker to build with):
+#   orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev
+#   orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
+# Each prints the pinned reference (…@sha256:…) to paste over the tag below,
+# which names the registry of `make up`, at localhost:5001. A deployment whose
+# image policy sets require_digest refuses the tags; one with allowed_registries
+# must list the registry they name.
 #
 #   probe         the whole ABI with no `with:`: read task.json, write
 #                 values.json, exit 0.
@@ -27,7 +30,7 @@
 apiVersion: orkstack/v1
 kind: Orkflow
 name: custom-image
-version: "0.2.0"
+version: "0.2.1"
 description: "Two custom OCI images, Go and shell, as durable activities: no SDK, no op, no catalog name. Build and push them first."
 
 inputs:

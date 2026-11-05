@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +13,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -403,6 +406,205 @@ func TestExamples_AreIndexed(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A shipped example asks nothing of a reader: they apply it, submit it with no
+// inputs, and see its stated result (examples/README.md, "What these are").
+// These are the only exceptions, and each one's header and both examples tables
+// state what it asks.
+var (
+	// composesFirst names each example that composes a block a reader must
+	// store first, and that block.
+	composesFirst = map[string]string{"approval-gate": "notify-block", "order-saga": "notify-block"}
+	// needsOwnImages names each example that runs images a reader builds.
+	needsOwnImages = map[string]bool{"custom-image": true}
+	// defaultHosts are the only hosts an example's input defaults may name.
+	defaultHosts = map[string]bool{"httpbin.org": true, "github.com": true}
+)
+
+// exampleURLs collects every http(s) URL held in a value: an input's default.
+func exampleURLs(t *testing.T, value *structpb.Value, into map[string]bool) {
+	t.Helper()
+	switch kind := value.GetKind().(type) {
+	case *structpb.Value_StringValue:
+		if !strings.HasPrefix(kind.StringValue, "http://") && !strings.HasPrefix(kind.StringValue, "https://") {
+			return
+		}
+		parsed, err := url.Parse(kind.StringValue)
+		if err != nil {
+			t.Errorf("default %q is not a URL: %v", kind.StringValue, err)
+			return
+		}
+		into[parsed.Host] = true
+	case *structpb.Value_ListValue:
+		for _, item := range kind.ListValue.GetValues() {
+			exampleURLs(t, item, into)
+		}
+	case *structpb.Value_StructValue:
+		for _, field := range kind.StructValue.GetFields() {
+			exampleURLs(t, field, into)
+		}
+	}
+}
+
+// exampleNeeds is what a reader needs for a compiled example, in the words both
+// examples tables use.
+func exampleNeeds(name string, hosts map[string]bool) string {
+	if needsOwnImages[name] {
+		return "your own images, built and pushed"
+	}
+	var needs []string
+	if block, ok := composesFirst[name]; ok {
+		needs = append(needs, fmt.Sprintf("`%s` applied first", block))
+	}
+	var sorted []string
+	for host := range hosts {
+		sorted = append(sorted, "`"+host+"`")
+	}
+	sort.Strings(sorted)
+	if len(sorted) > 0 {
+		needs = append(needs, "internet access to "+strings.Join(sorted, " and "))
+	}
+	if len(needs) == 0 {
+		return "nothing"
+	}
+	return strings.Join(needs, "; ")
+}
+
+// needsColumn reads a table's last column, keyed by the name its first column
+// links. A document may hold other tables: only rows linking a name count.
+func needsColumn(t *testing.T, path string) map[string]string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cells := map[string]string{}
+	row := regexp.MustCompile(`^\| \[([a-z0-9-]+)\]\([^)]*\) \|.*\| ([^|]+) \|$`)
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := row.FindStringSubmatch(line); m != nil {
+			cells[m[1]] = m[2]
+		}
+	}
+	return cells
+}
+
+// TestExamples_AskNothingOfAReader is the guard on that rule: it refuses a
+// required input with no default, a secret, a default endpoint only a reader
+// could supply, a person on the default path, and any exception that is not
+// named above or not stated where a reader looks.
+func TestExamples_AskNothingOfAReader(t *testing.T) {
+	const sitePath = "../../site/content/examples.md"
+	readmeNeeds, siteNeeds := needsColumn(t, readmePath), needsColumn(t, sitePath)
+	readme, err := os.ReadFile(readmePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	site, err := os.ReadFile(sitePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	composing, ownImages, pinned := map[string]string{}, map[string]bool{}, false
+	for _, path := range orkflowExamples(t) {
+		file := filepath.Base(path)
+		wf, err := dsl.CompileFile(path)
+		if err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		name := wf.GetName()
+
+		hosts := map[string]bool{}
+		for input, decl := range wf.GetInputs().GetFields() {
+			read := dsl.ReadInput(decl)
+			if read.Required {
+				t.Errorf("%s: input %s is required and has no default", file, input)
+			}
+			if read.Default != nil {
+				exampleURLs(t, read.Default, hosts)
+			}
+		}
+		for host := range hosts {
+			if !defaultHosts[host] {
+				t.Errorf("%s: an input defaults to a URL on %s, which is not one of the hosts a reader can count on", file, host)
+			}
+		}
+
+		for _, task := range wf.GetTasks() {
+			id := task.GetId()
+			if len(task.GetSecrets()) > 0 {
+				t.Errorf("%s: task %s mounts a secret, which a reader would have to supply", file, id)
+			}
+			if task.GetAwait() != nil && task.GetCondition() == "" {
+				t.Errorf("%s: task %s always waits for a person; its default path must not", file, id)
+			}
+			if task.GetPin() != "" {
+				pinned = true
+			}
+			if ref := task.GetOrkflow(); ref != nil {
+				composing[name] = ref.GetName()
+				continue
+			}
+			if strings.ContainsAny(task.GetUses(), "/:") {
+				ownImages[name] = true
+			}
+		}
+
+		want := exampleNeeds(name, hosts)
+		if got := readmeNeeds[name]; got != want {
+			t.Errorf("examples/README.md says %s needs %q, want %q", name, got, want)
+		}
+		if got := siteNeeds[name]; got != want {
+			t.Errorf("site/content/examples.md says %s needs %q, want %q", name, got, want)
+		}
+
+		// A composing example states the two commands wherever a reader
+		// meets it: its header, its description (the gallery's card) and the
+		// section both tables point to.
+		if block, ok := composesFirst[name]; ok {
+			source, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, command := range []string{"orkctl apply examples/" + block + ".ork.yaml", "orkctl apply examples/" + file} {
+				if !bytes.Contains(source, []byte("#   "+command+"\n")) {
+					t.Errorf("%s: the header does not state %q", file, command)
+				}
+				if !strings.Contains(wf.GetDescription(), command) {
+					t.Errorf("%s: the description does not state %q", file, command)
+				}
+				if !bytes.Contains(readme, []byte(command)) {
+					t.Errorf("examples/README.md does not state %q", command)
+				}
+				if !bytes.Contains(site, []byte(command)) {
+					t.Errorf("site/content/examples.md does not state %q", command)
+				}
+			}
+		}
+	}
+	if !reflect.DeepEqual(composing, composesFirst) {
+		t.Errorf("the examples that compose a block are %v, want exactly the named exceptions %v", composing, composesFirst)
+	}
+	if !reflect.DeepEqual(ownImages, needsOwnImages) {
+		t.Errorf("the examples that name an image are %v, want exactly the named exceptions %v", ownImages, needsOwnImages)
+	}
+
+	// A pinned example runs on the quickstart and on `make up` only because
+	// each makes its Orker a pin host.
+	if !pinned {
+		t.Fatal("no example declares a pin; the pin host rule checked nothing")
+	}
+	for path, setting := range map[string]string{
+		"../../compose.yaml":     `ORK_ORKER_MAX_PINS: "1"`,
+		"../../scripts/stack.sh": "max_concurrent: 1",
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(raw, []byte(setting)) {
+			t.Errorf("%s does not make its Orker a pin host (%s), so a pinned example is refused there", path, setting)
+		}
 	}
 }
 
