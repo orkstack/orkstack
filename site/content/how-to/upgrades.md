@@ -54,7 +54,7 @@ Some rollbacks need preparation first. Each one below names what to change, then
 - a fan-out maximum above 1,000 items: lower `engine.each_max_items` to 1,000;
 - definitions passed by reference: set `engine.definition_by_reference` to `false` on every replica, then wait for the runs started that way to finish;
 - snapshot overlays: set `engine.snapshot_overlays` to `false` on every replica, then wait for the runs started while it was on to finish;
-- the Temporal Go SDK 1.50, which is release 0.1.1, with versioning off: hold each namespace that takes runs, wait until `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run, roll back, then release each hold with `orkctl namespace update NS --release-hold`. Count every open run, however old. Resolve or cancel an awaited task rather than wait for its deadline. With versioning on, this case needs nothing more: a run that 0.1.1 started finishes on 0.1.1.
+- the Temporal Go SDK 1.50, which is release 0.2.0, with versioning off: hold each namespace that takes runs, wait until `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run, roll back, then release each hold with `orkctl namespace update NS --release-hold`. Count every open run, however old. Resolve or cancel an awaited task rather than wait for its deadline. With versioning on, this case needs nothing more: a run that 0.2.0 started finishes on 0.2.0.
 
 Do not roll back below the release that introduced reading runs carried into a fresh history. Every release from 0.1.0 contains it.
 

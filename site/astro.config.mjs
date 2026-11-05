@@ -38,12 +38,18 @@ function sidebarItems(pages) {
 	});
 }
 
-/** A page's old routes keep working: each redirects to where the page is now. */
-const redirects = Object.fromEntries(
-	manifest.groups.flatMap((/** @type {ManifestGroup} */ g) =>
+const olderExamples = JSON.parse(readFileSync(new URL('./src/styles/generated/older-examples.json', import.meta.url), 'utf8'));
+
+/**
+ * A page's old routes keep working: each redirects to where the page is now. So
+ * does an example the docs no longer show, to the gallery.
+ */
+const redirects = Object.fromEntries([
+	...manifest.groups.flatMap((/** @type {ManifestGroup} */ g) =>
 		g.pages.flatMap((p) => (p.aliases ?? []).map((a) => [`/${a}`, `${BASE_PATH}/${p.route}/`])),
 	),
-);
+	...olderExamples.map((/** @type {string} */ id) => [`/docs/examples/${id}`, `${BASE_PATH}/docs/examples/`]),
+]);
 
 export default defineConfig({
 	site: SITE,

@@ -31,7 +31,7 @@ OrkStack is described on its own terms. The site never names, compares to or pos
 The name OrkStack and the words Orkflow, Orker, `ork` and `orkctl` are fixed. It never claims production readiness, exactly-once execution or Temporal Cloud support. The mark is Strata, the UI's own: colour, one colour and on navy.
 
 ## Evidence on Hand
-- Real behaviour: the example Orkflows in `examples/`, the UI and CLI on the local stack (captured by `make site-media`).
+- Real behaviour: the example Orkflows in `examples/` and two small Orkflows of the capture's own, `greet` and `render-configs` (`media/orkflows/`), the UI and CLI on the local stack (captured by `make site-media`).
 - The proof discipline: AGENTS.md §11, `docs/PROOFS.md`, `scripts/proof-section11-coverage.tsv`.
 - Absences the site must not fabricate: customers, testimonials, benchmarks, adoption numbers, pricing, a hosted offering.
 

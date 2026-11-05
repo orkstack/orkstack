@@ -4,8 +4,8 @@
 # The setup is hidden: a neutral prompt in /work, where the container sees
 # only examples/ and a static orkctl on its PATH. The commands are the
 # README's and docs/GETTING_STARTED.md's, in the namespace they use
-# (`default`), and the apply is a first apply: run.sh refuses to record when
-# each-fan-out is already stored there.
+# (`default`). run.sh refuses to record when each-fan-out is already stored there
+# and the images may have changed since.
 
 Set Shell "bash"
 # Twice the size the site shows it at (sync-docs.mjs), so a screen with two
@@ -16,6 +16,10 @@ Set Width 2400
 # video's controls band.
 Set Height 1720
 Set Padding 48
+# A frame this size takes VHS longer to capture than its default 50 a second
+# allows, and a frame it misses shortens the recording: at 10 a second it plays
+# in real time.
+Set Framerate 10
 Set TypingSpeed 30ms
 Set CursorBlink false
 
@@ -43,8 +47,11 @@ Sleep 500ms
 Enter
 Sleep 18s
 # The poster: the watch finished, as the terminal drew it, lossless.
-# media/run.sh renames it for the theme.
+# media/run.sh renames it for the theme. A screenshot is taken at the next
+# frame, so the tape stays visible until there has been one, and media/finish.mjs
+# refuses a poster with nothing on it.
 Screenshot out/poster.png
+Sleep 2s
 
 Hide
 Type "RUN=$(orkctl run list --limit 1 --json | grep -o 'ork-[0-9]*-[0-9]*' | head -1) && orkctl run watch $RUN >/dev/null 2>&1; clear"

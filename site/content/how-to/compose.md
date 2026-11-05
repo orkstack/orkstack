@@ -4,42 +4,33 @@ Add a task with `uses: orkflow:<name>@<version>` to start a child run of that Or
 
 ## Example
 
-In [`examples/composed-release.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/composed-release.ork.yaml), the `release` task runs the `release-block` Orkflow at version `0.1.0`. `announce` reads two of the block's outputs:
+In [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/approval-gate.ork.yaml), the `tell-requester` task runs the `notify-block` Orkflow at version `0.1.0`:
 
 ```yaml
-  - id: release
-    uses: orkflow:release-block@0.1.0
+  - id: tell-requester
+    uses: orkflow:notify-block@0.1.0
     needs:
-      - build
+      - approval
+    join: any_failed
     with:
-      image: '{{ .tasks.build.output.value }}'
-
-  - id: announce
-    uses: shell
-    needs:
-      - release
-    with:
-      op: exec
-      command:
-        - sh
-        - -c
-        - "echo released {{ sh .tasks.release.output.digest }} at {{ sh .tasks.release.output.url }}"
+      url: '{{ .inputs.notify_url }}'
+      subject: change
+      text: 'not applied: the approval was rejected or expired ({{ .tasks.assess.output.result.summary }})'
 ```
 
-The block declares those two outputs in [`examples/release-block.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/release-block.ork.yaml):
+The block declares one output in [`examples/notify-block.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/notify-block.ork.yaml). A later task reads it as `{{ .tasks.tell-requester.output.status }}`:
 
 ```yaml
 outputs:
-  digest: '{{ .tasks.sign.output.value }}'
-  url: '{{ .tasks.publish.output.value }}'
+  status: '{{ .tasks.post.output.status }}'
 ```
 
 Apply the block first, in the same namespace:
 
 ```bash
-orkctl apply examples/release-block.ork.yaml
-orkctl apply examples/composed-release.ork.yaml
-orkctl run submit composed-release --watch
+orkctl apply examples/notify-block.ork.yaml
+orkctl apply examples/approval-gate.ork.yaml
+orkctl run submit approval-gate --input notify_url=https://hooks.example.com/change --watch
 orkctl run get <run-id> --tree
 ```
 

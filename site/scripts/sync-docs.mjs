@@ -157,6 +157,12 @@ function flatten(groups, out = []) {
 const pages = flatten(manifest.groups);
 
 // Example Orkflows: one generated page each, the page's featured ones first.
+// The docs show the current ones: an example examples/README.md marks older stays
+// in the repository for deployments that stored it, and its old address redirects
+// to the gallery (astro.config.mjs).
+const olderExamples = new Set(
+	[...readFileSync(path.join(repoRoot, 'examples', 'README.md'), 'utf8').matchAll(/^\|\s*\[[^\]]+\]\(([^)]+\.ork\.yaml)\)\s*\|\s*\*older\*/gm)].map((m) => `examples/${m[1]}`),
+);
 const exampleFiles = [];
 for (const page of pages.filter((p) => p.examples)) {
 	const dirs = ['examples', 'examples/automation'];
@@ -165,6 +171,7 @@ for (const page of pages.filter((p) => p.examples)) {
 		for (const name of readdirSync(path.join(repoRoot, dir)).sort()) {
 			if (!name.endsWith('.ork.yaml')) continue;
 			const rel = `${dir}/${name}`;
+			if (olderExamples.has(rel)) continue;
 			const id = rel.replace(/^examples\//, '').replace(/\.ork\.yaml$/, '').replace(/\//g, '-');
 			const doc = YAML.parseDocument(readFileSync(path.join(repoRoot, rel), 'utf8'));
 			const kind = doc.get('kind');
@@ -404,23 +411,24 @@ function mediaFigure(name) {
 		const src = (f) => `${BASE_PATH}/media/${f}`;
 		if (!item.width || !item.height) fail(`media ${name} has no width and height in src/assets/media/manifest.json (run make site-media)`);
 		const aspect = `${item.width} / ${item.height + (name.startsWith('cli-') ? 110 : 0)}`;
-		// Every recording has captions: its own timed file when make site-media
-		// wrote one; until then, its caption as one cue.
-		const track = item.captions ? src(item.captions) : describedCaptions(name, item.caption);
-		const video = (webm, mp4, poster) =>
+		// Every recording has captions: each theme's own timed file when make
+		// site-media wrote them, as it does for the UI's; otherwise, its caption
+		// as one cue.
+		const oneCue = item.captions && item.captionsDark ? undefined : describedCaptions(name, item.caption);
+		const video = (webm, mp4, poster, captions) =>
 			[
 				`<video controls playsinline preload="none"${poster ? ` poster="${src(poster)}"` : ''} style="aspect-ratio: ${aspect}" aria-label="${escapeHtml(item.alt)}">`,
 				webm ? `<source src="${src(webm)}" type="video/webm" />` : '',
 				mp4 ? `<source src="${src(mp4)}" type="video/mp4" />` : '',
-				`<track kind="captions" src="${track}" srclang="en" label="English" />`,
+				`<track kind="captions" src="${captions ? src(captions) : oneCue}" srclang="en" label="English" />`,
 				`</video>`,
 			].join('');
-		for (const f of [item.webm, item.mp4, item.poster, item.webmDark, item.mp4Dark, item.posterDark, item.captions].filter(Boolean)) {
+		for (const f of [item.webm, item.mp4, item.poster, item.webmDark, item.mp4Dark, item.posterDark, item.captions, item.captionsDark].filter(Boolean)) {
 			if (!existsSync(path.join(siteRoot, 'public', 'media', f))) fail(`media ${name}: public/media/${f} is missing (run make site-media)`);
 		}
 		return [
 			`<figure class="theme-figure theme-clip">`,
-			`<div class="theme-pair">${video(item.webm, item.mp4, item.poster)}${video(item.webmDark, item.mp4Dark, item.posterDark)}</div>`,
+			`<div class="theme-pair">${video(item.webm, item.mp4, item.poster, item.captions)}${video(item.webmDark, item.mp4Dark, item.posterDark, item.captionsDark)}</div>`,
 			`<figcaption>${escapeHtml(item.caption)}</figcaption>`,
 			`</figure>`,
 		].join('\n');
@@ -876,6 +884,10 @@ mkdirSync(path.join(siteRoot, 'public'), { recursive: true });
 }
 
 // Exported for astro.config.mjs's sidebar.
+writeFileSync(
+	path.join(generated, 'older-examples.json'),
+	JSON.stringify([...olderExamples].map((rel) => rel.replace(/^examples\//, '').replace(/\.ork\.yaml$/, '')).sort(), null, '\t') + '\n',
+);
 writeFileSync(
 	path.join(generated, 'examples.json'),
 	JSON.stringify(exampleFiles.map(({ route, title }) => ({ route, title })), null, '\t') + '\n',
