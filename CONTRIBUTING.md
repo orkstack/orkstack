@@ -270,9 +270,9 @@ run, with its own `ork` and `orker`, and stops them when it ends.
 
 ## What CI runs on your pull request
 
-- **`check`** — `make check`, on every push and every pull request, with
+- **`check`** — `make check`, on every push, except to a Dependabot branch, and every pull request, with
   `DOCKER_HOST` pointing at nothing to prove the fast path needs no Docker.
-- **`vuln`** — `make vuln`, on every push and every pull request. It needs the
+- **`vuln`** — `make vuln`, on every push, except to a Dependabot branch, and every pull request. It needs the
   network and is in no proof; the nightly workflow runs it too, with
   `make vuln-js` and `make vuln-images`, and a vulnerability any of them
   reports makes that night's run red.

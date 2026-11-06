@@ -92,7 +92,7 @@ Three rules follow and are enforced everywhere below:
 stale stored document can never be re-read as a pool selection or an image.
 The DSL compiler decodes strictly: a document carrying any key the schema does
 not define is refused. `make proto` runs `buf lint` and `buf generate`;
-`make proto-breaking`, which `ci.yml` › `proto` runs on every push and pull
+`make proto-breaking`, which `ci.yml` › `proto` runs on every push (except to a Dependabot branch) and pull
 request, runs `buf breaking` against the first release, v0.1.0, under
 `buf.yaml`'s `FILE` rules, so a renumbered, retyped or removed field turns
 that job red. It is not part of the merge gate (`proof`).
