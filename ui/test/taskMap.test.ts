@@ -19,6 +19,7 @@ import {
 	readoutPosition,
 	rectOf,
 	scrollForCursor,
+	SCROLL_SETTLE_MS,
 	scrollToCard,
 	worstStatus,
 	type MapColors,
@@ -412,39 +413,117 @@ test('the map builds nothing on init: the model and the paint run in one idle ca
 	expect(/\blayoutDag\b/.test(source.replace(/\/\/.*$/gm, ''))).toBe(false);
 });
 
-test('scrollToCard converges within three passes on cards that change height, and never makes a fourth', async () => {
-	// A card estimated at 7 rem that turns out taller once rendered: the first
-	// scroll lands short, the second lands it.
-	let top = 3000 * 112;
+// scrollWorld: a page whose scroll position and card position are plain numbers.
+// Each frames() is 33 ms of its clock; `onLook(frame, world)` is what the page
+// does at that frame (cards drawn above the card, a reader scrolling).
+function scrollWorld(cardAt: number, onLook: (frame: number, world: { cardAt: number; y: number }) => void = () => {}) {
+	const world = { cardAt, y: 0 };
+	let frame = 0;
+	let now = 0;
 	let scrolls = 0;
-	const env = {
-		rect: () => ({ top: top - scrolled, bottom: top - scrolled + 120 }),
-		scroll: () => {
-			scrolls++;
-			scrolled = top - 300;
-			if (scrolls === 1) top += 900; // cards around the target took their real heights
-		},
-		viewport: () => ({ top: 44, bottom: 720 - 64 }),
-		frames: async () => {}
+	return {
+		world,
+		scrolls: () => scrolls,
+		now: () => now,
+		inView: () => world.cardAt - world.y >= 56 && world.cardAt - world.y + 68 <= 720,
+		env: {
+			rect: () => ({ top: world.cardAt - world.y, bottom: world.cardAt - world.y + 68 }),
+			scroll: () => {
+				scrolls++;
+				world.y = world.cardAt - 326;
+			},
+			viewport: () => ({ top: 56, bottom: 720 }),
+			position: () => world.y,
+			now: () => now,
+			frames: async () => {
+				frame++;
+				now += 33;
+				onLook(frame, world);
+			}
+		}
 	};
-	let scrolled = 0;
-	expect(await scrollToCard(env)).toBe(2);
-	expect(scrolls).toBe(2);
-	// A target that never settles is given up after the third pass.
-	let n = 0;
-	const moving = {
-		rect: () => ({ top: 10_000 + n * 1000, bottom: 10_120 + n * 1000 }),
-		scroll: () => {
-			n++;
-		},
-		viewport: () => ({ top: 44, bottom: 656 }),
-		frames: async () => {}
-	};
-	expect(await scrollToCard(moving)).toBe(3);
-	expect(n).toBe(3);
-	// Already in view: one look, no scroll.
-	const still = { rect: () => ({ top: 100, bottom: 200 }), scroll: () => (n = -1), viewport: () => ({ top: 44, bottom: 656 }), frames: async () => {} };
-	expect(await scrollToCard(still)).toBe(0);
-	expect(n).toBe(3);
+}
+
+test('scrollToCard lands on a card that moves after its first scroll', async () => {
+	const page = scrollWorld(136_000, (frame, w) => {
+		if (frame === 1) w.cardAt += 900; // cards around it took their real heights
+	});
+	expect(await scrollToCard(page.env)).toBe(2);
+	expect(page.inView()).toBe(true);
+});
+
+test('scrollToCard follows a card that moves after it looked settled', async () => {
+	// The release proof's failure: the card was in view, then three chunks above
+	// it took their real heights and it stood some 3,400 px lower.
+	const page = scrollWorld(136_000, (frame, w) => {
+		if (frame === 2) w.cardAt += 3_400;
+	});
+	await scrollToCard(page.env);
+	expect(page.scrolls()).toBe(2);
+	expect(page.inView()).toBe(true);
+});
+
+test('scrollToCard is not limited to three passes while the time lasts', async () => {
+	const page = scrollWorld(136_000, (frame, w) => {
+		if (frame <= 4) w.cardAt += 1_200;
+	});
+	await scrollToCard(page.env);
+	expect(page.scrolls()).toBe(5);
+	expect(page.inView()).toBe(true);
+});
+
+test('scrollToCard gives a card that never settles up at its time limit', async () => {
+	const page = scrollWorld(136_000, (_, w) => {
+		w.cardAt += 1_200;
+	});
+	await scrollToCard(page.env);
+	expect(page.now() >= SCROLL_SETTLE_MS && page.now() <= SCROLL_SETTLE_MS + 33).toBe(true);
+});
+
+test('scrollToCard leaves the page alone once someone else scrolls it', async () => {
+	const page = scrollWorld(136_000, (frame, w) => {
+		if (frame === 1) w.y = 0; // a reader went back to the top
+	});
+	await scrollToCard(page.env);
+	expect(page.scrolls()).toBe(1);
+	expect(page.world.y).toBe(0);
+});
+
+test('scrollToCard keeps following a card when the browser moved the page with it', async () => {
+	// Scroll anchoring: cards grew above, and the browser moved the page by part
+	// of it, so both numbers changed. That is the layout, not a reader.
+	const page = scrollWorld(136_000, (frame, w) => {
+		if (frame === 1) {
+			w.cardAt += 3_400;
+			w.y += 400;
+		}
+	});
+	await scrollToCard(page.env);
+	expect(page.scrolls()).toBe(2);
+	expect(page.inView()).toBe(true);
+});
+
+test('scrollToCard stops when it is cancelled by a newer selection', async () => {
+	let cancelled = false;
+	const page = scrollWorld(136_000, (frame, w) => {
+		if (frame === 1) {
+			cancelled = true;
+			w.cardAt += 3_400;
+		}
+	});
+	await scrollToCard({ ...page.env, cancelled: () => cancelled });
+	expect(page.scrolls()).toBe(1);
+});
+
+test('scrollToCard does not scroll to a card already in view', async () => {
+	const page = scrollWorld(300);
+	expect(await scrollToCard(page.env)).toBe(0);
+	expect(page.scrolls()).toBe(0);
+});
+
+test('scrollToCard stops when the card is gone', async () => {
+	const page = scrollWorld(136_000);
+	expect(await scrollToCard({ ...page.env, rect: () => null })).toBe(0);
+	expect(page.scrolls()).toBe(0);
 });
 

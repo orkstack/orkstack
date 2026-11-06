@@ -1616,7 +1616,10 @@
 	function cardOf(taskId: string): HTMLElement | null {
 		return document.querySelector(`[data-testid="task-${CSS.escape(taskId)}"]`);
 	}
+	// The latest selection owns the scroll: an earlier one still following its card stops.
+	let scrollRequest = 0;
 	async function bringIntoView(taskId: string): Promise<void> {
+		const request = ++scrollRequest;
 		const card = cardOf(taskId);
 		if (!card) return;
 		await scrollToCard({
@@ -1626,7 +1629,10 @@
 				top: document.querySelector('header')?.getBoundingClientRect().bottom ?? 0,
 				bottom: innerHeight
 			}),
-			frames: twoFrames
+			position: () => window.scrollY,
+			now: () => performance.now(),
+			frames: twoFrames,
+			cancelled: () => request !== scrollRequest
 		});
 	}
 	// The selected row is marked imperatively, so a new selection never
@@ -3258,7 +3264,7 @@
 		border-bottom: 1px solid var(--line);
 		font-size: 14px;
 		content-visibility: auto;
-		contain-intrinsic-size: auto 62px;
+		contain-intrinsic-size: auto 68px;
 	}
 	.trow:global([data-selected]) {
 		background: var(--hover);
@@ -3313,7 +3319,7 @@
 	}
 	.rows-chunk {
 		content-visibility: auto;
-		contain-intrinsic-size: auto 12400px;
+		contain-intrinsic-size: auto 13600px;
 	}
 	.tl {
 		position: relative;

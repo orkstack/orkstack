@@ -734,27 +734,60 @@ export interface ScrollEnv {
 	/** The card's box, relative to the viewport. */
 	rect(): { top: number; bottom: number } | null;
 	scroll(): void;
-	/** The band between the top bar and the title block. */
+	/** The band between the top bar and the viewport's bottom edge. */
 	viewport(): { top: number; bottom: number };
+	/** How far the page is scrolled. */
+	position(): number;
+	/** A clock in milliseconds. */
+	now(): number;
 	/** Resolves after the next two animation frames. */
 	frames(): Promise<void>;
+	/** True once a newer selection has taken over the scroll. */
+	cancelled?(): boolean;
 }
 
+/** How long scrollToCard keeps following a card that is still moving. */
+export const SCROLL_SETTLE_MS = 2000;
+/** The looks in a row a card must hold still, in view, for scrollToCard to stop. */
+const SCROLL_SETTLE_LOOKS = 3;
+
 /**
- * Scrolls a task card into view, exactly. The cards are content-visibility:
- * auto with a 7 rem estimate, so the first scroll to a card thousands down
- * lands where estimated cards put it, and the cards then drawn around it take
- * their real heights and move it. So: scroll, wait two frames, look again —
- * at most three passes, a bound, never a loop. Returns the passes made.
+ * Scrolls a task card into view, exactly. The rows are content-visibility:
+ * auto with an estimated height, so the first scroll to a card thousands down
+ * lands where estimated rows put it, and the rows then drawn around it take
+ * their real heights and move it, possibly after it first looked settled. So:
+ * scroll, wait two frames, look again, until the card has held still in view
+ * or the time is up. A scroll that is not this one's own (the card's place in
+ * the page is unchanged, the page's position is not) ends it, so it never
+ * fights a reader. Returns the scrolls made.
  */
 export async function scrollToCard(env: ScrollEnv): Promise<number> {
-	for (let passes = 0; ; passes++) {
+	const deadline = env.now() + SCROLL_SETTLE_MS;
+	let passes = 0;
+	let still = 0;
+	let last: { position: number; at: number } | null = null;
+	for (;;) {
+		if (env.cancelled?.()) return passes;
 		const r = env.rect();
 		if (!r) return passes;
+		const position = env.position();
+		const at = r.top + position;
+		const sameLayout = last !== null && Math.abs(at - last.at) < 1;
+		if (last !== null && sameLayout && Math.abs(position - last.position) >= 1) return passes;
 		const v = env.viewport();
-		if (r.top >= v.top && r.bottom <= v.bottom) return passes;
-		if (passes === 3) return passes;
-		env.scroll();
+		const inView = r.top >= v.top && r.bottom <= v.bottom;
+		still = inView && sameLayout ? still + 1 : 0;
+		if (still >= SCROLL_SETTLE_LOOKS || env.now() >= deadline) return passes;
+		if (inView) {
+			last = { position, at };
+		} else {
+			env.scroll();
+			passes++;
+			const moved = env.rect();
+			if (!moved) return passes;
+			const after = env.position();
+			last = { position: after, at: moved.top + after };
+		}
 		await env.frames();
 	}
 }
