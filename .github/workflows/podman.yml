@@ -25,6 +25,9 @@ name: podman
 
 on:
   push:
+    # A Dependabot branch runs only as its pull request, never again as a push.
+    branches-ignore:
+      - dependabot/**
     paths:
       - internal/orker/**
       - cmd/orker/**

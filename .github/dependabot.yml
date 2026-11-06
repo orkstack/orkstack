@@ -2,7 +2,9 @@ version: 2
 
 # Every dependency update is a pull request that must pass the proof
 # (AGENTS.md §11.1, docs/PROOFS.md). Pin exact versions and image digests;
-# never float a tag at runtime.
+# never float a tag at runtime. A push to main does not rebase an open pull
+# request, because each rebase would run its whole proof again: ask for one
+# with an `@dependabot rebase` comment when that pull request is next to merge.
 updates:
   - package-ecosystem: gomod
     directory: /
@@ -11,6 +13,7 @@ updates:
     groups:
       go:
         patterns: ["*"]
+    rebase-strategy: disabled
     commit-message:
       prefix: "chore(deps)"
 
@@ -21,6 +24,7 @@ updates:
     groups:
       docker-root:
         patterns: ["*"]
+    rebase-strategy: disabled
     commit-message:
       prefix: "chore(deps)"
 
@@ -43,6 +47,7 @@ updates:
     groups:
       docker-images:
         patterns: ["*"]
+    rebase-strategy: disabled
     commit-message:
       prefix: "chore(deps)"
 
@@ -62,6 +67,7 @@ updates:
     groups:
       docker-deploy:
         patterns: ["*"]
+    rebase-strategy: disabled
     commit-message:
       prefix: "chore(deps)"
 
@@ -79,6 +85,7 @@ updates:
     groups:
       docker-compose:
         patterns: ["*"]
+    rebase-strategy: disabled
     commit-message:
       prefix: "chore(deps)"
 
@@ -94,6 +101,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+    rebase-strategy: disabled
     commit-message:
       prefix: "chore(deps)"
 
@@ -104,6 +112,7 @@ updates:
     groups:
       bun:
         patterns: ["*"]
+    rebase-strategy: disabled
     commit-message:
       prefix: "chore(deps)"
 
@@ -114,5 +123,6 @@ updates:
     groups:
       bun-site:
         patterns: ["*"]
+    rebase-strategy: disabled
     commit-message:
       prefix: "chore(deps)"

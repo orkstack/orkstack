@@ -702,9 +702,9 @@ skipped required job reports success, which is why
 
 | Job | Runs |
 |---|---|
-| `ci.yml` › `check` | `make check` on every push and every pull request: no Docker, no Temporal |
-| `ci.yml` › `vuln` | `make vuln` (the pinned `govulncheck`) on every push and every pull request. It reads the vulnerability database over the network, so it is a job of its own and in no proof gate: a network failure cannot fail a proof |
-| `ci.yml` › `proto` | `make proto-breaking` on every push and every pull request: `buf breaking` of the proto contract against the first release, v0.1.0, under `buf.yaml`'s rules, by the buf `deploy/buf-image.txt` pins. It checks out every tag, and is in no proof gate |
+| `ci.yml` › `check` | `make check` on every push, except to a Dependabot branch, and every pull request: no Docker, no Temporal |
+| `ci.yml` › `vuln` | `make vuln` (the pinned `govulncheck`) on every push, except to a Dependabot branch, and every pull request. It reads the vulnerability database over the network, so it is a job of its own and in no proof gate: a network failure cannot fail a proof |
+| `ci.yml` › `proto` | `make proto-breaking` on every push, except to a Dependabot branch, and every pull request: `buf breaking` of the proto contract against the first release, v0.1.0, under `buf.yaml`'s rules, by the buf `deploy/buf-image.txt` pins. It checks out every tag, and is in no proof gate |
 | `ci.yml` › `feature` | the optional feature tier: on a pull request only with the `ci:feature` label, on a push to `validate/feature/**`, and by dispatch; it gates nothing |
 
 `site.yml` is not part of the proof and holds no required check; it builds and

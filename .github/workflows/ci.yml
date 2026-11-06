@@ -18,8 +18,11 @@ name: ci
 
 on:
   # `check` runs on every push and every pull request; `feature` narrows
-  # itself to a validate/feature/** push below.
+  # itself to a validate/feature/** push below. A Dependabot branch runs only
+  # as its pull request, never again as a push.
   push:
+    branches-ignore:
+      - dependabot/**
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled]
   workflow_dispatch:

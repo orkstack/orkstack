@@ -1553,8 +1553,9 @@ func TestWorkflows_CheckRunsOnEveryPush(t *testing.T) {
 		push, ok := w.On["push"]
 		if !ok {
 			p = append(p, "ci.yml does not trigger on push")
-		} else if m, _ := push.(map[string]any); len(m) > 0 {
-			p = append(p, fmt.Sprintf("ci.yml filters its push trigger: %v", m))
+		} else if m, _ := push.(map[string]any); len(m) != 1 || fmt.Sprint(m["branches-ignore"]) != "[dependabot/**]" {
+			// A Dependabot branch runs as its pull request; nothing else is filtered.
+			p = append(p, fmt.Sprintf("ci.yml's push trigger filters more than Dependabot's branches: %v", m))
 		}
 		if _, ok := w.On["pull_request"]; !ok {
 			p = append(p, "ci.yml does not trigger on pull_request")
@@ -1578,6 +1579,7 @@ func TestWorkflows_CheckRunsOnEveryPush(t *testing.T) {
 			w.On["push"] = map[string]any{"branches": []any{"validate/feature/**"}}
 		}},
 		{"no push", func(w *wfFile) { delete(w.On, "push") }},
+		{"push filter removed, so Dependabot's branches run twice", func(w *wfFile) { w.On["push"] = nil }},
 		{"feature on every push", func(w *wfFile) {
 			w.Jobs["feature"].If = "${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}"
 		}},
