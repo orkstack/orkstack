@@ -53,7 +53,7 @@ services:
   # Values are JSON, so a duration string keeps its quotes
   # (docs/DEPLOY.md §4, "Underneath"; TestDevCompose_Temporal...).
   temporal:
-    image: temporalio/temporal:1.9.1@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
+    image: temporalio/temporal:1.10.0@sha256:003508da05989e7cf0d583cfce521c4bb2732e733574e3040db8f1284783baa2
     command:
       - server
       - start-dev
@@ -88,7 +88,7 @@ services:
   # listens on 8333; 9000 stays the published port so ORK_S3_ENDPOINT and
   # every documented default are unchanged. `-bucket` creates the dev bucket.
   seaweedfs:
-    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+    image: chrislusf/seaweedfs:4.52@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
     command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts"]
     ports:
       - "127.0.0.1:9000:8333"   # S3 API, on the documented port
@@ -145,7 +145,7 @@ services:
   # as above: each image by its release tag and its multi-arch index digest.
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b
+    image: otel/opentelemetry-collector-contrib:0.164.0-386@sha256:40392928d2b988b77e7525dbac33e5e3d9bedb40b9ff8c1f9119d92ca3a8a1c3
     profiles: ["observability"]
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
