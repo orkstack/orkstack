@@ -91,8 +91,8 @@ written as null (`triggers:` and nothing) is an error, because "manage none"
 and "leave alone" are opposites: write `triggers: {}` or remove the key.
 
 Parsing is strict: an unknown key at any level is an error naming the keys
-allowed there; a second YAML document (`---`), a duplicate key, and anchors or
-aliases are errors. Entry names are slugs (`^[a-z][a-z0-9-]*$`, at most 200
+allowed there; a second YAML document (`---`), even an empty one or one that
+does not parse, a duplicate key, and anchors or aliases are errors. Entry names are slugs (`^[a-z][a-z0-9-]*$`, at most 200
 bytes). Every problem is a `ValidationIssue` with a dot-separated field path —
 `settings.run_retention`, `schedules.nightly-reconcile.cron[1]`,
 `webhooks.etl-loader.events[0]` — and a message beginning `line N:` when the

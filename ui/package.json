@@ -13,7 +13,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"test": "playwright test",
-		"test:unit": "bun test test/"
+		"test:unit": "bun test test/",
+		"gen:validators": "bun test/gen-validators.ts"
 	},
 	"devDependencies": {
 		"@axe-core/playwright": "4.14.0",

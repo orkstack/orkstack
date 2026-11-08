@@ -103,7 +103,7 @@ orkctl run logs <run-id> --task greet
 
 The log reads `hello Ada from my own image`. Leave out `--input who=Ada` and the task greets `world`.
 
-The output is the task's `values.json`. Open the run in the UI. The run page's **Leaf task values** card shows it under the task's name: `"greet": {"greeting": "hello Ada"}`.
+The output is the task's `values.json`. Open the run in the UI. The run page's **Outputs** card shows it under the task's name: `"greet": {"greeting": "hello Ada"}`.
 
 **If you installed orkctl.** The alias cannot write files, so save the output with the installed binary, called as `./orkctl` because the alias wins over it. [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains how to install it.
 

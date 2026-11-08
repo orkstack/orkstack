@@ -10,7 +10,8 @@ export type IconTag = 'path' | 'circle' | 'rect' | 'ellipse';
 export type IconElement = readonly [IconTag, Readonly<Record<string, string>>];
 
 export const ICONS = {
-	runs: [['path', {'d': 'M2 4h12M2 8h12M2 12h8', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round'}]],
+	edit: [['path', {'d': 'M10.5 3 13 5.5 5.5 13 2.5 13.5 3 10.5ZM9 4.5 11.5 7', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
+	runs: [['path', {'d': 'M5.6 2.6v6.2l5.3-3.1z', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}], ['path', {'d': 'M2 13h12', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round'}], ['circle', {'cx': '5.5', 'cy': '13', 'r': '1.7', 'fill': 'currentColor'}]],
 	flow: [['circle', {'cx': '3.5', 'cy': '4', 'r': '2', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['circle', {'cx': '12.5', 'cy': '4', 'r': '2', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['circle', {'cx': '8', 'cy': '12.5', 'r': '2', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['path', {'d': 'M5.5 4h5M4.6 5.7 7 10.6M11.4 5.7 9 10.6', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none'}]],
 	apply: [['path', {'d': 'M3.5 8.5 6.5 11.5 12.5 4.5', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	home: [['path', {'d': 'M2.5 7 8 2.5 13.5 7v6.5h-11z', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linejoin': 'round'}]],
@@ -49,6 +50,7 @@ export const ICONS = {
 	'a-await': [['path', {'d': 'M2 9.5 3.6 3.5h8.8L14 9.5v3.5H2z', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linejoin': 'round'}], ['path', {'d': 'M2 9.5h3.4l1 1.6h3.2l1-1.6H14', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linejoin': 'round'}]],
 	retry: [['path', {'d': 'M13.3 8.6A5.4 5.4 0 1 1 11.6 4', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round'}], ['path', {'d': 'M12.2 1.4v3h-3', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	ban: [['circle', {'cx': '8', 'cy': '8', 'r': '6', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['path', {'d': 'M3.8 12.2 12.2 3.8', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round'}]],
+	trash: [['path', {'d': 'M2.8 4.2h10.4M6 4.2V3a.8.8 0 0 1 .8-.8h2.4a.8.8 0 0 1 .8.8v1.2M4.1 4.2l.6 8.7a.9.9 0 0 0 .9.9h4.8a.9.9 0 0 0 .9-.9l.6-8.7M6.8 7.2v3.6M9.2 7.2v3.6', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	close: [['path', {'d': 'M4 4l8 8M12 4l-8 8', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	'chev-up': [['path', {'d': 'm4.5 10 3.5-3.5L11.5 10', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	'chev-left': [['path', {'d': 'M10 4.5 6.5 8l3.5 3.5', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
@@ -58,6 +60,7 @@ export const ICONS = {
 	moon: [['path', {'d': 'M13 9.6A5.5 5.5 0 0 1 6.4 3 5.5 5.5 0 1 0 13 9.6z', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	monitor: [['rect', {'x': '1.75', 'y': '2.5', 'width': '12.5', 'height': '8.5', 'rx': '1.5', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}], ['path', {'d': 'M5.5 14h5M8 11v3', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	delta: [['path', {'d': 'M8 2.8 13.5 12.5h-11z', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
+	updated: [['path', {'d': 'M8 2a6 6 0 1 1-5.2 3', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round'}], ['circle', {'cx': '8', 'cy': '8', 'r': '2', 'fill': 'currentColor'}]],
 	download: [['path', {'d': 'M8 2.5v8M4.5 7.5 8 11l3.5-3.5M2.5 13.5h11', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	stop: [['rect', {'x': '4', 'y': '4', 'width': '8', 'height': '8', 'rx': '1.5', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	compare: [['path', {'d': 'M5.5 2.5v11M10.5 2.5v11M2.5 5.5h3M10.5 10.5h3', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],

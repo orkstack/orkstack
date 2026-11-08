@@ -86,7 +86,12 @@ become a second state machine. Temporal remains authoritative for execution stat
 An Orkflow keeps its existing user-facing `name` and `version` identity, but
 its canonical definition also has a SHA-256 digest. The immutable definition is
 addressed by that digest, and every execution records both the pinned version
-and the definition digest.
+and the definition digest. A document that pins no `version:` is given one when
+first applied, a UUIDv7 in lowercase base32; a write-once object beside its
+versions maps the document's content to it, so re-applying the document stays a
+no-op on every replica (`docs/STORAGE.md`). That object is a record, never a
+lock, and a version stored under its content hash by an earlier release answers
+the same lookup.
 
 Artifacts are references, not bytes. The Orker materializes and uploads them
 through `pkg/artifacts`. The production artifact backend is shared object
@@ -144,7 +149,11 @@ path. Do not add a YAML input mode to the UI or CLI.
 
 Exit code `0` means computation succeeded; the Orker then validates and commits
 outputs. Any non-zero exit means the activity failed. Retry behavior belongs to
-Temporal workflow policy, not magic exit codes such as 42, 43, or 44.
+Temporal workflow policy, not magic exit codes such as 42, 43, or 44. A container
+its runtime stopped from outside (its daemon shutting down, an operator's `stop`)
+did not exit on its own, so its code says neither: it is an `InfrastructureError`
+(`CONTAINER_STOPPED_BY_RUNTIME`), told from what the runtime observed, never from
+the number.
 
 stdout and stderr are independent logs. Capture them independently, stream them
 when possible, retain them in object storage, and associate them with the
@@ -163,7 +172,9 @@ Temporal cancellation → Orker receives it → SIGTERM
 The 30-second cancellation grace period is the default. Ordinary Unix signal
 handling must be enough for cleanup; no custom cancellation API is required.
 
-The Orker should heartbeat the Temporal Activity while the container exists.
+The Orker should heartbeat the Temporal Activity while the container exists. A
+heartbeat the cluster does not answer is not a cancellation: only an answer ends
+an attempt, until nothing has answered for the heartbeat timeout.
 The container must not implement Temporal heartbeats or a heartbeat IPC
 protocol. Application hangs are handled by the activity timeout. A structured
 progress mechanism is a possible later extension, not a current requirement.
@@ -509,6 +520,10 @@ internal never appears on any of those surfaces.
 - **Origin** means the immutable record of what started a run: a kind
   (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), the
   originating object's id, a caller-supplied reference and the principal.
+- **Root run** means the run at the top of a composed chain, the one that
+  started it. A child run's origin names it beside its parent
+  (`origin.root_run_id`), copied down at each child start. A top-level run holds
+  none. `origin.root_run_id=` lists every run below a root; the root is not one of them.
 - **Principal** means the `Ork-Principal` request header a deployment's
   gateway asserted, recorded verbatim on audit records and origins. It is not
   authenticated, and no surface may present it as a verified identity: every
@@ -610,11 +625,12 @@ Creating `default` writes nothing: an identical namespace specification is a
 no-op, a different specification is a conflict, and deleting `default` is
 always refused. A request with no namespace uses `default` on the wire.
 
-Runs use IDs shaped `ork-{timestamp}-{sequence}`. The sequence is
-`nonce<<32 | counter`, with one 32-bit cryptographic nonce per process and a
-per-process counter. It is monotonic only within one replica. A run ID is the
-single-use Temporal workflow ID; starting a duplicate must fail, never attach
-to another run. Nothing may parse a run ID or derive meaning from its parts.
+New runs use IDs shaped `ork-` followed by a UUIDv7 in the lowercase base32 of
+the TypeID encoding, 30 characters. Runs started before this shape keep
+`ork-{timestamp}-{sequence}`, and the two coexist as opaque strings. An ID is
+monotonic only within one replica. A run ID is the single-use Temporal workflow
+ID; starting a duplicate must fail, never attach to another run. Nothing may
+parse a run ID or derive meaning from its parts, its embedded time included.
 Order runs by `created_at`; compare IDs only as the documented tie-break on the
 ListRuns read path.
 
@@ -875,7 +891,10 @@ includes:
 - Orker termination while a container runs, after it exits, during artifact
   upload, and after `commit.json` but before Temporal completion;
 - Orker restart, temporary object-storage failure, and temporary Temporal
-  failure;
+  failure: a stall inside the heartbeat timeout leaves a task and its container
+  untouched, plain or pinned; a cancel during a stall still reaches the container;
+  past the timeout the Orker stops the container and the attempt is retried
+  under its policy, never reported cancelled;
 - exit `1`, exit `0` without `values.json`, malformed JSON, output-size excess,
   timeout, cancellation, ignored SIGTERM, unavailable input artifact, failed
   image pull, and a tag changing between executions;
@@ -1071,8 +1090,9 @@ SDK; activity logs remain stdout/stderr.
 
 Every code change follows this order:
 
-0. `make check` is the fast path: build, vet, lint and the unit suites with
-   `-short`, with no Docker and no Temporal. Run it before every push; CI
+0. `make check` is the fast path: build, vet, lint, the unit suites with
+   `-short`, and the UI's type-check and unit suite, with no Docker and no
+   Temporal. Run it before every push; CI
    runs it on every pull request. Lint is `go vet`, gofmt and staticcheck at
    the version `go.mod` pins (`go tool staticcheck`, its default checks, run
    as built and with `-tags=integration`): a finding is fixed in the code,
@@ -1092,7 +1112,11 @@ Every code change follows this order:
    For a change to an authored document's keys or words, or to a first-party
    image's interface label, regenerate `docs/schemas/` with
    `go run ./internal/schemas/cmd/genschemas`; `TestSchemas_AreGenerated`
-   refuses a stale schema.
+   refuses a stale schema. When that changes an Orkflow or automation schema,
+   or a change bumps ajv or ajv-formats, also regenerate the UI editor's
+   validators with `cd ui && bun run gen:validators`;
+   `TestSchemas_ValidatorsAreCurrent` and `ui/test/yamlValidators.test.ts`
+   refuse stale ones.
 3. Dependencies are pinned: an exact module version, or an image digest,
    never a floating tag at runtime; a toolchain version is an exact line in
    `go.mod` or the workflow; a tool the build runs (staticcheck,
@@ -1142,7 +1166,9 @@ Every code change follows this order:
    that raises a default the deferred tests measured still quotes a feature
    proof that names them (§11).
 9. Commit with a Conventional Commit that names the tests and specs that
-   prove the change.
+   prove the change. A branch may hold several; what lands on `main` is one
+   squash commit (§11.3), whose subject is a Conventional Commit and whose body
+   names those tests and specs.
 10. Merge through §11.3. The full proof of the merged tree is what makes the
     change done.
 
@@ -1338,8 +1364,9 @@ the reference for what each tier runs.
   and both refuse without a passing pre-release proof of the exact commit.
   `release.yml` also refuses a commit whose nightly did not pass, and it tags
   and publishes only from `main`, in one job, after one approval of its
-  `release` environment; `make release-tag` tags locally and publishes
-  nothing.
+  `release` environment, pushing the tag with a token of the GitHub App that
+  environment holds and never through the API; `make release-tag` tags locally
+  and publishes nothing.
 - A skip is never a pass. The ledgers list every test the binaries report; a
   listed test without an outcome, an unlisted test, and an allowance naming
   no test all fail the gate.
@@ -1487,21 +1514,32 @@ proof's logs, ledgers, artifacts and recovery procedures are docs/PROOFS.md's
 
 ### 11.3 Merging
 
-`main` moves only by fast-forward, and only to a commit whose tree a full
-proof passed on. There are two paths to that.
+`main` moves only by fast-forward, and only to one squash commit: its parent
+is `main`'s old tip, its subject a Conventional Commit (§12), and its tree one a
+full proof passed on. A proof is bound to the tree, so the squash keeps the
+proven tree exactly. There are two paths to that.
 
 **(a) GitHub, once the gate is enforced.** The required `proof` check is the
-full proof. By default it runs on the pull request, whose branch must contain
-`main`'s tip, under the strict policy, and GitHub lands exactly the tree it
-tested; with the optional merge queue it runs on the merge group, and the
-queue lands that tree. A code-owner ruleset, which the enablement applies
-unless it is told not to (`CODEOWNER_REVIEW=0`), requires the maintainer's
-review for a change to the gate's own files.
+full proof, and the required `pr-title` check holds the pull request's title to
+a Conventional Commit. GitHub squash-merges the pull request: the title becomes
+the commit's subject and the description its body, which names the tests and
+specs and quotes the evidence. By default `proof` runs on the pull request,
+whose branch must contain `main`'s tip, under the strict policy, and GitHub
+lands exactly the tree it tested; with the optional merge queue it runs on the
+merge group, and the queue lands that tree. A code-owner ruleset, which the
+enablement applies unless it is told not to (`CODEOWNER_REVIEW=0`), requires
+the maintainer's review for a change to the gate's own files. A Dependabot pull
+request's `proof` fails until someone adds the `ci:proof` label, which starts the
+proof (`proof-label.yml`, docs/PROOFS.md §5); a required check must never be
+reported skipped, because GitHub counts that as passing.
 
-**(b) Locally.** Branch from `main`'s tip and merge the feature branch, or
-several branches to share one proof, with `--no-ff`. When both sides changed a
-file, resolve the union of behaviors against the merge base; do not take one
-side wholesale. Run `make merge-check` (build, lint, unit and
+**(b) Locally.** Branch from `main`'s tip and squash the feature branch onto it
+with `git merge --squash`, then one Conventional Commit. Several branches that
+share one proof land as one commit: merge each onto that branch with `--no-ff`,
+then fold the merges with `git reset --soft main` and one Conventional Commit,
+which keeps their tree, and a proof taken before the fold with it. When both
+sides changed a file, resolve the union of behaviors against the merge base; do
+not take one side wholesale. Run `make merge-check` (build, lint, unit and
 `go vet -tags=integration`), then prove that clean candidate. By default, push
 it to `validate/full/<name>`, where CI runs the full proof sharded across
 runners in a fraction of one host's time, and download the
@@ -1509,13 +1547,14 @@ runners in a fraction of one host's time, and download the
 `make proof` on it. `make merge-check PROOF=` accepts a CI proof when it is a
 full, passing, merge-eligible proof of exactly the candidate's tree whose base
 is `main`'s tip. The artifact is downloaded, never retyped: its `proof.json` is the
-evidence. When the proof passes, amend the merge commit's message to quote
+evidence. When the proof passes, amend the squash commit so its body quotes
 it; the amend leaves the tree, which the proof is bound to, unchanged. Then
 run `make merge-check PROOF=proof/<name>` and fast-forward `main` with
 `git merge --ff-only`. `merge-check PROOF=` refuses unless the proof is a
 full, passing, merge-eligible proof of exactly the candidate's tree, the
-worktree is clean, and both the candidate's first parent and the base the
-proof diffed against are `main`'s current tip. If `main` moved during the
+worktree is clean, the candidate is one commit with a Conventional Commit for
+its subject, and both its parent and the base the proof diffed against are
+`main`'s current tip. If `main` moved during the
 proof, rebuild the candidate on the new tip and prove it again. Run one full
 proof at a time on a host until two concurrent full proofs have both passed
 there.
@@ -1552,10 +1591,12 @@ internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker
+internal/typeid/       The time-ordered ids a run id and a minted Orkflow version are made of
 internal/docscheck/    Documentation drift checks (test-only)
 internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
 internal/dist/         Release artifacts: binaries, archives, checksums, release guards; the quickstart's guards
 internal/healthcheck/  The `--healthcheck` probe of ork and orker
+internal/buildinfo/    Which commit a binary was built from, as all three commands report it
 internal/hostpolicy/   The Host allowlist every listener applies (API and admin)
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
@@ -1574,7 +1615,7 @@ docs/                  Reference material (indexed in README.md; `CLI.md` is gen
 test/                  Activity contract fixtures and test-only helper tools
 scripts/               Development helpers (`make up`, `make reset`) and the proof harness
                        (`proof.sh`, the gate lists)
-.github/               CI: fast check, feature tier, sharded merge gate, nightly, release
+.github/               CI: fast check, feature tier, sharded merge gate, title check, nightly, release
 ```
 
 Use Go 1.27, one module `github.com/orkstack/orkstack`, `gofmt`, `go vet`, and
@@ -1632,8 +1673,11 @@ Agent ownership is split as follows:
   both), `internal/hostpolicy` (the API and admin listeners share it), `internal/webui` (UI and engine agents share it), and this file.
 
 Use Conventional Commits such as `feat(engine): ...`, `fix(orker): ...`,
-`test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. Keep commits scoped and
-keep `main` buildable. Release tags use `vMAJOR.MINOR.PATCH`.
+`test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. The types are `feat`,
+`fix`, `docs`, `chore`, `test`, `ci`, `refactor`, `perf`, `build`, `style` and
+`revert`; the scope and a breaking change's `!` are optional. `proofrun
+pr-title` is the rule. Keep commits scoped and keep `main` buildable. Release
+tags use `vMAJOR.MINOR.PATCH`.
 
 ## 13. Explicit non-goals
 

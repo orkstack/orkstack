@@ -329,7 +329,8 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await nav.getByTestId('nav-runs').click();
 	await page.waitForURL(new RegExp(`/runs\\?.*ns=${ALPHA}`));
 	await expectNamespace(page, ALPHA);
-	await expect(page.getByTestId('runs-empty')).toContainText(ALPHA);
+	await expect(page.getByTestId('runs-empty')).toBeVisible();
+	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText(ALPHA);
 
 	// Submitting lives on each orkflow's own page rather than on a route that
 	// asks which orkflow it is looking at, so "submit is scoped" is now the
@@ -348,7 +349,7 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 
 	await nav.getByTestId('nav-apply').click();
 	await page.waitForURL(new RegExp(`/apply\\?.*ns=${ALPHA}`));
-	await expect(page.getByTestId('apply-namespace')).toContainText(ALPHA);
+	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText(ALPHA);
 
 	// Reload preserves it.
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=${ALPHA}`);
@@ -447,6 +448,8 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	);
 	await page.getByTestId('editor-apply').click();
 	await expect(page.getByTestId('editor-error')).toContainText('a refusal only apply can make');
+	// Beside the code, in the card's notice slot, not below the editor.
+	await expect(page.locator('section.edcard').getByTestId('editor-notices').getByTestId('editor-error')).toBeInViewport();
 	await expect(yamlValue(page, 'editor-yaml')).toHaveValue(/refused at apply/);
 	await page.unroute('**/orkstack.v1.OrkflowService/ApplyOrkflow');
 

@@ -159,6 +159,14 @@ func TestParseRunIndexKeys_OnlyTheStampTheWriterSpellsParses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	rooted := record
+	rooted.OriginKind = orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN
+	rooted.OriginID = "ork-parent"
+	rooted.RootRunID = "ork-root"
+	rootKey, _, err := artifacts.RunRootIndexKey(rooted)
+	if err != nil {
+		t.Fatal(err)
+	}
 	stamp := artifacts.RunStamp(record.Time)
 	// The recent index writes the stamp with its digits inverted.
 	inverted := strings.Split(recentKey, "/")[4]
@@ -169,6 +177,7 @@ func TestParseRunIndexKeys_OnlyTheStampTheWriterSpellsParses(t *testing.T) {
 		"run index":    {runKey, stamp, artifacts.ParseRunIndexKey},
 		"recent index": {recentKey, inverted, artifacts.ParseRunRecentIndexKey},
 		"origin index": {originKey, stamp, artifacts.ParseRunOriginIndexKey},
+		"root index":   {rootKey, stamp, artifacts.ParseRunRootIndexKey},
 	} {
 		if _, ok := tc.parse(tc.key); !ok {
 			t.Fatalf("%s: the writer's own key %q does not parse", name, tc.key)

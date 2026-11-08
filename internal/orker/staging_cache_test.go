@@ -95,7 +95,7 @@ func putRef(t *testing.T, store artifacts.Store, name string, data []byte) *orks
 
 func stageEntries(t *testing.T, d *OCIDispatcher) []string {
 	t.Helper()
-	entries, err := os.ReadDir(filepath.Join(d.WorkRoot, StageDirName))
+	entries, err := os.ReadDir(d.stagingCache().dir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		t.Fatal(err)
 	}
@@ -234,7 +234,8 @@ func TestStagingCache_FallsBackToADirectDownloadWhenTheLinkFails(t *testing.T) {
 // removed at the next boot.
 func TestBoot_ReapsTheStagingCache(t *testing.T) {
 	root := t.TempDir()
-	leftover := filepath.Join(root, StageDirName, strings.Repeat("a", 64))
+	id := proof.OrkerID("orker-stage-reap")
+	leftover := filepath.Join(root, StageDirName, attemptOwner(id), strings.Repeat("a", 64))
 	if err := os.MkdirAll(filepath.Dir(leftover), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +243,7 @@ func TestBoot_ReapsTheStagingCache(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := NewActivitiesWithOptions(nil, Options{
-		OrkerID: proof.OrkerID("orker-stage-reap"), WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
+		OrkerID: id, WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
 	})
 	t.Cleanup(a.Close)
 	if err := a.Boot(context.Background()); err != nil {

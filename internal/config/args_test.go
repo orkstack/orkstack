@@ -45,6 +45,11 @@ func TestParseArgs(t *testing.T) {
 		{"--defaults with --no-config", []string{"--no-config", "--defaults"}, noEnv, Args{Defaults: true}, false},
 		{"--defaults with --check and --no-config is still an error", []string{"--no-config", "--check", "--defaults"}, noEnv, Args{Defaults: true}, true},
 
+		{"--version alone", []string{"--version"}, noEnv, Args{Version: true}, false},
+		{"--version with --no-config", []string{"--version", "--no-config"}, withConfigFileVar("/env/path.yaml"), Args{Version: true}, false},
+		{"--version beside a broken file's path", []string{"--version", "--config", "/missing.yaml"}, noEnv, Args{Path: "/missing.yaml", Version: true}, false},
+		{"--version takes no value", []string{"--version=true"}, noEnv, Args{}, true},
+
 		{"--healthcheck alone", []string{"--healthcheck"}, noEnv, Args{Healthcheck: true}, false},
 		{"--healthcheck --config PATH", []string{"--healthcheck", "--config", "/a.yaml"}, noEnv, Args{Path: "/a.yaml", Healthcheck: true}, false},
 		{"--config=PATH --healthcheck", []string{"--config=/a.yaml", "--healthcheck"}, noEnv, Args{Path: "/a.yaml", Healthcheck: true}, false},

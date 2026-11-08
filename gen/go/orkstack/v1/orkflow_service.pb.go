@@ -576,9 +576,13 @@ func (x *ValidateOrkflowRequest) GetNamespace() string {
 }
 
 type ValidateOrkflowResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Orkflow       *Orkflow               `protobuf:"bytes,1,opt,name=orkflow,proto3" json:"orkflow,omitempty"`
-	Issues        []*ValidationIssue     `protobuf:"bytes,2,rep,name=issues,proto3" json:"issues,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// orkflow is the document as apply would store it. For a document that pins
+	// no version, version and definition_digest are those of the version its
+	// content already has, and empty when that content was never applied: the
+	// version is assigned by the apply that stores it.
+	Orkflow       *Orkflow           `protobuf:"bytes,1,opt,name=orkflow,proto3" json:"orkflow,omitempty"`
+	Issues        []*ValidationIssue `protobuf:"bytes,2,rep,name=issues,proto3" json:"issues,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1837,7 +1841,9 @@ type PlanRunResponse struct {
 	// The definition that was planned: the coordinates and the digest of the
 	// exact document, so a plan of a pinned version and a plan of `current`
 	// can be told apart after the pointer moves.
-	OrkflowName      string `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	OrkflowName string `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	// orkflow_version is the version planned, empty for a file that pins none and
+	// whose content was never applied. definition_digest is then empty too.
 	OrkflowVersion   string `protobuf:"bytes,2,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"`
 	Namespace        string `protobuf:"bytes,3,opt,name=namespace,proto3" json:"namespace,omitempty"`
 	DefinitionDigest string `protobuf:"bytes,4,opt,name=definition_digest,json=definitionDigest,proto3" json:"definition_digest,omitempty"`

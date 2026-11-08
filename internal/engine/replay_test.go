@@ -78,6 +78,26 @@ func TestRunWorkflow_ReplaysCommittedV1History(t *testing.T) {
 	}
 }
 
+// TestRecordedHistories_ReplayUnderEitherRunIDShape: a run id is the workflow id
+// and is opaque to workflow code, so its shape can decide no command. Every
+// recorded history carries the older shape and replays as recorded
+// (TestRunWorkflow_ReplaysCommittedV1History and its siblings); these replay with
+// a new-shape id in the workflow id's place and issue the same commands.
+//
+// A carried generation is not among them: its saved state is addressed by the
+// exact run id that wrote it, so it refuses any other id, whatever its shape.
+func TestRecordedHistories_ReplayUnderEitherRunIDShape(t *testing.T) {
+	newShape := engine.NewRunID()
+	if len(newShape) != engine.MaxRunIDLength {
+		t.Fatalf("NewRunID() = %q is %d characters, want %d", newShape, len(newShape), engine.MaxRunIDLength)
+	}
+	for _, path := range []string{goldenHistory, continuedG0History} {
+		if err := replayAs(t, loadHistoryFile(t, path), newShape); err != nil {
+			t.Errorf("replaying %s under the id %s: %v", path, newShape, err)
+		}
+	}
+}
+
 // TestCommittedHistory_CatchesAnEmitInsertedIntoTheStream is what makes the
 // guard above worth having on the day the fixture is recorded, instead of only
 // from the next change onward.

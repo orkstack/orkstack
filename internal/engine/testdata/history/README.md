@@ -133,6 +133,14 @@ and `StoreComposedValues` markers, and the declared-outputs render.
 - recorder: `TestIntegration_RecordComposedRunHistory`
   (`compose_integration_test.go`); `ORK_REQUIRE_COMPOSED_FIXTURES`
 
+Recording a chain's root run took no gate and no fixture of its own: it moves no
+command, only what a child start carries (its plan, memo and search attribute),
+and only for a plan that asks (`RunPlan.RecordRootRun`, `RootRunIndexed`), which
+no recorded plan does.
+`TestRootRun_ChangesNoCommand` replays the parent fixture with the ask turned on,
+in memory, and the payload half above holds a recorded parent to the bytes it
+sent.
+
 ### `run-cached-v1.json` — caching
 
 The second run of `internal/dsl/testdata/orkflows/cached-pipeline.ork.yaml`: `featurize` a hit on

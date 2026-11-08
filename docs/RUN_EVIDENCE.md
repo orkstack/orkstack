@@ -20,7 +20,8 @@ orkctl run evidence verify <bundle.tar.gz> --against-store [-n NS] [--server URL
 
 `export` commits the file only after the stream's `last` chunk (a temporary
 sibling, renamed), so an interrupted export leaves nothing behind; `--json`
-prints `MANIFEST.json` itself and writes no file. The run page offers the same
+prints `MANIFEST.json` itself, a character a terminal could obey written as its
+JSON escape, and writes no file. The run page offers the same
 bundle through its **Evidence** action, which shows the manifest before any
 byte of the bundle is fetched ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Run
 evidence").

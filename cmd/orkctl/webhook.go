@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -126,7 +125,7 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 			hook := webhookFromProto(response.Msg.GetWebhook())
 			hook.Secret = response.Msg.GetSecret()
 			if g.json {
-				return writeIndentedJSON(cmd.OutOrStdout(), webhookEnvelope{Webhook: hook})
+				return writeGoJSON(cmd.OutOrStdout(), webhookEnvelope{Webhook: hook})
 			}
 			return renderWebhookRegistered(cmd.OutOrStdout(), hook)
 		},
@@ -260,7 +259,7 @@ func newWebhookUpdateCommand(g *globalFlags) *cobra.Command {
 			}
 			hook := webhookFromProto(response.Msg.GetWebhook())
 			if g.json {
-				return writeIndentedJSON(cmd.OutOrStdout(), webhookEnvelope{Webhook: hook})
+				return writeGoJSON(cmd.OutOrStdout(), webhookEnvelope{Webhook: hook})
 			}
 			return renderWebhookUpdated(cmd.OutOrStdout(), hook)
 		},
@@ -316,7 +315,7 @@ func newWebhookListCommand(g *globalFlags) *cobra.Command {
 				hooks = append(hooks, webhookFromProto(hook))
 			}
 			if g.json {
-				return writeIndentedJSON(cmd.OutOrStdout(), webhookListEnvelope{Webhooks: hooks})
+				return writeGoJSON(cmd.OutOrStdout(), webhookListEnvelope{Webhooks: hooks})
 			}
 			if len(filters) > 0 && len(hooks) == 0 {
 				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("webhooks", filters))
@@ -442,17 +441,4 @@ func eventNames() []string {
 		names = append(names, string(event))
 	}
 	return names
-}
-
-// writeIndentedJSON prints a plain Go value as indented JSON. Protobuf
-// messages go through writeJSON instead, which owns the enum dialect.
-func writeIndentedJSON(out io.Writer, value any) error {
-	encoded, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode json: %w", err)
-	}
-	if _, err := out.Write(append(encoded, '\n')); err != nil {
-		return fmt.Errorf("write output: %w", err)
-	}
-	return nil
 }

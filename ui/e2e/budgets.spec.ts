@@ -25,7 +25,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { adminNamespaceUrl } from './uiHelpers';
+import { adminNamespaceUrl, pageCli, openNamespacePage } from './uiHelpers';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('budgets');
@@ -155,11 +155,12 @@ test('1: Admin → Namespaces creates an enforced budget and the Budget column s
 	// The create filtered the list to the created name, so its row is on
 	// screen whichever page it sorts onto.
 	await expect(page).toHaveURL(new RegExp(`filter=name%3D${NS}(&|$)`));
+	await openNamespacePage(page, NS);
 	await expect(page.getByTestId(`namespace-budget-${NS}`)).toHaveText('1 cpu-s/1h0m0s enforced');
-	note(`Budget column of ${NS}: ${await page.getByTestId(`namespace-budget-${NS}`).innerText()}`);
-	await page.getByTestId(`namespace-row-${NS}`).scrollIntoViewIfNeeded();
+	note(`Budget of ${NS}: ${await page.getByTestId(`namespace-budget-${NS}`).innerText()}`);
 	await page.screenshot({ path: out('screenshot-budget-column.png'), fullPage: true });
 	await page.goto(adminNamespaceUrl(UI_ORIGIN, FREE));
+	await openNamespacePage(page, FREE);
 	await expect(page.getByTestId(`namespace-budget-${FREE}`)).toHaveText('unbounded');
 });
 
@@ -183,12 +184,12 @@ test('2–3: a run reserves past the budget, and the Usage card shows the danger
 		'cpu-seconds and GiB-seconds are RESERVED cpu and memory × attempt time, not measured utilization.'
 	);
 	await expect(page.getByTestId('usage-footer')).toContainText('coverage begins ');
-	await page.getByTestId('usage-cli-trigger').click();
-	await expect(page.getByTestId('usage-cli-command')).toHaveText(`orkctl --namespace ${NS} stats usage --since 1h0m0s`);
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'What this namespace reserved')).toHaveText(`orkctl --namespace ${NS} stats usage --since 1h0m0s`);
 	note(`usage card: bar ${await page.getByTestId('usage-bar-cpu-label').innerText()}; cpu-seconds ${await page.getByTestId('usage-cpu-seconds').innerText()}`);
 	await card.scrollIntoViewIfNeeded();
 	await page.screenshot({ path: out('screenshot-usage-card-danger.png'), fullPage: true });
-	await page.getByTestId('usage-cli-trigger').click();
+	await page.keyboard.press('Escape');
 });
 
 test('4: a submit past the enforced budget shows the server’s sentence verbatim', async ({ page }) => {
@@ -212,11 +213,11 @@ test('5: Admin → Usage lists every namespace; the budget’s share only in its
 	await expect(page.getByTestId(`usage-ns-${NS}-runs`)).toHaveText('1');
 	await expect(page.getByTestId(`usage-ns-${FREE}-budget`)).toHaveText('unbounded', { timeout: 120_000 });
 	await expect(page.getByTestId('usage-admin-caveat')).toContainText('RESERVED');
-	await page.getByTestId('usage-admin-cli-trigger').click();
-	await expect(page.getByTestId('usage-admin-cli-command')).toHaveText('orkctl stats usage --group-by namespace --since 24h');
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'What each namespace reserved')).toHaveText('orkctl stats usage --group-by namespace --since 24h');
 	note(`admin usage row ${NS}: cpu-seconds ${await page.getByTestId(`usage-ns-${NS}-cpu-seconds`).innerText()}, budget ${await page.getByTestId(`usage-ns-${NS}-budget`).innerText()}`);
 	await page.screenshot({ path: out('screenshot-admin-usage.png'), fullPage: true });
-	await page.getByTestId('usage-admin-cli-trigger').click();
+	await page.keyboard.press('Escape');
 });
 
 // F-ui-perf-8: Admin → Usage asks the usage of the rows on its page only,
@@ -265,12 +266,13 @@ test('6: unchecking Enforce makes the budget soft, and a submit is accepted and 
 	await openNamespaceEdit(page, NS);
 	await expect(page.getByTestId(`ns-edit-budget-enforce-${NS}`)).toBeChecked();
 	await page.getByTestId(`ns-edit-budget-enforce-${NS}`).uncheck();
-	await page.getByTestId(`ns-edit-cli-${NS}-trigger`).click();
-	await expect(page.getByTestId(`ns-edit-cli-${NS}-command`)).toHaveText(
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'Set this budget')).toHaveText(
 		`orkctl namespace update ${NS} --budget-cpu-seconds 1 --budget-gib-seconds 0 --budget-period 1h --budget-enforce=false`
 	);
-	await page.getByTestId(`ns-edit-cli-${NS}-trigger`).click();
+	await page.keyboard.press('Escape');
 	await page.getByTestId(`ns-edit-save-${NS}`).click();
+	await openNamespacePage(page, NS);
 	await expect(page.getByTestId(`namespace-budget-${NS}`)).toHaveText('1 cpu-s/1h0m0s soft');
 
 	await openSubmitDialog(page);

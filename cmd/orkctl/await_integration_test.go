@@ -31,6 +31,13 @@ type awaitCLI struct {
 	engines   []string
 	namespace string
 	session   *sessionRecorder
+
+	// What another engine of this deployment needs (startSignalledEngine).
+	enginePath        string
+	temporalAddress   string
+	temporalNamespace string
+	taskQueue         string
+	pool              string
 }
 
 func newAwaitCLI(t *testing.T, engines int, withOrker bool) *awaitCLI {
@@ -57,6 +64,7 @@ func newAwaitCLI(t *testing.T, engines int, withOrker bool) *awaitCLI {
 	}
 	enginePath := testbin.Path(t, "./cmd/ork")
 	temporalNamespace := privateTemporalNamespace()
+	c.enginePath, c.temporalAddress, c.temporalNamespace, c.taskQueue, c.pool = enginePath, address, temporalNamespace, taskQueue, pool
 	if withOrker {
 		startOrker(ctx, t, testbin.Path(t, "./cmd/orker"), address, temporalNamespace, taskQueue)
 	}
@@ -80,6 +88,24 @@ func newAwaitCLI(t *testing.T, engines int, withOrker bool) *awaitCLI {
 		waitForPoolLive(t, func(args ...string) (string, string, int) { return c.on(0, args...) }, c.namespace, pool)
 	}
 	return c
+}
+
+// signalledEngine is a replica a test ends itself.
+type signalledEngine struct {
+	addr    string
+	process *os.Process
+}
+
+// startSignalledEngine boots one more replica of this deployment, ready to
+// answer, whose process the test can signal.
+func (c *awaitCLI) startSignalledEngine() (signalledEngine, <-chan struct{}) {
+	c.t.Helper()
+	addr := freeAddress(c.t)
+	process, exited := startProcessHandle(c.ctx, c.t, "ork", c.enginePath, engineEnv(c.t, addr, c.temporalAddress, c.temporalNamespace, c.taskQueue)...)
+	waitForEngine(c.t, exited, func(args ...string) (string, string, int) {
+		return runBinary(c.ctx, c.t, c.orkctl, c.repoRoot, append(args, "--server", "http://"+addr, "-n", c.namespace)...)
+	})
+	return signalledEngine{addr: addr, process: process}, exited
 }
 
 // on runs orkctl against engine i, in this test's namespace.

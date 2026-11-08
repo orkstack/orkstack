@@ -48,7 +48,14 @@ type composeProblem struct {
 }
 
 // composeKey is a reference's "name@version".
-func composeKey(name, version string) string { return name + "@" + version }
+func composeKey(name, version string) string {
+	// A document being prepared has no version yet when it pins none, and nothing
+	// can compose a version that does not exist, so its name alone cannot clash.
+	if version == "" {
+		return name
+	}
+	return name + "@" + version
+}
 
 // pathNames is a path of "name@version" entries as names only.
 func pathNames(path []string) []string {
@@ -284,8 +291,8 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 	}
 	nodes, problems, err := s.loadComposeTree(ctx, ns.GetName(), wf, true)
 	if err != nil {
-		return nil, orkflowStoreError(err, "read the orkflows %s@%s composes in namespace %q",
-			wf.GetName(), wf.GetVersion(), ns.GetName())
+		return nil, orkflowStoreError(err, "read the orkflows %s composes in namespace %q",
+			engine.OrkflowRefText(wf), ns.GetName())
 	}
 	const (
 		errorSeverity   = orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR
@@ -511,6 +518,15 @@ type composeRequest struct {
 	originIndexed    bool
 	// noCache is SubmitRunRequest.no_cache: one for the whole tree.
 	noCache bool
+}
+
+// rootIndexAnswer is the boot answer a plan pins for its child starts (false
+// for a starter that does not say, which stamps nothing and so is always safe).
+func rootIndexAnswer(starter engine.RunStarter) bool {
+	if answer, ok := starter.(interface{ RootIndexAnswer() bool }); ok {
+		return answer.RootIndexAnswer()
+	}
+	return false
 }
 
 // indexAnswers is the starter's boot answers when it has them (the

@@ -1,8 +1,8 @@
 <script lang="ts">
 	// A run's progress: a ring and its percentage, the counts in the tooltip
 	// and in screen-reader text (#lib/progress.ts gives the basis). The ring's
-	// colour carries the outcome: navy while running or succeeded, red for
-	// Failed, grey for Canceled, so a failed run at 100% never reads as a
+	// colour carries the status: blue while Running, green once Succeeded, red
+	// for Failed, grey for Canceled, so a failed run at 100% never reads as a
 	// success — and the status pill beside it says so in words.
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import { progressWords, type Progress } from '#lib/progress.ts';
@@ -19,6 +19,8 @@
 	tabindex="0"
 	class="pring"
 	class:pring-sm={small}
+	class:is-running={status === Status.RUNNING}
+	class:is-succeeded={status === Status.SUCCEEDED}
 	class:is-failed={status === Status.FAILED}
 	class:is-canceled={status === Status.CANCELED}
 	data-tip={words}

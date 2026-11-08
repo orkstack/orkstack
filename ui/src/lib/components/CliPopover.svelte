@@ -55,6 +55,7 @@
 			aria-expanded={open}
 			data-tip="Command line"
 			data-testid="{testid}-trigger"
+			data-cli-icon
 			onclick={() => {
 				open = !open;
 				status = '';
@@ -74,6 +75,7 @@
 					<div class="flex items-start gap-2">
 						<pre
 							data-testid="{testid}-command-{i}"
+							data-cli-label={cmd.label}
 							class="min-w-0 flex-1 rounded-sm border border-line bg-surface-2 px-2.5 py-1.5 font-mono text-xs leading-normal break-words whitespace-pre-wrap text-ink">{cmd.command}</pre>
 						<button type="button" class="btn btn-sm btn-icon" aria-label="Copy: {cmd.label}" data-tip="Copy" data-testid="{testid}-copy-{i}" onclick={() => void copy(i)}
 							><Icon name={copiedAt === i ? 'apply' : 'copy'} /></button

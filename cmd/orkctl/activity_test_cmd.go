@@ -765,22 +765,6 @@ func keysOf(in map[string]bool) []string {
 	return out
 }
 
-// writeGoJSON renders a plain Go value as --json output.
-//
-// writeJSON takes a proto.Message, because almost every --json payload in this
-// CLI is one. This report is not: it is a local result type with no wire
-// contract, and inventing a proto message for a command that talks to a
-// container runtime rather than to the engine would put a cross-process type
-// in the way of a purely local check.
-func writeGoJSON(out io.Writer, value any) error {
-	encoder := json.NewEncoder(out)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(value); err != nil {
-		return fmt.Errorf("write output: %w", err)
-	}
-	return nil
-}
-
 // localToolRoot picks a directory the container daemon can actually
 // bind-mount, for a local tool that drives the dispatcher on this machine
 // (`activity test`, `task run`); sub names the tool's own directory under

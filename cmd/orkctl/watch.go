@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 )
 
 func newRunWatchCommand(g *globalFlags) *cobra.Command {
@@ -19,11 +20,12 @@ func newRunWatchCommand(g *globalFlags) *cobra.Command {
 		Long: "watch consumes RunService.StreamEvents and prints each event as it arrives,\n" +
 			"exiting when the run reaches a terminal state. The exit code reflects the\n" +
 			"final status: 0 succeeded, 2 failed, 3 canceled.\n\n" +
-			"A stream that ends as unavailable, or as canceled when watch did not\n" +
-			"cancel it (a reset connection to the engine), is opened again after the\n" +
-			"last event printed, so no event is printed twice or skipped; each resume\n" +
-			"is said on stderr. A connection that ends partway through the stream\n" +
-			"ends the watch with that error. After\n" +
+			"A stream that ends as unavailable, as canceled when watch did not cancel\n" +
+			"it (a reset connection to the engine), because its connection to the\n" +
+			"engine ended, or cleanly while the run is still going (an engine replica\n" +
+			"shutting down), is opened again after the last event printed, so no event\n" +
+			"is printed twice or skipped; each resume is said on stderr. Any error the\n" +
+			"engine itself reports ends the watch with that error. After\n" +
 			fmt.Sprintf("%d resumes in a row that deliver no event, watch gives up with the\n", watchResumeLimit) +
 			"engine's error.\n\n" +
 			"Numbers the run used without publishing an event are printed as a\n" +
@@ -59,11 +61,13 @@ var (
 // The stream can end without a terminal event (for example when resuming past
 // one), so the final status always comes from GetRun.
 //
-// A stream the engine ends as unavailable, or whose connection the engine
-// resets (engineInterrupted says which resets), is opened again after the
-// last event printed, as the UI's run page does: any replica can serve it,
-// and the sequence makes the resume exact, so no event is printed twice or
-// skipped.
+// A stream the engine ends as unavailable, or whose connection goes away under
+// it (engineInterrupted says which), is opened again after the last event
+// printed, as the UI's run page does: any replica can serve it, and the
+// sequence makes the resume exact, so no event is printed twice or skipped. So
+// is a stream that ends cleanly while GetRun says the run is still going, which
+// is how a replica shutting down ends its streams: only a terminal status ends
+// the watch as finished.
 // Each resume is said on stderr; stdout carries only the watch's output.
 func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int64) error {
 	out := cmd.OutOrStdout()
@@ -89,6 +93,7 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 
 	lastSequence := fromSequence
 	resumes := 0 // resumes in a row that delivered no event
+	var run *orkstackv1.Run
 	for {
 		stream, err := client.StreamEvents(streamCtx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 			RunId:        runID,
@@ -117,10 +122,24 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 			err = stream.Err()
 			_ = stream.Close()
 		}
+		if err != nil {
+			if !engineInterrupted(streamCtx, err) {
+				return rpcError("watch run", err)
+			}
+		} else {
+			run, err = finalRun(cmd, g, client, runID)
+			switch {
+			case err == nil && !runStillGoing(run):
+			case err == nil:
+				err = fmt.Errorf("the stream ended with the run still %s", statusLabel(run.GetStatus()))
+			case !engineInterrupted(streamCtx, err):
+				return rpcError("get run", err)
+			}
+		}
 		if err == nil {
 			break
 		}
-		if !engineInterrupted(streamCtx, err) || resumes >= watchResumeLimit {
+		if resumes >= watchResumeLimit {
 			return rpcError("watch run", err)
 		}
 		delay := min(watchResumeDelay<<resumes, watchResumeMaxDelay)
@@ -137,20 +156,34 @@ func watchRun(cmd *cobra.Command, g *globalFlags, runID string, fromSequence int
 	}
 	cancelStream()
 
-	runCtx, cancelRun := g.unaryContext(cmd)
-	defer cancelRun()
-	resp, err := client.GetRun(runCtx, connect.NewRequest(
-		&orkstackv1.GetRunRequest{RunId: runID, Namespace: g.namespace}))
-	if err != nil {
-		return rpcError("get run", err)
-	}
-
-	run := resp.Msg.GetRun()
 	closed = true
 	if err := sink.finish(run); err != nil {
 		return err
 	}
 	return runExitError(run)
+}
+
+// finalRun reads the run a stream has just ended on.
+func finalRun(cmd *cobra.Command, g *globalFlags, client orkstackv1connect.RunServiceClient, runID string) (*orkstackv1.Run, error) {
+	ctx, cancel := g.unaryContext(cmd)
+	defer cancel()
+	resp, err := client.GetRun(ctx, connect.NewRequest(
+		&orkstackv1.GetRunRequest{RunId: runID, Namespace: g.namespace}))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg.GetRun(), nil
+}
+
+// runStillGoing reports whether the run has yet to reach a terminal state, so
+// the stream that ended on it stopped short of its end.
+func runStillGoing(run *orkstackv1.Run) bool {
+	switch run.GetStatus() {
+	case orkstackv1.Status_STATUS_PENDING, orkstackv1.Status_STATUS_RUNNING, orkstackv1.Status_STATUS_AWAITING:
+		return true
+	default:
+		return false
+	}
 }
 
 // runExitError maps a terminal run status onto the process exit code.

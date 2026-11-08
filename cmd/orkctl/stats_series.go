@@ -142,16 +142,24 @@ func localZoneName(
 		}
 		skipped = fmt.Sprintf("TZ=%q is not a zone name the zone database holds; ", raw)
 	}
-	if target, err := readlink("/etc/localtime"); err == nil {
-		if name, ok := usable(target); ok {
-			if skipped != "" {
-				return name, skipped + "drawing the series in " + name + ", from /etc/localtime (set --timezone to choose)"
-			}
-			return name, ""
+	// What /etc/localtime said, in the same words whichever way it fell
+	// through: a link that does not read is missing or not a link, and a link
+	// that reads is named by its target.
+	var link string
+	if target, err := readlink("/etc/localtime"); err != nil {
+		link = "/etc/localtime is not a link into the zone database"
+		if skipped == "" {
+			link = "TZ is not set and " + link
 		}
+	} else if name, ok := usable(target); ok {
+		if skipped != "" {
+			return name, skipped + "drawing the series in " + name + ", from /etc/localtime (set --timezone to choose)"
+		}
+		return name, ""
+	} else {
+		link = fmt.Sprintf("/etc/localtime points to %q, which is not a zone the zone database holds", target)
 	}
-	return "UTC", skipped + "could not tell this machine's time zone, so the series is drawn in UTC " +
-		"(set --timezone to choose)"
+	return "UTC", skipped + link + ", so the series is drawn in UTC (set --timezone to choose)"
 }
 
 // renderSeries writes the series table: one row per bucket, labelled on the

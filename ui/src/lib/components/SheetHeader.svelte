@@ -2,6 +2,7 @@
 	// The head of every page: its title, an optional line of facts, and the
 	// page's primary action top right — the one ink-filled button on the page.
 	import type { Snippet } from 'svelte';
+	import CliPopover, { type CliCommand } from './CliPopover.svelte';
 
 	interface Props {
 		title: string;
@@ -16,11 +17,17 @@
 		short?: string;
 		meta?: Snippet;
 		actions?: Snippet;
+		/**
+		 * This page's command lines: the one terminal icon a page has, after its
+		 * actions (ui/DESIGN.md, the Shell Icon Rule). A row's or a dialog's own
+		 * command stays with it, because it carries that row's values.
+		 */
+		commands?: CliCommand[];
 		/** Title and actions on one row with the facts full width below; narrow, the actions come before the facts. */
 		actionsFirst?: boolean;
 	}
 
-	let { title, testid = undefined, mono = false, short = undefined, meta = undefined, actions = undefined, actionsFirst = false }: Props = $props();
+	let { title, testid = undefined, mono = false, short = undefined, meta = undefined, actions = undefined, commands = [], actionsFirst = false }: Props = $props();
 </script>
 
 <header class="ph mb-5 flex flex-wrap items-start justify-between gap-x-5 gap-y-3" class:ph-grid={actionsFirst}>
@@ -42,7 +49,12 @@
 		{/if}
 		{#if meta}<div class="ph-meta mt-2 text-dense text-ink-2">{@render meta()}</div>{/if}
 	</div>
-	{#if actions}<div class="ph-actions flex max-w-full min-w-0 flex-wrap items-center gap-2">{@render actions()}</div>{/if}
+	{#if actions || commands.length > 0}
+		<div class="ph-actions flex max-w-full min-w-0 flex-wrap items-center gap-2">
+			{#if actions}{@render actions()}{/if}
+			{#if commands.length > 0}<CliPopover testid="page-cli" title="Command line: {title}" {commands} />{/if}
+		</div>
+	{/if}
 </header>
 
 <style>

@@ -727,6 +727,12 @@
 		font-weight: var(--font-weight-heading);
 		font-variant-numeric: tabular-nums;
 	}
+	.pring.is-running .val {
+		stroke: var(--color-run);
+	}
+	.pring.is-succeeded .val {
+		stroke: var(--color-ok-mark);
+	}
 	.pring.is-failed .val {
 		stroke: var(--color-fail-mark);
 	}

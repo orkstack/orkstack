@@ -544,9 +544,9 @@ type TaskRun struct {
 	// the task, and ListTaskAttempts describes the rest.
 	//
 	// Unset while the task is PENDING or RUNNING, and for a terminal task no
-	// Orker reported on — a host that died before reporting, a Temporal-side
-	// timeout, a cancellation that reached the Orker as a plain context
-	// cancellation, a lost pin. Unset is "not known", never zero.
+	// Orker reported on — a host the run lost contact with before it reported,
+	// a Temporal-side timeout, a cancellation that reached the Orker as a plain
+	// context cancellation, a lost pin. Unset is "not known", never zero.
 	//
 	// Before this field's meaning was corrected it held the dispatch instant;
 	// scheduled_at (18) holds that now.
@@ -598,13 +598,14 @@ type TaskRun struct {
 	// ExecuteTaskResult.orker_id or ActivityFailureDetail.orker_id. Set for
 	// every task that reached an Orker, pinned or not; empty when the task
 	// never reached one (skipped, canceled before dispatch) or when the Orker
-	// died before reporting (heartbeat timeout).
+	// lost contact before it reported (heartbeat timeout).
 	//
 	// One exception to "reported by this task's own attempt": a task recorded
-	// PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — its host died — so
-	// the engine BACKFILLS this from another member of the same pin. A pin never
-	// moves: every member executes on the same Orker process for the pin's whole
-	// life, so a sibling's orker_id is this task's by construction. It stays
+	// PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — the run lost contact
+	// with its host, or the pin closed at its lifetime — so the engine BACKFILLS
+	// this from another member of the same pin. A pin never moves: every member
+	// executes on the same Orker process for the pin's whole life, so a
+	// sibling's orker_id is this task's by construction. It stays
 	// empty only when no member of that pin ever reported one, in which case the
 	// failure's error.details carries the pin host's raw OS host name as an
 	// explicitly labelled best-effort lead, which is NOT an orker_id.
@@ -1450,14 +1451,14 @@ func (x *TaskAttempt) GetCache() *CacheResult {
 // Run is one execution of an Orkflow.
 type Run struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
-	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // ork run id, ork-{timestamp}-{sequence}; opaque, nothing parses it
+	Id             string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"` // ork run id, ork- and a UUIDv7 in lowercase base32 (ork-{timestamp}-{sequence} on an older run); opaque, nothing parses it
 	OrkflowName    string                 `protobuf:"bytes,2,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
 	OrkflowVersion string                 `protobuf:"bytes,3,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"`
 	Status         Status                 `protobuf:"varint,4,opt,name=status,proto3,enum=orkstack.v1.Status" json:"status,omitempty"`
 	Input          *Payload               `protobuf:"bytes,5,opt,name=input,proto3" json:"input,omitempty"`
 	// output is the Orkflow's declared outputs, rendered at success, when it
-	// declares `outputs:`; otherwise every leaf task's inline values, keyed by
-	// task id.
+	// declares `outputs:`; otherwise the inline values of the tasks no other
+	// task needs, keyed by task id.
 	Output *Payload `protobuf:"bytes,6,opt,name=output,proto3" json:"output,omitempty"`
 	// error is set when the run's outcome is decided FAILED or CANCELED. While
 	// a failing run's failure handlers still run, it is already set and status
@@ -1754,7 +1755,13 @@ type RunOrigin struct {
 	// same terms, as AuditRecord.principal. Empty when no header was present;
 	// a client then omits the line entirely rather than showing a blank that
 	// could be mistaken for a name.
-	Principal     string `protobuf:"bytes,5,opt,name=principal,proto3" json:"principal,omitempty"`
+	Principal string `protobuf:"bytes,5,opt,name=principal,proto3" json:"principal,omitempty"`
+	// root_run_id is the id of the run at the top of this run's composed chain:
+	// the run that started the chain, which id names only for a direct child.
+	// Set on a PARENT_RUN origin and empty on every other kind, so a run-again
+	// of a child, a new top-level run, has none. An empty value names no root.
+	// Opaque, like id.
+	RootRunId     string `protobuf:"bytes,6,opt,name=root_run_id,json=rootRunId,proto3" json:"root_run_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1820,6 +1827,13 @@ func (x *RunOrigin) GetDescription() string {
 func (x *RunOrigin) GetPrincipal() string {
 	if x != nil {
 		return x.Principal
+	}
+	return ""
+}
+
+func (x *RunOrigin) GetRootRunId() string {
+	if x != nil {
+		return x.RootRunId
 	}
 	return ""
 }
@@ -2059,13 +2073,14 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"canceledBy\"H\n" +
 	"\x10RunCancelRequest\x12\x16\n" +
 	"\x06format\x18\x01 \x01(\x05R\x06format\x12\x1c\n" +
-	"\tprincipal\x18\x02 \x01(\tR\tprincipal\"\xa9\x01\n" +
+	"\tprincipal\x18\x02 \x01(\tR\tprincipal\"\xc9\x01\n" +
 	"\tRunOrigin\x12.\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1a.orkstack.v1.RunOriginKindR\x04kind\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1c\n" +
 	"\treference\x18\x03 \x01(\tR\treference\x12 \n" +
 	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x1c\n" +
-	"\tprincipal\x18\x05 \x01(\tR\tprincipal\"\xcc\x02\n" +
+	"\tprincipal\x18\x05 \x01(\tR\tprincipal\x12\x1e\n" +
+	"\vroot_run_id\x18\x06 \x01(\tR\trootRunId\"\xcc\x02\n" +
 	"\x05Event\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1a\n" +
 	"\bsequence\x18\x02 \x01(\x03R\bsequence\x12*\n" +

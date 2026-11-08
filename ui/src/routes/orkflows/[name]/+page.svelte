@@ -1,4 +1,7 @@
 <script lang="ts">
+	import OrkflowDelete from '#lib/components/OrkflowDelete.svelte';
+	import VersionText from '#lib/components/VersionText.svelte';
+	import { shortVersion, versionTip } from '#lib/version.ts';
 	import type { Snippet } from 'svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { page } from '$app/state';
@@ -8,6 +11,7 @@
 	import { activityClient } from '#lib/clients/activities.ts';
 	import { loadActivities } from '#lib/activityMeta.ts';
 	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
+	import type { CliCommand } from '#lib/components/CliPopover.svelte';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import OrkflowEditor from '#lib/components/OrkflowEditor.svelte';
@@ -22,9 +26,9 @@
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { registerProvider } from '#lib/palette/context.ts';
 	import { orkflowPageCommands } from '#lib/palette/orkflowPage.ts';
-	import { setTitleBlock } from '#lib/sheet.svelte.ts';
 	import { listHref, runWindowFilters } from '#lib/browsing.ts';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
 	import { activityLabel, shortDigest } from '#lib/activity.ts';
 	import { cacheSpecLabel } from '#lib/cache.ts';
@@ -90,6 +94,23 @@
 			current = false;
 		};
 	});
+	// The tab's commands, in the page's one terminal icon. The Edit tab has its
+	// own (OrkflowEditor's, in the header's actions), and the Runs tab is a link.
+	let versionCli = $state<CliCommand[]>([]);
+	let callersCli = $state('');
+	const cli = $derived.by<CliCommand[]>(() => {
+		const base = `orkctl -n ${shellQuote(namespaceLabel(data.namespace))}`;
+		if (data.tab === 'overview') return [{ label: 'This Orkflow', command: `${base} orkflow get ${data.name}` }];
+		if (data.tab === 'schedules') return [{ label: 'Its schedules', command: `${base} schedule list --filter orkflow_name=${data.name}` }];
+		if (data.tab === 'triggers') return [{ label: 'Its triggers', command: `${base} trigger list --filter orkflow_name=${data.name}` }];
+		if (data.tab !== 'versions') return [];
+		return [
+			{ label: 'Its versions', command: `${base} orkflow versions ${data.name}` },
+			...versionCli,
+			...(callersCli ? [{ label: 'What calls it', command: callersCli }] : [])
+		];
+	});
+
 	const tabs = $derived<{ id: string; label: string; count?: number }[]>([
 		{ id: 'overview', label: 'Overview' },
 		{ id: 'versions', label: 'Versions', count: data.versionsError ? undefined : data.versions.length },
@@ -117,29 +138,11 @@
 	// says so beside the commands it builds.
 	const invokeOrigin = $derived(page.url.origin);
 
-	// The title block: what this page shows — the version on screen, its
-	// digest, and the marks the Versions tab gives it (current, head), or —
-	// when it is neither. No word is invented for a version that is neither.
+	// The version on screen.
 	const shownVersion = $derived(wf?.version ?? data.version);
 	// Current is the engine's own answer (is_current), read and never
 	// recomputed: the version an unnamed run executes.
 	const resolvedVersion = $derived(data.versions.find((v) => v.isCurrent)?.version ?? '');
-	const marks = $derived(
-		[shownVersion && shownVersion === resolvedVersion ? 'current' : '', shownVersion && shownVersion === data.headVersion ? 'head' : '']
-			.filter(Boolean)
-			.join(' · ')
-	);
-	setTitleBlock(() => {
-		const digest = wf?.definitionDigest ?? '';
-		const hex = digest.includes(':') ? digest.slice(digest.indexOf(':') + 1) : digest;
-		return [
-			{ label: 'ORKFLOW', value: wf?.name ?? data.name },
-			{ label: 'VERSION', value: shownVersion || '—', mono: true },
-			{ label: 'DIGEST', value: hex.slice(0, 8) || '—', mono: true, title: digest || undefined, copy: digest || undefined },
-			{ label: 'NAMESPACE', value: namespaceLabel(data.namespace) },
-			{ label: 'STATUS', value: marks || '—' }
-		];
-	});
 
 	// The versions beside the DAG: the listing this page already read, at
 	// most five rows, the shown one always among them.
@@ -154,7 +157,7 @@
 		return `/orkflows/${data.name}?${new URLSearchParams({ [NAMESPACE_PARAM]: namespaceLabel(data.namespace), version }).toString()}`;
 	}
 
-	// What this page adds to the palette while it is open: Submit a run…
+	// What this page adds to the palette while it is open: Submit a run
 	// opens this page's own dialog; the other tabs; a task id jumps to its
 	// row in the task register. Registering builds nothing (#lib/palette).
 	$effect(() =>
@@ -190,7 +193,7 @@
 
 <svelte:head><title>{data.name} — OrkStack</title></svelte:head>
 
-<SheetHeader title={wf?.name ?? data.name} testid="orkflow-name" actionsFirst>
+<SheetHeader title={wf?.name ?? data.name} testid="orkflow-name" actionsFirst commands={cli}>
 	{#snippet meta()}
 		{#if wf}
 			{#snippet version()}<span data-testid="orkflow-version"><Plate key="version" value={wf.version} /></span>{/snippet}
@@ -209,6 +212,7 @@
 				><Icon name="play" />Submit a run</button
 			>
 		{/if}
+		{#if wf}<OrkflowDelete name={wf.name} namespace={data.namespace} />{/if}
 	{/snippet}
 </SheetHeader>
 
@@ -248,10 +252,10 @@
 			<section class="min-w-0" aria-label="Task DAG">
 				<DrawingFrame
 					testid="orkflow-drawing"
-					caption="{wf.name} @ {wf.version} · {wf.tasks.length} {wf.tasks.length === 1 ? 'task' : 'tasks'}"
+					caption="{wf.name} @ {shortVersion(wf.version)} · {wf.tasks.length} {wf.tasks.length === 1 ? 'task' : 'tasks'}"
 					captionLead={wf.name}
 					tasks={wf.tasks}
-					orkflowLabel="{wf.name}@{wf.version}"
+					orkflowLabel="{wf.name}@{shortVersion(wf.version)}"
 					direction={dagDirectionParam(page.url)}
 					iconOf={(id) => activityByTask.get(id)?.icon}
 				/>
@@ -268,7 +272,6 @@
 							<tr>
 								<th scope="col">Version</th>
 								<th scope="col">Applied</th>
-								<th scope="col"><span class="sr-only">Marks</span></th>
 							</tr>
 						</thead>
 						<tbody>
@@ -276,22 +279,20 @@
 								<tr data-testid="orkflow-sheet-version-{v.version}" class={v.version === shownVersion ? 'bg-blue-tint' : ''}>
 									<td class="figure">
 										{#if v.version === shownVersion}
-											<span class="font-semibold text-ink" aria-current="true">{v.version}</span>
+											<span aria-current="true"><VersionText version={v.version} class="font-semibold text-ink" /></span>
 										{:else}
-											<a class="link" href={versionHref(v.version)}>{v.version}</a>
+											<a class="link" href={versionHref(v.version)} data-tip={versionTip(v.version)}>{shortVersion(v.version)}</a>
 										{/if}
-									</td>
-									<td class="figure text-xs text-ink-secondary">{fmtTimestamp(v.appliedAt)}</td>
-									<td class="text-right">
-										<div class="flex flex-wrap justify-end gap-1">
+										<div class="mt-1 flex flex-wrap gap-1 empty:hidden">
 											{#if v.version === shownVersion}<span class="stamp border-ink text-ink" data-testid="orkflow-sheet-version-{v.version}-shown">Shown</span>{/if}
 											{#if v.isCurrent}<span class="stamp border-blue text-blue" data-testid="orkflow-sheet-version-{v.version}-current">Current</span>{/if}
 											{#if v.version === data.headVersion}<span class="stamp border-rule-strong text-ink-secondary" data-testid="orkflow-sheet-version-{v.version}-head">Head</span>{/if}
 										</div>
 									</td>
+									<td class="figure text-xs text-ink-secondary">{fmtTimestamp(v.appliedAt)}</td>
 								</tr>
 							{:else}
-								<tr><td colspan="3" class="text-ink-muted">No versions are listed for {data.name}.</td></tr>
+								<tr><td colspan="2" class="text-ink-muted">No versions are listed for {data.name}.</td></tr>
 							{/each}
 						</tbody>
 					</table>
@@ -342,7 +343,7 @@
 										<a
 											href={withNamespace(`/orkflows/${encodeURIComponent(task.orkflow.name)}?version=${encodeURIComponent(task.orkflow.version)}`, data.namespace)}
 											data-testid="task-child-link-{task.id}"
-											class="link font-mono text-xs">orkflow {task.orkflow.name}@{task.orkflow.version}</a
+											class="link font-mono text-xs">orkflow {task.orkflow.name}@{shortVersion(task.orkflow.version)}</a
 										>
 									{:else}
 										{activityLabel(task) || '—'}
@@ -400,7 +401,7 @@
 		<!--
 			OUTPUTS: the Orkflow's declared return contract. When declared, a
 			run's output IS this map rendered, and it is all an Orkflow that
-			composes this one can read; when not, a run's output is every leaf
+			composes this one can read; when not, a run's output is every end
 			task's values and a composing Orkflow reads nothing.
 		-->
 		<section class="region mb-8 pt-3" data-testid="orkflow-outputs" aria-labelledby="orkflow-outputs-heading">
@@ -425,15 +426,16 @@
 					</table>
 				</div>
 			{:else}
-				<p class="text-sm text-ink-muted" data-testid="orkflow-outputs-none">
-					This Orkflow declares no outputs; a run's output is every leaf task's values, and an Orkflow that
-					composes it receives none.
+				<p class="max-w-prose text-sm text-ink-muted" data-testid="orkflow-outputs-none">
+					This Orkflow declares no outputs, so a run's output is the values of the tasks no other task needs, and
+					an Orkflow that composes it receives none.
 				</p>
 			{/if}
 		</section>
 	{/if}
 {:else if data.tab === 'versions'}
 	<OrkflowVersions
+		bind:commands={versionCli}
 		name={data.name}
 		namespace={data.namespace}
 		versions={data.versions}
@@ -441,7 +443,7 @@
 		headVersion={data.headVersion}
 		error={data.versionsError}
 	/>
-	<OrkflowCallers name={data.name} namespace={data.namespace} />
+	<OrkflowCallers bind:command={callersCli} name={data.name} namespace={data.namespace} />
 {:else if data.tab === 'triggers'}
 	<OrkflowTriggers
 		name={data.name}

@@ -404,12 +404,13 @@ test('finish review: the DAG fits its frame, the failure speaks plainly, rows ar
 	}
 
 	// The count band: its sub-lines are whole, and at 390 its two ruled lines
-	// both run the band's full width.
+	// both run the full width inside the band's card.
 	await page.goto(`${UI_ORIGIN}/?ns=default`);
 	await expect(page.getByTestId('stat-succeeded')).not.toHaveText('0', { timeout: 60_000 });
 	const band = await page.evaluate(() => {
 		const counts = document.querySelector('[data-testid="dashboard-counts"]')!;
-		const right = counts.getBoundingClientRect().right;
+		const frame = getComputedStyle(counts);
+		const right = counts.getBoundingClientRect().right - parseFloat(frame.paddingRight) - parseFloat(frame.borderRightWidth);
 		const cells = [...counts.children].map((el) => el.getBoundingClientRect());
 		const rows = [...new Set(cells.map((c) => Math.round(c.top)))];
 		const notes = [...counts.querySelectorAll('[data-testid$="-note"]')].map((el) => ({

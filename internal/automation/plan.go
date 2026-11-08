@@ -111,7 +111,7 @@ func (p *planner) settings() {
 		}
 	}
 	if hold := live.GetHold(); hold != nil {
-		since := "an unknown time"
+		since := "a time the registry did not record"
 		if hold.GetSince() != nil {
 			since = renderTimestamp(hold.GetSince())
 		}

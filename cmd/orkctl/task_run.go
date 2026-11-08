@@ -433,6 +433,10 @@ type taskRunner struct {
 	rt     orker.ContainerRuntime
 	start  time.Time
 
+	// source is the --file document's bytes, read before the runtime
+	// preflight; nil without --file.
+	source []byte
+
 	run      *orkstackv1.Run
 	wf       *orkstackv1.Orkflow
 	warnings []*orkstackv1.ValidationIssue
@@ -559,6 +563,19 @@ func (r *taskRunner) streamContext() (context.Context, context.CancelFunc) {
 func (r *taskRunner) namespace() string { return artifacts.ResolveNamespace(r.g.namespace) }
 
 func (r *taskRunner) execute() error {
+	// STEP 1, after the flag checks. The --file document is read and held
+	// to one document per file before anything else: a refusal of the file's
+	// own needs no daemon and sends nothing.
+	if r.opts.file != "" {
+		source, err := os.ReadFile(r.opts.file)
+		if err != nil {
+			return fmt.Errorf("read orkflow file: %w", err)
+		}
+		if err := refuseSecondDocument(r.opts.file, source); err != nil {
+			return err
+		}
+		r.source = source
+	}
 	// STEP 2. Runtime preflight, before any download, so a missing daemon
 	// never costs a multi-gigabyte fetch.
 	if _, err := r.rt.Describe(r.ctx); err != nil {
@@ -677,13 +694,32 @@ func (r *taskRunner) joinContext() *orkstackv1.JoinContext {
 	return join
 }
 
+// stampUnappliedDefinition gives a document never applied what the activity
+// contract requires of run.orkflow in task.json: a version string and a
+// `sha256:<64 hex>` definition digest. Only an apply mints a version, and a local
+// run stores nothing, so it runs under the document's content hash, which names
+// this file and resolution and is stable across local runs of it.
+func stampUnappliedDefinition(wf *orkstackv1.Orkflow, source []byte) error {
+	if wf.GetVersion() != "" {
+		return nil
+	}
+	version, err := dsl.ContentHash(source, wf)
+	if err != nil {
+		return fmt.Errorf("name the document: %w", err)
+	}
+	wf.Version = version
+	digest, err := dsl.DefinitionDigest(wf)
+	if err != nil {
+		return fmt.Errorf("digest the document: %w", err)
+	}
+	wf.DefinitionDigest = digest
+	return nil
+}
+
 // definition resolves the task's definition.
 func (r *taskRunner) definition() error {
 	if r.opts.file != "" {
-		source, err := os.ReadFile(r.opts.file)
-		if err != nil {
-			return fmt.Errorf("read orkflow file: %w", err)
-		}
+		source := r.source
 		ctx, cancel := r.rpcContext()
 		response, err := r.g.orkflowClient().ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
 			Yaml: string(source), Namespace: r.g.namespace,
@@ -705,6 +741,9 @@ func (r *taskRunner) definition() error {
 			return errors.New("the document does not validate; nothing was run")
 		}
 		r.wf = response.Msg.GetOrkflow()
+		if err := stampUnappliedDefinition(r.wf, source); err != nil {
+			return err
+		}
 		if r.run != nil && r.wf.GetName() != r.run.GetOrkflowName() {
 			return fmt.Errorf("--file defines orkflow %q but run %s ran %q; --from-run replays one orkflow's bytes into the same orkflow",
 				r.wf.GetName(), r.run.GetId(), r.run.GetOrkflowName())
@@ -1088,7 +1127,7 @@ func (r *taskRunner) dispatch() (err error) {
 	if pin := r.in.GetPin(); pin != nil {
 		defer func() {
 			if r.opts.keep {
-				if pinWS, acqErr := orker.AcquirePin(workRoot, r.localID, pin.GetName(), pin.GetInstanceId(), pin.GetTimeoutSeconds()); acqErr == nil {
+				if pinWS, acqErr := orker.AcquirePin(workRoot, r.localID, pin.GetName(), pin.GetInstanceId(), pin.GetTimeoutSeconds(), ""); acqErr == nil {
 					if skipped, _ := copyTree(pinWS.Shared, filepath.Join(r.session, "shared"), nil); len(skipped) > 0 {
 						for _, note := range skipped {
 							r.t.println("kept shared: " + note)
@@ -1099,7 +1138,7 @@ func (r *taskRunner) dispatch() (err error) {
 			_, _ = orker.ReleasePinDirectory(workRoot, r.localID, pin.GetName(), pin.GetInstanceId())
 		}()
 		if r.parsed.shared != "" {
-			pinWS, acqErr := orker.AcquirePin(workRoot, r.localID, pin.GetName(), pin.GetInstanceId(), pin.GetTimeoutSeconds())
+			pinWS, acqErr := orker.AcquirePin(workRoot, r.localID, pin.GetName(), pin.GetInstanceId(), pin.GetTimeoutSeconds(), "")
 			if acqErr != nil {
 				return fmt.Errorf("--shared: acquire the pin's shared directory: %w", acqErr)
 			}

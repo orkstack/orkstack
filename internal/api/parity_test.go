@@ -24,8 +24,17 @@ func TestValidateOrkflowDoesNotWriteAndReturnsDocumentIssues(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: store})
 	valid := "apiVersion: orkstack/v1\nkind: Orkflow\nname: validate-only\ntasks:\n  - id: one\n    uses: busybox:latest\n"
 	response, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: valid}))
-	if err != nil || response.Msg.GetOrkflow().GetDefinitionDigest() == "" {
+	if err != nil || response.Msg.GetOrkflow().GetName() != "validate-only" {
 		t.Fatalf("ValidateOrkflow = %v, %v", response, err)
+	}
+	// A document that pins no version has none until an apply mints one, so it
+	// has no digest either: the digest covers the version.
+	if wf := response.Msg.GetOrkflow(); wf.GetVersion() != "" || wf.GetDefinitionDigest() != "" {
+		t.Fatalf("validated before any apply: version %q, digest %q, want both empty", wf.GetVersion(), wf.GetDefinitionDigest())
+	}
+	pinned, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: "apiVersion: orkstack/v1\nkind: Orkflow\nname: validate-only\nversion: 1.0.0\ntasks:\n  - id: one\n    uses: busybox:latest\n"}))
+	if err != nil || pinned.Msg.GetOrkflow().GetVersion() != "1.0.0" || pinned.Msg.GetOrkflow().GetDefinitionDigest() == "" {
+		t.Fatalf("ValidateOrkflow of a pinned document = %v, %v", pinned, err)
 	}
 	if _, err := store.Get(context.Background(), "default", "validate-only", ""); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Fatalf("validation wrote a definition: %v", err)
@@ -69,7 +78,7 @@ tasks:
 	if err != nil {
 		t.Fatalf("ValidateOrkflow = %v", err)
 	}
-	if warned.Msg.GetOrkflow().GetDefinitionDigest() == "" {
+	if warned.Msg.GetOrkflow().GetName() != "pin-default-user" {
 		t.Fatalf("a warning must not cost the validated document: %#v", warned.Msg)
 	}
 	issues := warned.Msg.GetIssues()

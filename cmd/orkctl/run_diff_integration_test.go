@@ -19,9 +19,10 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
-	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -375,6 +376,36 @@ func adoptionProbeWorkflow(ctx workflow.Context, in *orkstackv1.ExecuteTaskInput
 	return result, err
 }
 
+// runAdoptionAttempt runs adoptionProbeWorkflow on the stack's cluster, on a
+// channel of its own, with activities as the real dispatcher of attempt 2.
+func runAdoptionAttempt(ctx context.Context, t *testing.T, s *timingStack, activities *orker.Activities, in *orkstackv1.ExecuteTaskInput) *orkstackv1.ExecuteTaskResult {
+	t.Helper()
+	queue := fmt.Sprintf("ork-run-diff-adopt-%d", time.Now().UnixNano())
+	w := worker.New(s.temporal, queue, worker.Options{DisableRegistrationAliasing: true})
+	w.RegisterWorkflow(adoptionProbeWorkflow)
+	w.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if activity.GetInfo(actx).Attempt < 2 {
+			return nil, temporal.NewApplicationError("stand-in for the committing attempt that died after commit.json", "PROBE")
+		}
+		return activities.ExecuteTask(actx, in)
+	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	if err := w.Start(); err != nil {
+		t.Fatalf("start the replacement attempt's worker: %v", err)
+	}
+	defer w.Stop()
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	probe, err := s.temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: queue, TaskQueue: queue}, adoptionProbeWorkflow, in)
+	if err != nil {
+		t.Fatalf("start the replacement attempt: %v", err)
+	}
+	var adopted *orkstackv1.ExecuteTaskResult
+	if err := probe.Get(ctx, &adopted); err != nil {
+		t.Fatalf("replacement attempt: %v", err)
+	}
+	return adopted
+}
+
 // scheduledInput reads the ExecuteTaskInput the workflow sent for one task out
 // of the run's own history: the replacement attempt must be the SAME input.
 func scheduledInput(t *testing.T, s *timingStack, runID, taskID string) *orkstackv1.ExecuteTaskInput {
@@ -461,25 +492,11 @@ func TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone(t *test
 	})
 	in := scheduledInput(t, s, run1, "work")
 
-	var suite testsuite.WorkflowTestSuite
-	env := suite.NewTestWorkflowEnvironment()
-	env.SetTestTimeout(2 * time.Minute)
-	env.RegisterWorkflow(adoptionProbeWorkflow)
-	env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-		if activity.GetInfo(ctx).Attempt < 2 {
-			return nil, temporal.NewApplicationError("stand-in for the committing attempt that died after commit.json", "PROBE")
-		}
-		return activities.ExecuteTask(ctx, in)
-	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	// The replacement attempt runs on the stack's real cluster: the Orker
+	// heartbeats through the activity's own client (internal/orker/heartbeat.go),
+	// which the SDK's in-memory test environment does not answer.
 	containersBefore := containersOf(t, adopterID)
-	env.ExecuteWorkflow(adoptionProbeWorkflow, in)
-	if !env.IsWorkflowCompleted() || env.GetWorkflowError() != nil {
-		t.Fatalf("replacement attempt: completed=%t err=%v", env.IsWorkflowCompleted(), env.GetWorkflowError())
-	}
-	var adopted *orkstackv1.ExecuteTaskResult
-	if err := env.GetWorkflowResult(&adopted); err != nil {
-		t.Fatalf("result: %v", err)
-	}
+	adopted := runAdoptionAttempt(ctx, t, s, activities, in)
 	containersAfter := containersOf(t, adopterID)
 	if containersAfter != containersBefore {
 		t.Fatalf("the adopter's containers %d -> %d across the replacement attempt; adoption starts none", containersBefore, containersAfter)

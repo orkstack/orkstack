@@ -122,7 +122,7 @@
 
 <h2 class="sr">Catalog</h2>
 
-<div class="mb-3"><ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" command={['orkctl', 'activity', 'list']} onapply={applyFilters} {clearHref} cli={false} /></div>
+<div class="mb-3"><ListFilter request={ListActivitiesRequestSchema} applied={data.applied} testid="activities" onapply={applyFilters} {clearHref} /></div>
 
 {#if data.activitiesError}
 	<ErrorPanel
@@ -368,16 +368,16 @@
 	/* The catalog's columns: an image's many ops read best on two lines. */
 	@media (min-width: 641px) {
 		.acts :global(thead th:nth-child(1)) {
-			width: 24%;
+			width: 22%;
 		}
 		.acts :global(thead th:nth-child(2)) {
-			width: 20%;
+			width: 26%;
 		}
 		.acts :global(thead th:nth-child(3)) {
 			width: 18%;
 		}
 		.acts :global(thead th:nth-child(4)) {
-			width: 28%;
+			width: 24%;
 		}
 	}
 	.opchip {

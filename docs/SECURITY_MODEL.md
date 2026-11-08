@@ -250,6 +250,10 @@ host. Every other registry is reached over HTTPS (`internal/dsl/reference.go`,
   secrets directory, then seals the files read-only (`0444`, in a directory that is
   `0555`). The directory is removed on every exit path, including a panic and a
   cancellation (`internal/orker/workspace.go`; `internal/orker/oci_dispatcher.go`).
+  A process that is killed takes no exit path, so the values stay on the host,
+  readable by the Orker's user and root, until the next boot under its identity
+  removes them, or an operator does when none comes
+  ([DEPLOY.md](DEPLOY.md#what-removes-a-tasks-container)).
 - A secret value never appears in a proto message, in Temporal history, in the
   archive, in a log chunk or in `task.json`, which carries names and paths only
   ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §9.4).
@@ -304,7 +308,7 @@ only the Orker's own sources stops the Orker at boot
 | `env:OTEL_*` | the telemetry exporters' settings; their headers carry a collector's credentials |
 | `env:HTTP_PROXY`, `env:HTTPS_PROXY`, `env:ALL_PROXY`, `env:http_proxy`, `env:https_proxy`, `env:all_proxy` | the proxies the Orker's HTTP clients and its container CLI use; a proxy URL may carry a user and a password |
 | `env:DOCKER_*`, `env:CONTAINERS_*`, `env:CONTAINER_HOST`, `env:CONTAINER_CONNECTION`, `env:CONTAINER_SSHKEY`, `env:CONTAINER_PASSPHRASE`, `env:REGISTRY_AUTH_FILE` | the settings of the container CLI the Orker drives, which runs with the Orker's environment: the daemon it reaches, its registry credentials, its TLS key, a remote engine's SSH identity |
-| `env:AWS_*`, `env:AZURE_*`, `env:GOOGLE_APPLICATION_CREDENTIALS`, `env:CLOUDSDK_*` | the cloud credentials a registry credential helper (ecr-login, gcr, acr) reads when the CLI pulls an image, from the environment it inherits: the Orker's |
+| `env:AWS_*`, `env:AZURE_*`, `env:GOOGLE_APPLICATION_CREDENTIALS`, `env:CLOUDSDK_*` | the cloud credentials a registry credential helper (ecr-login, gcr, acr) reads when the CLI pulls an image, from the environment it inherits: the Orker's. `AWS_*` is also what the Orker's object-store client reads when no key is set |
 | each telemetry sink header's `env:` source (`ORK_TELEMETRY_SINKS`) | a collector's credentials |
 | `file:/proc` | the Orker's process: its environment, memory and descriptors, and every other process it can see |
 | `file:/dev` | its devices, `/dev/fd` and `/dev/stdin` among them, which are its own descriptors |
@@ -394,10 +398,17 @@ opening the file and judging the descriptor it holds: such a read would close
 a window no task can reach, at the cost of a second, platform-specific
 reading of every path, and it is not planned.
 
-An Orker's own object-store client signs only with `ORK_S3_ACCESS_KEY` and
-`ORK_S3_SECRET_KEY` (`pkg/artifacts/s3.go`). The cloud credentials above are
-on the list for the credential helpers, not for the object store. A task that
-needs a cloud credential is given it under a variable or file of its own.
+An Orker's own object-store client signs with `ORK_S3_ACCESS_KEY` and
+`ORK_S3_SECRET_KEY` when they are set, and otherwise with the AWS SDK's default
+credential chain (`pkg/artifacts/s3.go`), so the cloud credentials above can be
+its own in that way too. A task that needs a cloud credential is given it under
+a variable or file of its own.
+
+The floor bounds what a task may name, and nothing about a network it can reach.
+A container on the `default` network can ask the host's instance metadata
+service for the host's role unless the host stops it, so a deployment that signs
+with an instance role must close that path ([DEPLOY.md](DEPLOY.md), "The object
+store's credentials").
 
 The list bounds what belongs to this Orker. Everything else on the host is
 reachable by name until the floor narrows it: another Orker's work root and
@@ -552,10 +563,10 @@ its own writes (`internal/api/audit.go`). A record is written once to
   hash: app.html's theme script and SvelteKit's boot script, and nothing a
   page could have injected. There is no `'unsafe-inline'` for scripts, no
   plugin (`object-src 'none'`), no `<base>` (`base-uri 'none'`), and forms
-  post only to the page's origin. Scripts allow `'unsafe-eval'`: the YAML
-  editor's schema checks compile their validators at run time (ajv,
-  `ui/src/lib/yaml/lint.ts`), from the generated schemas the build carries
-  and nothing a caller sends. Styles allow `'unsafe-inline'`, because the
+  post only to the page's origin. There is no `'unsafe-eval'` either: the YAML
+  editor's schema checks are compiled ahead of time into modules the build
+  carries (`ui/test/gen-validators.ts`), so the page evaluates no code at run
+  time. Styles allow `'unsafe-inline'`, because the
   page cannot run without inline styles: app.html wraps the app in a styled
   element, Svelte renders style attributes from its templates, and the YAML
   editor (CodeMirror) inserts its own `<style>` element at run time. Images
@@ -564,9 +575,8 @@ its own writes (`internal/api/audit.go`). A record is written once to
   The page refuses to be framed (`frame-ancestors 'none'`, which opens the
   policy, and `X-Frame-Options: DENY`), because it carries the operator's
   destructive controls. A page that names no policy, such as the placeholder,
-  is sent the build's policy with no hash and no `'unsafe-eval'`, so it
-  runs no inline script and no eval (`webui.DefaultPagePolicy`, which a test
-  holds to `ui/vite.config.ts`); every
+  is sent the build's policy with no hash, so it runs no inline script
+  (`webui.DefaultPagePolicy`, which a test holds to `ui/vite.config.ts`); every
   other UI response is sent `default-src 'none'; frame-ancestors 'none'`, so a
   file of the build opened as a document runs nothing.
 - **The UI serves only its own build.** The build holds no credential, and the
@@ -671,10 +681,11 @@ its own writes (`internal/api/audit.go`). A record is written once to
   catalog names the first-party activities by a tag there, and an apply pins
   whatever digest that tag names at that moment. A deployment anyone else can
   reach needs the authenticating gateway this model assumes.
-- **Object-storage keys have development defaults.** `ORK_S3_ACCESS_KEY` and
-  `ORK_S3_SECRET_KEY` default to the values in the development compose file
-  (`pkg/artifacts/config.go`). The operator must supply real credentials
-  ([DEPLOY.md](DEPLOY.md), §1, `storage.s3.access_key`).
+- **Object-storage keys have no default.** With `ORK_S3_ACCESS_KEY` and
+  `ORK_S3_SECRET_KEY` unset, the AWS SDK's default credential chain signs, and a
+  boot with nothing to sign with stops (`pkg/artifacts/credentials.go`). The
+  development stack's key is set only where that stack starts the binaries
+  ([DEPLOY.md](DEPLOY.md), "The object store's credentials").
 - **Telemetry is off by default.** A deployment that sets no telemetry configuration
   exports nothing and opens no admin listener (`AGENTS.md` §11).
 

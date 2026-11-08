@@ -80,6 +80,11 @@ func FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites(f *testing.F) {
 			key, _, err := artifacts.RunOriginIndexKey(rec)
 			return key, err
 		},
+		func(rec artifacts.RunRecord) (string, error) {
+			rec.OriginKind, rec.OriginID, rec.RootRunID = orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, "ork-parent", "ork-root"
+			key, _, err := artifacts.RunRootIndexKey(rec)
+			return key, err
+		},
 	} {
 		if key, err := build(stamped); err == nil {
 			seeds = append(seeds, key)
@@ -102,6 +107,18 @@ func FuzzKeys_AKeyTheParserAcceptsIsTheKeyTheBuilderWrites(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, key string) {
+		if entry, ok := artifacts.ParseRunRootIndexKey(key); ok {
+			rebuilt, wrote, err := artifacts.RunRootIndexKey(artifacts.RunRecord{
+				RunID: entry.RunID, Namespace: entry.Namespace, Orkflow: entry.Orkflow, Status: entry.Status, Time: entry.Time,
+				OriginKind: entry.OriginKind, OriginID: entry.OriginID, RootRunID: entry.RootRunID,
+			})
+			if err != nil || !wrote || rebuilt != key {
+				t.Fatalf("ParseRunRootIndexKey(%q) = %+v; RunRootIndexKey writes %q, %v (%v)", key, entry, rebuilt, wrote, err)
+			}
+			if entry.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN || entry.RootRunID == "" || entry.OriginID == "" {
+				t.Fatalf("ParseRunRootIndexKey(%q) = %+v, which no run with a root is", key, entry)
+			}
+		}
 		if entry, ok := artifacts.ParseRunIndexKey(key); ok {
 			rebuilt, err := artifacts.RunIndexKeyForEntry(entry)
 			if err != nil || rebuilt != key {

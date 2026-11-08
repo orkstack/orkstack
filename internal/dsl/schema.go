@@ -114,7 +114,7 @@ var orkflowDescriptions = map[string]string{
 	"kind":        "Exactly `Orkflow`; an automation document says `Automation`.",
 	"namespace":   "Slug scope; absent means the built-in `default`.",
 	"name":        "Slug identifier, unique within its namespace.",
-	"version":     "Author-pinned version; defaults to the source's hash.",
+	"version":     "Author-pinned version; absent, the first apply assigns one.",
 	"description": "Human description.",
 	"labels":      "Free-form `map[string]string` for organization and filtering (see \"Labels\").",
 	"inputs":      "Declared input parameters (see below).",

@@ -1,6 +1,8 @@
 package telemetry
 
 import (
+	"fmt"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"regexp"
 	"sort"
 	"strings"
@@ -23,12 +25,20 @@ func FuzzParseSinks(f *testing.F) {
 		"sinks:\n  " + strings.Repeat("a", 64) + ": {}\n", "sinks:\n  " + strings.Repeat("a", 65) + ": {}\n", "---\nsinks: {a: {}}\n---\nsinks: {b: {}}\n",
 		"sinks: [", "sinks: 1", "- sinks", "sinks:\n  a:\n    timeout: soon\n", "sinks:\n  a:\n    insecure: yes\n", "sinks:\n  \"a\\u0000\": {}\n",
 		"sinks:\n  a: &x {}\n  b: *x\n", "sinks:\n  <<: {a: {}}\n",
+		"sinks: {}\n---\nsinks: [\n", "sinks: {}\n---\n\tx: 1\n", "sinks: {}\n---\n", "---\nsinks: {}\n", "sinks: {}\n...\n",
 	} {
 		f.Add([]byte(seed))
 	}
 	slug := regexp.MustCompile(`^[a-z][a-z0-9_-]{0,63}$`)
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		table, err := ParseSinks(raw)
+		if line, found := dsl.SecondDocumentLine(raw); found {
+			want := fmt.Sprintf("%s: line %d: a second YAML document begins here", SinksVar, line)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("ParseSinks(%q) = %v, want a refusal holding %q", raw, err, want)
+			}
+			return
+		}
 		if err != nil {
 			if !strings.Contains(err.Error(), SinksVar) || table.Len() != 0 {
 				t.Fatalf("ParseSinks(%q) refused as %q with %d sinks", raw, err, table.Len())

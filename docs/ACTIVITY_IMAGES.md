@@ -140,7 +140,8 @@ The document is held to the authored-document rules: the two header lines;
 the keys exactly as the label spells them; `required:` and every `default:`
 converted by the strict mapping (`docs/JSON.md`, "Data written in an authored
 document"), so `yes`, `0755` or a date is refused naming its path; no anchor,
-alias, merge key or tag anywhere; one document per file, at most 1 MiB. An op
+alias, merge key or tag anywhere; one YAML document per file, a second refused
+naming its line even if it is empty or does not parse; at most 1 MiB. An op
 that reads no key beyond `fields` is written `name: {}` or `name:` alone.
 Editors complete it from [`activityinterface.v1.json`](schemas/activityinterface.v1.json),
 which the dispatcher `orkstack.v1.json` selects by `kind`, so the

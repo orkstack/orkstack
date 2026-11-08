@@ -154,7 +154,7 @@ function findRelease(read: ListReleasesResponse | null, build: string): Release 
 }
 
 const unconfirmed =
-	'The change is recorded, but the cluster had not applied it to new runs after 10s; "orkctl release status" shows when it has.';
+	'The change is recorded, but the cluster had not applied it to new runs after 10s; this page shows when it has.';
 
 function runsFinish(previous: Release | undefined, build: string): string {
 	if (!previous || previous.runsUnavailableReason) return `the runs executing on ${build} finish there`;
@@ -175,7 +175,7 @@ export function promoteResult(
 	const verb = rollback ? 'current again' : 'current';
 	const prev = res.previousBuildId;
 	let text = prev
-		? `release ${build} is ${verb} (was ${prev})${ramp}. New runs start on ${build}; ${runsFinish(findRelease(read, prev), prev)}. Keep ${prev} running until "orkctl release wait ${prev}" exits 0.`
+		? `release ${build} is ${verb} (was ${prev})${ramp}. New runs start on ${build}; ${runsFinish(findRelease(read, prev), prev)}. Keep ${prev} running until it has drained.`
 		: `release ${build} is ${verb}${ramp}. New runs start on ${build}.`;
 	if (!res.routingConfirmed) text += ' ' + unconfirmed;
 	return text;

@@ -25,7 +25,7 @@
 		scopeName,
 		type PurgeSelector
 	} from '#lib/cache.ts';
-	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { withNamespace } from '#lib/namespace.ts';
 	import { fmtInstant } from '#lib/stats.ts';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
@@ -121,10 +121,8 @@
 
 <svelte:head><title>Admin — Cache — OrkStack</title></svelte:head>
 
-<SheetHeader title="Cache">
-	{#snippet meta()}Namespace <span class="font-mono font-semibold text-ink">{namespaceLabel(data.namespace)}</span>{/snippet}
+<SheetHeader title="Cache" commands={[{ label: 'How cached tasks fared', command: cacheStatsCli(data.namespace, data.window, data.orkflow) }]}>
 	{#snippet actions()}
-		<CliEquivalent command={cacheStatsCli(data.namespace, data.window, data.orkflow)} testid="cache-stats-cli" />
 		<button
 			type="button"
 			data-testid="cache-purge"

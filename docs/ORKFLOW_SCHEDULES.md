@@ -176,10 +176,15 @@ runs already started running, with their origin; a repeat delete is NotFound.
 
 The Orkflow page's **Schedules** tab is the UI: create (with the server's
 refusal verbatim), list with a state pill (`active`, `paused` with its note,
-`unavailable` with its reason), next fire and last run, pause (with a reason),
-resume, fire now (which sends no overlap override), delete, the recreating
-`schedule create` command, and each row's next ten fire times, recent fires
-and counters. A run's origin `schedule` links back to the tab. **Backfill is
+`unavailable` with its reason), next fire and last run, edit, pause (with a
+reason), resume, fire now (which sends no overlap override), delete, the
+recreating `schedule create` command, and each row's next ten fire times,
+recent fires and counters. A row's name opens its edit, at an address of its
+own (`?edit=NAME`): every mutable field as stored, and a field left alone is
+sent back exactly as stored. An unavailable schedule cannot be read back, so it
+has no edit, as `schedule update` refuses it. The one edit with no CLI command
+is emptying the cron expressions of a schedule that has an interval:
+`schedule update` has no flag for an empty list, so the dialog shows none. A run's origin `schedule` links back to the tab. **Backfill is
 CLI-only**: it enqueues many fires at once and is an operator recovery tool,
 an accepted parity exception ([UI_CLI_PARITY.md](UI_CLI_PARITY.md)).
 

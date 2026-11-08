@@ -1,8 +1,11 @@
 package dsl_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -15,6 +18,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
+	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -379,9 +383,22 @@ func FuzzCompile_Orkflow(f *testing.F) {
 	} {
 		f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    retry: " + retry + "\n"))
 	}
+	for _, tc := range secondDocumentCases {
+		f.Add([]byte(tc.source))
+	}
+	for _, tc := range singleDocumentCases {
+		f.Add([]byte(tc.source))
+	}
 	digestShape := regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	f.Fuzz(func(t *testing.T, source []byte) {
 		wf, err := dsl.Compile(source)
+		if line, found := dsl.SecondDocumentLine(source); found {
+			want := fmt.Sprintf("line %d: %s", line, dsl.SecondDocumentMessage(dsl.KindOrkflow))
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Compile(%q) with a second document on line %d = %v, want a refusal holding %q", source, line, err, want)
+			}
+			return
+		}
 		if err != nil {
 			if err.Error() == "" {
 				t.Fatalf("Compile refused %q without a reason", source)
@@ -672,4 +689,33 @@ func holdsReplacement(value any) bool {
 		}
 	}
 	return false
+}
+
+// FuzzSecondDocumentLine: the parser and SecondDocumentLine agree on every file
+// whose first document parses, and a line it reports stands in the file.
+func FuzzSecondDocumentLine(f *testing.F) {
+	for _, tc := range secondDocumentCases {
+		f.Add([]byte(tc.source))
+	}
+	for _, tc := range singleDocumentCases {
+		f.Add([]byte(tc.source))
+	}
+	for _, source := range []string{"", "---", "---\n---\n", "...\n", "...\na: 1\n", "a: 1\r---\rb: 2\r", "a: 1\u2028---\u2028b: 2", "%YAML 1.1\n---\na: 1\n...\n%YAML 1.1\n---\nb: 2\n"} {
+		f.Add([]byte(source))
+	}
+	f.Fuzz(func(t *testing.T, source []byte) {
+		line, found := dsl.SecondDocumentLine(source)
+		if found && (line < 1 || line > bytes.Count(source, []byte("\n"))+bytes.Count(source, []byte("\r"))+bytes.Count(source, []byte("\xc2\x85"))+bytes.Count(source, []byte("\xe2\x80"))+1) {
+			t.Fatalf("SecondDocumentLine(%q) = line %d, which is not in the file", source, line)
+		}
+		decoder := yaml.NewDecoder(bytes.NewReader(source))
+		var first, second yaml.Node
+		if err := decoder.Decode(&first); err != nil {
+			return
+		}
+		err := decoder.Decode(&second)
+		if holds := !errors.Is(err, io.EOF); holds != found {
+			t.Fatalf("SecondDocumentLine(%q) = %d, %v, and the parser's second read says %v", source, line, found, err)
+		}
+	})
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // ciCandidateRepo is a repository whose main carries a non-empty nightly
-// list and whose HEAD is a merge candidate one commit above main's tip, as
+// list and whose HEAD is a squash candidate one commit above main's tip, as
 // AGENTS.md §11.3(b) builds one. It returns main's tip, its tree and HEAD's
 // tree.
 func ciCandidateRepo(t *testing.T) (dir, mainTip, mainTree, headTree string) {
@@ -43,7 +43,7 @@ func ciCandidateRepo(t *testing.T) (dir, mainTip, mainTree, headTree string) {
 	git("checkout", "-q", "-b", "candidate")
 	write("f", "change")
 	git("add", ".")
-	git("commit", "-q", "-m", "candidate")
+	git("commit", "-q", "-m", "feat: the candidate")
 	return dir, mainTip, mainTree, git("rev-parse", "HEAD^{tree}")
 }
 

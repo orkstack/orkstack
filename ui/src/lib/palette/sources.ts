@@ -3,6 +3,7 @@
 // only with the palette (a dynamic import on first open), so no route pays
 // for these clients until a person opens it. Nothing here calls GetRun: a run
 // is opened by navigating to it, and its page answers whether it exists.
+import { shortVersion } from '../version';
 import { runClient } from '../clients/runs';
 import { orkflowClient } from '../clients/orkflows';
 import { FilterOperator } from '../gen/orkstack/v1/filter_pb';
@@ -50,7 +51,7 @@ export async function searchOrkflows(fetchFn: typeof fetch, namespace: string, q
 			id: commandId('orkflow', o.name),
 			group: 'Orkflows' as const,
 			label: `Open Orkflow ${o.name}`,
-			context: `version ${o.version}`,
+			context: `version ${shortVersion(o.version)}`,
 			keywords: o.name,
 			action: { kind: 'navigate' as const, href },
 			href

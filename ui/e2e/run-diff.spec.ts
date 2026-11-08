@@ -25,6 +25,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { pageCli } from './uiHelpers';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('run-diff');
@@ -192,9 +193,9 @@ test('P2: the comparison is a deep link, and Swap exchanges the sides', async ({
 
 test('P3: the CLI equivalent is the command runCommand quotes', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}${compareURL(failed, succeeded)}`);
-	await page.getByTestId('run-diff-cli-trigger').click();
+	await page.getByTestId('page-cli-trigger').click();
 	const expected = runCommand('', ['run', 'diff', failed, succeeded]);
-	await expect(page.getByTestId('run-diff-cli-command')).toHaveText(expected);
+	await expect(pageCli(page, 'This comparison')).toHaveText(expected);
 	note(`P3 ${expected}`);
 });
 

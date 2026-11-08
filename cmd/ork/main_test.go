@@ -476,6 +476,11 @@ func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 	if stream.Receive() {
 		t.Fatalf("received event after shutdown: %v", stream.Msg())
 	}
+	// The run has not ended, so the stream may not end cleanly: every client
+	// resumes on Unavailable, and an older one reads a clean end as the run's.
+	if err := stream.Err(); connect.CodeOf(err) != connect.CodeUnavailable || !connect.IsWireError(err) {
+		t.Fatalf("the stream ended %v, want the engine's Unavailable", err)
+	}
 	if err := <-serveErr; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		t.Fatalf("Serve: %v", err)
 	}

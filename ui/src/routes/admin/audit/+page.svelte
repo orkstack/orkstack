@@ -20,7 +20,6 @@
 	// filtered is the ListAuditRecordsRequest allowlist. No write exists on
 	// this page, so there is nothing to confirm.
 	import { goto, invalidateAll } from '$app/navigation';
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ListFilter from '#lib/components/ListFilter.svelte';
 	import Pagination from '#lib/components/Pagination.svelte';
@@ -99,24 +98,15 @@
 
 <svelte:head><title>Admin — Audit — OrkStack</title></svelte:head>
 
-<SheetHeader title="Audit">
-	{#snippet actions()}
-		<CliEquivalent testid="audit-cli" command={auditCliCommand(c)} label="orkctl admin audit for this listing" />
-	{/snippet}
-</SheetHeader>
+<SheetHeader title="Audit" commands={[{ label: 'This listing', command: auditCliCommand(c) }]} />
 
 <ScopeNote testid="audit-scope">
 	{auditScopeSentence(c.filters)}{#if data.audit}{' '}<span class="font-mono text-xs" data-testid="audit-window">{resolvedSince} to {resolvedUntil}</span>.{/if}
 </ScopeNote>
 
-<ListFilter
-	request={ListAuditRecordsRequestSchema}
-	applied={c.filters}
-	testid="audit"
-	command={['orkctl', 'admin', 'audit']}
-	onapply={applyFilters}
-	{clearHref}
-/>
+<div class="mb-3">
+	<ListFilter request={ListAuditRecordsRequestSchema} applied={c.filters} testid="audit" onapply={applyFilters} {clearHref} />
+</div>
 
 {#if data.auditError}
 	<ErrorPanel
@@ -144,7 +134,7 @@
 					<th scope="col">Principal <span class="font-normal normal-case tracking-normal">(asserted)</span></th>
 					<th scope="col">Action</th>
 					<th scope="col">Namespace</th>
-					<th scope="col">Target</th>
+					<th scope="col" class="w-[38%]">Target</th>
 					<th scope="col">Result</th>
 				</tr>
 			</thead>
@@ -164,7 +154,7 @@
 						<td class="break-all font-mono text-xs" data-testid="audit-target">
 							{rec.target || '-'}
 							{#if rec.detail}
-								<span class="mt-1 block font-sans text-xs text-ink-muted" data-testid="audit-detail">{rec.detail}</span>
+								<span class="mt-1 block font-sans text-xs text-ink-muted [overflow-wrap:anywhere] [word-break:normal]" data-testid="audit-detail">{rec.detail}</span>
 							{/if}
 						</td>
 						<td>

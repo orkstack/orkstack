@@ -134,11 +134,17 @@ func (s *Service) interfaceChangeIssues(ctx context.Context, namespace string,
 			Severity: orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING}
 	}
 	name, version := wf.GetName(), wf.GetVersion()
+	// A document validated before its first apply has no version yet, so the
+	// advice speaks of the document and of a version to come.
+	subject, target, applied := name+"@"+version, version, version
+	if version == "" {
+		subject, target, applied = "this document", "VERSION", "it"
+	}
 	versions, err := s.orkflows.Versions(ctx, namespace, name)
 	if err != nil {
 		return []*orkstackv1.ValidationIssue{warn("version", fmt.Sprintf(
 			"could not compare with the version that runs now: %v; compare once the store answers: "+
-				"orkctl orkflow compat %s %s", err, name, version))}
+				"orkctl orkflow compat %s %s", err, name, target))}
 	}
 	resolved := versions.Resolved()
 	if resolved == "" || resolved == version {
@@ -162,21 +168,21 @@ func (s *Service) interfaceChangeIssues(ctx context.Context, namespace string,
 	var summary string
 	switch {
 	case versions.Current != "":
-		summary = fmt.Sprintf("%s@%s breaks the declared interface of %s@%s, the current version (%s). "+
+		summary = fmt.Sprintf("%s breaks the declared interface of %s@%s, the current version (%s). "+
 			"Applying it changes nothing that runs; promoting it is refused until acknowledged "+
 			"(orkctl orkflow promote %s %s --acknowledge-breaking). What starts or composes %s: "+
 			"orkctl orkflow callers %s",
-			name, version, name, resolved, count, name, version, name, name)
+			subject, name, resolved, count, name, target, name, name)
 	case !storesVersion(versions, version):
-		summary = fmt.Sprintf("%s@%s breaks the declared interface of %s@%s (%s), and %s was never "+
+		summary = fmt.Sprintf("%s breaks the declared interface of %s@%s (%s), and %s was never "+
 			"promoted, so a run that names no version executes its newest applied version: applying "+
 			"%s makes it what runs. To keep %s running, promote it before applying: "+
 			"orkctl orkflow promote %s %s",
-			name, version, name, resolved, count, name, version, resolved, name, resolved)
+			subject, name, resolved, count, name, applied, resolved, name, resolved)
 	default:
-		summary = fmt.Sprintf("%s@%s is already stored and breaks the declared interface of %s@%s, "+
+		summary = fmt.Sprintf("%s is already stored and breaks the declared interface of %s@%s, "+
 			"which runs when no version is named (%s); promoting it is refused until acknowledged",
-			name, version, name, resolved, count)
+			subject, name, resolved, count)
 	}
 	return append(issues, warn("version", summary))
 }

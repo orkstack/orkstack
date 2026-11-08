@@ -256,7 +256,10 @@ func TestRun_Sums(t *testing.T) {
 	}
 }
 
-func fakeBuild(_ context.Context, _ string, target dist.Target, version, out string) error {
+// buildCommit is the -commit every build below passes.
+const buildCommit = "af4986a1c0ffee00c0ffee00c0ffee00c0ffee00"
+
+func fakeBuild(_ context.Context, _ string, target dist.Target, version, _, out string) error {
 	return os.WriteFile(out, []byte(target.String()+" "+version), 0o755)
 }
 
@@ -285,7 +288,7 @@ func TestRun_Build(t *testing.T) {
 		t.Parallel()
 		root, out := repoWith(t, ""), filepath.Join(t.TempDir(), "dist")
 		got := invoke(t, map[string]string{"SOURCE_DATE_EPOCH": "1"}, fakeBuild,
-			"build", "-version", "v0.1.0", "-out", out, "-root", root, "-commit-time", "1761298215")
+			"build", "-version", "v0.1.0", "-commit", buildCommit, "-out", out, "-root", root, "-commit-time", "1761298215")
 		if got.code != 0 {
 			t.Fatalf("exit %d: %s", got.code, got.stderr)
 		}
@@ -305,7 +308,7 @@ func TestRun_Build(t *testing.T) {
 		t.Parallel()
 		root, out := repoWith(t, ""), filepath.Join(t.TempDir(), "dist")
 		got := invoke(t, map[string]string{"SOURCE_DATE_EPOCH": "1700000000"}, fakeBuild,
-			"build", "-version", "v0.1.0", "-out", out, "-root", root)
+			"build", "-version", "v0.1.0", "-commit", buildCommit, "-out", out, "-root", root)
 		if got.code != 0 {
 			t.Fatalf("exit %d: %s", got.code, got.stderr)
 		}
@@ -317,13 +320,27 @@ func TestRun_Build(t *testing.T) {
 		t.Parallel()
 		root, out := repoWith(t, ""), filepath.Join(t.TempDir(), "dist")
 		for _, env := range []map[string]string{nil, {"SOURCE_DATE_EPOCH": "soon"}} {
-			got := invoke(t, env, fakeBuild, "build", "-version", "v0.1.0", "-out", out, "-root", root)
+			got := invoke(t, env, fakeBuild, "build", "-version", "v0.1.0", "-commit", buildCommit, "-out", out, "-root", root)
 			if got.code != 2 || !strings.Contains(got.stderr, "SOURCE_DATE_EPOCH") {
 				t.Errorf("env %v: exit %d, stderr %q; want 2 naming SOURCE_DATE_EPOCH", env, got.code, got.stderr)
 			}
 		}
 		if _, err := os.Stat(out); err == nil {
 			t.Error("the release directory was created before the commit time was known")
+		}
+	})
+	t.Run("refuses a release with no commit, or not a whole one", func(t *testing.T) {
+		t.Parallel()
+		root, out := repoWith(t, ""), filepath.Join(t.TempDir(), "dist")
+		for _, args := range [][]string{{}, {"-commit", ""}, {"-commit", "af4986a1"}, {"-commit", "unknown"}} {
+			got := invoke(t, map[string]string{"SOURCE_DATE_EPOCH": "1700000000"}, fakeBuild,
+				append([]string{"build", "-version", "v0.1.0", "-out", out, "-root", root}, args...)...)
+			if got.code != 2 || !strings.Contains(got.stderr, "commit") {
+				t.Errorf("%v: exit %d, stderr %q; want 2 naming the commit", args, got.code, got.stderr)
+			}
+		}
+		if _, err := os.Stat(out); err == nil {
+			t.Error("the release directory was created before the commit was known")
 		}
 	})
 	t.Run("a tree without the web UI build is exit 1, naming make ui", func(t *testing.T) {
@@ -333,12 +350,12 @@ func TestRun_Build(t *testing.T) {
 			t.Fatal(err)
 		}
 		var compiled []string
-		recording := func(_ context.Context, _ string, target dist.Target, _, _ string) error {
+		recording := func(_ context.Context, _ string, target dist.Target, _, _, _ string) error {
 			compiled = append(compiled, target.String())
 			return nil
 		}
 		got := invoke(t, map[string]string{"SOURCE_DATE_EPOCH": "1700000000"}, recording,
-			"build", "-version", "v0.1.0", "-out", out, "-root", root)
+			"build", "-version", "v0.1.0", "-commit", buildCommit, "-out", out, "-root", root)
 		if got.code != 1 || !strings.Contains(got.stderr, "make ui") || !strings.Contains(got.stderr, dist.UIIndex) {
 			t.Errorf("exit %d, stderr %q; want 1 naming %s and make ui", got.code, got.stderr, dist.UIIndex)
 		}
@@ -349,9 +366,9 @@ func TestRun_Build(t *testing.T) {
 	t.Run("a failing compile is exit 1", func(t *testing.T) {
 		t.Parallel()
 		root, out := repoWith(t, ""), filepath.Join(t.TempDir(), "dist")
-		failing := func(context.Context, string, dist.Target, string, string) error { return io.ErrUnexpectedEOF }
+		failing := func(context.Context, string, dist.Target, string, string, string) error { return io.ErrUnexpectedEOF }
 		got := invoke(t, map[string]string{"SOURCE_DATE_EPOCH": "1700000000"}, failing,
-			"build", "-version", "v0.1.0", "-out", out, "-root", root)
+			"build", "-version", "v0.1.0", "-commit", buildCommit, "-out", out, "-root", root)
 		if got.code != 1 {
 			t.Errorf("exit %d, want 1", got.code)
 		}

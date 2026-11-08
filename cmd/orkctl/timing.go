@@ -857,14 +857,7 @@ func (attempt *attemptTiming) document() jsonObject {
 }
 
 func writeTimingJSON(out io.Writer, timing *runTiming) error {
-	encoded, err := json.MarshalIndent(timing.document(), "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode json: %w", err)
-	}
-	if _, err := out.Write(append(encoded, '\n')); err != nil {
-		return fmt.Errorf("write output: %w", err)
-	}
-	return nil
+	return writeGoJSON(out, timing.document())
 }
 
 // ---------------------------------------------------------------- command

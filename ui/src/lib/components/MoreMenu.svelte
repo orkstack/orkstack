@@ -15,9 +15,13 @@
 		class?: string;
 		/** The design's three dots: the label is then the button's accessible name. */
 		iconOnly?: boolean;
+		/** The dots at a page header's size, beside its terminal icon. */
+		bordered?: boolean;
+		/** Called each time the list opens, for what it reads only when asked. */
+		onopen?: () => void;
 	}
 
-	let { testid, label = 'More', items, class: className = '', iconOnly = false }: Props = $props();
+	let { testid, label = 'More', items, class: className = '', iconOnly = false, bordered = false, onopen }: Props = $props();
 
 	let open = $state(false);
 	const close = () => (open = false);
@@ -31,10 +35,13 @@
 				data-testid={testid}
 				aria-expanded={open}
 				aria-controls="{testid}-items"
-				onclick={() => (open = !open)}
+				onclick={() => {
+					open = !open;
+					if (open) onopen?.();
+				}}
 				aria-label={iconOnly ? label : undefined}
 				data-tip={iconOnly ? label : undefined}
-				class={iconOnly ? 'btn btn-sm btn-quiet btn-icon' : 'btn gap-1.5'}>{#if iconOnly}<Icon name="more" />{:else}{label}<Icon name="chev" class="size-4 text-ink-muted" />{/if}</button
+				class={iconOnly ? (bordered ? 'btn btn-icon' : 'btn btn-sm btn-quiet btn-icon') : 'btn gap-1.5'}>{#if iconOnly}<Icon name="more" />{:else}{label}<Icon name="chev" class="size-4 text-ink-muted" />{/if}</button
 			>
 		{/snippet}
 		{#snippet content()}

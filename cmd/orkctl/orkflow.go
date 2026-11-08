@@ -42,6 +42,9 @@ func newOrkflowValidateCommand(g *globalFlags) *cobra.Command {
 		if err != nil {
 			return fmt.Errorf("read orkflow file: %w", err)
 		}
+		if err := refuseSecondDocument(args[0], source); err != nil {
+			return err
+		}
 		ctx, cancel := g.unaryContext(cmd)
 		defer cancel()
 		response, err := g.orkflowClient().ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: string(source), Namespace: g.namespace}))
@@ -58,15 +61,30 @@ func newOrkflowValidateCommand(g *globalFlags) *cobra.Command {
 		// nonzero" — not warned ones.
 		if !failed {
 			wf := response.Msg.GetOrkflow()
+			version := "version " + wf.GetVersion()
+			if wf.GetVersion() == "" {
+				// Nothing was stored, and a version is only minted by the apply
+				// that stores it.
+				version = "new version, assigned when applied"
+			}
 			if warnings == 0 {
-				fmt.Fprintf(out, "Valid orkflow %s (version %s)\n", wf.GetName(), wf.GetVersion())
+				fmt.Fprintf(out, "Valid orkflow %s (%s)\n", wf.GetName(), version)
 			} else {
-				fmt.Fprintf(out, "Valid orkflow %s (version %s), %s\n", wf.GetName(), wf.GetVersion(), countNoun(warnings, "warning"))
+				fmt.Fprintf(out, "Valid orkflow %s (%s), %s\n", wf.GetName(), version, countNoun(warnings, "warning"))
 			}
 			return nil
 		}
 		return fmt.Errorf("orkflow validation failed")
 	}}
+}
+
+// orkflowRef names a definition in a line of output: name@version, or the name
+// alone for a document whose content was never applied and so has no version yet.
+func orkflowRef(name, version string) string {
+	if version == "" {
+		return name
+	}
+	return name + "@" + version
 }
 
 func newOrkflowListCommand(g *globalFlags) *cobra.Command {

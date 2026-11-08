@@ -25,10 +25,12 @@ const (
 
 // ExitStatus is what a container's own process reported.
 //
-// It carries no interpretation. Every status Wait returns is the WORKLOAD's,
-// and is ActivityFailed when non-zero, whatever the number: 125, 126 and 127
-// carry no runtime guarantee (§8.2, measured in §14.13). "The runtime refused"
-// is distinguished by Create or Start returning an error, never by a number.
+// The code carries no interpretation. A status with StoppedFromOutside unset is
+// the WORKLOAD's, and is ActivityFailed when non-zero, whatever the number: 125,
+// 126 and 127 carry no runtime guarantee (§8.2, measured in §14.13), and a
+// process that exits 143 itself looks the same as one a SIGTERM ended. "The
+// runtime refused" is distinguished by Create or Start returning an error, and
+// "it was stopped" by what the runtime observed, never by a number.
 type ExitStatus struct {
 	// Code is the process exit status.
 	Code int32
@@ -36,6 +38,20 @@ type ExitStatus struct {
 	// memory limit. It is reported so an operator can see it; it does not
 	// change the category, because the workload still failed.
 	OOMKilled bool
+	// StoppedFromOutside reports that, before the container ended, its runtime
+	// was stopping or signalling it: its daemon shutting down, or someone asking
+	// the daemon to. It says nothing about a container this Orker signalled
+	// itself, which is the only reason the dispatcher reads it just for a
+	// container that ended while the Orker was only waiting.
+	StoppedFromOutside bool
+	// StopCauseUnknown reports that whether the runtime stopped the container is
+	// unknown: its events ended before they said how it ended, or
+	// StopCauseUnrecorded. The status then stands as the workload's, and the
+	// failure says so.
+	StopCauseUnknown bool
+	// StopCauseUnrecorded, with StopCauseUnknown, reports why: the runtime keeps
+	// no record of a stop that its events did not say, or did not give it.
+	StopCauseUnrecorded bool
 }
 
 // PullInfo is what the runtime learned about an image it made available.
@@ -168,7 +184,11 @@ type ContainerRuntime interface {
 	// would have. A digest the layout does not hold returns an error matching
 	// ErrNotInLayout.
 	LoadLayout(ctx context.Context, layoutPath, digest string) (PullInfo, error)
-	// Create builds a container from spec without starting it.
+	// Create builds a container from spec without starting it. On a failure a
+	// non-empty id names what the engine may have made regardless, which the
+	// caller then owes a removal: a CLI's or a connection's failure is not the
+	// engine's. An error matching ErrCreateUnanswered says the engine may yet
+	// finish it, so a removal that finds nothing proves nothing for a while.
 	Create(ctx context.Context, spec ContainerSpec) (ContainerID, error)
 	// Start runs the container and streams its stdout and stderr to the two
 	// writers, independently and byte-exact. The streams are never merged on
@@ -177,7 +197,8 @@ type ContainerRuntime interface {
 	Start(ctx context.Context, id ContainerID, stdout, stderr io.Writer) error
 	// Signal delivers sig to the container's PID 1.
 	Signal(ctx context.Context, id ContainerID, sig Signal) error
-	// Wait blocks until the container exits and reports its status.
+	// Wait blocks until the container exits and reports its status, and whether
+	// it ended on its own, as far as the runtime could observe.
 	Wait(ctx context.Context, id ContainerID) (ExitStatus, error)
 	// Remove force-removes the container. It is called on a DETACHED context,
 	// because cleanup must survive the cancellation that caused it.
@@ -196,6 +217,15 @@ type ContainerRuntime interface {
 	// Describe reports the runtime's identity for the DescribeOrker pool
 	// liveness probe (§6.5).
 	Describe(ctx context.Context) (RuntimeInfo, error)
+}
+
+// OtherOrkerContainer is a container labelled with another Orker's identity.
+type OtherOrkerContainer struct {
+	ID string
+	// State is the state as the engine names it.
+	State string
+	// Orker is the identity on its label.
+	Orker string
 }
 
 // RuntimeInfo is a runtime's self-description, for DescribeOrker.

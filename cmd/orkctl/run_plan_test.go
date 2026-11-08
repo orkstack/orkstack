@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -78,6 +79,36 @@ func TestRunPlanFileGolden(t *testing.T) {
 		t.Errorf("file-form header does not say it was not applied:\n%s", out.stdout)
 	}
 	f.run("orkflow", "get", "advanced-demo").requireExit(t, exitError)
+}
+
+// TestRunPlanFile_AnUnappliedDocumentHasNoVersionInItsHeader: the header names
+// the Orkflow with no dangling "@" for a document that was never applied.
+func TestRunPlanFile_AnUnappliedDocumentHasNoVersionInItsHeader(t *testing.T) {
+	f := newFixture(t)
+	path := writePlanFile(t, "unpinned.ork.yaml",
+		"apiVersion: orkstack/v1\nkind: Orkflow\nname: unpinned-plan\ntasks:\n  - id: one\n    uses: busybox:latest\n")
+	out := f.run("run", "plan", "--file", path).requireExit(t, exitOK)
+	if !strings.Contains(out.stdout, "PLAN  unpinned-plan  namespace ") || strings.Contains(out.stdout, "unpinned-plan@") {
+		t.Errorf("plan header:\n%s", out.stdout)
+	}
+	// The plan itself is whole: only the version and its digest are absent.
+	machine := f.run("--json", "run", "plan", "--file", path).requireExit(t, exitOK)
+	var plan struct {
+		OrkflowName      string `json:"orkflowName"`
+		OrkflowVersion   string `json:"orkflowVersion"`
+		DefinitionDigest string `json:"definitionDigest"`
+		WaveCount        int    `json:"waveCount"`
+		Tasks            []struct {
+			TaskID string `json:"taskId"`
+		} `json:"tasks"`
+	}
+	if err := json.Unmarshal([]byte(machine.stdout), &plan); err != nil {
+		t.Fatalf("decode --json: %v\n%s", err, machine.stdout)
+	}
+	if plan.OrkflowName != "unpinned-plan" || plan.OrkflowVersion != "" || plan.DefinitionDigest != "" ||
+		len(plan.Tasks) != 1 || plan.WaveCount != 1 {
+		t.Errorf("plan = %+v, want one task in one wave and no version or digest\n%s", plan, machine.stdout)
+	}
 }
 
 func TestRunPlanFailsGolden(t *testing.T) {

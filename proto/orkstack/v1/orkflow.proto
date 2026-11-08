@@ -199,7 +199,7 @@ message AwaitSpec {
 // Orkflow is the compiled, validated form of a DSL document.
 message Orkflow {
   string name = 1;                       // unique identifier (slug)
-  string version = 2;                    // semantic or content hash
+  string version = 2;                    // the author's own, or assigned at first apply (a UUIDv7 in lowercase base32, or a content hash on an older version)
   string description = 3;
   map<string, string> labels = 4;
   // inputs declares the accepted input parameters (JSON schema fragment as struct).
@@ -245,8 +245,8 @@ message Orkflow {
   // template over .inputs and .tasks.<id>.output, rendered ONCE, by the
   // engine, when a run succeeds; every value renders to a string. When
   // non-empty the rendered map IS Run.output, and is what a composing
-  // parent's task receives as its values. When empty, Run.output keeps the
-  // leaf aggregation it has always had, and a composing parent's task
+  // parent's task receives as its values. When empty, Run.output is the
+  // values of the tasks no other task needs, and a composing parent's task
   // receives {}. Part of canonicalOrkflow only when non-empty (see pins).
   map<string, string> outputs = 12;
 }

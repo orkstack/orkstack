@@ -119,7 +119,7 @@
 		} finally {
 			uncordonBusy = '';
 			await load();
-			// The button that had focus is gone: Cordon… stands in its place.
+			// The button that had focus is gone: Cordon stands in its place.
 			if (cleared) {
 				await tick();
 				document.querySelector<HTMLElement>(`[data-testid="orker-cordon-${orker.orkerId}"]`)?.focus();
@@ -213,7 +213,7 @@
 									{#if operatorCordoned(orker)}
 										<button type="button" data-testid="orker-uncordon-{orker.orkerId}" disabled={uncordonBusy === orker.orkerId} onclick={() => void uncordon(orker)} class="btn btn-sm">Uncordon</button>
 									{:else}
-										<button type="button" data-testid="orker-cordon-{orker.orkerId}" onclick={() => openCordon(orker)} class="btn btn-sm"><Icon name="pause" />Cordon…</button>
+										<button type="button" data-testid="orker-cordon-{orker.orkerId}" onclick={() => openCordon(orker)} class="btn btn-sm"><Icon name="pause" />Cordon</button>
 									{/if}
 									<CliPopover testid="orker-cli-{orker.orkerId}" title="Command line: {orker.orkerId}" commands={[{ label: 'This Orker', command: orkerCommand(orker) }]} />
 								{/if}

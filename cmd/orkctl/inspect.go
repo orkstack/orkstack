@@ -14,7 +14,6 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -143,7 +142,7 @@ func (i *runInspector) poll(ctx context.Context, watching bool) (orkstackv1.Stat
 			return inspected.GetRunStatus(), writeJSON(out, inspected)
 		}
 		// One COMPACT object per line, as `run logs -f --json` prints.
-		encoded, err := api.MarshalJSON(inspected)
+		encoded, err := marshalCompactJSON(inspected)
 		if err != nil {
 			return inspected.GetRunStatus(), err
 		}

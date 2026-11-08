@@ -72,8 +72,12 @@ var (
 // It reads the root mapping's top-level keys, taking the first occurrence of
 // each; a duplicate is refused later by the struct decode. It runs before
 // the strict struct decode, so a document of another kind gets the kind
-// message rather than `unknown key "settings"`.
+// message rather than `unknown key "settings"`. A second YAML document comes
+// first of all: the decodes after it read only the first.
 func checkHeader(source []byte) error {
+	if err := refuseSecondDocument(source, KindOrkflow); err != nil {
+		return err
+	}
 	var root yaml.Node
 	if err := yaml.NewDecoder(bytes.NewReader(source)).Decode(&root); err != nil {
 		if errors.Is(err, io.EOF) {

@@ -23,6 +23,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/typeid"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -82,9 +83,9 @@ const (
 // parent's child start.
 const MaxPlanBytes = task.MaxActivityInputBytes
 
-// MaxRunIDLength is the longest id RunIDGenerator.NewRunID can issue:
-// len("ork-") + 19 (int64 nanoseconds) + len("-") + 20 (uint64) = 44.
-const MaxRunIDLength = 44
+// MaxRunIDLength is the length of every id NewRunID issues:
+// len("ork-") + 26 (a UUIDv7 in base32) = 30.
+const MaxRunIDLength = len(runIDPrefix) + typeid.Length
 
 // RunOriginKindParentRun is the plan-side spelling of a child run's origin
 // kind: the enum's proto name, as RunOrigin.Kind holds it.
@@ -94,7 +95,7 @@ var RunOriginKindParentRun = orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN
 // the reason RunPlan is; the definition travels as protojson bytes because
 // encoding/json cannot round-trip google.protobuf.Struct.
 type ChildRunPlan struct {
-	// RunID is minted by the API's RunIDGenerator after every refusal passed.
+	// RunID is minted by the API's NewRunID after every refusal passed.
 	// Never derived from the parent's id, never parsed (AGENTS.md §7).
 	RunID string `json:"run_id"`
 	// Orkflow is the child's PLANNED definition (pools resolved by
@@ -384,7 +385,9 @@ func (s *runState) failComposed(ctx workflow.Context, id, code string, category 
 // that would cost every composed task its bytes inside the 256 KiB plan.
 func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 	childPlan := planned.Plan
-	childPlan.Origin = &RunOrigin{Kind: RunOriginKindParentRun, ID: s.runID}
+	childPlan.Origin = &RunOrigin{Kind: RunOriginKindParentRun, ID: s.runID, RootRunID: s.childRootRunID()}
+	childPlan.RecordRootRun = s.plan.RecordRootRun
+	childPlan.RootRunIndexed = s.plan.RootRunIndexed
 	childPlan.History = s.plan.History
 	childPlan.Continuation = s.plan.Continuation
 	childPlan.InFlight = s.plan.InFlight
@@ -395,6 +398,21 @@ func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 	// parent's, copied here rather than carried by every nested plan.
 	childPlan.Fairness = s.plan.Fairness
 	return childPlan
+}
+
+// childRootRunID is the root of the chain a child of this run belongs to:
+// what this run holds, or this run itself when it holds none. A run whose plan
+// does not ask for the root says nothing, so a parent accepted before the
+// field, which may itself be a child with no root recorded, never names itself
+// its child's root. Pure: every input is on the replay-pinned plan.
+func (s *runState) childRootRunID() string {
+	if !s.plan.RecordRootRun {
+		return ""
+	}
+	if s.plan.Origin != nil && s.plan.Origin.RootRunID != "" {
+		return s.plan.Origin.RootRunID
+	}
+	return s.runID
 }
 
 // startChild requests one composed task's child run and returns its result
@@ -551,8 +569,8 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 		return s.recordChildFailure(ctx, id, err)
 	}
 
-	// The child's declared outputs, or {}: the leaf aggregation never
-	// crosses a composition boundary.
+	// The child's declared outputs, or {}: its end tasks' values never
+	// cross a composition boundary.
 	values := map[string]any{}
 	if len(c.wf.GetOutputs()) > 0 {
 		values = payloadMap(result.GetOutput())
@@ -791,7 +809,7 @@ func (s *runState) result() *orkstackv1.Run {
 	if s.isChildRun() {
 		child := compactChildResult(s.snapshot())
 		// The parent reads Output only for declared outputs (collectChild); an
-		// undeclared leaf aggregation is unbounded and read by nobody.
+		// undeclared run's end task values are unbounded and read by nobody.
 		if len(s.wf.GetOutputs()) == 0 {
 			child.Output = nil
 		}

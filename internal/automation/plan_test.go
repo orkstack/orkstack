@@ -348,6 +348,20 @@ func TestPlan_SettingsOverlayManagesOnlyPresentKeys(t *testing.T) {
 	}
 }
 
+// A hold the registry recorded no instant for says so, never "an unknown
+// time".
+func TestPlan_AHoldWithNoRecordedSinceSaysSo(t *testing.T) {
+	live := identicalLive()
+	live.Namespace.Hold = &orkstackv1.NamespaceHold{Reason: "Q3 close"}
+	steps, issues := plan(t, header+"settings:\n  run_retention: 72h\n", live, false)
+	requireNoErrors(t, issues)
+	step := stepFor(t, steps, kindNamespace, "payments")
+	want := `on hold since a time the registry did not record: Q3 close — operational state; this document does not manage it`
+	if len(step.GetNotes()) != 1 || step.GetNotes()[0] != want {
+		t.Errorf("notes = %q, want [%q]", step.GetNotes(), want)
+	}
+}
+
 func TestPlan_SettingsExplicitEmptyClears(t *testing.T) {
 	live := identicalLive()
 	live.Namespace.Labels = map[string]string{"team": "payments"}

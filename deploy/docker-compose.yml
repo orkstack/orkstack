@@ -87,9 +87,18 @@ services:
   # `weed mini` runs master, volume, filer and S3 in one process. The S3 API
   # listens on 8333; 9000 stays the published port so ORK_S3_ENDPOINT and
   # every documented default are unchanged. `-bucket` creates the dev bucket.
+  #
+  # It refuses what production refuses, so a wrong credential or bucket does not
+  # first fail there. The keys are the ones `make up`, `make run-ork`, the tests
+  # and the proofs set: with none set, this store checks none, whatever a request
+  # signs with. With them set, auto-create would let an admin's first upload make a
+  # missing bucket, so it is off. Both apply to a store's existing volume.
   seaweedfs:
     image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
-    command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts"]
+    command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts", "-s3.autoCreateBucket=false"]
+    environment:
+      AWS_ACCESS_KEY_ID: orkstack
+      AWS_SECRET_ACCESS_KEY: orkstack-secret
     ports:
       - "127.0.0.1:9000:8333"   # S3 API, on the documented port
       - "127.0.0.1:9333:9333"   # master
@@ -100,9 +109,8 @@ services:
     # answers. On an empty volume `weed mini` serves S3 for seconds before it
     # creates its -bucket; in that gap the Orker's boot probe is refused 403 and
     # the engine's first read finds no bucket, and each exits. So the check asks
-    # for that bucket, signed as their own requests are, with their default
-    # ORK_S3_ACCESS_KEY and ORK_S3_SECRET_KEY. It is the bucket they wait for, not
-    # a credential: with none configured, this store checks none.
+    # for that bucket, signed as their own requests are, with the key `make up`
+    # sets as ORK_S3_ACCESS_KEY and ORK_S3_SECRET_KEY.
     healthcheck:
       test: ["CMD", "curl", "-fsS", "-o", "/dev/null", "--head", "--aws-sigv4", "aws:amz:us-east-1:s3", "--user", "orkstack:orkstack-secret", "http://localhost:8333/orkstack-artifacts"]
       interval: 5s
@@ -191,7 +199,7 @@ services:
       - "127.0.0.1:9090:9090"
     extra_hosts:
       # so the container can reach ork's and orker's ORK_ADMIN_ADDR on the
-      # host; docker-desktop resolves this on macOS/Windows without the entry,
+      # host; some Docker installs resolve this without the entry,
       # but Linux needs host-gateway explicitly.
       - "host.docker.internal:host-gateway"
 

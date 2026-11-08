@@ -443,6 +443,69 @@ func TestIntegration_TaskRunRunsAnEditedDocumentAgainstTheRunsBytes(t *testing.T
 	s.writeTranscript("task-run-edited.txt")
 }
 
+// TestIntegration_TaskRunRunsAFileNeverApplied: a real container reads the task.json
+// a file that pins no version and was never applied gets, through the real engine's
+// validation and the Orker's own dispatcher.
+func TestIntegration_TaskRunRunsAFileNeverApplied(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	s := newTaskRunStack(ctx, t)
+	name := fmt.Sprintf("task-run-unapplied-%d", time.Now().UnixNano())
+	doc := filepath.Join(t.TempDir(), "unapplied.ork.yaml")
+	if err := os.WriteFile(doc, []byte(fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
+tasks:
+  - id: show
+    uses: shell
+    timeout_seconds: 120
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        echo '<<<TASK'
+        cat /orkstack/input/task.json
+        echo 'TASK>>>'
+`, name)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, code := s.taskRun("--file", doc, "--task", "show")
+	if code != exitOK {
+		t.Fatalf("exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
+	}
+	_, rest, found := strings.Cut(stdout, "<<<TASK\n")
+	body, _, closed := strings.Cut(rest, "TASK>>>")
+	if !found || !closed {
+		t.Fatalf("the container's task.json is not in the output:\n%s", stdout)
+	}
+	var task struct {
+		Run struct {
+			Orkflow struct {
+				Name             string `json:"name"`
+				Version          string `json:"version"`
+				DefinitionDigest string `json:"definitionDigest"`
+			} `json:"orkflow"`
+		} `json:"run"`
+	}
+	// Each line of the container's output is framed by the local run's log.
+	body = regexp.MustCompile(`(?m)^[^│\n]*│ ?`).ReplaceAllString(body, "")
+	body = body[:strings.LastIndex(body, "}")+1]
+	if err := json.Unmarshal([]byte(body), &task); err != nil {
+		t.Fatalf("decode task.json: %v\n%s", err, body)
+	}
+	orkflow := task.Run.Orkflow
+	if orkflow.Name != name || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(orkflow.Version) ||
+		!regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(orkflow.DefinitionDigest) {
+		t.Fatalf("task.json run.orkflow = %+v, want the name, a content hash and a digest", orkflow)
+	}
+	_, err := s.replicas[0].flows.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: name}))
+	if connect.CodeOf(err) != connect.CodeNotFound {
+		t.Fatalf("GetOrkflow after a local run = %v, want not found: it stores nothing", err)
+	}
+	t.Logf("EVIDENCE a file never applied ran: version %s, digest %s, nothing stored", orkflow.Version, orkflow.DefinitionDigest)
+	s.writeTranscript("task-run-unapplied.txt")
+}
+
 // TestIntegration_TaskRunSecretIsExplicitAndNeverKept.
 func TestIntegration_TaskRunSecretIsExplicitAndNeverKept(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)

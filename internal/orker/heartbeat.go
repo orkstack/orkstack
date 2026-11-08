@@ -3,11 +3,14 @@ package orker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/temporal"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -36,32 +39,28 @@ const HeartbeatTimeout = task.HeartbeatTimeout
 // The Orker's tick rate: its default, and the bounds an operator may move it
 // between with ORK_ORKER_HEARTBEAT_INTERVAL (docs/DEPLOY.md §1).
 //
-// THE PAIRING RULE. The task worker's worker.Options.MaxHeartbeatThrottleInterval
-// MUST be set to the same value as the tick this package runs at. The Go SDK
-// batches RecordHeartbeat calls into windows of
-// min(0.8 × HeartbeatTimeout, MaxHeartbeatThrottleInterval) — inside a window a
-// heartbeat only overwrites the pending detail and no RPC leaves the process —
-// and cancellation arrives only in a heartbeat RPC's RESPONSE. So a fast tick
-// with the SDK's default throttle is not a fast cancellation: it is a 24 s one
-// (0.8 × 30 s), which is what a measured run showed. Lowering only the throttle
-// is equally useless, since there would be no beat to carry. cmd/orker sets
-// both from one value; a test harness that runs this dispatcher against a real
-// Temporal must do the same or it measures the SDK's default.
+// THE ORKER SENDS ITS OWN HEARTBEATS (Heartbeater.report), through the client
+// activity.GetClient returns, and not through activity.RecordHeartbeat. The SDK's
+// route batches beats into windows of min(0.8 × HeartbeatTimeout,
+// MaxHeartbeatThrottleInterval), and it cancels the activity locally when one
+// RPC outlasts its window with a status it counts as retryable, assuming the
+// server is about to time the activity out (internal_task_handlers.go in
+// go.temporal.io/sdk). The server has decided nothing at that point, a later
+// real cancel can no longer be told from it, and it returns no error to look at.
 //
-// The tick is also THE LONGEST TEMPORAL FRONTEND OUTAGE A RUNNING CONTAINER
-// SURVIVES: the SDK uses the same window as the heartbeat RPC's deadline and
-// cancels the activity locally when the RPC still fails a retryable status
-// after it, on the assumption the server is about to time the activity out.
-// That is the tradeoff which makes this an operator setting rather than a
-// constant — the right value depends on how a deployment runs Temporal.
+// So the tick is how often a beat leaves and how soon a running container hears
+// of a cancel, and nothing else: a frontend that stays silent costs a running
+// container nothing until the heartbeat timeout (Heartbeater.report).
+//
+// The worker's MaxHeartbeatThrottleInterval is deliberately left to the SDK.
+// Only a pin's session heartbeats through the SDK's route now, and that window
+// is its RPC's deadline: 24 s of a 30 s timeout, not one tick (cmd/orker).
 const (
 	// DefaultHeartbeatInterval is the tick an unconfigured Orker uses: fast
-	// enough that a failed run stops its siblings in about five seconds,
-	// slow enough to ride out a brief frontend blip.
+	// enough that a failed run stops its siblings in about five seconds.
 	DefaultHeartbeatInterval = 5 * time.Second
-	// MinHeartbeatInterval is the SDK's own floor on an RPC deadline
-	// (minRPCTimeout). Below it the SDK clamps the deadline anyway, so a
-	// smaller number would only be a lie in the boot log.
+	// MinHeartbeatInterval is as often as a heartbeat is worth sending: a cancel
+	// reaching a container sooner than a second later buys nothing.
 	MinHeartbeatInterval = time.Second
 	// MaxHeartbeatInterval keeps two missed ticks inside the dead-worker
 	// window: tick more slowly than a third of HeartbeatTimeout and Temporal
@@ -80,7 +79,7 @@ func ValidateHeartbeatInterval(d time.Duration) error {
 		return nil
 	case d < MinHeartbeatInterval:
 		return fmt.Errorf(
-			"%s=%s is below %s: Temporal's SDK clamps a heartbeat RPC deadline at that floor, so a smaller tick cannot be honored",
+			"%s=%s is below %s: a cancel gains nothing from a faster tick, and every Orker's every task sends one",
 			HeartbeatIntervalVar, d, MinHeartbeatInterval)
 	case d > MaxHeartbeatInterval:
 		return fmt.Errorf(
@@ -112,13 +111,38 @@ type Heartbeater struct {
 	stopped  chan struct{}
 	stopOnce sync.Once
 
-	// beat is the heartbeat sink. It is a field so tests can observe the
-	// sequence without a Temporal environment.
-	beat func(HeartbeatProgress)
+	// send makes one heartbeat RPC and returns what came back: nil, or what the
+	// server decided, or why it could not be asked. It is a field so tests can
+	// play the cluster without a Temporal environment.
+	send func(context.Context, HeartbeatProgress) error
+	// deliver hands a decision of the server's to the SDK. The SDK alone can
+	// cancel the activity's context with the cause that makes a cancel a cancel
+	// on the wire, and it does so from the answer to one more heartbeat.
+	deliver func(context.Context, HeartbeatProgress)
+	// onLost stops the attempt: nothing acknowledged a heartbeat for ackTimeout.
+	onLost func(error)
+	// ackTimeout is the attempt's heartbeat timeout, past which the cluster has
+	// timed it out, or will as soon as it can. Zero means HeartbeatTimeout.
+	ackTimeout time.Duration
+	// now is the clock the ack timeout is measured on. Nil means time.Now.
+	now func() time.Time
+	// logger says when heartbeats stop reaching the cluster and when they
+	// resume. Nil means no log.
+	logger *slog.Logger
+	// lastAck and failing belong to the loop's goroutine alone.
+	lastAck time.Time
+	failing bool
+	// serverCanceled is set before deliver hands the server's cancel on. Execute
+	// reads it: if a new stall ate that one heartbeat, the SDK cancels with the
+	// stall as its cause, and the task was still cancelled.
+	serverCanceled atomic.Bool
+	// completeCanceled reports the attempt cancelled without the SDK, which will
+	// not report a cancel once its own context carries any other cause.
+	completeCanceled func(context.Context) error
+	// cancelRPC ends an RPC in flight when the loop is stopped.
+	cancelRPC context.CancelFunc
 	// interval is the tick rate. Zero means DefaultHeartbeatInterval. It is
-	// filled from OCIDispatcher.HeartbeatInterval, which cmd/orker sets from
-	// the same value it caps the worker's MaxHeartbeatThrottleInterval with —
-	// see the pairing rule above.
+	// filled from OCIDispatcher.HeartbeatInterval.
 	interval time.Duration
 	// onPhase optionally receives every phase transition, in the same order
 	// Phase is called. Execute sets it to an AttemptObserver's Phase method
@@ -147,15 +171,34 @@ type phaseMark struct {
 	at   time.Time
 }
 
-// NewHeartbeater builds a loop that reports into the activity context.
+// NewHeartbeater builds the loop for one activity attempt. Outside an activity
+// (orkctl task run) there is nobody to tell and it sends nothing.
 func NewHeartbeater(ctx context.Context) *Heartbeater {
-	return &Heartbeater{
-		beat: func(progress HeartbeatProgress) {
-			if activity.IsActivity(ctx) {
-				activity.RecordHeartbeat(ctx, progress)
-			}
-		},
+	h := &Heartbeater{}
+	if !activity.IsActivity(ctx) {
+		return h
 	}
+	info := activity.GetInfo(ctx)
+	h.ackTimeout = info.HeartbeatTimeout
+	beats := activity.GetClient(ctx)
+	h.send = func(call context.Context, progress HeartbeatProgress) error {
+		return beats.RecordActivityHeartbeatWithOptions(call, client.RecordActivityHeartbeatOptions{
+			TaskToken:    info.TaskToken,
+			Details:      []any{progress},
+			Namespace:    info.Namespace,
+			WorkflowID:   info.WorkflowExecution.ID,
+			ActivityType: info.ActivityType.Name,
+			WorkflowType: info.WorkflowType.Name,
+			TaskQueue:    info.TaskQueue,
+		})
+	}
+	h.deliver = func(call context.Context, progress HeartbeatProgress) {
+		activity.RecordHeartbeat(call, progress)
+	}
+	h.completeCanceled = func(call context.Context) error {
+		return beats.CompleteActivity(call, info.TaskToken, nil, temporal.NewCanceledError())
+	}
+	return h
 }
 
 // Start runs the loop until Stop. It ticks on a timer AND reports immediately,
@@ -168,34 +211,145 @@ func (h *Heartbeater) Start(ctx context.Context) {
 	if interval <= 0 {
 		interval = DefaultHeartbeatInterval
 	}
+	// An RPC survives nothing but the loop: it ends when the attempt does, and
+	// never carries the attempt's own deadline or cause into the SDK.
+	calls, cancelRPC := context.WithCancel(context.WithoutCancel(ctx))
+	h.cancelRPC = cancelRPC
+	stopWatching := context.AfterFunc(ctx, cancelRPC)
+	h.lastAck = h.clock()
 	go func() {
 		defer close(h.stopped)
+		defer cancelRPC()
+		defer stopWatching()
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		h.beat(h.progress())
+		h.report(calls)
 		for {
 			select {
 			case <-h.stop:
 				return
 			case <-ctx.Done():
-				// The context being done is exactly what a heartbeat
-				// response delivered. There is nothing left to report to a
-				// cancelled activity, and continuing to beat would be
-				// reporting progress on work that is being torn down.
+				// There is nothing left to report to a stopped attempt, and
+				// continuing to beat would be reporting progress on work that
+				// is being torn down.
 				return
 			case <-ticker.C:
-				h.beat(h.progress())
+				h.report(calls)
 			}
 		}
 	}()
 }
 
-// Stop ends the loop and waits for it. It is idempotent, so a deferred Stop
-// beside an explicit one is safe.
+// report sends one heartbeat and acts on what came back, and it is the only place
+// that does:
+//
+//   - an answer resets the ack timeout;
+//   - a decision of the server's (a cancel, a pause, a reset, an activity or
+//     namespace it no longer knows) goes to the SDK, which ends the attempt
+//     with that cause;
+//   - anything else says only that this heartbeat was not answered. The attempt
+//     and its container are left alone until nothing has been acknowledged for
+//     the heartbeat timeout. Then the cluster has timed the attempt out, or will
+//     the moment it can, and a retry may start elsewhere, so the attempt stops:
+//     that is what bounds how long the two run side by side.
+func (h *Heartbeater) report(calls context.Context) {
+	if h.send == nil {
+		return
+	}
+	progress := h.progress()
+	call, cancel := context.WithTimeout(calls, h.rpcDeadline())
+	defer cancel()
+	err := h.send(call, progress)
+	switch {
+	case err == nil:
+		if h.failing && h.logger != nil {
+			h.logger.Info("heartbeats reach the cluster again", "unanswered_for", h.clock().Sub(h.lastAck))
+		}
+		h.failing = false
+		h.lastAck = h.clock()
+		return
+	case serverDecided(err):
+		h.serverCanceled.Store(temporal.IsCanceledError(err))
+		if h.deliver != nil {
+			h.deliver(calls, progress)
+		}
+		return
+	case calls.Err() != nil:
+		// The attempt ended while this heartbeat was on its way, which says
+		// nothing about the cluster.
+		return
+	}
+	if !h.failing && h.logger != nil {
+		h.logger.Warn("a heartbeat did not reach the cluster; the attempt carries on until the heartbeat timeout",
+			"error", err, "heartbeat_timeout", h.ackWindow())
+	}
+	h.failing = true
+	if h.clock().Sub(h.lastAck) >= h.ackWindow() && h.onLost != nil {
+		h.onLost(&heartbeatUnanswered{after: h.ackWindow(), err: err})
+	}
+}
+
+// heartbeatUnanswered is why the loop stops an attempt.
+type heartbeatUnanswered struct {
+	after time.Duration
+	err   error
+}
+
+func (e *heartbeatUnanswered) Error() string {
+	return fmt.Sprintf("nothing answered for %s, last: %v", e.after, e.err)
+}
+
+func (e *heartbeatUnanswered) Unwrap() error { return e.err }
+
+// rpcDeadline gives one heartbeat a third of the timeout, or what is left of it,
+// so the stop is not late by a whole RPC. An RPC that has less than this left
+// could not be answered anyway.
+func (h *Heartbeater) rpcDeadline() time.Duration {
+	deadline := h.ackWindow() / 3
+	if left := h.ackWindow() - h.clock().Sub(h.lastAck); left < deadline {
+		deadline = max(left, min(deadline, MinHeartbeatInterval))
+	}
+	return deadline
+}
+
+// reportCanceled tells the cluster this attempt was cancelled, on a context of
+// its own and bounded by the timeout. If it cannot, the cluster's own timeout
+// ends the attempt, and the run is being cancelled either way.
+func (h *Heartbeater) reportCanceled(ctx context.Context) {
+	if h.completeCanceled == nil {
+		return
+	}
+	call, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.ackWindow())
+	defer cancel()
+	if err := h.completeCanceled(call); err != nil && h.logger != nil {
+		h.logger.Warn("could not report a cancelled attempt to the cluster", "error", err)
+	}
+}
+
+func (h *Heartbeater) ackWindow() time.Duration {
+	if h.ackTimeout > 0 {
+		return h.ackTimeout
+	}
+	return HeartbeatTimeout
+}
+
+func (h *Heartbeater) clock() time.Time {
+	if h.now != nil {
+		return h.now()
+	}
+	return time.Now()
+}
+
+// Stop ends the loop and waits for it, however long the cluster takes to answer:
+// a heartbeat in flight is abandoned. It is idempotent, so a deferred Stop beside
+// an explicit one is safe.
 func (h *Heartbeater) Stop() {
 	h.stopOnce.Do(func() {
 		if h.stop != nil {
 			close(h.stop)
+		}
+		if h.cancelRPC != nil {
+			h.cancelRPC()
 		}
 	})
 	if h.stopped != nil {

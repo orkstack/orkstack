@@ -68,6 +68,59 @@ func TestListQuery_PushesOriginDownOnlyWhenIndexed(t *testing.T) {
 	}
 }
 
+// TestListQuery_PushesTheRootDownOnlyWhenIndexed: alone or beside an origin
+// filter, it is a predicate on a cluster that has the attribute and none on one
+// that does not.
+func TestListQuery_PushesTheRootDownOnlyWhenIndexed(t *testing.T) {
+	root := RunListPlan(runFilters(t, "origin.root_run_id=ork-root"))
+	if root.RootRunID != "ork-root" {
+		t.Fatalf("plan root = %q", root.RootRunID)
+	}
+	reader := newRunReader(&fakeReadClient{}, nil)
+	if query, _, _ := reader.listQuery(root); strings.Contains(query, task.SearchAttrOrkflowOriginRootRunId) {
+		t.Fatalf("without the index the query %q pushed the root down", query)
+	}
+	reader.WithRootIndex(true)
+	query, _, _ := reader.listQuery(root)
+	if want := `WorkflowType = "RunWorkflow" AND OrkflowOriginRootRunId = "ork-root"`; query != want {
+		t.Fatalf("indexed query = %q, want %q", query, want)
+	}
+	// An id with quote characters stays one value: a filter value is a caller's.
+	quoted := RunListPlan(runFilters(t, `origin.root_run_id=a"b`))
+	query, _, _ = reader.listQuery(quoted)
+	if !strings.Contains(query, `OrkflowOriginRootRunId = "a\"b"`) {
+		t.Fatalf("quoted query = %q", query)
+	}
+}
+
+// TestListRuns_RootFilterWithoutIndex: with no attribute a list by root selects
+// from the memo when the walk reaches the end, and past its budget it refuses,
+// in words a client may read, rather than answer short.
+func TestListRuns_RootFilterWithoutIndex(t *testing.T) {
+	endless := &endlessReadClient{page: []*workflowpb.WorkflowExecutionInfo{
+		withOriginMemo(t, visibilityRecord(t, "ork-other", "hello-ork", "1.0.0",
+			enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, readerEpoch), "submit", ""),
+	}}
+	_, err := newRunReader(endless, nil).ListRuns(context.Background(), RunQuery{RootRunID: "ork-root", Limit: 10})
+	if err == nil || !strings.Contains(err.Error(), "does not index a run's root") {
+		t.Fatalf("an unindexed root filter past its budget = %v, want a failure saying so", err)
+	}
+	if strings.Contains(err.Error(), task.SearchAttrOrkflowOriginRootRunId) || strings.Contains(err.Error(), "visibility") {
+		t.Fatalf("the refusal names what no user-facing text may: %v", err)
+	}
+	if endless.calls != maxRunScanPages {
+		t.Fatalf("the walk read %d pages, want the fail-closed %d", endless.calls, maxRunScanPages)
+	}
+
+	indexed := &endlessReadClient{}
+	if _, err := newRunReader(indexed, nil).WithRootIndex(true).ListRuns(context.Background(), RunQuery{RootRunID: "ork-root", Limit: 10}); err != nil {
+		t.Fatalf("indexed root list: %v", err)
+	}
+	if !strings.Contains(indexed.queries[0], `OrkflowOriginRootRunId = "ork-root"`) {
+		t.Fatalf("indexed query = %q", indexed.queries[0])
+	}
+}
+
 func TestListRuns_OriginFilterWithoutIndexFailsClosed(t *testing.T) {
 	// Every record is another origin's: only the budget can end the walk.
 	client := &endlessReadClient{page: []*workflowpb.WorkflowExecutionInfo{
@@ -80,10 +133,8 @@ func TestListRuns_OriginFilterWithoutIndexFailsClosed(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unindexed origin filter past its budget returned a list, want a failure")
 	}
-	for _, name := range []string{task.SearchAttrOrkflowOriginKind, task.SearchAttrOrkflowOriginId} {
-		if !strings.Contains(err.Error(), name) {
-			t.Errorf("error %q does not name %s", err, name)
-		}
+	if !strings.Contains(err.Error(), "does not index a run's origin") {
+		t.Errorf("error %q does not say the cluster cannot index a run's origin", err)
 	}
 	if client.calls != maxRunScanPages {
 		t.Fatalf("the walk read %d pages, want the fail-closed %d", client.calls, maxRunScanPages)
@@ -98,6 +149,28 @@ func TestListRuns_OriginFilterWithoutIndexFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(indexed.queries[0], `OrkflowOriginKind = "trigger"`) {
 		t.Fatalf("indexed query = %q", indexed.queries[0])
+	}
+}
+
+// TestListedRun_ReadsTheRootFromTheMemo: a live listing row names a chain's
+// root without a history read, and a record with none reads as empty.
+func TestListedRun_ReadsTheRootFromTheMemo(t *testing.T) {
+	reader := newRunReader(&fakeReadClient{}, nil)
+	info := withOriginMemo(t, visibilityRecord(t, "ork-leaf", "leaf", "1.0.0",
+		enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, readerEpoch), "parent-run", "ork-mid")
+	if got := reader.listedRun(info).GetOrigin().GetRootRunId(); got != "" {
+		t.Fatalf("a record with no root key lists root %q", got)
+	}
+	payload, err := converter.GetDefaultDataConverter().ToPayload("ork-root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	info.Memo.Fields[MemoOriginRootRunID] = payload
+	want := &orkstackv1.RunOrigin{
+		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid", RootRunId: "ork-root",
+	}
+	if got := reader.listedRun(info).GetOrigin(); !proto.Equal(got, want) {
+		t.Fatalf("listed origin = %v, want %v", got, want)
 	}
 }
 

@@ -1057,3 +1057,11 @@ tasks:
 		t.Fatalf("a refused submit minted %d ids and started %v", minted, starter.startedRuns())
 	}
 }
+
+func (d downOrkflowStore) FindDerivedVersion(context.Context, string, string, string) (string, error) {
+	return "", d.err
+}
+
+func (d downOrkflowStore) ClaimDerivedVersion(context.Context, string, string, string, string) (string, error) {
+	return "", d.err
+}

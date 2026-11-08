@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -12,7 +13,6 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/api"
 )
 
 // newRunLogsCommand builds `orkctl run logs`.
@@ -44,6 +44,13 @@ func newRunLogsCommand(g *globalFlags) *cobra.Command {
 			"pin the try with --attempt, or name it with --from-attempt. A cursor with\n" +
 			"no attempt is refused rather than applied to whichever try happens to be\n" +
 			"latest, which would silently skip that try's first chunks.\n\n" +
+			"With -f, a stream that ends as unavailable, as canceled when logs did not\n" +
+			"cancel it, because its connection to the engine ended, or with no end of\n" +
+			"the log, is opened again after the last chunk printed, so no line is printed\n" +
+			"twice or skipped, and a try that ended meanwhile is printed whole before the\n" +
+			"next; each resume is said on stderr. Any error the engine itself reports\n" +
+			fmt.Sprintf("ends it, as do %d resumes in a row that deliver nothing. Without -f a read\n", watchResumeLimit) +
+			"is one read, and its failure ends it.\n\n" +
 			"The exit code reports whether the log could be read, not how the run\n" +
 			"ended; `orkctl run watch` is the command whose exit code is the outcome.\n\n" +
 			"A fan-out task (each:) writes one log per item: name it with --task and\n" +
@@ -160,7 +167,7 @@ func runLogs(cmd *cobra.Command, g *globalFlags, req logsRequest) error {
 			return fmt.Errorf("run %s has no task %q (tasks: %s)",
 				req.runID, req.taskID, joinTaskIDs(run))
 		}
-		return streamOneTaskLog(ctx, g, req, req.taskID, writer, false)
+		return streamOneTaskLog(ctx, cmd, g, req, req.taskID, writer, false)
 	}
 	if !req.follow {
 		// A replay of a whole run is sequential, so the output is the same on
@@ -178,7 +185,7 @@ func runLogs(cmd *cobra.Command, g *globalFlags, req logsRequest) error {
 				writer.composedHint(g.namespace, task, true)
 				continue
 			}
-			if err := streamOneTaskLog(ctx, g, req, taskID, writer, true); err != nil {
+			if err := streamOneTaskLog(ctx, cmd, g, req, taskID, writer, true); err != nil {
 				return err
 			}
 		}
@@ -190,6 +197,7 @@ func runLogs(cmd *cobra.Command, g *globalFlags, req logsRequest) error {
 // streamOneTaskLog follows or replays one task, writing through writer.
 func streamOneTaskLog(
 	ctx context.Context,
+	cmd *cobra.Command,
 	g *globalFlags,
 	req logsRequest,
 	taskID string,
@@ -200,17 +208,11 @@ func streamOneTaskLog(
 	if err != nil {
 		return err
 	}
-	stream, err := g.runClient().StreamTaskLogs(ctx, connect.NewRequest(
-		&orkstackv1.StreamTaskLogsRequest{
-			RunId:       req.runID,
-			TaskId:      taskID,
-			Attempt:     req.attempt,
-			FromSeq:     req.fromSeq,
-			FromAttempt: fromAttempt,
-			Follow:      req.follow,
-			Namespace:   g.namespace,
-			Item:        req.item,
-		}))
+	cursor := logCursor{attempt: fromAttempt, seq: req.fromSeq}
+	if req.follow {
+		return followOneTaskLog(ctx, cmd, g, req, taskID, writer, prefixed, cursor)
+	}
+	stream, err := g.runClient().StreamTaskLogs(ctx, connect.NewRequest(req.taskLogsRequest(g.namespace, taskID, cursor)))
 	if err != nil {
 		return rpcError("read task logs", err)
 	}
@@ -228,6 +230,117 @@ func streamOneTaskLog(
 		return rpcError("read task logs", err)
 	}
 	return nil
+}
+
+// taskLogsRequest is this request's read of one task from cursor.
+func (r logsRequest) taskLogsRequest(namespace, taskID string, cursor logCursor) *orkstackv1.StreamTaskLogsRequest {
+	return &orkstackv1.StreamTaskLogsRequest{
+		RunId:       r.runID,
+		TaskId:      taskID,
+		Attempt:     r.attempt,
+		FromSeq:     cursor.seq,
+		FromAttempt: cursor.attempt,
+		Follow:      r.follow,
+		Namespace:   namespace,
+		Item:        r.item,
+	}
+}
+
+// logCursor is how far a read has printed: the last chunk's sequence and the
+// attempt it counts in.
+type logCursor struct {
+	attempt int32
+	seq     int64
+}
+
+// errLogEndedEarly is a follow that ended with no `last` chunk, which is what
+// an engine older than this release answers when it stops under the stream.
+var errLogEndedEarly = errors.New("the stream ended before the task's log did")
+
+// followOneTaskLog follows one task, resuming as `run watch` does when the
+// engine goes away under it (engineInterrupted): any replica reads the same
+// chunks, and a sequence is dense and assigned once per attempt, so the cursor
+// makes the resume exact within an attempt.
+//
+// Across attempts the engine's answer would lose lines. A follow names the
+// latest attempt and the engine drops a cursor of another, so a task that
+// retried during the outage is served from the new try's first chunk, past the
+// unread tail of the try being read and any try between. So on a resumed read
+// the first chunk of a later attempt is not printed: the rest of the cursor's
+// attempt, and each attempt up to that one, is read as a replay first, and the
+// follow opens again on that one's first chunk. Before the first chunk printed
+// there is no cursor to protect: the read is still a first read, of the latest.
+func followOneTaskLog(
+	ctx context.Context,
+	cmd *cobra.Command,
+	g *globalFlags,
+	req logsRequest,
+	taskID string,
+	writer *logWriter,
+	prefixed bool,
+	cursor logCursor,
+) error {
+	resumes := 0          // resumes in a row that delivered no chunk
+	resumed := false      // this read has been cut once
+	catchUpTo := int32(0) // the attempt the follow moved to, while replaying up to it
+	for {
+		request := req.taskLogsRequest(g.namespace, taskID, cursor)
+		if catchUpTo > 0 {
+			request.Attempt, request.Follow = cursor.attempt, false
+		}
+		stream, err := g.runClient().StreamTaskLogs(ctx, connect.NewRequest(request))
+		reopen := false
+		if err == nil {
+			for !reopen && stream.Receive() {
+				chunk := stream.Msg()
+				switch {
+				case catchUpTo > 0 && chunk.GetLast():
+					cursor = logCursor{attempt: cursor.attempt + 1}
+					if cursor.attempt == catchUpTo {
+						catchUpTo = 0
+					}
+					reopen = true
+				case catchUpTo == 0 && resumed && req.attempt == 0 && cursor.attempt > 0 && chunk.GetAttempt() > cursor.attempt:
+					catchUpTo = chunk.GetAttempt()
+					reopen = true
+				case chunk.GetLast():
+					_ = stream.Close()
+					return writer.chunk(chunk, prefixed)
+				case chunk.GetAttempt() == cursor.attempt && chunk.GetSeq() <= cursor.seq:
+				default:
+					if err := writer.chunk(chunk, prefixed); err != nil {
+						_ = stream.Close()
+						return err
+					}
+					cursor, resumes = logCursor{attempt: chunk.GetAttempt(), seq: chunk.GetSeq()}, 0
+				}
+			}
+			err = stream.Err()
+			_ = stream.Close()
+			if reopen {
+				continue
+			}
+			if err == nil {
+				err = errLogEndedEarly
+			}
+		}
+		if ctx.Err() != nil {
+			return nil
+		}
+		if (!errors.Is(err, errLogEndedEarly) && !engineInterrupted(ctx, err)) || resumes >= watchResumeLimit {
+			return rpcError("read task logs", err)
+		}
+		delay := min(watchResumeDelay<<resumes, watchResumeMaxDelay)
+		resumes++
+		resumed = true
+		writer.note(cmd.ErrOrStderr(), "read task logs: the stream of task %s was interrupted (%s); resuming after chunk %d of attempt %d in %s (%d of %d)\n",
+			taskID, stepError(err), cursor.seq, cursor.attempt, delay, resumes, watchResumeLimit)
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(delay):
+		}
+	}
 }
 
 // followAllTaskLogs follows every task of a live run, including the ones that
@@ -276,7 +389,7 @@ func followAllTaskLogs(
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if err := streamOneTaskLog(ctx, g, req, taskID, writer, true); err != nil {
+			if err := streamOneTaskLog(ctx, cmd, g, req, taskID, writer, true); err != nil {
 				mu.Lock()
 				if firstErr == nil {
 					firstErr = err
@@ -289,17 +402,27 @@ func followAllTaskLogs(
 		start(taskID)
 	}
 
+	wait, interrupted := logDiscoveryInterval, 0
 	for !isRunTerminal(run) {
 		select {
 		case <-ctx.Done():
 			wg.Wait()
 			return nil
-		case <-time.After(logDiscoveryInterval):
+		case <-time.After(wait):
 		}
 		lookupCtx, cancelLookup := g.unaryContext(cmd)
 		resp, err := g.runClient().GetRun(lookupCtx, connect.NewRequest(
 			&orkstackv1.GetRunRequest{RunId: req.runID, Namespace: g.namespace}))
 		cancelLookup()
+		if err == nil {
+			wait, interrupted = logDiscoveryInterval, 0
+		} else if engineInterrupted(ctx, err) && interrupted < watchResumeLimit {
+			// The replica went away under this read as under the streams, and
+			// the same bound and waits apply.
+			wait = min(watchResumeDelay<<interrupted, watchResumeMaxDelay)
+			interrupted++
+			continue
+		}
 		if err != nil {
 			if ctx.Err() != nil {
 				break
@@ -335,6 +458,13 @@ type logWriter struct {
 	mu   sync.Mutex
 }
 
+// note writes a line about the read itself to stderr, between whole chunks.
+func (w *logWriter) note(stderr io.Writer, format string, args ...any) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	fmt.Fprintf(stderr, format, args...)
+}
+
 func (w *logWriter) chunk(chunk *orkstackv1.TaskLogChunk, prefixed bool) error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -343,7 +473,7 @@ func (w *logWriter) chunk(chunk *orkstackv1.TaskLogChunk, prefixed bool) error {
 		// line-oriented processor without waiting for the stream to end,
 		// which both a single enclosing document and an indented object
 		// would require.
-		encoded, err := api.MarshalJSON(chunk)
+		encoded, err := marshalCompactJSON(chunk)
 		if err != nil {
 			return err
 		}
@@ -466,19 +596,26 @@ func isRunTerminal(run *orkstackv1.Run) bool {
 // awaitTaskRuns re-reads a run until it has task runs, reaches a terminal
 // state, or ctx ends, and returns the last run it read.
 func awaitTaskRuns(ctx context.Context, cmd *cobra.Command, g *globalFlags, runID string) (*orkstackv1.Run, error) {
+	wait, interrupted := logDiscoveryInterval, 0
 	for {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
-		case <-time.After(logDiscoveryInterval):
+		case <-time.After(wait):
 		}
 		lookupCtx, cancelLookup := g.unaryContext(cmd)
 		resp, err := g.runClient().GetRun(lookupCtx, connect.NewRequest(
 			&orkstackv1.GetRunRequest{RunId: runID, Namespace: g.namespace}))
 		cancelLookup()
 		if err != nil {
+			if engineInterrupted(ctx, err) && interrupted < watchResumeLimit {
+				wait = min(watchResumeDelay<<interrupted, watchResumeMaxDelay)
+				interrupted++
+				continue
+			}
 			return nil, rpcError("read run", err)
 		}
+		wait, interrupted = logDiscoveryInterval, 0
 		run := resp.Msg.GetRun()
 		if len(run.GetTaskRuns()) > 0 || isRunTerminal(run) {
 			return run, nil

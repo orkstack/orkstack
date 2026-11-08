@@ -3,10 +3,11 @@ name: ci
 # The fast contributor path and the feature tier. No required check lives
 # here; the merge gate is `proof.yml`'s `proof` job (docs/PROOFS.md).
 #
-#   check    build, vet, lint (gofmt and staticcheck included) and the unit
-#            suites with -short: no Docker, under two minutes warm; cold,
-#            377 s was measured at four CPUs before staticcheck joined lint,
-#            and about twice that is estimated at two (docs/PROOFS.md §11.5).
+#   check    build, vet, lint (gofmt and staticcheck included), the unit
+#            suites with -short, and the UI's type-check and unit suite: no
+#            Docker, under two minutes warm; cold, 377 s was measured at four
+#            CPUs before staticcheck joined lint, and about twice that is
+#            estimated at two (docs/PROOFS.md §11.5).
 #   vuln     govulncheck over the module: the one job that needs the network
 #            (vuln.go.dev), so it is a job of its own and in no proof.
 #   proto    buf breaking: the proto contract against the first release,
@@ -33,7 +34,7 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 51
     permissions:
       contents: read
     steps:
@@ -45,6 +46,14 @@ jobs:
         timeout-minutes: 5
         with:
           go-version: "1.27.3"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        timeout-minutes: 5
+        with:
+          bun-version: "1.4.4"
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        timeout-minutes: 3
+        with:
+          node-version: "26.12.0"
       - name: check
         # Cold, two vCPUs: estimated at about 750 s before staticcheck, which
         # adds 6.6 CPU-minutes on a build cache that vet has warmed

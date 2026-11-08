@@ -93,6 +93,22 @@ func TestPinRunTreeLimits_PinsEveryCommandStreamNumber(t *testing.T) {
 	t.Logf("E2 run-tree limits: the top-level plan grows by %d bytes with continuation on", len(encoded)-len(before))
 }
 
+// TestPinRunTreeLimits_AsksForTheRootRun: every top-level plan asks its
+// children to record the chain's root, and a nested child plan does not carry
+// the ask: the engine copies it at the child's start, once per run tree.
+func TestPinRunTreeLimits_AsksForTheRootRun(t *testing.T) {
+	svc := NewService(Config{})
+	child := &engine.ChildRunPlan{RunID: "ork-1-1", Plan: engine.RunPlan{Namespace: "default"}}
+	plan := engine.RunPlan{Namespace: "default", Children: map[string]*engine.ChildRunPlan{"compose": child}}
+	svc.pinRunTreeLimits(&plan)
+	if !plan.RecordRootRun {
+		t.Error("the top-level plan does not ask for the root run")
+	}
+	if child.Plan.RecordRootRun || child.Plan.RootRunIndexed {
+		t.Error("the nested child plan carries the ask")
+	}
+}
+
 // TestPinRunTreeLimits_PinsThePinCreationTimeout: the top-level plan carries
 // the deployment's engine.pin_creation_timeout in whole seconds, always — the
 // default included, so a release that changes the default moves only new

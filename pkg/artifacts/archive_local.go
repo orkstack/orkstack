@@ -47,7 +47,7 @@ func NewLocalRunArchive(dir string) (*LocalRunArchive, error) {
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: local run archive: open %q: %w", abs, err)
 	}
-	for _, subdir := range []string{localTempDir, RunArchiveNamespace, RunIndexNamespace, RunOriginIndexNamespace, RunObjectRefNamespace, RunObjectListNamespace, RunCleanupNamespace} {
+	for _, subdir := range []string{localTempDir, RunArchiveNamespace, RunIndexNamespace, RunOriginIndexNamespace, RunRootIndexNamespace, RunObjectRefNamespace, RunObjectListNamespace, RunCleanupNamespace} {
 		if err := root.MkdirAll(subdir, localDirPerm); err != nil {
 			_ = root.Close()
 			return nil, fmt.Errorf("artifacts: local run archive: create %q: %w", subdir, err)
@@ -78,6 +78,10 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 		return err
 	}
 	originKey, hasOrigin, err := RunOriginIndexKey(rec)
+	if err != nil {
+		return err
+	}
+	rootKey, hasRoot, err := RunRootIndexKey(rec)
 	if err != nil {
 		return err
 	}
@@ -127,6 +131,11 @@ func (a *LocalRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if hasOrigin {
 		if err := a.writeAtomic(originKey, nil); err != nil {
 			return fmt.Errorf("artifacts: local archive run %q: write origin index: %w", rec.RunID, err)
+		}
+	}
+	if hasRoot {
+		if err := a.writeAtomic(rootKey, nil); err != nil {
+			return fmt.Errorf("artifacts: local archive run %q: write root index: %w", rec.RunID, err)
 		}
 	}
 	if err := a.writeAtomic(recentKey, nil); err != nil {

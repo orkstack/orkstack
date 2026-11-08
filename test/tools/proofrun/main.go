@@ -27,6 +27,7 @@
 //	proofrun runner-health  measure this runner against the floors and write runner-health.json
 //	proofrun rerun-plan   decide whether a completed proof run's failed jobs are worth a rerun
 //	proofrun job-log      bound a GitHub job log to what the merger and the rerun planner read
+//	proofrun pr-title     refuse a pull request title that is not a Conventional Commit
 //
 // Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation.
 package main
@@ -71,6 +72,7 @@ var subcommands = []subcommand{
 	{"runner-health", "measure this runner against the floors and write runner-health.json", cmdRunnerHealth},
 	{"rerun-plan", "decide whether the failed jobs of a completed proof run are worth an automatic rerun", cmdRerunPlan},
 	{"job-log", "bound a GitHub job log to what the merger and the rerun planner read from it", cmdJobLog},
+	{"pr-title", "refuse a pull request title that is not a Conventional Commit", cmdPRTitle},
 }
 
 func main() {

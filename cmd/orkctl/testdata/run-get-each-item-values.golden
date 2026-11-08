@@ -1,0 +1,9 @@
+
+ITEM  VALUES
+0     {"part":"a"}
+1     {"v":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx… (208 bytes; orkctl -n data run artifact download ork-each --task convert --item 1 --kind values --name values.json --output convert-1-values.json saves them whole)
+4     not shown (8192 bytes; orkctl -n data run artifact download ork-each --task convert --item 4 --kind values --name values.json --output convert-4-values.json saves them)
+5     {"esc":"\u009b31m\u001b]0;x\u0007"}
+6     not read (the stored values are not JSON; orkctl -n data run artifact download ork-each --task convert --item 6 --kind values --name values.json --output convert-6-values.json saves them)
+7     not read (read artifact: unavailable: the store\u001b[2J is down; orkctl -n data run artifact download ork-each --task convert --item 7 --kind values --name values.json --output convert-7-values.json saves them)
+8     not shown (20 bytes; orkctl -n data run artifact download ork-each --task convert --item 8 --kind values --name values.json --output convert-8-values.json saves them)

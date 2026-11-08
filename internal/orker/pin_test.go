@@ -417,7 +417,8 @@ func TestBoot_ReapsPinDirectoriesWhetherOrNotThisOrkerHostsPins(t *testing.T) {
 			// a workload can genuinely leave under the 1777 shared/ tree — which
 			// is why the reap needs the chmod-then-RemoveAll walk and not a
 			// plain RemoveAll.
-			stale, err := AcquirePin(workRoot, "ork-previous-life", "build", testInstanceID, 3600)
+			orkerID := "pin-boot-reap-" + t.Name()
+			stale, err := AcquirePin(workRoot, "ork-previous-life", "build", testInstanceID, 3600, orkerID)
 			if err != nil {
 				t.Fatalf("AcquirePin: %v", err)
 			}
@@ -436,7 +437,7 @@ func TestBoot_ReapsPinDirectoriesWhetherOrNotThisOrkerHostsPins(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = store.Close() })
 			replacement := NewActivitiesWithOptions(store, Options{
-				Runtime: &reapRecorder{}, WorkRoot: workRoot, MaxPins: maxPins,
+				Runtime: &reapRecorder{}, WorkRoot: workRoot, MaxPins: maxPins, OrkerID: orkerID,
 			})
 			if err := replacement.Boot(context.Background()); err != nil {
 				t.Fatalf("Boot: %v", err)
@@ -460,12 +461,12 @@ func TestBoot_ReapsPinDirectoriesWhetherOrNotThisOrkerHostsPins(t *testing.T) {
 // malformed instance id is refused before anything is touched.
 func TestReleasePinActivity_RemovesTheRightDirectoryAndIsIdempotent(t *testing.T) {
 	workRoot := t.TempDir()
-	target, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600)
+	target, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600, "")
 	if err != nil {
 		t.Fatalf("AcquirePin: %v", err)
 	}
 	const siblingInstance = "bbbbbbbb-1111-2222-3333-444444444444"
-	bystander, err := AcquirePin(workRoot, "ork-1", "test", siblingInstance, 3600)
+	bystander, err := AcquirePin(workRoot, "ork-1", "test", siblingInstance, 3600, "")
 	if err != nil {
 		t.Fatalf("AcquirePin: %v", err)
 	}

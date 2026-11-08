@@ -468,7 +468,7 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
   name: string;
 
   /**
-   * semantic or content hash
+   * the author's own, or assigned at first apply (a UUIDv7 in lowercase base32, or a content hash on an older version)
    *
    * @generated from field: string version = 2;
    */
@@ -559,8 +559,8 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
    * template over .inputs and .tasks.<id>.output, rendered ONCE, by the
    * engine, when a run succeeds; every value renders to a string. When
    * non-empty the rendered map IS Run.output, and is what a composing
-   * parent's task receives as its values. When empty, Run.output keeps the
-   * leaf aggregation it has always had, and a composing parent's task
+   * parent's task receives as its values. When empty, Run.output is the
+   * values of the tasks no other task needs, and a composing parent's task
    * receives {}. Part of canonicalOrkflow only when non-empty (see pins).
    *
    * @generated from field: map<string, string> outputs = 12;

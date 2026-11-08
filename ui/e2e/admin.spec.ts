@@ -786,8 +786,10 @@ test('a delete holding an orkflow is refused naming the count, and default remai
 	await page.goto(adminNamespaceUrl(UI_ORIGIN, HOLDS_NS));
 	const row = page.getByTestId(`namespace-row-${HOLDS_NS}`);
 	await expect(row).toBeVisible();
+	await expect(row.getByTestId(`namespace-delete-${HOLDS_NS}`).locator('svg use')).toHaveAttribute('href', '#i-trash');
 	await row.getByTestId(`namespace-delete-${HOLDS_NS}`).click();
 	await expect(page.getByTestId('namespace-delete-confirm')).toBeVisible();
+	await expect(page.getByTestId('namespace-delete-confirm-accept').locator('svg use')).toHaveAttribute('href', '#i-trash');
 	await page.getByTestId('namespace-delete-confirm-accept').click();
 
 	const error = page.getByTestId('namespace-delete-confirm-error');
@@ -884,8 +886,8 @@ test('pool health is namespace-scoped, and reports live Orker counts for every p
 	note(`namespace ${OPS_NS} widened to allow deaf, a live poller that runs no activities`);
 
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=${OPS_NS}`);
-	await expect(page.getByTestId('pools-scope-caption')).toContainText(OPS_NS);
-	await expect(page.getByTestId('pools-scope-caption')).toContainText('Where a task of namespace');
+	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText(OPS_NS);
+	await expect(page.getByTestId('pools-scope-caption')).toContainText('Where a task can run');
 
 	// main: a live Orker really is polling for it, and it is the default.
 	const mainCard = page.getByTestId('pool-card-main');

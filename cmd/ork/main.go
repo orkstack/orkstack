@@ -33,6 +33,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	archivecleanup "github.com/orkstack/orkstack/internal/archive"
+	"github.com/orkstack/orkstack/internal/buildinfo"
 	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -465,6 +466,11 @@ func artifactLocation(cfg artifacts.Config) string {
 // variable name, as cmd/orkctl/version.go.
 var version = "dev"
 
+// commit is the commit this binary was built from: -ldflags
+// "-X main.commit=<sha>" on a release build, empty otherwise. `ork --version`
+// reports it (internal/buildinfo). Same variable name as cmd/orkctl/version.go.
+var commit string
+
 // engineVersion resolves what this binary calls itself, most deliberate
 // first: the ldflags stamp, then the version the module was built as (set for
 // `go install module@version`), then the source revision a VCS-stamped build
@@ -579,6 +585,15 @@ func main() {
 	requested, argsErr := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv)
 	if argsErr == nil && requested.Defaults {
 		fmt.Print(cfgfile.RenderDefaults())
+		os.Exit(0)
+	}
+	// --version asks nothing of the configuration or the cluster, for the
+	// same reason.
+	if argsErr == nil && requested.Version {
+		if err := buildinfo.Write(os.Stdout, "ork", engineVersion(), commit); err != nil {
+			fmt.Fprintf(os.Stderr, "ork: %v\n", err)
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -734,12 +749,14 @@ func eventWorkerOptions(config) worker.Options {
 
 // installServerShutdownContext gives all HTTP handlers a shared lifetime and
 // cancels it when Shutdown begins. Long-lived Connect and WebSocket streams
-// then return before http.Server waits for active connections to drain.
+// then return before http.Server waits for active connections to drain, and
+// the cause tells them to answer that the replica is stopping, not that they
+// reached their end.
 func installServerShutdownContext(server *http.Server) context.CancelFunc {
-	handlerCtx, cancel := context.WithCancel(context.Background())
+	handlerCtx, cancel := context.WithCancelCause(context.Background())
 	server.BaseContext = func(net.Listener) context.Context { return handlerCtx }
-	server.RegisterOnShutdown(cancel)
-	return cancel
+	server.RegisterOnShutdown(func() { cancel(api.ErrEngineStopping) })
+	return func() { cancel(nil) }
 }
 
 // bindAndServe binds server.Addr synchronously — so a port already in use,
@@ -766,6 +783,20 @@ func bindAndServe(server *http.Server, logger *slog.Logger, serverErr chan<- err
 		serverErr <- nil
 	}()
 	return ln, nil
+}
+
+// checkStoreCredentials stops the boot on object-store credentials the engine
+// could never sign with: half a key, or no key and nothing in the default
+// credential chain. The engine's store is S3 whatever the artifact backend says
+// (openOrkflowStore), so it is always asked. Only the credential's source is
+// logged, never the credential.
+func checkStoreCredentials(ctx context.Context, logger *slog.Logger) error {
+	source, err := artifacts.ResolveS3Credentials(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return err
+	}
+	logger.Info("object store credentials resolved", "source", source)
+	return nil
 }
 
 // openOrkflowStore connects the engine to the bucket that holds orkflow
@@ -1003,6 +1034,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	logger.Info("web UI", "source", uiSource, "dir", cfg.ui.dir)
 
+	if err := checkStoreCredentials(ctx, logger); err != nil {
+		return err
+	}
 	namespaces, err := openNamespaceStore(ctx, logger)
 	if err != nil {
 		return err
@@ -1058,10 +1092,20 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			"consequence", "filtering runs by origin walks the whole index",
 			"error", err)
 	}
+	// The root index is a third answer, for the same reason: a cluster at its
+	// limit of custom attributes keeps the two it already has.
+	rootIndexed, err := task.EnsureRunRootSearchAttribute(ctx, temporalClient, cfg.temporalNamespace)
+	if err != nil {
+		logger.Warn("visibility does not index a run's composed chain",
+			"search_attribute", task.SearchAttrOrkflowOriginRootRunId,
+			"consequence", "filtering runs by root run walks the whole index",
+			"error", err)
+	}
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace,
 		"run_namespace_index", namespaceIndexed,
-		"run_origin_index", originIndexed)
+		"run_origin_index", originIndexed,
+		"run_root_index", rootIndexed)
 
 	// Every read is answered by Temporal and the archive (AGENTS.md §7), so
 	// the bus and the store are write-side helpers here: each forgets a run
@@ -1205,7 +1249,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		WithSnapshotStore(snapshots).
 		WithBaseCache(snapshotBases).
 		WithNamespaceIndex(namespaceIndexed).
-		WithOriginIndex(originIndexed)
+		WithOriginIndex(originIndexed).
+		WithRootIndex(rootIndexed)
 
 	// The retention policy store and controller: the deployment's maximum run
 	// retention (never a user-facing Temporal setting, AGENTS.md §7) and the
@@ -1353,6 +1398,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker).
 		WithNamespaceIndex(namespaceIndexed).
 		WithOriginIndex(originIndexed).
+		WithRootIndex(rootIndexed).
 		// What the client was dialed with: a cancellation that records who
 		// asked names them on the cluster itself (TemporalStarter.CancelRun).
 		WithClusterIdentity(cfg.temporalNamespace, clusterIdentity)

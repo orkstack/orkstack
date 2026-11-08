@@ -202,7 +202,7 @@ func TestParseInterfaceDocument_Refuses(t *testing.T) {
 		{"an alias", header + "fields:\n  a: &shared\n    type: string\n  b: *shared\n", `not allowed`},
 		{"a merge key", header + "fields:\n  a:\n    <<: {type: string}\n", `merge key`},
 		{"a tag", header + "fields:\n  a:\n    type: !!str string\n", `the tag !!str is not allowed`},
-		{"a second document", header + "---\n" + header, `one activity interface per file: a second YAML document (---) is not allowed`},
+		{"a second document", header + "---\n" + header, `line 3: one activity interface per file: a second YAML document begins here`},
 		{"a type outside the vocabulary", header + "fields:\n  a:\n    type: text\n", `fields.a: type "text" is not one of string, number, boolean, object, array`},
 		{"a field with no type", header + "fields:\n  a:\n    required: true\n", `fields.a: type "" is not one of`},
 		{"required and default", header + "fields:\n  a:\n    type: string\n    required: true\n    default: x\n", `fields.a: required and default contradict`},

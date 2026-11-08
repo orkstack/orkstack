@@ -16,14 +16,13 @@ OrkStack's processes on the host for working on them.
 
 ## What you need
 
-- **Docker** with Compose v2: Docker Engine, or Docker Desktop. The stack
-  builds and runs in containers, and so does every task.
+- **Docker** with Compose v2. The stack builds and runs in containers, and so
+  does every task.
 - **git**, to clone the repository.
 
 Nothing else: no toolchain and no database of its own. OrkStack runs on a
 Temporal cluster and S3-compatible object storage, and the quickstart starts
-one of each. This page is checked on Linux with Docker Engine, on amd64; Docker
-Desktop on macOS and Windows, and arm64, are not checked yet.
+one of each.
 
 ## 1. Clone the repository
 
@@ -160,7 +159,7 @@ under Inspect its values and artifacts.
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../site/public/media/ui-run-finished-dark-2x.webp">
-  <img alt="The merge task of a finished each-fan-out run selected on the run page: its row and log in the Tasks card, and beside them its card with its attempts, Orker, pool, what it reserved, its timing and its phases." src="../site/public/media/ui-run-finished-light-2x.webp" width="880">
+  <img alt="The merge task of a finished each-fan-out run selected on the run page: under its row in the Tasks card, its attempts, Orker, pool, what it reserved, its timing, its phases and its log." src="../site/public/media/ui-run-finished-light-2x.webp" width="880">
 </picture>
 </p>
 

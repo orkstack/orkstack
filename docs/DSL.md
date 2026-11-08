@@ -11,7 +11,7 @@ applied to the `ork` engine with `orkctl apply`.
 | `kind`        | yes      | Exactly `Orkflow`; an automation document says `Automation`. |
 | `namespace`   | no       | Slug scope; absent means the built-in `default`.        |
 | `name`        | yes      | Slug identifier, unique within its namespace.           |
-| `version`     | no       | Author-pinned version; defaults to the source's hash.  |
+| `version`     | no       | Author-pinned version; absent, the first apply assigns one. |
 | `description` | no       | Human description.                                     |
 | `labels`      | no       | Free-form `map[string]string` for organization and filtering (see "Labels"). |
 | `inputs`      | no       | Declared input parameters (see below).                 |
@@ -54,11 +54,10 @@ Write the two lines as the document's first YAML lines. Comments may stand
 above or below them; the compiler accepts the two keys anywhere at the top
 level, quoted or not.
 
-The header is part of the source. A derived version, the check that decides
-whether an apply repeats a stored version, and the digest of an unpinned
-document all cover it, so moving or reformatting it is an edit like any other:
-an unpinned document gets a new version, and a pinned one is refused as a
-rewrite.
+The header is part of the source. The check that decides whether an apply
+repeats a stored version, and whether an unpinned document already has one, covers
+it, so moving or reformatting it is an edit like any other: an unpinned document
+gets a new version, and a pinned one is refused as a rewrite.
 
 ### What an Orkflow does not declare
 
@@ -149,7 +148,10 @@ The UI's YAML editor — the Apply page, an Orkflow's Edit tab and
 Admin → Automation — uses the same Orkflow and Automation schemas, which the
 generator also writes to `ui/src/lib/schemas/` (the UI is built from `ui/`
 alone; `TestSchemas_AreGenerated` refuses a stale copy and
-`ui/test/yamlSchemaSource.test.ts` one that differs from `docs/schemas/`). It
+`ui/test/yamlSchemaSource.test.ts` one that differs from `docs/schemas/`), and
+whose validators `cd ui && bun run gen:validators` compiles ahead of time, so
+the page runs no eval (`TestSchemas_ValidatorsAreCurrent` and
+`ui/test/yamlValidators.test.ts` refuse stale ones). It
 underlines a schema finding on its line as the document is typed, and asks the
 engine (`ValidateOrkflow`, or a plan for an automation document) once typing
 pauses, for everything the schema cannot express — the strict YAML-to-JSON
@@ -208,19 +210,33 @@ orkctl apply deploy.ork.yaml     # unchanged file: no new version, nothing writt
 orkctl apply deploy.ork.yaml     # edited file:    a new version
 ```
 
-`version:` is optional. When a document pins none, the compiler derives one
-from the source itself: the sha256 of the bytes that version is stored with,
-the header included. So editing and applying produces a new version without
-anybody inventing a number, and re-applying an unchanged file produces the same
-version and writes nothing. A version names the document a reader opens,
-comments and header included — a comment-only edit, or a moved header, is a
-new version, because what is stored changed.
+`version:` is optional. When a document pins none, its first apply assigns one:
+a UUIDv7 in lowercase base32, 26 characters such as
+`01h455vb4pex5vsknk084sn02q`. So editing and applying produces a new version without anybody inventing a number,
+and re-applying an unchanged file lands on the version it already has and writes
+nothing, from any replica, because the version is found by a hash of the document
+and the images it resolved to. Two applies of one new file at the same moment end
+on one version. A version names the document a reader opens, comments and header
+included — a comment-only edit, or a moved header, is a new version, because what
+is stored changed. A version an earlier release stored as a sha256 hash stays
+valid: re-applying its file still writes nothing, and an edit lands a new version
+beside it.
+
+Validating or planning a file stores nothing, so it reports the version the file
+already has, and none when the file was never applied: `orkctl orkflow validate`
+prints `new version, assigned when applied`, and `version` and
+`definition_digest` are empty in its JSON and in `run plan --file --json`. A
+container needs both, so `orkctl task run --file` of such a file runs under the
+document's content hash and the digest that covers it, and stores nothing.
+
+`docs/STORAGE.md`, "Invariants the layout carries", names the three cases where
+the same content can hold two versions.
 
 Pinning one takes that decision back: the number is yours, and applying a
 **changed** document under a version that is already stored is refused
 (`already_exists`), because a run pinned to it is still reading those bytes.
 The fix is a new version rather than a force — bump `version:`, or drop it and
-let the source name one.
+let the apply assign one.
 
 ### Which version runs
 
@@ -293,7 +309,7 @@ and gives every declared input and output a finding:
 | neither version declares `outputs:`, or only the newer one does | unknown |
 
 An orkflow with no `outputs:` declares no return contract — a run's output is
-then every leaf task's values, an accident of graph shape — so its output side
+then the values of the tasks no other task needs, an accident of graph shape — so its output side
 is **unknown**, never compatible. A version string is a name: `3.0.0` gets no
 pass for being a major bump; the declarations decide.
 
@@ -398,8 +414,9 @@ string.
   without the interface it declares.
 
 An Orkflow that declares no `outputs:` (absent and `{}` are one value) has no
-return contract: its run's output is every leaf task's inline values, keyed
-by task id — an accident of graph shape that adding a task changes — and an
+return contract: its run's output is the inline values of the tasks no other
+task needs, keyed by task id (a failure handler's `needs` do not count) — an
+accident of graph shape that adding a task changes — and an
 Orkflow composing it receives `{}`.
 
 ## Tasks
@@ -1020,7 +1037,7 @@ fails the run:
 | code | category | when |
 |---|---|---|
 | `PIN_UNAVAILABLE` | `InfrastructureError` | every pin host of the pool stayed full (or cordoned) for the whole pin creation timeout, **5 minutes** by default (`engine.pin_creation_timeout`, [DEPLOY.md](./DEPLOY.md) §1). Only the task whose readiness asked for the pin fails; it never reached an Orker, so its `scheduled_at` and `started_at` stay unset. |
-| `PIN_HOST_LOST` | `InfrastructureError` | the host stopped heartbeating the pin (noticed within the 30-second heartbeat timeout) before the pin's lifetime ran out. Every member running at that moment is `FAILED` with this code — never `CANCELED`, because the platform lost it — and members not yet started are `CANCELED`. A member that already committed stays `SUCCEEDED`. |
+| `PIN_HOST_LOST` | `InfrastructureError` | the run lost contact with the host: it stopped heartbeating the pin, or the cluster stopped hearing from it (noticed within the 30-second heartbeat timeout) before the pin's lifetime ran out. Every member running at that moment is `FAILED` with this code — never `CANCELED`, because the platform lost it — and members not yet started are `CANCELED`. A member that already committed stays `SUCCEEDED`. |
 | `PIN_TIMEOUT` | `TimedOut` | the pin was open for at least its lifetime (`timeout_seconds`, or the derived sum). Members still running are stopped with it, as above. |
 
 A pool with **no** pin host at all is refused at submit instead (above), so
@@ -1784,8 +1801,11 @@ How each node reads:
     the two lines; a missing one is refused naming the line to add; another
     `apiVersion` names `orkstack/v1` (field `apiVersion`); another `kind`
     names the kinds there are, and `kind: Automation` or
-    `kind: ActivityInterface` says where that document goes (field `kind`). No read path compiles a stored
-    source, so the rule applies when a document is applied, never again.
+    `kind: ActivityInterface` says where that document goes (field `kind`). A
+    file holds one YAML document: a second, even one that is empty or does not
+    parse, is refused before this, naming its line, and `orkctl` names the file
+    too. No read path compiles a stored source, so the rule applies when a
+    document is applied, never again.
 46. `inputs`, every `tasks[i].with` and every `tasks[i].await.schema` are
     authored data, converted to JSON by the strict mapping (`docs/JSON.md`,
     "Data written in an authored document"): each is a mapping (or absent, or

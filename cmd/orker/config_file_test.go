@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"log/slog"
@@ -110,6 +111,7 @@ func TestApplyConfigFile_PerBinaryAdminAddr(t *testing.T) {
 
 func TestApplyConfigFile_Check(t *testing.T) {
 	t.Setenv("ORK_LOG_FORMAT", "json") // guarantees at least one origin=env line
+	unsetenvT(t, "ORK_S3_SECRET_KEY")  // so the file's value is the one reported
 	path := writeTempConfig(t, "cfg.yaml",
 		"storage:\n  s3:\n    secret_key: super-secret\n")
 
@@ -222,5 +224,29 @@ func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
 	}
 	if err := opts.Policy.AllowsSecretSource("file:" + sibling); err != nil {
 		t.Errorf("AllowsSecretSource(file:%s) = %v, want a file beside them permitted", sibling, err)
+	}
+}
+
+// TestStart_VersionReadsNoConfiguration: --version answers even where the
+// configuration could not be read, and starts nothing.
+func TestStart_VersionReadsNoConfiguration(t *testing.T) {
+	lookup := func(key string) (string, bool) {
+		if key == cfgfile.ConfigFileVar {
+			return filepath.Join(t.TempDir(), "missing.yaml"), true
+		}
+		return "", false
+	}
+	serve := func(*slog.Logger, telemetry.Config, *telemetry.Sinks, config) error {
+		t.Error("--version started the Orker")
+		return nil
+	}
+	var stdout, stderr bytes.Buffer
+	if exit := start([]string{"--version"}, lookup, setenvT(t), &stdout, &stderr, serve); exit != 0 {
+		t.Fatalf("exit %d, stderr %q", exit, stderr.String())
+	}
+	for _, want := range []string{"orker:", "commit:"} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Errorf("stdout %q does not say %s", stdout.String(), want)
+		}
 	}
 }

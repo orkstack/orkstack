@@ -2,6 +2,7 @@ package engine_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/mock"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -329,12 +332,53 @@ func TestRunWorkflow_ACarriedGenerationKeepsThePinCreationDecision(t *testing.T)
 	budget := engine.DefaultContinuationBudget(1, 1<<40, time.Hour)
 	plan.Continuation = &budget
 
+	// The run's one idle point comes after gap, and only once the first pin
+	// has finished closing (its ReleasePin and then the session's
+	// completion). The test environment runs activities concurrently, so the
+	// close could still be running when gap ended: the run then opened the
+	// second pin and finished without ever being idle (a loaded CI runner).
+	// The order is therefore fixed, never left to the scheduler: the first
+	// pin's release waits until gap has started, so gap is always in flight
+	// while the pin closes, and gap waits until the session's completion has
+	// returned. Every wait has a deadline.
+	gapStarted, firstClosed := make(chan struct{}), make(chan struct{})
+	var startOnce, closeOnce sync.Once
+	defer startOnce.Do(func() { close(gapStarted) }) // never leave a release blocked past the test
 	g := runGenerations(t, "run-carried-pins", compile(t, twoPinsDocument), payload(t, nil), plan,
 		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			if in.GetTaskId() == "gap" {
+				startOnce.Do(func() { close(gapStarted) })
+				select {
+				case <-firstClosed:
+				case <-time.After(10 * time.Second):
+					return nil, errors.New("the first pin never finished closing")
+				}
+			}
 			return succeeded(in.TaskId, map[string]any{"ok": true}), nil
 		},
 		func(h *harness, _ int) {
-			enablePins(h, worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}})
+			h.env.SetWorkerOptions(testWorkerOptions(worker.Options{
+				EnableSessionWorker: true,
+				Interceptors:        []interceptor.WorkerInterceptor{capture},
+			}))
+			h.env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.ReleasePinInput) error {
+				if in.GetPin().GetName() == "first" {
+					select {
+					case <-gapStarted:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+				h.mu.Lock()
+				h.released = append(h.released, in)
+				h.mu.Unlock()
+				return nil
+			}, activity.RegisterOptions{Name: task.ActivityReleasePin})
+			h.env.SetOnActivityCompletedListener(func(info *activity.Info, _ converter.EncodedValue, err error) {
+				if info.ActivityType.Name == sessionCompletionActivityName && err == nil {
+					closeOnce.Do(func() { close(firstClosed) })
+				}
+			})
 		})
 	if g.err != nil {
 		t.Fatalf("the run ended with %v", g.err)

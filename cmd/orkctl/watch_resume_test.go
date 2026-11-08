@@ -56,6 +56,9 @@ type scriptedStream struct {
 	end    error
 	stall  bool
 	reset  bool
+	// raw answers the call at the HTTP layer instead, for an end the Connect
+	// handler cannot produce. It may be only the script's first entry.
+	raw func(s *resumingRuns, w http.ResponseWriter, r *http.Request)
 }
 
 // resumingRuns answers StreamEvents from a script, one entry per call (the
@@ -64,12 +67,32 @@ type scriptedStream struct {
 type resumingRuns struct {
 	orkstackv1connect.UnimplementedRunServiceHandler
 	script []scriptedStream
-	// reset resets every connection the server holds, and closeWrite ends
-	// each with a FIN; watchAgainst sets both.
-	reset, closeWrite func()
+	// reset resets every connection the server holds, closeWrite ends each
+	// with a FIN, and goAway sends a GOAWAY on each and then ends it with a
+	// FIN; watchAgainst sets all three.
+	reset, closeWrite, goAway func()
+	// runStatuses are GetRun's answers, one per call (the last repeats); none
+	// is one succeeded run. A status of unspecified answers with getRunErr.
+	runStatuses []orkstackv1.Status
+	getRunErr   error
 
-	mu    sync.Mutex
-	froms []int64
+	mu       sync.Mutex
+	froms    []int64
+	getCalls int
+}
+
+// serveRaw answers the first call from the script's raw entry, when it has one.
+func (s *resumingRuns) serveRaw(w http.ResponseWriter, r *http.Request) bool {
+	s.mu.Lock()
+	first := len(s.froms) == 0 && s.script[0].raw != nil
+	if first {
+		s.froms = append(s.froms, 0)
+	}
+	s.mu.Unlock()
+	if first {
+		s.script[0].raw(s, w, r)
+	}
+	return first
 }
 
 func (s *resumingRuns) StreamEvents(
@@ -106,8 +129,18 @@ func (s *resumingRuns) GetRun(
 	context.Context,
 	*connect.Request[orkstackv1.GetRunRequest],
 ) (*connect.Response[orkstackv1.GetRunResponse], error) {
+	s.mu.Lock()
+	status := orkstackv1.Status_STATUS_SUCCEEDED
+	if len(s.runStatuses) > 0 {
+		status = s.runStatuses[min(s.getCalls, len(s.runStatuses)-1)]
+	}
+	s.getCalls++
+	s.mu.Unlock()
+	if status == orkstackv1.Status_STATUS_UNSPECIFIED {
+		return nil, s.getRunErr
+	}
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: &orkstackv1.Run{
-		Id: resumeRunID, Status: orkstackv1.Status_STATUS_SUCCEEDED}}), nil
+		Id: resumeRunID, Status: status}}), nil
 }
 
 func (s *resumingRuns) calls() []int64 {
@@ -142,14 +175,24 @@ func watchAgainstTo(t *testing.T, handler *resumingRuns, out io.Writer, args ...
 
 	path, h := orkstackv1connect.NewRunServiceHandler(handler)
 	mux := http.NewServeMux()
-	mux.Handle(path, h)
+	mux.Handle(path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/StreamEvents") && handler.serveRaw(w, r) {
+			return
+		}
+		h.ServeHTTP(w, r)
+	}))
 	server := httptest.NewUnstartedServer(mux)
 	server.Config.Protocols = new(http.Protocols)
 	server.Config.Protocols.SetHTTP1(true)
 	server.Config.Protocols.SetUnencryptedHTTP2(true)
-	listener := &resetListener{Listener: server.Listener}
+	listener := &resetListener{Listener: server.Listener, goAwaySeen: make(chan struct{})}
 	server.Listener = listener
 	handler.reset, handler.closeWrite = listener.reset, listener.closeWrite
+	handler.goAway = func() {
+		go func() { _ = server.Config.Shutdown(context.Background()) }()
+		<-listener.goAwaySeen
+		listener.closeWrite()
+	}
 	server.Start()
 	t.Cleanup(server.Close)
 
@@ -329,7 +372,9 @@ func TestRunWatch_AnEventResetsTheResumeBound(t *testing.T) {
 }
 
 func TestRunWatch_OtherStreamErrorsAreNotResumed(t *testing.T) {
-	for _, code := range []connect.Code{connect.CodeInternal, connect.CodeNotFound, connect.CodeDeadlineExceeded} {
+	// INTERNAL and UNKNOWN are the codes a connection's end reaches orkctl
+	// with: said by the engine in the stream's end message, they end the watch.
+	for _, code := range []connect.Code{connect.CodeInternal, connect.CodeUnknown, connect.CodeNotFound, connect.CodeDeadlineExceeded} {
 		t.Run(code.String(), func(t *testing.T) {
 			handler := &resumingRuns{script: []scriptedStream{
 				{send: []int64{1}, end: connect.NewError(code, errors.New("no"))},
@@ -348,6 +393,86 @@ func TestRunWatch_OtherStreamErrorsAreNotResumed(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A replica shutting down ends its streams cleanly on a run that has not
+// ended. The run's status says so, and the watch resumes rather than report
+// a live run as finished.
+func TestRunWatch_ResumesAStreamThatEndsWhileTheRunIsLive(t *testing.T) {
+	for _, status := range []orkstackv1.Status{orkstackv1.Status_STATUS_RUNNING, orkstackv1.Status_STATUS_PENDING, orkstackv1.Status_STATUS_AWAITING} {
+		t.Run(status.String(), func(t *testing.T) {
+			handler := &resumingRuns{
+				script:      []scriptedStream{{send: []int64{1, 2}}, {send: []int64{3, 4, 5}}},
+				runStatuses: []orkstackv1.Status{status, orkstackv1.Status_STATUS_SUCCEEDED},
+			}
+			outcome := watchAgainst(t, handler)
+			outcome.requireExit(t, exitOK)
+			requireSequences(t, printedSequences(t, outcome.stdout), 1, 2, 3, 4, 5)
+			if got := handler.calls(); len(got) != 2 || got[1] != 2 {
+				t.Fatalf("from_sequence per stream = %v, want [0 2]", got)
+			}
+			if strings.Contains(outcome.stdout, statusLabel(status)) {
+				t.Fatalf("the watch reported the live run as finished:\n%s", outcome.stdout)
+			}
+			lines := resumeLines(outcome.stderr)
+			if len(lines) != 1 || !strings.Contains(lines[0], "the stream ended with the run still "+statusLabel(status)) {
+				t.Fatalf("resume lines = %v", lines)
+			}
+		})
+	}
+}
+
+// An engine whose streams keep ending on a live run is reported, not retried
+// for ever, and --json still prints one whole document.
+func TestRunWatch_LiveRunResumeIsBounded(t *testing.T) {
+	handler := &resumingRuns{
+		script:      []scriptedStream{{send: nil}},
+		runStatuses: []orkstackv1.Status{orkstackv1.Status_STATUS_RUNNING},
+	}
+	outcome := watchAgainst(t, handler, "--json")
+	outcome.requireExit(t, exitError)
+	if got := handler.calls(); len(got) != 1+watchResumeLimit {
+		t.Fatalf("streams opened = %d, want %d", len(got), 1+watchResumeLimit)
+	}
+	if want := "Error: watch run: the stream ended with the run still RUNNING"; !strings.Contains(outcome.stderr, want) {
+		t.Fatalf("stderr = %q, want %q", outcome.stderr, want)
+	}
+	if !json.Valid([]byte(outcome.stdout)) {
+		t.Fatalf("stdout does not parse:\n%s", outcome.stdout)
+	}
+}
+
+// The final GetRun meets the same engine going away: an interrupted answer is
+// resumed, and any other ends the watch naming it.
+func TestRunWatch_FinalGetRunAnswer(t *testing.T) {
+	t.Run("interrupted", func(t *testing.T) {
+		handler := &resumingRuns{
+			script:      []scriptedStream{{send: []int64{1, 2, 3, 4, 5}}},
+			runStatuses: []orkstackv1.Status{orkstackv1.Status_STATUS_UNSPECIFIED, orkstackv1.Status_STATUS_SUCCEEDED},
+			getRunErr:   resumeUnavailable,
+		}
+		outcome := watchAgainst(t, handler)
+		outcome.requireExit(t, exitOK)
+		requireSequences(t, printedSequences(t, outcome.stdout), 1, 2, 3, 4, 5)
+		if lines := resumeLines(outcome.stderr); len(lines) != 1 {
+			t.Fatalf("resume lines = %v, want one", lines)
+		}
+	})
+	t.Run("refused", func(t *testing.T) {
+		handler := &resumingRuns{
+			script:      []scriptedStream{{send: []int64{1, 2, 3, 4, 5}}},
+			runStatuses: []orkstackv1.Status{orkstackv1.Status_STATUS_UNSPECIFIED},
+			getRunErr:   connect.NewError(connect.CodeNotFound, errors.New("no such run")),
+		}
+		outcome := watchAgainst(t, handler)
+		outcome.requireExit(t, exitError)
+		if want := "Error: get run: not_found: no such run"; !strings.Contains(outcome.stderr, want) {
+			t.Fatalf("stderr = %q, want %q", outcome.stderr, want)
+		}
+		if lines := resumeLines(outcome.stderr); len(lines) != 0 {
+			t.Fatalf("resume lines = %v, want none", lines)
+		}
+	})
 }
 
 // TestRunWatch_ShowsAGapAndReachesTheRunsEnd: numbers the run never published

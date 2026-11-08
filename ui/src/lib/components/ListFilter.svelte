@@ -17,7 +17,6 @@
 	// verbatim by the page — one validator, so the two clients cannot disagree.
 	import type { Snippet } from 'svelte';
 	import type { DescMessage } from '@bufbuild/protobuf';
-	import CliEquivalent from './CliEquivalent.svelte';
 	import Icon from './Icon.svelte';
 	import Select from './Select.svelte';
 	import { sinceInputValue } from '#lib/browsing.ts';
@@ -26,7 +25,6 @@
 		OPERATOR_LABELS,
 		escapeValue,
 		fieldOf,
-		filterFlags,
 		filterOf,
 		specFor,
 		utcInstant,
@@ -41,22 +39,15 @@
 		applied: FieldFilter[];
 		/** testid prefix: 'namespaces' → namespaces-filters, namespaces-filter-field-0, … */
 		testid: string;
-		/** The command before its flags, each word already shell-safe: ['orkctl', 'namespace', 'list']. */
-		command: string[];
 		/** Navigate to the list with these filters, on a first page. */
 		onapply: (filters: FieldFilter[]) => void;
 		/** The list's address with no filters, no cursor, the same size. */
 		clearHref: string;
 		/** Controls applied with the same submit (page size). */
 		children?: Snippet;
-		/**
-		 * Draws the form's own command-line popover. A page whose header
-		 * already has one (Runs) folds the filtered command into it instead.
-		 */
-		cli?: boolean;
 	}
 
-	let { request, applied, testid, command, onapply, clearHref, children, cli: showCli = true }: Props = $props();
+	let { request, applied, testid, onapply, clearHref, children }: Props = $props();
 
 	const spec = $derived(specFor(request));
 
@@ -179,19 +170,18 @@
 		const ops = field ? field.operators : [row.op];
 		return ops.map((op) => ({ value: String(op), label: OPERATOR_LABELS[op] }));
 	}
-	const cli = $derived([...command, ...filterFlags(applied)].join(' '));
-
 	const inputClass = 'field h-8.5 px-3 text-dense';
 </script>
 
 <!--
 	One toolbar: each filter in force (or being written) is a compact group
 	of its own controls — field, operator, value, remove — and after them Add
-	filter, the page's own controls (page size), Apply and the CLI twin, on
-	one line where they fit. With no filter it is one row; the list below
-	starts right under it.
+	filter, the page's own controls (page size) and Apply, on one line where
+	they fit. With no filter it is one row; the list below starts right under
+	it. The filtered command is in the page's one terminal icon, built with
+	filterFlags.
 -->
-<form role="search" class="flex flex-wrap items-center gap-2 {showCli ? 'mb-3' : ''}" data-testid="{testid}-filters" onsubmit={submit}>
+<form role="search" class="flex flex-wrap items-center gap-2" data-testid="{testid}-filters" onsubmit={submit}>
 	{#each rows as row, i (i)}
 		{@const field = declared(row.path)}
 		<div
@@ -265,10 +255,5 @@
 	{/if}
 	{#if applied.length > 0}
 		<a href={clearHref} class="link text-sm font-medium" data-testid="{testid}-filters-clear">Clear filters</a>
-	{/if}
-	{#if showCli}
-		<div class="ml-auto">
-			<CliEquivalent testid="{testid}-filters-cli" label="CLI equivalent of these filters" command={cli} />
-		</div>
 	{/if}
 </form>

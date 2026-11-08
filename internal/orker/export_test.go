@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"context"
 	"fmt"
 	"math"
 	"os"
@@ -55,6 +56,15 @@ func GoodBootProbeFacts(policy SecurityPolicy) string {
 		fmt.Sprintf("%d 100000", int64(math.Round(cpus*100000))),
 	}, "\n") + "\n"
 }
+
+// RetryRemovals runs what the periodic retry of unremoved containers runs,
+// once, for the integration tests in package orker_test.
+func (a *Activities) RetryRemovals(ctx context.Context) { a.retryRemovals(ctx) }
+
+// SetRemovalRetryEvery replaces the interval of the periodic retry, before
+// Boot starts it, so a test that drives RetryRemovals itself decides when one
+// runs.
+func SetRemovalRetryEvery(a *Activities, every time.Duration) { a.removalRetryEvery = every }
 
 // SetSignalProbeGrace shortens the boot probe's SIGTERM grace for the
 // integration tests' Orkers, which live in package orker_test.

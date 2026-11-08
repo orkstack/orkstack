@@ -104,11 +104,19 @@ needs `ORK_S3_*` either way.
   workflow assigns it — so resuming against a *different* replica yields the
   same stream with nothing repeated and nothing skipped. A stream that ends
   `unavailable` is resumed that way by `orkctl run watch` and the UI's run
-  page, each up to six times in a row without an event; `orkctl run watch`
+  page, each up to six times in a row without an event. `orkctl run watch`
   resumes too when a reset of its connection to the engine reaches it as
-  `canceled`. A connection that ends partway through a stream — the engine
-  closed it, or orkctl's own write met the reset first — ends the watch as
-  `internal` or `unknown`. The engine itself restarts a history read the
+  `canceled`, when the connection to the engine ends partway through a stream
+  (a FIN, as when a replica dies or a load balancer closes it, which reaches it
+  as `internal` or `unknown`), and when a stream ends cleanly while `GetRun` says
+  the run is still going. A replica told to stop ends its streams with
+  `unavailable` (`StreamEvents` and `StreamTaskLogs`, once a run's terminal event
+  or a log's `last` chunk has not gone out), so every `orkctl` resumes; the run
+  page's socket simply drops and reconnects. Any other
+  error the engine itself reports ends the watch: it arrives in the stream's end
+  message whatever its code, which a connection's end never does. So does an
+  HTTP stream ended cleanly partway through a message, or reset, on a connection
+  that stays up (`cmd/orkctl/root.go`, `connectionEnded`). The engine itself restarts a history read the
   cluster says changed under it (`CurrentBranchChanged`, which can answer a
   long poll of a run that has just completed), up to three times in a row
   without a new event, so that answer reaches a client only when it persists
@@ -552,7 +560,9 @@ flag) or `ORK_CONFIG_FILE=PATH` (an environment variable; the flag wins);
 with neither set, behavior is byte-identical to a deployment that has never
 heard of this section — no file, no default path, nothing implied.
 
-The file is YAML, decoded strictly: an unknown key is refused at boot,
+The file is YAML, decoded strictly: a second YAML document is refused at
+boot, naming its line, even an empty one or one that does not parse, as it is in
+`ORK_TELEMETRY_SINKS` and `ORK_ACTIVITY_CATALOG`; an unknown key is refused at boot,
 naming its full path, and so is an integer, boolean or duration that is not
 one once the space around it is trimmed (the daemons are handed the bare
 value: not every reader trims, and a padded one would quietly use the
@@ -577,9 +587,14 @@ instead of writing an empty value that can never take effect. `--check`
 validates the file, prints the effective configuration for the binary you
 ran it on as YAML — secret leaves redacted to `***`, and every value
 labeled with where it came from: `file`, `env`, or `default` — then exits
-0, or 1 naming the first error. `--check` never starts anything. The other
-flag that starts nothing is `--healthcheck`, which asks a running process
-whether it is ready (§5, "Health checks").
+0, or 1 naming the first error. `--check` never starts anything. Two other
+flags start nothing: `--healthcheck`, which asks a running process whether it
+is ready (§5, "Health checks"), and `--version`, which prints the version and
+the commit the binary was built from and reads no configuration
+(`docker run --rm ghcr.io/orkstack/ork:<version> --version`, and the same for
+`orker`; `orkctl version` is the CLI's). A release names its whole commit. A
+development build names the revision version control recorded, and a build
+with neither, such as the quickstart's source build, says `commit: unknown`.
 
 Two subtrees are documents rather than scalars: `activities:` and
 `telemetry.sinks:` carry their own nested schema — the same shapes
@@ -618,11 +633,11 @@ then the variable it becomes.
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme except the Orker's own, and logs a warning at boot. No entry admits the Orker's own sources: its `ORK_*` and `OTEL_*` settings, its process files, its work root, its configuration and credential files (§5, "Secrets on a shared pool"). With `orker.workdir` unset the work root is the temp directory, so a `file:/tmp/…` source is refused and an entry under `/tmp` stops the Orker at boot: give tasks' secret files a directory of their own. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed, names a scheme not in `orker.secret_schemes`, or can match only the Orker's own sources |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
-| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it, and its path must be a plain one: a mount is a comma-separated option list, so an Orker whose work root holds a comma or a control character refuses to start (`WORKDIR_NOT_BINDABLE`, naming `ORK_ORKER_WORKDIR`). The default is `os.TempDir()` — `/var/folders/...` on macOS — which a VM daemon (colima, Lima, Rancher, Docker Desktop) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
+| `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it, and its path must be a plain one: a mount is a comma-separated option list, so an Orker whose work root holds a comma or a control character refuses to start (`WORKDIR_NOT_BINDABLE`, naming `ORK_ORKER_WORKDIR`). The default is `os.TempDir()` — `/var/folders/...` on macOS — which a Docker daemon running in a virtual machine (colima, Lima, Rancher) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
 | `orker.log.flush_bytes` | `ORK_ORKER_LOG_FLUSH_BYTES` | `64 KiB` | `orker` | live task logs: buffered bytes that trip a flush. Bigger batches a chatty task harder and costs less per object |
 | `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
-| `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat actually reaches Temporal. Two consequences, both real: it is the longest a **cancellation** waits before the Orker acts on it — Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long — and it is the longest **Temporal frontend outage** a running container survives, since the SDK gives up on an activity whose heartbeat RPC keeps failing for a whole interval. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` where Temporal is local or highly available; raise it where the frontend is flaky |
+| `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat goes to Temporal, and so the longest a **cancellation** waits before the Orker acts on it: Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long. It does not bound how long a **Temporal frontend outage** a container survives: that is the 30 s heartbeat timeout, whatever the tick, after which the Orker stops the container and the attempt fails `ORKER_HEARTBEAT_LOST`; an open pin rides out 24 s. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` for faster cancels |
 | `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | `orker` | how many tasks this Orker runs at once — the size of its task worker's activity slots, and the **Max concurrent** Admin → Activities reports. A whole number, 1 or more; anything else is refused at boot. The default fits a 16-CPU, 64 GiB host running default-sized tasks; size it to the host — see "Sizing an Orker's task ceiling" below |
 | `orker.store_check.enabled` | `ORK_ORKER_STORE_CHECK_ENABLED` | `true` | `orker` | whether this Orker checks object storage and cordons itself while the checks keep failing, so tasks wait without using attempts. `false` turns it off, and then an outage fails attempts as they arrive — see §5, "When object storage goes away" |
 | `orker.store_check.interval` | `ORK_ORKER_STORE_CHECK_INTERVAL` | `15s` | `orker` | how often the store is checked: one conditional write the store refuses and one read of one small object, per Orker, per check. `1s` to `1h`; anything else is refused at boot |
@@ -670,9 +685,9 @@ then the variable it becomes.
 | `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3-compatible endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
 | `storage.s3.bucket` | `ORK_S3_BUCKET` | `orkstack-artifacts` | both | one bucket holds definitions, artifacts, archived runs and task logs |
-| `storage.s3.access_key` | `ORK_S3_ACCESS_KEY` | `orkstack` | both | the dev credential from `deploy/docker-compose.yml`. Supply a real one |
-| `storage.s3.secret_key` | `ORK_S3_SECRET_KEY` | `orkstack-secret` | both | as above |
-| `storage.s3.session_token` | `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for temporary credentials |
+| `storage.s3.access_key` | `ORK_S3_ACCESS_KEY` | *(empty)* | both | set with `storage.s3.secret_key`; with neither set, the default credential chain signs, such as an instance or pod role ("The object store's credentials"). Half a key stops the boot |
+| `storage.s3.secret_key` | `ORK_S3_SECRET_KEY` | *(empty)* | both | as above |
+| `storage.s3.session_token` | `ORK_S3_SESSION_TOKEN` | *(empty)* | both | for a temporary key; set with both keys, never alone |
 | `storage.s3.path_style` | `ORK_S3_PATH_STYLE` | `true` | both | path-style addressing; the dev store needs it, AWS S3 does not |
 | `engine.stats_cache_ttl` | `ORK_STATS_CACHE_TTL` | `5s` | `ork` | how long one `GetStats`, `GetFailureBreakdown`, `GetFlakeIndex` or `GetCacheStats` answer is reused; `0` switches the cache off (`docs/STATS.md`) |
 | `engine.usage_cache_ttl` | `ORK_USAGE_CACHE_TTL` | `5m` | `ork` | how long one usage measurement (`orkctl stats usage`, the dashboard Usage section, and an enforced budget's admission check) is reused; `0` switches the cache off, which makes every submit into an enforced namespace measure (`docs/STATS.md`, "Usage") |
@@ -785,7 +800,8 @@ one bound it knows in advance, the per-task cap (`orker.resources.max_cpu`,
   handed back without a container;
 - the reservation is freed when the attempt's container is **removed**. A
   container whose removal failed keeps its reservation, and the Orker tries to
-  remove it again every 30 seconds.
+  remove it again every 30 seconds, as it does with no capacity declared
+  ("What removes a task's container").
 
 `orkctl orker list` shows `CAPACITY` and `RESERVED` for each Orker that declares
 one. `RESERVED` counts each outstanding poll at the per-task cap, so an idle
@@ -1116,7 +1132,7 @@ export ORK_ARTIFACT_BACKEND=s3
 export ORK_S3_ENDPOINT="https://s3.internal.example"   # or http://localhost:9000
 export ORK_S3_BUCKET=orkstack-artifacts
 export ORK_S3_REGION=us-east-1
-export ORK_S3_ACCESS_KEY=…        # never the docker-compose dev credentials
+export ORK_S3_ACCESS_KEY=…        # or neither key, to use a role: see below
 export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # the dev store needs path style; AWS S3 does not
 ```
@@ -1130,6 +1146,59 @@ digest in `deploy/docker-compose.yml`, S3 API on `localhost:9000`), because
 MinIO stopped publishing images and Garage cannot do conditional writes. What
 lives under which key, who writes it and what removes it is
 `docs/STORAGE.md`.
+
+### The object store's credentials
+
+`ork` always signs requests to the object store, and an `orker` does when its
+`ORK_ARTIFACT_BACKEND` is `s3`. No key has a default. What signs depends on what
+you set:
+
+| You set | What signs |
+| --- | --- |
+| `ORK_S3_ACCESS_KEY` and `ORK_S3_SECRET_KEY`, and `ORK_S3_SESSION_TOKEN` for a temporary key | that key, whatever else the environment holds |
+| none of them | the AWS SDK's default credential chain: `AWS_ACCESS_KEY_ID` and its siblings, the shared credentials and config files, a web identity token, a container's credentials endpoint, then the instance role |
+| one key alone, or a session token with no key | nothing: the boot stops, naming both keys |
+
+The boot asks for the credential before it opens a store. With nothing to sign
+with it stops and says so, rather than a run failing later. Otherwise it logs
+`object store credentials resolved` with the `source` that answered, and never
+the credential. An `orker` on the `local` backend signs nothing, so it asks
+nothing of the chain, but it still refuses half a key.
+
+The development store's key is set only by what starts the development stack:
+`make up`, `make run-ork`, `make run-orker`, the quickstart's `compose.yaml`,
+the `kind` overlay, the tests and the proofs. The store refuses any other.
+
+**To use an instance or pod role:**
+
+1. Leave both keys and the session token unset on every `ork` and `orker`, in
+   the environment and in the configuration file.
+2. Give the role read, write, list and delete on the bucket.
+3. On AWS S3, set `ORK_S3_ENDPOINT=https://s3.<region>.amazonaws.com`,
+   `ORK_S3_REGION` and `ORK_S3_PATH_STYLE=false`. The default endpoint is
+   `http://localhost:9000`.
+4. On Kubernetes, bind the role to the pod's service account, and create the
+   `orkstack-s3` Secret with no keys:
+   `kubectl create secret generic orkstack-s3`. The bases require that Secret,
+   so a forgotten one stops the pod rather than falling through to the node's
+   role.
+5. Keep tasks away from the role. A container on the `default` network can
+   reach the host's instance metadata service unless the host stops it, and
+   that service hands out the role's credentials, which a task must never get
+   ([AGENTS.md](../AGENTS.md) §2.3). OrkStack cannot stop it from inside a
+   container's network. On EC2, require IMDSv2 with a hop limit of 1, which a
+   container on a bridge network cannot answer across:
+   `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required --http-put-response-hop-limit 1`.
+   A rootless engine's user-space network sends a container's packets from a
+   process on the host, so the hop limit may not stop them: block the address
+   with a firewall rule there. On Kubernetes, prefer a role bound to the pod
+   over a role on the node. A container's credentials endpoint (ECS, EKS Pod
+   Identity) answers only with a path or token the Orker holds, under `AWS_*`
+   and the token file those variables name, and no secret floor admits either
+   to a task. A task with `network: none` reaches none of these services.
+
+The SDK refreshes a role's temporary credentials. When it cannot, requests fail
+as they do in any object-store outage.
 
 ### Live task logs: where they are, what bounds them, how long they stay
 
@@ -1156,6 +1225,11 @@ holds when it runs and returns, even against a task that is still writing, so
 a script that wants a transcript is not left tailing a chatty task forever.
 Both resume on `from_seq`, the last sequence already received: the stream
 continues **after** it, so a reconnect replays nothing and skips nothing.
+`orkctl run logs -f` does this by itself when the engine goes away under it, as
+`run watch` does: after an `unavailable`, a `canceled` it did not cause, the end
+of its connection, or a clean end with no `last` chunk, up to six times in a row
+without a chunk, saying each resume on stderr. Any other error ends it, and a
+read without `-f` is not resumed.
 
 **A follow moves with the task's retries.** Keys are per ATTEMPT, and a
 Temporal retry changes nothing a task's status shows — the task stays RUNNING
@@ -1169,7 +1243,11 @@ That makes `from_seq` half a cursor: sequences are dense **per attempt**, so a
 reconnecting client sends `from_attempt` beside it. A cursor from another
 attempt is dropped and the new attempt is delivered from its start — a retry
 is usually shorter than the try that failed, so applying the old cursor would
-deliver nothing. An explicit `--attempt N` is pinned and never moves. Every
+deliver nothing. That would lose lines when a task retries while a follower is
+away, so after a resume `orkctl run logs -f` reads the rest of the cursor's
+attempt, and each attempt up to the one the engine moved to, before going on. A
+line an Orker the cluster already gave up on writes after its retry began is not
+seen, by a resumed follower or by an uninterrupted one. An explicit `--attempt N` is pinned and never moves. Every
 client sends both halves (`ui/src/lib/taskLogs.ts`, `internal/api/ws.go`,
 `orkctl run logs --from-seq N --from-attempt N`); the CLI **refuses** a cursor
 that names no attempt rather than guess, which is how a resume silently skips
@@ -1809,7 +1887,7 @@ use it. What an older release does with each:
 | `await:` | treats the await as a container task and fails it — explicit |
 | `each:` (fan-out) | runs the node once as a plain task, staging no items for its dependents; fails `RENDER_FAILED` only if `with:` reads `.each` — **silent** otherwise |
 | `uses: orkflow:` | an older run worker cannot decode the start (`Task.orkflow`, `RunPlan.children`) and retries the workflow task until a new worker takes it — under Pinned, possibly never; a composed task reaching an older Orker fails `IMAGE_NOT_PINNED` |
-| `outputs:` | returns the leaf aggregation instead of the declared outputs — **silent** |
+| `outputs:` | returns the values of the tasks no other task needs instead of the declared outputs — **silent** |
 | `join:` | runs every task as `all_succeeded`: a `none_failed` re-join is skipped (visible), but an **`any_failed` failure handler runs after its needs SUCCEEDED** (a rollback after a successful deploy) and an `all_done` handler only on success — **silent and destructive** |
 | `cache:` | runs every task uncached; memos left behind are inert — benign |
 | schedules | no `ScheduleFireWorkflow` is registered, so a fire cannot start — pause or delete every schedule (`orkctl schedule pause`/`delete`) first |
@@ -1924,7 +2002,7 @@ on its own.
 
 ```bash
 temporal workflow update-options \
-  --workflow-id ork-1786941899450567000 \
+  --workflow-id ork-01m6qt8vete0691h2jn074a2yk \
   --versioning-override-behavior pinned \
   --versioning-override-deployment-name "$ORK_DEPLOYMENT_NAME" \
   --versioning-override-build-id "$OLD" \
@@ -2180,10 +2258,11 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   fill it, and it stays bounded. A replica that restarts reads each digest
   once more. Without `allow_cached` (`orkctl activity inspect`, the Admin
   page's inspect form) every inspect reads the registry, as apply does.
-- **Run ids** are `ork-{timestamp}-{sequence}` and single-use for all time.
-  Nothing may parse one or derive meaning from its parts — the sequence
-  carries a per-process nonce in its high half (`internal/engine/runid.go`),
-  so it is comparable only within one replica and means nothing across two.
+- **Run ids** are `ork-` and a UUIDv7 in lowercase base32, 30 characters, and
+  single-use for all time; a run started by an earlier release keeps
+  `ork-{timestamp}-{sequence}`, and both stay valid. Nothing may parse one or
+  derive meaning from its parts (`internal/engine/runid.go`): within one replica
+  a later id sorts after an earlier one, and across two that means nothing.
   Order runs by `created_at`. The one exception, and it is not a licence to
   order by id: two places compare ids to break a tie between runs with the
   *same* timestamp, so a page is stable rather than arbitrary — `mergeRuns`
@@ -2192,21 +2271,27 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   orders one page of the archive index (`pkg/artifacts/archive.go`). Those two
   are the whole list.
 - **Listing runs is a question the cluster answers.** At boot each engine
-  registers three search attributes on its Temporal namespace —
-  `OrkflowNamespace` (`task.EnsureRunSearchAttributes`) and
+  registers four search attributes on its Temporal namespace —
+  `OrkflowNamespace` (`task.EnsureRunSearchAttributes`),
   `OrkflowOriginKind`/`OrkflowOriginId`
-  (`task.EnsureRunOriginSearchAttributes`) — and stamps every run it starts
-  with them, so `run list -n payments`, `run list --filter origin.kind=TRIGGER
-  --filter origin.id=trg-…` and an `origin.kind` filter on the runs page are
+  (`task.EnsureRunOriginSearchAttributes`) and `OrkflowOriginRootRunId`
+  (`task.EnsureRunRootSearchAttribute`) — and stamps every run it starts
+  with the ones that apply, so `run list -n payments`, `run list --filter
+  origin.kind=TRIGGER --filter origin.id=trg-…`, `run list --filter
+  origin.root_run_id=ork-…` and an `origin.kind` filter on the runs page are
   visibility predicates over live runs rather than filters over a page of
   everyone's. That is a tenancy
   property: filtered afterwards, how far a list could see would be set by how
   busy the OTHER namespaces were. Finished runs come from the archive, whose
-  run and origin index keys begin with the namespace (`docs/STORAGE.md`).
+  run, origin and root index keys begin with the namespace (`docs/STORAGE.md`).
+  All four are keywords. A Temporal 1.32 dev server (the development stack's)
+  takes 10 custom keyword attributes per namespace; measure your own visibility
+  store if the namespace holds attributes of your own.
 
   The boot line reports each answer separately
-  (`INFO connected to temporal … run_namespace_index=true run_origin_index=true`),
-  so a cluster that refuses one pair keeps the other. A cluster that refuses
+  (`INFO connected to temporal … run_namespace_index=true run_origin_index=true
+  run_root_index=true`), so a cluster that refuses one keeps the others. A plan
+  pins the root answer at submit, so one run tree has one answer. A cluster that refuses
   the registration — the operator API behind an authorizer, a visibility
   store without custom attributes — still boots and warns once
   (`WARN visibility does not index …`, naming the attribute and the
@@ -2348,7 +2433,7 @@ follow from the daemon reading paths on the host:
   bind-mounts each task's workspace from `ORK_ORKER_WORKDIR` as a host path,
   so mount the host directory at that same path in the container
   (`-v /var/lib/orkstack/work:/var/lib/orkstack/work`). On a machine whose
-  daemon runs in a virtual machine (Docker Desktop, colima), the directory
+  daemon runs in a virtual machine (colima, for example), the directory
   must also be one the virtual machine shares; the Orker's boot check refuses
   one it cannot bind (`WORKDIR_NOT_BINDABLE`).
 - **One `ORK_ORKER_ID` per Orker, set explicitly.** The default id is derived
@@ -2538,7 +2623,8 @@ Each base is used from an overlay of your own. The overlay names the release's
 settings the Orker reads in the same namespace: the `orkstack` ConfigMap
 (`ORK_TEMPORAL_ADDRESS`, `ORK_ARTIFACT_BACKEND=s3`, `ORK_S3_ENDPOINT`,
 `ORK_S3_BUCKET`, and the other settings of §1) and the `orkstack-s3` Secret
-(`ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`), and, when tasks read secrets, the
+(`ORK_S3_ACCESS_KEY`, `ORK_S3_SECRET_KEY`, or no keys when a role signs: "The
+object store's credentials"), and, when tasks read secrets, the
 `orkstack-task-secrets` Secret (below). Each base's `kustomization.yaml`
 shows the overlay.
 
@@ -2848,7 +2934,7 @@ remote   unknown (unreachable)  -        -
 A task naming no pool runs on gpu.
 
 1 pool could not be reached, so its Orkers are unknown rather than zero:
-  remote: cannot tell whether pool "remote" has live Orkers: context deadline exceeded
+  remote: could not check pool "remote" for live Orkers: asking the cluster failed (context deadline exceeded); retry the request
 ```
 
 Three states, and the column keeps them apart because they need three different
@@ -2934,8 +3020,8 @@ orkctl orker drain  orker-7f3a --timeout 4h --watch
 $ orkctl orker drain orker-7f3a --timeout 4h --watch
 cordoned orker-7f3a: "orkctl orker drain"
 waiting for 2 tasks and 1 pin to finish…
-  09:15:40  2 tasks, 1 pin     pin "build" of run ork-20260922-…  expires in 2h11m
-  10:02:18  0 tasks, 1 pin     pin "build" of run ork-20260922-…  expires in 1h24m
+  09:15:40  2 tasks, 1 pin     pin "build" of run ork-01m6qt8v…  expires in 2h11m
+  10:02:18  0 tasks, 1 pin     pin "build" of run ork-01m6qt8v…  expires in 1h24m
   11:26:51  0 tasks, 0 pins
 orker-7f3a is drained; it is safe to stop this process.
 ```
@@ -3026,6 +3112,108 @@ cordon` answers `NotFound`.
 Every cordon and uncordon is an audit record (`orker.cordon`,
 `orker.uncordon`, target the Orker id, the reason in its detail, no
 namespace).
+
+### What removes a task's container
+
+While an Orker lives, nothing stays. An attempt removes its container with
+`rm --force --volumes` however it ended, and takes the container's anonymous
+volumes with it. What can stay comes from a removal that failed and from an
+Orker that died:
+
+| What happened | What stays | For how long | What removes it |
+|---|---|---|---|
+| The task succeeded, exited non-zero, wrote malformed output, timed out, was cancelled, or ignored SIGTERM; its start was refused; it was pinned (the pin's shared directory stays, by design) | nothing | | the attempt |
+| A commit or a memo answered the attempt | nothing: no container started | | |
+| The daemon refused the removal | the stopped container | until the daemon allows it | this Orker, every 30 seconds |
+| The daemon restarted under the task | the container, stopped; under `live-restore` still **running**. The attempt fails `CONTAINER_STOPPED_BY_RUNTIME` when the daemon stopped the container, and `RUNTIME_REFUSED` when it went away first, by a crash or under `live-restore`; both are retried under the task's `retry:`. On Podman, stopping the API service stops no container and `RUNTIME_REFUSED` is the only outcome | up to 30 seconds after the daemon answers | this Orker, every 30 seconds |
+| The CLI gave up on a create the daemon then finished | a container in the `created` state, which holds no cpu or memory | up to 30 seconds after it appears, if that is within 10 minutes of the create; after that, until the next boot | this Orker, every 30 seconds for 10 minutes; then its next boot |
+| The Orker was killed and restarted under the same `ORK_ORKER_ID` | the container, still **running** past its task's timeout, which is the Orker's own clock | until that boot | the replacement's boot, whatever its work root |
+| The Orker was killed and came back under another identity, or never came back | the container, **running** until its workload exits, then stopped | until an operator removes it | **you** |
+
+A removal this Orker owes is process-local: if it stops first, its next boot
+under the same identity reaps by label instead. Each retry that fails is logged
+with the container's id (`a container could not be removed`).
+
+An Orker's boot removes only containers labelled with its own identity, because
+nothing proves another identity is dead: an Orker on another host or in another
+container may share this daemon, and its identity lock is not visible from
+here. So keep the identity stable. The derived default is
+`<host>-<hash of the work root>`, which changes with the work root and, for an
+Orker in a container, whenever a recreated container gets a new host name. Set
+`ORK_ORKER_ID` for an Orker that is replaced rather than restarted.
+
+A boot does say what else it found. It lists the daemon's containers of other
+identities, and when there are any it logs one warning (`containers of other orker
+identities are on this container runtime`) with how many, how many are running,
+the identities and up to 20 containers. It never stops or removes one, and a
+listing that fails is logged and does not stop the boot. A live Orker sharing the
+daemon appears in the warning at every boot, so check it against `orkctl orker
+list` rather than acting on it alone.
+
+**What an operator cleans up.** When that warning names an identity `orkctl orker
+list` does not, or a host's Orker will not return or returned under another
+identity, list what its daemon holds:
+
+```bash
+docker ps --all --filter label=ork.orker --format '{{.ID}} {{.Status}} {{.Labels}}'
+```
+
+Then remove one dead identity's containers. Never run this for an identity of a
+live Orker, whose running tasks it would kill:
+
+```bash
+docker ps --all --quiet --filter label=ork.orker=<id> | xargs --no-run-if-empty docker rm --force --volumes
+```
+
+On the podman CLI the commands are the same with `podman`. A container also
+carries `ork.run`, `ork.task` and `ork.attempt`, to say what it was running.
+
+**What a killed attempt leaves on disk.** A process that is killed takes no exit
+path, so its attempt's directory, `ork-<run>-<task>-<attempt>-<owner>-*` under the
+work root, stays with the secret values staged for it in plain files. `<owner>`
+is sixteen hex digits of the SHA-256 of the identity that made the directory, and
+an Orker's boot removes the directories that name its own identity, under its own
+work root, once it holds that identity's lock and has reaped its containers. It
+logs each (`attempt directory reaped`), with no operator step. Nothing else
+removes them:
+
+| Under the work root | What removes it |
+|---|---|
+| A directory naming this Orker's identity, found by its boot | the boot, secrets first; a removal that fails is logged, and the next boot tries again |
+| A file in one that a workload left and the Orker cannot remove, because the workload ran as another user | **you**. The boot removes everything else, secrets included, and logs what stayed |
+| A directory naming another identity, which may be a live Orker's on this work root | never the boot. It logs them (`attempt directories under this work root are not this identity's`); once that Orker is gone, **you** |
+| A directory named `ork-<run>-<task>-<attempt>-<digits>`, with no owner, from a release before 0.3.0 | **you**: nothing says whose it is |
+| A pin directory, `ork-pin-*`, whose `lease.json` names this Orker's identity, found by its boot | the boot |
+| A pin directory whose lease names another identity, or nobody (a release before 0.3.0, or a torn lease) | never the boot. Any Orker on this work root removes it when its lease expires, the pin's lifetime plus 6 minutes after it opened, or for a torn lease 6 minutes after it last changed |
+| `ork-spool/<owner>/` and `ork-stage/<owner>/`, this Orker's identity's upload spool and input staging | the boot |
+| `ork-spool/<owner>/` and `ork-stage/<owner>/` of another identity | never the boot. **You**, once that Orker is gone for good: the owner is computed as below, and these two directories are all there is to remove |
+| A file directly under `ork-spool/` or `ork-stage/`, from a release before 0.3.0 | **you**, once no Orker of that release uses this work root. The boot logs them, because nothing says whose they are |
+| Anything under another work root, when an Orker came back under the same id on a new one | **you**: a boot looks under its own work root only |
+
+So when an Orker will not return, or returned under another identity or work
+root, remove the directories naming its identity under its old work root. Check
+first with `orkctl orker list` that no live Orker holds that identity. It takes
+root, for the sealed input trees and for what a workload left as root:
+
+```bash
+owner="$(printf '%s' 'ORKER_ID' | sha256sum | cut -c1-16)"
+```
+
+```bash
+sudo find "/path/to/work-root" -mindepth 1 -maxdepth 1 -type d -name "ork-*-$owner-*" -exec rm -rf -- {} +
+```
+
+A directory from before 0.3.0 names no identity, so nothing but its age and the
+work root says whose it is: remove it by name, once no Orker of that release runs
+on that work root.
+
+**An identity must have one holder.** A boot removes containers and attempt
+directories by its identity, and what says no live Orker answers to it is a lock
+in the temp directory. Two processes that do not share a temp directory, such as
+Orkers in containers of their own or units with `PrivateTmp=true`, do not see each
+other's lock, so given one `ORK_ORKER_ID` each boot would remove the other's running
+work, secrets included. The derived default cannot collide this way; an explicit
+id is yours to keep unique across everything that shares a daemon or a work root.
 
 ### When object storage goes away
 

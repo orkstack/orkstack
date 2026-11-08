@@ -41,7 +41,7 @@ import { fillYaml } from './yaml';
 //              head marked, the header naming what is shown (its version and
 //              definition plates); its runs a tab, not a link in the
 //              header's actions; every tab;
-//   palette    on an Orkflow page, Submit a run… opens the page's own dialog
+//   palette    on an Orkflow page, Submit a run opens the page's own dialog
 //              and sends nothing; a task id jumps to its row;
 //   apply      validation issues carry .severity-error / .severity-warning;
 //              the examples are a ruled list, each with its name and Use;
@@ -171,7 +171,7 @@ async function tokenColor(page: Page, token: string): Promise<string> {
 }
 
 async function axe(page: Page, label: string): Promise<void> {
-	const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
+	const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
 	const found = result.violations.map((v) => `${v.id} (${v.nodes.length}: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(', ')})`);
 	note(`axe ${label}: ${found.length} violation(s)${found.length ? ' — ' + found.join('; ') : ''}`);
 	expect(found).toEqual([]);
@@ -248,7 +248,7 @@ test('dashboard: the count band is a summary line in ink, one row, the first reg
 
 test('dashboard: a namespace where nothing finished says unavailable, in the muted face', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/?ns=${EMPTY_NS}`);
-	await expect(page.getByTestId('dashboard-namespace')).toContainText(EMPTY_NS);
+	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText(EMPTY_NS);
 	const muted = await tokenColor(page, '--color-ink-muted');
 	for (const id of ['stat-success-rate', 'stat-p50', 'stat-p95']) {
 		await expect(page.getByTestId(id)).toHaveAttribute('data-unavailable', 'true');
@@ -264,7 +264,7 @@ test('dashboard: a namespace where nothing finished says unavailable, in the mut
 	await axe(page, 'dashboard, nothing finished (light)');
 });
 
-test('orkflows: a register of NAME, VERSION, DIGEST, TASKS, APPLIED, LABELS with exactly one link per row', async ({ page }) => {
+test('orkflows: a register of Name, Version, Digest, Applied, labels under the name, with exactly one link per row', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=default`);
 	await expect(page.getByTestId(`orkflow-row-${SAGA}`)).toBeVisible();
 	const rows = page.locator('tr[data-testid^="orkflow-row-"]');
@@ -273,8 +273,8 @@ test('orkflows: a register of NAME, VERSION, DIGEST, TASKS, APPLIED, LABELS with
 	for (let i = 0; i < count; i++) await expect(rows.nth(i).getByRole('link')).toHaveCount(1);
 	const hex = sagaDigest.slice(sagaDigest.indexOf(':') + 1);
 	await expect(page.getByTestId(`orkflow-digest-${SAGA}`)).toHaveText(hex.slice(0, 8));
-	await expect(page.getByTestId(`orkflow-taskcount-${SAGA}`)).toHaveText('5');
-	await expect(page.getByTestId(`orkflow-row-${SAGA}`)).toContainText('team=payments');
+	await expect(page.getByTestId('orkflow-list').locator('thead th')).toHaveText(['Name', 'Version', 'Digest', 'Applied']);
+	await expect(page.getByTestId(`orkflow-labels-${SAGA}`).locator('.tag')).toContainText(['team=payments']);
 	await expect(page.getByTestId(`orkflow-row-${SAGA}`)).toContainText('0.2.0');
 	await page.screenshot({ path: out('screenshot-orkflows-light-1280.png') });
 	await axe(page, '/orkflows (light)');
@@ -342,7 +342,7 @@ test('orkflow sheet: every tab renders, with axe', async ({ page }) => {
 	}
 });
 
-test('palette: on an Orkflow page, Submit a run… opens the page’s dialog and sends nothing; a task id jumps to its row', async ({ page }) => {
+test('palette: on an Orkflow page, Submit a run opens the page’s dialog and sends nothing; a task id jumps to its row', async ({ page }) => {
 	const writes: string[] = [];
 	page.on('request', (request) => {
 		if (/RunService\/(SubmitRun|PlanRun)|OrkflowService\/PlanRun/.test(request.url())) writes.push(request.url());
@@ -380,7 +380,7 @@ test('palette: on an Orkflow page, Submit a run… opens the page’s dialog and
 	await expect(page).toHaveURL(/tab=schedules/);
 	await expect(page.getByTestId('schedules-scope')).toBeVisible();
 	expect(writes).toEqual([]);
-	note('palette on the Orkflow page: Submit a run… opened the dialog with no SubmitRun or PlanRun; task jumps landed on their rows');
+	note('palette on the Orkflow page: Submit a run opened the dialog with no SubmitRun or PlanRun; task jumps landed on their rows');
 });
 
 test('apply: issues carry their severity classes; the examples are a ruled list', async ({ page }) => {

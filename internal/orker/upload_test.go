@@ -45,7 +45,7 @@ func TestCommit_PassesTheDigestItAlreadyComputedToThePut(t *testing.T) {
 	if _, err := h.dispatcher.Execute(context.Background(), in); err != nil {
 		t.Fatal(err)
 	}
-	spool := filepath.Join(h.dispatcher.WorkRoot, SpoolDirName)
+	spool := h.dispatcher.spoolDir()
 	content := []byte("1\n2\n3\n")
 	for name, want := range map[string]struct {
 		sha  string
@@ -74,7 +74,8 @@ func TestCommit_PassesTheDigestItAlreadyComputedToThePut(t *testing.T) {
 // removed at the next boot.
 func TestBoot_ReapsTheSpoolDirectory(t *testing.T) {
 	root := t.TempDir()
-	leftover := filepath.Join(root, SpoolDirName, "ork-artifact-123")
+	id := proof.OrkerID("orker-spool-reap")
+	leftover := filepath.Join(root, SpoolDirName, attemptOwner(id), "ork-artifact-123")
 	if err := os.MkdirAll(filepath.Dir(leftover), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -82,7 +83,7 @@ func TestBoot_ReapsTheSpoolDirectory(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := NewActivitiesWithOptions(nil, Options{
-		OrkerID: proof.OrkerID("orker-spool-reap"), WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
+		OrkerID: id, WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
 	})
 	t.Cleanup(a.Close)
 	if err := a.Boot(context.Background()); err != nil {

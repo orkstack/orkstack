@@ -9,8 +9,10 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -111,9 +113,7 @@ type Options struct {
 	Signatures *dsl.SignatureVerifier
 	// HeartbeatInterval is how often an attempt's heartbeat loop ticks, and
 	// therefore how long a running container waits to observe a cancellation.
-	// Zero means DefaultHeartbeatInterval. The caller MUST cap its task
-	// worker's MaxHeartbeatThrottleInterval to the same value — heartbeat.go's
-	// pairing rule.
+	// Zero means DefaultHeartbeatInterval.
 	HeartbeatInterval time.Duration
 	// TaskLogs exports every framed log line of every attempt, beside the
 	// durable chunk store. Nil exports nothing.
@@ -157,9 +157,11 @@ type Activities struct {
 	capacity    *Capacity
 	capacityErr error
 	taskQueue   string
-	// stopReap ends the capacity's periodic reap of containers it could not
+	// stopReap ends the periodic retry of containers it could not
 	// remove; nil until Boot starts one.
 	stopReap context.CancelFunc
+	// removalRetryEvery overrides removalRetryInterval, for a test.
+	removalRetryEvery time.Duration
 }
 
 // NewActivitiesWithOptions builds the activity set with explicit options.
@@ -526,7 +528,8 @@ func (a *Activities) sweepPinLeasesOnce(now time.Time) {
 	}
 }
 
-// reapPinDirectories removes every pin directory found at boot (§6.4).
+// reapPinDirectories removes the pin directories this identity's previous life
+// left (§6.4), and says what it left because nothing says it is this identity's.
 //
 // It is UNCONDITIONAL, and deliberately so: a directory left behind by a
 // PREVIOUS life that did host pins must still be cleaned up by a boot that does
@@ -538,13 +541,56 @@ func (a *Activities) sweepPinLeasesOnce(now time.Time) {
 // pin survives a restart — and refusing to accept work over a tree nothing will
 // ever read again is worse than starting; the lease sweep will try again.
 func (a *Activities) reapPinDirectories(root string) {
-	removed, err := ReapPinDirectories(root)
-	for _, path := range removed {
+	report, err := ReapPinDirectories(root, a.dispatcher.OrkerID)
+	for _, path := range report.Removed {
 		a.dispatcher.logger().Info("pin reaped", "path", path)
+	}
+	if len(report.Others) > 0 {
+		a.dispatcher.logger().Info("pin directories under this work root are not this identity's; "+
+			"their leases collect them", "count", len(report.Others), "paths", firstOf(report.Others, reapLogLimit))
 	}
 	if err != nil {
 		a.dispatcher.logger().Warn("pin boot reap", "error", err)
 	}
+}
+
+// reapAttemptDirectories removes the attempt directories this Orker's previous
+// life left (ReapAttemptDirectories), and says what it removed, what it could
+// not, and what it left because nothing says it is this identity's. A failure is
+// logged and does not fail Boot, as reapPinDirectories' does: nothing will read
+// what is left, and its next boot tries again.
+func (a *Activities) reapAttemptDirectories(root string) {
+	logger := a.dispatcher.logger()
+	report, err := ReapAttemptDirectories(root, a.dispatcher.OrkerID)
+	for _, path := range report.Removed {
+		logger.Info("attempt directory reaped", "path", path)
+	}
+	for _, path := range report.SecretsLeft {
+		logger.Error("a dead attempt's secrets could not be removed and are still on this host; remove them by hand",
+			"path", path)
+	}
+	if err != nil {
+		logger.Warn("what a dead attempt left could not all be removed; its next boot under this identity tries again",
+			"error", err)
+	}
+	if count := len(report.Others); count > 0 {
+		logger.Warn("attempt directories under this work root are not this identity's, so they stay: "+
+			"each is a live orker's on this work root, or holds what a dead attempt left, secrets included, "+
+			"until an operator removes it (docs/DEPLOY.md, \"What removes a task's container\")",
+			"count", count, "paths", firstOf(report.Others, reapLogLimit))
+	}
+}
+
+// reapLogLimit bounds how many paths one boot's log line names; the count beside
+// them is the whole.
+const reapLogLimit = 20
+
+// firstOf is the first limit items of list.
+func firstOf[T any](list []T, limit int) []T {
+	if len(list) > limit {
+		return list[:limit]
+	}
+	return list
 }
 
 // reapContainers runs the runtime's Reap and logs what it removed and each
@@ -565,15 +611,71 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 		// Each orphan that stayed was admitted within the cap by this
 		// Orker's previous life and still holds the host, so a declared
 		// capacity starts with it reserved, until a later reap removes it.
-		if a.capacity != nil {
-			for _, id := range partial.Containers {
+		// Either way it is tried again while this Orker runs, not left for its
+		// next boot.
+		for _, id := range partial.Containers {
+			if a.capacity != nil {
 				a.capacity.seed(id)
+			} else {
+				a.dispatcher.unremoved.owe(id, time.Time{})
 			}
 		}
 		return nil
 	default:
 		return fmt.Errorf("reap orphaned containers: %w", err)
 	}
+}
+
+// otherOrkerLister is the runtime capability Boot asks what other identities
+// hold. A runtime without it has nothing to say.
+type otherOrkerLister interface {
+	OtherOrkersContainers(ctx context.Context, orkerID string) ([]OtherOrkerContainer, error)
+}
+
+// warnAboutOtherOrkers says what other identities' containers are on this
+// runtime, and never stops or removes one. An Orker that never returned leaves
+// its container running with no time limit, because the task's timeout is the
+// Orker's own clock, and no other Orker can reap it: nothing proves its identity
+// is dead, since another Orker can share the daemon. The operator can tell, so
+// the operator is told. It is a courtesy: a listing that fails says so and never
+// fails boot.
+func (a *Activities) warnAboutOtherOrkers(ctx context.Context) {
+	lister, ok := a.dispatcher.Runtime.(otherOrkerLister)
+	if !ok {
+		return
+	}
+	logger := a.dispatcher.logger()
+	others, err := lister.OtherOrkersContainers(ctx, a.dispatcher.OrkerID)
+	if err != nil {
+		// An Orker told to stop has found nothing wrong with its runtime.
+		if ctx.Err() != nil {
+			return
+		}
+		logger.Warn("could not list containers of other orker identities on this container runtime, "+
+			"so any an orker that never returned left there goes unmentioned", "error", err)
+		return
+	}
+	if len(others) == 0 {
+		return
+	}
+	running := 0
+	orkers := map[string]struct{}{}
+	containers := make([]string, 0, min(len(others), reapLogLimit))
+	for _, other := range others {
+		if other.State == "running" {
+			running++
+		}
+		orkers[other.Orker] = struct{}{}
+		if len(containers) < reapLogLimit {
+			containers = append(containers, other.ID+" "+other.State+" "+other.Orker)
+		}
+	}
+	names := slices.Sorted(maps.Keys(orkers))
+	logger.Warn("containers of other orker identities are on this container runtime, and this orker touches none: "+
+		"each is a live orker's sharing it, or was left by an orker that never returned and runs until its workload "+
+		"exits; compare with `orkctl orker list`, and remove a dead identity's by its label "+
+		"(docs/DEPLOY.md, \"What removes a task's container\")",
+		"count", len(others), "running", running, "orkers", firstOf(names, reapLogLimit), "containers", containers)
 }
 
 // engineStater is the runtime capability Boot asks where the engine keeps
@@ -738,7 +840,9 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if err := a.reapContainers(ctx); err != nil {
 		return err
 	}
-	a.startCapacityReap()
+	a.startRemovalRetry()
+	// And what no reap may touch, said out loud (warnAboutOtherOrkers).
+	a.warnAboutOtherOrkers(ctx)
 	if a.capacity != nil {
 		limit, reserved := a.capacity.snapshot()
 		a.dispatcher.logger().Info("capacity declared",
@@ -757,29 +861,55 @@ func (a *Activities) Boot(ctx context.Context) error {
 	}
 	// And its own previous life's pin directories, beside the containers, for
 	// the same reason and with a stronger guarantee: a pin cannot outlive the
-	// worker process that opened its session, so every ork-pin-* under the work
-	// root is dead by construction rather than by heuristic (§6.4).
+	// worker process that opened its session, so a directory this identity opened
+	// is dead by construction rather than by heuristic (§6.4).
 	a.reapPinDirectories(root)
+	// And its own previous life's attempt directories, whose secrets a killed
+	// process had no exit path to remove. Only after the claim above: the lock
+	// is what says no live process answers to this identity.
+	a.reapAttemptDirectories(root)
 	// And the upload spool and the staging cache, for the same reason: a
 	// spool file outlives its upload, and a staging entry the attempts that
 	// held it, only when the process died.
-	a.reapScratch(filepath.Join(root, SpoolDirName))
-	a.reapScratch(filepath.Join(root, StageDirName))
+	a.reapScratch(root, SpoolDirName)
+	a.reapScratch(root, StageDirName)
 	return nil
 }
 
-// reapScratch removes one of the work root's process-scoped scratch
-// directories at boot. Like reapPinDirectories, a failure is logged and does
-// not fail Boot: nothing will ever read what is left there.
-func (a *Activities) reapScratch(dir string) {
-	if _, err := os.Lstat(dir); errors.Is(err, os.ErrNotExist) {
-		return
+// reapScratch removes this identity's part of one of the work root's
+// process-scoped scratch directories at boot, and only that: a peer on a shared
+// work root is using its own. Like reapPinDirectories, a failure is logged and
+// does not fail Boot: nothing will ever read what is left there.
+func (a *Activities) reapScratch(root, name string) {
+	dir := a.dispatcher.scratchDir(root, name)
+	if _, err := os.Lstat(dir); err == nil {
+		if err := removeSealedTree(dir); err != nil {
+			a.dispatcher.logger().Warn("boot reap", "path", dir, "error", err)
+		} else {
+			a.dispatcher.logger().Info("scratch reaped", "path", dir)
+		}
 	}
-	if err := removeSealedTree(dir); err != nil {
-		a.dispatcher.logger().Warn("boot reap", "path", dir, "error", err)
-		return
+	if left := ownerlessScratch(filepath.Join(root, name)); len(left) > 0 {
+		a.dispatcher.logger().Warn("scratch files from a release that kept them per work root rather than "+
+			"per identity stay, because nothing says whose they are; once no Orker of that release uses "+
+			"this work root, remove them", "count", len(left), "paths", firstOf(left, reapLogLimit))
 	}
-	a.dispatcher.logger().Info("scratch reaped", "path", dir)
+}
+
+// ownerlessScratch lists what a scratch directory holds outside any identity's
+// own part of it.
+func ownerlessScratch(dir string) []string {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var left []string
+	for _, entry := range entries {
+		if !entry.IsDir() || !isAttemptOwner(entry.Name()) {
+			left = append(left, filepath.Join(dir, entry.Name()))
+		}
+	}
+	return left
 }
 
 // claimIdentity takes the process-lifetime lock that makes reaping by a stable
@@ -829,38 +959,58 @@ func (a *Activities) Close() {
 	}
 }
 
-// startCapacityReap tries again, every capacityReapInterval, to remove the
-// containers a declared capacity still holds a reservation for (capacity.go):
-// orphans seeded at boot and attempts whose removal failed. Nothing runs when
-// no capacity is declared.
-func (a *Activities) startCapacityReap() {
-	if a.capacity == nil || a.stopReap != nil {
+// startRemovalRetry tries again, every removalRetryInterval, to remove the
+// containers this Orker owes a removal: orphans its boot could not remove,
+// attempts' containers the daemon would not let go or that a daemon restart
+// left, creates it never heard the end of, and those a declared capacity holds
+// a reservation for. With nothing owed it asks the daemon nothing.
+func (a *Activities) startRemovalRetry() {
+	if a.stopReap != nil {
 		return
+	}
+	interval := a.removalRetryEvery
+	if interval <= 0 {
+		interval = removalRetryInterval
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a.stopReap = cancel
 	go func() {
-		ticker := time.NewTicker(capacityReapInterval)
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				if a.capacity.pendingRemovals() == 0 {
-					continue
-				}
-				reapCtx, done := context.WithTimeout(ctx, controlTimeout)
-				for _, err := range a.capacity.reap(reapCtx, a.dispatcher.Runtime.Remove) {
-					// Each still holds its reservation, and so still keeps
-					// this Orker from polling for that much work.
-					a.dispatcher.logger().Warn("capacity: a container could not be removed, so it "+
-						"keeps its reservation", "error", err, "pending", a.capacity.pendingRemovals())
-				}
-				done()
+				a.retryRemovals(ctx)
 			}
 		}
 	}()
+}
+
+// retryRemovals is one pass of startRemovalRetry.
+func (a *Activities) retryRemovals(ctx context.Context) {
+	if a.capacity != nil && a.capacity.pendingRemovals() > 0 {
+		reapCtx, done := context.WithTimeout(ctx, controlTimeout)
+		for _, err := range a.capacity.reap(reapCtx, a.dispatcher.Runtime.Remove) {
+			// Each still holds its reservation, and so still keeps
+			// this Orker from polling for that much work.
+			a.dispatcher.logger().Warn("capacity: a container could not be removed, so it "+
+				"keeps its reservation", "error", err, "pending", a.capacity.pendingRemovals())
+		}
+		done()
+	}
+	if a.dispatcher.unremoved.pending() == 0 {
+		return
+	}
+	settled, failed := a.dispatcher.unremoved.retry(ctx, a.dispatcher.clock, a.dispatcher.Runtime.Remove)
+	if settled > 0 {
+		a.dispatcher.logger().Info("containers that could not be removed earlier are gone", "removed", settled)
+	}
+	for _, err := range failed {
+		a.dispatcher.logger().Warn("a container could not be removed; trying again in "+removalRetryInterval.String(),
+			"error", err, "pending", a.dispatcher.unremoved.pending())
+	}
 }
 
 // defaultOrkerID derives an identity that is STABLE across a restart on the

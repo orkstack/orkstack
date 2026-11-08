@@ -521,8 +521,9 @@ func writeVerdict(w io.Writer, r *proofRecord) {
 
 // cmdVerify is `proofrun verify`, behind `make merge-check PROOF=`: it
 // refuses unless the proof is a full, passing, merge-eligible proof of
-// exactly HEAD's tree, the worktree is clean, HEAD's first parent is the main
-// branch's current tip, and the proof's own base was that same tip.
+// exactly HEAD's tree, the worktree is clean, HEAD is one commit whose parent
+// is the main branch's current tip with a Conventional Commit for its subject,
+// and the proof's own base was that same tip.
 //
 // -release is the pre-release gate: a passing release proof of the exact
 // commit the tag names (or HEAD, before the tag exists). -nightly is optional:
@@ -579,6 +580,10 @@ func cmdVerify(args []string) int {
 	mainTip := strings.TrimSpace(mustGit("rev-parse", "--verify", "--quiet", mainBranch+"^{commit}"))
 	status := mustGit("status", "--porcelain", "--untracked-files=all")
 	problems := verifyProblems(r, head, parent, mainTip, status, mainBranch)
+	problems = append(problems, candidateCommitProblems(
+		strings.Fields(mustGit("show", "-s", "--format=%P", "HEAD")),
+		strings.TrimSpace(mustGit("show", "-s", "--format=%s", "HEAD")),
+		mainBranch)...)
 	if nightlyGiven && *nightlyDir == "" {
 		problems = append(problems, "-nightly names no proof directory: leave the flag out to ask for no nightly proof, or name the one to verify")
 	}
@@ -590,7 +595,7 @@ func cmdVerify(args []string) int {
 		}
 		return 1
 	}
-	fmt.Printf("merge-check: %s is a full, passing, merge-eligible proof of tree %s; HEAD^1 is %s's tip. Fast-forward with git merge --ff-only.\n", *dir, head, mainBranch)
+	fmt.Printf("merge-check: %s is a full, passing, merge-eligible proof of tree %s; HEAD is one commit on %s's tip. Fast-forward with git merge --ff-only.\n", *dir, head, mainBranch)
 	return 0
 }
 
@@ -885,6 +890,20 @@ func verifyProblems(r proofRecord, headTree, parent, mainTip, status, mainRef st
 	}
 	if parent == "" || parent != mainTip {
 		p = append(p, fmt.Sprintf("HEAD^1 (%s) is not %s's current tip (%s): rebuild the candidate on it and prove it again", orDash(short(parent)), mainRef, orDash(short(mainTip))))
+	}
+	return p
+}
+
+// candidateCommitProblems holds a candidate to what main takes: one commit, a
+// squash whatever branches it folds, with a Conventional Commit for its subject.
+// Its tree is untouched by either fix, so a proof of it still stands.
+func candidateCommitProblems(parents []string, subject, mainRef string) []string {
+	var p []string
+	if len(parents) > 1 {
+		p = append(p, fmt.Sprintf("HEAD has %d parents, and %s moves by one squash commit: git reset --soft %s && git commit folds it into one and keeps the tree the proof is bound to", len(parents), mainRef, mainRef))
+	}
+	if _, err := parseConventionalTitle(subject); err != nil {
+		p = append(p, fmt.Sprintf("HEAD's subject is not a Conventional Commit: %v; git commit --amend keeps the tree the proof is bound to", err))
 	}
 	return p
 }

@@ -41,6 +41,27 @@ func marshalJSON(message proto.Message) ([]byte, error) {
 	return jsonTerminalSafe(indented.Bytes()), nil
 }
 
+// marshalCompactJSON is marshalJSON on one line, for a stream that prints one
+// object per line.
+func marshalCompactJSON(message proto.Message) ([]byte, error) {
+	compact, err := api.MarshalJSON(message)
+	if err != nil {
+		return nil, err
+	}
+	return jsonTerminalSafe(compact), nil
+}
+
+// marshalGoJSON encodes a plain Go value as indented JSON, as terminal-safe as
+// marshalJSON's. Protobuf messages go through marshalJSON, which owns the enum
+// dialect.
+func marshalGoJSON(value any) ([]byte, error) {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode json: %w", err)
+	}
+	return jsonTerminalSafe(encoded), nil
+}
+
 // jsonTerminalSafe writes each character a terminal could obey that the
 // encoder leaves raw — DEL, a C1 control and a format character
 // (bidirectional, zero-width, tag) — as its \u escape, a character past
@@ -69,9 +90,44 @@ func jsonTerminalSafe(encoded []byte) []byte {
 	return out.Bytes()
 }
 
+// compactValuesLine is values as one line of JSON a person reads: `&` and `<`
+// stay themselves, as they do not in json.Marshal, and whatever a terminal
+// could obey is an escape.
+func compactValuesLine(data *structpb.Struct) (string, error) {
+	var encoded bytes.Buffer
+	encoder := json.NewEncoder(&encoded)
+	encoder.SetEscapeHTML(false)
+	if err := encoder.Encode(data.AsMap()); err != nil {
+		return "", fmt.Errorf("encode values: %w", err)
+	}
+	return string(jsonTerminalSafe(bytes.TrimRight(encoded.Bytes(), "\n"))), nil
+}
+
+// compactStoredValues is a stored values.json on one line, as compactValuesLine
+// prints values a run carries.
+func compactStoredValues(raw []byte) (string, error) {
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, raw); err != nil {
+		return "", fmt.Errorf("compact values: %w", err)
+	}
+	return string(jsonTerminalSafe(compact.Bytes())), nil
+}
+
 // writeJSON prints a protobuf message as indented JSON followed by a newline.
 func writeJSON(out io.Writer, message proto.Message) error {
 	encoded, err := marshalJSON(message)
+	if err != nil {
+		return err
+	}
+	if _, err := out.Write(append(encoded, '\n')); err != nil {
+		return fmt.Errorf("write output: %w", err)
+	}
+	return nil
+}
+
+// writeGoJSON prints a plain Go value as indented JSON followed by a newline.
+func writeGoJSON(out io.Writer, value any) error {
+	encoded, err := marshalGoJSON(value)
 	if err != nil {
 		return err
 	}
@@ -145,7 +201,9 @@ func joinOrDash(values []string) string {
 	return strings.Join(values, ",")
 }
 
-// errorLine renders a structured run or task error on one line.
+// errorLine renders a structured run or task error on one line, with
+// whatever a terminal could obey in its code or message written as an escape:
+// a message can carry a task's or a resolver's own words.
 func errorLine(runErr *orkstackv1.Error) string {
 	if runErr == nil {
 		return dash
@@ -154,11 +212,11 @@ func errorLine(runErr *orkstackv1.Error) string {
 	message := runErr.GetMessage()
 	switch {
 	case code != "" && message != "":
-		return code + ": " + message
+		return terminalSafe(code + ": " + message)
 	case code != "":
-		return code
+		return terminalSafe(code)
 	case message != "":
-		return message
+		return terminalSafe(message)
 	default:
 		return dash
 	}
@@ -170,7 +228,8 @@ const payloadSummaryMax = 512
 // payloadSummary renders a Payload compactly for human output: its JSON on
 // one line, cut at payloadSummaryMax bytes (on a character boundary) with
 // its full size and the command that prints it whole — a 256 KiB output on
-// one terminal line hides everything after it. --json is never cut.
+// one terminal line hides everything after it. --json is never cut. A task
+// wrote it, so what a terminal could obey is written as an escape.
 func payloadSummary(payload *orkstackv1.Payload, runID, namespace string) string {
 	data := payload.GetData()
 	if data == nil || len(data.GetFields()) == 0 {
@@ -180,6 +239,7 @@ func payloadSummary(payload *orkstackv1.Payload, runID, namespace string) string
 	if err != nil {
 		return dash
 	}
+	encoded = jsonTerminalSafe(encoded)
 	if len(encoded) <= payloadSummaryMax {
 		return string(encoded)
 	}

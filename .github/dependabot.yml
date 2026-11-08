@@ -1,28 +1,25 @@
 version: 2
 
 # Every dependency update is a pull request that must pass the proof
-# (AGENTS.md §11.1, docs/PROOFS.md). Pin exact versions and image digests;
+# (AGENTS.md §11.1, docs/PROOFS.md), which waits for someone to add the ci:proof
+# label, so no entry here may add it. Pin exact versions and image digests;
 # never float a tag at runtime. A push to main does not rebase an open pull
 # request, because each rebase would run its whole proof again: ask for one
 # with an `@dependabot rebase` comment when that pull request is next to merge.
+#
+# Each entry opens at most one pull request a month, holding all of its updates,
+# so each month costs at most one full proof per entry (docs/CI.md, "Dependency
+# updates"). A security update does not wait for this schedule, where the
+# repository enables them, and the nightly's vulnerability scan runs every day.
+# GitHub re-runs every entry when this file changes; other pushes start none.
 updates:
   - package-ecosystem: gomod
     directory: /
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
       go:
-        patterns: ["*"]
-    rebase-strategy: disabled
-    commit-message:
-      prefix: "chore(deps)"
-
-  - package-ecosystem: docker
-    directory: /
-    schedule:
-      interval: weekly
-    groups:
-      docker-root:
         patterns: ["*"]
     rebase-strategy: disabled
     commit-message:
@@ -40,17 +37,7 @@ updates:
   # (TestBindProbeImage_IsTheFirstPartyImagesBase); and the proof cleanup's
   # firstPartyBase (test/tools/proofrun/clean.go,
   # TestClean_RemoveTreeArgs_BaseIsTheFirstPartyImagesBase).
-  - package-ecosystem: docker
-    directories: ["/images/*"]
-    schedule:
-      interval: weekly
-    groups:
-      docker-images:
-        patterns: ["*"]
-    rebase-strategy: disabled
-    commit-message:
-      prefix: "chore(deps)"
-
+  #
   # The release images' Dockerfile and the quickstart's source build, whose
   # runtime stages are the release's own (TestSourceDockerfile_StagesAreTheReleasesOwn),
   # so one update moves both; the source build alone also builds the web UI
@@ -61,11 +48,12 @@ updates:
   # runs (TestQuickstartCompose_InfraPinsMatchTheDevStack), and golang, whose
   # version is the workflows' go-version.
   - package-ecosystem: docker
-    directories: ["/deploy", "/deploy/source"]
+    directories: ["/images/*", "/deploy", "/deploy/source"]
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
-      docker-deploy:
+      docker:
         patterns: ["*"]
     rebase-strategy: disabled
     commit-message:
@@ -81,7 +69,8 @@ updates:
   - package-ecosystem: docker-compose
     directories: ["/", "/deploy"]
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
       docker-compose:
         patterns: ["*"]
@@ -97,7 +86,8 @@ updates:
   - package-ecosystem: github-actions
     directories: ["/", "/.github/actions/*"]
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
       actions:
         patterns: ["*"]
@@ -105,23 +95,15 @@ updates:
     commit-message:
       prefix: "chore(deps)"
 
+  # The UI and the site share what must move together: make site-media refuses
+  # a @playwright/test the two pin differently.
   - package-ecosystem: bun
-    directory: /ui
+    directories: ["/ui", "/site"]
     schedule:
-      interval: weekly
+      interval: monthly
+    open-pull-requests-limit: 1
     groups:
       bun:
-        patterns: ["*"]
-    rebase-strategy: disabled
-    commit-message:
-      prefix: "chore(deps)"
-
-  - package-ecosystem: bun
-    directory: /site
-    schedule:
-      interval: weekly
-    groups:
-      bun-site:
         patterns: ["*"]
     rebase-strategy: disabled
     commit-message:

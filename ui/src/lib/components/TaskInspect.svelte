@@ -14,7 +14,7 @@
 	import { pinnedOrReference, shortDigest } from '#lib/activity.ts';
 	import { cacheOutcomeLabel, cacheSourceHref, cacheSpecLabel, memoWriteSentence, missReasonSentence, sourceAttemptDuration } from '#lib/cache.ts';
 	import { childLabel } from '#lib/compose.ts';
-	import { artifactMetadata, inlinePayload, payloadJson } from '#lib/runDetail.ts';
+	import { artifactContentTypeLabel, artifactMetadata, inlinePayload, payloadJson } from '#lib/runDetail.ts';
 	import { fmtTimestamp, isTerminal } from '#lib/status.ts';
 	import type { TaskTiming } from '#lib/timing.ts';
 	import ArtifactProvenance from './ArtifactProvenance.svelte';
@@ -292,7 +292,7 @@
 						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule-faint py-2 text-xs last:border-b-0">
 							<span class="font-medium text-ink">{ArtifactKind[record.kind] ?? 'UNSPECIFIED'}</span>
 							<span class="font-mono break-all text-ink-secondary">{record.artifact.name}</span>
-							<span class="text-ink-muted">{record.artifact.contentType || 'unknown type'} · {record.artifact.sizeBytes.toString()} bytes</span>
+							<span class="text-ink-muted">{artifactContentTypeLabel(record.artifact)} · {record.artifact.sizeBytes.toString()} bytes</span>
 							<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => onDownload(record)} disabled={downloading === key} class="link ml-auto font-medium disabled:opacity-50">{downloading === key ? 'Downloading…' : 'Download'}</button>
 							<ArtifactProvenance runId={runId} namespace={namespace} taskId={task.id} kind={record.kind} name={record.artifact.name} />
 							<details class="w-full min-w-0 text-ink-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>

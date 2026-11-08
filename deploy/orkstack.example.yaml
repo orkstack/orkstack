@@ -49,8 +49,8 @@ storage:
     # endpoint: http://localhost:9000
     # region: us-east-1
     # bucket: orkstack-artifacts
-    # access_key: orkstack           # the docker-compose dev credential; supply a real one
-    # secret_key: orkstack-secret    # as above — or a `file:` mapping naming /run/secrets/ork_s3_secret_key
+    # access_key: ""                 # set both, or neither to use the default credential chain (a role)
+    # secret_key: ""                 # as above — or a `file:` mapping naming /run/secrets/ork_s3_secret_key
     # session_token: ""              # for temporary credentials
     # path_style: true               # the dev store needs path-style addressing; AWS S3 does not
 

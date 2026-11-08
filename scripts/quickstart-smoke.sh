@@ -92,6 +92,12 @@ fail() {
 	exit 1
 }
 say() { printf '%s\n' "$*"; }
+# submitted_run LOG prints the run id `orkctl run submit` wrote to LOG, or nothing,
+# and exits 0 either way, so that its caller's check says why. A run id is opaque:
+# nothing here reads its shape.
+submitted_run() {
+	{ grep -m1 -oE '^Submitted run [^[:space:]]+' "$1" || true; } | cut -d' ' -f3
+}
 
 { command -v docker >/dev/null && docker info >/dev/null 2>&1; } || need "Docker is not running"
 docker compose version >/dev/null 2>&1 || need "docker compose (v2) is not installed"
@@ -289,6 +295,14 @@ else
 	got="$(dc run --rm -T orkctl version)"
 	grep -q "^orkctl: *$VERSION\$" <<<"$got" || fail "orkctl version says: $got"
 	say "  version $VERSION"
+	COMMIT="${SOURCE_COMMIT:-$(git -C "$REPO" rev-parse HEAD)}"
+	grep -q "^commit: *$COMMIT\$" <<<"$got" || fail "orkctl version does not name commit $COMMIT: $got"
+	for daemon in ork orker; do
+		got="$(dc run --rm -T --no-deps "$daemon" --version)"
+		grep -q "^$daemon: *$VERSION\$" <<<"$got" && grep -q "^commit: *$COMMIT\$" <<<"$got" ||
+			fail "$daemon --version does not name $VERSION at $COMMIT: $got"
+	done
+	say "  commit $COMMIT, from each of the three images"
 	dc run --rm -T orkctl apply examples/each-fan-out.ork.yaml >"$WORK/apply.log" || { cat "$WORK/apply.log" >&2; fail "apply"; }
 	say "  applied each-fan-out"
 
@@ -297,6 +311,9 @@ else
 	tar -xzf "$REPO/dist/orkctl-linux-$(go env GOARCH).tar.gz" -C "$WORK/archive"
 	ORKCTL="$(find "$WORK/archive" -type f -name orkctl | head -1)"
 	[ -x "$ORKCTL" ] || fail "dist/orkctl-linux-$(go env GOARCH).tar.gz holds no executable orkctl"
+	got="$("$ORKCTL" version)"
+	grep -q "^commit: *$COMMIT\$" <<<"$got" || fail "the archive's orkctl does not name commit $COMMIT: $got"
+	say "  commit $COMMIT"
 	export ORK_SERVER="http://127.0.0.1:$ORKSTACK_API_PORT"
 	watch_log="$WORK/watch.log"
 	"$ORKCTL" run submit each-fan-out --watch >"$watch_log" 2>&1 || { cat "$watch_log" >&2; fail "run submit --watch"; }
@@ -304,7 +321,7 @@ else
 fi
 
 say "== the run"
-run="$(grep -oE '^Submitted run ork-[0-9]+-[0-9]+' "$watch_log" | head -1 | cut -d' ' -f3)"
+run="$(submitted_run "$watch_log")"
 [ -n "$run" ] || fail "no run id in: $(tail -3 "$watch_log")"
 grep -q "finished with status SUCCEEDED" "$watch_log" || fail "the run did not finish SUCCEEDED: $(tail -3 "$watch_log")"
 say "  $run SUCCEEDED"
@@ -322,9 +339,7 @@ if [ -n "$EXAMPLES" ]; then
 		log="$WORK/example-$name.log"
 		# --watch exits non-zero for a failed run, which one of these means to be.
 		orkctl run submit "$name" "$@" --watch >"$log" 2>&1 || true
-		# A refused submit prints no run id, which grep must not turn into a
-		# silent exit before the log below is shown.
-		run="$({ grep -oE '^Submitted run ork-[0-9]+-[0-9]+' "$log" || true; } | head -1 | cut -d' ' -f3)"
+		run="$(submitted_run "$log")"
 		[ -n "$run" ] || { cat "$log" >&2; fail "$name: no run id"; }
 		orkctl --json run get "$run" >"$WORK/example-$name.json" || fail "$name: run get $run"
 		python3 - "$WORK/example-$name.json" "$want" "$tasks" <<'PY' || { tail -40 "$log" >&2; fail "$name: run $run"; }
@@ -422,7 +437,8 @@ if [ -n "$VERSION" ]; then
 	say "  refused under cosign:other: $(grep -m1 -o 'none verifies with key "other"' "$WORK/refused.log")"
 	"$ORKCTL" -n signed apply "$REPO/examples/each-fan-out.ork.yaml" >"$WORK/signed.log" 2>&1 || { cat "$WORK/signed.log" >&2; fail "apply under cosign:release"; }
 	"$ORKCTL" -n signed run submit each-fan-out --watch >"$WORK/signed.log" 2>&1 || { cat "$WORK/signed.log" >&2; fail "run submit --watch under cosign:release"; }
-	signed_run="$(grep -oE '^Submitted run ork-[0-9]+-[0-9]+' "$WORK/signed.log" | head -1 | cut -d' ' -f3)"
+	signed_run="$(submitted_run "$WORK/signed.log")"
+	[ -n "$signed_run" ] || fail "no run id in: $(tail -3 "$WORK/signed.log")"
 	grep -q "finished with status SUCCEEDED" "$WORK/signed.log" || fail "the signed run did not finish SUCCEEDED: $(tail -3 "$WORK/signed.log")"
 	say "  $signed_run SUCCEEDED in a namespace that requires cosign:release"
 fi

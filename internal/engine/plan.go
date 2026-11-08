@@ -218,6 +218,25 @@ type RunPlan struct {
 	// this says. omitempty, so a plan with none encodes exactly as it did
 	// before the field existed.
 	RetryMaxIntervalSeconds int32 `json:"retry_max_interval_seconds,omitempty"`
+
+	// RecordRootRun says this run's child runs record the root of their chain
+	// (RunOrigin.RootRunID, childStartPlan). It changes what a child start
+	// carries and no command. It rides the plan rather than a gate so that a
+	// run accepted before the field keeps sending what its build sent, its
+	// children record no root and neither do theirs: a parent that is itself
+	// a child, with no root recorded, cannot say what its child's root is. A
+	// run-tree value: set on the top-level plan by pinRunTreeLimits and copied
+	// into each child's start plan by childStartPlan. omitempty, so a plan
+	// without it encodes exactly as it did before the field existed.
+	RecordRootRun bool `json:"record_root_run,omitempty"`
+
+	// RootRunIndexed says the cluster indexes a run's root
+	// (task.EnsureRunRootSearchAttribute), so a child start may stamp it; a
+	// start stamping an attribute the cluster does not have is refused. It is
+	// the submitting engine's boot answer, pinned because workflow code may not
+	// ask, and a run-tree value like RecordRootRun, so every child of a plan
+	// has the one answer. omitempty, as RecordRootRun is.
+	RootRunIndexed bool `json:"root_run_indexed,omitempty"`
 }
 
 // OverlayPolicy is a run's snapshot-overlay thresholds, pinned per run
@@ -434,6 +453,7 @@ type RunOrigin struct {
 	Reference   string `json:"reference,omitempty"`
 	Description string `json:"description,omitempty"`
 	Principal   string `json:"principal,omitempty"`
+	RootRunID   string `json:"root_run_id,omitempty"`
 }
 
 // Proto renders the origin as the wire message the snapshot carries.
@@ -455,6 +475,7 @@ func (o *RunOrigin) Proto() *orkstackv1.RunOrigin {
 		Reference:   o.Reference,
 		Description: o.Description,
 		Principal:   o.Principal,
+		RootRunId:   o.RootRunID,
 	}
 }
 
@@ -470,6 +491,7 @@ func OriginFromProto(o *orkstackv1.RunOrigin) *RunOrigin {
 		Reference:   o.GetReference(),
 		Description: o.GetDescription(),
 		Principal:   o.GetPrincipal(),
+		RootRunID:   o.GetRootRunId(),
 	}
 }
 

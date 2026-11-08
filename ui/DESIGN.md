@@ -135,7 +135,6 @@ spacing:
   bar: "3.5rem"
   side: "15.5rem"
   aside: "21.25rem"
-  content: "92.5rem"
 components:
   button:
     backgroundColor: "{colors.surface}"
@@ -195,7 +194,7 @@ Density is moderate: 14 px body, 13.5 px in tables and controls, tabular numeral
 Cool slate neutrals, a deep harbour navy, one warm orange, and a closed set of status hues. Each role below is `light / dark`.
 
 ### Primary
-- **Harbour Navy** (`--navy` #0F2B3D / #11293C; `--navy-text` #163A52 / #B9CCDB; `--navy-tint` #E5EDF4 / #172C3D): the brand, the sidebar's active pill (`--side-active`), tags, the retry mark, the live dot, links and the focus ring (`--link` = `--focus` = navy-text). `--meter` (#2B4A63 / #7E9CB4) is the progress ring's running and succeeded stroke.
+- **Harbour Navy** (`--navy` #0F2B3D / #11293C; `--navy-text` #163A52 / #B9CCDB; `--navy-tint` #E5EDF4 / #172C3D): the brand, the sidebar's active pill (`--side-active`), tags, the retry mark, the live dot, links and the focus ring (`--link` = `--focus` = navy-text). `--meter` (#2B4A63 / #7E9CB4) is the progress ring's stroke before it has a status.
 
 ### Secondary
 - **Container Orange** (`--accent` #DA8757 / #E39967, hover #E29463 / #EBA879, edge #9F5021 / #E39967): the primary button and the Strata mark's S (`--mark-s`). Its label is dark ink (`--on-accent` #0E1C28 / #0B141C, 6.2:1 and 8.0:1), never white.
@@ -252,7 +251,7 @@ Both are self-hosted `@fontsource-variable` 5.3.0, imported by `app.css`. Inter 
 
 ## Layout
 
-A fixed light sidebar (248 px, `--spacing-side`) beside a sticky top bar (56 px, `--spacing-bar`) and a content column capped at 1480 px (`--spacing-content`) with 28 px sheet padding (`--spacing-sheet`) and 16 px gutters. Below 900 px the sidebar becomes a drawer opened from the top bar's menu button. Spacing is Tailwind's 4 px step (`--spacing`). The editor uses layout C: the YAML editor beside a 340 px docs rail (`--spacing-aside`). A log pane is bounded at `min(60dvh, 30rem)`; the graph card at `clamp(15rem, 42vh, 30rem)` (tall: `clamp(15rem, 65svh, 40rem)`).
+A fixed light sidebar (248 px, `--spacing-side`) beside a sticky top bar (56 px, `--spacing-bar`) and a content column that uses all the width the window gives it, with no upper limit, with 28 px sheet padding (`--spacing-sheet`) and 16 px gutters. Registers, the graph and the timeline fill that column; running text keeps its reading measure (`max-w-prose`), and a form its own (`max-w-3xl`, `max-w-4xl`). The floor it is drawn for is 1280x800. Below 900 px the sidebar becomes a drawer opened from the top bar's menu button. Spacing is Tailwind's 4 px step (`--spacing`). The editor uses layout C: the YAML editor beside a 340 px docs rail (`--spacing-aside`), with what an apply answered in a notice slot under the editor card's header. A log pane is bounded at `min(60dvh, 30rem)`; the graph card at `clamp(15rem, 42vh, 30rem)` (tall: `clamp(15rem, 65svh, 40rem)`).
 
 Responsive rules, all in components: the facts strip goes to two columns with no rules below 640 px and one below 360 px; below 640 px the Activities register stacks into labelled rows and a pool's Orkers stay one row each in a table that scrolls in its own frame; buttons and chips reach a 40 px minimum on phones; everything reflows at 320 px. `scroll-padding-top` keeps a focused control clear of the sticky bar.
 
@@ -285,19 +284,19 @@ The mark is **Strata**: three bars joined by round turns inside a ring, a dot wh
 - **Destroy `.btn-destroy`:** solid ink (navy with white in light, near-white with dark ink in dark). Only the confirm inside a reason dialog, never a trigger on a page.
 - **Icon `.btn-icon`:** square, `--ink-2`, named by `aria-label`; only terminal, copy and More.
 - **Disabled:** surface-2, line-2, ink-3, no shadow; `aria-disabled` with its reason visible and wired by `aria-describedby`.
-- **Icons on buttons:** 16 px, leading, only on actions that start or commit a change (play, check, ban, pause, and their confirms).
+- **Icons on buttons:** 16 px, leading, only on actions that start or commit a change (play, check, ban, trash, pause, and their confirms), and the run page's Edit (pencil).
 
 ### Status pills `.stamp`
 24 px (20 px `.stamp-sm`) full pills: mark, word, then tint ground and word colour. The mark is CSS on the pill itself (`.mark-dot`, `.mark-square`, `.mark-tri`, `.mark-ring`, `.mark-diamond`, `.mark-strike`, `.mark-hollow`, `.mark-dotted`), because a run page holds thousands. Pending and Skipped are outlined (`.pill-outline`). A running dot breathes three times then rests. `.pill-plain` is a markless label; `.tag` is a navy-tint count or kind.
 
 ### Plates `.plate`
-A key cell (surface-2, ink-3, semibold) and a mono value, 6 px radius: the one way a run id, version or digest is set. A run id has full and short forms and a copy button; a version never copies and looks the same on every page. `.plate-sm` in rows.
+A key cell (surface-2, ink-3, semibold) and a mono value, 6 px radius: the one way a run id, version or digest is set. A run id has full and short forms and a copy button; a version never copies and looks the same on every page. On the run page the version plate names the run's version and links to it on the Orkflow's page. `.plate-sm` in rows.
 
 ### Facts strip `.fstrip`
 A `<dl>` of 12 px labels over 14 px tabular values, separated by vertical rules; on the run, failed run, Runs and editor headers. Principals always carry the **asserted tag** (`.atag`, `Asserted`/`Principal`): "asserted by your gateway, not verified by OrkStack".
 
 ### Progress ring `.pring`
-20 px (16 px in rows) with the percentage beside it; counts in the tooltip and sr text. Basis (`lib/progress.ts`): ended tasks plus fan-out items over all of them, Skipped and Canceled counting as ended. Stroke `--meter` while running or succeeded, `--fail-mark` when failed, `--ink-3` when canceled.
+20 px (16 px in rows) with the percentage beside it; counts in the tooltip and sr text. Basis (`lib/progress.ts`): ended tasks plus fan-out items over all of them, Skipped and Canceled counting as ended. Its stroke is the status it shows, from the status tokens: `--run` while running, `--ok-mark` when succeeded, `--fail-mark` when failed, `--ink-3` when canceled, and `--meter` before there is one. The Runs list shares the component.
 
 ### Retry mark `.retry`
 A 22 px navy circular arrow with the count (10 px bold) inside; drawn only for two or more attempts.
@@ -330,7 +329,7 @@ One full pill: a state chip (`role="status"`) and a toggle. Live: navy dot with 
 `DrawingFrame` holds `DagGraph` over a dotted ground (8 px minor, 40 px major pitch). The graph scrolls horizontally and centres the selected node on load (the failed one on a failed run). A node is `role="button"`, `aria-pressed`, with an activity icon and its own focus ring outside the box. Activity icons come from `icons.ts` (`a-*`) or from an image's declared icon, rendered through the closed allowlist in `lib/activityIcon.ts`; anything unknown draws the default icon, never a partial one.
 
 ### Signature: the run page
-One task selection, held by a row's name, its graph node, a task map cell and the Jump dialog. With no choice made it is the failed task, else the first one running or awaiting; Clear selection stands until the next choice. The graph greys what is outside the selection. The Tasks card draws every task on the run's own axis (hatched waited, green ran, blue running, a hollow red bar a failed attempt), a fan-out's items under its row, and one log pane that follows the selection. A failed task opens under its row with its attempt, strip, reason, phases and stderr. The Item card follows the selection and announces it: while it runs only what the live read knows (attempts, Orker, pool, the request, the wait to start, Now from the heartbeat), once it has ended what the attempt record adds (reserved, phases, image digest), and before it starts the request alone; Inspect holds the definition, the attempts, the artifacts and the values. Side cards on a failed run: Why it failed, How it failed, Seen before, Since the last success, Task map. On any other: Task map, What X waits for, Item, Since the last run, Image, Inputs.
+One task selection, held by a row's name, its graph node, a task map cell and the Jump dialog. With no choice made it is the failed task, else the first one running or awaiting; Clear selection stands until the next choice. The graph greys what is outside the selection. The Tasks card draws every task on the run's own axis (hatched waited, green ran, blue running, a hollow red bar a failed attempt), and the axis holds only the marks its own width has room for. A row stays minimal: its name, its activity, and for why it ended a word or two (`condition false`, `need skipped`, `run failing`), never the engine's sentence, which is the Reason on its panel; an Orker is named on a pinned row, where it proves the pin held, and on the panel of every task. Show Orkers, in the Tasks card's More, names it on every row that reached one and is remembered per viewer. An id never takes more than one line: it clips, with the whole of it in a tip, and a row with nothing else to say keeps the height it had. A fan-out's row names the one Orker its items ran on, or counts them (`2 Orkers`) with the names in a tip. A fan-out's items sit under its row, and the selected task opens under its own row, never below every other task. That is the task panel: one element the selection moves (`underSelectedRow`), so selecting re-renders no row and the rows stay in the DOM unvirtualised. Pressing a row keeps that row where it is under the pointer and scrolls only as far as showing the panel asks. A fan-out's items stay directly under its row, with the panel below them. A failed task opens under its row with its attempt, strip, reason, phases and stderr. The panel holds the Item card and the one log pane that follows the selection. The Item card follows the selection and announces it, and its facts are a strip (`.fstrip`), as a failed task's are: while it runs only what the live read knows (attempts, Orker, pool, the request, the wait to start, Now from the heartbeat), once it has ended what the attempt record adds (reserved, phases, image digest) and when it finished, with the date when that is not the day it started, and before it starts the request alone; Inspect holds the definition, the attempts, the artifacts and the values. The panel also holds what else is about that task: What X waits for and its Image; a failed run's failed task holds Seen before in its own expansion. The run's Inputs and its Outputs sit in one row between the graph and the Tasks card, side by side when both are there. Side cards are the run's alone. On a failed run: Why it failed, How it failed, Since the last success, Task map. On any other: How it ended when the run says, Task map, Since the last run.
 
 ### Motion
 80 ms instant feedback, 180 ms state change, 320 ms entrance; `--ease-in` cubic-bezier(.22,1,.36,1), `--ease-out` cubic-bezier(.4,0,.2,1). Under reduced motion: no pulse, no transforms.
@@ -339,11 +338,11 @@ One task selection, held by a row's name, its graph node, a task map cell and th
 
 **The One Action Colour Rule.** At most one orange button per screen, on the action that creates work or commits a change on the screen's own object.
 
-**The No Hue For Destruction Rule.** A destructive trigger is neutral, ends in an ellipsis and carries its glyph ("Cancel run…" with ban, "Cordon…" with pause), set apart by a divider (`.act-gap`). It opens a reason dialog whose confirm is solid ink (`--destroy-*`) with the same glyph.
+**The No Hue For Destruction Rule.** A destructive trigger is neutral and carries its glyph ("Cancel run" with ban, "Delete" with trash, "Cordon" with pause), set apart by a divider (`.act-gap`); its label has no ellipsis, and only a progress label ("Validating…") keeps one. It opens a reason dialog whose confirm is solid ink (`--destroy-*`) with the same glyph.
 
-**The Icons Earn Their Place Rule.** Leading icons only on actions that start or commit a change; icon-only buttons only for terminal, copy and More; one 16-unit, 1.4-stroke family everywhere.
+**The Icons Earn Their Place Rule.** Leading icons only on actions that start or commit a change, with one exception: the run page's Edit, a neutral `.btn` with the pencil, which starts an edit from the run's version; icon-only buttons only for terminal, copy and More; one 16-unit, 1.4-stroke family everywhere.
 
-**The Shell Icon Rule.** No `orkctl` text on an app screen; every screen's commands live in its CLI popover.
+**The Shell Icon Rule.** No `orkctl` text on an app screen; every screen's commands live in its one CLI popover, in its header (`SheetHeader`'s `commands`). A row's, a dialog's or a notice's own command stays with it behind its own icon, because it carries that row's values (`ui/e2e/cli-icon-rule.spec.ts`).
 
 **The Plate Rule.** Run ids, versions and digests are always plates, identical on every page.
 

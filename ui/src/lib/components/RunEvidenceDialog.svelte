@@ -140,9 +140,7 @@
 			<p class="text-sm text-ink-secondary">
 				One tar.gz of everything this run recorded — the archived run and events, the pinned definition,
 				and per task its commit, values, artifacts, attempt records and logs — with a MANIFEST.json naming
-				each member's sha256. Verify it later, offline, with <code class="font-mono text-xs"
-					>orkctl run evidence verify</code
-				>.
+				each member's sha256. Verify it later, offline.
 			</p>
 			<div class="flex flex-wrap gap-4">
 				<label class="flex items-center gap-1.5 text-sm text-ink">
@@ -230,6 +228,7 @@
 
 			<div class="flex items-center justify-end gap-2">
 				<CliEquivalent {command} testid="run-evidence-cli" label="Copy CLI" />
+				<CliEquivalent command="orkctl run evidence verify evidence.tar.gz" testid="run-evidence-verify-cli" label="Verify a bundle from the CLI" />
 				<button
 					type="button"
 					data-testid="run-evidence-download"

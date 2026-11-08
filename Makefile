@@ -204,6 +204,11 @@ infra-down-observability: ## Stop infrastructure, including the observability pr
 	$(COMPOSE) --profile observability down
 
 ## ---- run ----
+# The development store's key: no binary falls back to one, and the store
+# refuses any other. A key already set is kept.
+run-ork run-orker: export ORK_S3_ACCESS_KEY ?= orkstack
+run-ork run-orker: export ORK_S3_SECRET_KEY ?= orkstack-secret
+
 .PHONY: run-ork
 run-ork: ## Run the ork engine (Connect API + WS + Temporal client)
 	go run ./cmd/ork
@@ -294,11 +299,12 @@ fmt: ## Format Go code
 GIT_STATE_PACKAGES := ./internal/docscheck ./internal/engine ./test/tools/proofrun
 
 .PHONY: check
-check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integration suites, unit tests (-short, test cache kept but for GIT_STATE_PACKAGES)
+check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integration suites, unit tests (-short, test cache kept but for GIT_STATE_PACKAGES), the UI's type-check and unit tests
 	$(MAKE) lint
 	go vet -tags=integration ./...
 	go test -short $$(go list ./... | grep -vxF "$$(go list $(GIT_STATE_PACKAGES))")
 	go test -short -count=1 $(GIT_STATE_PACKAGES)
+	cd ui && bun install --frozen-lockfile && bun run check && bun test test/
 
 .PHONY: merge-check
 merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree, and with NIGHTLY=proof/<name> verify that nightly proof of main's tip (AGENTS.md §11.3; none is required)
@@ -375,11 +381,16 @@ RELEASE_IMAGES := ork orker orkctl
 SOURCE_DATE_EPOCH ?= $(shell git log -1 --format=%ct 2>/dev/null)
 # Every archive and image is stamped with the commit's time, never a clock's.
 need-commit-time = $(if $(strip $(SOURCE_DATE_EPOCH)),,$(error no commit time: run from a git checkout or set SOURCE_DATE_EPOCH))
+# Every release binary is stamped with the commit it came from, which it reports
+# (`orkctl version`), because a release builds with -buildvcs=false.
+SOURCE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
+need-commit = $(if $(strip $(SOURCE_COMMIT)),,$(error no commit: run from a git checkout or set SOURCE_COMMIT))
 
 .PHONY: dist
 dist: ui ## The web UI (make ui), then release binaries, archives and SHA256SUMS for VERSION=vX.Y.Z -> dist/ (gitignored)
 	$(need-commit-time)
-	go run ./internal/dist/cmd/dist build -version $(VERSION) -out $(DIST) -commit-time $(SOURCE_DATE_EPOCH)
+	$(need-commit)
+	go run ./internal/dist/cmd/dist build -version $(VERSION) -commit $(SOURCE_COMMIT) -out $(DIST) -commit-time $(SOURCE_DATE_EPOCH)
 
 .PHONY: release-images
 release-images: ## Release images (ork, orker, orkctl, activities) as OCI layouts: VERSION=vX.Y.Z OUT=<dir> [PLATFORMS=linux/amd64,linux/arm64]

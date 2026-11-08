@@ -950,15 +950,15 @@ func TestRunWorkflow_EachResultCarriesNoItems(t *testing.T) {
 	}
 }
 
-func TestRunWorkflow_EachLeafContributesNoRunOutput(t *testing.T) {
+func TestRunWorkflow_EachEndTaskContributesNoRunOutput(t *testing.T) {
 	h := newEachHarness(t, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		r := itemResult(in)
 		r.ValuesJson = []byte(`{"x":1}`)
 		return r, nil
 	})
-	run := h.run(t, "run-each-leaf", fmt.Sprintf(eachInputDocument, 10, "", ""), map[string]any{"regions": []any{"eu"}})
+	run := h.run(t, "run-each-end-task", fmt.Sprintf(eachInputDocument, 10, "", ""), map[string]any{"regions": []any{"eu"}})
 	if _, present := run.GetOutput().GetData().GetFields()["convert"]; present {
-		t.Fatalf("a fan-out leaf contributed to Run.output: %v", run.GetOutput())
+		t.Fatalf("a fan-out end task contributed to Run.output: %v", run.GetOutput())
 	}
 }
 

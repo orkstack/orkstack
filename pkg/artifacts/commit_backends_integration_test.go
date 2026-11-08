@@ -67,6 +67,24 @@ func TestS3CommitStoreProbeOfAMissingBucketIsUnavailable(t *testing.T) {
 	}
 }
 
+// TestS3CommitStoreProbeWithAWrongKeyIsUnavailable: the development stores check
+// keys, as production does, so a wrong key fails here and not first in
+// production. Against a store with no keys configured this fails, because that
+// store accepts anything; `make infra-up` recreates one from before they did.
+func TestS3CommitStoreProbeWithAWrongKeyIsUnavailable(t *testing.T) {
+	cfg := s3TestConfig()
+	requireObjectStore(t, cfg)
+	cfg.S3SecretKey = "not-" + cfg.S3SecretKey
+	ctx := context.Background()
+	store, err := artifacts.NewS3CommitStore(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := artifacts.ProbeCommitStore(ctx, store); !errors.Is(err, artifacts.ErrCommitStoreUnavailable) {
+		t.Fatalf("probe with a wrong secret key = %v, want ErrCommitStoreUnavailable; a store started before the development stores checked keys accepts any, and make infra-up recreates it", err)
+	}
+}
+
 func TestS3CommitStoreExactlyOneWriterAndStoredBytesWin(t *testing.T) {
 	cfg := s3TestConfig()
 	requireObjectStore(t, cfg)

@@ -16,7 +16,9 @@ version: "1.4.0"
 
 Applying a file stores it as a version. Applying an unchanged file stores nothing new. Applying an edited file stores a new version, and a stored version is never rewritten.
 
-If you leave `version:` out, OrkStack derives one from the file's bytes. If you pin one, applying a changed file under that same version is refused, because a run pinned to it still reads those bytes. Bump the version, or drop it.
+If you leave `version:` out, the first apply gives the file a generated version, and applying the same file again finds it. If you pin one, applying a changed file under that same version is refused, because a run pinned to it still reads those bytes. Bump the version, or drop it.
+
+The web UI shows a generated version in a short form, the same on every page. Hold the pointer over it for the whole value, which is what URLs and `orkctl` take.
 
 ## A run keeps its version
 
@@ -46,6 +48,6 @@ Changes to tasks, images, pools and retries never block a promotion. Only the in
 
 ## See also
 
-- [docs/DSL.md, version](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#version): the rules for pinned and derived versions.
+- [docs/DSL.md, version](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#version): the rules for pinned and assigned versions.
 - [docs/DSL.md, Which version runs](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#which-version-runs): promotion, rollback and the commands that compare versions.
 - [docs/DSL.md, Promoting compares declared interfaces](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#promoting-compares-declared-interfaces): the table of what counts as breaking.

@@ -370,7 +370,7 @@ type PoolUnreachableError struct {
 }
 
 func (e *PoolUnreachableError) Error() string {
-	return fmt.Sprintf("cannot tell whether pool %q has live Orkers: %v", e.Pool, e.Err)
+	return fmt.Sprintf("could not check pool %q for live Orkers: asking the cluster failed (%v); retry the request", e.Pool, e.Err)
 }
 
 func (e *PoolUnreachableError) Unwrap() error { return e.Err }

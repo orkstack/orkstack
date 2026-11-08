@@ -58,7 +58,7 @@ func renderRunTree(out io.Writer, run *orkstackv1.Run, read childReader, level, 
 		fmt.Fprintln(out)
 		childRun, err := read(child.GetRunId(), run.GetNamespace())
 		if err != nil {
-			code, message := "unknown", err.Error()
+			code, message := "no answer", err.Error()
 			var connectErr *connect.Error
 			if errors.As(err, &connectErr) {
 				code, message = connectErr.Code().String(), connectErr.Message()
@@ -73,9 +73,16 @@ func renderRunTree(out io.Writer, run *orkstackv1.Run, read childReader, level, 
 		if err := renderTaskRunTable(&table, childRun); err != nil {
 			return err
 		}
+		if err := renderTaskValues(&table, childRun); err != nil {
+			return err
+		}
 		indent := strings.Repeat("  ", level)
 		for _, line := range strings.SplitAfter(table.String(), "\n") {
 			if line == "" {
+				continue
+			}
+			if line == "\n" {
+				fmt.Fprintln(out)
 				continue
 			}
 			fmt.Fprint(out, indent+line)

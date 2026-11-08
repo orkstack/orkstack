@@ -349,8 +349,10 @@ test('a failed subscriptions read offers Retry, and Retry renders the list', asy
 test('deleting the scoped webhook removes its row', async ({ page }) => {
 	expect(scopedId).not.toBe('');
 	await page.goto(`${UI_ORIGIN}/admin/webhooks`);
+	await expect(page.getByTestId(`delete-webhook-${scopedId}`).locator('svg use')).toHaveAttribute('href', '#i-trash');
 	await page.getByTestId(`delete-webhook-${scopedId}`).click();
 	await expect(page.getByTestId('delete-webhook-confirm')).toBeVisible();
+	await expect(page.getByTestId('delete-webhook-accept').locator('svg use')).toHaveAttribute('href', '#i-trash');
 	await page.getByTestId('delete-webhook-accept').click();
 	await expect(page.getByTestId(`webhook-${scopedId}`)).toHaveCount(0);
 	await page.reload();

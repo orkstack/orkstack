@@ -311,9 +311,12 @@ func (s *runState) readChunkBefore(
 	}
 }
 
+// errorText is the cause a RUN_STATE_* or RUN_DEFINITION_* message quotes:
+// an application error's own message, any other error's text, or, when none
+// was recorded, says so.
 func errorText(err error) string {
 	if err == nil {
-		return "unknown"
+		return "no error was recorded"
 	}
 	var applicationErr *temporal.ApplicationError
 	if errors.As(err, &applicationErr) {

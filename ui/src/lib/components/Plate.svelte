@@ -6,6 +6,7 @@
 	import Icon from './Icon.svelte';
 	import { copyText } from '#lib/clipboard.ts';
 	import { onDestroy, tick } from 'svelte';
+	import { shortVersion, versionTip } from '#lib/version.ts';
 
 	interface Props {
 		key: string;
@@ -22,9 +23,15 @@
 		copy?: string;
 		/** The whole width of its card. */
 		wide?: boolean;
+		/** It sits inside a link, which is the tab stop. */
+		inLink?: boolean;
 	}
 
-	let { key, value, short, copyLabel, small = false, testid, tip, copy: copied, wide = false }: Props = $props();
+	let { key, value, short, copyLabel, small = false, testid, tip, copy: copied, wide = false, inLink = false }: Props = $props();
+	// A version looks the same on every page, whoever draws its plate.
+	const isVersion = $derived(key === 'version');
+	const shown = $derived(isVersion ? shortVersion(value) : value);
+	const tipShown = $derived(tip ?? (isVersion ? versionTip(value) : undefined));
 	// What the last copy did, in a live region that is always there: a copy
 	// never silently does nothing (docs/UI_CLI_PARITY.md).
 	let said = $state('');
@@ -40,8 +47,8 @@
 </script>
 
 <span class="plate" class:plate-sm={small} class:plate-wide={wide} data-testid={testid}
-	><span class="plate-k">{key}</span><span class="plate-v" data-tip={tip}
-		>{#if short}<span class="full">{value}</span><span class="short" aria-hidden="true">{short}</span>{:else}{value}{/if}</span
+	><span class="plate-k">{key}</span>{' '}<!-- A shortened version is a tab stop, so its whole value reaches a keyboard and a screen reader. --><!-- svelte-ignore a11y_no_noninteractive_tabindex --><span class="plate-v" data-tip={tipShown} tabindex={isVersion && !inLink && versionTip(value) ? 0 : undefined}
+		>{#if short}<span class="full">{shown}</span><span class="short" aria-hidden="true">{short}</span>{:else}{shown}{/if}</span
 	>{#if copyLabel}<button type="button" aria-label={copyLabel} data-tip={copyLabel} onclick={copy}
 			><Icon name={said === 'Copied' ? 'apply' : 'copy'} /></button
 		><span class={said && said !== 'Copied' ? 'plate-said' : 'sr'} role="status">{said}</span>{/if}</span

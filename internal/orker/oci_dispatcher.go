@@ -18,7 +18,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -96,12 +98,6 @@ type OCIDispatcher struct {
 	LayoutRoot string
 	// HeartbeatInterval is how often an attempt's heartbeat loop ticks. Zero
 	// means DefaultHeartbeatInterval.
-	//
-	// Whoever sets this MUST cap the task worker's
-	// worker.Options.MaxHeartbeatThrottleInterval to the same value, or the
-	// SDK batches these ticks into 0.8 × HeartbeatTimeout windows and a
-	// running container waits that long to learn it was cancelled — see the
-	// pairing rule in heartbeat.go.
 	HeartbeatInterval time.Duration
 	// LogSinkObserver is an optional in-process observer of streamed lines.
 	LogSinkObserver func(in *orkstackv1.ExecuteTaskInput, line string)
@@ -146,6 +142,11 @@ type OCIDispatcher struct {
 	// zero is DefaultCancellationGrace, the grace a task that sets none gets.
 	// Tests shorten it.
 	signalProbeGrace time.Duration
+	// heartbeaters builds an attempt's heartbeat loop. Nil means NewHeartbeater;
+	// a test plays the cluster through it.
+	heartbeaters func(context.Context) *Heartbeater
+	// unremoved is the removals this process still owes (removal.go).
+	unremoved unremovedContainers
 }
 
 // transferLimit is the per-phase bound on concurrent object-store requests.
@@ -163,7 +164,7 @@ func (d *OCIDispatcher) stagingCache() *stagingCache {
 		if root == "" {
 			root = os.TempDir()
 		}
-		d.stage = newStagingCache(filepath.Join(root, StageDirName))
+		d.stage = newStagingCache(d.scratchDir(root, StageDirName))
 	})
 	return d.stage
 }
@@ -388,13 +389,26 @@ func (d *OCIDispatcher) Execute(
 	// STEP 2. The heartbeat loop, for the ENTIRE attempt.
 	//
 	// Temporal delivers cancellation to an activity only through a heartbeat
-	// response: an activity that never calls RecordHeartbeat never observes
-	// ctx.Done(). A loop that only beat between phases could not deliver
-	// cancellation to a container that is running, which is exactly when
-	// somebody presses cancel.
-	beat = NewHeartbeater(ctx)
-	beat.interval = d.HeartbeatInterval
+	// response: an activity that never heartbeats never observes ctx.Done(). A
+	// loop that only beat between phases could not deliver cancellation to a
+	// container that is running, which is exactly when somebody presses cancel.
+	//
+	// The attempt's context is one of its own, which the loop can end when
+	// nothing has been acknowledged for the heartbeat timeout. The SDK's own
+	// context stays uncancelled then, so the failure goes out as a failure.
+	ctx, stopAttempt := context.WithCancelCause(ctx)
+	defer stopAttempt(nil)
+	if d.heartbeaters != nil {
+		beat = d.heartbeaters(ctx)
+	} else {
+		beat = NewHeartbeater(ctx)
+	}
+	if d.HeartbeatInterval > 0 {
+		beat.interval = d.HeartbeatInterval
+	}
 	beat.orkerID = d.OrkerID
+	beat.onLost = stopAttempt
+	beat.logger = d.logger().With("run", in.GetRunId(), "task", in.GetTaskId())
 	if attemptObs != nil {
 		beat.onPhase = attemptObs.Phase
 	}
@@ -438,8 +452,47 @@ func (d *OCIDispatcher) Execute(
 			end(AttemptOutcome{Reason: failure.Reason, Err: failure.TemporalError()})
 			return nil, activity.ErrResultPending
 		}
-		end(AttemptOutcome{Canceled: true, Err: err})
-		return nil, err
+		lost, cause := heartbeatLost(ctx)
+		switch {
+		case !lost:
+			end(AttemptOutcome{Canceled: true, Err: err})
+			return nil, err
+		case beat.serverCanceled.Load():
+			// The server asked for this, and a new stall ate the heartbeat that
+			// would have told the SDK, so the SDK cancelled with the stall as its
+			// cause. The task was cancelled all the same, but the SDK would now
+			// report a returned cancel as a failure, "unexpected activity cancel
+			// error". So the Orker reports it, and tells the SDK it has nothing
+			// to send.
+			end(AttemptOutcome{Canceled: true, Err: temporal.NewCanceledError()})
+			beat.reportCanceled(ctx)
+			return nil, activity.ErrResultPending
+		case result != nil:
+			// Nobody cancelled the task and its commit is written, so the work
+			// is done: the retry a failure would ask for would only adopt it,
+			// and a task with no retry would fail with its work done.
+			d.logger().Warn("a heartbeat was lost after this attempt committed; reporting its result",
+				"run", in.GetRunId(), "task", in.GetTaskId(), "error", cause)
+		case failure != nil && containersOwnEnding(failure.Reason):
+			// The container ended by itself before the loss stopped anything (the
+			// Orker signals nothing it has not been asked to, and these reasons
+			// come only from a container it did not signal), so how it ended is
+			// this attempt's failure, not the loss that came after it.
+			d.logger().Warn("a heartbeat was lost after this attempt's container ended; reporting how it ended",
+				"run", in.GetRunId(), "task", in.GetTaskId(), "reason", failure.Reason, "error", cause)
+		default:
+			// Nobody cancelled the task here either, so it is not Cancelled,
+			// which would never be retried and which names something nobody
+			// did. This takes the place of any failure collected: the teardown
+			// that followed the loss is what produced it (VALUES_MISSING from
+			// a container killed mid-run, say).
+			failure = Fail(ReasonHeartbeatLost,
+				"orker %s stopped this attempt as it stops a cancelled one (SIGTERM to a running container, "+
+					"SIGKILL after the task's %ds grace): the cluster did not answer its heartbeat (%v). "+
+					"Nobody cancelled the task. By then the cluster has timed the attempt out, or will when "+
+					"it can, so it runs again if its retry policy allows",
+				d.OrkerID, graceSecondsOf(in), cause)
+		}
 	}
 	if failure != nil {
 		// Every failure carries the attempt's start, detail or not, so the
@@ -628,6 +681,10 @@ func (d *OCIDispatcher) secretFloorFailure(secret *orkstackv1.SecretRef) *Failur
 		secret.GetName(), err, SecretAllowVar)
 }
 
+// stopCauseUnknownWords end each CONTAINER_EXIT_NONZERO message whose status
+// does not say whether the runtime stopped the container (ExitStatus.StopCauseUnknown).
+const stopCauseUnknownWords = "whether the workload exited on its own or the runtime stopped it is unknown"
+
 // execute is Execute's body, split out so Execute owns only the two lifecycles
 // that must wrap everything (§7.1 steps 1-2 and 15).
 func (d *OCIDispatcher) execute(
@@ -725,7 +782,7 @@ func (d *OCIDispatcher) execute(
 	// filesystem the contract promises the workload.
 	if pin := in.GetPin(); pin != nil {
 		pinWS, err := AcquirePin(
-			d.WorkRoot, in.GetRunId(), pin.GetName(), pin.GetInstanceId(), pin.GetTimeoutSeconds())
+			d.WorkRoot, in.GetRunId(), pin.GetName(), pin.GetInstanceId(), pin.GetTimeoutSeconds(), d.OrkerID)
 		if err != nil {
 			return nil, FailCause(ReasonWorkdirFailed, err,
 				"task %q: acquire the shared directory of pin %q: %v", in.GetTaskId(), pin.GetName(), err)
@@ -923,6 +980,9 @@ func (d *OCIDispatcher) execute(
 	}
 	id, err := d.Runtime.Create(ctx, spec)
 	if err != nil {
+		if id != "" {
+			d.removeFailedCreate(ctx, id, err)
+		}
 		return nil, d.runtimeFailure(err, "create the container")
 	}
 	beat.Container(id)
@@ -938,6 +998,13 @@ func (d *OCIDispatcher) execute(
 		err := d.Runtime.Remove(removeCtx, id)
 		if err != nil {
 			sink.Write(fmt.Sprintf("[ork] container %s could not be removed: %v", id, err))
+			d.logger().Warn("a container could not be removed; its removal will be tried again",
+				"container", id, "run_id", in.GetRunId(), "task_id", in.GetTaskId(), "error", err)
+			// A declared capacity tries again itself, so that the reservation
+			// goes when the container does.
+			if admission == nil {
+				d.unremoved.owe(id, time.Time{})
+			}
 		}
 		admission.ContainerRemoved(err)
 	}()
@@ -955,12 +1022,29 @@ func (d *OCIDispatcher) execute(
 	// waited out the grace period, killed and let the deferred Remove run;
 	// continuing into validation would only produce a misleading
 	// VALUES_MISSING for a container that was never allowed to finish.
+	// One exception: a container that ended by itself, non-zero or stopped
+	// through its runtime, before a lost heartbeat stopped the attempt. Nothing
+	// was taken away from it, so how it ended is still its failure.
 	if err := ctx.Err(); err != nil {
-		return nil, nil
+		lost, _ := heartbeatLost(ctx)
+		if !lost || capture.status.Code == 0 && !capture.status.StoppedFromOutside {
+			return nil, nil
+		}
 	}
 
 	// STEP 11. Exit capture.
 	beat.Phase("exit")
+	// Before the code, because the code says nothing here: a container stopped
+	// from outside exits with whatever the stop made of it, and one whose handler
+	// exits 0 must not have what it left committed as this task's result.
+	// runContainer reaches here only for a container this Orker did not signal.
+	if capture.status.StoppedFromOutside {
+		failure := Fail(ReasonContainerStoppedByRuntime,
+			"task %q: the container exited %d after its runtime was stopping it: its daemon shut down or "+
+				"restarted, or someone stopped or signalled the container through it. So the exit says "+
+				"nothing about the workload", in.GetTaskId(), capture.status.Code)
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+	}
 	if capture.status.Code != 0 {
 		failure := Fail(ReasonContainerExitNonzero,
 			"task %q: the container exited %d", in.GetTaskId(), capture.status.Code)
@@ -968,6 +1052,16 @@ func (d *OCIDispatcher) execute(
 			failure = Fail(ReasonContainerExitNonzero,
 				"task %q: the container exited %d after the kernel killed it for exceeding its "+
 					"memory limit of %s", in.GetTaskId(), capture.status.Code, effectiveMem)
+		}
+		// Not guessed at: the status stands as the workload's, and says what it
+		// rests on.
+		switch {
+		case capture.status.StopCauseUnrecorded:
+			failure.Message += ". This container runtime does not record whether it stopped a container, so " +
+				stopCauseUnknownWords
+		case capture.status.StopCauseUnknown:
+			failure.Message += ". The container runtime's events ended before they said how the container ended, so " +
+				stopCauseUnknownWords
 		}
 		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
 	}
@@ -1827,6 +1921,27 @@ func (d *OCIDispatcher) runContainer(
 	}
 }
 
+// removeFailedCreate settles what a create that failed may have made, under the
+// name it asked for. A create the daemon never answered is only owed: a removal
+// now would find nothing and say nothing, because the daemon may finish it after,
+// so the retries carry it through the settle window. Where nothing retries
+// (orkctl task run), the owner's next scan finds it by label instead. An answer
+// the daemon gave ends with this one removal, on a context the failure's own
+// cancellation does not reach, unless the removal itself fails.
+func (d *OCIDispatcher) removeFailedCreate(ctx context.Context, id ContainerID, createErr error) {
+	if errors.Is(createErr, ErrCreateUnanswered) {
+		d.unremoved.owe(id, d.clock().Add(createSettleWindow))
+		return
+	}
+	removeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), controlTimeout)
+	defer cancel()
+	if err := d.Runtime.Remove(removeCtx, id); err != nil {
+		d.unremoved.owe(id, time.Time{})
+		d.logger().Warn("what a failed create may have left could not be removed; its removal will be tried again",
+			"container", id, "error", err)
+	}
+}
+
 // runtimeFailure separates "the runtime refused" from "the host cannot bind
 // the workspace". The distinction is drawn from the runtime error, never from
 // an exit code.
@@ -2125,16 +2240,28 @@ func (d *OCIDispatcher) put(
 }
 
 // SpoolDirName is the directory under the work root where a store spools a
-// reader it cannot seek. Boot empties it: a spool file outlives its upload only
-// when the process was killed mid-upload, and nothing will ever read it.
+// reader it cannot seek. Boot empties this identity's part of it: a spool file
+// outlives its upload only when the process was killed mid-upload, and nothing
+// will ever read it.
 const SpoolDirName = "ork-spool"
+
+// scratchDir is this Orker's own part of a scratch directory under root, named as
+// an attempt directory's owner is (attemptOwner), so that a boot's reap of it
+// reaches no peer's on a shared work root. A dispatcher with no identity (orkctl
+// task run) has no boot and no peer, and uses the directory itself.
+func (d *OCIDispatcher) scratchDir(root, name string) string {
+	if d.OrkerID == "" {
+		return filepath.Join(root, name)
+	}
+	return filepath.Join(root, name, attemptOwner(d.OrkerID))
+}
 
 func (d *OCIDispatcher) spoolDir() string {
 	root := d.WorkRoot
 	if root == "" {
 		root = os.TempDir()
 	}
-	return filepath.Join(root, SpoolDirName)
+	return d.scratchDir(root, SpoolDirName)
 }
 
 // uploadStreams publishes stdout.log and stderr.log as system artifacts.
@@ -2448,15 +2575,20 @@ func (d *OCIDispatcher) makeAttemptDir(in *orkstackv1.ExecuteTaskInput, attempt 
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return "", fmt.Errorf("create workdir root %s: %w", root, err)
 	}
-	pattern := fmt.Sprintf("ork-%s-%s-%d-*",
+	pattern := fmt.Sprintf("ork-%s-%s-%d-",
 		safeComponent(in.GetRunId()), safeComponent(in.GetTaskId()), attempt)
 	// An item's directory names it, for an operator reading the work root:
 	// ork-{run}-{task}-i00097-{attempt}-*.
 	if each := in.GetEach(); each != nil {
-		pattern = fmt.Sprintf("ork-%s-%s-i%s-%d-*",
+		pattern = fmt.Sprintf("ork-%s-%s-i%s-%d-",
 			safeComponent(in.GetRunId()), safeComponent(in.GetTaskId()), itemSegmentOf(each.GetIndex()), attempt)
 	}
-	dir, err := os.MkdirTemp(root, pattern)
+	// The name says whose it is, which is how a boot under this identity knows
+	// a dead attempt's directory for its own (ReapAttemptDirectories).
+	if d.OrkerID != "" {
+		pattern += attemptOwner(d.OrkerID) + "-"
+	}
+	dir, err := os.MkdirTemp(root, pattern+"*")
 	if err != nil {
 		return "", err
 	}
@@ -2534,6 +2666,53 @@ func attemptOf(ctx context.Context) int32 {
 // activity with worker.ErrWorkerShutdown as the cause when its worker stops.
 func orkerStopping(ctx context.Context) bool {
 	return errors.Is(context.Cause(ctx), worker.ErrWorkerShutdown)
+}
+
+// containersOwnEnding reports whether reason is how a container ended by
+// itself, which runContainer reports only for one this Orker did not signal.
+func containersOwnEnding(reason string) bool {
+	return reason == ReasonContainerExitNonzero || reason == ReasonContainerStoppedByRuntime
+}
+
+// heartbeatLost reports whether ctx ended because a heartbeat went unanswered,
+// and with what: the loop's own stop (Heartbeater.report), or the SDK's cancel
+// when the one heartbeat it was handed fails a status it counts as retryable.
+// Either way the server has decided nothing and nobody asked for the task to stop.
+//
+// It is the complement of the causes that do carry a decision, so a cause the
+// SDK adds later is a retryable failure a person can read rather than a cancel
+// that is never retried: a decision of the server's, a plain parent cancel and a
+// stopping worker.
+func heartbeatLost(ctx context.Context) (bool, error) {
+	if !errors.Is(ctx.Err(), context.Canceled) {
+		return false, nil
+	}
+	cause := context.Cause(ctx)
+	var unanswered *heartbeatUnanswered
+	if errors.As(cause, &unanswered) {
+		return true, cause
+	}
+	if serverDecided(cause) || errors.Is(cause, context.Canceled) || errors.Is(cause, worker.ErrWorkerShutdown) {
+		return false, nil
+	}
+	return true, cause
+}
+
+// serverDecided reports whether err is a decision of the server's about this
+// attempt rather than a failure to reach it: its cancel, a pause or a reset, and
+// an activity or namespace it no longer knows, for which no completion can land.
+func serverDecided(err error) bool {
+	var (
+		notFound    *serviceerror.NotFound
+		notActive   *serviceerror.NamespaceNotActive
+		noNamespace *serviceerror.NamespaceNotFound
+	)
+	return temporal.IsCanceledError(err) ||
+		errors.Is(err, activity.ErrActivityPaused) ||
+		errors.Is(err, activity.ErrActivityReset) ||
+		errors.As(err, &notFound) ||
+		errors.As(err, &notActive) ||
+		errors.As(err, &noNamespace)
 }
 
 func graceSecondsOf(in *orkstackv1.ExecuteTaskInput) int32 {

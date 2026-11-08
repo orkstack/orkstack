@@ -3,7 +3,7 @@
 //
 //	go run ./internal/dist/cmd/dist check -version v0.1.0
 //	git tag --list >tags && go run ./internal/dist/cmd/dist order -version v0.1.0 -tags tags
-//	go run ./internal/dist/cmd/dist build -version v0.1.0 -out dist
+//	go run ./internal/dist/cmd/dist build -version v0.1.0 -commit "$(git rev-parse HEAD)" -out dist
 //	go run ./internal/dist/cmd/dist sums dist
 //	go run ./internal/dist/cmd/dist notes -version v0.1.0
 //	go run ./internal/dist/cmd/dist digests -layouts dist/layouts
@@ -55,9 +55,11 @@ commands:
                                   print latest=true or latest=false: whether no tag FILE
                                   lists (one per line) is a higher release; refuse a version
                                   below a released tag of its own X.Y
-  build -version vX.Y.Z -out DIR  build every release binary, pack the archives into DIR
-                                  and the linux binaries into DIR/bin/linux-<arch>/; refuse
-                                  a tree without the web UI build ork embeds (make ui)
+  build -version vX.Y.Z -commit SHA -out DIR
+                                  build every release binary, stamped with the version and the
+                                  whole commit, pack the archives into DIR and the linux binaries
+                                  into DIR/bin/linux-<arch>/; refuse a tree without the web UI
+                                  build ork embeds (make ui)
   sums DIR                        write DIR/SHA256SUMS for the files in DIR
   notes -version vX.Y.Z [-images FILE]
                                   print the GitHub release's page: the "## [X.Y.Z]" section of
@@ -296,6 +298,7 @@ func (e runEnv) build(args []string) int {
 	set := e.flags("build")
 	raw, root := versionFlags(set)
 	out := set.String("out", "", "the release directory (required)")
+	rawCommit := set.String("commit", "", "the whole revision the tree is checked out at, as `git rev-parse HEAD` prints it (required)")
 	stamp := commitTimeFlag(set)
 	if code, done := e.parse(set, args, 0); done {
 		return code
@@ -307,6 +310,10 @@ func (e runEnv) build(args []string) int {
 	if *out == "" {
 		return e.usageError("-out is required, for example -out dist")
 	}
+	commit, err := dist.ParseCommit(*rawCommit)
+	if err != nil {
+		return e.usageError("%v (from -commit)", err)
+	}
 	commitTime, code := e.commitTime(*stamp)
 	if code != 0 {
 		return code
@@ -314,7 +321,7 @@ func (e runEnv) build(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	assets, err := dist.Build(ctx, dist.BuildOptions{
-		Root: *root, Out: *out, Version: version, CommitTime: commitTime, Builder: e.builder,
+		Root: *root, Out: *out, Version: version, Commit: commit, CommitTime: commitTime, Builder: e.builder,
 	})
 	if err != nil {
 		return e.failure(err)

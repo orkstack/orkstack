@@ -1,17 +1,23 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"runtime"
-	"runtime/debug"
 
 	"github.com/spf13/cobra"
+
+	"github.com/orkstack/orkstack/internal/buildinfo"
 )
 
 // version is the orkctl release. Release builds override it with
 // -ldflags "-X main.version=vX.Y.Z"; source builds report "dev".
 var version = "dev"
+
+// commit is the commit this binary was built from. Release builds set it with
+// -ldflags "-X main.commit=<sha>", because they build with -buildvcs=false;
+// a development build leaves it empty and reports what version control says
+// (internal/buildinfo).
+var commit string
 
 // versionInfo is the machine-readable shape of `orkctl version --json`.
 type versionInfo struct {
@@ -30,15 +36,7 @@ func newVersionCommand(g *globalFlags) *cobra.Command {
 			info := collectVersionInfo()
 			out := cmd.OutOrStdout()
 			if g.json {
-				encoded, err := json.MarshalIndent(info, "", "  ")
-				if err != nil {
-					return fmt.Errorf("encode json: %w", err)
-				}
-				_, err = out.Write(append(encoded, '\n'))
-				if err != nil {
-					return fmt.Errorf("write output: %w", err)
-				}
-				return nil
+				return writeGoJSON(out, info)
 			}
 			table := newTable(out)
 			fmt.Fprintf(table, "orkctl:\t%s\n", info.Version)
@@ -54,20 +52,10 @@ func newVersionCommand(g *globalFlags) *cobra.Command {
 }
 
 func collectVersionInfo() versionInfo {
-	info := versionInfo{
+	return versionInfo{
 		Version:   version,
-		Commit:    "unknown",
+		Commit:    buildinfo.Commit(commit),
 		GoVersion: runtime.Version(),
 		Platform:  runtime.GOOS + "/" + runtime.GOARCH,
 	}
-	build, ok := debug.ReadBuildInfo()
-	if !ok {
-		return info
-	}
-	for _, setting := range build.Settings {
-		if setting.Key == "vcs.revision" && setting.Value != "" {
-			info.Commit = setting.Value
-		}
-	}
-	return info
 }

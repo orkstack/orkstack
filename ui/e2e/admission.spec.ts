@@ -25,7 +25,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { adminNamespaceUrl } from './uiHelpers';
+import { adminNamespaceUrl, pageCli } from './uiHelpers';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('admission');
@@ -34,7 +34,7 @@ const BUCKET = ownBucket('admission');
 // Temporal and MinIO:
 //
 //   1. Admin → Namespaces shows a namespace as `accepting` and `unlimited`,
-//      Hold… closes it with a reason, and the row then reads
+//      Hold closes it with a reason, and the row then reads
 //      `since … — "reason"`;
 //   2. the Orkflows list and the dashboard of that namespace carry the hold
 //      banner with the reason and the exact release command;
@@ -152,7 +152,7 @@ async function runningCount(): Promise<number> {
 	return (answer.runs ?? []).length;
 }
 
-test('1–3: Hold… closes the namespace, and every place a submit starts says so', async ({ page }) => {
+test('1–3: Hold closes the namespace, and every place a submit starts says so', async ({ page }) => {
 	await openAdmin(page);
 	await expect(page.getByTestId(`namespace-hold-${NS}`)).toHaveText('accepting');
 	await expect(page.getByTestId(`namespace-max-running-${NS}`)).toHaveText('unlimited');
@@ -177,7 +177,7 @@ test('1–3: Hold… closes the namespace, and every place a submit starts says 
 	await expect(cell).toContainText(`— "${REASON}"`);
 	await expect(page.getByTestId(`namespace-row-${NS}`)).toHaveAttribute('data-held', 'true');
 	await expect(page.getByTestId(`namespace-release-hold-${NS}`)).toBeVisible();
-	note(`admin row after Hold…: ${await cell.innerText()}`);
+	note(`admin row after Hold: ${await cell.innerText()}`);
 	await page.screenshot({ path: out('screenshot-admin-held-row.png'), fullPage: true });
 
 	// 2. The Orkflows list and the dashboard of that namespace.
@@ -185,12 +185,12 @@ test('1–3: Hold… closes the namespace, and every place a submit starts says 
 	const banner = page.getByTestId('orkflows-hold-banner');
 	await expect(banner).toBeVisible();
 	await expect(banner).toContainText(`"${REASON}"`);
-	await page.getByTestId('orkflows-hold-banner-cli-trigger').click();
-	await expect(page.getByTestId('orkflows-hold-banner-cli-command')).toHaveText(
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'Release the hold')).toHaveText(
 		`orkctl namespace update ${NS} --release-hold`
 	);
 	await page.screenshot({ path: out('screenshot-orkflows-hold-banner.png'), fullPage: true });
-	await page.getByTestId('orkflows-hold-banner-cli-trigger').click();
+	await page.keyboard.press('Escape');
 
 	await page.goto(`${UI_ORIGIN}/?ns=${NS}`);
 	await expect(page.getByTestId('dashboard-hold-banner')).toContainText(`"${REASON}"`);

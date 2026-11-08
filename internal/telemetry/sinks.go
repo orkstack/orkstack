@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"io"
 	"net/url"
 	"regexp"
@@ -97,6 +98,10 @@ type SinkTable struct {
 func ParseSinks(raw []byte) (SinkTable, error) {
 	if strings.TrimSpace(string(raw)) == "" {
 		return SinkTable{}, nil
+	}
+	if line, found := dsl.SecondDocumentLine(raw); found {
+		return SinkTable{}, fmt.Errorf("%s: line %d: a second YAML document begins here; the setting holds one: "+
+			"move every sink under one sinks:, and delete the ---", SinksVar, line)
 	}
 	var doc sinksDocument
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))

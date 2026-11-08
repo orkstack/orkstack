@@ -27,7 +27,6 @@
 		timestampMs
 	} from '#lib/stats.ts';
 	import { FailureGroupBy, type GetFailureBreakdownResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
-	import CliEquivalent from './CliEquivalent.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 
 	interface Props {
@@ -38,9 +37,11 @@
 		sinceParam: string;
 		/** The page's stats.computedAt: a new measurement is a reason to refetch. */
 		computedAt: Timestamp | undefined;
+		/** This panel's command, read by the page for its one terminal icon. */
+		command?: string;
 	}
 
-	let { namespace, window, sinceParam, computedAt }: Props = $props();
+	let { namespace, window, sinceParam, computedAt, command = $bindable('') }: Props = $props();
 
 	// The open state is a per-viewer convenience, nothing more: a browser that
 	// refuses storage still gets a working disclosure, closed.
@@ -142,6 +143,14 @@
 	const cli = $derived(
 		`orkctl --namespace ${shellQuote(namespaceLabel(namespace))} stats failures --since ${shellQuote(window === 'custom' && sinceParam ? sinceParam : window)} --group-by ${groupBy.map(groupBySpelling).join(',')}`
 	);
+
+	// The page's one terminal icon lists it, carrying this panel's own choices.
+	$effect(() => {
+		command = cli;
+		return () => {
+			command = '';
+		};
+	});
 </script>
 
 <details
@@ -181,7 +190,6 @@
 					{#if loading}
 						<span class="text-xs text-ink-muted" data-testid="failure-fingerprints-loading">loading…</span>
 					{/if}
-					<CliEquivalent command={cli} testid="fingerprint-cli" />
 				</div>
 			</div>
 
@@ -193,7 +201,7 @@
 				<ErrorPanel
 					testid="failure-fingerprints-error"
 					retryTestid="failure-fingerprints-retry"
-					subject="the failure fingerprints for namespace {namespaceLabel(namespace)}"
+					subject="the failure fingerprints"
 					message={error}
 					busy={loading}
 					onretry={() => void load(groupBy)}

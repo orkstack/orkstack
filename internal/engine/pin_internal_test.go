@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -85,6 +86,16 @@ func TestPinFailureError_SeparatesALostHostFromAnExpiredLifetime(t *testing.T) {
 			}
 			if got.GetMessage() == "" {
 				t.Error("message is empty; it is what a client is shown")
+			}
+			// The event cannot tell a dead host from a silent one, so the message
+			// claims neither, and it names no internal mechanism (AGENTS.md §7).
+			if tc.wantCode == "PIN_HOST_LOST" && !strings.Contains(got.GetMessage(), "lost contact with the Orker") {
+				t.Errorf("message = %q, want it to say contact was lost", got.GetMessage())
+			}
+			for _, word := range []string{"died", "dead", "session", "heartbeat"} {
+				if strings.Contains(got.GetMessage(), word) {
+					t.Errorf("message = %q says %q", got.GetMessage(), word)
+				}
 			}
 		})
 	}

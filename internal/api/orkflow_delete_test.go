@@ -233,3 +233,11 @@ func TestDeleteOrkflow_RunReaderFailureFailsClosedAndLeavesTheOrkflowStored(t *t
 		t.Errorf("orkflow disappeared after reader failure: %v", getErr)
 	}
 }
+
+func (s *deleteRecordingStore) FindDerivedVersion(ctx context.Context, namespace, name, contentHash string) (string, error) {
+	return s.inner.FindDerivedVersion(ctx, namespace, name, contentHash)
+}
+
+func (s *deleteRecordingStore) ClaimDerivedVersion(ctx context.Context, namespace, name, contentHash, candidate string) (string, error) {
+	return s.inner.ClaimDerivedVersion(ctx, namespace, name, contentHash, candidate)
+}

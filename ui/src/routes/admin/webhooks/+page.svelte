@@ -1,15 +1,20 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
+	import { untrack } from 'svelte';
+	import { EDIT_PARAM, closedHref, editHref } from '#lib/editParam.ts';
+	import { FilterOperator, filterOf } from '#lib/listFilter.ts';
 	import ListFilter from '#lib/components/ListFilter.svelte';
-	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { filterFlags, type FieldFilter } from '#lib/listFilter.ts';
 	import { ListWebhooksRequestSchema } from '#lib/gen/orkstack/v1/webhook_service_pb.ts';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import Icon from '#lib/components/Icon.svelte';
 	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import { webhookUpdateCli } from '#lib/automation.ts';
 	import type { Webhook } from '#lib/gen/orkstack/v1/webhook_service_pb.ts';
 	import WebhookDeliveries from '#lib/components/WebhookDeliveries.svelte';
-	import { deliveriesHref, webhookDeliveriesFilters } from '#lib/deliveries.ts';
+	import { deliveriesCliCommand, deliveriesHref, webhookDeliveriesFilters } from '#lib/deliveries.ts';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ScopeNote from '#lib/components/ScopeNote.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
@@ -42,7 +47,41 @@
 	let editing = $state<Webhook | null>(null); let editName = $state(''); let editUrl = $state(''); let editEvents = $state<EventType[]>([]); let editNamespace = $state(''); let editOrkflow = $state(''); let editTask = $state(''); let editError = $state(''); let saving = $state(false);
 	function startEdit(hook: Webhook) { editing = hook; editName = hook.name; editUrl = hook.url; editEvents = [...hook.events]; editNamespace = hook.namespace; editOrkflow = hook.orkflowName; editTask = hook.taskId; editError = ''; }
 	function toggleEdit(event: EventType, checked: boolean) { editEvents = checked ? [...editEvents, event] : editEvents.filter((value) => value !== event); }
-	async function saveEdit() { if (!editing) return; saving = true; editError = ''; try { await webhookClient(fetch).updateWebhook({ id: editing.id, name: editName.trim(), url: editUrl.trim(), events: editEvents, namespace: editNamespace.trim(), orkflowName: editOrkflow.trim(), taskId: editTask.trim() }); editing = null; await invalidateAll(); } catch (err) { editError = errorMessage(err); } finally { saving = false; } }
+	async function saveEdit() { if (!editing) return; saving = true; editError = ''; try { await webhookClient(fetch).updateWebhook({ id: editing.id, name: editName.trim(), url: editUrl.trim(), events: editEvents, namespace: editNamespace.trim(), orkflowName: editOrkflow.trim(), taskId: editTask.trim() }); await goto(closedHref(page.url), { invalidateAll: true, reset: false }); } catch (err) { editError = errorMessage(err); } finally { saving = false; } }
+	// A webhook's id links to its edit, and the address opens it: one on another
+	// page of this list is asked for by id.
+	let editMissing = $state('');
+	function closeEdit() { void goto(closedHref(page.url), { reset: false }); }
+	$effect(() => {
+		const id = page.url.searchParams.get(EDIT_PARAM);
+		const open = untrack(() => editing);
+		editMissing = '';
+		if (!id) {
+			if (open) editing = null;
+			return;
+		}
+		if (open?.id === id) return;
+		const listed = data.webhooks.find((hook) => hook.id === id);
+		if (listed) {
+			untrack(() => startEdit(listed));
+			return;
+		}
+		let live = true;
+		webhookClient(fetch)
+			.listWebhooks({ filters: [filterOf('id', FilterOperator.EQUALS, [id])] })
+			.then((res) => {
+				if (!live) return;
+				const found = res.webhooks[0];
+				if (found) startEdit(found);
+				else editMissing = `Webhook ${id} is not registered.`;
+			})
+			.catch((err) => {
+				if (live) editMissing = errorMessage(err);
+			});
+		return () => {
+			live = false;
+		};
+	});
 	const label = (event: EventType) => EventType[event];
 	function toggle(event: EventType, checked: boolean) { selected = checked ? [...selected, event] : selected.filter((value) => value !== event); }
 	async function register() { busy = true; formError = ''; shownSecret = ''; try { const response = await webhookClient(fetch).registerWebhook({ url, events: selected, secret, namespace: namespace.trim(), orkflowName: orkflowName.trim(), taskId: taskId.trim(), name: namespace.trim() ? hookName.trim() : '' }); shownSecret = response.secret; url = ''; secret = ''; selected = []; namespace = ''; orkflowName = ''; taskId = ''; hookName = ''; await invalidateAll(); } catch (err) { formError = errorMessage(err); } finally { busy = false; } }
@@ -56,11 +95,51 @@
 </script>
 <svelte:head><title>Admin — Webhooks — OrkStack</title></svelte:head>
 
-<SheetHeader title="Webhooks" />
+<SheetHeader
+	title="Webhooks"
+	commands={[
+		{ label: 'The subscriptions', command: ['orkctl', 'webhook', 'list', ...filterFlags(data.applied)].join(' ') },
+		{ label: 'The deliveries', command: deliveriesCliCommand(data.coordinates) }
+	]}
+/>
 
 <ScopeNote testid="webhooks-scope">Subscriptions are deployment-wide unless they name a scope. The namespace selector does not filter this list; each row states what it covers.</ScopeNote>
 
-<section class="region mb-10 pt-3" aria-labelledby="webhook-register-heading">
+<h2 class="mb-2 text-md font-semibold text-ink">Subscriptions</h2>
+{#if editMissing}<div class="mb-3"><ErrorPanel testid="webhook-edit-missing" message={editMissing} /></div>{/if}
+<div class="mb-3"><ListFilter request={ListWebhooksRequestSchema} applied={data.applied} testid="webhooks" onapply={applyFilters} {clearHref} /></div>
+{#if data.error}
+	<ErrorPanel testid="webhooks-error" retryTestid="webhooks-retry" subject="the webhook subscriptions" message={data.error} busy={retrying} onretry={retry} />
+{:else if data.webhooks.length === 0 && data.applied.length > 0}
+	<p data-testid="webhooks-empty" class="text-sm text-ink-muted">No webhooks match these filters.</p>
+{:else if data.webhooks.length === 0}
+	<p data-testid="webhooks-empty" class="text-sm text-ink-muted">No webhooks are registered.</p>
+{:else}
+	<div class="relative overflow-x-auto border-t-2 border-ink">
+		<table class="register min-w-[820px]" data-testid="webhook-list">
+			<thead><tr><th scope="col">ID</th><th scope="col">Name</th><th scope="col">URL</th><th scope="col">Events</th><th scope="col">Scope</th><th scope="col">Created</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+			<tbody>
+				{#each data.webhooks as webhook (webhook.id)}
+					<tr class="transition-colors hover:bg-hover" data-testid="webhook-{webhook.id}">
+						<td class="font-mono text-xs"><a class="link" data-testid="edit-webhook-{webhook.id}" data-sveltekit-reset="false" href={editHref(page.url, webhook.id)}>{webhook.id}</a></td>
+						<td class="font-mono text-xs" data-testid="webhook-name-{webhook.id}">{webhook.name || '—'}</td>
+						<td class="break-all">{webhook.url}</td>
+						<td class="font-mono text-xs">{webhook.events.length ? webhook.events.map(label).join(', ') : 'ALL'}</td>
+						<td class="font-mono text-xs" data-testid="webhook-scope-{webhook.id}">{webhookScope(webhook)}</td>
+						<td class="figure text-xs text-ink-muted">{fmtTimestamp(webhook.createdAt)}</td>
+						<td class="whitespace-nowrap">
+							<a data-testid="webhook-deliveries-{webhook.id}" href={deliveriesHref(data.coordinates, { filters: webhookDeliveriesFilters(webhook.id), cursor: '', page: 1 }, 'deliveries')} class="link mr-3 text-sm font-semibold">Deliveries</a>
+							<button type="button" data-testid="delete-webhook-{webhook.id}" onclick={() => { deleting = webhook.id; deleteError = ''; }} class="btn btn-sm"><Icon name="trash" />Delete</button>
+						</td>
+					</tr>
+				{/each}
+			</tbody>
+		</table>
+	</div>
+{/if}
+<WebhookDeliveries coordinates={data.coordinates} response={data.deliveries} error={data.deliveriesError} webhooks={data.panelWebhooks} />
+
+<section class="region mt-10 pt-3" aria-labelledby="webhook-register-heading">
 	<h2 id="webhook-register-heading" class="text-md font-semibold text-ink">Register webhook</h2>
 	<form class="mt-3 max-w-3xl space-y-4" onsubmit={(event) => { event.preventDefault(); void register(); }}>
 		<div>
@@ -93,43 +172,10 @@
 	{#if shownSecret}<div data-testid="webhook-secret-once" class="note mt-4 max-w-3xl border-ink p-3 text-sm text-ink-secondary"><p class="font-semibold text-ink">Copy this signing secret now. It will not be shown again.</p><code class="mt-1 block break-all font-mono text-xs">{shownSecret}</code></div>{/if}
 </section>
 
-<h2 class="mb-2 text-md font-semibold text-ink">Subscriptions</h2>
-<ListFilter request={ListWebhooksRequestSchema} applied={data.applied} testid="webhooks" command={['orkctl', 'webhook', 'list']} onapply={applyFilters} {clearHref} />
-{#if data.error}
-	<ErrorPanel testid="webhooks-error" retryTestid="webhooks-retry" subject="the webhook subscriptions" message={data.error} busy={retrying} onretry={retry} />
-{:else if data.webhooks.length === 0 && data.applied.length > 0}
-	<p data-testid="webhooks-empty" class="text-sm text-ink-muted">No webhooks match these filters.</p>
-{:else if data.webhooks.length === 0}
-	<p data-testid="webhooks-empty" class="text-sm text-ink-muted">No webhooks are registered.</p>
-{:else}
-	<div class="relative overflow-x-auto border-t-2 border-ink">
-		<table class="register min-w-[820px]" data-testid="webhook-list">
-			<thead><tr><th scope="col">ID</th><th scope="col">Name</th><th scope="col">URL</th><th scope="col">Events</th><th scope="col">Scope</th><th scope="col">Created</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-			<tbody>
-				{#each data.webhooks as webhook (webhook.id)}
-					<tr class="transition-colors hover:bg-hover" data-testid="webhook-{webhook.id}">
-						<td class="font-mono text-xs">{webhook.id}</td>
-						<td class="font-mono text-xs" data-testid="webhook-name-{webhook.id}">{webhook.name || '—'}</td>
-						<td class="break-all">{webhook.url}</td>
-						<td class="font-mono text-xs">{webhook.events.length ? webhook.events.map(label).join(', ') : 'ALL'}</td>
-						<td class="font-mono text-xs" data-testid="webhook-scope-{webhook.id}">{webhookScope(webhook)}</td>
-						<td class="figure text-xs text-ink-muted">{fmtTimestamp(webhook.createdAt)}</td>
-						<td class="whitespace-nowrap">
-							<a data-testid="webhook-deliveries-{webhook.id}" href={deliveriesHref(data.coordinates, { filters: webhookDeliveriesFilters(webhook.id), cursor: '', page: 1 }, 'deliveries')} class="link mr-3 text-sm font-semibold">Deliveries</a>
-							<button type="button" data-testid="edit-webhook-{webhook.id}" onclick={() => startEdit(webhook)} class="btn btn-sm mr-1">Edit</button>
-							<button type="button" data-testid="delete-webhook-{webhook.id}" onclick={() => { deleting = webhook.id; deleteError = ''; }} class="btn btn-sm">Delete</button>
-						</td>
-					</tr>
-				{/each}
-			</tbody>
-		</table>
-	</div>
-{/if}
-<WebhookDeliveries coordinates={data.coordinates} response={data.deliveries} error={data.deliveriesError} webhooks={data.panelWebhooks} />
-{#if deleting}<ConfirmDialog testid="delete-webhook-confirm" title="Delete webhook {deleting}?" acceptLabel="Delete" acceptTestid="delete-webhook-accept" cancelTestid="delete-webhook-cancel" busy={busy} error={deleteError} destructive onaccept={remove} oncancel={() => { deleting = ''; deleteError = ''; }}>{#snippet body()}<p>Future matching events will no longer be delivered. In-flight delivery is not cancelled.</p>{/snippet}</ConfirmDialog>{/if}
+{#if deleting}<ConfirmDialog testid="delete-webhook-confirm" title="Delete webhook {deleting}?" glyph="trash" acceptLabel="Delete" acceptTestid="delete-webhook-accept" cancelTestid="delete-webhook-cancel" busy={busy} error={deleteError} destructive onaccept={remove} oncancel={() => { deleting = ''; deleteError = ''; }}>{#snippet body()}<p>Future matching events will no longer be delivered. In-flight delivery is not cancelled.</p>{/snippet}</ConfirmDialog>{/if}
 
 {#if editing}
-	<Dialog title="Edit webhook {editing.id}" testid="webhook-edit-dialog" onclose={() => (editing = null)} widthClass="max-w-xl">
+	<Dialog title="Edit webhook {editing.id}" testid="webhook-edit-dialog" onclose={closeEdit} widthClass="max-w-xl">
 		{#snippet body()}
 			<p class="mb-3 text-sm text-ink-secondary">Editing keeps this subscription's id and signing secret.</p>
 			<form class="space-y-3" onsubmit={(event) => { event.preventDefault(); void saveEdit(); }}>

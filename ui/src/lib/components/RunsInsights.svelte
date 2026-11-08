@@ -1,16 +1,3 @@
-<script lang="ts" module>
-	/** One bar of "Runs created each day": its label and what it holds. */
-	export interface DayBar {
-		label: string;
-		/** The word under its bar: the weekday. */
-		day: string;
-		total: number;
-		failed: number;
-		/** The bucket that holds now: "today so far". */
-		partial: boolean;
-	}
-</script>
-
 <script lang="ts">
 	// The last 7 days of a namespace, in five cards: outcomes, how long runs
 	// take, the most failing Orkflows, failures by reason and the flakiest
@@ -19,7 +6,7 @@
 	// "Runs created each day" draws only when the engine answers a daily
 	// series; without one the window's totals stand alone.
 	import type { GetFailureBreakdownResponse, GetFlakeIndexResponse, GetStatsResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
-	import { durationMs, finishedRuns, fmtDuration } from '#lib/stats.ts';
+	import { durationMs, finishedRuns, fmtDuration, runCount, type DayBar } from '#lib/stats.ts';
 	import { shortInstant } from '#lib/when.ts';
 	import { fmtCategoryWords } from '#lib/failureWords.ts';
 
@@ -30,9 +17,11 @@
 		flakes: GetFlakeIndexResponse | null;
 		/** The daily series, oldest first, when the engine has one. */
 		days?: DayBar[];
+		/** Only outcomes and how long runs take: the Dashboard's two charts. */
+		overview?: boolean;
 	}
 
-	let { week, weekError, failures, flakes, days = [] }: Props = $props();
+	let { week, weekError, failures, flakes, days = [], overview = false }: Props = $props();
 
 	const n = (v: bigint | undefined) => Number(v ?? 0n);
 	const counts = $derived(week?.runsByStatus ?? {});
@@ -97,7 +86,7 @@
 
 <div class="vizgrid" data-testid="runs-insights-body">
 	<figure class="card viz wide" aria-labelledby="viz-outcomes" data-testid="viz-outcomes">
-		<h3 id="viz-outcomes">Outcomes {#if week}<small>{created} runs created</small>{/if}</h3>
+		<h3 id="viz-outcomes">Outcomes {#if week}<small>{runCount(created)} created</small>{/if}</h3>
 		{#if weekError}
 			<p class="viz-none" data-testid="viz-outcomes-error">The numbers for these 7 days could not be read: {weekError}</p>
 		{:else if !week}
@@ -190,11 +179,12 @@
 				<div class="taxis" aria-hidden="true">{#each ticks as t (t.s)}<span style:left="{lp(t.s * 1000)}%">{t.l}</span>{/each}</div>
 			</div>
 			<figcaption>
-				From {Number(week.durationSampleCount)} finished runs{#if week.durationCoverageSince}{' '}created since {shortInstant(week.durationCoverageSince)}{/if}: durations reach back only as far as the run records the cluster still keeps.
+				From {Number(week.durationSampleCount)} finished {Number(week.durationSampleCount) === 1 ? 'run' : 'runs'}{#if week.durationCoverageSince}{' '}created since {shortInstant(week.durationCoverageSince)}{/if}: durations reach back only as far as the run records the cluster still keeps.
 			</figcaption>
 		{/if}
 	</figure>
 
+	{#if !overview}
 	<figure class="card viz" aria-labelledby="viz-failing" data-testid="viz-most-failing">
 		<h3 id="viz-failing">Most failing Orkflows</h3>
 		{#if mostFailing.length === 0}
@@ -261,6 +251,7 @@
 			<figcaption>A retried task can still succeed; no other number shows it.</figcaption>
 		{/if}
 	</figure>
+	{/if}
 </div>
 
 <style>

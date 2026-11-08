@@ -1,7 +1,10 @@
 package engine
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"fmt"
+	"os"
 	"sync/atomic"
 	"time"
 )
@@ -16,9 +19,8 @@ import (
 // an id at once, and a host whose clock is coarser than a nanosecond hands
 // them the same reading routinely: a clock reading alone is not enough.
 //
-// A clock reading is not a uniqueness token; the construction that is, and
-// that this package already relies on for run ids, is a random nonce over a
-// counter (`runid.go`, AGENTS.md §7):
+// A clock reading is not a uniqueness token; the construction that is, is a
+// random nonce over a counter:
 //
 //	sequence = (nonce << 32) | counter
 //	nonce   : 32 bits from crypto/rand, drawn once per generator
@@ -38,7 +40,28 @@ type activityIDGenerator struct {
 // fresh nonce. crypto/rand is read here, once: the nonce only has to
 // distinguish this process from another one.
 func newActivityIDGenerator() *activityIDGenerator {
-	return &activityIDGenerator{now: time.Now, nonce: newRunIDNonce()}
+	return &activityIDGenerator{now: time.Now, nonce: newActivityIDNonce()}
+}
+
+// newActivityIDNonce draws the high half of the sequence.
+//
+// Zero is excluded so a fresh process can never render its first sequence as
+// "1", a misleadingly ordinal-looking id.
+func newActivityIDNonce() uint32 {
+	var b [4]byte
+	nonce := uint32(0)
+	if _, err := rand.Read(b[:]); err == nil {
+		nonce = binary.BigEndian.Uint32(b[:])
+	} else {
+		// crypto/rand.Read has not returned an error since Go 1.24, and library
+		// code must not panic, so the fallback still has to differ between two
+		// processes on one host.
+		nonce = uint32(time.Now().UnixNano()) ^ uint32(os.Getpid())<<16
+	}
+	if nonce == 0 {
+		nonce = 1
+	}
+	return nonce
 }
 
 // next returns the next id under prefix. It is safe for concurrent use.

@@ -265,6 +265,11 @@ write_run_config() {
 		echo "# not this file; 'make up' overwrites it every time."
 		echo "storage:"
 		echo "  backend: $backend"
+		# The development store's key. No binary falls back to one, and the
+		# engine reads its definitions from the store whatever the backend.
+		echo "  s3:"
+		echo "    access_key: orkstack"
+		echo "    secret_key: orkstack-secret"
 		echo "orker:"
 		echo "  workdir: $workdir"
 		# A pin host, so examples/pinned-checkout.ork.yaml runs here as shipped.
@@ -297,7 +302,7 @@ cmd_up() {
 	# The bucket, not just the port: on an empty volume the store serves S3 for
 	# seconds before it creates its -bucket, and the engine and the Orker each
 	# exit in that gap (deploy/docker-compose.yml).
-	wait_for "object store (SeaweedFS)" 60 curl -fs -o /dev/null --head http://localhost:9000/orkstack-artifacts
+	wait_for "object store (SeaweedFS)" 60 curl -fs -o /dev/null --head --aws-sigv4 aws:amz:us-east-1:s3 --user orkstack:orkstack-secret http://localhost:9000/orkstack-artifacts
 
 	say "== binaries =="
 	make build >/dev/null

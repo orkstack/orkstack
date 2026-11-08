@@ -100,7 +100,7 @@
 				<ActivityIcon kind={activityKind(settled.uses)} icon={shownInfo?.icon} class="size-4.5 text-navy-text" />
 				<span class="min-w-0"><b>{settled.id || 'This task'}</b> uses <b class="font-mono">{settled.uses}</b></span>
 			</p>
-			<p class="rail-sub">line {settled.line}{#if headKeys.length} · <span data-testid="editor-docs-set">{settled.set.filter((k) => headKeys.includes(k)).length} of {headKeys.length} set</span>{/if}</p>
+			<p class="rail-sub" data-testid="editor-docs-sub">line {settled.line}{#if headKeys.length}{' · '}<span data-testid="editor-docs-set">{settled.set.filter((k) => headKeys.includes(k)).length} of {headKeys.length} set</span>{/if}</p>
 		{:else}
 			<p class="rail-title"><span>Activity docs</span></p>
 		{/if}
@@ -150,42 +150,43 @@
 					{:else if keys.length === 0}
 						<p class="rail-note">Its <code>with:</code> takes no keys.</p>
 					{:else}
-						<table class="ktable" data-testid="editor-docs-keys">
-							<caption class="sr">The <code>with:</code> keys of {op ? `op ${op}` : 'this activity'}</caption>
-							<thead><tr><th scope="col">Key</th><th scope="col">Type</th><th scope="col">Set</th></tr></thead>
-							<tbody>
-								{#each keys as key (key)}
-									{@const f = fields[key]}
-									{@const isSet = settled.set.includes(key)}
-									<tr>
-										<th scope="row"><code>{key}</code>{#if f.required}<span class="text-ink-3"> required</span>{/if}</th>
-										<td>{typeOf(f.type)}</td>
-										<td>{#if isSet}<span class="sr">set</span><Icon name="apply" class="size-4 text-ok" />{:else}<span class="text-ink-3">—<span class="sr"> not set</span></span>{/if}</td>
-									</tr>
-									{#if opDocs?.fields[key] ?? docs?.fields[key]}
-										<tr class="kd">
-											<td colspan="3"><DocText text={opDocs?.fields[key] ?? docs?.fields[key] ?? ''} limit={200} lines={3} testid="editor-docs-key-{key}" /></td>
-										</tr>
-									{/if}
-								{/each}
-							</tbody>
-						</table>
-						{#if Object.keys(iface.values ?? {}).length}
-							<table class="ktable" data-testid="editor-docs-values">
-								<caption class="sr">The values it returns</caption>
-								<thead><tr><th scope="col">Value</th><th scope="col">Type</th></tr></thead>
-								<tbody>
-									{#each Object.keys(iface.values) as value (value)}
-										<tr>
-											<th scope="row"><code>{value}</code></th>
-											<td>{typeOf(iface.values[value]?.type ?? '')}</td>
-										</tr>
-										{#if docs?.values[value]}
-											<tr class="kd"><td colspan="2"><DocText text={docs.values[value]} limit={200} lines={3} /></td></tr>
+						<h3 id="editor-docs-keys-label" class="rail-label">Keys of {op ? `op ${op}` : 'this activity'}</h3>
+						<ul class="kblocks" aria-labelledby="editor-docs-keys-label" data-testid="editor-docs-keys">
+							{#each keys as key (key)}
+								{@const f = fields[key]}
+								{@const doc = opDocs?.fields[key] ?? docs?.fields[key]}
+								<li class="kblock" data-testid="editor-docs-field-{key}">
+									<div class="kb-head">
+										<code class="kb-key">{key}</code>
+										<span class="kb-meta">{typeOf(f.type)}</span>
+										{#if f.required}<span class="kb-meta kb-required">required</span>{/if}
+										{#if settled.set.includes(key)}
+											<span class="kb-set is-set"><Icon name="apply" class="size-4 text-ok" />set</span>
+										{:else}
+											<span class="kb-set">not set</span>
 										{/if}
-									{/each}
-								</tbody>
-							</table>
+									</div>
+									{#if doc}
+										<p class="kb-doc"><DocText text={doc} limit={280} lines={6} testid="editor-docs-key-{key}" /></p>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+						{#if Object.keys(iface.values ?? {}).length}
+							<h3 id="editor-docs-values-label" class="rail-label">Values it returns</h3>
+							<ul class="kblocks" aria-labelledby="editor-docs-values-label" data-testid="editor-docs-values">
+								{#each Object.keys(iface.values) as value (value)}
+									<li class="kblock">
+										<div class="kb-head">
+											<code class="kb-key">{value}</code>
+											<span class="kb-meta">{typeOf(iface.values[value]?.type ?? '')}</span>
+										</div>
+										{#if docs?.values[value]}
+											<p class="kb-doc"><DocText text={docs.values[value]} limit={280} lines={6} /></p>
+										{/if}
+									</li>
+								{/each}
+							</ul>
 						{/if}
 					{/if}
 				{/if}
@@ -251,36 +252,59 @@
 		font-size: 13.5px;
 		color: var(--ink-2);
 	}
-	.ktable {
-		width: 100%;
-		margin-top: 8px;
-		border-collapse: collapse;
-		font-size: 13.5px;
-	}
-	.ktable th,
-	.ktable td {
-		padding: 7px 16px;
+	.rail-label {
+		margin: 12px 0 0;
+		padding: 0 16px 4px;
 		border-bottom: 1px solid var(--line);
-		text-align: left;
-		vertical-align: top;
-	}
-	.ktable thead th {
 		font-size: 12px;
 		font-weight: 600;
 		color: var(--ink-3);
 	}
-	.ktable tbody th {
-		font-weight: 400;
+	.kblocks {
+		margin: 0;
+		padding: 0;
+		list-style: none;
 	}
-	.ktable tr:has(+ .kd) th,
-	.ktable tr:has(+ .kd) td {
-		border-bottom: 0;
-		padding-bottom: 2px;
+	.kblock {
+		padding: 10px 16px;
+		border-bottom: 1px solid var(--line);
+		font-size: 13.5px;
 	}
-	.ktable .kd td {
-		padding-top: 0;
-		font-size: 13px;
+	.kb-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 2px 8px;
+	}
+	.kb-key {
+		min-width: 0;
+		font-weight: 600;
+		color: var(--ink);
+		overflow-wrap: anywhere;
+	}
+	.kb-meta {
 		color: var(--ink-3);
+	}
+	.kb-required {
+		font-weight: 600;
+		color: var(--ink-2);
+	}
+	.kb-set {
+		display: inline-flex;
+		align-self: center;
+		align-items: center;
+		gap: 4px;
+		margin-left: auto;
+		color: var(--ink-3);
+		white-space: nowrap;
+	}
+	.kb-set.is-set {
+		color: var(--ink-2);
+	}
+	.kb-doc {
+		margin: 4px 0 0;
+		font-size: 14px;
+		color: var(--ink-2);
 	}
 	.rail-summary {
 		margin: 0;

@@ -818,7 +818,9 @@ func (x *GetRunResponse) GetRun() *Run {
 // only equals, and a run recorded before origins existed matches no
 // origin.kind filter; origin.id is meaningful only within a kind, so it
 // needs an equals filter on origin.kind. An id is matched whole, never by
-// part.
+// part. origin.root_run_id takes only equals and keeps every run below that
+// root in its composed chain, however deep: the root run itself holds no root
+// and is not one of them.
 type ListRunsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// page_size caps the runs returned; 0 means the default (200); above the
@@ -3260,14 +3262,14 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"4\n" +
 	"\x0eGetRunResponse\x12\"\n" +
-	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\x9b\x04\n" +
+	"\x03run\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x03run\"\xbe\x04\n" +
 	"\x0fListRunsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x03 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\x04 \x01(\tR\tpageToken\x12\x1c\n" +
 	"\tnamespace\x18\x05 \x01(\tR\tnamespace\x122\n" +
 	"\afilters\x18\n" +
-	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\x9a\x02\xa2\xbb\x18\x95\x02\n" +
+	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xbd\x02\xa2\xbb\x18\xb8\x02\n" +
 	"\x0forkstack.v1.Run\x12 \n" +
 	"\forkflow_name\x12\aOrkflow\x1a\x05\x01\x02\x03\x04\x058\x01\x12M\n" +
 	"\x06status\x12\x06Status\x1a\x03\x01\x02\x03\"\aPENDING\"\aRUNNING\"\tSUCCEEDED\"\x06FAILED\"\bCANCELED\"\aSKIPPED\x12\x19\n" +
@@ -3276,7 +3278,8 @@ const file_orkstack_v1_run_service_proto_rawDesc = "" +
 	"\vorigin.kind\x12\n" +
 	"Started by\x1a\x01\x01\"\x06SUBMIT\"\aTRIGGER\"\bSCHEDULE\"\n" +
 	"PARENT_RUN\"\tRUN_AGAIN\x12&\n" +
-	"\torigin.id\x12\tOrigin id\x1a\x01\x012\vorigin.kindJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03J\x04\b\x06\x10\n" +
+	"\torigin.id\x12\tOrigin id\x1a\x01\x012\vorigin.kind\x12!\n" +
+	"\x12origin.root_run_id\x12\bRoot run\x1a\x01\x01J\x04\b\x01\x10\x02J\x04\b\x02\x10\x03J\x04\b\x06\x10\n" +
 	"R\forkflow_nameR\x06statusR\rcreated_afterR\x0ecreated_beforeR\vorigin_kindR\torigin_id\"`\n" +
 	"\x10ListRunsResponse\x12$\n" +
 	"\x04runs\x18\x01 \x03(\v2\x10.orkstack.v1.RunR\x04runs\x12&\n" +

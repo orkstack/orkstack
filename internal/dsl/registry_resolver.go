@@ -1,6 +1,7 @@
 package dsl
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -378,6 +379,16 @@ func (r labelReaders) read(labels map[string]string, res *Resolution) {
 // maxReasonBytes bounds a reason a label could not be read.
 const maxReasonBytes = 512
 
+// safeBodyReason is SafeReason of a registry's error body, trimmed, and copies
+// only what SafeReason can read of it: its reading stops once its pieces pass
+// maxReasonBytes, no piece is shorter than the bytes it read, and the last
+// character it starts is at most utf8.UTFMax bytes long. A 4 MiB body costs what
+// its first 516 bytes do.
+func safeBodyReason(body []byte) string {
+	body = bytes.TrimSpace(body)
+	return SafeReason(string(body[:min(len(body), maxReasonBytes+utf8.UTFMax)]))
+}
+
 // SafeReason is why a label could not be read, as every client may show it:
 // a parser's message can quote the label, which an untrusted image wrote, so
 // every control or format character and every byte that is not UTF-8 is
@@ -598,7 +609,7 @@ func (r *Resolver) getManifest(ctx context.Context, ref Reference, target string
 		// error: escaped and cut, as every reason a label gives is.
 		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
 			Detail: fmt.Sprintf("registry %s answered %d: %s",
-				ref.APIHost(), resp.StatusCode, SafeReason(strings.TrimSpace(string(body))))}
+				ref.APIHost(), resp.StatusCode, safeBodyReason(body))}
 	}
 }
 
@@ -634,7 +645,7 @@ func (r *Resolver) getBlob(ctx context.Context, ref Reference, digest string, au
 	default:
 		return nil, &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
 			Detail: fmt.Sprintf("registry %s answered %d for blob %s: %s",
-				ref.APIHost(), resp.StatusCode, digest, SafeReason(strings.TrimSpace(string(body))))}
+				ref.APIHost(), resp.StatusCode, digest, safeBodyReason(body))}
 	}
 }
 

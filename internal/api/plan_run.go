@@ -87,7 +87,7 @@ func (s *Service) PlanRun(
 	for _, id := range keys {
 		if _, ok := known[id]; !ok {
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
-				"assumed_outputs[%q]: not a task of %s@%s", id, wf.GetName(), wf.GetVersion()))
+				"assumed_outputs[%q]: not a task of %s", id, engine.OrkflowRefText(wf)))
 		}
 	}
 
@@ -96,7 +96,7 @@ func (s *Service) PlanRun(
 	for i, id := range msg.GetAssumeFailed() {
 		if _, ok := known[id]; !ok {
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
-				"assume_failed[%d]: %q is not a task of %s@%s", i, id, wf.GetName(), wf.GetVersion()))
+				"assume_failed[%d]: %q is not a task of %s", i, id, engine.OrkflowRefText(wf)))
 		}
 		if listed[id] {
 			return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(

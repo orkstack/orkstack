@@ -23,7 +23,8 @@ import {
 	scrollToCard,
 	worstStatus,
 	type MapColors,
-	type MapTask
+	type MapTask,
+	revealBy
 } from '../src/lib/taskMap';
 
 const one = (cells: number, w: number, h: number) => mapGeometry([{ count: cells, labelled: false }], w, h);
@@ -527,3 +528,12 @@ test('scrollToCard stops when the card is gone', async () => {
 	expect(page.scrolls()).toBe(0);
 });
 
+
+test('revealBy moves the least that shows a selected row and its panel', () => {
+	const view = { top: 56, bottom: 800 };
+	expect(revealBy({ top: 100, bottom: 700 }, view)).toBe(0);
+	expect(revealBy({ top: 500, bottom: 900 }, view)).toBe(100);
+	// Above the band it lands under the bar, and it never pushes the row under it.
+	expect(revealBy({ top: -300, bottom: 200 }, view)).toBe(-356);
+	expect(revealBy({ top: 60, bottom: 2000 }, view)).toBe(4);
+});

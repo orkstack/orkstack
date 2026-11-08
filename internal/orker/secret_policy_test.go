@@ -110,6 +110,7 @@ func runOnce(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput) er
 	env.SetTestTimeout(60 * time.Second)
 	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
 	env.RegisterWorkflow(attemptProbeWorkflow)
+	d.heartbeaters = sdkRouteHeartbeater
 	env.RegisterActivityWithOptions(d.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
 	env.ExecuteWorkflow(attemptProbeWorkflow, in)
 	if !env.IsWorkflowCompleted() {

@@ -66,9 +66,9 @@ message TaskRun {
   // the task, and ListTaskAttempts describes the rest.
   //
   // Unset while the task is PENDING or RUNNING, and for a terminal task no
-  // Orker reported on — a host that died before reporting, a Temporal-side
-  // timeout, a cancellation that reached the Orker as a plain context
-  // cancellation, a lost pin. Unset is "not known", never zero.
+  // Orker reported on — a host the run lost contact with before it reported,
+  // a Temporal-side timeout, a cancellation that reached the Orker as a plain
+  // context cancellation, a lost pin. Unset is "not known", never zero.
   //
   // Before this field's meaning was corrected it held the dispatch instant;
   // scheduled_at (18) holds that now.
@@ -124,13 +124,14 @@ message TaskRun {
   // ExecuteTaskResult.orker_id or ActivityFailureDetail.orker_id. Set for
   // every task that reached an Orker, pinned or not; empty when the task
   // never reached one (skipped, canceled before dispatch) or when the Orker
-  // died before reporting (heartbeat timeout).
+  // lost contact before it reported (heartbeat timeout).
   //
   // One exception to "reported by this task's own attempt": a task recorded
-  // PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — its host died — so
-  // the engine BACKFILLS this from another member of the same pin. A pin never
-  // moves: every member executes on the same Orker process for the pin's whole
-  // life, so a sibling's orker_id is this task's by construction. It stays
+  // PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — the run lost contact
+  // with its host, or the pin closed at its lifetime — so the engine BACKFILLS
+  // this from another member of the same pin. A pin never moves: every member
+  // executes on the same Orker process for the pin's whole life, so a
+  // sibling's orker_id is this task's by construction. It stays
   // empty only when no member of that pin ever reported one, in which case the
   // failure's error.details carries the pin host's raw OS host name as an
   // explicitly labelled best-effort lead, which is NOT an orker_id.
@@ -413,14 +414,14 @@ enum RetryState {
 
 // Run is one execution of an Orkflow.
 message Run {
-  string id = 1;                         // ork run id, ork-{timestamp}-{sequence}; opaque, nothing parses it
+  string id = 1;                         // ork run id, ork- and a UUIDv7 in lowercase base32 (ork-{timestamp}-{sequence} on an older run); opaque, nothing parses it
   string orkflow_name = 2;
   string orkflow_version = 3;
   Status status = 4;
   Payload input = 5;
   // output is the Orkflow's declared outputs, rendered at success, when it
-  // declares `outputs:`; otherwise every leaf task's inline values, keyed by
-  // task id.
+  // declares `outputs:`; otherwise the inline values of the tasks no other
+  // task needs, keyed by task id.
   Payload output = 6;
   // error is set when the run's outcome is decided FAILED or CANCELED. While
   // a failing run's failure handlers still run, it is already set and status
@@ -560,6 +561,12 @@ message RunOrigin {
   // a client then omits the line entirely rather than showing a blank that
   // could be mistaken for a name.
   string principal = 5;
+  // root_run_id is the id of the run at the top of this run's composed chain:
+  // the run that started the chain, which id names only for a direct child.
+  // Set on a PARENT_RUN origin and empty on every other kind, so a run-again
+  // of a child, a new top-level run, has none. An empty value names no root.
+  // Opaque, like id.
+  string root_run_id = 6;
 }
 
 // EventType classifies a run event on the realtime stream.

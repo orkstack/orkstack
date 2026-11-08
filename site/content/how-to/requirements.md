@@ -22,7 +22,7 @@ Set these before the first start. Both binaries read the same file, and each ent
 | [`temporal.address`](/docs/configuration/#temporal-address), [`temporal.namespace`](/docs/configuration/#temporal-namespace) | Where the cluster is, and the partition for this environment. Use one namespace per environment. |
 | [`storage.backend`](/docs/configuration/#storage-backend) | Set `s3` for any replicated deployment. The default `local` is one directory per process. |
 | [`storage.s3.endpoint`](/docs/configuration/#storage-s3-endpoint), [`storage.s3.bucket`](/docs/configuration/#storage-s3-bucket) | The bucket every `ork` and `orker` shares. |
-| [`storage.s3.secret_key`](/docs/configuration/#storage-s3-secret-key) | Replace the development credentials with your own, or read them from a file. |
+| [`storage.s3.secret_key`](/docs/configuration/#storage-s3-secret-key) | Set with `access_key`, reading them from files if you like, or leave both unset to use an instance or pod role. |
 | [`pool.name`](/docs/configuration/#pool-name) | The pool each Orker joins. On `ork`, the value is where a task that names no `pool:` goes. Leave it unset on `ork` unless you change the default pool. |
 | [`orker.workdir`](/docs/configuration/#orker-workdir) | A path the container daemon can bind-mount, the same inside and out. |
 | [`orker.max_concurrent`](/docs/configuration/#orker-max-concurrent) | Tasks one Orker runs at once. Size it to the host. |

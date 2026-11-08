@@ -114,7 +114,7 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 	}
 	spec := taskByID(wf, t.TaskID)
 	if spec == nil {
-		return nil, fmt.Errorf("task %q is not in orkflow %s@%s", t.TaskID, wf.GetName(), wf.GetVersion())
+		return nil, fmt.Errorf("task %q is not in orkflow %s", t.TaskID, OrkflowRefText(wf))
 	}
 	if spec.GetAwait() != nil {
 		// The interpreter never schedules an awaited task: it waits for a
@@ -321,7 +321,7 @@ func ComposedTaskRefusal(taskID string, ref *orkstackv1.OrkflowRef) error {
 // task's input. Unknown taskID is an error.
 func TaskClosure(wf *orkstackv1.Orkflow, taskID string) ([]string, error) {
 	if taskByID(wf, taskID) == nil {
-		return nil, fmt.Errorf("task %q is not in orkflow %s@%s", taskID, wf.GetName(), wf.GetVersion())
+		return nil, fmt.Errorf("task %q is not in orkflow %s", taskID, OrkflowRefText(wf))
 	}
 	tasks := make(map[string]*orkstackv1.Task, len(wf.GetTasks()))
 	for _, t := range wf.GetTasks() {

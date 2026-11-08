@@ -32,7 +32,6 @@
 		usageCli,
 		usageFooter
 	} from '#lib/usage.ts';
-	import CliEquivalent from './CliEquivalent.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 	import CountCell from './CountCell.svelte';
 
@@ -43,9 +42,11 @@
 		/** The dashboard's window: a preset, or 'custom' with sinceParam. */
 		window: string;
 		sinceParam: string;
+		/** This panel's command, read by the page for its one terminal icon. */
+		command?: string;
 	}
 
-	let { namespace, budget, window, sinceParam }: Props = $props();
+	let { namespace, budget, window, sinceParam, command = $bindable('') }: Props = $props();
 
 	const PRESET_MS: Record<string, number> = { '15m': 15 * 60_000, '6h': 6 * 60 * 60_000, '24h': 24 * 60 * 60_000 };
 	const period = $derived<Duration | undefined>(budget?.period);
@@ -108,6 +109,14 @@
 	const shares = $derived(result ? budgetShareCells(result) : []);
 	const footer = $derived(result ? usageFooter(result) : []);
 	const cli = $derived(usageCli(namespaceLabel(namespace), windowWord, groupBy));
+
+	// The page's one terminal icon lists it, carrying this panel's own choices.
+	$effect(() => {
+		command = cli;
+		return () => {
+			command = '';
+		};
+	});
 	const toneClass: Record<string, string> = {
 		danger: 'bg-red',
 		warning: 'bg-ink-secondary',
@@ -124,14 +133,13 @@
 		{#if result}
 			<span class="text-xs text-ink-muted" data-testid="usage-computed-at">measured {fmtAge(result.computedAt, now)}</span>
 		{/if}
-		<div class="ml-auto"><CliEquivalent command={cli} testid="usage-cli" /></div>
 	</div>
 	<div>
 		{#if error}
 			<ErrorPanel
 				testid="usage-error"
 				retryTestid="usage-retry"
-				subject="the usage of namespace {namespaceLabel(namespace)}"
+				subject="the usage"
 				message={error}
 				busy={loading}
 				onretry={() => void load()}

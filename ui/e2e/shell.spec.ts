@@ -473,7 +473,7 @@ test('breadcrumb: the namespace, the page, then where on it; no whole run id on 
 	// The scope of an Operate page is said in its own sentence now (the title block's SCOPE cell is gone).
 	await page.goto(`${UI_ORIGIN}/admin/pools?ns=default`);
 	await expect(page.getByTestId('breadcrumb-current')).toHaveText('Pools');
-	await expect(page.getByTestId('pools-scope-caption')).toContainText('Where a task of namespace');
+	await expect(page.getByTestId('pools-scope-caption')).toContainText('Where a task can run');
 
 	await page.keyboard.press('Tab');
 	const skip = page.getByRole('link', { name: 'Skip to content' });
@@ -485,7 +485,7 @@ test('breadcrumb: the namespace, the page, then where on it; no whole run id on 
 
 async function axeShell(page: Page, label: string): Promise<void> {
 	const builder = new AxeBuilder({ page })
-		.withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa'])
+		.withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa'])
 		.include('header')
 		.include('[data-testid="sidebar"]');
 	if (await page.getByTestId('command-palette').count()) builder.include('[data-testid="command-palette"]');

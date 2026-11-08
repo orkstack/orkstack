@@ -64,7 +64,7 @@ func cleanupArchivedRun(t *testing.T, cfg artifacts.Config, runID string) {
 			t.Fatalf("RunObjectListKey: %v", err)
 		}
 		keys := []string{body, list}
-		for _, prefix := range []string{artifacts.RunIndexNamespace + "/", artifacts.RunOriginIndexNamespace + "/", artifacts.RunRecentIndexNamespace + "/", artifacts.RunObjectRefNamespace + "/"} {
+		for _, prefix := range []string{artifacts.RunIndexNamespace + "/", artifacts.RunOriginIndexNamespace + "/", artifacts.RunRootIndexNamespace + "/", artifacts.RunRecentIndexNamespace + "/", artifacts.RunObjectRefNamespace + "/"} {
 			for _, key := range listKeys(t, ctx, client, cfg.S3Bucket, prefix) {
 				if strings.HasSuffix(key, "/"+runID) {
 					keys = append(keys, key)

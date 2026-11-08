@@ -19,7 +19,6 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
-	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 )
@@ -189,9 +188,8 @@ func newPinVersionReplica(
 	// task.Deployment.Apply — so a change to either side of that pair reaches
 	// this test rather than passing beside it.
 	r.orker = worker.New(c, orkerQueue, deployment.Apply(worker.Options{
-		DisableRegistrationAliasing:  true,
-		DisableWorkflowWorker:        true,
-		MaxHeartbeatThrottleInterval: orker.DefaultHeartbeatInterval,
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
 
 		EnableSessionWorker:               true,
 		MaxConcurrentSessionExecutionSize: pinVersionMaxPins,

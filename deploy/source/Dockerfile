@@ -39,6 +39,9 @@ COPY --from=ui-build /src/ui/build/ /
 FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS binaries
 ARG TARGETARCH
 ARG VERSION=dev
+# The context holds no .git, so a build reports a commit only when told one;
+# the quickstart tells it none, and its binaries say `commit: unknown`.
+ARG COMMIT=
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY cmd/ cmd/
@@ -49,7 +52,7 @@ COPY --from=ui / internal/webui/dist/
 RUN --mount=type=cache,target=/go/pkg/mod \
 	--mount=type=cache,target=/root/.cache/go-build \
 	CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH GOTOOLCHAIN=local \
-	go build -trimpath -buildvcs=false -tags timetzdata -ldflags "-X main.version=${VERSION}" -o /out/ ./cmd/ork ./cmd/orker ./cmd/orkctl
+	go build -trimpath -buildvcs=false -tags timetzdata -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/ ./cmd/ork ./cmd/orker ./cmd/orkctl
 
 FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99 AS ork
 COPY LICENSE /usr/share/doc/orkstack/LICENSE

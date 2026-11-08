@@ -7,6 +7,7 @@
 	// and a third close it as a side effect of the action it was showing.
 	import { untrack, type Snippet } from 'svelte';
 	import { dismissOnOutsideOrEscape } from '#lib/dismiss.ts';
+	import { placePanel, type PanelPlacement } from '#lib/placement.ts';
 
 	interface Props {
 		open: boolean;
@@ -62,22 +63,45 @@
 	// 4,000 cards two document listeners each were the largest single cost of
 	// drawing the page.
 	let root = $state<HTMLDivElement | undefined>(undefined);
-	// The panel hangs from its trigger's edge, but never past the viewport's:
-	// opened from a trigger near the other edge (a header's actions wrapped to
-	// the left on a phone), it is moved back inside, 8 px clear of the edge.
+	// The panel is a manual popover, in the top layer, as the tooltip is: inside
+	// a table's scrolling frame or a modal's body it would otherwise be clipped
+	// to whatever that frame shows. It stays a descendant of `root`, so the
+	// dismissal and Escape handling below see it as inside.
+	//
+	// offsetWidth, not the bounding box: the opening animation scales the panel,
+	// and a placement measured mid-animation would stick.
 	let panel = $state<HTMLDivElement | undefined>(undefined);
-	let shift = $state(0);
+	let placed = $state<PanelPlacement | undefined>(undefined);
+	function place(): void {
+		if (!root || !panel) return;
+		// The full height the content asks for, not what the last placement allowed.
+		const height = panel.scrollHeight + panel.offsetHeight - panel.clientHeight;
+		placed = placePanel(
+			root.getBoundingClientRect(),
+			{ width: panel.offsetWidth, height },
+			{ width: document.documentElement.clientWidth, height: document.documentElement.clientHeight },
+			align
+		);
+	}
 	$effect(() => {
 		if (!open || !panel) {
-			shift = 0;
+			placed = undefined;
 			return;
 		}
-		const r = panel.getBoundingClientRect();
-		const current = untrack(() => shift);
-		const left = r.left - current;
-		const right = r.right - current;
-		const room = document.documentElement.clientWidth;
-		shift = left < 8 ? 8 - left : right > room - 8 ? Math.max(room - 8 - right, 8 - left) : 0;
+		panel.showPopover();
+		untrack(place);
+		// Fixed in the viewport, so it follows its trigger through any scroll,
+		// and its own content changing size can move it across an edge.
+		const sized = new ResizeObserver(() => place());
+		sized.observe(panel);
+		const options = { capture: true, passive: true };
+		window.addEventListener('scroll', place, options);
+		window.addEventListener('resize', place);
+		return () => {
+			sized.disconnect();
+			window.removeEventListener('scroll', place, options);
+			window.removeEventListener('resize', place);
+		};
 	});
 	$effect(() => {
 		if (!open || !root) return;
@@ -107,13 +131,13 @@
 	{#if open}
 		<div
 			bind:this={panel}
+			popover="manual"
 			data-testid={testid}
 			data-overlay
-			style:translate={shift ? `${shift}px 0` : undefined}
-			class="absolute z-30 mt-1.5 rounded-md border border-line-2 bg-surface p-3.5 text-ink shadow-overlay animate-overlay-in motion-reduce:animate-none {align ===
-			'end'
-				? 'right-0'
-				: 'left-0'}"
+			style:left={placed ? `${placed.left}px` : '0'}
+			style:top={placed ? `${placed.top}px` : '0'}
+			style:max-height={placed ? `${placed.maxHeight}px` : undefined}
+			class="fixed right-auto bottom-auto m-0 overflow-y-auto rounded-md border border-line-2 bg-surface p-3.5 text-ink shadow-overlay animate-overlay-in motion-reduce:animate-none"
 		>
 			{@render content()}
 		</div>

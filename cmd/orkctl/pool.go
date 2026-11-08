@@ -35,6 +35,11 @@ func newPoolListCommand(g *globalFlags) *cobra.Command {
 			"reason printed under the table — one unreachable pool must not hide the\n" +
 			"healthy ones. `unknown` and `0` are different answers: 0 means start an Orker,\n" +
 			"unknown means ask again.\n\n" +
+			"The count includes an Orker that stopped in the last 90 seconds, which the\n" +
+			"cluster still remembers polling and `orkctl orker list` shows as\n" +
+			"`unknown (unreachable)`. An Orker restarted under the same id is one Orker\n" +
+			"throughout; one restarted under another id, as a new host gives it by\n" +
+			"default, is two until then. Set ORK_ORKER_ID to keep it one.\n\n" +
 			"Which activities a pool can run is engine configuration, not something an\n" +
 			"Orker reports: use `orkctl activity list` for the catalog; this command\n" +
 			"answers who is available to run it.\n\n" +

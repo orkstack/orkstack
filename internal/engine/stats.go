@@ -402,7 +402,7 @@ func (r *TemporalRunReader) walkExecutions(
 			NextPageToken: token,
 		})
 		if err != nil {
-			return fmt.Errorf("engine: read the execution index (%s): %w", query, err)
+			return fmt.Errorf("engine: read the cluster's run index: %w", err)
 		}
 		for _, info := range response.GetExecutions() {
 			visit(info)
@@ -426,9 +426,9 @@ func unindexedAdvice(scoped bool, namespace string) string {
 	if scoped || namespace == "" {
 		return ""
 	}
-	return fmt.Sprintf(", or register the %s index (it is provisioned at engine boot) "+
-		"so the namespace becomes a query predicate instead of a filter",
-		task.SearchAttrOrkflowNamespace)
+	return ", or have the cluster index a run's namespace, so the read is scoped to it " +
+		"instead of filtered: the engine provisions the index at boot and warns there if " +
+		"it cannot (run_namespace_index, docs/DEPLOY.md)"
 }
 
 // executionDuration is how long one execution took, from its own record.

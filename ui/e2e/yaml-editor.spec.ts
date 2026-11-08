@@ -214,7 +214,7 @@ test('the editor in both themes: findings, colours and the list (screenshots)', 
 		await page.locator('.cm-line').nth(6).getByText('need').hover();
 		await expect(page.locator('.cm-tooltip-lint')).toBeVisible();
 		await shot(page, `yaml-editor-${theme}.png`);
-		const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
+		const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
 		const found = axe.violations.map((v) => `${v.id} (${v.nodes.length}: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(', ')})`);
 		note(`axe apply with findings (${theme}): ${found.length} violation(s)${found.length ? ' — ' + found.join('; ') : ''}`);
 		expect(found).toEqual([]);
@@ -266,7 +266,7 @@ test('Tab indents, Escape then Tab leaves the editor, and completion offers the 
 	await expect(page.locator('.cm-tooltip-autocomplete li', { hasText: 'join' })).toBeVisible();
 	// The field and its popups (CodeMirror mounts them inside the editor); the
 	// page around it was scanned whole above, at its top, and is scrolled here.
-	const axe = await new AxeBuilder({ page }).include('.yaml-field').withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
+	const axe = await new AxeBuilder({ page }).include('.yaml-field').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
 	const found = axe.violations.map((v) => `${v.id} (${v.nodes.length}: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(', ')})`);
 	note(`axe editor with the completion list open: ${found.length} violation(s)${found.length ? ' — ' + found.join('; ') : ''}`);
 	expect(found).toEqual([]);

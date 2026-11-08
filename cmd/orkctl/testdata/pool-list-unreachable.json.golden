@@ -2,7 +2,7 @@
   "pools": [
     {
       "name": "gpu",
-      "unavailableReason": "cannot tell whether pool \"gpu\" has live Orkers: context deadline exceeded"
+      "unavailableReason": "could not check pool \"gpu\" for live Orkers: asking the cluster failed (context deadline exceeded); retry the request"
     },
     {
       "name": "main",

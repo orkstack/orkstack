@@ -1,6 +1,6 @@
 <script lang="ts">
 	// A question with two answers, as a native modal <dialog>. A destructive
-	// one (Cancel run…, Cordon…, a delete) names its safe choice on the back
+	// one (Cancel run, Cordon, a delete) names its safe choice on the back
 	// button ("Keep running", "Back"), and its confirm is solid ink with the
 	// same glyph as the trigger — never red: red is a status colour only. The
 	// back button takes the focus first, so Enter never destroys by accident.
@@ -58,7 +58,7 @@
 		dialog?.showModal();
 		if (destructive) back?.focus();
 		return () => {
-			// The opener may be gone (Cordon… became Uncordon, a run ended):
+			// The opener may be gone (Cordon became Uncordon, a run ended):
 			// focus then goes to the page's main region, never to nothing.
 			if (opener?.isConnected) opener.focus();
 			else document.getElementById('content')?.focus();

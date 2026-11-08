@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { shellQuote } from '#lib/runDetail.ts';
 	// Image supply-chain policy (proto/orkstack/v1/service.proto's
 	// GetImagePolicy/UpdateImagePolicy): the deployment's floor on which
 	// images may be applied and run — whether a `uses:` may be a mutable tag,
@@ -142,11 +143,22 @@
 
 	const inputClass =
 		'field px-3';
+
+	// The form's digest rule and registries, as `set` takes them; a signing key is a
+	// file on the machine that runs it, so it stays a flag to add by hand.
+	const cli = $derived.by(() => {
+		const registries = parseRegistryLines(registriesText);
+		const flags = registries.length > 0 ? registries.map((r) => `--allowed-registry ${shellQuote(r)}`) : ['--clear-allowed-registries'];
+		return [
+			{ label: 'The policy', command: 'orkctl admin image-policy get' },
+			{ label: 'Change it', command: ['orkctl admin image-policy set', `--require-digest=${requireDigest}`, ...flags].join(' ') }
+		];
+	});
 </script>
 
 <svelte:head><title>Admin — Image policy — OrkStack</title></svelte:head>
 
-<SheetHeader title="Image policy" />
+<SheetHeader title="Image policy" commands={cli} />
 
 <ScopeNote testid="image-policy-scope-caption">
 	Deployment-wide: the namespace selector above does not scope it. A namespace may tighten this on
@@ -211,8 +223,7 @@
 			</dl>
 		</div>
 		<p class="mt-2 max-w-prose text-xs text-ink-muted">
-			Stored with the deployment, so every replica answers the same — see
-			<code>orkctl admin image-policy get</code>. Refused at validate, apply and submit, and by the
+			Stored with the deployment, so every replica answers the same. Refused at validate, apply and submit, and by the
 			Orker before it pulls; a run keeps the policy it was submitted under.
 		</p>
 	</section>

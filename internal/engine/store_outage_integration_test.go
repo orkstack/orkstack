@@ -94,6 +94,10 @@ func storeOutageOrker(d *cordonDeployment, id, pool string) (*pinOrker, *faultpr
 		return err
 	}
 	go o.activities.NewStoreWatch(check, storeOutageWatchConfig(), nil).Run(watchCtx)
+	// A submit asks the cluster whether the pool is served, and an Orker that has
+	// only just started polling may not be in that answer yet, so a test that
+	// submits at once would be refused for an empty pool.
+	awaitPoolServedBy(t, d.ctx, engine.NewTemporalPoolProbe(d.temporal), pool, o.queue, 1)
 	return o, proxy, checks
 }
 

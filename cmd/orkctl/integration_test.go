@@ -424,15 +424,21 @@ func startOrker(ctx context.Context, t *testing.T, orkerPath, temporalAddr, temp
 func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, temporalNamespace, orkerQueue string) (string, <-chan struct{}) {
 	t.Helper()
 	addr := freeAddress(t)
-	exited := startProcess(ctx, t, "ork", enginePath,
-		"ORK_HTTP_ADDR="+addr,
-		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
-		"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
-		"ORK_ORKER_QUEUE="+orkerQueue,
-		"ORK_ARTIFACT_BACKEND=local",
-		"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
-	)
+	exited := startProcess(ctx, t, "ork", enginePath, engineEnv(t, addr, temporalAddr, temporalNamespace, orkerQueue)...)
 	return addr, exited
+}
+
+// engineEnv is the environment of an engine startEngine boots.
+func engineEnv(t *testing.T, addr, temporalAddr, temporalNamespace, orkerQueue string) []string {
+	t.Helper()
+	return []string{
+		"ORK_HTTP_ADDR=" + addr,
+		"ORK_TEMPORAL_ADDRESS=" + temporalAddr,
+		"ORK_TEMPORAL_NAMESPACE=" + temporalNamespace,
+		"ORK_ORKER_QUEUE=" + orkerQueue,
+		"ORK_ARTIFACT_BACKEND=local",
+		"ORK_ARTIFACT_DIR=" + sharedLocalArtifactDir(t),
+	}
 }
 
 // startProcess starts a built binary with extra environment and guarantees it
@@ -445,6 +451,14 @@ func startEngine(ctx context.Context, t *testing.T, enginePath, temporalAddr, te
 // references that are not published (see localActivityCatalogEnv). One place,
 // rather than one copy per engine launcher.
 func startProcess(ctx context.Context, t *testing.T, name, path string, env ...string) <-chan struct{} {
+	t.Helper()
+	_, done := startProcessHandle(ctx, t, name, path, env...)
+	return done
+}
+
+// startProcessHandle is startProcess for a test that signals the process
+// itself.
+func startProcessHandle(ctx context.Context, t *testing.T, name, path string, env ...string) (*os.Process, <-chan struct{}) {
 	t.Helper()
 	// The BINARY decides, not the label: replicas are started as "ork-A",
 	// "ork-history" and so on, and an engine that missed the catalog would fail
@@ -472,7 +486,7 @@ func startProcess(ctx context.Context, t *testing.T, name, path string, env ...s
 		}
 		t.Logf("%s log:\n%s", name, log.String())
 	})
-	return done
+	return cmd.Process, done
 }
 
 // waitForEngine polls the engine through the CLI until it answers. A slow boot
@@ -546,9 +560,9 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 // every run of this test produces a DIFFERENT document under one name — and
 // a stored version is immutable, so re-applying that document under the
 // example's `0.1.0` would be refused, not written. Unpinning the
-// version hands the job to the DSL's own rule: an unpinned document's version
-// is the sha256 of its source (internal/dsl.sourceHash), so changed source
-// lands on a new version and identical source re-applies as a no-op.
+// version hands the job to the apply's own rule: an unpinned document is given a
+// version by its content (internal/api.assignVersion), so changed source lands
+// on a new version and identical source re-applies as a no-op.
 // `run submit <name>` then resolves the empty version to it, being the most
 // recently applied.
 func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {

@@ -40,25 +40,30 @@ const (
 	ReasonContainerExitNonzero = "CONTAINER_EXIT_NONZERO"
 	ReasonContainerTimeout     = "CONTAINER_TIMEOUT"
 	ReasonRuntimeRefused       = "RUNTIME_REFUSED"
-	ReasonWorkspaceNotBindable = "WORKSPACE_NOT_BINDABLE"
-	ReasonWorkdirNotBindable   = "WORKDIR_NOT_BINDABLE"
-	ReasonImagePullFailed      = "IMAGE_PULL_FAILED"
-	ReasonImageDigestMismatch  = "IMAGE_DIGEST_MISMATCH"
-	ReasonImageNotPinned       = "IMAGE_NOT_PINNED"
-	ReasonValuesMissing        = "VALUES_MISSING"
-	ReasonValuesMalformed      = "VALUES_MALFORMED"
-	ReasonValuesTooLarge       = "VALUES_TOO_LARGE"
-	ReasonArtifactNotAFile     = "ARTIFACT_NOT_A_FILE"
-	ReasonArtifactLimit        = "ARTIFACT_LIMIT_EXCEEDED"
-	ReasonArtifactNameNotUTF8  = "ARTIFACT_NAME_NOT_UTF8"
-	ReasonArtifactUploadFailed = "ARTIFACT_UPLOAD_FAILED"
-	ReasonInputUnavailable     = "INPUT_ARTIFACT_UNAVAILABLE"
-	ReasonInputCorrupt         = "INPUT_ARTIFACT_CORRUPT"
-	ReasonInputTooLarge        = "INPUT_TOO_LARGE"
-	ReasonRenderFailed         = "RENDER_FAILED"
-	ReasonWorkdirFailed        = "WORKDIR_FAILED"
-	ReasonSecretUnresolved     = "SECRET_UNRESOLVED"
-	ReasonSecretSchemeForbid   = "SECRET_SCHEME_FORBIDDEN"
+	// ReasonContainerStoppedByRuntime is a container that ran and did not end on
+	// its own: the runtime reports it was stopped from outside, by its daemon
+	// shutting down or by someone asking the runtime to. Whatever code it exited
+	// with is what the stop made of it, so it says nothing about the workload.
+	ReasonContainerStoppedByRuntime = "CONTAINER_STOPPED_BY_RUNTIME"
+	ReasonWorkspaceNotBindable      = "WORKSPACE_NOT_BINDABLE"
+	ReasonWorkdirNotBindable        = "WORKDIR_NOT_BINDABLE"
+	ReasonImagePullFailed           = "IMAGE_PULL_FAILED"
+	ReasonImageDigestMismatch       = "IMAGE_DIGEST_MISMATCH"
+	ReasonImageNotPinned            = "IMAGE_NOT_PINNED"
+	ReasonValuesMissing             = "VALUES_MISSING"
+	ReasonValuesMalformed           = "VALUES_MALFORMED"
+	ReasonValuesTooLarge            = "VALUES_TOO_LARGE"
+	ReasonArtifactNotAFile          = "ARTIFACT_NOT_A_FILE"
+	ReasonArtifactLimit             = "ARTIFACT_LIMIT_EXCEEDED"
+	ReasonArtifactNameNotUTF8       = "ARTIFACT_NAME_NOT_UTF8"
+	ReasonArtifactUploadFailed      = "ARTIFACT_UPLOAD_FAILED"
+	ReasonInputUnavailable          = "INPUT_ARTIFACT_UNAVAILABLE"
+	ReasonInputCorrupt              = "INPUT_ARTIFACT_CORRUPT"
+	ReasonInputTooLarge             = "INPUT_TOO_LARGE"
+	ReasonRenderFailed              = "RENDER_FAILED"
+	ReasonWorkdirFailed             = "WORKDIR_FAILED"
+	ReasonSecretUnresolved          = "SECRET_UNRESOLVED"
+	ReasonSecretSchemeForbid        = "SECRET_SCHEME_FORBIDDEN"
 	// ReasonSecretNotPermitted is a source outside this Orker's
 	// ORK_ORKER_SECRET_ALLOW floor, or one of the Orker's own sources, which
 	// no floor admits (SecurityPolicy.AllowsSecretSource). A policy refusal
@@ -102,6 +107,11 @@ const (
 	// attempt's record and never reported to Temporal, which sees what it sees
 	// of an Orker that died: no heartbeat, then ORKER_HEARTBEAT_TIMEOUT.
 	ReasonOrkerStopped = "ORKER_STOPPED"
+	// ReasonHeartbeatLost is an attempt stopped because its heartbeat could not
+	// reach the cluster within the heartbeat interval. Nobody cancelled the
+	// task: the SDK cancels the attempt locally when a heartbeat RPC keeps
+	// failing a retryable status. Retried under the task's policy.
+	ReasonHeartbeatLost = "ORKER_HEARTBEAT_LOST"
 
 	// Image supply-chain policy (docs/DEPLOY.md "Image supply-chain policy"), re-exported
 	// from internal/task so the engine and the Orker spell one refusal one
@@ -158,6 +168,7 @@ var reasonCategory = map[string]string{
 	ReasonContainerExitNonzero:      CategoryActivityFailed,
 	ReasonContainerTimeout:          CategoryTimedOut,
 	ReasonRuntimeRefused:            CategoryInfrastructureError,
+	ReasonContainerStoppedByRuntime: CategoryInfrastructureError,
 	ReasonWorkspaceNotBindable:      CategoryInfrastructureError,
 	ReasonWorkdirNotBindable:        CategoryInfrastructureError,
 	ReasonImagePullFailed:           CategoryInfrastructureError,
@@ -194,6 +205,7 @@ var reasonCategory = map[string]string{
 	ReasonNetworkModeRefused:        CategoryContractViolation,
 	ReasonEachItemUnavailable:       CategoryContractViolation,
 	ReasonOrkerStopped:              CategoryInfrastructureError,
+	ReasonHeartbeatLost:             CategoryInfrastructureError,
 
 	ReasonRunAsOrkerUnavailable: CategoryInfrastructureError,
 

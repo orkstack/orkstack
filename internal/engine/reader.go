@@ -56,6 +56,10 @@ const (
 	// the user-facing slug and the id; absent when the plan carries no origin.
 	MemoOriginKind = "orkflow_origin_kind"
 	MemoOriginID   = "orkflow_origin_id"
+	// MemoOriginRootRunID carries the root of a run's composed chain beside
+	// them. Absent on a run with no root recorded. It selects nothing: it has
+	// no search attribute, and it is on the memo only for the listing row.
+	MemoOriginRootRunID = "orkflow_origin_root_run_id"
 	// MemoCreatedAt carries a run's created_at, an RFC 3339 nano UTC string,
 	// once the run has continued as new: a generation's own StartTime is not
 	// the run's. The first switch upserts it, so it merges into generation
@@ -98,6 +102,10 @@ type RunQuery struct {
 	// OriginKind — exact match, never a prefix (ListRunsRequest).
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// RootRunID keeps the runs below one root of a composed chain, a predicate
+	// the cluster applies when it indexes the root (WithRootIndex). A run with
+	// no root recorded is matched by no value.
+	RootRunID string
 	// Keep is the residual filter set (docs/UI_CLI_PARITY.md "Filtering
 	// lists"): when set, a run is listed only if Keep holds for its
 	// RunFilterView. The fields above are pushdowns that narrow what is read;
@@ -236,6 +244,8 @@ type TemporalRunReader struct {
 	// for the rest of the process's life.
 	chainINUnsupported atomic.Bool
 
+	// rootIndexed reports that this cluster has OrkflowOriginRootRunId.
+	rootIndexed bool
 	// originIndexed reports that this cluster has the OrkflowOriginKind and
 	// OrkflowOriginId search attributes (task.EnsureRunOriginSearchAttributes),
 	// so an origin filter is a predicate the cluster applies. It is a separate
@@ -453,6 +463,14 @@ func (r *TemporalRunReader) WithNamespaceIndex(indexed bool) *TemporalRunReader 
 	return r
 }
 
+// WithRootIndex records whether the cluster indexes a run's root. Off, a list
+// by root selects from the memo, over the walk WithOriginIndex describes, and
+// refuses rather than answer short.
+func (r *TemporalRunReader) WithRootIndex(indexed bool) *TemporalRunReader {
+	r.rootIndexed = indexed
+	return r
+}
+
 // WithOriginIndex records whether the cluster indexes a run's origin. Off,
 // the reader answers an origin filter by the fail-closed walk the namespace
 // filter takes without its index.
@@ -630,7 +648,8 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	// held to the same rule: "which runs did this trigger start" answered from
 	// as far as the budget got is a short list nobody can tell from a whole one.
 	originUnscoped := q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && !originScoped
-	exhaustive := q.Exhaustive || q.Complete || (q.Namespace != "" && !scoped) || originUnscoped
+	rootUnscoped := q.RootRunID != "" && !r.rootIndexed
+	exhaustive := q.Exhaustive || q.Complete || (q.Namespace != "" && !scoped) || originUnscoped || rootUnscoped
 
 	limit, batch, pages := runListBudget(q, exhaustive)
 	// A walk that goes to the end (Complete, Exhaustive) sees every record
@@ -650,7 +669,7 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 			NextPageToken: token,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("engine: list runs from temporal: %w", err)
+			return nil, fmt.Errorf("engine: list runs from the cluster's run index: %w", err)
 		}
 		if whole {
 			page.records = append(page.records, response.GetExecutions()...)
@@ -691,27 +710,35 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	}
 	if q.Namespace != "" && !scoped {
 		return nil, fmt.Errorf(
-			"engine: list runs in namespace %q: visibility does not index %s, so every "+
-				"other namespace's runs had to be read and discarded, and %d pages were "+
-				"not enough. Register the search attribute (it is provisioned at engine "+
-				"boot) and the namespace becomes a query predicate",
-			q.Namespace, task.SearchAttrOrkflowNamespace, pages)
+			"engine: list runs in namespace %q: the cluster does not index a run's namespace, "+
+				"so every other namespace's runs had to be read and discarded, and %d pages "+
+				"were not enough. The engine provisions the index at boot and warns there if "+
+				"it cannot (run_namespace_index, docs/DEPLOY.md)",
+			q.Namespace, pages)
 	}
 	if originUnscoped {
 		return nil, fmt.Errorf(
-			"engine: list runs by origin: visibility does not index %s or %s, so every "+
-				"other origin's runs had to be read and discarded, and %d pages were not "+
-				"enough. Register the search attributes (they are provisioned at engine "+
-				"boot) and the origin becomes a query predicate",
-			task.SearchAttrOrkflowOriginKind, task.SearchAttrOrkflowOriginId, pages)
+			"engine: list runs by origin: the cluster does not index a run's origin, so "+
+				"every other origin's runs had to be read and discarded, and %d pages were "+
+				"not enough. The engine provisions the index at boot and warns there if it "+
+				"cannot (run_origin_index, docs/DEPLOY.md)",
+			pages)
+	}
+	if rootUnscoped {
+		return nil, fmt.Errorf(
+			"engine: list runs by root run: the cluster does not index a run's root, so "+
+				"every other run had to be read and discarded, and %d pages were not enough. "+
+				"The engine provisions the index at boot and warns there if it cannot "+
+				"(run_root_index, docs/DEPLOY.md)",
+			pages)
 	}
 	if q.Complete {
-		return nil, fmt.Errorf("engine: complete run page for orkflow %q in namespace %q could not determine whether history continues after %d visibility pages", q.OrkflowName, q.Namespace, pages)
+		return nil, fmt.Errorf("engine: complete run page for orkflow %q in namespace %q could not determine whether history continues after %d pages of the cluster's run index", q.OrkflowName, q.Namespace, pages)
 	}
 	if exhaustive {
 		return nil, fmt.Errorf(
 			"engine: exhaustive run list for orkflow %q in namespace %q did not reach the "+
-				"end of Temporal visibility after %d pages; deletion safety cannot be "+
+				"end of the cluster's run index after %d pages; deletion safety cannot be "+
 				"decided from a partial answer",
 			q.OrkflowName, q.Namespace, pages)
 	}
@@ -848,6 +875,9 @@ func (r *TemporalRunReader) listQuery(q RunQuery) (query string, scoped, originS
 		if q.OriginID != "" {
 			query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowOriginId, q.OriginID)
 		}
+	}
+	if q.RootRunID != "" && r.rootIndexed {
+		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowOriginRootRunId, q.RootRunID)
 	}
 	return query, scoped, originScoped
 }
@@ -1552,11 +1582,15 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
 	run.OrkflowVersion = r.memoString(info.GetMemo(), MemoOrkflowVersion)
 	run.Namespace = r.memoString(info.GetMemo(), MemoNamespace)
-	// A listing row carries the origin's kind and id from the memo; the whole
+	// A listing row carries the origin's kind, id and root from the memo; the whole
 	// origin comes from GetRun, which reads the snapshot. A memo with no kind
 	// (a run started before origins existed) leaves Origin unset.
 	if kind, ok := artifacts.ParseOriginKindSlug(r.memoString(info.GetMemo(), MemoOriginKind)); ok {
-		run.Origin = &orkstackv1.RunOrigin{Kind: kind, Id: r.memoString(info.GetMemo(), MemoOriginID)}
+		run.Origin = &orkstackv1.RunOrigin{
+			Kind:      kind,
+			Id:        r.memoString(info.GetMemo(), MemoOriginID),
+			RootRunId: r.memoString(info.GetMemo(), MemoOriginRootRunID),
+		}
 	}
 	return run
 }
@@ -1608,6 +1642,9 @@ func matchesRunQuery(run *orkstackv1.Run, q RunQuery) bool {
 	if q.OriginID != "" && run.GetOrigin().GetId() != q.OriginID {
 		return false
 	}
+	if q.RootRunID != "" && run.GetOrigin().GetRootRunId() != q.RootRunID {
+		return false
+	}
 	created := RunIndexTime(run)
 	if !q.Since.IsZero() && created.Before(q.Since) {
 		return false
@@ -1651,6 +1688,11 @@ func RunListPlan(set listfilter.Set) RunQuery {
 		if id, ok := set.Equality("origin.id"); ok {
 			plan.OriginID = id
 		}
+	}
+	// A root stands alone: a chain's runs are found by it in either family,
+	// whatever else narrows them.
+	if root, ok := set.Equality("origin.root_run_id"); ok {
+		plan.RootRunID = root
 	}
 	plan.Since, plan.Until = set.Interval("created_at")
 	if !set.Empty() {

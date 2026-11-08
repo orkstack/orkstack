@@ -7,6 +7,7 @@
 package orker
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -105,6 +106,11 @@ type DockerRuntime struct {
 	// SAME attach draining fully before reporting the exit status — see
 	// dockerAttach and Wait for why that join is load-bearing.
 	attaches map[ContainerID]*dockerAttach
+	// watches tracks, per container, the event stream Start opened, until Wait
+	// or Remove ends it.
+	watches map[ContainerID]*stopWatch
+	// stopSettle overrides stopWatchSettle, for a test.
+	stopSettle time.Duration
 	// described is the first successful Describe, kept for the process's
 	// lifetime. A failure is never kept.
 	described *RuntimeInfo
@@ -470,32 +476,49 @@ func (d *DockerRuntime) bindProbeTimeout() time.Duration {
 // Create builds the container. Every §9.2 constraint is materialized here as a
 // flag, and nothing from §9.1 is expressible: there is no branch that could
 // add a capability, mount a socket, or select a host namespace.
+//
+// A create that reached the CLI and failed returns the name it asked for beside
+// the error. The CLI's failure is not the daemon's: killed at its deadline, or
+// cut off when its connection dropped, it says nothing of what the daemon went
+// on to do, and the name is the only handle on what it may have made. Only a
+// CLI that gave no answer at all, ErrCreateUnanswered, leaves the daemon possibly
+// still working.
 func (d *DockerRuntime) Create(ctx context.Context, spec ContainerSpec) (ContainerID, error) {
 	spoken, err := d.dialect(ctx)
 	if err != nil {
 		return "", fmt.Errorf("create container: %w", err)
 	}
-	args, err := createArgs(spec, spoken)
+	name := containerName(spec.Labels["ork.task"])
+	args, err := namedCreateArgs(spec, name, spoken)
 	if err != nil {
 		return "", err
 	}
 	answer, err := d.control(ctx, args...)
 	if err != nil {
-		return "", err
+		return ContainerID(name), fmt.Errorf("%w: %w", ErrCreateUnanswered, err)
+	}
+	if answer.code < 0 {
+		// Stopped by a signal, which is how exec ends a CLI past its deadline
+		// or on a cancelled context.
+		return ContainerID(name), fmt.Errorf("%w: the CLI was stopped: %s", ErrCreateUnanswered, answer.said())
 	}
 	if answer.code != 0 {
 		said := answer.said()
 		if spoken.unbindable(said) {
-			return "", fmt.Errorf("%w: %s", ErrNotBindable, said)
+			return ContainerID(name), fmt.Errorf("%w: %s", ErrNotBindable, said)
 		}
-		return "", fmt.Errorf("create container: docker exited %d: %s", answer.code, said)
+		return ContainerID(name), fmt.Errorf("create container: docker exited %d: %s", answer.code, said)
 	}
 	id := strings.TrimSpace(answer.stdout)
 	if id == "" {
-		return "", errors.New("create container: docker returned no container id")
+		return ContainerID(name), errors.New("create container: docker returned no container id")
 	}
 	return ContainerID(id), nil
 }
+
+// ErrCreateUnanswered is a create whose CLI ended without the daemon's answer:
+// the daemon may yet finish it.
+var ErrCreateUnanswered = errors.New("create container: no answer from the container engine, which may still finish it")
 
 // dockerCreateArgs renders a spec to argv for the docker CLI against Docker.
 // It is a pure function so a test can assert the whole security posture
@@ -506,7 +529,12 @@ func dockerCreateArgs(spec ContainerSpec) ([]string, error) {
 
 // createArgs renders a spec to argv in a dialect.
 func createArgs(spec ContainerSpec, spoken dialect) ([]string, error) {
-	flags, err := dockerContainerFlags(spec, containerName(spec.Labels["ork.task"]), spoken)
+	return namedCreateArgs(spec, containerName(spec.Labels["ork.task"]), spoken)
+}
+
+// namedCreateArgs is createArgs for a container of a name the caller chose.
+func namedCreateArgs(spec ContainerSpec, name string, spoken dialect) ([]string, error) {
+	flags, err := dockerContainerFlags(spec, name, spoken)
 	if err != nil {
 		return nil, err
 	}
@@ -703,6 +731,10 @@ func (d *DockerRuntime) Start(ctx context.Context, id ContainerID, stdout, stder
 	// workload's stderr is unbounded.
 	diagnostics := &boundedBuffer{limit: 4096}
 
+	// The event stream's CLI may connect after the container has run: looking back
+	// to the container's creation covers that (eventArgs, stopWatch).
+	d.trackWatch(id, d.watchStops(ctx, bin, id))
+
 	// NOT exec.CommandContext, and that is the point. Binding the attach to
 	// the activity context kills `docker start --attach` the instant the
 	// activity is cancelled — which is exactly when the workload is running
@@ -771,6 +803,184 @@ func (d *DockerRuntime) takeAttach(id ContainerID) *dockerAttach {
 	attach := d.attaches[id]
 	delete(d.attaches, id)
 	return attach
+}
+
+// stopWatch follows what the engine says happens to one container, for the one
+// fact an exit status cannot carry: whether the container ended on its own.
+//
+// The number cannot say. A daemon that shuts down stops its containers with their
+// stop signal, and the workload then exits 143, or 137 past the grace, or
+// whatever its own handler chooses, 0 included; a workload that runs `exit 143`
+// or signals itself reports the same number. Nor can anything asked afterwards:
+// measured on Docker 29.9.3, a clean shutdown ends the daemon's API as `wait`
+// answers, so an inspect at that moment fails, and inspect, once the daemon is
+// back, reads the same for both (exit code, an empty error, the time it finished),
+// and the restarted daemon's event buffer is empty. Only someone connected while
+// it happened hears it: `kill` and `stop` come from someone asking the engine to
+// stop the container, before its `die`, and a process that ends by itself makes
+// neither (stopSeen.see). Stopping Podman's API service stops no container, and
+// its `wait` fails instead, so there this only ever hears an operator.
+//
+// It is one more process per attempt, beside the attach and the wait, and it is
+// an observation: nothing depends on it running, and an attempt whose stream
+// failed only cannot say (ExitStatus.StopCauseUnknown). It holds the read end of its
+// pipe rather than letting the CLI inherit a writer of ours, so that if this
+// process is killed, the CLI's next word, which the reap of its container or
+// the container's own end provides, finds no reader and ends it.
+type stopWatch struct {
+	cmd  *exec.Cmd
+	pipe *os.File
+	// answered closes when the stream has settled the question: it said the
+	// container was stopped, it said the container ended, or it ended itself.
+	answered chan struct{}
+	done     sync.Once
+	stopOnce sync.Once
+
+	mu   sync.Mutex
+	seen stopSeen
+}
+
+// stopWatchSettle is how long Wait gives the stream to say what happened once
+// the container has ended. It is an upper bound for a stream that is stuck: on
+// Docker the `die` follows `wait`'s answer within tens of milliseconds, and it
+// closes at once when the daemon goes away.
+const stopWatchSettle = 5 * time.Second
+
+func (d *DockerRuntime) stopWatchSettle() time.Duration {
+	if d.stopSettle > 0 {
+		return d.stopSettle
+	}
+	return stopWatchSettle
+}
+
+// watchStops opens the container's event stream. A stream that cannot be opened,
+// or anchored, is an answer of its own: nothing observed.
+func (d *DockerRuntime) watchStops(ctx context.Context, bin string, id ContainerID) *stopWatch {
+	watch := &stopWatch{answered: make(chan struct{})}
+	since, err := d.createdAnchor(ctx, id)
+	if err != nil {
+		watch.finish()
+		return watch
+	}
+	read, write, err := os.Pipe()
+	if err != nil {
+		watch.finish()
+		return watch
+	}
+	watch.pipe = read
+	cmd := exec.Command(bin, d.grammar().eventArgs(string(id), since)...)
+	cmd.Stdout = write
+	err = cmd.Start()
+	_ = write.Close()
+	if err != nil {
+		_ = read.Close()
+		watch.finish()
+		return watch
+	}
+	watch.cmd = cmd
+	go func() { _ = cmd.Wait() }()
+	go watch.read(read)
+	return watch
+}
+
+// createdAnchor is when the engine says it created the container, for the stream
+// to look back to. It is the engine's clock that compares a --since with an event's
+// time, so it is the engine's clock that has to say when.
+func (d *DockerRuntime) createdAnchor(ctx context.Context, id ContainerID) (string, error) {
+	answer, err := d.control(ctx, "inspect", "--format", "{{json .Created}}", string(id))
+	if err != nil {
+		return "", err
+	}
+	if answer.code != 0 {
+		return "", fmt.Errorf("inspect exited %d: %s", answer.code, answer.stderr)
+	}
+	return parseCreatedAnchor(answer.stdout)
+}
+
+// parseCreatedAnchor reads what `inspect --format {{json .Created}}` printed, on
+// both CLIs and Podman's socket: a JSON string holding an RFC 3339 instant. Only an
+// instant goes on to a command line, as no other text would mean anything to --since.
+func parseCreatedAnchor(raw string) (string, error) {
+	var text string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &text); err != nil {
+		return "", fmt.Errorf("the engine's created time %q: %w", raw, err)
+	}
+	created, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return "", fmt.Errorf("the engine's created time %q: %w", raw, err)
+	}
+	if created.IsZero() {
+		return "", fmt.Errorf("the engine has no created time for the container: %q", raw)
+	}
+	return created.Format(time.RFC3339Nano), nil
+}
+
+// read takes the stream's words until it ends. A line too long to be a word ends
+// the reading, which is the same as a stream that ended.
+func (w *stopWatch) read(from io.Reader) {
+	defer w.finish()
+	lines := bufio.NewScanner(from)
+	for lines.Scan() {
+		w.mu.Lock()
+		settled := w.seen.see(lines.Text())
+		w.mu.Unlock()
+		if settled {
+			w.finish()
+		}
+	}
+}
+
+func (w *stopWatch) finish() { w.done.Do(func() { close(w.answered) }) }
+
+// settle waits for the stream's answer, up to within or ctx, ends the stream, and
+// returns what it said.
+func (w *stopWatch) settle(ctx context.Context, within time.Duration) stopSeen {
+	timer := time.NewTimer(within)
+	defer timer.Stop()
+	select {
+	case <-w.answered:
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+	w.stop()
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.seen
+}
+
+// stop ends the stream. Closing the pipe is what ends it where the kill cannot
+// reach, as a CLI wrapped in sudo: the next word finds no reader.
+func (w *stopWatch) stop() {
+	w.stopOnce.Do(func() {
+		if w.cmd != nil {
+			_ = w.cmd.Process.Kill()
+		}
+		if w.pipe != nil {
+			_ = w.pipe.Close()
+		}
+	})
+}
+
+// trackWatch keeps the stream Start opened; one a repeated Start would replace is
+// ended.
+func (d *DockerRuntime) trackWatch(id ContainerID, watch *stopWatch) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.watches == nil {
+		d.watches = make(map[ContainerID]*stopWatch)
+	}
+	if previous := d.watches[id]; previous != nil {
+		previous.stop()
+	}
+	d.watches[id] = watch
+}
+
+func (d *DockerRuntime) takeWatch(id ContainerID) *stopWatch {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	watch := d.watches[id]
+	delete(d.watches, id)
+	return watch
 }
 
 // awaitLeftCreated blocks until the daemon reports the container is no longer
@@ -977,7 +1187,51 @@ func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, e
 		}
 	}
 
+	// Once the container is known to have ended, what was said about why. An
+	// attempt that took any other way out of this function ends the stream in
+	// Remove.
+	if watch := d.takeWatch(id); watch != nil {
+		seen := watch.settle(ctx, d.stopWatchSettle())
+		status.StoppedFromOutside = seen.stopped
+		status.StopCauseUnknown = !seen.stopped && !seen.ended
+	}
+	// Where the engine keeps a record of having been asked (stoppedByUserQuery),
+	// it answers what the stream did not hear, and an engine that will not
+	// answer gives no record.
+	if query := d.grammar().stoppedByUserQuery(); query != "" && !status.StoppedFromOutside {
+		stopped, known := d.stoppedByUser(ctx, id, query)
+		status.StoppedFromOutside = stopped
+		status.StopCauseUnknown = !known
+		status.StopCauseUnrecorded = !known
+	}
+	// Where nothing records a stop that the stream did not say (endTellsNothing),
+	// an end with none heard has no record, and so has one on an engine that
+	// cannot be identified, whose words could be either's.
+	if d.grammar().stoppedByUserQuery() == "" && !status.StoppedFromOutside && !status.StopCauseUnknown {
+		spoken, err := d.dialect(ctx)
+		unrecorded := err != nil || spoken.endTellsNothing()
+		status.StopCauseUnknown = unrecorded
+		status.StopCauseUnrecorded = unrecorded
+	}
+
 	return status, nil
+}
+
+// stoppedByUser reads the engine's record of a stop or kill asked of it, and
+// whether the engine gave one.
+func (d *DockerRuntime) stoppedByUser(ctx context.Context, id ContainerID, query string) (stopped, known bool) {
+	answer, err := d.control(ctx, "inspect", "--format", query, string(id))
+	if err != nil || answer.code != 0 {
+		return false, false
+	}
+	switch strings.TrimSpace(answer.stdout) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func (d *DockerRuntime) oomKilled(ctx context.Context, id ContainerID) bool {
@@ -1006,6 +1260,9 @@ func (d *DockerRuntime) oomKilled(ctx context.Context, id ContainerID) bool {
 // a removal cut off at its deadline leaves the daemon removing a container its
 // caller has already given up on.
 func (d *DockerRuntime) Remove(ctx context.Context, id ContainerID) error {
+	if watch := d.takeWatch(id); watch != nil {
+		watch.stop()
+	}
 	killCtx, cancel := context.WithTimeout(ctx, removeKillTimeout)
 	_, _ = d.control(killCtx, "kill", "--signal", string(SIGKILL), string(id))
 	cancel()
@@ -1064,6 +1321,41 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 	return removed, nil
 }
 
+// otherContainersFormat is one container a line, tab-separated. Its label
+// template and its state field are spelled the same by the docker CLI, against
+// Docker or Podman's socket, and by the podman CLI (measured on Docker 29.9.2 and
+// Podman 5.8.9), so it needs no dialect.
+const otherContainersFormat = `{{.ID}}` + "	" + `{{.State}}` + "	" + `{{.Label "ork.orker"}}`
+
+// OtherOrkersContainers lists the containers labelled with an identity other
+// than orkerID. It only looks: nothing proves another identity is dead, and it may
+// be a live Orker sharing this daemon (Reap).
+func (d *DockerRuntime) OtherOrkersContainers(ctx context.Context, orkerID string) ([]OtherOrkerContainer, error) {
+	answer, err := d.control(ctx, "ps", "--all", "--filter", "label=ork.orker", "--format", otherContainersFormat)
+	if err != nil {
+		return nil, err
+	}
+	if answer.code != 0 {
+		return nil, fmt.Errorf("list containers: docker exited %d: %s", answer.code, answer.said())
+	}
+	return parseOtherContainers(answer.stdout, orkerID), nil
+}
+
+// parseOtherContainers reads otherContainersFormat's answer. A line without its
+// three fields is not one of its answers, such as a line a CLI wrapper printed,
+// and an empty identity is no Orker's.
+func parseOtherContainers(answer, orkerID string) []OtherOrkerContainer {
+	var others []OtherOrkerContainer
+	for _, line := range strings.Split(answer, "\n") {
+		fields := strings.SplitN(strings.TrimRight(line, "\r"), "\t", 3)
+		if len(fields) != 3 || fields[0] == "" || fields[2] == "" || fields[2] == orkerID {
+			continue
+		}
+		others = append(others, OtherOrkerContainer{ID: fields[0], State: fields[1], Orker: fields[2]})
+	}
+	return others
+}
+
 // endpointVars point a CLI at a daemon or at a container store: the docker
 // CLI's host, context and configuration directory (which holds its current
 // context), and the podman CLI's remote connection and storage.
@@ -1082,8 +1374,8 @@ var endpointVars = []string{"DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG",
 // run a registry credential helper (ecr-login, gcr, acr), which reads the
 // cloud credentials of the environment it inherits — the Orker's — so
 // AWS_*, AZURE_*, GOOGLE_APPLICATION_CREDENTIALS and the gcloud SDK's
-// CLOUDSDK_* are the Orker's own too. The object store's client never uses
-// them: it signs with ORK_S3_*.
+// CLOUDSDK_* are the Orker's own too. The object store's client reads AWS_* as
+// well when ORK_S3_ACCESS_KEY and ORK_S3_SECRET_KEY are unset.
 var runtimeOwnEnv = []ownName{
 	{"DOCKER_*", "its container CLI's settings, DOCKER_*"},
 	{"CONTAINERS_*", "its container CLI's settings, CONTAINERS_*"},

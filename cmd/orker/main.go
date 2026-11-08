@@ -24,6 +24,7 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/buildinfo"
 	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/healthcheck"
@@ -39,6 +40,11 @@ import (
 // `go build ./cmd/orker` reports "dev". Same pattern, and the same variable
 // name, as cmd/ork.
 var version = "dev"
+
+// commit is the commit this binary was built from: -ldflags
+// "-X main.commit=<sha>" on a release build, empty otherwise. `orker --version`
+// reports it (internal/buildinfo). Same variable name as cmd/ork.
+var commit string
 
 type config struct {
 	temporalAddress   string
@@ -429,15 +435,13 @@ func start(
 // pinned run's routing, and a rollout would move an in-flight run's tasks onto
 // a newer Orker build. `ork` and `orker` ship as one version: docs/DEPLOY.md.
 //
-// MaxHeartbeatThrottleInterval is the OTHER half of the heartbeat contract, and
-// it is invisible until somebody cancels. The SDK does not send every
-// RecordHeartbeat: it batches them into windows of
-// min(0.8 × HeartbeatTimeout, MaxHeartbeatThrottleInterval) and delivers
-// cancellation only in a heartbeat RPC's response. Left unset, that window is
-// 24 s whatever rate the dispatcher's loop ticks at — measured: a failing run
-// took 23.9 s to stop its still-running sibling, all of it waiting for one
-// heartbeat. Capping it to the SAME number orkerOptions gives the dispatcher is
-// what makes the tick mean anything.
+// MaxHeartbeatThrottleInterval is left to the SDK, on purpose. The Orker's own
+// loop sends a task's heartbeats (internal/orker, heartbeat.go), so the only
+// heartbeat that takes the SDK's route is a pin's session. For that one the
+// window is the RPC's deadline, and a deadline outlasted ends the session for
+// good (session.go in go.temporal.io/sdk): left alone it is 0.8 × 30 s, so a pin
+// rides out 24 s of silence from the frontend, where a cap at the tick would
+// have it rides out 5.
 // EnableSessionWorker is what makes this Orker a pin host, and it is the reason
 // ORK_ORKER_MAX_PINS defaults to 0. With it set the SDK starts two more pollers
 // beside the ordinary activity worker — a creation worker on
@@ -448,9 +452,8 @@ func start(
 // pins acquires no poller and no queue it did not have before this feature.
 func workerOptions(cfg config) worker.Options {
 	return cfg.deployment.Apply(worker.Options{
-		DisableRegistrationAliasing:  true,
-		DisableWorkflowWorker:        true,
-		MaxHeartbeatThrottleInterval: cfg.tick(),
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
 		// Explicit, so a namespace's poller autoscaling cannot enrol this
 		// worker and its session worker (orker.TaskPollers).
 		MaxConcurrentActivityTaskPollers: orker.TaskPollers,
@@ -512,24 +515,48 @@ func checkTunerCompatible(opts worker.Options) error {
 
 // connectTemporal dials the cluster with the options this process runs on:
 // the telemetry package's (telemetry.ClientOptions is the one way a client's
-// options are built, TestClientOptions_IsHowOrkAndOrkerDialTemporal). An
-// Orker names no identity of its own, so the SDK gives it its default, which
-// advertises no engine capabilities.
+// options are built, TestClientOptions_IsHowOrkAndOrkerDialTemporal). Its
+// identity is the Orker id, as its workers' are (taskWorkerOptions), so what
+// the client sends itself, a task's heartbeats above all (heartbeat.go), names
+// this Orker in the cluster's records rather than the SDK's pid@host. An Orker
+// id holds no whitespace (task.ValidOrkerID), so it advertises no engine
+// capability.
 //
 // dialing, when set, is told the options just before the dial: a test's way
 // to see exactly what this process dials with, without a cluster to dial. It
 // is nil in production.
-func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, logger *slog.Logger,
+func connectTemporal(ctx context.Context, cfg config, orkerID string, sinks *telemetry.Sinks, logger *slog.Logger,
 	dialing func(client.Options),
 ) (client.Client, error) {
 	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
 	if err != nil {
 		return nil, err
 	}
+	temporalOptions.Identity = orkerID
 	if dialing != nil {
 		dialing(temporalOptions)
 	}
 	return client.DialContext(ctx, temporalOptions)
+}
+
+// checkStoreCredentials stops the boot on object-store credentials this Orker
+// could never sign with, rather than a task failing on them later. Half a key
+// is refused whatever the backend. Only an S3 backend needs a credential at all,
+// so only it asks the default credential chain. Only the credential's source is
+// logged, never the credential.
+func checkStoreCredentials(ctx context.Context, store artifacts.Config, logger *slog.Logger) error {
+	if err := store.CheckS3Keys(); err != nil {
+		return err
+	}
+	if store.Backend != artifacts.BackendS3 {
+		return nil
+	}
+	source, err := artifacts.ResolveS3Credentials(ctx, store)
+	if err != nil {
+		return err
+	}
+	logger.Info("object store credentials resolved", "source", source)
+	return nil
 }
 
 func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg config) error {
@@ -603,6 +630,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return cfg.storeWatchErr
 	}
 
+	if err := checkStoreCredentials(ctx, artifacts.ConfigFromEnv(), logger); err != nil {
+		return err
+	}
 	store, err := artifacts.NewFromEnv()
 	if err != nil {
 		return err
@@ -649,7 +679,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	opts.Memos = memoStore
 	logger.Info("task log export ready", "enabled", opts.TaskLogs != nil)
 
-	temporalClient, err := connectTemporal(ctx, cfg, sinks, logger, nil)
+	// One dispatcher runs every activity. There is no registry and no name
+	// lookup: an activity is an OCI image (§6.1). Built before the dial, which
+	// names the Orker id it resolves.
+	activities := orker.NewActivitiesWithOptions(store, opts)
+
+	temporalClient, err := connectTemporal(ctx, cfg, activities.Dispatcher().OrkerID, sinks, logger, nil)
 	if err != nil {
 		return err
 	}
@@ -659,10 +694,6 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace)
-
-	// One dispatcher runs every activity. There is no registry and no name
-	// lookup: an activity is an OCI image (§6.1).
-	activities := orker.NewActivitiesWithOptions(store, opts)
 	// Refusing to start is the only honest response to an unbindable
 	// workspace root or an orphaned container this Orker cannot account for:
 	// starting anyway would fail every task later with an error naming the
@@ -853,6 +884,15 @@ func configure(
 		fmt.Fprint(stdout, cfgfile.RenderDefaults())
 		return config{}, "", nil, 0, true
 	}
+	// --version asks nothing of the configuration or the cluster, for the
+	// same reason.
+	if argsErr == nil && requested.Version {
+		if err := buildinfo.Write(stdout, "orker", version, commit); err != nil {
+			fmt.Fprintf(stderr, "orker: %v\n", err)
+			return config{}, "", nil, 1, true
+		}
+		return config{}, "", nil, 0, true
+	}
 
 	// The configuration file, if any, is resolved before loadConfig reads a
 	// single environment variable — see applyConfigFile — so every existing
@@ -987,9 +1027,6 @@ func orkerOptions(
 			Resolver:    dsl.NewResolver(cfg.registryAuthFile),
 			AuthFileVar: orker.RegistryAuthFileVar,
 		},
-		// The dispatcher's half of the pairing workerOptions describes. Both
-		// read cfg.tick(), so there is one number and no way for the loop and
-		// the SDK's batch window to drift apart.
 		HeartbeatInterval: cfg.tick(),
 		Logger:            logger,
 	}

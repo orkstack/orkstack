@@ -35,7 +35,7 @@ const hold = () => {
 };
 
 // Harbour's own behaviour, against a real engine, Orker, Temporal and object
-// store (brief §12): every dialog (Jump, Cancel run…, Cordon…) and the
+// store (brief §12): every dialog (Jump, Cancel run, Cordon) and the
 // editor's More disclosure, the editor's docs rail at 1440, 1280, 1220, 1100
 // and 390, selecting a fan-out item, the live-updates control, the one
 // tooltip, the asserted principal of a cancel, the drawer, and forced
@@ -167,10 +167,10 @@ test('Jump (Ctrl K) is a modal dialog named "Jump to" that counts its matches li
 	await expect(page).toHaveURL(/\/admin\/pools\?/);
 });
 
-test('Cancel run… asks in a reason dialog: the safe choice has the focus, Escape keeps the run running, focus returns', async ({ page }) => {
+test('Cancel run asks in a reason dialog: the safe choice has the focus, Escape keeps the run running, focus returns', async ({ page }) => {
 	// Regression: a destructive confirm took Enter by default, or Escape canceled the run it was meant to keep.
 	await page.goto(at(`/runs/${liveRun}`));
-	const trigger = page.getByRole('button', { name: 'Cancel run…' });
+	const trigger = page.getByRole('button', { name: 'Cancel run' });
 	await trigger.click();
 	const dialog = page.getByRole('dialog', { name: /^Cancel run / });
 	await expect(dialog).toBeVisible();
@@ -180,13 +180,13 @@ test('Cancel run… asks in a reason dialog: the safe choice has the focus, Esca
 	await expect(dialog).toHaveCount(0);
 	await expect(trigger).toBeFocused();
 	// No cancel was asked for: the trigger still offers it, and no request is noted.
-	await expect(trigger).toHaveText('Cancel run…');
+	await expect(trigger).toHaveText('Cancel run');
 	await expect(page.getByTestId('cancellation-requested')).toHaveCount(0);
 	await trigger.click();
 	await expect(dialog.getByRole('button', { name: 'Cancel run', exact: true })).toBeEnabled();
 	await page.getByRole('button', { name: 'Keep running' }).click();
 	await expect(dialog).toHaveCount(0);
-	await expect(trigger).toHaveText('Cancel run…');
+	await expect(trigger).toHaveText('Cancel run');
 	await expect(page.getByTestId('cancellation-requested')).toHaveCount(0);
 	// The confirm with a reason cancels it, and a cancel nobody asserted shows no principal.
 	await trigger.click();
@@ -238,6 +238,9 @@ test('the live control swaps its name, announces its state, explains itself on f
 test('a hovered tooltip stays while the pointer crosses onto it, the next tip follows a sweep, and no element carries a native title', async ({ page }) => {
 	// Regression: native titles came back beside the one tooltip, or the tip vanished as the pointer moved onto it.
 	await page.goto(at(`/runs/${fanRun}`));
+	// A scroll dismisses a tip, and this is about the pointer alone: both controls
+	// are in view before it moves.
+	await page.getByTestId('run-tasks-more').scrollIntoViewIfNeeded();
 	const copy = page.getByRole('button', { name: 'Copy run id' });
 	await copy.hover();
 	const tip = page.getByRole('tooltip');
@@ -376,6 +379,39 @@ test('the editor rail follows the caret to the task it is in', async ({ page }) 
 	await expect(page.getByRole('button', { name: 'Docs for convert' })).toHaveAttribute('aria-expanded', 'true');
 });
 
+for (const scheme of ['light', 'dark'] as const) {
+	test(`the docs rail at the 1280x800 floor, ${scheme}: 340 px, each key a block`, async ({ page }) => {
+		// Regression: a three-column table in 264 px, `scriptrequired`, `line 30·`.
+		await page.emulateMedia({ colorScheme: scheme });
+		await page.setViewportSize({ width: 1280, height: 800 });
+		await page.goto(editorAt(FAN));
+		await editorReady(page, 'editor-yaml');
+		await page.getByText('uses: shell').first().click();
+		const keys = page.getByTestId('editor-docs-keys');
+		await expect(keys).toBeVisible({ timeout: 30_000 });
+		const rail = await page.getByTestId('editor-docs').boundingBox();
+		expect(Math.round(rail!.width)).toBe(340);
+		// It scrolls inside the card's height, its foot on screen beside the code's.
+		const card = await page.getByRole('region', { name: 'Edit' }).boundingBox();
+		expect(rail!.y + rail!.height).toBeLessThanOrEqual(card!.y + card!.height + 1);
+		expect(rail!.y + rail!.height).toBeLessThanOrEqual(801);
+		// Blocks, not a table: a key's head and its description stack at full width.
+		await expect(page.getByTestId('editor-docs').locator('table')).toHaveCount(0);
+		await expect(keys.locator('> li').first()).toBeVisible();
+		const script = page.getByTestId('editor-docs-field-script');
+		await expect(script.locator('.kb-key')).toHaveText('script');
+		await expect(script.getByText('required', { exact: true })).toBeVisible();
+		await expect(script).toContainText(/\bset\b/);
+		expect(await script.innerText()).not.toContain('scriptrequired');
+		const doc = await page.getByTestId('editor-docs-key-script').boundingBox();
+		expect(doc!.width).toBeGreaterThan(260);
+		expect(await keys.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+		// The header's two facts are apart.
+		await expect(page.getByTestId('editor-docs-sub')).toHaveText(/^line \d+ · \d+ of \d+ set$/);
+		await shot(page, `editor-docs-1280-${scheme}.png`);
+	});
+}
+
 test('at 390 px Import and Export fold into More, a plain disclosure that Escape closes', async ({ page }) => {
 	// Regression: the editor header clipped its buttons on a phone, or More trapped focus.
 	await page.setViewportSize({ width: 390, height: 844 });
@@ -478,12 +514,12 @@ test('at 390 px Pools gives its title the width, and an Orker stays one row of a
 	expect(fits, 'the page itself never scrolls sideways').toBe(true);
 });
 
-test('Cordon… cannot confirm until a reason is given, and Back leaves the Orker serving', async ({ page }) => {
+test('Cordon cannot confirm until a reason is given, and Back leaves the Orker serving', async ({ page }) => {
 	// Regression: a cordon went through with no reason, or its confirm drew red (red is a status colour only).
 	await page.goto(at('/admin/pools'));
-	// A pool's Orkers are shown by default, each with Cordon….
+	// A pool's Orkers are shown by default, each with Cordon.
 	await expect(page.getByRole('button', { name: /^Orkers of / }).first()).toHaveAttribute('aria-expanded', 'true');
-	const trigger = page.getByRole('button', { name: 'Cordon…' }).first();
+	const trigger = page.getByRole('button', { name: 'Cordon' }).first();
 	await trigger.click();
 	const dialog = page.getByRole('dialog', { name: /^Cordon / });
 	await expect(dialog).toBeVisible();
@@ -499,8 +535,8 @@ test('Cordon… cannot confirm until a reason is given, and Back leaves the Orke
 	await dialog.getByRole('button', { name: 'Back' }).click();
 	await expect(dialog).toHaveCount(0);
 	await expect(trigger).toBeFocused();
-	// Back cordoned nothing: the Orker still offers Cordon…, never Uncordon.
-	await expect(trigger).toHaveText('Cordon…');
+	// Back cordoned nothing: the Orker still offers Cordon, never Uncordon.
+	await expect(trigger).toHaveText('Cordon');
 	await expect(page.getByRole('button', { name: 'Uncordon' })).toHaveCount(0);
 });
 

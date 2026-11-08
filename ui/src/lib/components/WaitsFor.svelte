@@ -3,6 +3,7 @@
 	// Orkers cannot reach object storage: what would have to change, how things
 	// stand now, and what ends it. From the run's live read and the pool's Orkers;
 	// nothing here is an estimate of when.
+	import { waitRoomNote } from '#lib/placement.ts';
 	import { activityClient } from '#lib/clients/activities.ts';
 	import { FilterOperator, filterOf } from '#lib/listFilter.ts';
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
@@ -27,6 +28,7 @@
 	}
 
 	let { label, wait, outage, namespace, ownRunning = 0, took = '' }: Props = $props();
+	const roomNote = $derived(waitRoomNote(ownRunning, took));
 	const pool = $derived(outage?.pool ?? wait?.pool ?? '');
 
 	let orkers = $state.raw<Orker[]>([]);
@@ -79,7 +81,7 @@
 			</div>
 			<div class="r2">
 				<span class="mark-dot" aria-hidden="true"></span>
-				<div>Room frees when an Orker of pool {wait.pool} has a whole per-task cap free{#if ownRunning > 0 || took}<small>{#if ownRunning > 0}{ownRunning} of the tasks there are this run's{/if}{#if ownRunning > 0 && took}; {/if}{#if took}its finished ones took {took}{/if}</small>{/if}</div>
+				<div>Room frees when an Orker of pool {wait.pool} has a whole per-task cap free{#if roomNote}<small>{roomNote}</small>{/if}</div>
 			</div>
 			<div class="flex"><a class="btn btn-sm" data-testid="run-waits-pool" href={withNamespace(`/admin/pools#pool-${encodeURIComponent(wait.pool)}`, namespace)}>View pool {wait.pool}</a></div>
 		{/if}

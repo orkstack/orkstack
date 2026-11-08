@@ -21,10 +21,11 @@ Every failure has a reason code and a message. The code is the part to match on.
 | Code | What happened | What to check |
 |---|---|---|
 | `CONTAINER_EXIT_NONZERO` | The container exited with a non-zero status. | Read the try's stderr. The status alone does not say what failed. It is retried under the task's `retry:`. |
+| `CONTAINER_STOPPED_BY_RUNTIME` | The container's daemon shut down, or someone stopped it through the runtime, so its exit says nothing about the workload. | Check what happened on the Orker's host. It is retried under the task's `retry:`. |
 | `CONTAINER_TIMEOUT` | The container ran past its `timeout_seconds`. | Find the hang, or raise `timeout_seconds` if the work is slow. It is not retried. |
 | `VALUES_MISSING` | The container exited `0` but wrote no `values.json`. | Write a JSON object to `/orkstack/output/values.json`. A task with no result writes `{}`. |
 | `IMAGE_PULL_FAILED` | The Orker could not pull the pinned image in time. | Check the registry and the Orker host's network. |
-| `PIN_HOST_LOST` | The host of a pin stopped while the pin was open. | Run again. A pin never moves to another host. |
+| `PIN_HOST_LOST` | The run lost contact with the Orker hosting a pin while the pin was open. That Orker may be gone, or the cluster may not be hearing from it. | Run again. A pin never moves to another host. |
 
 The [error reasons](/docs/reference/reasons/) list every code. Each one says whether it is retried.
 

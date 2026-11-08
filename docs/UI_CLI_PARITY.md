@@ -51,11 +51,17 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   [JSON.md](JSON.md), unless a command says otherwise. Two responses cannot
   share one document, so a flag that would append a second read to `--json`
   output is refused and names the command that prints it.
-- **Every action has its CLI equivalent.** Behind the terminal icon of each
-  page (and of a run's task row) the UI lists that page's shell-escaped,
-  runnable `orkctl` (or `curl`) commands, each with a copy icon, carrying the
-  namespace, version, task, attempt and item where they apply; the commands
-  are never printed on the page itself. A quote in a value cannot become
+- **Every action has its CLI equivalent.** Each page has exactly one terminal
+  icon, in its header, listing that page's shell-escaped, runnable `orkctl` (or
+  `curl`) commands, each with a copy icon, carrying the namespace, version,
+  task, attempt and item where they apply: a list's filters, a section's
+  choices and a hold's release fold into it. A row's, a dialog's, a run task's
+  or a notice's own command stays with it behind an icon of its own, because it
+  carries that row's values. The commands are never printed on the page itself
+  (`ui/e2e/cli-icon-rule.spec.ts` holds every route to this; an example's own
+  description in the Apply page's gallery is authored text, not the page's). The
+  panel has one width, and shows its whole command wherever its icon stands,
+  in a table's scrolling frame, in a dialog or against a viewport edge. A quote in a value cannot become
   shell syntax. A word is quoted only when a shell would read it as syntax (a
   space, a quote, `$`, `*`, `~`, a leading `=`), so the command reads the way
   a person types it. The copy icon works on a plain-HTTP origin too (where the browser
@@ -78,8 +84,13 @@ triggers ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md)), schedules
   `namespace use` writes, which keeps a hand-set `server`), then
   `http://localhost:8080`. The namespace follows the same order with
   `--namespace`, `ORK_NAMESPACE` and the file's `namespace`.
+- **A derived version is short on screen.** A 64-hex version shows its first 8
+  characters and a UUIDv7 one `…` and its last 7, on every page; the full value
+  is in the tooltip, every URL and every `orkctl` command, because the engine
+  takes no short form.
 - **What cannot be undone is confirmed.** The UI's confirmation dialogs have
-  a CLI twin: `orkflow delete`, `namespace delete`, `cache purge`, `release
+  a CLI twin: `orkflow delete` (the Orkflow header's More menu, on every tab,
+  typing the name to confirm), `namespace delete`, `cache purge`, `release
   promote`, `release rollback` and an `admin retention set` that **lowers**
   the maximum state what they are about to do — the namespace, the purge's
   scope, the release current now and the one that will be, the old and new
@@ -126,7 +137,7 @@ the run page say whether the run exists; it never looks a run up itself), to
 the runs and Orkflows recently opened in this browser (ids and names only,
 never inputs), and switches the namespace or the appearance. The page you
 are on adds its own commands: a run page selects a task by id and offers the
-run's actions; an Orkflow page offers Submit a run…, its other tabs and a
+run's actions; an Orkflow page offers Submit a run, its other tabs and a
 jump to any task's row in its task list. It never writes:
 a command that changes something opens the same dialog as the page's own
 button, with its confirmation and its CLI equivalent. It is the browser's
@@ -336,7 +347,7 @@ every row read, so a narrower read can never change an answer.
 | Releases | `build_id=`: that release alone is counted; the release rows | filters select release rows only; every other field is the deployment's |
 | Deliveries | every field from the record's key (`created_at`, `namespace`, `run_id`, `webhook_id`, `event`, `delivered`) | a body is read only for a record whose key matches; the `created_at` bounds are the window; 100,000 keys per page at most |
 | Audit trail | each record's body (the key holds only the day and the id) | the `at` bounds are the window; bodies are read eight at a time, newest first, and decided in key order; 5,000 records per page at most |
-| Runs | live runs: what the cluster lists for each run (its Orkflow, status, origin and start); finished runs: the archive's index keys (the newest-first index, read from the page cursor until the page is full), never a run body | exactly the fields both halves answer without reading a run: `orkflow_name`, `status`, `created_at`, `origin.kind` and `origin.id`. One `orkflow_name=` or `status=` narrows what each half reads, one `origin.kind=` (and `origin.id=` beside it) selects the origin index, and the `created_at` bounds bound the scan; any other filter is decided per row without narrowing the read. A finished run's body is read only when its key matches |
+| Runs | live runs: what the cluster lists for each run (its Orkflow, status, origin and start); finished runs: the archive's index keys (the newest-first index, read from the page cursor until the page is full), never a run body | exactly the fields both halves answer without reading a run: `orkflow_name`, `status`, `created_at`, `origin.kind`, `origin.id` and `origin.root_run_id`. One `orkflow_name=` or `status=` narrows what each half reads, one `origin.kind=` (and `origin.id=` beside it) selects the origin index, one `origin.root_run_id=` selects the root index, and the `created_at` bounds bound the scan; any other filter is decided per row without narrowing the read. A finished run's body is read only when its key matches |
 
 **Runs.** `created_at` is the instant a run is ordered and paged by: its
 `created_at`, else its `started_at`, else its `finished_at`, at microsecond
@@ -344,6 +355,7 @@ precision — so a `created_at` filter selects a run on exactly the instant the
 list sorts it by, and a run with no time at all matches no `created_at`
 filter. `origin.kind` takes only equals, because a run started before origins
 were recorded is in no origin index and matches no `origin.kind` filter, and
+`origin.root_run_id` takes only equals and needs nothing beside it, while
 `origin.id` needs an equals filter on `origin.kind` (an id is meaningful only
 within a kind). `status` never names `AWAITING`, which is a task status: a run
 whose task is awaiting is `RUNNING`.
@@ -391,6 +403,9 @@ write boundary. Warnings stay visible after validation and after a successful
 apply.
 
 CLI: `orkctl orkflow validate FILE [--json]` exits non-zero only for an ERROR.
+It stores nothing, so it reports the version a document that pins none already
+has, or `new version, assigned when applied` when that content was never
+applied (`docs/DSL.md`, "`version`").
 UI: **Validate** on the Apply page and in the editor, and the editor asks on
 its own once typing pauses (never for a document that does not parse, never
 twice for the same text). Each issue is listed as the engine wrote it and
@@ -491,6 +506,19 @@ is the `Ork-Principal` assertion, recorded and never authenticated. A run
 recorded before origins existed has kind `UNSPECIFIED`, renders `unrecorded`
 (never `submit`) and matches no origin filter.
 
+A `PARENT_RUN` origin also holds `root_run_id`: the run at the top of the
+child's composed chain, so in A → B → C both B and C name A, and C names B as
+its parent. It is empty on every other kind, so a re-run of a child, a new
+top-level run, has none, and an empty `root_run_id` names no root. It is opaque,
+like `id`. `GetRun`, `ListRuns`,
+an archived run and a webhook body's `run` all carry it.
+
+`ListRuns` lists a chain with one filter, `origin.root_run_id=`, equals only:
+every run below that root, however deep, live and finished runs alike. The root
+itself holds no root, so it is not one of them; read it by its id. A run with an
+empty `root_run_id` matches no such filter. To list one parent's children, use
+`origin.kind=PARENT_RUN` and `origin.id=`.
+
 `ListRuns` selects by origin with an `origin.kind=` filter, or `origin.kind=`
 and `origin.id=` ("Filtering lists"), live and finished runs alike — finished
 runs through the archive's origin index ([STORAGE.md](STORAGE.md)) — merged
@@ -498,12 +526,17 @@ under the same fail-rather-than-subset rule as every list.
 
 CLI: `run submit --origin-ref`, `run again --origin-ref`, `run list --filter
 origin.kind=KIND [--filter origin.id=ID]`, an `ORIGIN` column (`-` when
-unrecorded), and `Origin:`, `Reference:` and `Principal:` lines on `run get`.
+unrecorded), and `Origin:`, `Root run:`, `Reference:` and `Principal:` lines on
+`run get`, the root's whenever one is recorded; `--json` carries it as
+`origin.rootRunId`, and `run list --filter origin.root_run_id=ID` lists the chain.
 UI: the run header's origin line — kind chip, the id linked to the source run
-or the Triggers/Schedules tab, the description, the reference linked only when
+or the Triggers/Schedules tab, **Root run** and a link to it when it is not the
+parent the line already links, the description, the reference linked only when
 it is an http(s) URL, and `asserted by …` with a not-authenticated title; the
 runs list's **Started by** (`origin.kind`) and **Origin id** (`origin.id`)
-filters, kept in the URL as `filter` keys, and its **Origin** column.
+filters, kept in the URL as `filter` keys, and its **Origin** column; on a
+top-level run that composes, **Chain runs** beside **Child runs** opens the runs
+list filtered to its chain.
 
 ### Run again
 
@@ -549,13 +582,40 @@ state, deadline, live remaining time, **Resolve** (typed fields over the
 await's schema, or JSON sent verbatim) and **Reject** dialogs with their CLI
 equivalents, *Delivered* until the run applies it, and a placeholder `curl`
 for a callback await; the submit dialog shows the one-time callback panel
-before it continues to the run.
+before it continues to the run. Once resolved, by any door, the task's panel
+shows **Values**: one line when short, and otherwise closed until opened, in a
+bounded box. A value past the 4 KiB a run carries inline is read by reference
+when opened, and at most its first 64 KiB is shown; it is plain text, with
+control characters shown as escapes. The CLI's `run get` shows them in its
+`TASK VALUES` table ([Reading runs](#reading-runs)), `run get --json` carries
+them in `task_runs[].output`, and the stored `values.json` is the task's
+`values` artifact.
 
 ## Reading runs
 
 `run get` prints a run's input and output as one line of JSON each, cut at
 512 bytes and followed by `… (N bytes; orkctl -n NS run get ID --json prints
 it whole)`; `run get --json` is never cut.
+
+Its `TASK VALUES` table shows what each task returned, awaited or not, in run
+order, for at most 50 tasks; a line after it says how many more hold values and
+that `run get --json` prints them. A task with no values, or with only `{}`, has
+no row, and a run with none has no table. A value is one line of JSON, with
+anything a terminal could obey written as an escape. Up to 64 characters it is
+shown whole, the run page's own limit. A longer one is cut and followed by
+`… (N bytes; orkctl -n NS run artifact download ID --task TASK --kind values
+--name values.json --output TASK-values.json saves them whole)`. A value the run
+holds only by reference, over 4 KiB, is not fetched: its row reads `not shown (N
+bytes; …saves them)`, with the same command.
+
+`--tree` adds the same table under each child run's tasks, and its commands name
+the child run. `--expand TASK` adds an `ITEM VALUES` table for that fan-out. A
+run holds only a reference to an item's values, so this table reads them from
+the store, one request per row, for at most 50 items of up to 4 KiB; a larger
+one reads `not shown`, with `--item N` in its command. A read that fails says so
+on its row, and the items after it are not read, so a store that is down costs
+one timeout. Plain `run get` reads nothing from the store, and `run get --json`
+is unchanged: an item's `values_ref` names its values, and it does not carry them.
 
 ### Run browsing
 
@@ -763,7 +823,7 @@ the next retry, a requested cancellation). `--watch` polls (default 5 s, at leas
 terminal and exits with the run's code (0 succeeded, 2 failed, 3 canceled);
 under `--watch`, `--json` prints one compact response per line. UI: a running
 page polls the same read every 5 s while it is visible. The selected task's
-Item card shows `Running for …`, its Now section (phase, container, bytes
+Item card, in the panel under its row, shows `Running for …`, its Now section (phase, container, bytes
 logged, the timeout as a lower bound, the heartbeat's age), a live line when
 there is more to say (`Waiting for capacity · …`, `Waiting for capacity · every
 Orker of pool … is full (reserved 1/1 cpu) · …`, `… — STALE`, `Attempt 3
@@ -998,7 +1058,8 @@ no longer plan with `FailedPrecondition` naming the child.
 CLI: `run get` names each child run (or why none started) and `--tree
 [--depth N]` appends every child's task table depth first, reading in the
 parent's namespace and printing `unavailable (<code>: <message>)` for a child
-it cannot read (`--tree --json` is refused, naming `taskRuns[].child.runId`);
+it cannot read, with `no answer` for the code when no server answered
+(`--tree --json` is refused, naming `taskRuns[].child.runId`);
 `orkflow get` adds `COMPOSED` and `OUTPUT` tables; `task run` refuses a
 composed task by name. UI: a composed task's card links the pinned child
 Orkflow and, once `TASK_STARTED` arrives, the child run, with its status and a
@@ -1126,8 +1187,9 @@ column; `--filter namespace=` keeps the deployment-wide ones), `webhook
 update ID [--name] [--url] [--event…|--clear-events] [-n|--deployment-wide]
 [--orkflow] [--task]` (read-modify-write), `webhook delete ID`. UI: **Admin →
 Webhooks** — list (with the filter form), register (name disabled until a namespace scope is given,
-run and task event checkboxes), the one-time secret, an Edit dialog stating
-the id and secret are kept, and delete. The listing is deployment-wide and
+run and task event checkboxes), the one-time secret, an edit dialog opened from
+a webhook's id, at an address of its own (`?edit=ID`), stating the id and secret
+are kept, and delete. The listing is deployment-wide and
 says so rather than implying the namespace switcher filters it.
 
 #### Scoped subscriptions and task outcome events
@@ -1224,7 +1286,8 @@ audited under its own action. Applying a directory, `--check` and
 Apply page applies Orkflows, and **Admin → Automation** (which respects the
 namespace switcher) exports, plans and applies one document, re-planning on
 accept and refusing a plan that moved since it was shown. Triggers and webhooks
-are named and edited in place on the Triggers tab and the Webhooks page.
+are named and edited in place on the Triggers tab and the Webhooks page, from
+their id, at an address of their own (`?edit=ID`).
 
 ### Control-plane audit trail
 
@@ -1337,7 +1400,7 @@ rows, one row per release with its role
 runs, and state (`serving`, `ready`, `not ready (N blockers)`, `draining`,
 `drained`), every blocker verbatim, a holds disclosure listing the runs still
 executing and each open pin with its Orker; **Promote**, **Roll back**,
-**Ramp…** and **Stop ramp** through a dialog that re-reads the release on
+**Ramp** and **Stop ramp** through a dialog that re-reads the release on
 open, keeps accept disabled while blockers remain, and sends that read's
 revision. Refresh is manual; nothing polls.
 
@@ -1352,14 +1415,19 @@ clients show it verbatim. Operator semantics are in [DEPLOY.md](DEPLOY.md).
 
 | Policy | CLI | UI | Refusal |
 | --- | --- | --- | --- |
-| Hold and cap | `--hold REASON`, `--release-hold`, `--max-running N` | Hold and Max running columns; Hold… / Release hold; a hold banner on Orkflows, the dashboard and the submit dialog, with submit disabled | `failed_precondition` `NAMESPACE_HELD` / `MAX_RUNNING_REACHED`, with the reason and the fix |
-| Budget | `--budget-cpu-seconds`, `--budget-gib-seconds`, `--budget-period`, `--budget-enforce[=false]`, `--clear-budget`; `stats usage` | Budget column and fields; dashboard Usage section; Admin → Usage ([STATS.md](STATS.md) §8) | `BUDGET_EXCEEDED` / `BUDGET_UNMEASURABLE`, with usage, budget, period and fix |
-| Secret sources | `--allow-secret PATTERN…`, `--clear-allowed-secrets` | Allowed secrets column, one per line, `unrestricted` caption | `invalid_argument` at apply/validate/submit naming the task, secret and list; the Orker's own floor refuses with `SECRET_NOT_PERMITTED` before pulling |
+| Hold and cap | `--hold REASON`, `--release-hold`, `--max-running N` | Hold and Max running columns; Hold / Release hold; a hold banner on Orkflows, the dashboard and the submit dialog, with submit disabled | `failed_precondition` `NAMESPACE_HELD` / `MAX_RUNNING_REACHED`, with the reason and the fix |
+| Budget | `--budget-cpu-seconds`, `--budget-gib-seconds`, `--budget-period`, `--budget-enforce[=false]`, `--clear-budget`; `stats usage` | Budget on the namespace's page, and its fields; dashboard Usage section; Admin → Usage ([STATS.md](STATS.md) §8) | `BUDGET_EXCEEDED` / `BUDGET_UNMEASURABLE`, with usage, budget, period and fix |
+| Secret sources | `--allow-secret PATTERN…`, `--clear-allowed-secrets` | Allowed secrets on the namespace's page, one per line, `unrestricted` caption | `invalid_argument` at apply/validate/submit naming the task, secret and list; the Orker's own floor refuses with `SECRET_NOT_PERMITTED` before pulling |
 | Fair share weight | `--fair-share-weight W` (create, update); `namespace get` shows a set weight | not shown or edited; the edit form keeps the stored weight | `invalid_argument` outside 0 or [0.001, 1000] |
-| Required signer | `--require-signed-by cosign:KEY`, `--clear-require-signed-by` | Signed by column and a signer select | see image policy below |
+| Required signer | `--require-signed-by cosign:KEY`, `--clear-require-signed-by` | Signed by on the namespace's page, and a signer select | see image policy below |
 
 `orkflow validate`, the Apply page and the editor show a policy refusal as a
 field-anchored issue on the offending task.
+
+**The page.** A namespace's name in Admin → Namespaces links to
+`/admin/namespaces/<name>`, which shows Signed by, Budget, Allowed secrets and
+Updated, and holds the edit form; a save returns to the page of the list it came
+from. The list shows Name, Hold, Max running, Run retention, Pools and Telemetry.
 
 **Listing.** `ListNamespaces` takes filters ("Filtering lists") on the name,
 description, labels, default pool, hold reason, required signer, telemetry

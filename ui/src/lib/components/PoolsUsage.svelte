@@ -7,7 +7,6 @@
 	import { errorMessage } from '#lib/client.ts';
 	import { statsClient } from '#lib/clients/stats.ts';
 	import { FailureGroupBy, type GetUsageResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
-	import { namespaceLabel } from '#lib/namespace.ts';
 	import { fmtGoDuration } from '#lib/usage.ts';
 
 	let { namespace }: { namespace: string } = $props();
@@ -100,7 +99,7 @@
 		</figure>
 		<figure class="card viz" aria-labelledby="pools-budget-h" data-testid="pools-budget">
 			{#if budget}
-				<h3 id="pools-budget-h">Budget of namespace {namespaceLabel(namespace)} <small>{budget.enforce ? 'enforced' : 'reported only'}</small></h3>
+				<h3 id="pools-budget-h">Budget <small>{budget.enforce ? 'enforced' : 'reported only'}</small></h3>
 				{#if budgetFailure}
 					<p class="viz-none" data-testid="pools-budget-error">What it has used could not be read: {budgetFailure}</p>
 				{:else if !budgetRead}
@@ -112,7 +111,7 @@
 					<figcaption>{budget.enforce ? 'An enforced budget refuses new runs once it is used up; runs already accepted finish.' : 'A soft budget is reported and refuses nothing.'} {fmtHours(gibHours)} GiB-hours reserved.</figcaption>
 				{/if}
 			{:else}
-				<h3 id="pools-budget-h">Budget of namespace {namespaceLabel(namespace)}</h3>
+				<h3 id="pools-budget-h">Budget</h3>
 				<p class="viz-none" data-testid="pools-budget-none">{week ? 'No budget: what this namespace reserves is unbounded.' : 'Reading its budget…'}</p>
 			{/if}
 		</figure>

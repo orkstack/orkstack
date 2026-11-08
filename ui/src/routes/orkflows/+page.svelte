@@ -1,4 +1,5 @@
 <script lang="ts">
+	import VersionText from '#lib/components/VersionText.svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import HoldBanner from '#lib/components/HoldBanner.svelte';
@@ -6,12 +7,11 @@
 	import Pagination from '#lib/components/Pagination.svelte';
 	import Select from '#lib/components/Select.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
-	import { setTitleBlock } from '#lib/sheet.svelte.ts';
 	import { listHref, pageStackKey, readPageStack, writePageStack } from '#lib/browsing.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
-	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { namespaceLabel, releaseHoldCli, withNamespace } from '#lib/namespace.ts';
 	import { shellQuote } from '#lib/runDetail.ts';
-	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { filterFlags, type FieldFilter } from '#lib/listFilter.ts';
 	import { ListOrkflowsRequestSchema } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
 	import type { PageProps } from './$types';
 
@@ -65,7 +65,10 @@
 		void goto(href({ size: sizeDraft, cursor: '', page: '' }, { filter: filters }), { reset: false });
 	}
 	const clearHref = $derived(href({ cursor: '', page: '' }, {}));
-	const command = $derived(['orkctl', '-n', shellQuote(namespaceLabel(data.namespace)), 'orkflow', 'list']);
+	const cli = $derived([
+		{ label: 'The Orkflows', command: ['orkctl', '-n', shellQuote(namespaceLabel(data.namespace)), 'orkflow', 'list', ...filterFlags(data.applied)].join(' ') },
+		...(data.namespaceHold ? [{ label: 'Release the hold', command: releaseHoldCli(namespaceLabel(data.namespace)) }] : [])
+	]);
 
 	// The first eight hex digits of a definition digest, as the title block
 	// shows one; the whole digest is the cell's title.
@@ -75,12 +78,6 @@
 	}
 	const labelPairs = (labels: Record<string, string>) => Object.entries(labels).sort(([a], [b]) => a.localeCompare(b));
 
-	setTitleBlock(() => [
-		{ label: 'PAGE', value: 'Orkflows' },
-		{ label: 'NAMESPACE', value: namespaceLabel(data.namespace) },
-		{ label: 'FILTERS', value: data.applied.length ? String(data.applied.length) : 'none' },
-		{ label: 'SHOWING', value: `page ${data.page} · ${data.orkflows.length} ${data.orkflows.length === 1 ? 'orkflow' : 'orkflows'}` }
-	]);
 
 	// A failed list is a failed request, not a permanent state of the world:
 	// the retry re-issues it in place instead of leaving the reload button as
@@ -106,24 +103,24 @@
 	/>
 {/if}
 
-<SheetHeader title="Orkflows">
+<SheetHeader title="Orkflows" commands={cli}>
 	{#snippet actions()}
 		<a href={withNamespace('/apply', data.namespace)} class="btn btn-primary">Apply Orkflow</a>
 	{/snippet}
 </SheetHeader>
 
-<ListFilter request={ListOrkflowsRequestSchema} applied={data.applied} testid="orkflow" {command} onapply={applyFilters} {clearHref}>
+<div class="mb-3"><ListFilter request={ListOrkflowsRequestSchema} applied={data.applied} testid="orkflow" onapply={applyFilters} {clearHref}>
 	<div class="flex items-center gap-2 text-sm">
 		<label class="field-label mb-0" for="orkflow-page-size">Page size</label>
 		<div class="w-20"><Select id="orkflow-page-size" testid="orkflow-page-size" value={sizeDraft} options={sizeOptions} onchange={(next) => (sizeDraft = next)} /></div>
 	</div>
-</ListFilter>
+</ListFilter></div>
 
 {#if data.error}
 	<ErrorPanel
 		testid="engine-error"
 		retryTestid="orkflows-retry"
-		subject="the Orkflows in namespace {namespaceLabel(data.namespace)}"
+		subject="the Orkflows"
 		message={data.error}
 		busy={retrying}
 		onretry={retry}
@@ -136,7 +133,7 @@
 	</p>
 {:else if data.orkflows.length === 0}
 	<p class="border border-dashed border-rule-strong px-6 py-12 text-center text-sm text-ink-muted" data-testid="orkflows-empty">
-		No Orkflows in namespace {namespaceLabel(data.namespace)} yet. Apply one from a YAML document to get
+		No Orkflows yet. Apply one from a YAML document to get
 		started.
 	</p>
 {:else}
@@ -144,16 +141,14 @@
 		row is one place to go and a reader's click on it is never ambiguous. -->
 	<div class="overflow-x-auto border-t-2 border-ink">
 		<!-- Below 640 px a row stacks: name and version, digest and when it was
-			applied, labels and task count. -->
-		<table class="register register-stacked sm:min-w-[760px]" data-testid="orkflow-list">
+			applied. An Orkflow's labels sit under its name and description. -->
+		<table class="register register-stacked sm:min-w-[560px]" data-testid="orkflow-list">
 			<thead class="max-sm:sr-only">
 				<tr>
 					<th scope="col">Name</th>
 					<th scope="col">Version</th>
 					<th scope="col">Digest</th>
-					<th scope="col" class="text-right">Tasks</th>
 					<th scope="col">Applied</th>
-					<th scope="col">Labels</th>
 				</tr>
 			</thead>
 			<tbody>
@@ -162,22 +157,17 @@
 						<td class="max-w-md">
 							<a href={withNamespace(`/orkflows/${wf.name}`, data.namespace)} class="link font-semibold">{wf.name}</a>
 							{#if wf.description}<p class="truncate text-xs text-ink-muted" data-tip={wf.description}>{wf.description}</p>{/if}
+							{#if labelPairs(wf.labels).length > 0}
+								<span class="mt-1 flex flex-wrap gap-1" data-testid="orkflow-labels-{wf.name}">
+									{#each labelPairs(wf.labels) as [key, value] (key)}<span class="tag">{key}={value}</span>{/each}
+								</span>
+							{/if}
 						</td>
-						<td class="figure text-ink max-sm:col-start-2 max-sm:row-start-1 max-sm:justify-self-end">{wf.version}</td>
+						<td class="figure text-ink max-sm:col-start-2 max-sm:row-start-1 max-sm:justify-self-end"><VersionText version={wf.version} /></td>
 						<td class="figure text-ink-secondary max-sm:row-start-2 max-sm:text-xs" data-tip={wf.definitionDigest || undefined} data-testid="orkflow-digest-{wf.name}"
 							>{wf.definitionDigest ? digest8(wf.definitionDigest) : '—'}</td
 						>
-						<td class="figure text-right text-ink-secondary max-sm:col-start-2 max-sm:row-start-3 max-sm:justify-self-end max-sm:text-xs max-sm:after:ml-1 max-sm:after:font-sans max-sm:after:content-['tasks']" data-testid="orkflow-taskcount-{wf.name}">{wf.tasks.length}</td>
 						<td class="figure text-xs text-ink-secondary max-sm:col-start-2 max-sm:row-start-2 max-sm:justify-self-end">{fmtTimestamp(wf.createdAt)}</td>
-						<td class="max-sm:row-start-3">
-							<span class="flex flex-wrap gap-1">
-								{#each labelPairs(wf.labels) as [key, value] (key)}
-									<span class="stamp border-rule-strong font-mono normal-case tracking-normal text-ink-secondary">{key}={value}</span>
-								{:else}
-									<span class="text-ink-muted">—</span>
-								{/each}
-							</span>
-						</td>
 					</tr>
 				{/each}
 			</tbody>

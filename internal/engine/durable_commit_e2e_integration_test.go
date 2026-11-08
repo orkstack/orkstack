@@ -26,7 +26,6 @@ import (
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
-	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
@@ -160,25 +159,11 @@ func TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly(t *testing.T) {
 		t.Fatalf("TaskRun.commit.uri = %q, want %q", taskRun.GetCommit().GetUri(), e.wantURI)
 	}
 
-	var suite testsuite.WorkflowTestSuite
-	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
-	env.SetTestTimeout(2 * time.Minute)
-	env.RegisterWorkflow(evidenceAdoptionProbeWorkflow)
-	env.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-		if activity.GetInfo(actx).Attempt < 2 {
-			return nil, temporal.NewApplicationError("stand-in for the committing attempt that died after commit.json", "PROBE")
-		}
-		return e.activities.ExecuteTask(actx, in)
-	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	// The replacement attempt runs on the real cluster: the Orker heartbeats
+	// through the activity's own client (internal/orker/heartbeat.go), which
+	// the SDK's in-memory test environment does not answer.
 	before := runningContainerCountForCommitE2E(t, e.orkerID)
-	env.ExecuteWorkflow(evidenceAdoptionProbeWorkflow, e.in)
-	if !env.IsWorkflowCompleted() || env.GetWorkflowError() != nil {
-		t.Fatalf("replacement attempt: completed=%t err=%v", env.IsWorkflowCompleted(), env.GetWorkflowError())
-	}
-	var adopted *orkstackv1.ExecuteTaskResult
-	if err := env.GetWorkflowResult(&adopted); err != nil {
-		t.Fatalf("replacement attempt result: %v", err)
-	}
+	adopted := runAdoptionAttemptForCommitE2E(t, e)
 	if after := runningContainerCountForCommitE2E(t, e.orkerID); after != before {
 		t.Fatalf("running containers %d -> %d across the replacement attempt; adoption starts none", before, after)
 	}
@@ -279,6 +264,38 @@ func evidenceAdoptionProbeWorkflow(ctx workflow.Context, in *orkstackv1.ExecuteT
 	var result *orkstackv1.ExecuteTaskResult
 	err := workflow.ExecuteActivity(ctx, task.ActivityExecuteTask, in).Get(ctx, &result)
 	return result, err
+}
+
+// runAdoptionAttemptForCommitE2E runs evidenceAdoptionProbeWorkflow on the
+// test's own cluster, on a channel of its own: attempt 1 stands in for the
+// committing attempt that died after commit.json, and attempt 2 is the real
+// dispatcher, heartbeating as an Orker does.
+func runAdoptionAttemptForCommitE2E(t *testing.T, e *commitE2E) *orkstackv1.ExecuteTaskResult {
+	t.Helper()
+	queue := fmt.Sprintf("ork-commit-e2e-adopt-%d", time.Now().UnixNano())
+	w := worker.New(e.temporal, queue, worker.Options{DisableRegistrationAliasing: true})
+	w.RegisterWorkflow(evidenceAdoptionProbeWorkflow)
+	w.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if activity.GetInfo(actx).Attempt < 2 {
+			return nil, temporal.NewApplicationError("stand-in for the committing attempt that died after commit.json", "PROBE")
+		}
+		return e.activities.ExecuteTask(actx, in)
+	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	if err := w.Start(); err != nil {
+		t.Fatalf("start the replacement attempt's worker: %v", err)
+	}
+	defer w.Stop()
+	ctx, cancel := context.WithTimeout(e.ctx, 2*time.Minute)
+	defer cancel()
+	probe, err := e.temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: queue, TaskQueue: queue}, evidenceAdoptionProbeWorkflow, e.in)
+	if err != nil {
+		t.Fatalf("start the replacement attempt: %v", err)
+	}
+	var adopted *orkstackv1.ExecuteTaskResult
+	if err := probe.Get(ctx, &adopted); err != nil {
+		t.Fatalf("replacement attempt: %v", err)
+	}
+	return adopted
 }
 
 // startCommitE2E brings up the production submit path of
@@ -515,14 +532,16 @@ func startCommitE2E(t *testing.T) *commitE2E {
 		bus: bus, runs: runs, runClient: runClient,
 		runID: runID, run: run, in: in, key: key,
 		wantURI: "s3://" + cfg.S3Bucket + "/" + key,
-		orkerID: orkerID,
+		orkerID: orkerID, temporal: temporalClient,
 	}
 }
 
 // commitE2E is what startCommitE2E leaves running and what it observed.
 type commitE2E struct {
 	// orkerID labels every container this test's Orker starts (ork.orker).
-	orkerID      string
+	orkerID string
+	// temporal is the client of the test's private namespace.
+	temporal     client.Client
 	ctx          context.Context
 	cfg          artifacts.Config
 	orkflows     *artifacts.S3OrkflowStore

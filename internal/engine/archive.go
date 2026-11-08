@@ -335,6 +335,10 @@ type ArchiveQuery struct {
 	// equals filter). A run archived with no origin is matched by neither.
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// RootRunID selects the root index instead, ahead of the origin index
+	// (artifacts.RunQuery.RootRunID). A run archived with no root is matched
+	// by no root filter.
+	RootRunID string
 	// Keep is the residual filter set. It is evaluated on indexProjection of
 	// each index entry during the key scan, so a key it rejects is never
 	// hydrated; nil keeps every entry the fields above keep.
@@ -393,6 +397,7 @@ func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events [
 		// index carries exactly what the archived body says.
 		OriginKind: run.GetOrigin().GetKind(),
 		OriginID:   run.GetOrigin().GetId(),
+		RootRunID:  run.GetOrigin().GetRootRunId(),
 	}
 	if record.Status == "" {
 		return fmt.Errorf("engine: archive run %q: status is unspecified", run.GetId())
@@ -550,6 +555,7 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		BeforeRunID: q.BeforeID,
 		OriginKind:  q.OriginKind,
 		OriginID:    q.OriginID,
+		RootRunID:   q.RootRunID,
 		Keep:        archiveKeep(q.Keep),
 		Limit:       limit,
 		// A bounded page of one namespace walks the newest-first family and
@@ -557,6 +563,16 @@ func (a *RunArchiver) ListRuns(ctx context.Context, q ArchiveQuery) ([]*orkstack
 		// serves the query better (artifacts.RunQuery.Recent).
 		Recent: true,
 	})
+	// A root a key cannot hold was never written as one, so no row is below it.
+	// A filter value is the caller's, and this is an answer, not a failure. Only
+	// the root's, though: an origin id no key can hold beside it stays the
+	// caller's error, as it is without a root.
+	if q.RootRunID != "" && errors.Is(err, artifacts.ErrInvalidRunKey) {
+		root := artifacts.RunQuery{Namespace: q.Namespace, RootRunID: q.RootRunID}
+		if _, _, rootErr := root.ScanPrefix(); rootErr != nil {
+			return nil, nil
+		}
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -620,7 +636,7 @@ func indexProjection(entry artifacts.RunIndexEntry) *orkstackv1.Run {
 		run.CreatedAt = timestamppb.New(entry.Time)
 	}
 	if entry.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
-		run.Origin = &orkstackv1.RunOrigin{Kind: entry.OriginKind, Id: entry.OriginID}
+		run.Origin = &orkstackv1.RunOrigin{Kind: entry.OriginKind, Id: entry.OriginID, RootRunId: entry.RootRunID}
 	}
 	return run
 }

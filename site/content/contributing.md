@@ -37,7 +37,7 @@ into `ork`, in Docker, and `make build` then embeds it.
 ## Check a change
 
 ```bash
-make check     # lint, vet and the unit tests: no Docker, a few minutes
+make check     # lint, vet, the unit tests and the UI's type-check: no Docker, a few minutes
 ```
 
 Every change ships with tests, and lands only after a full proof of the
@@ -59,6 +59,15 @@ Each change goes through the same checks, at different scopes:
 | Pre-release proof (`make proof-release`) | Before a release tag, on the exact commit | Required for a release |
 
 A change is done only after a full proof passes on the exact tree that lands. The reference is [docs/PROVEN.md](https://github.com/orkstack/orkstack/blob/main/docs/PROVEN.md#the-proof-tiers), and [What is proven](/docs/concepts/proven/) explains the results for users.
+
+## Open the pull request
+
+A pull request lands as one squash commit: its title becomes the subject and its
+description the body. So the title must be a Conventional Commit, such as
+`fix(orker): keep the shared directory on a retry`, and a required check refuses
+one that is not. The description names the tests and specs that prove the change.
+The rule, and how a landing is checked, are in
+[docs/PROOFS.md](https://github.com/orkstack/orkstack/blob/main/docs/PROOFS.md#6-the-merge-queue-the-nightly-tier-and-the-pre-release-gate).
 
 ## Record the change
 

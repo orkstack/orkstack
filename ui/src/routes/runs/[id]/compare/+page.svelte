@@ -1,14 +1,14 @@
 <script lang="ts">
+	import VersionText from '#lib/components/VersionText.svelte';
 	import FactsStrip from '#lib/components/FactsStrip.svelte';
 	// Two runs of one namespace, side by side: what differs between them.
 	//
 	// The page renders RunService.DiffRuns and nothing else. The engine decides
 	// every value and the order of the rows; `orkctl run diff` prints the same
-	// strings from the same response, and the CliEquivalent below is the
+	// strings from the same response, and the page's terminal icon holds the
 	// command that does. Nothing here is stored, and the URL carries two ids
 	// (and an optional field list) — never a run's input.
 	import { invalidateAll } from '$app/navigation';
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import DiffView from '#lib/components/DiffView.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import RunDiffTable from '#lib/components/RunDiffTable.svelte';
@@ -19,10 +19,6 @@
 	import { diffSummary, isNarrowed, unavailableLines } from '#lib/runDiff.ts';
 	import type { PageProps } from './$types';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
-	import { namespaceLabel } from '#lib/namespace.ts';
-	import { setTitleBlock } from '#lib/sheet.svelte.ts';
-	import { statusLabel } from '#lib/status.ts';
-	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 
 	let { data }: PageProps = $props();
 
@@ -63,23 +59,6 @@
 	// "what changed" on this page (red stays for failure).
 	const sameChip = 'stamp border-rule-strong bg-paper text-ink-secondary';
 	const differentChip = 'stamp border-blue bg-blue-tint text-blue-strong';
-
-	// The title block: the two runs by their status (never their ids — those
-	// are the page's own links), what they ran, and the namespace.
-	setTitleBlock(() => {
-		const d = data.diff;
-		const status = (s: Status | undefined) => ({ value: statusLabel(s), status: s ?? Status.UNSPECIFIED });
-		return [
-			{ label: 'FROM', ...status(d?.from?.status) },
-			{ label: 'TO', ...status(d?.to?.status) },
-			{ label: 'ORKFLOW', value: d ? (d.sameOrkflow ? (d.from?.orkflowName ?? '—') : 'different') : '—' },
-			{
-				label: 'DEFINITION',
-				value: !d ? '—' : !d.fieldsCompared.includes('definition') ? 'not compared' : definitionIdentical ? 'same' : 'different'
-			},
-			{ label: 'NAMESPACE', value: namespaceLabel(data.namespace) }
-		];
-	});
 </script>
 
 <svelte:head><title>Compare {data.fromId} — OrkStack</title></svelte:head>
@@ -87,7 +66,7 @@
 <a href={runHref(data.fromId)} class="link mb-3 inline-flex items-center gap-1 text-sm" data-testid="run-diff-back"
 	><Icon name="chev-left" class="size-3.5" />Back to {data.fromId}</a
 >
-<SheetHeader title="Compare runs">
+<SheetHeader title="Compare runs" commands={diff ? [{ label: 'This comparison', command: cli }] : []}>
 	{#snippet meta()}
 		{@const d = data.diff}
 		{#snippet from()}<StatusPill status={d?.from?.status} testid="compare-fact-from" />{/snippet}
@@ -108,7 +87,6 @@
 	{#snippet actions()}
 		{#if diff}
 			<a href={swapHref} data-testid="run-diff-swap" class="btn">Swap</a>
-			<CliEquivalent command={cli} testid="run-diff-cli" />
 		{/if}
 	{/snippet}
 </SheetHeader>
@@ -137,7 +115,7 @@
 			</dd>
 			<dd class="mt-1.5 flex flex-wrap items-center gap-2 text-sm text-ink-secondary">
 				<StatusPill status={run?.status} testid={which === 'from' ? 'run-diff-from-status' : 'run-diff-to-status'} />
-				<span>{run?.orkflowName}@{run?.orkflowVersion}</span>
+				<span>{run?.orkflowName}@<VersionText version={run?.orkflowVersion ?? ''} /></span>
 			</dd>
 			{#if run?.orkflowDefinitionDigest}
 				<dd class="mt-1 font-mono text-xs break-all text-ink-muted" data-tip={run.orkflowDefinitionDigest}>

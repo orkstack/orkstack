@@ -42,15 +42,14 @@ import { taskMapCellCenter, tasksMore } from './uiHelpers';
 //   bound      81 tasks: the DAG on request; 301: never laid out, the
 //              selected task's neighbourhood instead — on the run page and on
 //              the Orkflow page alike;
-//   aside      the versions table (THIS RUN, CURRENT, HEAD), the failure and
+//   aside      the version plate's link, the failure and
 //              the version it was on, the failing image, the commands that
 //              reproduce it (behind the header's terminal icon);
 //   degraded   no definition (GetOrkflow refused): a NOTE with the reason, the
-//              map in run order, the aside whole, every card; the versions
-//              listing refused: an error with Retry, then the table;
+//              map in run order, the aside whole, every card;
 //   live       the header's status pill turns Running green → Failed red with
 //              no reload;
-//   palette    on a run page a task id selects the task; Cancel run… opens
+//   palette    on a run page a task id selects the task; Cancel run opens
 //              the confirmation and sends nothing;
 //   register   a run the list saw RUNNING that fails is held in place by the
 //              poll, on its new ground, its status pill still its own; held
@@ -264,7 +263,7 @@ async function tokenColor(page: Page, token: string): Promise<string> {
 }
 
 async function axe(page: Page, label: string): Promise<void> {
-	const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
+	const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
 	const found = result.violations.map((v) => `${v.id} (${v.nodes.length}: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(', ')})`);
 	note(`axe ${label}: ${found.length} violation(s)${found.length ? ' — ' + found.join('; ') : ''}`);
 	expect(found).toEqual([]);
@@ -317,16 +316,12 @@ test('DAG: a small run opens on its DAG, drawn by status, one box per node, the 
 	await expect(page.getByTestId('run-dag-node-charge')).toHaveAttribute('aria-pressed', 'false');
 });
 
-test('aside: versions with THIS RUN / CURRENT / HEAD, the failure, the image, the reproduce commands', async ({ page }) => {
+test('aside: the version plate links to the run\'s version, the failure, the image, the reproduce commands', async ({ page }) => {
 	await page.goto(runUrl(sagaRun));
-	// The versions are a popover off the header's Versions button.
-	await page.getByTestId('run-versions-toggle').click();
-	await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
-	await expect(page.getByTestId('run-version-0.1.0-this')).toHaveText('This run');
-	await expect(page.getByTestId('run-version-0.2.0-current')).toBeVisible();
-	await expect(page.getByTestId('run-version-0.2.0-head')).toBeVisible();
-	await expect(page.getByTestId('run-version-0.1.0-current')).toHaveCount(0);
-	await page.keyboard.press('Escape');
+	// The plate names this run's version alone and links to it on the Orkflow's page.
+	await expect(page.getByTestId('run-version')).toContainText('0.1.0');
+	await expect(page.getByTestId('run-version')).not.toContainText('0.2.0');
+	await expect(page.getByTestId('run-version-link')).toHaveAttribute('href', new RegExp(`/orkflows/${SAGA}\\?version=0\\.1\\.0`));
 	// The "Why it failed" card names the failure; its retry phrase is the failure's.
 	await expect(page.getByTestId('run-why')).toContainText('charge');
 	await expect(page.getByTestId('run-error')).toBeVisible();
@@ -354,17 +349,6 @@ test('aside: versions with THIS RUN / CURRENT / HEAD, the failure, the image, th
 	await (await download).saveAs(exportPath);
 	expect(JSON.parse(readFileSync(exportPath, 'utf8')).orkflow.definitionDigest).toBe(digest);
 	await page.screenshot({ path: out('screenshot-run-aside-light.png') });
-
-	// One version that is this run's, the current and the head: its three
-	// marks wrap inside the aside rather than run past it.
-	await page.goto(runUrl(wideRun));
-	await page.getByTestId('run-versions-toggle').click();
-	await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
-	const table = await page.getByTestId('run-versions').boundingBox();
-	for (const mark of ['this', 'current', 'head']) {
-		const box = await page.getByTestId(`run-version-0.1.0-${mark}`).boundingBox();
-		expect(box!.x + box!.width, `the ${mark} mark inside the versions table`).toBeLessThanOrEqual(table!.x + table!.width + 0.5);
-	}
 });
 
 test('map: past 80 tasks the map is painted only after the last card is attached', async ({ page }) => {
@@ -485,24 +469,7 @@ test('degraded: with no definition the map follows the run order, the graph says
 	await page.screenshot({ path: out('screenshot-run-no-definition-light.png') });
 });
 
-test('degraded: a refused versions listing is an error with Retry, then the table', async ({ page }) => {
-	let refuse = true;
-	await page.route('**/orkstack.v1.OrkflowService/ListOrkflowVersions', (route) =>
-		refuse
-			? route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ code: 'unavailable', message: 'versions held' }) })
-			: route.continue()
-	);
-	await page.goto(runUrl(sagaRun));
-	await page.getByTestId('run-versions-toggle').click();
-	await expect(page.getByTestId('run-versions-error')).toContainText('versions held');
-	await expect(page.getByTestId('run-error')).toBeVisible();
-	refuse = false;
-	await page.getByTestId('run-versions-retry').click();
-	await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
-	await expect(page.getByTestId('run-version-0.1.0')).toBeVisible();
-});
-
-test('palette: a task id selects the task; Cancel run… opens the confirmation and sends nothing', async ({ page }) => {
+test('palette: a task id selects the task; Cancel run opens the confirmation and sends nothing', async ({ page }) => {
 	await page.goto(runUrl(sagaRun));
 	await expect(page.getByTestId('run-status')).toHaveText('Failed');
 	await openPalette(page);
@@ -529,7 +496,7 @@ test('palette: a task id selects the task; Cancel run… opens the confirmation 
 	await page.getByTestId('cancel-run-dismiss').click();
 	await expect(page.getByTestId('cancel-run-confirm')).toHaveCount(0);
 	expect(cancels).toEqual([]);
-	note(`palette: task jump selected refund on ${sagaRun}; Cancel run… on ${liveRun} opened the confirmation and sent no CancelRun`);
+	note(`palette: task jump selected refund on ${sagaRun}; Cancel run on ${liveRun} opened the confirmation and sent no CancelRun`);
 });
 
 test('live: the header status pill turns Running green → Failed red with no reload', async ({ page }) => {
@@ -578,6 +545,18 @@ test('register: a run seen RUNNING that fails is held in place, survives a reloa
 	);
 	await expect(page.getByTestId('runs-held-summary')).toContainText('changed since you last looked');
 	await expect(page.getByTestId('runs-held-summary')).not.toContainText(liveRun);
+	// The mark is round and neutral: the row's own status says it failed.
+	await expect(page.getByTestId('runs-held-summary').locator('svg use')).toHaveAttribute('href', '#i-updated');
+	await expect(page.getByTestId(`run-row-held-${liveRun}`).locator('svg use')).toHaveAttribute('href', '#i-updated');
+	const redInk = await page.evaluate(() => {
+		const probe = document.createElement('span');
+		probe.style.color = 'var(--color-fail, var(--fail))';
+		document.body.appendChild(probe);
+		const c = getComputedStyle(probe).color;
+		probe.remove();
+		return c;
+	});
+	expect(await page.getByTestId('runs-held-summary').locator('svg').evaluate((el) => getComputedStyle(el).color)).not.toBe(redInk);
 	await page.screenshot({ path: out('screenshot-runs-held-light.png') });
 	await axe(page, 'runs register with a held row (light)');
 
@@ -645,12 +624,6 @@ test('screens: both themes, desktop and 390 px; axe on the run page and on a fai
 		await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 		await page.screenshot({ path: out(`screenshot-run-failed-dag-${theme}-1440.png`) });
 		await axe(page, `failed run, graph and map (${theme})`);
-		// The versions popover, open.
-		await page.getByTestId('run-versions-toggle').click();
-		await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
-		await page.screenshot({ path: out(`screenshot-run-failed-map-${theme}-1440.png`) });
-		await axe(page, `failed run, versions open (${theme})`);
-		await page.keyboard.press('Escape');
 		await page.goto(runUrl(wideRun));
 		await expect(page.getByTestId('task-map')).toHaveAttribute('data-painted', 'true');
 		await page.screenshot({ path: out(`screenshot-run-map-81-${theme}-1440.png`) });

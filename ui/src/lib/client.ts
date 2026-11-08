@@ -15,8 +15,15 @@ import { createConnectTransport } from '@connectrpc/connect-web';
 // services it does not call. Do not reintroduce a factory that builds every
 // client at once: one import of it would put every service's schemas back on
 // every route.
+//
+// A task's values are arbitrary JSON, and each level of it is two messages
+// here. The reader's default of 100 levels refused a whole run whose values
+// nested past about 50 of them, so it takes the same 10,000 the engine's own
+// protobuf JSON does: values the engine answers with, the page can read.
+const JSON_RECURSION_LIMIT = 10_000;
+
 export function transport(fetchFn: typeof globalThis.fetch): Transport {
-	return createConnectTransport({ baseUrl: '/', fetch: fetchFn });
+	return createConnectTransport({ baseUrl: '/', fetch: fetchFn, jsonOptions: { recursionLimit: JSON_RECURSION_LIMIT } });
 }
 
 export function errorMessage(err: unknown): string {

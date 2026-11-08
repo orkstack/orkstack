@@ -47,13 +47,10 @@ const epoch = process.env.SOURCE_DATE_EPOCH;
 // header, with frame-ancestors, which only a header can carry
 // (internal/webui, PagePolicy). No inline script runs that is not hashed
 // here: app.html's theme script, which runs before SvelteKit's, is hashed
-// from app.html itself, so editing it moves its hash with it. Scripts allow
-// 'unsafe-eval' for one reason: the YAML editor's schema checks compile
-// their validators at run time (ajv, src/lib/yaml/lint.ts and complete.ts),
-// from the static generated schemas the build carries. Once neither compiles
-// a validator at run time, remove 'unsafe-eval' here and nowhere else (the
-// engine copies this policy; docs/SECURITY_MODEL.md says why). Styles allow
-// 'unsafe-inline': Svelte writes style attributes and the editor inserts
+// from app.html itself, so editing it moves its hash with it. Scripts do not
+// allow 'unsafe-eval': the YAML editor's validators are compiled ahead of time
+// (test/gen-validators.ts), and the engine copies this policy
+// (docs/SECURITY_MODEL.md says why). Styles allow 'unsafe-inline': Svelte writes style attributes and the editor inserts
 // <style> elements at run time, which no build-time hash can name.
 const appHtml = readFileSync(new URL('./src/app.html', import.meta.url), 'utf8');
 const themeStart = appHtml.indexOf('<script>');
@@ -74,7 +71,7 @@ export default defineConfig({
 				mode: 'hash',
 				directives: {
 					'default-src': ['self'],
-					'script-src': ['self', 'unsafe-eval', themeHash],
+					'script-src': ['self', themeHash],
 					'style-src': ['self', 'unsafe-inline'],
 					'img-src': ['self', 'data:'],
 					'font-src': ['self'],

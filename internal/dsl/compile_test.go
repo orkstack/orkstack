@@ -648,8 +648,9 @@ tasks:
 		t.Fatalf("version = %q, want a 64-char sha256 hex hash", first.GetVersion())
 	}
 
-	// The same bytes are the same version. This is what makes re-applying an
-	// unchanged file a no-op rather than a second version of the same thing.
+	// The same bytes are the same provisional version: Compile has no clock and
+	// no store, so a hermetic caller gets a stable name for what it compiled. The
+	// apply path replaces it (internal/api.prepareOrkflow).
 	second, err := dsl.Compile([]byte(doc))
 	if err != nil {
 		t.Fatalf("Compile (repeat): %v", err)

@@ -249,7 +249,7 @@ jobs:
           [ -n "$ORK_DOCKER_BIN" ] || unset ORK_DOCKER_BIN
           [ -n "$DOCKER_HOST" ] || unset DOCKER_HOST
           if [ "$SHAPE" = rootful-socket ]; then
-            scripts/integration.sh ./internal/orker -run '^TestIntegration_(BootProbe|BootBindProbe|Dispatcher|BurstOutput|Cancellation|ContainerTimeout|RemoveOfARunning|ACLIThatWrites|ReplacementOrkerReapsLabelledOrphan|WorkspaceModes|OutputNotReadable|AFailedTaskStillPublishes|RefusesAnUnpinned)'
+            scripts/integration.sh ./internal/orker -run '^TestIntegration_(BootProbe|BootBindProbe|Dispatcher|BurstOutput|Cancellation|ContainerTimeout|RemoveOfARunning|ACLIThatWrites|ReplacementOrkerReapsLabelledOrphan|WorkspaceModes|OutputNotReadable|AFailedTaskStillPublishes|RefusesAnUnpinned|ContainerRemoval|ContainerExit|AttemptDirectories|BootWarning|AReplacementOrkerReapsAPin)'
           else
             scripts/integration.sh ./internal/orker
           fi

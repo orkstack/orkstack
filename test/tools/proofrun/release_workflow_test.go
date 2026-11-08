@@ -216,8 +216,8 @@ func publishProblems(w *wfFile) []string {
 	for i, s := range job.Steps {
 		if isCheckout(s) || strings.HasPrefix(s.Uses, "./") {
 			p = append(p, fmt.Sprintf("jobs.publish %s checks out or runs repository code", s.label(i)))
-		} else if s.Uses != "" && !strings.HasPrefix(s.Uses, "actions/download-artifact@") {
-			p = append(p, fmt.Sprintf("jobs.publish %s uses %s; publish uses only download-artifact", s.label(i), s.Uses))
+		} else if s.Uses != "" && !strings.HasPrefix(s.Uses, "actions/download-artifact@") && s.Uses != tagTokenAction {
+			p = append(p, fmt.Sprintf("jobs.publish %s uses %s; publish uses only download-artifact and the tag's token action", s.label(i), s.Uses))
 		}
 		if m := repoCodeInRun.FindString(s.Run); m != "" {
 			p = append(p, fmt.Sprintf("jobs.publish %s runs %q: publish runs no repository code", s.label(i), strings.TrimSpace(m)))
@@ -238,8 +238,8 @@ func publishProblems(w *wfFile) []string {
 		case release < 0 && strings.Contains(s.Run, "gh release create"):
 			release = i
 		}
-		if holdsToken(s) && i != tag && i != push && i != sign && i != retag && i != release {
-			p = append(p, fmt.Sprintf("jobs.publish %s is handed a token and neither tags, pushes, signs, moves X.Y nor releases", s.label(i)))
+		if holdsToken(s) && i != push && i != sign && i != retag && i != release {
+			p = append(p, fmt.Sprintf("jobs.publish %s is handed a token and neither pushes images, signs them, moves X.Y nor releases", s.label(i)))
 		}
 	}
 	if download < 0 || check <= download || tag <= check || push <= tag || sign <= push || release <= sign {
@@ -744,14 +744,15 @@ func TestWorkflows_ReleaseSignsWhatItPublishes(t *testing.T) {
 		}},
 	})
 
-	// The key's two secrets are named only where publish signs: four
-	// references in the whole file, at any level a job or step could set env,
-	// and no other secret: the tag, the push and the release use the job's
-	// own token.
+	// The signing key's two secrets are named only where publish signs, and the
+	// tag App's two only where publish checks them and mints its token: eight
+	// references in the whole file, at any level a job or step could set env, and
+	// no other secret. The push and the release use the job's own token.
 	raw := workflowFile(t, "release.yml")
 	secrets := regexp.MustCompile(`secrets\.[A-Za-z0-9_]+`).FindAllString(raw, -1)
-	if strings.Join(secrets, " ") != "secrets.COSIGN_PRIVATE_KEY secrets.COSIGN_PASSWORD secrets.COSIGN_PRIVATE_KEY secrets.COSIGN_PASSWORD" {
-		t.Errorf("release.yml names secrets %v; want the key and its password once in each of publish's two signing steps", secrets)
+	signing, app := "secrets.COSIGN_PRIVATE_KEY secrets.COSIGN_PASSWORD", "secrets."+tagAppClientID+" secrets."+tagAppKey
+	if strings.Join(secrets, " ") != strings.Join([]string{signing, app, app, signing}, " ") {
+		t.Errorf("release.yml names secrets %v; want the key and its password once in each of publish's two signing steps, and %s once in its secrets check and once in its token step", secrets, app)
 	}
 }
 

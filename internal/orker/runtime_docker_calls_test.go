@@ -19,7 +19,8 @@ import (
 //
 // Flags (files under dir): present (the image is local), pullfail, oom,
 // exitcode (Wait's status), created (`inspect {{.State.Status}}` answers
-// "created" while it exists), rmfail-<id>, psfail, versionfail, runfail,
+// "created" while it exists), createfail (`create` is refused), createhang
+// (`create` hangs for 30 s), rmfail-<id>, psfail, versionfail, runfail,
 // slowruns (its content N: the first N `run` invocations hang for 30 s, as a
 // daemon that is slow to start a container does), timeoutruns (its content N:
 // the first N `run` invocations answer at once with the daemon's own deadline
@@ -33,7 +34,14 @@ import (
 // (`version`'s components name the Podman engine), rootless (the content
 // `info {{.Host.Security.Rootless}}` answers), infofail (`info` fails),
 // versionhang and infohang (`version` or `info` hangs for 30 s) and state
-// (the content `inspect {{.State.Status}}` answers). `run` also counts
+// (the content `inspect {{.State.Status}}` answers), stoppedbyuser (`inspect
+// {{.State.StoppedByUser}}` answers true) and stoppedbyuserfail (that inspect
+// is refused). startquick makes the attach
+// end at once; events (the words the event stream says, `die` by default),
+// eventsend (the stream ends after them) and eventsfail (the CLI refuses it)
+// drive the stream, whose process leaves its pid in eventspid; others (what a
+// `ps` that asks for a --format lists) and otherpsfail (it is refused) drive the
+// list of other identities' containers. `run` also counts
 // itself into the runs file and, once counted, touches runstarted.
 //
 // A `run` that succeeds behaves as the boot probe's container does on a
@@ -92,19 +100,53 @@ case "$1" in
   inspect)
     case "$3" in
       *OOMKilled*) if [ -e "$S/oom" ]; then echo true; else echo false; fi ;;
+      *StoppedByUser*)
+        if [ -e "$S/stoppedbyuserfail" ]; then echo "Error: no such container" >&2; exit 125; fi
+        if [ -e "$S/stoppedbyuser" ]; then echo true; else echo false; fi ;;
+      *Created*)
+        if [ -e "$S/createdfail" ]; then echo "Error: daemon unreachable" >&2; exit 1; fi
+        if [ -e "$S/createdat" ]; then cat "$S/createdat"; exit 0; fi
+        skew=0; if [ -e "$S/daemonskew" ]; then skew=$(cat "$S/daemonskew"); fi
+        date -u -d "@$(( $(date +%s) + skew ))" '+"%Y-%m-%dT%H:%M:%SZ"' ;;
       *) if [ -e "$S/state" ]; then cat "$S/state"; elif [ -e "$S/created" ]; then echo created; else echo running; fi ;;
     esac ;;
-  create) echo cid-0123 ;;
+  create)
+    if [ -e "$S/createfail" ]; then echo "Error response from daemon: the create was refused" >&2; exit 125; fi
+    if [ -e "$S/createhang" ]; then exec sleep 30; fi
+    echo cid-0123 ;;
   kill)
     if [ -e "$S/killnotrunning" ]; then echo "Error response from daemon: container $4 is not running" >&2; exit 1; fi
     if [ "$3" = TERM ]; then touch "$S/termsent"; fi
     if [ "$3" = TERM ] && [ -e "$S/termrefused" ]; then echo "Error response from daemon: cannot kill container: permission denied" >&2; exit 1; fi
     if [ "$3" = TERM ] && [ -e "$S/sigout" ] && [ ! -e "$S/deaf" ]; then echo heard > "$(cat "$S/sigout")/probe-heard-term"; fi
     exit 0 ;;
-  start) sleep 5 ;;
+  start) if [ -e "$S/startquick" ]; then exit 0; fi; sleep 5 ;;
+  events)
+    echo $$ > "$S/eventspid"
+    if [ -e "$S/eventsfail" ]; then echo "Error: cannot read events" >&2; exit 125; fi
+    if [ -e "$S/eventsconnect" ]; then sleep "$(cat "$S/eventsconnect")"; fi
+    if [ -e "$S/daemonskew" ]; then
+      # What the two CLIs do: a relative --since is worked out on this host's
+      # clock, and the engine compares what it gets with its own.
+      here=$(date +%s); engine=$(( here + $(cat "$S/daemonskew") ))
+      case "$3" in
+        *m) since=$(( here - 60 )) ;;
+        *) since=$(date -u -d "$3" +%s) ;;
+      esac
+      if [ "$engine" -lt "$since" ]; then exec sleep 30; fi
+    fi
+    if [ -e "$S/events" ]; then cat "$S/events"; else echo die; fi
+    if [ -e "$S/eventsend" ]; then exit 0; fi
+    exec sleep 30 ;;
   wait) if [ -e "$S/exitcode" ]; then cat "$S/exitcode"; else echo 0; fi ;;
   ps)
     if [ -e "$S/psfail" ]; then echo "daemon unreachable" >&2; exit 1; fi
+    case "$*" in
+      *--format*)
+        if [ -e "$S/otherpsfail" ]; then echo "daemon unreachable" >&2; exit 1; fi
+        if [ -e "$S/others" ]; then cat "$S/others"; fi
+        exit 0 ;;
+    esac
     echo c1; echo c2; echo c3 ;;
   rm)
     if [ -e "$S/rmfailall" ]; then echo "Error response from daemon: removal of container $4 is already in progress" >&2; exit 1; fi

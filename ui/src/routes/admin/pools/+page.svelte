@@ -64,7 +64,7 @@
 	// Which pool cards have their Orker list open. Orkers are deployment
 	// infrastructure, so the list is a disclosure on the (namespace-scoped)
 	// pool card rather than a namespace-scoped list of its own.
-	// Every pool's Orkers are shown, with Cordon…; a reader may fold one away.
+	// Every pool's Orkers are shown, with Cordon; a reader may fold one away.
 	let expanded = $state<Record<string, boolean>>({});
 	const shown = (pool: string) => expanded[pool] ?? true;
 
@@ -140,20 +140,20 @@
 	<div class="ph-main min-w-0">
 		<h1 class="page-h1">Pools</h1>
 		<p class="mt-1 text-dense text-ink-2" data-testid="pools-scope-caption">
-			Where a task of namespace <b class="font-semibold text-ink">{namespaceLabel(data.namespace)}</b> can run, and the Orkers serving each pool now
+			Where a task can run, and the Orkers serving each pool now
 		</p>
 	</div>
 	<button type="button" class="btn" data-testid="pools-refresh" disabled={busy} onclick={() => void retry()}>Refresh</button>
 	<CliPopover testid="pools-cli" title="Command line: pools" commands={cli} />
 </header>
 
-<div class="mb-3"><ListFilter request={ListPoolsRequestSchema} applied={data.applied} testid="pools" {command} onapply={applyFilters} {clearHref} cli={false} /></div>
+<div class="mb-3"><ListFilter request={ListPoolsRequestSchema} applied={data.applied} testid="pools" onapply={applyFilters} {clearHref} /></div>
 
 {#if data.poolsError}
 	<ErrorPanel
 		testid="pools-error"
 		retryTestid="pools-retry"
-		subject="pool health for namespace {namespaceLabel(data.namespace)}"
+		subject="pool health"
 		message={data.poolsError}
 		busy={retrying}
 		onretry={retry}
@@ -164,7 +164,7 @@
 	<p class="text-sm text-ink-muted" data-testid="pools-empty">No pools match these filters.</p>
 {:else if data.pools.length === 0}
 	<p class="text-sm text-ink-muted" data-testid="pools-empty">
-		No pools are in scope for namespace {namespaceLabel(data.namespace)}.
+		No pools are in scope for this namespace.
 	</p>
 {:else}
 	<!-- A card per pool: its state in words, its live Orkers, and how much of

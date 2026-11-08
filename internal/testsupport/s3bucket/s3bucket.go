@@ -99,6 +99,45 @@ func Name(label string, pid int, suffix int64) string {
 	return fmt.Sprintf("orkstack-%s-%d-%d", label, pid, suffix%1_000_000_000)
 }
 
+// The development store's key (deploy/docker-compose.yml, compose.yaml). A
+// binary never falls back to it: the development stack and the tests set it
+// where they start one. The store refuses any other, so a place that misses it
+// fails loudly.
+const (
+	DevAccessKey = "orkstack"
+	DevSecretKey = "orkstack-secret"
+
+	envAccessKey = "ORK_S3_ACCESS_KEY"
+	envSecretKey = "ORK_S3_SECRET_KEY"
+)
+
+// UseDevKey points this process and every process it starts at the development
+// store's key, unless a key is already set: an explicit one is kept, and half a
+// key stays half, so the stores refuse it as they would anywhere.
+func UseDevKey() error {
+	if os.Getenv(envAccessKey) != "" || os.Getenv(envSecretKey) != "" {
+		return nil
+	}
+	if err := os.Setenv(envAccessKey, DevAccessKey); err != nil {
+		return fmt.Errorf("set %s: %w", envAccessKey, err)
+	}
+	if err := os.Setenv(envSecretKey, DevSecretKey); err != nil {
+		return fmt.Errorf("set %s: %w", envSecretKey, err)
+	}
+	return nil
+}
+
+// DevConfig is artifacts.ConfigFromEnv with the development store's key when no
+// key is set, for a harness tool that reaches the store without changing its
+// own environment.
+func DevConfig() artifacts.Config {
+	cfg := artifacts.ConfigFromEnv()
+	if cfg.S3AccessKey == "" && cfg.S3SecretKey == "" {
+		cfg.S3AccessKey, cfg.S3SecretKey = DevAccessKey, DevSecretKey
+	}
+	return cfg
+}
+
 // Main is a TestMain body: it creates a bucket named for label, points
 // ORK_S3_BUCKET at it for the rest of the process, runs the tests, and
 // removes the bucket when every test passed. It returns m.Run's exit code.
@@ -120,6 +159,12 @@ func Main(m *testing.M, label string) int {
 	// of its own nor removes the parent's.
 	if inherited := os.Getenv(envOwned); inherited != "" && inherited == os.Getenv(EnvBucket) {
 		return m.Run()
+	}
+	// Every process the tests start inherits the development store's key, as
+	// it inherits the bucket.
+	if err := UseDevKey(); err != nil {
+		fmt.Fprintf(os.Stderr, "s3bucket: %v\n", err)
+		return 1
 	}
 	cfg := artifacts.ConfigFromEnv()
 	bucket := Name(label, os.Getpid(), time.Now().UnixNano())

@@ -5,7 +5,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
-import { OP, addListFilter, selectOption } from './uiHelpers';
+import { OP, addListFilter, selectOption, pageCli } from './uiHelpers';
 import {
 	bin,
 	catalogEnv,
@@ -174,9 +174,9 @@ const rowIds = (page: Page) =>
 		.locator('tbody tr[data-testid^="delivery-dlv-"]')
 		.evaluateAll((els) => els.map((el) => el.getAttribute('data-testid')!.slice('delivery-'.length)));
 
-async function cliText(page: Page, testid: string): Promise<string> {
-	await page.getByTestId(`${testid}-trigger`).click();
-	const text = await page.getByTestId(`${testid}-command`).innerText();
+async function cliText(page: Page, label: string): Promise<string> {
+	await page.getByTestId('page-cli-trigger').click();
+	const text = await pageCli(page, label).innerText();
 	await page.keyboard.press('Escape');
 	return text;
 }
@@ -500,12 +500,10 @@ test('D5: paging under filters walks newest first without repeats; a changed fil
 test('D6: the CLI equivalents name the same listing', async ({ page }) => {
 	await page.goto(panelUrl([`webhook_id=${webhookId}`, 'delivered=false', `run_id=${firstRun}`], { limit: '2' }));
 	await page.waitForLoadState('networkidle');
-	const filters = await cliText(page, 'deliveries-filters-cli');
-	expect(filters).toBe(
-		`orkctl webhook deliveries --filter delivered=false --filter run_id=${firstRun} --filter webhook_id=${webhookId}`
+	const listing = await cliText(page, 'The deliveries');
+	expect(listing).toBe(
+		`orkctl webhook deliveries --filter delivered=false --filter run_id=${firstRun} --filter webhook_id=${webhookId} --limit 2`
 	);
-	const listing = await cliText(page, 'deliveries-cli');
-	expect(listing).toBe(`${filters} --limit 2`);
 	note(`D6 CLI equivalent: ${listing}`);
 });
 

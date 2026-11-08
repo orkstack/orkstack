@@ -10,8 +10,7 @@
 	import ProgressRing from '#lib/components/ProgressRing.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { runProgress } from '#lib/progress.ts';
-	import type { DayBar } from '#lib/components/RunsInsights.svelte';
-	import type { GetStatsResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
+	import { dayBars, runCount } from '#lib/stats.ts';
 	import { relativeTime } from '#lib/when.ts';
 	import { filterFlags, filterOf, FilterOperator } from '#lib/listFilter.ts';
 	import { timestampDate } from '@bufbuild/protobuf/wkt';
@@ -35,8 +34,7 @@
 	import { heldLabel, loadHeld, markAllSeen, observeList, saveHeld, type ListedRun } from '#lib/heldRuns.ts';
 	import { registerProvider } from '#lib/palette/context.ts';
 	import { formatDuration } from '#lib/runDetail.ts';
-	import { setTitleBlock } from '#lib/sheet.svelte.ts';
-	import { isTerminal, statusLabel } from '#lib/status.ts';
+	import { isTerminal } from '#lib/status.ts';
 	import { pollWhileVisible } from '#lib/visibility.ts';
 	import { shortRunId } from '#lib/runDetail.ts';
 
@@ -71,21 +69,6 @@
 		return () => clearInterval(timer);
 	});
 	const nowStamp = $derived({ seconds: BigInt(Math.floor(nowMs / 1000)), nanos: 0 });
-
-	function dayBars(week: GetStatsResponse | null): DayBar[] {
-		return (week?.buckets ?? []).map((bucket) => {
-			const counts = bucket.runsByStatus;
-			const total = Number(Object.values(counts).reduce((sum, n) => sum + n, 0n));
-			const since = bucket.since ? new Date(Number(bucket.since.seconds) * 1000) : null;
-			return {
-				label: since ? since.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '',
-				day: since ? since.toLocaleDateString(undefined, { weekday: 'short' }) : '',
-				total,
-				failed: Number(counts.failed ?? 0n),
-				partial: bucket.partial
-			};
-		});
-	}
 
 	const sizeOptions = [10, 25, 50, 100].map((size) => ({ value: String(size), label: String(size) }));
 
@@ -237,12 +220,6 @@
 	});
 	const heldCount = $derived(data.runs.filter((r) => held.has(r.id)).length);
 
-	setTitleBlock(() => [
-		{ label: 'PAGE', value: 'Runs' },
-		{ label: 'NAMESPACE', value: namespaceLabel(data.namespace) },
-		{ label: 'FILTERS', value: data.applied.length ? String(data.applied.length) : 'none' },
-		{ label: 'SHOWING', value: `page ${data.page} · ${data.runs.length} ${data.runs.length === 1 ? 'run' : 'runs'}` }
-	]);
 
 	$effect(() =>
 		registerProvider({
@@ -363,10 +340,9 @@
 
 <svelte:head><title>Runs — OrkStack</title></svelte:head>
 
-{#snippet nsFact()}<b class="font-semibold text-ink">{ns}</b>{/snippet}
 {#snippet weekRuns()}
 	{#await data.insights.week}<span class="text-ink-3">…</span>{:then week}{#if week.value}{@const c = week.value.runsByStatus}<span data-testid="runs-week-count"
-				>{Number((c.succeeded ?? 0n) + (c.failed ?? 0n) + (c.canceled ?? 0n) + (c.running ?? 0n))} runs</span
+				>{runCount((c.succeeded ?? 0n) + (c.failed ?? 0n) + (c.canceled ?? 0n) + (c.running ?? 0n))}</span
 			>{:else}<span class="text-ink-3">—</span>{/if}{/await}
 {/snippet}
 
@@ -377,7 +353,6 @@
 			<div class="fline">
 				<FactsStrip
 					facts={[
-						{ label: 'Namespace', value: nsFact, testid: 'runs-fact-namespace' },
 						{ label: 'Last 7 days', value: weekRuns }
 					] satisfies Fact[]}
 				/>
@@ -441,7 +416,7 @@
 		<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
 			<h2 id="insights-h" class="insights-h">Last 7 days</h2>
 			{#await data.insights.week then week}{#if week.value?.computedAt}<span class="text-dense text-ink-3"
-						>namespace {ns} · measured <TimeAgo at={week.value.computedAt} /></span
+						>measured <TimeAgo at={week.value.computedAt} /></span
 					>{/if}{/await}
 			<button
 				type="button"
@@ -485,21 +460,21 @@
 			<Select variant="chip" testid="runs-chip-origin" label="Origin" value={equalityOf(data.applied, 'origin.kind') ?? ''} options={originOptions} onchange={(v) => void filterTo('origin.kind', v || null)} />
 			<!-- The table's head is hidden on a phone: this says, and sets, what its rows read in. -->
 			<span class="sort-chip"><Select variant="chip" testid="runs-sort" label="Sort" value={rowOrder} options={ROW_ORDERS} onchange={(v) => (rowOrder = v as RowOrder)} /></span>
-			<ListFilter request={ListRunsRequestSchema} applied={data.applied} testid="run" {command} onapply={applyFilters} {clearHref} cli={false} />
+			<ListFilter request={ListRunsRequestSchema} applied={data.applied} testid="run" onapply={applyFilters} {clearHref} />
 		</div>
 
 		{#if data.error}
 			<div class="p-4">
-				<ErrorPanel testid="engine-error" retryTestid="runs-retry" subject="the runs in namespace {ns}" message={data.error} busy={retrying} onretry={retry} />
+				<ErrorPanel testid="engine-error" retryTestid="runs-retry" subject="the runs" message={data.error} busy={retrying} onretry={retry} />
 			</div>
 		{:else if retrying}
 			<p class="px-4 py-6 text-sm text-ink-3" data-testid="runs-loading">Loading runs…</p>
 		{:else if data.runs.length === 0}
 			<p class="px-6 py-12 text-center text-dense text-ink-3" data-testid="runs-empty">
 				{#if data.applied.length > 0}
-					No runs match these filters in namespace {ns}.
+					No runs match these filters.
 				{:else}
-					No runs in namespace {ns} yet.
+					No runs yet.
 				{/if}
 			</p>
 		{:else}
@@ -509,7 +484,7 @@
 				</p>
 				{#if heldCount > 0}
 					<p data-testid="runs-held-summary" class="inline-flex items-center gap-1.5 text-ink">
-						<Icon name="delta" class="size-3.5 text-fail" />
+						<Icon name="updated" class="size-3.5 text-ink-2" />
 						{heldCount} {heldCount === 1 ? 'run' : 'runs'} changed since you last looked
 					</p>
 					<button type="button" data-testid="runs-held-clear" class="btn btn-sm" onclick={markAll}>Mark all seen</button>
@@ -545,12 +520,12 @@
 							>
 								<th scope="row" class="rid">
 									{#if from !== undefined}<span role="img" aria-label={heldLabel(from)} data-testid="run-row-held-{run.id}" class="mr-1.5 inline-flex align-middle text-fail"
-											><Icon name="delta" class="size-3.5" /></span
+											><Icon name="updated" class="size-3.5" /></span
 										>{/if}<a href={withNamespace(`/runs/${run.id}`, data.namespace)} data-tip={run.id} class="font-mono text-sm text-ink"
 										><span class="sr">{run.id}</span><span aria-hidden="true">{shortRunId(run.id)}</span></a
 									>
 								</th>
-								<td class="wf"><span class="font-semibold">{run.orkflowName}</span> <Plate key="version" value={run.orkflowVersion} small /></td>
+								<td class="wf"><span class="mb-1 block font-semibold">{run.orkflowName}</span><Plate key="version" value={run.orkflowVersion} small /></td>
 								<td>
 									<StatusPill {status} testid="run-row-status-{run.id}" />
 									{#if reason?.kind === 'fail'}

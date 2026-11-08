@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -113,6 +115,8 @@ func FuzzLoad_AValueTheFileSetsIsOneItsKindReads(f *testing.F) {
 		"temporal:\n  address: ' padded '\n", "temporal:\n  address: \"a\\0b\"\n", "orker:\n  max_concurrent: ' 5 '\n", "orker:\n  max_concurrent: 5\n",
 		"orker:\n  max_concurrent: '5.0'\n", "orker:\n  max_concurrent: abc\n", "temporal:\n  address: a\n  address: b\n",
 		"telemetry:\n  otlp:\n    headers:\n      A: b\n",
+		"temporal:\n  address: a:1\n---\ntemporal:\n  address: b:1\n", "temporal:\n  address: a:1\n---\ntemporal: [\n", "temporal:\n  address: a:1\n---\n\tx: 1\n",
+		"temporal:\n  address: a:1\n---\n", "---\ntemporal:\n  address: a:1\n", "temporal:\n  address: a:1\n...\n",
 	} {
 		f.Add([]byte(seed))
 	}
@@ -131,6 +135,13 @@ func FuzzLoad_AValueTheFileSetsIsOneItsKindReads(f *testing.F) {
 		}
 		for _, binary := range []Binary{BinaryOrk, BinaryOrker} {
 			doc, err := Load(path, binary)
+			if line, found := dsl.SecondDocumentLine(content); found {
+				want := fmt.Sprintf("line %d: a second YAML document begins here", line)
+				if err == nil || doc != nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("Load(%q) = %v, %v, want a refusal holding %q", content, doc, err, want)
+				}
+				continue
+			}
 			if err != nil {
 				if !strings.Contains(err.Error(), path) || doc != nil {
 					t.Fatalf("Load(%q, %s) refused as %q (document %v)", content, binary, err, doc)

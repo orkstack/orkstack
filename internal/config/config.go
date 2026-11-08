@@ -123,8 +123,8 @@ var Schema = []Var{
 	{Path: "storage.s3.endpoint", Env: "ORK_S3_ENDPOINT", Binaries: usesBoth, Kind: KindString, Default: artifacts.DefaultS3Endpoint},
 	{Path: "storage.s3.region", Env: "ORK_S3_REGION", Binaries: usesBoth, Kind: KindString, Default: artifacts.DefaultS3Region},
 	{Path: "storage.s3.bucket", Env: "ORK_S3_BUCKET", Binaries: usesBoth, Kind: KindString, Default: artifacts.DefaultS3Bucket},
-	{Path: "storage.s3.access_key", Env: "ORK_S3_ACCESS_KEY", Binaries: usesBoth, Kind: KindSecret, Secret: true, Default: artifacts.DefaultS3AccessKey},
-	{Path: "storage.s3.secret_key", Env: "ORK_S3_SECRET_KEY", Binaries: usesBoth, Kind: KindSecret, Secret: true, Default: artifacts.DefaultS3SecretKey},
+	{Path: "storage.s3.access_key", Env: "ORK_S3_ACCESS_KEY", Binaries: usesBoth, Kind: KindSecret, Secret: true, Default: EmptyDefault, DerivedNote: "set with secret_key; empty uses the default credential chain, such as an instance or pod role"},
+	{Path: "storage.s3.secret_key", Env: "ORK_S3_SECRET_KEY", Binaries: usesBoth, Kind: KindSecret, Secret: true, Default: EmptyDefault, DerivedNote: "set with access_key; empty uses the default credential chain, such as an instance or pod role"},
 	{Path: "storage.s3.session_token", Env: "ORK_S3_SESSION_TOKEN", Binaries: usesBoth, Kind: KindSecret, Secret: true, Default: EmptyDefault, DerivedNote: "for temporary credentials"},
 	{Path: "storage.s3.path_style", Env: "ORK_S3_PATH_STYLE", Binaries: usesBoth, Kind: KindBool, Default: formatBool(artifacts.DefaultS3PathStyle)},
 

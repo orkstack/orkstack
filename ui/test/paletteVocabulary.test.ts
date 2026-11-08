@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
-import { BUILD_PAGES, OPERATE_PAGES, operateScope } from '../src/lib/navigation';
+import { BUILD_PAGES, OPERATE_PAGES } from '../src/lib/navigation';
 import { namespaceCommands, openRunCommand, pageCommands, themeCommands } from '../src/lib/palette/commands';
 
 // The words the new shell puts in front of a person (AGENTS.md §7, and the
@@ -82,13 +82,10 @@ test('no static palette command says a banned word', () => {
 	expect(found).toEqual([]);
 });
 
-test('no page name, mode or title-block label says a banned word', () => {
+test('no page name or mode says a banned word', () => {
 	const words = [
 		...BUILD_PAGES.flatMap((p) => [p.label, p.title]),
-		...OPERATE_PAGES.flatMap((p) => [p.label, p.title, operateScope(p.id)]),
-		'PAGE',
-		'NAMESPACE',
-		'SCOPE',
+		...OPERATE_PAGES.flatMap((p) => [p.label, p.title]),
 		'Build',
 		'Operate'
 	];
@@ -115,7 +112,6 @@ test('the shell and its new components render no banned word', () => {
 		'lib/components/TaskMapLegend.svelte',
 		'lib/components/DrawingFrame.svelte',
 		'lib/components/RevisionCloud.svelte',
-		'lib/components/VersionTable.svelte',
 		// Stage 3: the authoring sheets' new component.
 		'lib/components/CountCell.svelte'
 	];

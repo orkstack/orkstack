@@ -1,12 +1,18 @@
 name: proof
 
-# The full proof, sharded across runners. `proof` is the single required
-# check: it passes only when every part of this run merged into one
+# The full proof, sharded across runners. `proof` is the required check of
+# the proof: it passes only when every part of this run merged into one
 # merge-eligible proof.json (docs/PROOFS.md).
 #
 # It runs the real proof on a pull request (the queue-less default, AGENTS.md
 # §11.3) and, when an organization-owned repository enables the merge queue,
 # on the merge group too. A push to validate/full/** runs it on a candidate.
+#
+# A Dependabot pull request waits for the ci:proof label: until someone adds it,
+# every job here skips and `proof` fails, so the required check is never passed.
+# It is never `labeled` here, because a label event of any pull request would
+# land in the concurrency group below, cancel its running proof and report the
+# required check again. proof-label.yml starts the proof on that one event.
 
 on:
   pull_request:
@@ -48,6 +54,11 @@ on:
       # attempt that uploaded it (release.yml › verify and publish).
       proof_artifact:
         value: ${{ jobs.proof.outputs.proof_artifact }}
+      # The proof's own verdict, for a caller that reports a check from it
+      # (proof-label.yml): the called job's result is not it, because an excused
+      # runner-size miss leaves a shard red while the proof passes.
+      proof_verdict:
+        value: ${{ jobs.proof.outputs.verdict }}
 
 concurrency:
   # Only pull requests share a group, so a newer push supersedes an older
@@ -69,7 +80,7 @@ env:
 
 jobs:
   base:
-    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
@@ -124,7 +135,7 @@ jobs:
 
   plan:
     needs: base
-    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     permissions:
@@ -189,7 +200,7 @@ jobs:
 
   build:
     needs: [base, plan]
-    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     permissions:
@@ -243,7 +254,7 @@ jobs:
 
   fast:
     needs: base
-    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 65
     permissions:
@@ -330,7 +341,7 @@ jobs:
     # runs nothing of the repository, and alone holds actions: write. The
     # proof job still runs, on always(), and fails (docs/PROOFS.md §5).
     needs: fast
-    if: ${{ !cancelled() && needs.fast.result == 'failure' && needs.fast.outputs.failed_gate == 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ !cancelled() && needs.fast.result == 'failure' && needs.fast.outputs.failed_gate == 'true' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 6
     permissions:
@@ -352,7 +363,7 @@ jobs:
     # The unit suites under the race detector (-short), on a runner of their
     # own: the race gate of the full and release tiers (docs/PROOFS.md §2.3).
     needs: base
-    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 80
     permissions:
@@ -389,7 +400,7 @@ jobs:
     # under the race detector, several times in one run, to catch a race that
     # one run in several exposes (docs/PROOFS.md §2.3).
     needs: base
-    if: ${{ inputs.tier == 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ inputs.tier == 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 185
     permissions:
@@ -428,7 +439,7 @@ jobs:
     # A crasher fails the part and is kept in its artifact, under crashers/
     # (docs/PROOFS.md §2.3).
     needs: base
-    if: ${{ inputs.tier == 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ inputs.tier == 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 160
     permissions:
@@ -462,7 +473,7 @@ jobs:
 
   integration:
     needs: [base, plan, build]
-    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 155
     permissions:
@@ -532,7 +543,7 @@ jobs:
     # Every tier's UI plan names its shards: the nightly tier's hold only the
     # spec files scripts/proof-nightly-specs.txt lists, and none when it lists
     # none.
-    if: ${{ needs.plan.outputs.ui_matrix != '[]' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ needs.plan.outputs.ui_matrix != '[]' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     # Its steps' limits sum to 110 (the host Chromium's is 10): the job ends
     # them, never the other way round.
@@ -680,7 +691,7 @@ jobs:
 
   activity-fixture:
     needs: [base, plan, build]
-    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ inputs.tier != 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
@@ -741,7 +752,7 @@ jobs:
 
   observability:
     needs: [base, plan, build]
-    if: ${{ (needs.plan.outputs.observability == 'true' || inputs.tier == 'release') && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
+    if: ${{ (needs.plan.outputs.observability == 'true' || inputs.tier == 'release') && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 75
     permissions:
@@ -830,8 +841,9 @@ jobs:
       checks: read
     outputs:
       proof_artifact: proof-${{ github.run_id }}-a${{ github.run_attempt }}
+      verdict: ${{ steps.verdict.outcome }}
     steps:
-      - name: draft and private-repository guard
+      - name: draft, Dependabot and private-repository guard
         if: github.event_name == 'pull_request'
         timeout-minutes: 1
         shell: bash
@@ -839,9 +851,14 @@ jobs:
           DRAFT: ${{ github.event.pull_request.draft }}
           PRIVATE: ${{ github.event.repository.private }}
           LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
         run: |
           if [ "$DRAFT" = "true" ]; then
             echo "a draft runs no full proof; mark it ready for review" >&2
+            exit 1
+          fi
+          if [ "$AUTHOR" = "dependabot[bot]" ] && [[ ",$LABELS," != *",ci:proof,"* ]]; then
+            echo "a Dependabot pull request runs its full proof only with the ci:proof label; add it, and the proof starts" >&2
             exit 1
           fi
           if [ "$PRIVATE" = "true" ] && [[ ",$LABELS," != *",ci:proof,"* ]]; then
@@ -1024,6 +1041,7 @@ jobs:
           path: ${{ runner.temp }}/ci/proof
           retention-days: ${{ github.event.repository.private && 30 || 90 }}
       - name: verdict
+        id: verdict
         timeout-minutes: 5
         shell: bash
         run: |

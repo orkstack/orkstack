@@ -707,17 +707,15 @@ func (j *joinE2E) killUnderRollback(runID string, workers map[string]worker.Work
 // killedAttemptRecord is a record an in-process Orker may still write for the
 // attempt a kill took from it. The kill closes the Orker's client, so nothing
 // reaches the cluster, but the dispatcher still finishes the attempt, and the
-// record says which of the kill's two steps reached it first: CANCELED when a
-// heartbeat failed on the closed client, FAILED with ORKER_STOPPED when the
-// worker's Stop did.
+// record says which of the kill's two steps reached it first: FAILED with
+// ORKER_HEARTBEAT_LOST when a heartbeat failed on the closed client, FAILED with
+// ORKER_STOPPED when the worker's Stop did.
 func killedAttemptRecord(r *orkstackv1.TaskAttempt) bool {
-	switch r.GetOutcome() {
-	case orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_CANCELED:
-		return r.GetError() == nil
-	case orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED:
-		return r.GetError().GetCode() == orker.ReasonOrkerStopped
+	if r.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED {
+		return false
 	}
-	return false
+	code := r.GetError().GetCode()
+	return code == orker.ReasonOrkerStopped || code == orker.ReasonHeartbeatLost
 }
 
 // heartbeatRetry returns taskID's first retried ActivityTaskStarted: its

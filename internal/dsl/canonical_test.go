@@ -427,11 +427,37 @@ func TestCanonicalNumber_RendersWithoutExponentOrFraction(t *testing.T) {
 	}
 }
 
-func TestDerivedVersion_CoversBothSourceAndResolution(t *testing.T) {
+// TestContentHash_IsFrozen holds the formula to the value every earlier release
+// computed, and to a recomputation by hand. A derived version already stored is
+// its document's content hash, and FindDerivedVersion looks it up by that name,
+// so changing what goes in would make each re-apply of such a document a new
+// version rather than the no-op it is.
+func TestContentHash_IsFrozen(t *testing.T) {
+	source := []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks: []\n")
+	wf := goldenOrkflow(t)
+	got, err := ContentHash(source, wf)
+	if err != nil {
+		t.Fatalf("hash: %v", err)
+	}
+	images, err := canonicalImages(wf)
+	if err != nil {
+		t.Fatalf("images: %v", err)
+	}
+	sum := sha256.Sum256(append(append(append([]byte(nil), source...), 0x1F), images...))
+	if want := hex.EncodeToString(sum[:]); got != want {
+		t.Fatalf("ContentHash = %s, want sha256(source || 0x1F || images) = %s", got, want)
+	}
+	const frozen = "e5f0806985c4cef65fc97d43c63d92ba0a92450bf00bdfa0707eaf1aa54c38c2"
+	if got != frozen {
+		t.Fatalf("ContentHash = %s, want the frozen %s", got, frozen)
+	}
+}
+
+func TestContentHash_CoversBothSourceAndResolution(t *testing.T) {
 	source := []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks: []\n")
 	wf := goldenOrkflow(t)
 
-	base, err := DerivedVersion(source, wf)
+	base, err := ContentHash(source, wf)
 	if err != nil {
 		t.Fatalf("derive: %v", err)
 	}
@@ -443,7 +469,7 @@ func TestDerivedVersion_CoversBothSourceAndResolution(t *testing.T) {
 		// hash.go settled this: the source bytes are hashed in full, so a
 		// cosmetic edit is a version. Two notions of "the same document" in
 		// one system is one too many.
-		got, err := DerivedVersion([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks: []\n# a comment\n"), wf)
+		got, err := ContentHash([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks: []\n# a comment\n"), wf)
 		if err != nil {
 			t.Fatalf("derive: %v", err)
 		}
@@ -455,7 +481,7 @@ func TestDerivedVersion_CoversBothSourceAndResolution(t *testing.T) {
 	t.Run("a moved tag mints a new version for identical source", func(t *testing.T) {
 		moved := goldenOrkflow(t)
 		moved.Tasks[0].Image.IndexDigest = "sha256:" + strings.Repeat("ef", 32)
-		got, err := DerivedVersion(source, moved)
+		got, err := ContentHash(source, moved)
 		if err != nil {
 			t.Fatalf("derive: %v", err)
 		}
@@ -466,7 +492,7 @@ func TestDerivedVersion_CoversBothSourceAndResolution(t *testing.T) {
 	})
 
 	t.Run("identical source and identical resolution is idempotent", func(t *testing.T) {
-		got, err := DerivedVersion(source, goldenOrkflow(t))
+		got, err := ContentHash(source, goldenOrkflow(t))
 		if err != nil {
 			t.Fatalf("derive: %v", err)
 		}
@@ -607,7 +633,7 @@ func TestCanonicalInputLine_IsOneSortedCompactLine(t *testing.T) {
 // form cannot hash it. Two resolutions of one document — through Inspect
 // against a labelled image, and by stamping the very same ImageRef with no
 // resolver at all — therefore produce one DefinitionDigest and one
-// DerivedVersion, and the canonical bytes carry nothing of the label.
+// ContentHash, and the canonical bytes carry nothing of the label.
 //
 // (A labelled and an unlabelled image cannot share an index digest — the
 // label lives in the config the index addresses — so "the same resolution
@@ -644,7 +670,7 @@ func TestDefinitionDigest_IgnoresTheInterface(t *testing.T) {
 		fn   func(*orkstackv1.Orkflow) (string, error)
 	}{
 		{"DefinitionDigest", DefinitionDigest},
-		{"DerivedVersion", func(wf *orkstackv1.Orkflow) (string, error) { return DerivedVersion(source, wf) }},
+		{"ContentHash", func(wf *orkstackv1.Orkflow) (string, error) { return ContentHash(source, wf) }},
 	} {
 		a, err := pair.fn(labelled)
 		if err != nil {
@@ -749,11 +775,11 @@ func TestCanonicalOrkflow_JoinEmittedOnlyWhenSet(t *testing.T) {
 	}
 }
 
-// TestDerivedVersion_TheHeaderIsPartOfTheVersion: the header is part of the
+// TestContentHash_TheHeaderIsPartOfTheVersion: the header is part of the
 // source, so moving or reformatting it changes the derived version like any
 // other edit. The expectation is the base formula, computed inline, over the
 // source as written.
-func TestDerivedVersion_TheHeaderIsPartOfTheVersion(t *testing.T) {
+func TestContentHash_TheHeaderIsPartOfTheVersion(t *testing.T) {
 	wf := goldenOrkflow(t)
 	images, err := canonicalImages(wf)
 	if err != nil {
@@ -772,7 +798,7 @@ func TestDerivedVersion_TheHeaderIsPartOfTheVersion(t *testing.T) {
 	bare := body
 	got := map[string]string{}
 	for name, source := range map[string]string{"with the header": with, "the header after a comment": moved, "without the header": bare} {
-		version, err := DerivedVersion([]byte(source), wf)
+		version, err := ContentHash([]byte(source), wf)
 		if err != nil {
 			t.Fatal(err)
 		}

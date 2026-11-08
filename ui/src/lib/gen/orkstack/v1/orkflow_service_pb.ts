@@ -145,6 +145,11 @@ export const ValidateOrkflowRequestSchema: GenMessage<ValidateOrkflowRequest> = 
  */
 export type ValidateOrkflowResponse = Message<"orkstack.v1.ValidateOrkflowResponse"> & {
   /**
+   * orkflow is the document as apply would store it. For a document that pins
+   * no version, version and definition_digest are those of the version its
+   * content already has, and empty when that content was never applied: the
+   * version is assigned by the apply that stores it.
+   *
    * @generated from field: orkstack.v1.Orkflow orkflow = 1;
    */
   orkflow?: Orkflow | undefined;
@@ -883,6 +888,9 @@ export type PlanRunResponse = Message<"orkstack.v1.PlanRunResponse"> & {
   orkflowName: string;
 
   /**
+   * orkflow_version is the version planned, empty for a file that pins none and
+   * whose content was never applied. definition_digest is then empty too.
+   *
    * @generated from field: string orkflow_version = 2;
    */
   orkflowVersion: string;

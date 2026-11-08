@@ -336,10 +336,6 @@ func (s *S3OrkflowStore) Delete(ctx context.Context, namespace, name string) err
 			return fmt.Errorf("artifacts: delete orkflow pointer %q: %w", s.uri(key), err)
 		}
 	}
-	if !found {
-		return fmt.Errorf("artifacts: delete orkflow %q in namespace %q: %w",
-			name, namespace, ErrNotFound)
-	}
 
 	for _, wf := range scan.versions {
 		key, err := OrkflowKey(namespace, name, wf.GetVersion())
@@ -353,6 +349,22 @@ func (s *S3OrkflowStore) Delete(ctx context.Context, namespace, name string) err
 		}); err != nil {
 			return fmt.Errorf("artifacts: delete orkflow version %q: %w", s.uri(key), err)
 		}
+	}
+	// The claims go last, so a delete that fails part way still maps a document
+	// to the versions that remain, and re-applying it lands on one of them. A
+	// claim with nothing else stored (its apply never landed, or an earlier
+	// delete stopped here) is cleaned up too, and the orkflow is still not found.
+	for _, key := range scan.claimKeys {
+		if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
+			Bucket: aws.String(s.bucket),
+			Key:    aws.String(key),
+		}); err != nil {
+			return fmt.Errorf("artifacts: delete derived claim %q: %w", s.uri(key), err)
+		}
+	}
+	if !found {
+		return fmt.Errorf("artifacts: delete orkflow %q in namespace %q: %w",
+			name, namespace, ErrNotFound)
 	}
 	return nil
 }

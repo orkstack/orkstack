@@ -41,6 +41,10 @@ type TemporalStarter struct {
 	// the start, so it is off until a boot says otherwise.
 	namespaceIndexed bool
 
+	// rootIndexed reports that this cluster has OrkflowOriginRootRunId
+	// (task.EnsureRunRootSearchAttribute). StartRun starts no run with a root,
+	// so this only decides what a plan asks of a child start (RootIndexAnswer).
+	rootIndexed bool
 	// originIndexed reports that this cluster has the OrkflowOriginKind and
 	// OrkflowOriginId search attributes (task.EnsureRunOriginSearchAttributes).
 	// It is a separate answer from namespaceIndexed: a cluster may have
@@ -91,6 +95,15 @@ func (s *TemporalStarter) WithNamespaceIndex(indexed bool) *TemporalStarter {
 	return s
 }
 
+// WithRootIndex records whether the cluster indexes a run's root.
+func (s *TemporalStarter) WithRootIndex(indexed bool) *TemporalStarter {
+	s.rootIndexed = indexed
+	return s
+}
+
+// RootIndexAnswer reports the boot answer a plan pins for its child starts.
+func (s *TemporalStarter) RootIndexAnswer() bool { return s.rootIndexed }
+
 // WithOriginIndex records whether the cluster indexes a run's origin
 // (task.EnsureRunOriginSearchAttributes), on the terms WithNamespaceIndex
 // records the namespace answer.
@@ -124,7 +137,7 @@ func (s *TemporalStarter) WithClusterIdentity(namespace, identity string) *Tempo
 // built-in "main"). The stored document is untouched.
 //
 // The three start policies make the run id single use for all time, which is
-// the half of run identity that entropy cannot provide (see RunIDGenerator):
+// the half of run identity that entropy cannot provide (see NewRunID):
 //
 //   - REJECT_DUPLICATE refuses an id a finished run already used;
 //   - CONFLICT_POLICY_FAIL refuses an id a running run already holds;
@@ -186,6 +199,9 @@ func RunStartMemo(wf *orkstackv1.Orkflow, plan RunPlan) map[string]any {
 	if originSlug, ok := artifacts.OriginKindSlug(plan.Origin.Proto().GetKind()); ok {
 		memo[MemoOriginKind] = originSlug
 		memo[MemoOriginID] = plan.Origin.ID
+		if plan.Origin.RootRunID != "" {
+			memo[MemoOriginRootRunID] = plan.Origin.RootRunID
+		}
 	}
 	return memo
 }
@@ -217,6 +233,11 @@ func RunStartSearchAttributes(
 		attrs = append(attrs,
 			task.SearchKeyOrkflowOriginKind.ValueSet(originSlug),
 			task.SearchKeyOrkflowOriginID.ValueSet(plan.Origin.ID))
+	}
+	// The plan's own answer, not an argument: only a child start gets here with
+	// a root, and it reads this from the plan its parent pinned.
+	if plan.RootRunIndexed && plan.Origin != nil && plan.Origin.RootRunID != "" {
+		attrs = append(attrs, task.SearchKeyOrkflowOriginRootRunID.ValueSet(plan.Origin.RootRunID))
 	}
 	return attrs
 }

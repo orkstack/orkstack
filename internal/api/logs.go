@@ -183,7 +183,29 @@ func (q TaskLogQuery) item() artifacts.Item { return artifacts.ItemOf(q.Item) }
 // exactly the tasks whose output a reader most wants. So while the current
 // attempt is silent the latest is re-read, and a later one is switched to and
 // delivered from its first chunk.
+//
+// A replica that stops before `last` answers Unavailable, so the caller reads
+// the rest from another (stoppedShort).
 func (s *Service) StreamRunTaskLogs(
+	ctx context.Context,
+	q TaskLogQuery,
+	send func(*orkstackv1.TaskLogChunk) error,
+) error {
+	finished := false
+	err := s.streamRunTaskLogs(ctx, q, func(chunk *orkstackv1.TaskLogChunk) error {
+		if err := send(chunk); err != nil {
+			return err
+		}
+		finished = finished || chunk.GetLast()
+		return nil
+	})
+	if finished {
+		return err
+	}
+	return stoppedShort(ctx, fmt.Sprintf("read logs of task %q in run %q", q.TaskID, q.RunID), err)
+}
+
+func (s *Service) streamRunTaskLogs(
 	ctx context.Context,
 	q TaskLogQuery,
 	send func(*orkstackv1.TaskLogChunk) error,
@@ -278,6 +300,11 @@ func (s *Service) StreamRunTaskLogs(
 		delivered, err := s.drainLogChunks(ctx, ref, &cursor, send)
 		if err != nil {
 			return err
+		}
+		if ctx.Err() != nil {
+			// The sweep may have stopped short, so nothing here may say the
+			// log is complete.
+			return nil
 		}
 		if terminal || !q.Follow {
 			// terminal: everything the task wrote is durable (the sink closes

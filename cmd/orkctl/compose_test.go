@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -256,5 +257,25 @@ func TestRunTiming_ComposedRowIsLabelledChild(t *testing.T) {
 	}
 	if strings.Contains(got.stdout, "  release  waited for an Orker") {
 		t.Fatalf("a composed task listed attempts:\n%s", got.stdout)
+	}
+}
+
+// A child read that fails without a server's answer (the connection itself
+// failed) says that no answer came, never an "unknown" code.
+func TestRenderRunTree_AReadWithNoServerAnswerSaysSo(t *testing.T) {
+	parent, _, _ := composedRuns("team-a")
+	var out strings.Builder
+	read := func(string, string) (*orkstackv1.Run, error) {
+		return nil, errors.New("dial tcp 127.0.0.1:8080: connect: connection refused")
+	}
+	if err := renderRunTree(&out, parent, read, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	want := "release → " + composedChildID + ": unavailable (no answer: dial tcp 127.0.0.1:8080: connect: connection refused)"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("tree does not say no answer came:\nwant %q\ngot:\n%s", want, out.String())
+	}
+	if strings.Contains(out.String(), "unknown") {
+		t.Fatalf("tree still says unknown:\n%s", out.String())
 	}
 }

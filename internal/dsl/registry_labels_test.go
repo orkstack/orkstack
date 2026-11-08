@@ -1,8 +1,11 @@
 package dsl
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"math"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode"
@@ -151,16 +154,59 @@ func TestReadLabels_AReasonQuotesNothingATerminalWouldObey(t *testing.T) {
 
 // TestSafeReason_ReadsNoFurtherThanItsBound: a reason of 4 MiB — the most
 // a registry's error body may be — costs what its first 512 bytes do, not
-// a piece per character of the whole.
+// a piece per character of the whole. The bodies are the shapes that cost it
+// most: a piece that allocates for every two bytes read, and an escape for
+// every byte.
 func TestSafeReason_ReadsNoFurtherThanItsBound(t *testing.T) {
-	for _, body := range []string{strings.Repeat("x", 4<<20), strings.Repeat("\x1b", 4<<20)} {
+	for _, body := range []string{
+		strings.Repeat("x", 4<<20),
+		strings.Repeat("\x1b", 4<<20),
+		strings.Repeat("\xff", 4<<20),
+		strings.Repeat("é", 2<<20),
+		strings.Repeat("日", 1<<20),
+		strings.Repeat("\U000e0041", 1<<20),
+	} {
 		var got string
 		allocs := testing.AllocsPerRun(1, func() { got = SafeReason(body) })
-		if allocs > 2000 {
+		if allocs > 1000 {
 			t.Fatalf("SafeReason of %d bytes made %.0f allocations: it read past its bound", len(body), allocs)
 		}
 		if len(got) > maxReasonBytes || !strings.HasSuffix(got, "…") {
 			t.Fatalf("SafeReason of %d bytes is %d bytes ending %q", len(body), len(got), got[len(got)-8:])
+		}
+	}
+}
+
+// TestSafeBodyReason_CopiesOnlyWhatItReads: a registry's 4 MiB error body is
+// not copied to be cut to 512 bytes. The measure is bytes allocated, the least
+// of a few calls, so a collector or a stray goroutine cannot fail it.
+func TestSafeBodyReason_CopiesOnlyWhatItReads(t *testing.T) {
+	body := bytes.Repeat([]byte("x"), 4<<20)
+	least := uint64(math.MaxUint64)
+	for range 5 {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		_ = safeBodyReason(body)
+		runtime.ReadMemStats(&after)
+		least = min(least, after.TotalAlloc-before.TotalAlloc)
+	}
+	if least > 64<<10 {
+		t.Fatalf("safeBodyReason of %d bytes allocated %d bytes", len(body), least)
+	}
+}
+
+// TestSafeBodyReason_IsSafeReasonOfTheTrimmedBody: the prefix it reads changes
+// nothing, at and around where it cuts, whichever character stands there.
+func TestSafeBodyReason_IsSafeReasonOfTheTrimmedBody(t *testing.T) {
+	bodies := []string{"", "  \n", " not found\n", "\x1b]0;x\x07 denied\r\n", strings.Repeat(" ", 2000) + "x" + strings.Repeat("\t", 2000)}
+	for _, fill := range []string{"a", "é", "日", "\U0001F600", "\x1b", "\xff", "\u202e"} {
+		for n := 500; n < 530; n++ {
+			bodies = append(bodies, strings.Repeat("a", n%len(fill)+1)+strings.Repeat(fill, n/len(fill)+1))
+		}
+	}
+	for _, body := range bodies {
+		if got, want := safeBodyReason([]byte(body)), SafeReason(strings.TrimSpace(body)); got != want {
+			t.Errorf("safeBodyReason(%.40q…) = %q, want %q", body, got, want)
 		}
 	}
 }

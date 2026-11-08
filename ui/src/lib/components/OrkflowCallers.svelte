@@ -4,7 +4,7 @@
 	// words. It is read here, on mount and when "every version" changes, not
 	// in the page loader: the engine answers it with a scan of the namespace,
 	// which not every tab should pay for (docs/UI_CLI_PARITY.md "Interface compatibility").
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import { shortVersion } from '#lib/version.ts';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { orkflowClient } from '#lib/clients/orkflows.ts';
@@ -17,14 +17,23 @@
 		pinsLabel
 	} from '#lib/compat.ts';
 	import { OrkflowCallerKind, type ListOrkflowCallersResponse } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
-	import { namespaceLabel } from '#lib/namespace.ts';
 
 	interface Props {
 		name: string;
 		namespace: string;
+		/** This panel's command, read by the page for its one terminal icon. */
+		command?: string;
 	}
 
-	let { name, namespace }: Props = $props();
+	let { name, namespace, command = $bindable('') }: Props = $props();
+
+	// The page's one terminal icon lists it, carrying the toggle below.
+	$effect(() => {
+		command = callersCommand(namespace, name, allVersions);
+		return () => {
+			command = '';
+		};
+	});
 
 	let allVersions = $state(false);
 	let loading = $state(true);
@@ -81,11 +90,6 @@
 				Include every version of each Orkflow
 			</label>
 		</div>
-		<CliEquivalent
-			command={callersCommand(namespace, name, allVersions)}
-			testid="callers-cli"
-			label="List the callers of {name} from the CLI"
-		/>
 	</div>
 
 	{#if loading}
@@ -94,20 +98,19 @@
 		<ErrorPanel
 			testid="callers-error"
 			retryTestid="callers-retry"
-			subject="the callers of {name} in namespace {namespaceLabel(namespace)}"
+			subject="the callers of {name}"
 			message={error}
 			onretry={load}
 		/>
 	{:else if response}
 		{#if response.storedVersions === 0}
 			<p data-testid="callers-deleted" class="mb-3 text-sm text-ink-secondary">
-				No version of {name} is stored in namespace {namespaceLabel(namespace)}; these still reference it.
+				No version of {name} is stored; these still reference it.
 			</p>
 		{/if}
 		{#if response.callers.length === 0}
 			<p data-testid="callers-empty" class="text-sm text-ink-muted">
-				Nothing in namespace {namespaceLabel(namespace)} references {name}: no Orkflow composes it and
-				no trigger or schedule starts it.
+				Nothing references {name}: no Orkflow composes it and no trigger or schedule starts it.
 			</p>
 		{:else}
 			<div class="overflow-x-auto border-t-2 border-ink">
@@ -136,7 +139,7 @@
 								</td>
 								<td class="text-ink-secondary">
 									{caller.callerVersion
-										? `${caller.callerVersion}${response.allVersions && caller.callerVersionIsCurrent ? '*' : ''}`
+										? `${shortVersion(caller.callerVersion)}${response.allVersions && caller.callerVersionIsCurrent ? '*' : ''}`
 										: '—'}
 								</td>
 								<td class="font-mono text-xs text-ink-secondary"

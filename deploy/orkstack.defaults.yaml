@@ -38,8 +38,8 @@ storage:
     endpoint: http://localhost:9000
     region: us-east-1
     bucket: orkstack-artifacts
-    access_key: orkstack
-    secret_key: orkstack-secret
+    access_key: ""  # set with secret_key; empty uses the default credential chain, such as an instance or pod role
+    secret_key: ""  # set with access_key; empty uses the default credential chain, such as an instance or pod role
     session_token: ""  # for temporary credentials
     path_style: true
 

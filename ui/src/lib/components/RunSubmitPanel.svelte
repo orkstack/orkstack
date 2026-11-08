@@ -13,6 +13,7 @@
 	// component reports the new run's id through `onsubmitted` and never
 	// navigates, which is why the identical component works both as the
 	// Orkflow page's "Submit a run" dialog and as the run page's "Run again".
+	import { shortVersion } from '#lib/version.ts';
 	import { untrack } from 'svelte';
 	import { page } from '$app/state';
 	import { create } from '@bufbuild/protobuf';
@@ -252,7 +253,7 @@ import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	}
 
 	function currentVersionLabel() {
-		return versions.find((entry) => entry.isCurrent)?.version ?? selectedOrkflow?.version ?? '…';
+		return shortVersion(versions.find((entry) => entry.isCurrent)?.version ?? selectedOrkflow?.version ?? '…');
 	}
 
 	const chosenVersion = $derived(selectedVersion === CURRENT ? '' : selectedVersion);
@@ -262,7 +263,7 @@ import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 		{ value: CURRENT, label: `Current (${currentVersionLabel()}) — resolves when submitted` },
 		...versions.map((version) => ({
 			value: version.version,
-			label: `${version.version}${version.isCurrent ? ' — current' : ''}${version.description ? ` — ${version.description}` : ''}`
+			label: `${shortVersion(version.version)}${version.isCurrent ? ' — current' : ''}${version.description ? ` — ${version.description}` : ''}`
 		}))
 	]);
 	const cliParsedInput = $derived(parseInputObject(inputsJson));
@@ -417,7 +418,7 @@ import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 		>
 			<span class="caps shrink-0 text-ink-muted">Note</span>
 			<span><strong>Reviewing a new run from {replayFromRunId}.</strong>
-			It starts {orkflowName}@{chosenVersion || currentVersionLabel()} with that run’s input. Submitting
+			It starts {orkflowName}@{chosenVersion ? shortVersion(chosenVersion) : currentVersionLabel()} with that run’s input. Submitting
 			creates a new run and does not reuse its idempotency key.</span>
 		</section>
 	{/if}
@@ -434,7 +435,7 @@ import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 		/>
 		<p data-testid="run-submit-version-mode" class="text-xs text-ink-muted">
 			{chosenVersion
-				? `Pinned explicitly to ${chosenVersion}.`
+				? `Pinned explicitly to ${shortVersion(chosenVersion)}.`
 				: `Current pointer (${currentVersionLabel()}) will be resolved by the engine.`}
 		</p>
 	</div>
@@ -619,7 +620,7 @@ import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	{/if}
 
 	{#if hold}
-		<HoldBanner namespace={namespaceLabel(namespace)} {hold} testid="submit-hold-banner" />
+		<HoldBanner namespace={namespaceLabel(namespace)} {hold} testid="submit-hold-banner" cli />
 	{/if}
 
 	<div class="flex flex-wrap items-center justify-between gap-3">

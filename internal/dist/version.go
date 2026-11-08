@@ -35,6 +35,19 @@ func ParseVersion(s string) (Version, error) {
 	return v, nil
 }
 
+var commitPattern = regexp.MustCompile(`^([0-9a-f]{40}|[0-9a-f]{64})$`)
+
+// ParseCommit accepts a whole revision as `git rev-parse HEAD` prints it, SHA-1
+// or SHA-256. A release is stamped with it (Target.BuildArgs), so what a
+// published binary reports names one commit, and nothing but lowercase hex
+// reaches the linker's flags.
+func ParseCommit(s string) (string, error) {
+	if !commitPattern.MatchString(s) {
+		return "", fmt.Errorf("commit %q is not a whole revision, as `git rev-parse HEAD` prints it", s)
+	}
+	return s, nil
+}
+
 // String is the version as a tag: "v1.2.3".
 func (v Version) String() string {
 	return fmt.Sprintf("v%d.%d.%d", v.Major, v.Minor, v.Patch)

@@ -15,7 +15,7 @@ import (
 // rather than derived from the map under test, so a code that lost its row
 // fails here instead of silently agreeing with itself.
 var allReasonCodes = []string{
-	ReasonContainerExitNonzero, ReasonContainerTimeout, ReasonRuntimeRefused,
+	ReasonContainerExitNonzero, ReasonContainerTimeout, ReasonRuntimeRefused, ReasonContainerStoppedByRuntime,
 	ReasonWorkspaceNotBindable, ReasonWorkdirNotBindable, ReasonImagePullFailed,
 	ReasonImageDigestMismatch, ReasonImageNotPinned, ReasonValuesMissing,
 	ReasonValuesMalformed, ReasonValuesTooLarge, ReasonArtifactNotAFile,
@@ -26,7 +26,7 @@ var allReasonCodes = []string{
 	ReasonCommitSchema, ReasonCommitIdentity, ReasonCommitUndecodable,
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonCommitStoreUnavailable, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused, ReasonResourceAdmissionMismatch,
-	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped,
+	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped, ReasonHeartbeatLost,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
@@ -64,6 +64,8 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"a workload that timed out once would time out again on the same wall clock (§8.1)"},
 		{ReasonRuntimeRefused, CategoryInfrastructureError, true,
 			"the container never ran; the host may be fine next attempt"},
+		{ReasonContainerStoppedByRuntime, CategoryInfrastructureError, true,
+			"its daemon or someone using it stopped the container; the workload did not end on its own"},
 		{ReasonWorkspaceNotBindable, CategoryInfrastructureError, false,
 			"a host misconfiguration retrying cannot fix"},
 		{ReasonCommitNotConditional, CategoryInfrastructureError, false,
@@ -100,6 +102,8 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"the daemon refused the bind, in its own words: a host fact a restart does not change"},
 		{ReasonRunAsOrkerUnavailable, CategoryInfrastructureError, false,
 			"the boot probe found the host maps the Orker's uid elsewhere; the next attempt on this Orker meets the same host"},
+		{ReasonHeartbeatLost, CategoryInfrastructureError, true,
+			"the cluster did not answer in time; nothing about the workload, and the next attempt may find it answering"},
 		{ReasonOrkerStopped, CategoryInfrastructureError, true,
 			"the host went away, not the workload: what the heartbeat timeout it stands beside says"},
 	}

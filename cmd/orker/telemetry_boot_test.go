@@ -59,24 +59,29 @@ func dialedWith(t *testing.T, cfg config, sinks *telemetry.Sinks, logger *slog.L
 	cancel()
 	var dialed client.Options
 	told := false
-	_, _ = connectTemporal(ctx, cfg, sinks, logger, func(options client.Options) { dialed, told = options, true })
+	_, _ = connectTemporal(ctx, cfg, testOrkerID, sinks, logger, func(options client.Options) { dialed, told = options, true })
 	if !told {
 		t.Fatal("connectTemporal dialed without building its options")
 	}
 	return dialed
 }
 
+// testOrkerID is the Orker id the dials above are made for.
+const testOrkerID = "orker-dial-test"
+
 // requireOrkerDial holds what every Orker dial carries whatever telemetry is
-// set: where it dials, no identity of its own (the SDK's default advertises
-// no engine capability), and the worker's environment never reported.
+// set: where it dials, its Orker id as its identity, so what its client sends
+// itself (its tasks' heartbeats) names the Orker as its workers' polls do, and
+// the worker's environment never reported. An Orker id holds no whitespace
+// (task.ValidOrkerID), so it advertises no engine capability.
 func requireOrkerDial(t *testing.T, got client.Options, cfg config, logger *slog.Logger) {
 	t.Helper()
 	if got.HostPort != cfg.temporalAddress || got.Namespace != cfg.temporalNamespace || got.Logger != logger {
 		t.Fatalf("dialed %q in namespace %q with logger %v, want %q, %q and the process logger",
 			got.HostPort, got.Namespace, got.Logger, cfg.temporalAddress, cfg.temporalNamespace)
 	}
-	if got.Identity != "" {
-		t.Fatalf("identity = %q, want none: an Orker advertises no engine capability", got.Identity)
+	if got.Identity != testOrkerID {
+		t.Fatalf("identity = %q, want the Orker id %q", got.Identity, testOrkerID)
 	}
 	if !got.DisableWorkerEnvironmentInfo {
 		t.Fatalf("client.Options.DisableWorkerEnvironmentInfo = false, want true: the worker's environment is never reported")

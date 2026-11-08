@@ -279,3 +279,35 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 		t.Errorf("the reissued run points at the occupied id's execution %q", occupiedExecution)
 	}
 }
+
+// TestIntegration_OldAndNewRunIDShapesCoexistOnOneCluster: a deployment that
+// upgrades has runs of the older shape in flight beside new ones. Both are plain
+// workflow ids to the cluster: both start, both are described by id, and each
+// stays single-use.
+func TestIntegration_OldAndNewRunIDShapesCoexistOnOneCluster(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	c := dialRunIDCluster(t, ctx)
+
+	queue := runIDQueue()
+	replica := engine.NewTemporalStarter(c, queue)
+	newShape := engine.NewRunID()
+	oldShape := fmt.Sprintf("ork-%d-%d", time.Now().UnixNano(), uint64(os.Getpid())<<32|1)
+	terminateAll(t, c, newShape, oldShape)
+
+	for _, runID := range []string{oldShape, newShape} {
+		if err := replica.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan()); err != nil {
+			t.Fatalf("start %s: %v", runID, err)
+		}
+		described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+		if err != nil {
+			t.Fatalf("describe %s: %v", runID, err)
+		}
+		if got := described.GetWorkflowExecutionInfo().GetExecution().GetWorkflowId(); got != runID {
+			t.Fatalf("describe %s named %q", runID, got)
+		}
+		if err := replica.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan()); !errors.Is(err, engine.ErrRunIDTaken) {
+			t.Fatalf("second start of %s = %v, want engine.ErrRunIDTaken", runID, err)
+		}
+	}
+}

@@ -562,6 +562,10 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 	fire := fired.Schedule.RecentFires[len(fired.Schedule.RecentFires)-1]
 	runID := fire.RunID
 
+	// The fire records its run's id before it starts the run, on purpose
+	// (schedule_fire.go, step 4), so for a moment `run get` finds no such run.
+	// The run's origin never changes, so it is read once the run has ended.
+	s.awaitRunStatus(t, runID, 3*time.Minute, "SUCCEEDED")
 	runJSON := s.cli(t, s.a, exitOK, "--json", "run", "get", runID)
 	origin := originOf(t, runJSON)
 	nominal, err := time.Parse(time.RFC3339Nano, fire.ScheduledAt)
@@ -576,7 +580,6 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 	}
 	t.Logf("EVIDENCE run_get_json=%s", compactJSON(t, runJSON))
 
-	s.awaitRunStatus(t, runID, 3*time.Minute, "SUCCEEDED")
 	runs := s.awaitRuns(t, id, 90*time.Second, func(r []runRow) bool { return len(r) == 1 && r[0].ID == runID })
 	t.Logf("EVIDENCE run_list_origin_schedule=%v", runs[0].ID)
 	if ids := listedIDs(t, s.cli(t, s.a, exitOK, "--json", "run", "list", "--filter", "origin.kind=SUBMIT")); containsID(ids, runID) {

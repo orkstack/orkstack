@@ -2998,23 +2998,40 @@ func TestIntegration_ContinuationChaosC25_InFlightCapBoundsAWideRun(t *testing.T
 	s := newChaosStack(t, ctx, "C25")
 	s.startReplica("replica-a", replicaOptions{})
 	s.startProjection(nil)
-	// Every task takes 15 s, so the run's work piles up against its cap
-	// instead of draining as fast as it is dispatched. It must outlast only
-	// the one pass that dispatches the first 200 items beside the 300 tasks
-	// still running — a workflow task, well under a second — for the cap to
-	// be reached; 15 s leaves that pass a wide margin and keeps the 1,500
-	// units at three rounds under the cap. Too short a value cannot pass
-	// falsely: the peakTasks >= limit.Max check below fails it explicitly.
+	// No task finishes before the run has reached its cap, so the cap is
+	// reached with every one of those tasks still pending in history. The
+	// items reach it in batches, a yield timer between two, and a task that
+	// finishes during a yield stays in the loop's in-flight set until the
+	// loop takes its result: the cap would count it while the history no
+	// longer does. On a slow runner the batches outlasted a fixed 15 s task
+	// (CI proof run 42420549646: the cap was first reached 62 s into the run,
+	// at 491 pending in history). So every task holds until the engine logs
+	// that its run reached the cap, then takes 15 s, which keeps the 1,500
+	// units at three rounds under the cap. The hold has a deadline: a run
+	// that never reaches its cap is failed below by the peakTasks >=
+	// limit.Max check, never passed.
+	capDeadline := time.Now().Add(5 * time.Minute)
 	s.startOrker("orker-1", func(actx context.Context, s *chaosStack, orker string, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if !strings.HasPrefix(in.GetTaskId(), "list") {
+			heartbeat := time.NewTicker(5 * time.Second)
+			defer heartbeat.Stop()
+			poll := time.NewTicker(100 * time.Millisecond)
+			defer poll.Stop()
+			for len(s.logs.matching("run reached its in-flight cap", "")) == 0 && time.Now().Before(capDeadline) {
+				select {
+				case <-poll.C:
+				case <-heartbeat.C:
+					activity.RecordHeartbeat(actx)
+				case <-actx.Done():
+					return nil, actx.Err()
+				}
+			}
 			done := time.After(15 * time.Second)
-			ticker := time.NewTicker(5 * time.Second)
-			defer ticker.Stop()
 			for waiting := true; waiting; {
 				select {
 				case <-done:
 					waiting = false
-				case <-ticker.C:
+				case <-heartbeat.C:
 					activity.RecordHeartbeat(actx)
 				case <-actx.Done():
 					return nil, actx.Err()

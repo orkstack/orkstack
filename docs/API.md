@@ -1708,7 +1708,9 @@ created_at, else its started_at, else its finished_at. origin.kind takes
 only equals, and a run recorded before origins existed matches no
 origin.kind filter; origin.id is meaningful only within a kind, so it
 needs an equals filter on origin.kind. An id is matched whole, never by
-part.
+part. origin.root_run_id takes only equals and keeps every run below that
+root in its composed chain, however deep: the root run itself holds no root
+and is not one of them.
 
 | Field | Type | Description |
 |---|---|---|
@@ -1928,7 +1930,7 @@ Orkflow is the compiled, validated form of a DSL document.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `string` | unique identifier (slug) |
-| `version` | `string` | semantic or content hash |
+| `version` | `string` | the author's own, or assigned at first apply (a UUIDv7 in lowercase base32, or a content hash on an older version) |
 | `description` | `string` |  |
 | `labels` | map&lt;`string`, `string`&gt; |  |
 | `inputs` | `google.protobuf.Struct` | inputs declares the accepted input parameters (JSON schema fragment as struct). |
@@ -1938,7 +1940,7 @@ Orkflow is the compiled, validated form of a DSL document.
 | `namespace` | `string` | namespace scopes this orkflow. Empty means the built-in "default" namespace. A name is unique WITHIN a namespace, never globally: two namespaces may both hold an orkflow called "deploy", and they are two different orkflows stored under two different keys. |
 | `definition_digest` | `string` | definition_digest is the canonical digest of THIS document's definition (§4.4): "sha256:" + hex(sha256(canonicalOrkflow(wf))).<br><br>It is computed at APPLY, after image resolution, and stamped here — "the version document is the pin", which is what AGENTS.md §7.2 requires of a run. Workflow code READS it and never computes it, so a run records the digest of the definition it actually pinned rather than one derived from whatever a later reader happened to reconstruct.<br><br>It is NOT part of canonicalOrkflow. The canonical form enumerates its fields and this one is not among them, so stamping the digest into the document it describes does not change that digest: the value is stable under re-canonicalization, and pkg/artifacts.sameStoredOrkflow still sees a re-apply of an unchanged document as equal.<br><br>Added after the original wire freeze, deliberately and ADDITIVELY: fields 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an older reader simply does not see it. The alternative was to populate orkflow_definition_digest from workflow code, which changes recorded activity-payload bytes and would force re-recording the base replay fixture, which is never re-recorded. |
 | `pins` | repeated [`Pin`](#pin) | pins declares every Pin a task may name, sorted by name at compile so one document always compiles to one message. Part of canonicalOrkflow, emitted ONLY when non-empty (see Task.pin). |
-| `outputs` | map&lt;`string`, `string`&gt; | outputs is this Orkflow's declared return contract: output name to a template over .inputs and .tasks.&lt;id>.output, rendered ONCE, by the engine, when a run succeeds; every value renders to a string. When non-empty the rendered map IS Run.output, and is what a composing parent's task receives as its values. When empty, Run.output keeps the leaf aggregation it has always had, and a composing parent's task receives {}. Part of canonicalOrkflow only when non-empty (see pins). |
+| `outputs` | map&lt;`string`, `string`&gt; | outputs is this Orkflow's declared return contract: output name to a template over .inputs and .tasks.&lt;id>.output, rendered ONCE, by the engine, when a run succeeds; every value renders to a string. When non-empty the rendered map IS Run.output, and is what a composing parent's task receives as its values. When empty, Run.output is the values of the tasks no other task needs, and a composing parent's task receives {}. Part of canonicalOrkflow only when non-empty (see pins). |
 
 ### OrkflowCaller
 
@@ -2111,7 +2113,7 @@ and stored nowhere.
 | Field | Type | Description |
 |---|---|---|
 | `orkflow_name` | `string` | The definition that was planned: the coordinates and the digest of the exact document, so a plan of a pinned version and a plan of `current` can be told apart after the pointer moves. |
-| `orkflow_version` | `string` |  |
+| `orkflow_version` | `string` | orkflow_version is the version planned, empty for a file that pins none and whose content was never applied. definition_digest is then empty too. |
 | `namespace` | `string` |  |
 | `definition_digest` | `string` |  |
 | `from_yaml` | `bool` | from_yaml is true when the request planned an unapplied document; the version is then whatever the document pins or the derived source hash, and nothing under these coordinates is stored. |
@@ -2409,12 +2411,12 @@ Run is one execution of an Orkflow.
 
 | Field | Type | Description |
 |---|---|---|
-| `id` | `string` | ork run id, ork-{timestamp}-{sequence}; opaque, nothing parses it |
+| `id` | `string` | ork run id, ork- and a UUIDv7 in lowercase base32 (ork-{timestamp}-{sequence} on an older run); opaque, nothing parses it |
 | `orkflow_name` | `string` |  |
 | `orkflow_version` | `string` |  |
 | `status` | [`Status`](#status) |  |
 | `input` | [`Payload`](#payload) |  |
-| `output` | [`Payload`](#payload) | output is the Orkflow's declared outputs, rendered at success, when it declares `outputs:`; otherwise every leaf task's inline values, keyed by task id. |
+| `output` | [`Payload`](#payload) | output is the Orkflow's declared outputs, rendered at success, when it declares `outputs:`; otherwise the inline values of the tasks no other task needs, keyed by task id. |
 | `error` | [`Error`](#error) | error is set when the run's outcome is decided FAILED or CANCELED. While a failing run's failure handlers still run, it is already set and status is RUNNING (docs/DSL.md "Joins and failure handlers"); the terminal snapshot carries the same error with status FAILED. |
 | `task_runs` | repeated [`TaskRun`](#taskrun) |  |
 | `created_at` | `google.protobuf.Timestamp` |  |
@@ -2470,6 +2472,7 @@ in OrkStack reads it to decide anything.
 | `reference` | `string` | reference is caller-supplied correlation text — a CI job URL, a ticket key, a partner event id — carried through from SubmitRunRequest.origin_reference or the Ork-Origin-Reference header on the trigger door. At most 256 bytes and no control characters, VALIDATED at the request boundary and never sanitized (AGENTS.md §7): an over-long or malformed reference is INVALID_ARGUMENT and starts no run. Opaque to OrkStack: it is never an expression, a selector or a routing key. A client renders it as a link only when it parses as an http(s) URL, and as text otherwise. |
 | `description` | `string` | description is the originating object's own human label at the moment of submit — Trigger.description for TRIGGER, the schedule's name for SCHEDULE — copied so a run stays explainable after the trigger is deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256 bytes by truncation. |
 | `principal` | `string` | principal is what the deployment's gateway asserted in the Ork-Principal request header on the submitting request — the trigger invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes by truncation, and NEVER authenticated: it is the same assertion, on the same terms, as AuditRecord.principal. Empty when no header was present; a client then omits the line entirely rather than showing a blank that could be mistaken for a name. |
+| `root_run_id` | `string` | root_run_id is the id of the run at the top of this run's composed chain: the run that started the chain, which id names only for a direct child. Set on a PARENT_RUN origin and empty on every other kind, so a run-again of a child, a new top-level run, has none. An empty value names no root. Opaque, like id. |
 
 ### Schedule
 
@@ -2786,7 +2789,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `output` | [`Payload`](#payload) | output carries the inline values.json when one was inlined, decoded for display only. values_ref is the authoritative reference. |
 | `artifacts` | repeated [`ArtifactRef`](#artifactref) |  |
 | `error` | [`Error`](#error) | carries FailureCategory (§8) |
-| `started_at` | `google.protobuf.Timestamp` | started_at is when the Orker began the attempt that produced this task's outcome, on the Orker's own clock: ExecuteTaskResult.started_at for a succeeded task (the committing attempt's start for an adopted commit, exactly as `attempt` is the committing attempt), and ActivityFailureDetail.started_at for a failed one. It is the start of the FINAL attempt, on the same rule attempt, error, exit_code and orker_id already follow: the snapshot describes the attempt that decided the task, and ListTaskAttempts describes the rest.<br><br>Unset while the task is PENDING or RUNNING, and for a terminal task no Orker reported on — a host that died before reporting, a Temporal-side timeout, a cancellation that reached the Orker as a plain context cancellation, a lost pin. Unset is "not known", never zero.<br><br>Before this field's meaning was corrected it held the dispatch instant; scheduled_at (18) holds that now.<br><br>For an awaited task, both are the instant the task started awaiting, on the workflow's clock: it is never queued and no Orker reports on it. |
+| `started_at` | `google.protobuf.Timestamp` | started_at is when the Orker began the attempt that produced this task's outcome, on the Orker's own clock: ExecuteTaskResult.started_at for a succeeded task (the committing attempt's start for an adopted commit, exactly as `attempt` is the committing attempt), and ActivityFailureDetail.started_at for a failed one. It is the start of the FINAL attempt, on the same rule attempt, error, exit_code and orker_id already follow: the snapshot describes the attempt that decided the task, and ListTaskAttempts describes the rest.<br><br>Unset while the task is PENDING or RUNNING, and for a terminal task no Orker reported on — a host the run lost contact with before it reported, a Temporal-side timeout, a cancellation that reached the Orker as a plain context cancellation, a lost pin. Unset is "not known", never zero.<br><br>Before this field's meaning was corrected it held the dispatch instant; scheduled_at (18) holds that now.<br><br>For an awaited task, both are the instant the task started awaiting, on the workflow's clock: it is never queued and no Orker reports on it. |
 | `finished_at` | `google.protobuf.Timestamp` | finished_at is the workflow's own clock at the moment it learned this task's outcome. |
 | `pool` | `string` | pool names the set of Orkers this attempt was dispatched to, in the word its author typed: the task's own `pool:`, or the pool this run's default route resolves to when the task named none.<br><br>Within a run, one pool name means one set of Orkers, so naming this pool on a task reaches exactly the Orkers this attempt reached. That holds under the per-deployment route override operators use to keep two stacks apart: a route belonging to no pool reports as the built-in "main", and a task that writes "main" follows the same override instead of escaping it. The override is an operator concern this contract does not expose, so this name is the routing request rather than a measurement of the host that answered, and another deployment resolves it against its own Orkers.<br><br>Empty means the task never reached an Orker (skipped, or terminal before dispatch). |
 | `values_ref` | [`ArtifactRef`](#artifactref) | values_ref addresses the committed values.json for this attempt. Set whenever the task succeeded, whether or not output was inlined. |
@@ -2795,7 +2798,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `system_artifacts` | repeated [`ArtifactRef`](#artifactref) | system_artifacts are stdout.log and stderr.log for this attempt. |
 | `retry_state` | [`RetryState`](#retrystate) | retry_state says why Temporal stopped retrying this task, read off temporal.ActivityError.RetryState() when the task ended in an error. It is DERIVED data on the snapshot — the engine records what Temporal already decided, it does not decide anything with it.<br><br>Unset for SUCCEEDED and SKIPPED tasks, for a failure that never reached an activity, and for snapshots written before this field existed. |
 | `pin` | `string` | pin is the Pin this task belongs to, as the author named it, or empty. Two TaskRuns of one run with the same pin ran on the same Orker. |
-| `orker_id` | `string` | orker_id is the Orker that produced this task's final outcome, read off ExecuteTaskResult.orker_id or ActivityFailureDetail.orker_id. Set for every task that reached an Orker, pinned or not; empty when the task never reached one (skipped, canceled before dispatch) or when the Orker died before reporting (heartbeat timeout).<br><br>One exception to "reported by this task's own attempt": a task recorded PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — its host died — so the engine BACKFILLS this from another member of the same pin. A pin never moves: every member executes on the same Orker process for the pin's whole life, so a sibling's orker_id is this task's by construction. It stays empty only when no member of that pin ever reported one, in which case the failure's error.details carries the pin host's raw OS host name as an explicitly labelled best-effort lead, which is NOT an orker_id. Empty on a fan-out task's own row, whose items each carry their own. |
+| `orker_id` | `string` | orker_id is the Orker that produced this task's final outcome, read off ExecuteTaskResult.orker_id or ActivityFailureDetail.orker_id. Set for every task that reached an Orker, pinned or not; empty when the task never reached one (skipped, canceled before dispatch) or when the Orker lost contact before it reported (heartbeat timeout).<br><br>One exception to "reported by this task's own attempt": a task recorded PIN_HOST_LOST or PIN_TIMEOUT reports nothing at all — the run lost contact with its host, or the pin closed at its lifetime — so the engine BACKFILLS this from another member of the same pin. A pin never moves: every member executes on the same Orker process for the pin's whole life, so a sibling's orker_id is this task's by construction. It stays empty only when no member of that pin ever reported one, in which case the failure's error.details carries the pin host's raw OS host name as an explicitly labelled best-effort lead, which is NOT an orker_id. Empty on a fan-out task's own row, whose items each carry their own. |
 | `scheduled_at` | `google.protobuf.Timestamp` | scheduled_at is the instant the engine scheduled this task's activity — workflow.Now at schedule(), which is also the timestamp on the EVENT_TYPE_TASK_SCHEDULED event. It is a PROJECTION of that event onto the snapshot, not a new measurement, and it is the workflow's own deterministic clock, never an Orker's.<br><br>Unset when the task never reached scheduling (skipped, or canceled before dispatch) and on a snapshot written before this field existed. The two are told apart by started_at: a pre-contract snapshot has started_at set (it held the dispatch instant then) and scheduled_at unset; a never-scheduled task has neither.<br><br>For an awaited task, both are the instant the task started awaiting, on the workflow's clock: it is never queued and no Orker reports on it. |
 | `await` | [`TaskAwait`](#taskawait) | await is this task's await state, set for a task whose definition declares `await:` and unset otherwise (see TaskAwait). |
 | `each` | [`TaskEach`](#taskeach) | each is set for a fan-out task's own row (TaskEach). |
@@ -2988,7 +2991,7 @@ grouped by". The total row has every key empty.
 
 | Field | Type | Description |
 |---|---|---|
-| `orkflow` | [`Orkflow`](#orkflow) |  |
+| `orkflow` | [`Orkflow`](#orkflow) | orkflow is the document as apply would store it. For a document that pins no version, version and definition_digest are those of the version its content already has, and empty when that content was never applied: the version is assigned by the apply that stores it. |
 | `issues` | repeated [`ValidationIssue`](#validationissue) |  |
 
 ### ValidationIssue

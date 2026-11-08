@@ -278,30 +278,34 @@
 		'field h-9 w-full px-3 text-sm';
 	const primary = 'btn btn-primary';
 	const secondary = 'btn';
+
+	// The page's commands, in its one terminal icon; a plan's Apply once it ran.
+	const cli = $derived([
+		{ label: 'Export this namespace', command: automationExportCli(namespaceLabel(namespace)) },
+		{ label: 'Plan the document', command: automationPlanCli(namespaceLabel(namespace), prune) },
+		...(plan && applied ? [{ label: 'Apply this plan', command: automationApplyCli(namespaceLabel(namespace), prune, plan.planDigest) }] : [])
+	]);
 </script>
 
 <svelte:head><title>Admin — Automation — OrkStack</title></svelte:head>
 
-<SheetHeader title="Automation">
-	{#snippet meta()}Namespace <span class="font-mono font-semibold text-ink">{namespaceLabel(namespace)}</span>{/snippet}
+<SheetHeader title="Automation" commands={cli}>
 </SheetHeader>
 
 <ScopeNote testid="automation-scope">
 	An automation document declares one namespace's settings, schedules, triggers and webhooks by
 	name. OrkStack does not store the document — keep it in Git — and nothing here runs on its own:
 	a plan writes nothing, and Apply sends the plan's steps to the same services the rest of Admin
-	uses. This page works in namespace
-	<span class="font-medium text-ink">{namespaceLabel(namespace)}</span>.
+	uses.
 </ScopeNote>
 
 <section class="region mb-10 pt-3">
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<h2 class="text-md font-semibold text-ink">Export</h2>
-		<CliEquivalent command={automationExportCli(namespaceLabel(namespace))} testid="automation-export-cli" />
 	</div>
 	<p class="mt-1 max-w-prose text-sm text-ink-secondary">
-		The document {namespaceLabel(namespace)}'s current automation would be applied from — the way to
-		start reviewing a namespace managed by hand.
+		The document this namespace's current automation would be applied from — the way to start
+		reviewing a namespace managed by hand.
 	</p>
 	<div class="mt-3 flex flex-wrap gap-2">
 		<button type="button" class={secondary} data-testid="automation-export" disabled={exporting} onclick={runExport}>
@@ -344,9 +348,14 @@
 					{#each exported.unmanaged as step (step.id)}
 						<li>
 							{automationKindSlug(step.kind)}
-							{step.id} ({step.summary}) — {step.kind === AutomationObjectKind.TRIGGER
-								? `orkctl trigger update ${step.id} -n ${namespaceLabel(namespace)} --name NAME`
-								: `orkctl webhook update ${step.id} --name NAME`}
+							{step.id} ({step.summary})
+							<CliEquivalent
+								testid="automation-unmanaged-cli-{step.id}"
+								label="Name {step.id} from the CLI"
+								command={step.kind === AutomationObjectKind.TRIGGER
+									? `orkctl trigger update ${step.id} -n ${namespaceLabel(namespace)} --name NAME`
+									: `orkctl webhook update ${step.id} --name NAME`}
+							/>
 						</li>
 					{/each}
 				</ul>
@@ -359,7 +368,6 @@
 <section class="region mb-10 pt-3">
 	<div class="flex flex-wrap items-center justify-between gap-3">
 		<h2 id="automation-document-heading" class="text-md font-semibold text-ink">Document</h2>
-		<CliEquivalent command={automationPlanCli(namespaceLabel(namespace), prune)} testid="automation-plan-cli" />
 	</div>
 	<div class="mt-3">
 		<YamlField
@@ -543,12 +551,6 @@
 				>
 					{applying ? 'Applying…' : 'Apply'}
 				</button>
-				{#if applied}
-					<CliEquivalent
-						command={automationApplyCli(namespaceLabel(namespace), prune, plan.planDigest)}
-						testid="automation-apply-cli"
-					/>
-				{/if}
 			</div>
 		{/if}
 		{#if applyError}

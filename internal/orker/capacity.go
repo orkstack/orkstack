@@ -95,11 +95,6 @@ const (
 	AdmissionBoundSlots    = "slots"
 )
 
-// capacityReapInterval is how often an Orker with a declared capacity tries
-// again to remove the containers it could not remove, releasing each one's
-// reservation once it is gone.
-const capacityReapInterval = 30 * time.Second
-
 // amount is a reservation: cpu in millicores and memory in bytes, so the
 // ledger adds and subtracts exactly. In a limit, a dimension at 0 is
 // unbounded.

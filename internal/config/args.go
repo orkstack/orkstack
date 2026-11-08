@@ -13,7 +13,7 @@ const ConfigFileVar = "ORK_CONFIG_FILE"
 // Usage is the string a -h/--help invocation returns as an error, so a
 // caller's main() can print it and exit non-zero the same way any other
 // argument error does.
-const Usage = "usage: [--config PATH | --config=PATH | --no-config] [--check | --healthcheck] [--defaults]"
+const Usage = "usage: [--config PATH | --config=PATH | --no-config] [--check | --healthcheck] [--defaults] [--version]"
 
 // Args is what the two daemons' argv asked for.
 type Args struct {
@@ -28,10 +28,12 @@ type Args struct {
 	// Healthcheck is --healthcheck: ask the already running process's own
 	// admin listener whether it is ready, and exit 0 or 1.
 	Healthcheck bool
+	// Version is --version: print what this binary was built from and stop.
+	Version bool
 }
 
 // ParseArgs handles the two daemons' argv (excluding argv[0]): --config
-// PATH, --config=PATH, --no-config, --check, --healthcheck, and --defaults, in
+// PATH, --config=PATH, --no-config, --check, --healthcheck, --defaults and --version, in
 // any order and combination. With no --config flag it falls back to
 // ORK_CONFIG_FILE via lookup. --no-config means "no file, and ignore
 // ORK_CONFIG_FILE too" — it returns path "" without consulting lookup at all,
@@ -47,7 +49,8 @@ type Args struct {
 // with path/check (cmd/ork's and cmd/orker's main do exactly that), so it
 // is not subject to that same refusal and every other flag here still
 // parses normally alongside it; beside --healthcheck, --defaults is
-// answered first and nothing is probed. -h/--help and any other argument are
+// answered first and nothing is probed. --version needs no file either, and
+// the daemons answer it right after --defaults. -h/--help and any other argument are
 // errors — -h/--help returns Usage as the error text, so main can print it
 // verbatim.
 func ParseArgs(args []string, lookup func(string) (string, bool)) (Args, error) {
@@ -67,6 +70,9 @@ func ParseArgs(args []string, lookup func(string) (string, bool)) (Args, error) 
 
 		case arg == "--defaults":
 			parsed.Defaults = true
+
+		case arg == "--version":
+			parsed.Version = true
 
 		case arg == "--no-config":
 			noConfig = true
@@ -98,7 +104,7 @@ func ParseArgs(args []string, lookup func(string) (string, bool)) (Args, error) 
 		if parsed.Check {
 			return Args{Defaults: parsed.Defaults}, fmt.Errorf("--check requires a config file")
 		}
-		return Args{Defaults: parsed.Defaults, Healthcheck: parsed.Healthcheck}, nil
+		return Args{Defaults: parsed.Defaults, Healthcheck: parsed.Healthcheck, Version: parsed.Version}, nil
 	}
 
 	if parsed.Path == "" {

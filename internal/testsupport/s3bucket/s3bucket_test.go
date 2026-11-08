@@ -331,3 +331,41 @@ func TestIsName_AcceptsOnlyABucketNameYields(t *testing.T) {
 		}
 	}
 }
+
+// TestDevKey: the harness fills in the development store's key only where no key
+// is set. An explicit key is kept, and half a key stays half, so the stores
+// refuse it as they would anywhere.
+func TestDevKey(t *testing.T) {
+	cases := []struct {
+		name               string
+		access, secret     string
+		wantAccess, wantSK string
+	}{
+		{name: "none", wantAccess: s3bucket.DevAccessKey, wantSK: s3bucket.DevSecretKey},
+		{name: "both kept", access: "a", secret: "b", wantAccess: "a", wantSK: "b"},
+		{name: "access key alone stays alone", access: "a", wantAccess: "a"},
+		{name: "secret key alone stays alone", secret: "b", wantSK: "b"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("ORK_S3_ACCESS_KEY", tc.access)
+			t.Setenv("ORK_S3_SECRET_KEY", tc.secret)
+			cfg := s3bucket.DevConfig()
+			if cfg.S3AccessKey != tc.wantAccess || cfg.S3SecretKey != tc.wantSK {
+				t.Errorf("DevConfig keys = %q, %q; want %q, %q", cfg.S3AccessKey, cfg.S3SecretKey, tc.wantAccess, tc.wantSK)
+			}
+			if os.Getenv("ORK_S3_ACCESS_KEY") != tc.access || os.Getenv("ORK_S3_SECRET_KEY") != tc.secret {
+				t.Error("DevConfig changed the environment")
+			}
+			if err := s3bucket.UseDevKey(); err != nil {
+				t.Fatalf("UseDevKey: %v", err)
+			}
+			if got, want := os.Getenv("ORK_S3_ACCESS_KEY"), tc.wantAccess; got != want {
+				t.Errorf("ORK_S3_ACCESS_KEY = %q, want %q", got, want)
+			}
+			if got, want := os.Getenv("ORK_S3_SECRET_KEY"), tc.wantSK; got != want {
+				t.Errorf("ORK_S3_SECRET_KEY = %q, want %q", got, want)
+			}
+		})
+	}
+}

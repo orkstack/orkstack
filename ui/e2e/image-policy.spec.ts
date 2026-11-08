@@ -29,7 +29,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { adminNamespaceUrl } from './uiHelpers';
+import { adminNamespaceUrl, openNamespacePage } from './uiHelpers';
 import { fillYaml } from './yaml';
 
 // Image supply-chain policy in a browser, against a real engine, Orker,
@@ -236,16 +236,18 @@ test('3: Admin → Namespaces offers the signer select and shows the Signed by c
 	await chooseSigner(page, 'ns-create-require-signed-by', 'cosign:e2e');
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${PROD}.`);
-	await expect(page.getByTestId(`namespace-require-signed-by-${PROD}`)).toHaveText('cosign:e2e');
-	note(`${PROD} Signed by: ${await page.getByTestId(`namespace-require-signed-by-${PROD}`).innerText()}`);
-	await page.screenshot({ path: out('screenshot-signed-by-column.png'), fullPage: true });
-
 	// Each create filters the list to the name it created.
 	await page.getByTestId('ns-create-name').fill(SANDBOX);
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${SANDBOX}.`);
+	await openNamespacePage(page, SANDBOX);
 	await expect(page.getByTestId(`namespace-require-signed-by-${SANDBOX}`)).toHaveText('—');
 	note(`${SANDBOX} Signed by: ${await page.getByTestId(`namespace-require-signed-by-${SANDBOX}`).innerText()}`);
+	await page.goto(adminNamespaceUrl(UI_ORIGIN, PROD));
+	await openNamespacePage(page, PROD);
+	await expect(page.getByTestId(`namespace-require-signed-by-${PROD}`)).toHaveText('cosign:e2e');
+	note(`${PROD} Signed by: ${await page.getByTestId(`namespace-require-signed-by-${PROD}`).innerText()}`);
+	await page.screenshot({ path: out('screenshot-signed-by-column.png'), fullPage: true });
 });
 
 /**
@@ -323,6 +325,7 @@ test('5: with prod moved to cosign:e2e-other, Submit a run shows the refusal ver
 	await openNamespaceEdit(page, PROD);
 	await chooseSigner(page, `ns-edit-require-signed-by-${PROD}`, 'cosign:e2e-other');
 	await page.getByTestId(`ns-edit-save-${PROD}`).click();
+	await openNamespacePage(page, PROD);
 	await expect(page.getByTestId(`namespace-require-signed-by-${PROD}`)).toHaveText('cosign:e2e-other');
 
 	await page.goto(`${UI_ORIGIN}/orkflows/deploy?ns=${PROD}`);
@@ -353,6 +356,7 @@ test('6: removing a key a namespace names is refused naming it; after clearing, 
 	await openNamespaceEdit(page, PROD);
 	await chooseSigner(page, `ns-edit-require-signed-by-${PROD}`, '');
 	await page.getByTestId(`ns-edit-save-${PROD}`).click();
+	await openNamespacePage(page, PROD);
 	await expect(page.getByTestId(`namespace-require-signed-by-${PROD}`)).toHaveText('—');
 
 	await openPolicy(page);

@@ -27,6 +27,7 @@ import {
 	waitForEngine
 } from './harness';
 import { fillYaml } from './yaml';
+import { pageCli } from './uiHelpers';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('admin-automation');
@@ -219,7 +220,9 @@ test('export shows the namespace\'s document and names unnamed objects', async (
 	await expect(yaml).toBeVisible();
 	expect((await yaml.innerText()).startsWith('apiVersion: orkstack/v1')).toBe(true);
 	const unmanaged = page.getByTestId('automation-unmanaged');
-	await expect(unmanaged).toContainText(`orkctl trigger update ${unnamed.trigger.id} -n ${NS} --name NAME`);
+	await page.getByTestId(`automation-unmanaged-cli-${unnamed.trigger.id}-trigger`).click();
+	await expect(page.getByTestId(`automation-unmanaged-cli-${unnamed.trigger.id}-command`)).toHaveText(`orkctl trigger update ${unnamed.trigger.id} -n ${NS} --name NAME`);
+	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('automation-export-download')).toHaveAttribute('download', 'automation.ork.yaml');
 	await page.screenshot({ path: out('automation-export.png'), fullPage: true });
 	note(`export named the unnamed trigger ${unnamed.trigger.id}`);
@@ -258,7 +261,9 @@ test('apply creates a trigger and shows its token once, and the token invokes', 
 	await expect(secrets).toContainText('Copy these now. They will not be shown again.');
 	const id = (await page.getByTestId('automation-secret-id-github-deploy').innerText()).trim();
 	const token = (await page.getByTestId('automation-secret-value-github-deploy').innerText()).trim();
-	await expect(page.getByTestId('automation-apply-cli-trigger')).toBeVisible();
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'Apply this plan')).toContainText('apply');
+	await page.keyboard.press('Escape');
 	await page.screenshot({ path: out('automation-applied-secrets.png'), fullPage: true });
 	expect(await invoke(id, token)).toBe(201);
 

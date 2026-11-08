@@ -51,6 +51,8 @@ func (s wfStep) label(i int) string {
 }
 
 type wfJob struct {
+	// Name is the check GitHub reports the job as; the job's id when empty.
+	Name        string            `yaml:"name"`
 	Needs       any               `yaml:"needs"`
 	If          string            `yaml:"if"`
 	Uses        string            `yaml:"uses"`
@@ -123,7 +125,7 @@ func (w *wfFile) onTypes(event string) ([]string, bool) {
 	return out, true
 }
 
-var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml", "proof-rerun.yml", "podman.yml", "kind-orker.yml"}
+var allWorkflows = []string{"proof.yml", "ci.yml", "nightly.yml", "release.yml", "site.yml", "proof-rerun.yml", "podman.yml", "kind-orker.yml", "pr-title.yml", "proof-label.yml"}
 
 func workflowPath(name string) string {
 	return filepath.Join("..", "..", "..", ".github", "workflows", name)
@@ -303,11 +305,11 @@ func expectEachMutationRefused(t *testing.T, file string, rule func(*wfFile) []s
 // ---- the required check -------------------------------------------------------
 
 // proofGuard is the guard every proof.yml job but `proof` carries (plan §3.2):
-// a draft runs nothing heavy, and while the repository is private a pull
-// request needs the ci:proof label. A job's `if:` is the guard in parentheses
+// a draft runs nothing heavy, and a Dependabot pull request, or any pull request
+// while the repository is private, needs the ci:proof label. A job's `if:` is the guard in parentheses
 // alone, or a condition ANDed with it: `<prefix> && (<guard>)`, the prefix
 // holding no `||` outside parentheses (which would bind looser than the AND).
-const proofGuard = `github.event_name != 'pull_request' || (!github.event.pull_request.draft && (github.event.repository.private == false || contains(github.event.pull_request.labels.*.name, 'ci:proof')))`
+const proofGuard = `github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))`
 
 // normalizeIf strips the expression delimiters and collapses whitespace.
 func normalizeIf(cond string) string {
@@ -401,7 +403,8 @@ func proofCheckProblems(w *wfFile) []string {
 			p = append(p, fmt.Sprintf("jobs.proof.permissions.%s = %q, want at least read", perm, proof.Permissions[perm]))
 		}
 	}
-	// On a draft, or unlabelled while private, `proof` fails rather than skips.
+	// On a draft, on a Dependabot pull request without the label, or unlabelled
+	// while private, `proof` fails rather than skips.
 	if len(proof.Steps) == 0 {
 		p = append(p, "jobs.proof has no steps")
 	} else {
@@ -409,8 +412,10 @@ func proofCheckProblems(w *wfFile) []string {
 		if !strings.Contains(first.If, "github.event_name == 'pull_request'") ||
 			!strings.Contains(first.Run, "a draft runs no full proof") ||
 			!strings.Contains(first.Run, "the ci:proof label") ||
+			!strings.Contains(first.Run, `"$AUTHOR" = "dependabot[bot]"`) ||
+			envString(first, "AUTHOR") != "${{ github.event.pull_request.user.login }}" ||
 			!strings.Contains(first.Run, "exit 1") {
-			p = append(p, "jobs.proof's first step does not fail a draft or an unlabelled private pull request")
+			p = append(p, "jobs.proof's first step does not fail a draft, an unlabelled Dependabot pull request or an unlabelled private pull request")
 		}
 	}
 
@@ -495,6 +500,12 @@ func TestWorkflows_TheProofCheckRefusesEachWeakening(t *testing.T) {
 		{"no merge_group", func(w *wfFile) { delete(w.On, "merge_group") }},
 		{"base without the guard", func(w *wfFile) { w.Jobs["base"].If = "" }},
 		{"plan without the guard", func(w *wfFile) { w.Jobs["plan"].If = "" }},
+		{"a Dependabot pull request needs no label", func(w *wfFile) {
+			w.Jobs["fast"].If = strings.ReplaceAll(w.Jobs["fast"].If, " && github.event.pull_request.user.login != 'dependabot[bot]'", "")
+		}},
+		{"proof's first step lets an unlabelled Dependabot pull request through", func(w *wfFile) {
+			w.Jobs["proof"].Steps[0].Run = strings.ReplaceAll(w.Jobs["proof"].Steps[0].Run, `"$AUTHOR" = "dependabot[bot]"`, `"$AUTHOR" = nobody`)
+		}},
 		{"build without the label", func(w *wfFile) { w.Jobs["build"].If = "${{ !github.event.pull_request.draft }}" }},
 		{"integration only on merge_group", func(w *wfFile) {
 			w.Jobs["integration"].If += " && github.event_name == 'merge_group'"
@@ -506,7 +517,7 @@ func TestWorkflows_TheProofCheckRefusesEachWeakening(t *testing.T) {
 			w.Jobs["fast"].If = "${{ inputs.tier == 'x' || inputs.tier == 'y' && (" + proofGuard + ") }}"
 		}},
 		{"the guard's draft and label terms swapped", func(w *wfFile) {
-			w.Jobs["plan"].If = "${{ (github.event_name != 'pull_request' || (github.event.repository.private == false || (!github.event.pull_request.draft && contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}"
+			w.Jobs["plan"].If = "${{ (github.event_name != 'pull_request' || ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || (!github.event.pull_request.draft && contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}"
 		}},
 		{"the guard ANDed with a looser branch", func(w *wfFile) {
 			w.Jobs["build"].If = "${{ (" + proofGuard + ") || github.event_name == 'push' }}"
@@ -1417,7 +1428,9 @@ func credentialProblems(file string, w *wfFile) []string {
 			}
 		}
 	}
-	if checkouts == 0 {
+	// proof-label.yml's own job reads one output and checks nothing out; the
+	// proof it calls is proof.yml, which this rule reads on its own account.
+	if checkouts == 0 && file != "proof-label.yml" {
 		p = append(p, file+" has no checkout to check")
 	}
 	return p
@@ -1502,8 +1515,9 @@ func callerProblems(file string, caller, callee *wfFile) []string {
 
 // TestWorkflows_CallersGrantWhatTheirCalleesNeed: a reusable workflow's jobs
 // cannot get a permission level their caller did not grant, and a caller
-// cannot pass an input the callee does not declare. Without this, nightly.yml
-// and release.yml would fail at startup, and nothing local would notice.
+// cannot pass an input the callee does not declare. Without this, nightly.yml,
+// release.yml and proof-label.yml would fail at startup, and nothing local would
+// notice.
 func TestWorkflows_CallersGrantWhatTheirCalleesNeed(t *testing.T) {
 	callee := loadWorkflow(t, "proof.yml")
 	need := calleeNeeds(callee)
@@ -1512,10 +1526,10 @@ func TestWorkflows_CallersGrantWhatTheirCalleesNeed(t *testing.T) {
 			t.Errorf("proof.yml's jobs need no %s: read; the comparison would be vacuous", p)
 		}
 	}
-	for _, file := range []string{"nightly.yml", "release.yml"} {
+	for _, file := range []string{"nightly.yml", "release.yml", "proof-label.yml"} {
 		expectNoProblems(t, file, callerProblems(file, loadWorkflow(t, file), callee))
 		rule := func(w *wfFile) []string { return callerProblems(file, w, callee) }
-		caller := map[string]string{"nightly.yml": "nightly", "release.yml": "gate"}[file]
+		caller := map[string]string{"nightly.yml": "nightly", "release.yml": "gate", "proof-label.yml": "prove"}[file]
 		expectEachMutationRefused(t, file, rule, []mutation{
 			{"actions: none", func(w *wfFile) { w.Jobs[caller].Permissions["actions"] = "none" }},
 			{"checks dropped", func(w *wfFile) { delete(w.Jobs[caller].Permissions, "checks") }},
@@ -1584,6 +1598,185 @@ func TestWorkflows_CheckRunsOnEveryPush(t *testing.T) {
 			w.Jobs["feature"].If = "${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}"
 		}},
 	})
+}
+
+// TestDependabot_EveryEntryReadsFilesThatExist: an entry naming a directory with
+// no file its ecosystem reads fails every run it makes, as the docker entry for
+// the repository's root did (dependency_file_not_found). Every entry opens at
+// most one pull request a month, because each one runs a full proof, and two
+// entries of one ecosystem would be two where one does. The first-party
+// Dockerfiles and both Bun projects are each moved by exactly one entry.
+func TestDependabot_EveryEntryReadsFilesThatExist(t *testing.T) {
+	type entry struct {
+		Ecosystem   string   `yaml:"package-ecosystem"`
+		Directory   string   `yaml:"directory"`
+		Directories []string `yaml:"directories"`
+		Schedule    struct {
+			Interval string `yaml:"interval"`
+		} `yaml:"schedule"`
+		Limit    *int           `yaml:"open-pull-requests-limit"`
+		Groups   map[string]any `yaml:"groups"`
+		Rebase   string         `yaml:"rebase-strategy"`
+		Messages struct {
+			Prefix string `yaml:"prefix"`
+		} `yaml:"commit-message"`
+	}
+	var cfg struct {
+		Updates []entry `yaml:"updates"`
+	}
+	if err := yaml.Unmarshal([]byte(readRepoFile(t, ".github/dependabot.yml")), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	reads := map[string]*regexp.Regexp{
+		"gomod":          regexp.MustCompile(`^go\.mod$`),
+		"docker":         regexp.MustCompile(`^Dockerfile$`),
+		"docker-compose": regexp.MustCompile(`^(compose|docker-compose)\.ya?ml$`),
+		"github-actions": regexp.MustCompile(`^(ci\.yml|action\.yml)$`),
+		"bun":            regexp.MustCompile(`^bun\.lock$`),
+	}
+	root := filepath.Join("..", "..", "..")
+	ecosystems := map[string]bool{}
+	covered := map[string]bool{}
+	for _, e := range cfg.Updates {
+		if ecosystems[e.Ecosystem] {
+			t.Errorf("%s has two entries, so up to two pull requests and two proofs a month: name its directories on one", e.Ecosystem)
+		}
+		ecosystems[e.Ecosystem] = true
+		if e.Schedule.Interval != "monthly" {
+			t.Errorf("%s runs %q, want monthly", e.Ecosystem, e.Schedule.Interval)
+		}
+		if e.Limit == nil || *e.Limit != 1 {
+			t.Errorf("%s has open-pull-requests-limit %v, want 1", e.Ecosystem, e.Limit)
+		}
+		if len(e.Groups) != 1 {
+			t.Errorf("%s has %d groups, want 1, so that its updates are one pull request", e.Ecosystem, len(e.Groups))
+		}
+		if e.Rebase != "disabled" {
+			t.Errorf("%s has rebase-strategy %q: a rebase on every push to main reruns its proof", e.Ecosystem, e.Rebase)
+		}
+		if e.Messages.Prefix != "chore(deps)" {
+			t.Errorf("%s commits with %q, want chore(deps)", e.Ecosystem, e.Messages.Prefix)
+		}
+		pattern, known := reads[e.Ecosystem]
+		if !known {
+			t.Errorf("no rule for what %s reads", e.Ecosystem)
+			continue
+		}
+		dirs := e.Directories
+		if e.Directory != "" {
+			dirs = append(dirs, e.Directory)
+		}
+		for _, dir := range dirs {
+			search := filepath.Join(root, filepath.FromSlash(dir))
+			if e.Ecosystem == "github-actions" && dir == "/" {
+				search = filepath.Join(root, ".github", "workflows")
+			}
+			matches, err := filepath.Glob(search)
+			if err != nil || len(matches) == 0 {
+				t.Errorf("%s names %s, which matches nothing (%v)", e.Ecosystem, dir, err)
+				continue
+			}
+			// A glob answers for its directories together: images/* also matches
+			// images/Makefile, which is no directory, and Dependabot skips what
+			// holds nothing it reads as long as something does.
+			found := false
+			for _, match := range matches {
+				files, err := os.ReadDir(match)
+				if err != nil {
+					continue
+				}
+				for _, f := range files {
+					if pattern.MatchString(f.Name()) {
+						found = true
+						rel, _ := filepath.Rel(root, match)
+						covered[e.Ecosystem+" "+filepath.ToSlash(rel)] = true
+					}
+				}
+			}
+			if !found {
+				t.Errorf("%s names %s, which holds no file it reads: every run of the entry fails", e.Ecosystem, dir)
+			}
+		}
+	}
+	// What the release and the proof build from must be moved by an entry.
+	dockerfiles, err := filepath.Glob(filepath.Join(root, "images", "*", "Dockerfile"))
+	if err != nil || len(dockerfiles) == 0 {
+		t.Fatalf("images/*/Dockerfile matches nothing (%v)", err)
+	}
+	wants := []string{"docker deploy", "docker deploy/source", "bun ui", "bun site", "gomod .", "docker-compose ."}
+	for _, f := range dockerfiles {
+		rel, _ := filepath.Rel(root, filepath.Dir(f))
+		wants = append(wants, "docker "+filepath.ToSlash(rel))
+	}
+	for _, want := range wants {
+		if !covered[want] {
+			t.Errorf("no entry moves %q", want)
+		}
+	}
+}
+
+// TestWorkflows_CheckRunsTheUIGates: `make check` runs the UI's type-check and
+// unit suite, so a UI type error fails on the branch instead of first failing a
+// full proof, and ci.yml's check job installs what those two need. Without Bun
+// and Node there, every push's check would fail for a missing tool.
+func TestWorkflows_CheckRunsTheUIGates(t *testing.T) {
+	recipe := makeRecipe(t, "check")
+	for _, want := range []string{"bun install --frozen-lockfile", "bun run check", "bun test test/"} {
+		if !strings.Contains(recipe, want) {
+			t.Errorf("make check does not run %q:\n%s", want, recipe)
+		}
+	}
+	rule := func(w *wfFile) []string {
+		check, ok := w.Jobs["check"]
+		if !ok {
+			return []string{"ci.yml has no check job"}
+		}
+		var p []string
+		for _, want := range []string{"oven-sh/setup-bun@", "actions/setup-node@"} {
+			installed := false
+			for _, s := range check.Steps {
+				installed = installed || strings.HasPrefix(s.Uses, want)
+			}
+			if !installed {
+				p = append(p, fmt.Sprintf("ci.yml's check job does not install %s, and make check needs it", want))
+			}
+		}
+		return p
+	}
+	dropStep := func(prefix string) func(w *wfFile) {
+		return func(w *wfFile) {
+			var kept []wfStep
+			for _, s := range w.Jobs["check"].Steps {
+				if !strings.HasPrefix(s.Uses, prefix) {
+					kept = append(kept, s)
+				}
+			}
+			w.Jobs["check"].Steps = kept
+		}
+	}
+	expectEachMutationRefused(t, "ci.yml", rule, []mutation{
+		{"no Bun in the check job", dropStep("oven-sh/setup-bun@")},
+		{"no Node in the check job", dropStep("actions/setup-node@")},
+	})
+}
+
+// makeRecipe returns the recipe lines of one Makefile target.
+func makeRecipe(t *testing.T, target string) string {
+	t.Helper()
+	var recipe []string
+	in := false
+	for _, line := range strings.Split(readRepoFile(t, "Makefile"), "\n") {
+		switch {
+		case strings.HasPrefix(line, target+":"):
+			in = true
+		case in && strings.HasPrefix(line, "\t"):
+			recipe = append(recipe, line)
+		case in:
+			return strings.Join(recipe, "\n")
+		}
+	}
+	t.Fatalf("the Makefile has no target %q", target)
+	return ""
 }
 
 // featureBaseProblems: the feature proof diffs from the commit the change
@@ -1914,21 +2107,61 @@ func TestWorkflows_ReleaseValidatesTheVersionFirst(t *testing.T) {
 	})
 }
 
-// tagRef creates the version's tag ref through the API; nothing else in
-// release.yml may create or move a ref.
-const tagRef = `gh api "repos/$REPO/git/refs" -f ref="refs/tags/$VERSION" -f sha="$object"`
+// tagRef pushes the version's tag with git, by name and without force; nothing
+// else in release.yml may create or move a ref. tagPushLine is the one line that
+// may hold it, which keeps what the server said for the step's own refusal.
+const (
+	tagRef      = `git push --quiet "$remote" "refs/tags/$VERSION:refs/tags/$VERSION"`
+	tagPushLine = `if ! pushed="$(` + tagRef + ` 2>&1)"; then`
+)
+
+// tagTokenAction mints the App's token, and tagTokenOutput is that token. The
+// release environment's two secrets are what it mints from, and tagSecretsCheck
+// refuses to go on without them, before the action is asked; tagTokenCheck is the
+// tag step's refusal of an empty token.
+const (
+	tagTokenAction  = "actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510"
+	tagTokenVersion = "v3.3.0"
+	tagTokenOutput  = "${{ steps.tag-token.outputs.token }}"
+	tagAppClientID  = "RELEASE_TAG_APP_CLIENT_ID"
+	tagAppKey       = "RELEASE_TAG_APP_PRIVATE_KEY"
+	tagSecretsCheck = `[ -n "$RELEASE_TAG_APP_CLIENT_ID" ] && [ -n "$RELEASE_TAG_APP_PRIVATE_KEY" ] ||`
+	tagTokenCheck   = `[ -n "$TAG_TOKEN" ] ||`
+)
+
+// tagTokenRead is any read of the token in the tag step's script, and tagTokenUse
+// every read it may make: testing it, and turning it into the header on a pipe.
+// tagAuthRead and tagAuthUse are the same for the header: masking it, and handing
+// it to git in its environment. Anything else could put either on the disk, on a
+// command line or in the log.
+var (
+	tagTokenRead = regexp.MustCompile(`\$\{?TAG_TOKEN`)
+	tagTokenUse  = regexp.MustCompile(`\[ -n "\$TAG_TOKEN" \]|printf 'x-access-token:%s' "\$TAG_TOKEN" \| base64 -w0`)
+	tagAuthRead  = regexp.MustCompile(`\$\{?auth\b`)
+	tagAuthUse   = regexp.MustCompile(`echo "::add-mask::\$auth"|GIT_CONFIG_VALUE_0="Authorization: Basic \$auth"`)
+)
+
+// tagPrintsCredential is anything in the tag step that could print what git holds
+// in its environment.
+var tagPrintsCredential = regexp.MustCompile(`set -[a-z]*x|(^|\s)(env|printenv|export -p|declare -p)(\s|$)|GIT_TRACE|GIT_CURL_VERBOSE`)
+
+// tagGitEnv is how git gets the header: in its environment alone, for the server's
+// own URL alone, and with no prompt to wait for when the server refuses it.
+const tagGitEnv = `export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$SERVER_URL/.extraHeader" GIT_CONFIG_VALUE_0="Authorization: Basic $auth"`
 
 // tagOfThisRun is how the tag step tells the tag this run made, kept on a
 // re-run of publish, from any other, which it refuses.
-var tagOfThisRun = []string{`[ "$type" = tag ]`, `.object.sha "$RUNNER_TEMP/tag.json")" = "$SHA" ]`, `grep -qxF "proof: $RUN_URL"`}
+var tagOfThisRun = []string{`[ "$type" = tag ]`, `[ "$(head -1 "$RUNNER_TEMP/tag.txt")" = "object $SHA" ]`, `grep -qxF "proof: $RUN_URL" "$RUNNER_TEMP/tag.txt"`}
 
 // gitTagRE matches `git tag`, with or without `-c key=value` options before it.
 var gitTagRE = regexp.MustCompile(`git( -c '?[^ ]+'?)* tag\b`)
 
 // tagProblems: `verify` runs `proofrun verify -release` on the gate's proof,
 // on the commit the gate proved, and only publish, which needs it, creates
-// the tag: through the API, after it bound the proof it downloaded to this
-// commit, and never over a tag another run made.
+// the tag: with git and the token of the release environment's App, after it
+// bound the proof it downloaded to this commit, and never over a tag another run
+// made. No step writes a tag through the API, which the job's token could do
+// only by getting past the ruleset that exists to stop it.
 func tagProblems(w *wfFile) []string {
 	var p []string
 	verify, ok := w.Jobs["verify"]
@@ -1964,33 +2197,30 @@ func tagProblems(w *wfFile) []string {
 	tagAt, created := -1, 0
 	for _, name := range w.jobNames() {
 		for i, s := range w.Jobs[name].Steps {
+			isTagStep := name == "publish" && strings.Contains(s.Run, tagRef)
+			if isTagStep {
+				tagAt = i
+				created += strings.Count(s.Run, tagRef)
+			}
 			for _, line := range strings.Split(s.Run, "\n") {
 				line = strings.TrimSpace(line)
 				if strings.HasPrefix(line, "#") || strings.Contains(line, "git tag --list") {
 					continue
 				}
-				if gitTagRE.MatchString(line) || strings.Contains(line, "git push") {
-					p = append(p, fmt.Sprintf("jobs.%s %s makes or pushes a tag with git; publish makes it through the API", name, s.label(i)))
+				if (gitTagRE.MatchString(line) || strings.Contains(line, "git push")) && !isTagStep {
+					p = append(p, fmt.Sprintf("jobs.%s %s makes or pushes a tag with git; only publish's tag step may", name, s.label(i)))
+				}
+				if strings.Contains(line, "git push") && line != tagPushLine {
+					p = append(p, fmt.Sprintf("jobs.%s %s pushes with %q, not %q: a version tag never moves", name, s.label(i), line, tagPushLine))
 				}
 			}
-			if strings.Contains(s.Run, "git/refs") || strings.Contains(s.Run, "git/tags\"") {
-				if name != "publish" {
-					p = append(p, fmt.Sprintf("jobs.%s %s writes a tag; only publish may", name, s.label(i)))
-				}
-				if strings.Contains(s.Run, tagRef) {
-					tagAt = i
-					created++
-				}
-				for _, move := range []string{"force=true", "-X PATCH", "--method PATCH", "-X DELETE", "--method DELETE"} {
-					if strings.Contains(s.Run, move) {
-						p = append(p, fmt.Sprintf("jobs.%s %s passes %s: a version tag never moves", name, s.label(i), move))
-					}
-				}
+			if strings.Contains(s.Run, "git/refs") || strings.Contains(s.Run, "git/tags") {
+				p = append(p, fmt.Sprintf("jobs.%s %s writes a tag through the API: only the App's push may", name, s.label(i)))
 			}
 		}
 	}
 	if created != 1 || tagAt < 0 {
-		return append(p, fmt.Sprintf("jobs.publish creates the tag with %q %d times, want once", tagRef, created))
+		return append(p, fmt.Sprintf("jobs.publish pushes the tag with %q %d times, want once", tagRef, created))
 	}
 	tag := publish.Steps[tagAt]
 	for _, want := range tagOfThisRun {
@@ -1999,12 +2229,112 @@ func tagProblems(w *wfFile) []string {
 		}
 	}
 	for k, want := range map[string]string{
-		"SHA":     "${{ github.sha }}",
-		"RUN_URL": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
-		"VERSION": "${{ needs.validate.outputs.version }}",
+		"SHA":        "${{ github.sha }}",
+		"RUN_URL":    "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}",
+		"VERSION":    "${{ needs.validate.outputs.version }}",
+		"REPO":       "${{ github.repository }}",
+		"SERVER_URL": "${{ github.server_url }}",
+		"TAG_TOKEN":  tagTokenOutput,
 	} {
 		if envString(tag, k) != want {
 			p = append(p, fmt.Sprintf("the tag step's %s is %q, want %s", k, envString(tag, k), want))
+		}
+	}
+	// The token: refused when absent before anything else, turned into a header
+	// and gone from the environment before git runs, and the header masked and in
+	// git's environment alone. The step holds no job token, and so there is no API
+	// to fall back to.
+	if holdsToken(tag) {
+		p = append(p, "the tag step is handed a token named for the API: it pushes with the App's token alone, and never falls back to the API")
+	}
+	if strings.Contains(tag.Run, "gh ") {
+		p = append(p, "the tag step runs gh: it pushes with the App's token alone, and never falls back to the API")
+	}
+	checkAt, unsetAt := strings.Index(tag.Run, tagTokenCheck), strings.Index(tag.Run, "unset TAG_TOKEN\n")
+	maskAt, envAt, unsetAuthAt := strings.Index(tag.Run, `echo "::add-mask::$auth"`), strings.Index(tag.Run, tagGitEnv), strings.Index(tag.Run, "unset auth\n")
+	firstGit := strings.Index(tag.Run, "git ")
+	switch {
+	case checkAt < 0 || (firstGit >= 0 && checkAt > firstGit) || (unsetAt >= 0 && checkAt > unsetAt):
+		p = append(p, "the tag step does not refuse a missing token first: "+tagTokenCheck)
+	case unsetAt < 0 || (firstGit >= 0 && unsetAt > firstGit):
+		p = append(p, "the tag step does not drop the token from the environment before git starts")
+	case maskAt < 0 || envAt < 0 || maskAt > envAt:
+		p = append(p, "the tag step does not mask the header before it hands it to git: "+tagGitEnv)
+	case unsetAuthAt < 0 || unsetAuthAt < envAt || (firstGit >= 0 && unsetAuthAt > firstGit):
+		p = append(p, "the tag step keeps the header in a variable once git has it")
+	}
+	if used, safe := len(tagTokenRead.FindAllString(tag.Run, -1)), len(tagTokenUse.FindAllString(tag.Run, -1)); used != safe {
+		p = append(p, fmt.Sprintf("the tag step reads TAG_TOKEN %d times, %d of them to test it or turn it into the header", used, safe))
+	}
+	if used, safe := len(tagAuthRead.FindAllString(tag.Run, -1)), len(tagAuthUse.FindAllString(tag.Run, -1)); used != safe {
+		p = append(p, fmt.Sprintf("the tag step reads the header %d times, %d of them to mask it or hand it to git", used, safe))
+	}
+	if strings.Contains(tag.Run, "git config") || strings.Contains(tag.Run, "git -c http") {
+		p = append(p, "the tag step puts a credential in git's config or on a command line: it stays in git's environment")
+	}
+	// git's environment holds the header for the rest of the step, so nothing in
+	// it may print an environment or trace what git sends.
+	if m := tagPrintsCredential.FindString(tag.Run); m != "" {
+		p = append(p, fmt.Sprintf("the tag step runs %q, which could print the header git holds in its environment", strings.TrimSpace(m)))
+	}
+	if !strings.Contains(tag.Run, `remote="$SERVER_URL/$REPO.git"`) {
+		p = append(p, `the tag step does not push to "$SERVER_URL/$REPO.git"`)
+	}
+	// The token and its secrets reach nothing else: the secrets are named only by
+	// the check and the action, and the token only by the tag step.
+	for i, s := range publish.Steps {
+		if i != tagAt && (strings.Contains(s.Run, "TAG_TOKEN") || envString(s, "TAG_TOKEN") != "") {
+			p = append(p, fmt.Sprintf("jobs.publish %s is handed the App's token and does not tag", s.label(i)))
+		}
+		for _, v := range s.Env {
+			if i != tagAt && strings.Contains(fmt.Sprint(v), "steps.tag-token") {
+				p = append(p, fmt.Sprintf("jobs.publish %s is handed the App's token and does not tag", s.label(i)))
+			}
+		}
+	}
+	// What mints it: right before the tag step, so it is as young as it can be;
+	// asked only after the secrets are checked; pinned; and for this repository's
+	// contents alone. Its `post` step revokes it, unless told not to.
+	mintAt := stepIndex(publish.Steps, func(s wfStep) bool { return strings.HasPrefix(s.Uses, "actions/create-github-app-token@") })
+	secretsAt := stepIndex(publish.Steps, func(s wfStep) bool { return strings.Contains(s.Run, tagSecretsCheck) })
+	switch {
+	case mintAt < 0 || mintAt != tagAt-1:
+		p = append(p, "jobs.publish does not mint the App's token in the step right before the tag step")
+	case secretsAt < 0 || secretsAt != mintAt-1:
+		p = append(p, "jobs.publish does not check the App's secrets in the step right before it asks for the token: "+tagSecretsCheck)
+	default:
+		mint, secrets := publish.Steps[mintAt], publish.Steps[secretsAt]
+		if mint.Uses != tagTokenAction {
+			p = append(p, fmt.Sprintf("the token step uses %s, want %s", mint.Uses, tagTokenAction))
+		}
+		if mint.ID != "tag-token" {
+			p = append(p, fmt.Sprintf("the token step's id is %q, want tag-token", mint.ID))
+		}
+		want := map[string]string{
+			"client-id":           "${{ secrets." + tagAppClientID + " }}",
+			"private-key":         "${{ secrets." + tagAppKey + " }}",
+			"repositories":        "${{ github.event.repository.name }}",
+			"permission-contents": "write",
+		}
+		for k, v := range want {
+			if withString(mint, k) != v {
+				p = append(p, fmt.Sprintf("the token step's %s is %q, want %s", k, withString(mint, k), v))
+			}
+		}
+		for k := range mint.With {
+			if _, ok := want[k]; !ok {
+				p = append(p, fmt.Sprintf("the token step also sets %s: it is for this repository's contents and nothing more", k))
+			}
+		}
+		for k, v := range map[string]string{tagAppClientID: want["client-id"], tagAppKey: want["private-key"]} {
+			if envString(secrets, k) != v {
+				p = append(p, fmt.Sprintf("the secrets check's %s is %q, want %s", k, envString(secrets, k), v))
+			}
+		}
+		for _, s := range []wfStep{secrets, mint, tag} {
+			if s.ContinueOnError != nil || s.If != "" {
+				p = append(p, s.Name+" is conditional or may fail: a release that cannot tag stops here")
+			}
 		}
 	}
 	// The proof publish downloads is the one verify accepted, bound to this
@@ -2033,10 +2363,22 @@ func tagProblems(w *wfFile) []string {
 }
 
 // TestWorkflows_TheReleaseIsTaggedOnlyAfterItsProofVerified: release.yml
-// creates a tag only in publish, which needs verify, only through the API,
-// and never moves one that another run made.
+// creates a tag only in publish, which needs verify, only with git and the App's
+// token, and never moves one that another run made.
 func TestWorkflows_TheReleaseIsTaggedOnlyAfterItsProofVerified(t *testing.T) {
 	expectNoProblems(t, "release.yml", tagProblems(loadWorkflow(t, "release.yml")))
+	if want := tagTokenAction + " # " + tagTokenVersion; !strings.Contains(workflowFile(t, "release.yml"), want) {
+		t.Errorf("release.yml does not pin %s", want)
+	}
+	mint := func(w *wfFile) *wfStep {
+		for i := range w.Jobs["publish"].Steps {
+			if w.Jobs["publish"].Steps[i].ID == "tag-token" {
+				return &w.Jobs["publish"].Steps[i]
+			}
+		}
+		t.Fatal("jobs.publish has no step with the id tag-token")
+		return nil
+	}
 	edit := func(w *wfFile, job, find, replace string) {
 		for i := range w.Jobs[job].Steps {
 			w.Jobs[job].Steps[i].Run = strings.ReplaceAll(w.Jobs[job].Steps[i].Run, find, replace)
@@ -2060,7 +2402,7 @@ func TestWorkflows_TheReleaseIsTaggedOnlyAfterItsProofVerified(t *testing.T) {
 			step(w, "verify", "proofrun verify -release").Env["GH_TOKEN"] = "${{ github.token }}"
 		}},
 		{"publish without verify", func(w *wfFile) { w.Jobs["publish"].Needs = []any{"validate", "gate", "artifacts"} }},
-		{"a tag pushed with git", func(w *wfFile) {
+		{"a second push", func(w *wfFile) {
 			s := step(w, "publish", tagRef)
 			s.Run += "\ngit push origin \"refs/tags/$VERSION\""
 		}},
@@ -2069,14 +2411,27 @@ func TestWorkflows_TheReleaseIsTaggedOnlyAfterItsProofVerified(t *testing.T) {
 			w.Jobs["verify"].Steps = append(w.Jobs["verify"].Steps, s)
 		}},
 		{"no tag", func(w *wfFile) { edit(w, "publish", tagRef, "true") }},
-		{"a forced tag", func(w *wfFile) { edit(w, "publish", ` -f sha="$object"`, ` -f sha="$object" -F force=true`) }},
-		{"a moved tag", func(w *wfFile) {
-			edit(w, "publish", tagRef, tagRef+"\ngh api -X PATCH \"repos/$REPO/git/refs/tags/$VERSION\" -f sha=\"$object\"")
+		{"a forced push", func(w *wfFile) { edit(w, "publish", "git push --quiet", "git push --force --quiet") }},
+		{"a forced refspec", func(w *wfFile) {
+			edit(w, "publish", `"refs/tags/$VERSION:refs/tags/$VERSION"`, `"+refs/tags/$VERSION:refs/tags/$VERSION"`)
 		}},
-		{"any existing tag kept", func(w *wfFile) { edit(w, "publish", `grep -qxF "proof: $RUN_URL"`, "true") }},
+		{"a deleted tag", func(w *wfFile) {
+			edit(w, "publish", tagRef, "git push --delete \"$remote\" \"refs/tags/$VERSION\"\n"+tagRef)
+		}},
+		{"a fallback to the API", func(w *wfFile) {
+			s := step(w, "publish", tagRef)
+			s.Run = strings.Replace(s.Run, tagRef, tagRef+` || gh api "repos/$REPO/git/refs" -f ref="refs/tags/$VERSION" -f sha="$SHA"`, 1)
+		}},
+		{"the API written from another step", func(w *wfFile) {
+			s := step(w, "publish", "gh release create")
+			s.Run = `gh api "repos/$REPO/git/tags" -f tag="$VERSION"` + "\n" + s.Run
+		}},
+		{"the tag step handed the token", func(w *wfFile) { step(w, "publish", tagRef).Env["GH_TOKEN"] = "${{ github.token }}" }},
+		{"any existing tag kept", func(w *wfFile) { edit(w, "publish", `grep -qxF "proof: $RUN_URL" "$RUNNER_TEMP/tag.txt"`, "true") }},
 		{"an existing tag on another commit kept", func(w *wfFile) {
-			edit(w, "publish", `.object.sha "$RUNNER_TEMP/tag.json")" = "$SHA" ]`, `.object.sha "$RUNNER_TEMP/tag.json")" != "" ]`)
+			edit(w, "publish", `[ "$(head -1 "$RUNNER_TEMP/tag.txt")" = "object $SHA" ]`, "true")
 		}},
+		{"a lightweight tag kept", func(w *wfFile) { edit(w, "publish", `[ "$type" = tag ]`, "true") }},
 		{"the run URL of this attempt", func(w *wfFile) {
 			step(w, "publish", tagRef).Env["RUN_URL"] = "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"
 		}},
@@ -2097,6 +2452,72 @@ func TestWorkflows_TheReleaseIsTaggedOnlyAfterItsProofVerified(t *testing.T) {
 			at := stepIndex(steps, func(s wfStep) bool { return withString(s, "name") == "${{ needs.gate.outputs.proof_artifact }}" })
 			w.Jobs["publish"].Steps = append(steps[:at:at], steps[at+1:]...)
 		}},
+		{"the job's token handed in as the App's", func(w *wfFile) {
+			step(w, "publish", tagRef).Env["TAG_TOKEN"] = "${{ github.token }}"
+		}},
+		{"a missing token not refused", func(w *wfFile) { edit(w, "publish", tagTokenCheck, "true ||") }},
+		{"the token written to disk", func(w *wfFile) {
+			s := step(w, "publish", tagRef)
+			s.Run = strings.Replace(s.Run, "set -euo pipefail\n", `set -euo pipefail`+"\n"+`printf '%s' "$TAG_TOKEN" >"$RUNNER_TEMP/token"`+"\n", 1)
+		}},
+		{"the token left in the environment", func(w *wfFile) { edit(w, "publish", "unset TAG_TOKEN\n", "") }},
+		{"the token in the remote", func(w *wfFile) {
+			edit(w, "publish", `remote="$SERVER_URL/$REPO.git"`, `remote="https://x-access-token:$TAG_TOKEN@github.com/$REPO.git"`)
+		}},
+		{"the header written to git's config", func(w *wfFile) {
+			edit(w, "publish", tagGitEnv, `git config --global http.extraHeader "Authorization: Basic $auth"`)
+		}},
+		{"the header on git's command line", func(w *wfFile) {
+			edit(w, "publish", tagRef, `git -c http.extraHeader="Authorization: Basic $auth" push --quiet "$remote" "refs/tags/$VERSION:refs/tags/$VERSION"`)
+		}},
+		{"the header not masked", func(w *wfFile) { edit(w, "publish", `echo "::add-mask::$auth"`, ":") }},
+		{"the header for every host", func(w *wfFile) { edit(w, "publish", `"http.$SERVER_URL/.extraHeader"`, "http.extraHeader") }},
+		{"the header left in a variable", func(w *wfFile) { edit(w, "publish", "unset auth\n", "") }},
+		{"the step traced", func(w *wfFile) { edit(w, "publish", "unset TAG_TOKEN\n", "unset TAG_TOKEN\nset -x\n") }},
+		{"the environment printed", func(w *wfFile) { edit(w, "publish", "unset auth\n", "unset auth\nenv\n") }},
+		{"git's requests traced", func(w *wfFile) {
+			edit(w, "publish", tagGitEnv, tagGitEnv+"\nexport GIT_TRACE_CURL=1 GIT_TRACE_REDACT=0")
+		}},
+		{"a prompt git could wait on", func(w *wfFile) { edit(w, "publish", "GIT_TERMINAL_PROMPT=0 ", "") }},
+		{"another remote", func(w *wfFile) {
+			edit(w, "publish", `remote="$SERVER_URL/$REPO.git"`, `remote="https://evil.example/$REPO.git"`)
+		}},
+		{"the next step handed the token", func(w *wfFile) {
+			step(w, "publish", "copy --all --preserve-digests").Env["TAG_TOKEN"] = tagTokenOutput
+		}},
+		{"another step handed the token by another name", func(w *wfFile) {
+			step(w, "publish", "gh release create").Env["TOKEN"] = tagTokenOutput
+		}},
+		{"no token step", func(w *wfFile) { mint(w).Uses = "" }},
+		{"another action", func(w *wfFile) { mint(w).Uses = "actions/other@64ab729a6294000f5aa4a4bc0b73d1f32bc45510" }},
+		{"the action by a tag", func(w *wfFile) { mint(w).Uses = "actions/create-github-app-token@v3.3.0" }},
+		{"the action's other version", func(w *wfFile) {
+			mint(w).Uses = "actions/create-github-app-token@0000000000000000000000000000000000000000"
+		}},
+		{"the token step under another id", func(w *wfFile) { mint(w).ID = "token" }},
+		{"the workflows permission", func(w *wfFile) { mint(w).With["permission-workflows"] = "write" }},
+		{"contents only read", func(w *wfFile) { mint(w).With["permission-contents"] = "read" }},
+		{"every permission of the installation", func(w *wfFile) { delete(mint(w).With, "permission-contents") }},
+		{"every repository of the installation", func(w *wfFile) {
+			delete(mint(w).With, "repositories")
+			mint(w).With["owner"] = "${{ github.repository_owner }}"
+		}},
+		{"a token that is not revoked", func(w *wfFile) { mint(w).With["skip-token-revoke"] = "true" }},
+		{"the client id from a repository variable", func(w *wfFile) {
+			mint(w).With["client-id"] = "${{ vars." + tagAppClientID + " }}"
+		}},
+		{"the private key from a repository variable", func(w *wfFile) {
+			mint(w).With["private-key"] = "${{ vars." + tagAppKey + " }}"
+		}},
+		{"a token step that may fail", func(w *wfFile) { mint(w).ContinueOnError = true }},
+		{"a token step that may be skipped", func(w *wfFile) { mint(w).If = "${{ false }}" }},
+		{"the token minted long before the tag", func(w *wfFile) {
+			steps := w.Jobs["publish"].Steps
+			m := stepIndex(steps, func(s wfStep) bool { return s.ID == "tag-token" })
+			steps[m], steps[m-2] = steps[m-2], steps[m]
+		}},
+		{"missing secrets not refused", func(w *wfFile) { edit(w, "publish", tagSecretsCheck, "true ||") }},
+		{"the check not handed the secrets", func(w *wfFile) { delete(step(w, "publish", tagSecretsCheck).Env, tagAppKey) }},
 	})
 }
 

@@ -406,23 +406,9 @@ test('a failed run tells one story: retries, never started, no strike, one facts
 	);
 	await page.keyboard.press('Escape');
 
-	// The accents: a node's tags are ink, This run's row is sunken paper, and
-	// the page has one primary.
+	// The accents: a node's tags are ink, and the page has one primary.
 	// (A node's join word is now the node's <desc>, read by assistive technology, not painted.)
 	await expect(page.getByTestId('run-dag-node-report-join')).toContainText('join');
-	await page.getByTestId('run-versions-toggle').click();
-	await expect(page.getByTestId('run-versions')).toHaveAttribute('data-loaded', 'true');
-	expect(await page.getByTestId('run-version-0.1.0').evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
-		await page.evaluate(() => {
-			const probe = document.createElement('span');
-			probe.style.backgroundColor = 'var(--color-paper-sunken)';
-			document.body.appendChild(probe);
-			const c = getComputedStyle(probe).backgroundColor;
-			probe.remove();
-			return c;
-		})
-	);
-	await page.keyboard.press('Escape');
 	await expect(page.locator('.btn-primary:visible')).toHaveCount(1);
 	// The graph comes before the tasks, the tasks start beside the aside rather
 	// than after it, and nothing runs past the right edge.
@@ -549,7 +535,7 @@ test('at 320 px: the count band is 2 × 2, run ids shorten in the middle, the ru
 	expect(band.firstRow).toBe(2);
 	for (const l of band.labels) expect(l.lines, `${l.text} is one line`).toBe(1);
 	// The header's actions wrap at this width; they stay inside the screen.
-	await expect(page.getByTestId('dashboard-cli-trigger')).toBeInViewport();
+	await expect(page.getByTestId('page-cli-trigger')).toBeInViewport();
 	// The stacked failures register says what its figures count, in words
 	// apart from the figures.
 	const finished = (await page.getByTestId(`failure-${SAGA}-finished`).innerText()).replace(/\u00a0/g, ' ');
@@ -590,7 +576,7 @@ test('at 320 px: the count band is 2 × 2, run ids shorten in the middle, the ru
 	});
 	expect(stacked.nameCut).toBe(false);
 	expect(stacked.editRight).toBeLessThanOrEqual(320);
-	expect(stacked.labelled).toBe(13);
+	expect(stacked.labelled).toBe(5);
 	expect(await pastRightEdge(page)).toEqual([]);
 	await fullPageShot(page, out('admin-namespaces-320.png'));
 });
@@ -603,8 +589,8 @@ test('Admin → Namespaces leads with its registry, and Create namespace opens t
 	await expect(page.locator('.btn-primary:visible')).toHaveCount(1);
 	await expect(page.getByTestId('ns-create-open')).toHaveClass(/btn-primary/);
 	await expect(page.getByTestId('namespaces-filters-apply')).not.toHaveClass(/btn-primary/);
-	// The row's actions are in view at 1440: the register scrolls under them.
-	const edit = await page.getByTestId('namespace-edit-default').evaluate((el) => {
+	// The row's actions are in view at 1440: the register fits, with no sideways scroll to lose them in.
+	const edit = await page.getByTestId('namespace-delete-default').evaluate((el) => {
 		const r = el.getBoundingClientRect();
 		const frame = el.closest('table')!.parentElement!.getBoundingClientRect();
 		return { right: r.right, frameRight: frame.right, left: r.left, frameLeft: frame.left };

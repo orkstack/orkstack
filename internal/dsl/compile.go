@@ -271,16 +271,14 @@ func CompileFile(path string) (*orkstackv1.Orkflow, error) {
 
 // DocumentPinsVersion reports whether the document names its own `version:`.
 //
-// It exists because §4.4(b) moves the DERIVATION of an unpinned version out of
-// Compile and into the apply path, after image resolution — and the applier
-// therefore has to tell "the author pinned 1.2.0" from "Compile derived this
-// from the source". It cannot read that off the compiled message, because both
-// arrive as a non-empty Version.
+// It exists because an unpinned version is assigned on the apply path, after
+// image resolution, not in Compile — and the applier therefore has to tell "the
+// author pinned 1.2.0" from "Compile stamped this provisional hash". It cannot
+// read that off the compiled message, because both arrive as a non-empty Version.
 //
-// The alternative was for Compile to leave Version empty and let every caller
-// derive it, which would mean `orkctl orkflow validate` and every hermetic
-// test either duplicating the derivation or reporting a versionless orkflow.
-// One small parse here is cheaper than that.
+// The alternative was for Compile to leave Version empty, which would hand every
+// hermetic caller a versionless orkflow to special-case. One small parse here is
+// cheaper than that.
 func DocumentPinsVersion(source []byte) (bool, error) {
 	var doc struct {
 		Version string `yaml:"version"`
@@ -293,9 +291,9 @@ func DocumentPinsVersion(source []byte) (bool, error) {
 
 // Compile parses, validates, and compiles a DSL document. The returned
 // Orkflow carries the original source bytes in SourceYaml; when the document
-// does not pin `version`, Version is the sha256 of that source as written,
-// header included, so a version always names the source it is stored with
-// (sourceHash).
+// does not pin `version`, Version is a provisional sha256 of that source as
+// written, header included (sourceHash). Compile has no clock and no store, so
+// that is not the version the document lands under: the apply path assigns that.
 func Compile(source []byte) (*orkstackv1.Orkflow, error) {
 	return CompileWithOptions(source, Options{})
 }

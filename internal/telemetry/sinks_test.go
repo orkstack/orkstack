@@ -377,3 +377,26 @@ sinks:
 		t.Fatalf("SourceVars() of an empty table = %q, want none", got)
 	}
 }
+
+// TestParseSinks_RefusesASecondDocument: a sink after the first document would
+// be one the deployment believes it declared.
+func TestParseSinks_RefusesASecondDocument(t *testing.T) {
+	const first = "sinks:\n  a:\n    endpoint: http://a:4318\n"
+	for name, rest := range map[string]string{
+		"a second document":                     "---\nsinks:\n  b:\n    endpoint: http://b:4318\n",
+		"a second document that does not parse": "---\nsinks: [\n",
+		"a tab the first read trips on":         "---\n\tsinks: {}\n",
+		"an empty second document":              "---\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseSinks([]byte(first + rest))
+			want := SinksVar + ": line 4: a second YAML document begins here"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("ParseSinks = %v, want a refusal holding %q", err, want)
+			}
+		})
+	}
+	if table, err := ParseSinks([]byte("---\n" + first + "...\n")); err != nil || !table.Has("a") {
+		t.Fatalf("ParseSinks of one document = %v, %v", table.Names(), err)
+	}
+}

@@ -72,9 +72,11 @@ if [ -n "$VERIFY_LANDED" ]; then
 	# The first merge through either mode: prove that the artifact's tree is
 	# the landed commit's tree.
 	# Pass the commit that landed on main. The queue-less mode lands a
-	# GitHub-made merge commit that carries no check run (the run is on the pull
-	# request's head, its second parent), so the head is read when the landed
-	# commit has none; the merge commit's tree equals the head's merged tree.
+	# GitHub-made squash commit that carries no check run and has one parent (the
+	# run is on the pull request's head, which only GitHub can name), so the pull
+	# request that landed it is asked for when the landed commit has none; the
+	# squash commit's tree equals the head's merged tree, because the branch
+	# contains main's old tip.
 	sha="$(git rev-parse "$VERIFY_LANDED")"
 	tree="$(git rev-parse "$sha^{tree}")"
 	tmp="$(mktemp -d)"
@@ -90,13 +92,16 @@ if [ -n "$VERIFY_LANDED" ]; then
 	run_id="$RUN_ID"
 	from="$sha"
 	if [ -z "$run_id" ]; then
-		if head_sha="$(git rev-parse --verify --quiet "$sha^2^{commit}")" && [ -n "$head_sha" ]; then
+		gh_read api "$api/commits/$sha/pulls" --jq "[.[] | select(.merge_commit_sha == \"$sha\")][0].head.sha // \"\"" ||
+			{ bad "cannot read the pull requests of $sha"; exit 1; }
+		head_sha="$GH_OUT"
+		if [ -n "$head_sha" ]; then
 			proof_run_of "$head_sha" || { bad "cannot read the check runs of $head_sha"; exit 1; }
 			run_id="$RUN_ID"
 			from="$head_sha"
 		fi
 	fi
-	[ -n "$run_id" ] || { bad "no proof check run on $sha, nor on its pull request head (its second parent)"; exit 1; }
+	[ -n "$run_id" ] || { bad "no proof check run on $sha, nor on the head of a pull request that landed it"; exit 1; }
 	# A pattern download puts each artifact in a directory of its own name;
 	# the run's last attempt is the proof that decided the check.
 	gh run download "$run_id" -R "$repo" -p "proof-$run_id-a*" -D "$tmp" 2>/dev/null || true
@@ -119,7 +124,11 @@ repo_json="$(gh api "$api" 2>/dev/null)" || { bad "cannot read $api"; exit 1; }
 visibility="$(jq -r '.visibility // ""' <<<"$repo_json")"
 owner_type="$(jq -r '.owner.type // ""' <<<"$repo_json")"
 admin="$(jq -r '.permissions.admin // false' <<<"$repo_json")"
+squash="$(jq -r '.allow_squash_merge // false' <<<"$repo_json")"
+squash_title="$(jq -r '.squash_merge_commit_title // ""' <<<"$repo_json")"
+squash_message="$(jq -r '.squash_merge_commit_message // ""' <<<"$repo_json")"
 merge_commit="$(jq -r '.allow_merge_commit // false' <<<"$repo_json")"
+rebase_merge="$(jq -r '.allow_rebase_merge // false' <<<"$repo_json")"
 
 [ "$admin" = true ] && ok "you are an administrator of $repo" || bad "you are not an administrator of $repo"
 [ "$visibility" = public ] && ok "$repo is public" || bad "$repo is $visibility: rulesets are refused on a private repository; the gate is not enforced until it is public"
@@ -133,7 +142,11 @@ merge_commit="$(jq -r '.allow_merge_commit // false' <<<"$repo_json")"
 		ok "$repo is owned by a User; the queue-less mode needs no organization"
 	fi
 }
-[ "$merge_commit" = true ] && ok "merge commits are allowed" || bad "allow_merge_commit is false: both modes land a merge commit whose first parent is main's old tip"
+[ "$squash" = true ] && ok "squash merging is allowed" || bad "allow_squash_merge is false: both modes land one squash commit whose parent is main's old tip"
+[ "$squash_title" = PR_TITLE ] && ok "a squash commit's subject is its pull request's title" || bad "squash_merge_commit_title is ${squash_title:-unset}, want PR_TITLE: the pr-title check validates the title, and any other default can land a subject nobody checked"
+[ "$squash_message" = PR_BODY ] && ok "a squash commit's body is its pull request's description" || bad "squash_merge_commit_message is ${squash_message:-unset}, want PR_BODY: the description names the tests that prove the change and quotes the proof"
+[ "$merge_commit" = true ] && warn "allow_merge_commit is true: the ruleset refuses a merge commit anyway; turn it off so the merge box offers only squash"
+[ "$rebase_merge" = true ] && warn "allow_rebase_merge is true: the ruleset refuses a rebase anyway; turn it off so the merge box offers only squash"
 
 git fetch origin main --quiet 2>/dev/null || bad "git fetch origin main failed"
 origin_tree="$(git rev-parse origin/main^{tree} 2>/dev/null)"
@@ -178,10 +191,10 @@ else
 	owners_fail "origin/main has no .github/CODEOWNERS"
 fi
 
-if go test ./test/tools/proofrun -run '^TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests$' -count=1 >/dev/null 2>&1; then
-	ok "the proof workflow runs the real proof on pull requests"
+if go test ./test/tools/proofrun -run '^(TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests|TestWorkflows_ThePRTitleCheckRunsOnEveryTitleChange)$' -count=1 >/dev/null 2>&1; then
+	ok "the proof workflow runs the real proof on pull requests, and pr-title reads every title"
 else
-	bad "TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests failed: the workflow no longer proves what it must"
+	bad "TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests or TestWorkflows_ThePRTitleCheckRunsOnEveryTitleChange failed: a workflow no longer proves what it must"
 fi
 
 actions_enabled="$(gh api "$api/actions/permissions" --jq '.enabled // false' 2>/dev/null)"
@@ -199,21 +212,32 @@ fi
 # of proof.yml (a pull request's head, or a validate/full push). A required
 # check with an integration_id needs that report first. GitHub's commits
 # endpoint takes a SHA or a branch, never a remote-tracking name.
-proof_success() { # <sha>
-	gh api "$api/commits/$1/check-runs?check_name=proof" 2>/dev/null |
-		jq '[.check_runs[]? | select(.name=="proof" and .app.id==15368 and .conclusion=="success")] | length' 2>/dev/null || echo 0
+check_success() { # <sha> <check name>
+	gh api "$api/commits/$1/check-runs?check_name=$2" 2>/dev/null |
+		jq --arg name "$2" '[.check_runs[]? | select(.name==$name and .app.id==15368 and .conclusion=="success")] | length' 2>/dev/null || echo 0
 }
 main_sha="$(git rev-parse origin/main 2>/dev/null)"
 check_proof=0
-[ -n "$main_sha" ] && check_proof="$(proof_success "$main_sha")"
+[ -n "$main_sha" ] && check_proof="$(check_success "$main_sha" proof)"
 if ! [ "${check_proof:-0}" -gt 0 ] 2>/dev/null; then
 	run_sha="$(gh api "$api/actions/workflows/proof.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
-	[ -n "$run_sha" ] && check_proof="$(proof_success "$run_sha")"
+	[ -n "$run_sha" ] && check_proof="$(check_success "$run_sha" proof)"
 fi
 if [ "${check_proof:-0}" -gt 0 ] 2>/dev/null; then
 	ok "the GitHub Actions app (15368) has reported a successful proof check"
 else
 	bad "no successful proof check from the GitHub Actions app (15368) yet: run proof.yml once (a validate/full/** push or a pull request with ci:proof) before requiring it"
+fi
+
+# The same for pr-title, which reports only on a pull request's head: the head
+# of the newest successful run of pr-title.yml.
+check_title=0
+title_sha="$(gh api "$api/actions/workflows/pr-title.yml/runs?status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""' 2>/dev/null || true)"
+[ -n "$title_sha" ] && check_title="$(check_success "$title_sha" pr-title)"
+if [ "${check_title:-0}" -gt 0 ] 2>/dev/null; then
+	ok "the GitHub Actions app (15368) has reported a successful pr-title check"
+else
+	bad "no successful pr-title check from the GitHub Actions app (15368) yet: open a pull request with a Conventional Commit title once before requiring it"
 fi
 
 # A 404 is "absent"; any other error is not, and fails closed.

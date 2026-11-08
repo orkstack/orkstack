@@ -1,4 +1,4 @@
-import { expect, test } from "./test";
+import { expect, test, type Page } from "./test";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import {
@@ -63,6 +63,17 @@ tasks:
 const versionsUrl = (name: string) =>
   `${UI_ORIGIN}/orkflows/${name}?ns=${NS}&tab=versions`;
 
+/** The header's More menu, open: Delete Orkflow lives in it, on every tab. */
+async function openMore(page: Page) {
+  await page.getByTestId("orkflow-more").click();
+  return page.getByTestId("orkflow-delete");
+}
+
+/** Type the Orkflow's name, which is what lets the confirm go. */
+async function typeName(page: Page, name: string) {
+  await page.getByTestId("delete-confirm-name").fill(name);
+}
+
 test.describe.configure({ mode: "serial" });
 
 test.beforeAll(async () => {
@@ -107,16 +118,26 @@ test("the delete control confirms irreversible deletion and cancel changes nothi
   page,
 }) => {
   await page.goto(versionsUrl(DELETABLE));
-  const button = page.getByTestId("versions-delete");
+  const button = await openMore(page);
   await expect(button).toBeVisible();
   await expect(button).toBeEnabled();
+  await expect(button).toHaveText("Delete Orkflow");
+  await expect(button.locator("svg use")).toHaveAttribute("href", "#i-trash");
 
   await button.click();
   const dialog = page.getByTestId("delete-confirm");
   await expect(dialog).toBeVisible();
+  await expect(page.getByTestId("delete-accept").locator("svg use")).toHaveAttribute("href", "#i-trash");
   await expect(dialog).toContainText(
     "This action will delete all versions and cannot be reversed.",
   );
+  // The confirm is held until the name is typed, whatever else was pressed.
+  const accept = page.getByTestId("delete-accept");
+  await expect(accept).toHaveAttribute("aria-disabled", "true");
+  await typeName(page, `${DELETABLE}x`);
+  await expect(accept).toHaveAttribute("aria-disabled", "true");
+  await typeName(page, DELETABLE);
+  await expect(accept).not.toHaveAttribute("aria-disabled", "true");
   await dialog.screenshot({ path: outPath("confirmation-dialog.png") });
   await page.getByTestId("delete-cancel").click();
   await expect(dialog).toHaveCount(0);
@@ -141,8 +162,9 @@ test("a server refusal is shown verbatim in the open confirmation dialog", async
     },
   );
   await page.goto(versionsUrl(DELETABLE));
-  await expect(page.getByTestId("versions-delete")).toBeEnabled();
-  await page.getByTestId("versions-delete").click();
+  await expect(await openMore(page)).toBeEnabled();
+  await page.getByTestId("orkflow-delete").click();
+  await typeName(page, DELETABLE);
   await page.getByTestId("delete-accept").click();
   await expect(page.getByTestId("delete-confirm")).toContainText(refusal);
   await expect(page).toHaveURL(versionsUrl(DELETABLE));
@@ -182,8 +204,8 @@ test("an active run behind 200 old terminal runs disables deletion through an ex
     });
   });
   await page.goto(versionsUrl(BLOCKED));
-  await expect(page.getByTestId("versions-delete")).toBeDisabled();
-  await expect(page.getByTestId("versions-delete-status")).toContainText(
+  await expect(await openMore(page)).toBeDisabled();
+  await expect(page.getByTestId("orkflow-delete-status")).toContainText(
     "At least 1 run(s) block deletion (1 active status(es), 0 finished within 24h",
   );
   const orkflowFilter = { field: "orkflow_name", op: "FILTER_OPERATOR_EQUALS", values: [BLOCKED] };
@@ -207,6 +229,23 @@ test("an active run behind 200 old terminal runs disables deletion through an ex
   await page.unroute("**/orkstack.v1.RunService/ListRuns");
 });
 
+test("Delete Orkflow is in the header's More menu on every tab, and no longer on the Versions tab", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  for (const tab of ["overview", "versions", "edit", "schedules", "triggers"]) {
+    await page.goto(`${UI_ORIGIN}/orkflows/${DELETABLE}?ns=${NS}&tab=${tab}`);
+    const header = page.locator("main header").first();
+    await expect(header.getByTestId("orkflow-more")).toBeVisible();
+    await expect(await openMore(page)).toBeVisible();
+    await page.keyboard.press("Escape");
+  }
+  await page.goto(versionsUrl(DELETABLE));
+  await expect(page.getByTestId("versions-delete")).toHaveCount(0);
+  await openMore(page);
+  await page.screenshot({ path: outPath("delete-in-more-menu.png") });
+});
+
 test("a failed run check keeps deletion disabled and names the failed check", async ({
   page,
 }) => {
@@ -214,8 +253,8 @@ test("a failed run check keeps deletion disabled and names the failed check", as
     route.abort(),
   );
   await page.goto(versionsUrl(UNCHECKED));
-  await expect(page.getByTestId("versions-delete")).toBeDisabled();
-  await expect(page.getByTestId("versions-delete-status")).toContainText(
+  await expect(await openMore(page)).toBeDisabled();
+  await expect(page.getByTestId("orkflow-delete-status")).toContainText(
     "Deletion is disabled because runs could not be checked",
   );
   await page.unroute("**/orkstack.v1.RunService/ListRuns");
@@ -225,8 +264,9 @@ test("accepting deletion returns to the namespace-scoped list and removes the or
   page,
 }) => {
   await page.goto(versionsUrl(DELETABLE));
-  await expect(page.getByTestId("versions-delete")).toBeEnabled();
-  await page.getByTestId("versions-delete").click();
+  await expect(await openMore(page)).toBeEnabled();
+  await page.getByTestId("orkflow-delete").click();
+  await typeName(page, DELETABLE);
   await page.getByTestId("delete-accept").click();
   await page.waitForURL(new RegExp(`/orkflows\\?ns=${NS}$`));
   await expect(page.getByTestId(`orkflow-row-${DELETABLE}`)).toHaveCount(0);

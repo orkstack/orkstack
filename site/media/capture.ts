@@ -518,10 +518,10 @@ const shotGroups: ShotGroup[] = [
 			await all(views, settled);
 			await shoot(
 				'ui-run-finished',
-				'The merge task of a finished each-fan-out run selected on the run page: its row and log in the Tasks card, and beside them its card with its attempts, Orker, pool, what it reserved, its timing and its phases.',
+				'The merge task of a finished each-fan-out run selected on the run page: under its row in the Tasks card, its attempts, Orker, pool, what it reserved, its timing, its phases and its log.',
 				'A finished run’s task: its log, attempts, timing and phases. Inspect, on the same card, lists its artifacts.',
 				views,
-				(p) => around(tasksCard(p), p.locator('#item-card')),
+				(p) => around(tasksCard(p)),
 			);
 		},
 	},

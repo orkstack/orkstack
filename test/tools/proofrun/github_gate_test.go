@@ -141,10 +141,6 @@ case "$*" in
 "rev-parse origin/main")
 	printf '%s\n' "${FAKE_ORIGIN_SHA:-}"
 	;;
-"rev-parse --verify --quiet "*"^2^{commit}")
-	[ -n "${FAKE_PARENT2:-}" ] || exit 1
-	printf '%s\n' "$FAKE_PARENT2"
-	;;
 "rev-parse "*"^{tree}")
 	printf '%s\n' "${FAKE_LANDED_TREE:-}"
 	;;
@@ -452,6 +448,12 @@ type gateState struct {
 	// mainChecks is the check-runs answer for main's tip: a successful proof
 	// from app 15368 unless set.
 	mainChecks string
+	// merging replaces the repository's merge settings: squash with the pull
+	// request's title and description, and nothing else, unless set.
+	merging string
+	// titleChecks is the check-runs answer for the newest pr-title run's head:
+	// a successful pr-title from app 15368 unless set.
+	titleChecks string
 }
 
 // postedFile resolves a recorded body path. The gate passes the committed
@@ -463,6 +465,9 @@ func (s *gateSandbox) postedFile(file string) string {
 	}
 	return filepath.Join(s.root, file)
 }
+
+// gateSquashSettings are the repository's merge settings the gate asks for.
+const gateSquashSettings = `"allow_squash_merge":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY","allow_merge_commit":false,"allow_rebase_merge":false`
 
 // gateCheckable answers every read the script makes before it applies
 // anything. Each test starts from this passing scenario and changes one fact.
@@ -484,15 +489,23 @@ func gateCheckable(t *testing.T, st gateState) *gateSandbox {
 	s.answer("auth status", "")
 	s.answer("repo view --json owner --jq .owner.login", `{"owner":{"login":"o"}}`)
 	s.answer("repo view --json name --jq .name", `{"name":"r"}`)
+	if st.merging == "" {
+		st.merging = gateSquashSettings
+	}
 	s.answer("api repos/o/r", fmt.Sprintf(
-		`{"visibility":%q,"owner":{"type":%q},"permissions":{"admin":true},"allow_merge_commit":true}`,
-		st.visibility, st.ownerType))
+		`{"visibility":%q,"owner":{"type":%q},"permissions":{"admin":true},%s}`,
+		st.visibility, st.ownerType, st.merging))
 	s.answer("api repos/o/r/actions/permissions --jq .enabled // false", `{"enabled":true}`)
 	s.answer("api repos/o/r/actions/workflows/nightly.yml", fmt.Sprintf(`{"state":%q}`, st.nightly))
 	if st.mainChecks == "" {
 		st.mainChecks = `{"check_runs":[{"name":"proof","app":{"id":15368},"conclusion":"success","details_url":"https://github.com/o/r/actions/runs/7"}]}`
 	}
 	s.answer("api repos/o/r/commits/sha-main/check-runs?check_name=proof", st.mainChecks)
+	if st.titleChecks == "" {
+		st.titleChecks = `{"check_runs":[{"name":"pr-title","app":{"id":15368},"conclusion":"success"}]}`
+	}
+	s.answer("api repos/o/r/actions/workflows/pr-title.yml/runs?status=success&per_page=1 --jq *", `{"workflow_runs":[{"head_sha":"sha-title"}]}`)
+	s.answer("api repos/o/r/commits/sha-title/check-runs?check_name=pr-title", st.titleChecks)
 	if st.ownerPermission == "" {
 		st.ownerPermission = "admin"
 	}
@@ -750,10 +763,10 @@ func TestGitHubMergeGate_RefusesWhenTheWorkflowTestFails(t *testing.T) {
 		t.Fatalf("exit = %d, want 1\n%s", code, out)
 	}
 	fails := gateFailures(out)
-	if len(fails) != 1 || !strings.Contains(fails[0], "TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests failed") {
+	if len(fails) != 1 || !strings.Contains(fails[0], "TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests or TestWorkflows_ThePRTitleCheckRunsOnEveryTitleChange failed") {
 		t.Errorf("want only the workflow-test failure, got:\n%s", strings.Join(fails, "\n"))
 	}
-	want := "test ./test/tools/proofrun -run ^TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests$ -count=1"
+	want := "test ./test/tools/proofrun -run ^(TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests|TestWorkflows_ThePRTitleCheckRunsOnEveryTitleChange)$ -count=1"
 	if got := gateLogLines(t, s.goLog); len(got) != 1 || got[0] != want {
 		t.Errorf("go was run as %q, want %q", got, want)
 	}
@@ -1069,9 +1082,32 @@ func TestGitHubRuleset_TheQueueBuildsOneGroupAtATime(t *testing.T) {
 	if queues != 1 {
 		t.Fatalf("%d merge_queue rules, want one", queues)
 	}
-	if builds != 1 || merges != 1 || grouping != "HEADGREEN" || method != "MERGE" || timeout != 60 {
-		t.Errorf("queue = build %d, merge %d, %s, %s, %d min; want one group at a time, HEADGREEN, MERGE, 60 min",
+	if builds != 1 || merges != 1 || grouping != "HEADGREEN" || method != "SQUASH" || timeout != 60 {
+		t.Errorf("queue = build %d, merge %d, %s, %s, %d min; want one group at a time, HEADGREEN, SQUASH, 60 min",
 			builds, merges, grouping, method, timeout)
+	}
+}
+
+// Rulesets on one branch intersect their allowed merge methods, so one body
+// left on another method leaves no method at all and wedges every pull request.
+func TestGitHubRuleset_EveryPullRequestRuleAllowsSquashAlone(t *testing.T) {
+	for _, file := range []string{gateMainRuleset, gateOwnersRuleset, gateQueueRuleset} {
+		var body struct {
+			Rules []struct {
+				Type       string `json:"type"`
+				Parameters struct {
+					AllowedMergeMethods []string `json:"allowed_merge_methods"`
+				} `json:"parameters"`
+			} `json:"rules"`
+		}
+		if err := json.Unmarshal(gateCommitted(t, file), &body); err != nil {
+			t.Fatalf("%s: %v", file, err)
+		}
+		for _, rule := range body.Rules {
+			if rule.Type == "pull_request" && !reflect.DeepEqual(rule.Parameters.AllowedMergeMethods, []string{"squash"}) {
+				t.Errorf("%s allows %v, want squash alone", file, rule.Parameters.AllowedMergeMethods)
+			}
+		}
 	}
 }
 
@@ -1087,6 +1123,7 @@ func TestGitHubRuleset_TheDefaultIsStrict(t *testing.T) {
 					Context       string `json:"context"`
 					IntegrationID int    `json:"integration_id"`
 				} `json:"required_status_checks"`
+				AllowedMergeMethods []string `json:"allowed_merge_methods"`
 			} `json:"parameters"`
 		} `json:"rules"`
 	}
@@ -1100,6 +1137,9 @@ func TestGitHubRuleset_TheDefaultIsStrict(t *testing.T) {
 	strict, sawChecks := false, false
 	for _, rule := range body.Rules {
 		types[rule.Type] = true
+		if rule.Type == "pull_request" && !reflect.DeepEqual(rule.Parameters.AllowedMergeMethods, []string{"squash"}) {
+			t.Errorf("allowed_merge_methods = %v, want squash alone: main moves by one squash commit", rule.Parameters.AllowedMergeMethods)
+		}
 		if rule.Type != "required_status_checks" {
 			continue
 		}
@@ -1109,8 +1149,9 @@ func TestGitHubRuleset_TheDefaultIsStrict(t *testing.T) {
 			t.Error("do_not_enforce_on_create is true: a new branch would bypass the proof")
 		}
 		checks := rule.Parameters.Checks
-		if len(checks) != 1 || checks[0].Context != "proof" || checks[0].IntegrationID != 15368 {
-			t.Errorf("required_status_checks = %+v, want exactly the proof context from app 15368", checks)
+		if len(checks) != 2 || checks[0].Context != "proof" || checks[0].IntegrationID != 15368 ||
+			checks[1].Context != "pr-title" || checks[1].IntegrationID != 15368 {
+			t.Errorf("required_status_checks = %+v, want exactly the proof and pr-title contexts from app 15368", checks)
 		}
 	}
 	if !sawChecks || !strict {
@@ -1228,18 +1269,25 @@ func TestGitHubMergeGate_ApplyDoesNotPostWhenTheNameLookupFails(t *testing.T) {
 	gateRefuseWrites(t, s)
 }
 
-// The queue-less mode lands a GitHub-made merge commit with no check run of
-// its own; --verify-landed reads the run on its second parent, the pull
-// request head, and compares the merge commit's tree.
+// The queue-less mode lands a GitHub-made squash commit with no check run of
+// its own and one parent; --verify-landed asks GitHub which pull request landed
+// it, reads the run on that pull request's head, and compares the squash
+// commit's tree.
 func TestGitHubMergeGate_VerifyLandedFindsTheProofOnThePullRequestHead(t *testing.T) {
 	for _, c := range []struct {
-		name    string
-		parent2 string
-		code    int
-		want    string
+		name       string
+		pulls      string
+		pullStatus int
+		proofTree  string
+		code       int
+		want       string
 	}{
-		{"a merge commit", "sha-head", 0, "carries no proof check run; read the pull request head sha-head"},
-		{"a commit that is not a merge", "", 1, "no proof check run on sha-landed"},
+		{"a squash commit", `[{"merge_commit_sha":"sha-landed","head":{"sha":"sha-head"}}]`, 0, "tree-landed", 0, "carries no proof check run; read the pull request head sha-head"},
+		{"a squash commit of another tree", `[{"merge_commit_sha":"sha-landed","head":{"sha":"sha-head"}}]`, 0, "tree-other", 1, "measured tree tree-other, and sha-landed's tree is tree-landed"},
+		// A pull request that merely contains the commit did not land it.
+		{"a pull request that did not land it", `[{"merge_commit_sha":"sha-other","head":{"sha":"sha-head"}}]`, 0, "tree-landed", 1, "no proof check run on sha-landed, nor on the head of a pull request that landed it"},
+		{"a commit no pull request landed", `[]`, 0, "tree-landed", 1, "no proof check run on sha-landed, nor on the head of a pull request that landed it"},
+		{"a read that failed", "", 500, "tree-landed", 1, "cannot read the pull requests of sha-landed"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			s := newGateSandbox(t)
@@ -1247,24 +1295,78 @@ func TestGitHubMergeGate_VerifyLandedFindsTheProofOnThePullRequestHead(t *testin
 			s.answer("repo view --json owner --jq .owner.login", `{"owner":{"login":"o"}}`)
 			s.answer("repo view --json name --jq .name", `{"name":"r"}`)
 			s.answer("api repos/o/r/commits/sha-landed/check-runs --jq *", `{"check_runs":[]}`)
+			s.answerStatus("api repos/o/r/commits/sha-landed/pulls --jq *", c.pulls, c.pullStatus)
 			s.answer("api repos/o/r/commits/sha-head/check-runs --jq *",
 				`{"check_runs":[{"name":"proof","app":{"id":15368},"details_url":"https://github.com/o/r/actions/runs/7/job/9"}]}`)
 			arts := filepath.Join(s.dir, "artifacts", "proof-7-a1")
 			if err := os.MkdirAll(arts, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(arts, "proof.json"), []byte(`{"tree":"tree-landed"}`), 0o644); err != nil {
+			if err := os.WriteFile(filepath.Join(arts, "proof.json"), []byte(fmt.Sprintf(`{"tree":%q}`, c.proofTree)), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			out, code := s.run(map[string]string{
 				"FAKE_GIT_DEFAULT":   "sha-landed",
 				"FAKE_LANDED_TREE":   "tree-landed",
-				"FAKE_PARENT2":       c.parent2,
 				"FAKE_RUN_ARTIFACTS": filepath.Join(s.dir, "artifacts"),
 			}, "--verify-landed", "sha-landed")
 			if code != c.code || !strings.Contains(out, c.want) {
 				t.Errorf("exit = %d, want %d with %q\n%s", code, c.code, c.want, out)
 			}
 		})
+	}
+}
+
+// The gate asks for squash merging with the pull request's title and
+// description, and no longer asks for merge commits: the check names what is
+// wrong, and each setting alone refuses.
+func TestGitHubMergeGate_RequiresSquashMergingWithThePullRequestsTitle(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		merging string
+		want    string
+	}{
+		{"squash merging off", `"allow_squash_merge":false,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"`, "allow_squash_merge is false"},
+		{"the default title", `"allow_squash_merge":true,"squash_merge_commit_title":"COMMIT_OR_PR_TITLE","squash_merge_commit_message":"PR_BODY"`, "squash_merge_commit_title is COMMIT_OR_PR_TITLE"},
+		{"no title setting", `"allow_squash_merge":true,"squash_merge_commit_message":"PR_BODY"`, "squash_merge_commit_title is unset"},
+		{"a blank body", `"allow_squash_merge":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"BLANK"`, "squash_merge_commit_message is BLANK"},
+		{"the commits as the body", `"allow_squash_merge":true,"squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"COMMIT_MESSAGES"`, "squash_merge_commit_message is COMMIT_MESSAGES"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			out, code := gateCheckable(t, gateState{merging: c.merging}).run(nil)
+			if code != 1 {
+				t.Fatalf("exit = %d, want 1\n%s", code, out)
+			}
+			fails := gateFailures(out)
+			if len(fails) != 1 || !strings.Contains(fails[0], c.want) {
+				t.Errorf("want only %q, got:\n%s", c.want, strings.Join(fails, "\n"))
+			}
+		})
+	}
+
+	// Merge commits are no precondition any more. Left on, the ruleset refuses
+	// them anyway, so each is a warning and never a failure.
+	out, code := gateCheckable(t, gateState{}).run(nil)
+	if code != 0 || !strings.Contains(out, "squash merging is allowed") || strings.Contains(out, "merge commits are allowed") {
+		t.Errorf("with squash alone: exit = %d\n%s", code, out)
+	}
+	out, code = gateCheckable(t, gateState{merging: gateSquashSettings + `,"allow_merge_commit":true,"allow_rebase_merge":true`}).run(nil)
+	if code != 0 || !strings.Contains(out, "warn: allow_merge_commit is true") || !strings.Contains(out, "warn: allow_rebase_merge is true") {
+		t.Errorf("with merge commits and rebasing left on: exit = %d\n%s", code, out)
+	}
+}
+
+// A required check with an integration_id needs a report first, and pr-title
+// reports only on a pull request's head, so the gate asks about the newest
+// successful run's.
+func TestGitHubMergeGate_RefusesBeforeThePRTitleCheckHasEverPassed(t *testing.T) {
+	s := gateCheckable(t, gateState{titleChecks: `{"check_runs":[{"name":"pr-title","app":{"id":99},"conclusion":"success"}]}`})
+	out, code := s.run(nil)
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1\n%s", code, out)
+	}
+	fails := gateFailures(out)
+	if len(fails) != 1 || !strings.Contains(fails[0], "no successful pr-title check") {
+		t.Errorf("want only the missing pr-title check, got:\n%s", strings.Join(fails, "\n"))
 	}
 }

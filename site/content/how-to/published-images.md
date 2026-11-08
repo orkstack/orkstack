@@ -109,7 +109,7 @@ With `ORK_BUILD_ID` set in `ork.env` and `orker.env`, run `orkctl release promot
 
 - **The Docker socket.** Each task's container starts through the host's Docker daemon. Whoever can use the socket can start a privileged container, so give it to the Orker and to nothing else.
 - **Root.** The `orker` image runs as root. The `ork` and `orkctl` images run as non-root.
-- **The same path inside and out.** The daemon mounts each task's workspace from the host, so the work directory must be mounted at the same path. On Docker Desktop or colima, the virtual machine must share that directory too. Otherwise the Orker refuses to boot with `WORKDIR_NOT_BINDABLE`.
+- **The same path inside and out.** The daemon mounts each task's workspace from the host, so the work directory must be mounted at the same path. Where the Docker daemon runs in a virtual machine, as on colima, that machine must share the directory too. Otherwise the Orker refuses to boot with `WORKDIR_NOT_BINDABLE`.
 - **One `ORK_ORKER_ID` per Orker,** unique across the whole deployment, not only on one host.
 - **`init: true` and a longer stop grace.** A stopped Orker cancels its tasks, and each gets 30 seconds before it is killed. `stop_grace_period: 45s` leaves time for that.
 

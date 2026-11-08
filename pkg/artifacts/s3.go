@@ -127,13 +127,35 @@ func NewS3Store(ctx context.Context, cfg Config) (*S3Store, error) {
 
 // newS3Client builds the client and resolves the bucket that both S3-backed
 // stores share: run artifacts (S3Store) and orkflow definitions
-// (S3OrkflowStore). Static credentials are used when both key fields are set;
-// otherwise the standard AWS credential chain applies, so the same code serves
-// MinIO and real AWS.
+// (S3OrkflowStore).
 func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 	bucket := cfg.S3Bucket
 	if bucket == "" {
 		bucket = DefaultS3Bucket
+	}
+
+	awsCfg, err := loadS3Config(ctx, cfg)
+	if err != nil {
+		return nil, "", err
+	}
+
+	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
+		if cfg.S3Endpoint != "" {
+			o.BaseEndpoint = aws.String(cfg.S3Endpoint)
+		}
+		o.UsePathStyle = cfg.S3PathStyle
+	})
+	return client, bucket, nil
+}
+
+// loadS3Config builds the SDK configuration of cfg. A whole configured key
+// signs every request. With none, the SDK's default credential chain does
+// (environment, shared files, web identity, container and instance roles), so
+// the same code serves a static key and a role. Half a key is refused
+// (CheckS3Keys).
+func loadS3Config(ctx context.Context, cfg Config) (aws.Config, error) {
+	if err := cfg.CheckS3Keys(); err != nil {
+		return aws.Config{}, err
 	}
 	region := cfg.S3Region
 	if region == "" {
@@ -147,7 +169,7 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 		awsconfig.WithRequestChecksumCalculation(aws.RequestChecksumCalculationWhenRequired),
 		awsconfig.WithResponseChecksumValidation(aws.ResponseChecksumValidationWhenRequired),
 	}
-	if cfg.S3AccessKey != "" && cfg.S3SecretKey != "" {
+	if cfg.S3AccessKey != "" {
 		loadOpts = append(loadOpts, awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3SessionToken),
 		))
@@ -155,16 +177,9 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 
 	awsCfg, err := awsconfig.LoadDefaultConfig(ctx, loadOpts...)
 	if err != nil {
-		return nil, "", fmt.Errorf("artifacts: s3 store: load aws config: %w", err)
+		return aws.Config{}, fmt.Errorf("artifacts: s3 store: load aws config: %w", err)
 	}
-
-	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		if cfg.S3Endpoint != "" {
-			o.BaseEndpoint = aws.String(cfg.S3Endpoint)
-		}
-		o.UsePathStyle = cfg.S3PathStyle
-	})
-	return client, bucket, nil
+	return awsCfg, nil
 }
 
 // Bucket returns the bucket this store reads and writes.

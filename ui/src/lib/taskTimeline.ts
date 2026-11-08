@@ -117,11 +117,11 @@ export function taskTimelineBars(input: TimelineInput): Timeline {
 	return { bars, words: words.join(', ') };
 }
 
-/** The Tasks card's axis: round marks that fit its span, as fractions of it. */
-export function timelineAxis(spanMs: number): { label: string; at: number }[] {
+/** The Tasks card's axis: at most `room` round marks that fit its span, as fractions of it. */
+export function timelineAxis(spanMs: number, room = 5): { label: string; at: number }[] {
 	if (!(spanMs > 0)) return [];
 	const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400, 28800, 86400];
-	const wanted = spanMs / 1000 / 5;
+	const wanted = spanMs / 1000 / Math.max(room, 1);
 	const step = steps.find((s) => s >= wanted) ?? steps[steps.length - 1];
 	const marks: { label: string; at: number }[] = [];
 	for (let t = 0; t * 1000 < spanMs; t += step) {

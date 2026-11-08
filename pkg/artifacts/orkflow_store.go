@@ -76,9 +76,16 @@ type OrkflowStore interface {
 	// *CurrentMovedError (errors.Is ErrCurrentMoved), never an overwrite.
 	SetCurrentVersion(ctx context.Context, namespace, name, version string,
 		expected CurrentExpectation) (string, error)
-	// Delete permanently removes every version and both pointers for one
-	// orkflow. A missing orkflow returns ErrNotFound.
+	// Delete permanently removes every version, both pointers and every
+	// derived claim for one orkflow. A missing orkflow returns ErrNotFound.
 	Delete(ctx context.Context, namespace, name string) error
+	// FindDerivedVersion reports the version a document that pins none was
+	// given, by its content hash, "" when it was never given one. It only
+	// reads, and it answers for a version stored under the hash itself.
+	FindDerivedVersion(ctx context.Context, namespace, name, contentHash string) (string, error)
+	// ClaimDerivedVersion gives a content hash its version: the one it already
+	// has, or candidate. Every caller for one hash gets one answer.
+	ClaimDerivedVersion(ctx context.Context, namespace, name, contentHash, candidate string) (string, error)
 }
 
 // OrkflowVersions is one orkflow's version catalog.
@@ -189,7 +196,7 @@ func OrkflowNamespacePrefix(namespace string) (string, error) {
 
 // validOrkflowNamespace holds the namespace component of an orkflow key to the
 // registry's name rule, which is the compiler's. The other two components have
-// their own rules — a version is a semver or a content hash, not a slug — but
+// their own rules — a version is a semver, a minted id or a content hash, not a slug — but
 // a namespace is the same concept here as in metadata/namespaces/, and one
 // concept gets one rule (AGENTS.md §7). Without this, an orkflow could be
 // stored under a namespace the registry can never hold and no document can
@@ -400,12 +407,12 @@ func pinnedOrkflow(versions []*orkstackv1.Orkflow, version string) *orkstackv1.O
 // the second would be silently dropped. Comparing everything is strictly
 // safer: it never treats a difference as a repeat.
 //
-// It is also the reason a DERIVED version covers the whole source rather than
-// the document's semantic content (internal/dsl.sourceHash): this comparison
-// is what "the same document" means, so a derivation that ignored comments
-// would hand one version two documents and get the second refused below, with
-// no version left for the author to publish it under. The engine's in-memory
-// store calls this function too, so there is one rule.
+// It is also the reason a document's content hash covers the whole source rather
+// than its semantic content (internal/dsl.ContentHash): this comparison is what
+// "the same document" means, so a hash that ignored comments would hand one
+// version two documents and get the second refused below, with no version left
+// for the author to publish it under. The engine's in-memory store calls this
+// function too, so there is one rule.
 func SameStoredOrkflow(stored, incoming *orkstackv1.Orkflow) bool {
 	if !bytes.Equal([]byte(stored.GetSourceYaml()), []byte(incoming.GetSourceYaml())) {
 		return false
@@ -809,12 +816,14 @@ func (s *S3OrkflowStore) scan(ctx context.Context, namespace, name string) (orkf
 	return s.readPrefix(ctx, prefix)
 }
 
-// orkflowScan is what one prefix scan found: every definition under it, and
-// the two pointers that live beside them, each keyed by orkflow name.
+// orkflowScan is what one prefix scan found: every definition under it, the two
+// pointers that live beside them, each keyed by orkflow name, and the keys of the
+// derived claims, which only Delete needs and nothing reads.
 type orkflowScan struct {
-	versions []*orkstackv1.Orkflow
-	current  map[string]string
-	head     map[string]string
+	versions  []*orkstackv1.Orkflow
+	current   map[string]string
+	head      map[string]string
+	claimKeys []string
 }
 
 // headOf is the version one orkflow's head names, and derivedHeadOf is the
@@ -899,6 +908,10 @@ func (s *S3OrkflowStore) readPrefix(ctx context.Context, prefix string) (orkflow
 				if pointer.Version != "" {
 					scan.head[name] = pointer.Version
 				}
+				continue
+			}
+			if _, _, _, ok := ParseOrkflowDerivedKey(key); ok {
+				scan.claimKeys = append(scan.claimKeys, key)
 				continue
 			}
 			if _, _, _, ok := parseOrkflowKey(key); !ok {

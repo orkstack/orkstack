@@ -415,9 +415,8 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 				}
 			}
 			taskWorker := worker.New(temporalClient, orkerQueue, worker.Options{
-				DisableRegistrationAliasing:  true,
-				DisableWorkflowWorker:        true,
-				MaxHeartbeatThrottleInterval: orker.DefaultHeartbeatInterval,
+				DisableRegistrationAliasing: true,
+				DisableWorkflowWorker:       true,
 			})
 			taskWorker.RegisterActivityWithOptions(activities.ExecuteTask, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 			taskWorker.RegisterActivityWithOptions(activities.DescribeOrker, activity.RegisterOptions{Name: task.ActivityDescribeOrker})

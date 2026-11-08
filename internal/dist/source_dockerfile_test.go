@@ -128,7 +128,7 @@ func TestSourceDockerfile_CompilesTheReleaseCommandsStatically(t *testing.T) {
 	build := runs[0].args
 	for _, want := range []string{
 		"CGO_ENABLED=0", "GOOS=linux", "GOARCH=$TARGETARCH", "GOTOOLCHAIN=local", "go build", "-trimpath", "-buildvcs=false",
-		"-tags " + dist.BuildTags, "-o /out/",
+		"-tags " + dist.BuildTags, "-X main.version=${VERSION}", "-X main.commit=${COMMIT}", "-o /out/",
 	} {
 		if !strings.Contains(build, want) {
 			t.Errorf("the go build %q does not say %s", build, want)

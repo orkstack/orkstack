@@ -8,7 +8,6 @@
 	// measure says so in its own row, in the server's words, and the others
 	// still render (#lib/adminUsage.ts).
 	import { goto, invalidateAll } from '$app/navigation';
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ScopeNote from '#lib/components/ScopeNote.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
@@ -20,7 +19,7 @@
 	import { listHref, pageStackKey, readPageStack, writePageStack } from '#lib/browsing.ts';
 	import { ListNamespacesRequestSchema } from '#lib/gen/orkstack/v1/namespace_service_pb.ts';
 	import type { GetUsageResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
-	import type { FieldFilter } from '#lib/listFilter.ts';
+	import { filterFlags, type FieldFilter } from '#lib/listFilter.ts';
 	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
 	import { fmtInstant } from '#lib/stats.ts';
 	import { USAGE_CAVEAT, USAGE_WINDOWS, adminUsageCli, budgetCellLabel, fmtUnitSeconds } from '#lib/usage.ts';
@@ -100,7 +99,13 @@
 
 <svelte:head><title>Admin — Usage — OrkStack</title></svelte:head>
 
-<SheetHeader title="Usage">
+<SheetHeader
+	title="Usage"
+	commands={[
+		{ label: 'What each namespace reserved', command: adminUsageCli(data.window) },
+		{ label: 'The namespaces', command: ['orkctl', 'namespace', 'list', ...filterFlags(data.applied)].join(' ') }
+	]}
+>
 	{#snippet meta()}What each namespace reserved over the last <span class="figure text-ink">{data.window}</span>{/snippet}
 	{#snippet actions()}
 		<span class="caps text-ink-muted" aria-hidden="true">Window</span>
@@ -115,7 +120,6 @@
 				>
 			{/each}
 		</div>
-		<CliEquivalent command={adminUsageCli(data.window)} testid="usage-admin-cli" />
 	{/snippet}
 </SheetHeader>
 
@@ -124,14 +128,9 @@
 	time. Deployment-wide: the namespace switcher does not filter this page; the filters below do.
 </ScopeNote>
 
-<ListFilter
-	request={ListNamespacesRequestSchema}
-	applied={data.applied}
-	testid="usage-namespaces"
-	command={['orkctl', 'namespace', 'list']}
-	onapply={applyFilters}
-	{clearHref}
-/>
+<div class="mb-3">
+	<ListFilter request={ListNamespacesRequestSchema} applied={data.applied} testid="usage-namespaces" onapply={applyFilters} {clearHref} />
+</div>
 
 {#if data.namespacesError}
 	<ErrorPanel

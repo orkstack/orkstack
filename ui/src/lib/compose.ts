@@ -2,6 +2,7 @@
 // (`uses: orkflow:<name>@<version>`) starts a CHILD RUN of another Orkflow and
 // reaches no Orker; the page links to that child and rolls its tasks up
 // live. Every sentence mirrors cmd/orkctl/compose.go.
+import { shortVersion } from './version';
 import { Status } from './gen/orkstack/v1/common_pb';
 import { EventType, type Event, type Run, type TaskChild } from './gen/orkstack/v1/run_pb';
 import { listHref } from './browsing';
@@ -12,7 +13,7 @@ import { statusLabel } from './status';
 /** "name@version": the child as the parent pinned it. */
 export function childLabel(child: Pick<TaskChild, 'orkflowName' | 'orkflowVersion'> | undefined): string {
 	if (!child) return '';
-	return `${child.orkflowName}@${child.orkflowVersion}`;
+	return `${child.orkflowName}@${shortVersion(child.orkflowVersion)}`;
 }
 
 /** The child run's page, in the parent's namespace. */
@@ -40,6 +41,14 @@ export function childrenFilters(parentRunId: string) {
 		filterOf('origin.kind', FilterOperator.EQUALS, ['PARENT_RUN']),
 		filterOf('origin.id', FilterOperator.EQUALS, [parentRunId])
 	];
+}
+
+/**
+ * Every run below a root of a composed chain, however deep: the runs list
+ * filtered to that root (`orkctl run list --filter origin.root_run_id=<id>`).
+ */
+export function chainListHref(namespace: string, rootRunId: string): string {
+	return listHref('/runs', { ns: namespaceLabel(namespace) }, { filter: [filterOf('origin.root_run_id', FilterOperator.EQUALS, [rootRunId])] });
 }
 
 /** One child task in the roll-up: its id and status. */

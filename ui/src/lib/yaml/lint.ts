@@ -4,7 +4,8 @@
 //
 // The validator is ajv, the reference draft-07 implementation and the one
 // ui/test/authoredSchemas.test.ts compiles the schemas with, under the same
-// options. What this module adds is only the wording and the placement: a
+// options, compiled ahead of time so the page need not allow eval
+// (ui/test/gen-validators.ts). What this module adds is only the wording and the placement: a
 // raw ajv error says "must NOT have additional properties" at `/tasks/0`; a
 // person needs "unknown key `need`; did you mean `needs`?" on the line where
 // `need` is written. Every sentence is derived from the schema the error came
@@ -16,33 +17,13 @@
 // "Editor support"), and it cannot see what only the engine can — the strict
 // YAML-to-JSON mapping, needs cycles, interfaces, pools, policy. The engine's
 // answer decides (./status.ts).
-import Ajv, { type ErrorObject, type ValidateFunction } from 'ajv';
-import addFormats from 'ajv-formats';
+import type { ErrorObject, ValidateFunction } from 'ajv';
 import { displayPath, headAt, parseYaml, pointerPath, rangeAt, type Parsed, type Range } from './document';
 import { SCHEMAS, schemaAt } from './schemas';
 import type { Diagnostic, DocumentKind, PathSegment } from './types';
+import { Automation, Orkflow } from './validators.gen';
 
-const validators = new Map<DocumentKind, ValidateFunction>();
-let ajv: Ajv | null = null;
-
-/** One ajv for every kind and every `if` condition the walker evaluates. */
-export function sharedAjv(): Ajv {
-	if (!ajv) {
-		ajv = new Ajv({ allErrors: true, strict: true, strictRequired: false, allowUnionTypes: true, verbose: true });
-		// Exactly the formats the generator emits (ui/test/authoredSchemas.test.ts).
-		addFormats(ajv, ['date-time']);
-	}
-	return ajv;
-}
-
-export function validatorFor(kind: DocumentKind): ValidateFunction {
-	let validate = validators.get(kind);
-	if (!validate) {
-		validate = sharedAjv().compile(SCHEMAS[kind]);
-		validators.set(kind, validate);
-	}
-	return validate;
-}
+const validators = { Orkflow, Automation } as unknown as Record<DocumentKind, ValidateFunction>;
 
 /** Every finding the editor can make on its own, in document order. */
 export function lintDocument(text: string, kind: DocumentKind): Diagnostic[] {
@@ -53,7 +34,7 @@ export function lintDocument(text: string, kind: DocumentKind): Diagnostic[] {
 }
 
 export function schemaFindings(parsed: Parsed, kind: DocumentKind): Diagnostic[] {
-	const validate = validatorFor(kind);
+	const validate = validators[kind];
 	if (validate(parsed.value)) return [];
 	const errors = validate.errors ?? [];
 	const conditions = errors.filter((e) => e.keyword === 'if');

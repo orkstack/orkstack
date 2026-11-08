@@ -22,7 +22,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { OP, addListFilter, adminNamespaceUrl } from './uiHelpers';
+import { OP, addListFilter, adminNamespaceUrl, pageCli } from './uiHelpers';
 
 // Admin → Audit, against a real engine on real Temporal and MinIO.
 //
@@ -123,9 +123,9 @@ async function actions(page: Page): Promise<string[]> {
 	return page.getByTestId('audit-action').evaluateAll((cells) => cells.map((cell) => (cell.textContent ?? '').trim()));
 }
 
-async function cliText(page: Page, testid: string): Promise<string> {
-	await page.getByTestId(`${testid}-trigger`).click();
-	const text = await page.getByTestId(`${testid}-command`).innerText();
+async function cliText(page: Page): Promise<string> {
+	await page.getByTestId('page-cli-trigger').click();
+	const text = await pageCli(page, 'This listing').innerText();
 	await page.keyboard.press('Escape');
 	return text;
 }
@@ -256,8 +256,7 @@ test('A1/A2/A6: every namespace by default; namespace = selects the deployment-w
 	expect(narrowed.every((row) => row.includes(NS))).toBe(true);
 
 	// A6: the CLI equivalent filters; it never sends -n.
-	expect(await cliText(page, 'audit-cli')).toBe(`orkctl admin audit --filter namespace=${NS}`);
-	expect(await cliText(page, 'audit-filters-cli')).toBe(`orkctl admin audit --filter namespace=${NS}`);
+	expect(await cliText(page)).toBe(`orkctl admin audit --filter namespace=${NS}`);
 	await shot(page, 'admin-audit-scoped.png');
 	note(`every namespace: ${everywhere.length} rows; namespace=${NS}: ${narrowed.length} rows, no retention.update`);
 });
@@ -270,7 +269,7 @@ test('A3: action ^ namespace. narrows to namespace writes', async ({ page }) => 
 	await page.getByTestId('audit-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['action^namespace.']);
 	await expect.poll(() => actions(page)).toEqual(['namespace.update', 'namespace.create']);
-	expect(await cliText(page, 'audit-filters-cli')).toBe(`orkctl admin audit --filter 'action^namespace.'`);
+	expect(await cliText(page)).toBe(`orkctl admin audit --filter 'action^namespace.'`);
 	note(`action^namespace. : ${(await actions(page)).join(' ')}`);
 });
 

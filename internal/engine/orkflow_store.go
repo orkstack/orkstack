@@ -66,6 +66,16 @@ type OrkflowStore interface {
 	// Delete removes all versions of an orkflow from the namespace.
 	// It is not reversible: all versions and their metadata are permanently deleted.
 	Delete(ctx context.Context, namespace, name string) error
+	// FindDerivedVersion reports the version a document that pins none was
+	// given, by its content hash, "" when it was never given one. It only reads,
+	// so a validation can ask, and it answers for a version an earlier release
+	// stored under the hash itself.
+	FindDerivedVersion(ctx context.Context, namespace, name, contentHash string) (string, error)
+	// ClaimDerivedVersion gives a content hash its version: the one it already
+	// has, or candidate. Every caller for one hash gets one answer, across
+	// replicas, which is what makes two concurrent applies of one new document
+	// converge on one version.
+	ClaimDerivedVersion(ctx context.Context, namespace, name, contentHash, candidate string) (string, error)
 }
 
 // MemoryOrkflowStore is the in-memory OrkflowStore used by unit tests that have no
@@ -81,6 +91,9 @@ type MemoryOrkflowStore struct {
 	latest      map[string]map[string]string
 	current     map[string]map[string]string
 	nameList    map[string][]string
+	// derived is namespace -> name -> content hash -> version, the durable
+	// store's @derived-{hash}.json objects.
+	derived map[string]map[string]map[string]string
 }
 
 // compile-time contract check.
@@ -93,7 +106,55 @@ func NewMemoryOrkflowStore() *MemoryOrkflowStore {
 		latest:      map[string]map[string]string{},
 		current:     map[string]map[string]string{},
 		nameList:    map[string][]string{},
+		derived:     map[string]map[string]map[string]string{},
 	}
+}
+
+// FindDerivedVersion answers as the durable store does: a claim first, then a
+// version stored under the hash itself.
+func (s *MemoryOrkflowStore) FindDerivedVersion(
+	_ context.Context,
+	namespace, name, contentHash string,
+) (string, error) {
+	namespace = artifacts.ResolveNamespace(namespace)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.derivedVersionLocked(namespace, name, contentHash), nil
+}
+
+func (s *MemoryOrkflowStore) derivedVersionLocked(namespace, name, contentHash string) string {
+	if version := s.derived[namespace][name][contentHash]; version != "" {
+		return version
+	}
+	if _, ok := s.byNamespace[namespace][name][contentHash]; ok {
+		return contentHash
+	}
+	return ""
+}
+
+// ClaimDerivedVersion settles under the store's lock what the durable store
+// settles with a conditional create.
+func (s *MemoryOrkflowStore) ClaimDerivedVersion(
+	_ context.Context,
+	namespace, name, contentHash, candidate string,
+) (string, error) {
+	if candidate == "" {
+		return "", fmt.Errorf("engine: claim a version for orkflow %q: %w", name, artifacts.ErrInvalidOrkflow)
+	}
+	namespace = artifacts.ResolveNamespace(namespace)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if version := s.derivedVersionLocked(namespace, name, contentHash); version != "" {
+		return version, nil
+	}
+	if s.derived[namespace] == nil {
+		s.derived[namespace] = map[string]map[string]string{}
+	}
+	if s.derived[namespace][name] == nil {
+		s.derived[namespace][name] = map[string]string{}
+	}
+	s.derived[namespace][name][contentHash] = candidate
+	return candidate, nil
 }
 
 // Put stores an orkflow version in the namespace the message names, and
@@ -298,6 +359,8 @@ func (s *MemoryOrkflowStore) Delete(
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// A claim whose apply never landed goes whether or not a version exists.
+	delete(s.derived[namespace], name)
 	if _, ok := s.byNamespace[namespace][name]; !ok {
 		return notStored(namespace, name, "")
 	}
@@ -318,6 +381,15 @@ func (s *MemoryOrkflowStore) Delete(
 	}
 
 	return nil
+}
+
+// OrkflowRefText names a definition in a message: name@version, or the name alone
+// for a document whose content has no version yet.
+func OrkflowRefText(wf *orkstackv1.Orkflow) string {
+	if wf.GetVersion() == "" {
+		return wf.GetName()
+	}
+	return wf.GetName() + "@" + wf.GetVersion()
 }
 
 func notStored(namespace, name, version string) error {

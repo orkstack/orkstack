@@ -5,7 +5,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild, uiEnv } from './harness';
-import { selectNamespace, selectTask } from './uiHelpers';
+import { selectNamespace, selectTask, pageCli } from './uiHelpers';
 import { fillYaml } from './yaml';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
@@ -655,7 +655,9 @@ test('a chatty task keeps a bounded scrollback and leaves the tab responsive', a
 	expect(rendered).toBeLessThanOrEqual(SCROLLBACK);
 	const dropped = page.getByTestId('task-log-dropped-chatter');
 	await expect(dropped).toBeVisible();
-	await expect(dropped).toContainText('orkctl run logs');
+	await page.getByTestId('task-log-dropped-cli-chatter-trigger').click();
+	await expect(page.getByTestId('task-log-dropped-cli-chatter-command')).toContainText('orkctl run logs');
+	await page.keyboard.press('Escape');
 
 	// The tail is the END of the output, not the beginning: a cap that kept the
 	// first 2000 lines would leave a reader watching a task's opening titles.
@@ -815,7 +817,7 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 	// ---- alpha: a namespace with real numbers ------------------------------
 	await page.goto(`${UI_ORIGIN}/?ns=${ALPHA}`);
 	await expect(page.getByTestId('dashboard-heading')).toBeVisible();
-	await expect(page.getByTestId('dashboard-namespace')).toContainText(ALPHA);
+	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText(ALPHA);
 
 	// Pool health: both pools, both with an Orker. This is the same answer
 	// ListPools gives, from a replica that started nothing. The `gpu` pool is
@@ -884,7 +886,7 @@ test('the dashboard scopes to a namespace, shows pool health and failures, and s
 	// gets.
 	await selectNamespace(page, BETA);
 	await page.waitForURL(new RegExp(`ns=${BETA}`));
-	await expect(page.getByTestId('dashboard-namespace')).toContainText(BETA);
+	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText(BETA);
 
 	// Nothing of alpha's leaks in.
 	await expect(page.getByTestId(`failure-${FAILING}`)).toHaveCount(0);
@@ -953,8 +955,8 @@ test('the recent-failures section expands into fingerprints that name the task a
 	note(`fingerprint image for ${FAILING}: ${await image.innerText()}`);
 
 	// The CLI that reproduces these rows.
-	await page.getByTestId('fingerprint-cli-trigger').click();
-	const command = (await page.getByTestId('fingerprint-cli-command').innerText()).trim();
+	await page.getByTestId('page-cli-trigger').click();
+	const command = (await pageCli(page, 'The same failures, grouped').innerText()).trim();
 	expect(command).toContain('stats failures');
 	expect(command).toContain('--group-by orkflow,task,code,category,image');
 	note(`fingerprint CLI equivalent: ${command}`);
@@ -1070,8 +1072,8 @@ test("the dashboard's stability section names the task that retried, its rate an
 	await expect(orkerRow).toContainText(orkerId, { timeout: 30_000 });
 	note(`stability grouped by task,orker: ${(await orkerRow.first().innerText()).replace(/\s+/g, ' ')}`);
 
-	await page.getByTestId('stability-cli-trigger').click();
-	const command = (await page.getByTestId('stability-cli-command').innerText()).trim();
+	await page.getByTestId('page-cli-trigger').click();
+	const command = (await pageCli(page, 'Tasks that needed a retry').innerText()).trim();
 	expect(command).toContain('stats flakes');
 	expect(command).toContain('--group-by task,orker');
 	note(`stability CLI equivalent: ${command}`);

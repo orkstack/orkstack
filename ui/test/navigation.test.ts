@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
-import { BUILD_PAGES, OPERATE_PAGES, buildPageOf, modeOf, operatePageOf, operateScope, pageOf } from '../src/lib/navigation';
+import { BUILD_PAGES, OPERATE_PAGES, buildPageOf, modeOf, operatePageOf, pageOf } from '../src/lib/navigation';
 import { pageCommands } from '../src/lib/palette/commands';
 
 // The app's map (#lib/navigation.ts) is the one list the top bar, the Operate
@@ -11,6 +11,8 @@ const routes = `${import.meta.dir}/../src/routes`;
 test('every admin page has exactly one Operate entry and a palette command', () => {
 	const pages = readdirSync(`${routes}/admin`, { recursive: true })
 		.filter((rel) => rel.endsWith('+page.svelte'))
+		// One namespace's page is reached from its row, on the page that lists it.
+		.filter((rel) => !rel.includes('['))
 		.map((rel) => (rel === '+page.svelte' ? '/admin' : `/admin/${rel.replace(/\/\+page\.svelte$/, '')}`));
 	expect(pages.length).toBe(12);
 	const commands = pageCommands('default');
@@ -53,13 +55,6 @@ test('a path belongs to exactly one mode and one page', () => {
 	// A prefix that is not a page boundary is not that page.
 	expect(pageOf('/runsx')).toBeUndefined();
 	expect(modeOf('/administrator')).toBe('build');
-});
-
-test('each Operate page says what its figures cover', () => {
-	expect(operateScope('pools')).toBe('This namespace');
-	expect(operateScope('cache')).toBe('This namespace');
-	expect(operateScope('audit')).toBe('All namespaces');
-	expect(operateScope('namespaces')).toBe('Deployment-wide');
 });
 
 test('the root layout imports no run or Orkflow client statically (the palette loads them on first open)', () => {

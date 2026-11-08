@@ -265,7 +265,9 @@ func (r *TemporalRunReader) listAll(ctx context.Context, query string, visit fun
 			NextPageToken: token,
 		})
 		if err != nil {
-			return fmt.Errorf("engine: list runs from temporal (%s): %w", query, err)
+			// The query is the cluster's own language, so no error a client
+			// sees carries it (AGENTS.md §7).
+			return fmt.Errorf("engine: list runs from the cluster's run index: %w", err)
 		}
 		for _, info := range response.GetExecutions() {
 			visit(info)
@@ -275,14 +277,14 @@ func (r *TemporalRunReader) listAll(ctx context.Context, query string, visit fun
 			return nil
 		}
 	}
-	return fmt.Errorf("engine: list runs from temporal (%s) did not reach the end after %d pages", query, maxRunScanPages)
+	return fmt.Errorf("engine: listing runs from the cluster's run index did not reach the end after %d pages", maxRunScanPages)
 }
 
 // countAll is one CountWorkflow.
 func (r *TemporalRunReader) countAll(ctx context.Context, query string) (int64, error) {
 	response, err := r.client.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{Query: query})
 	if err != nil {
-		return 0, fmt.Errorf("engine: count the execution index (%s): %w", query, err)
+		return 0, fmt.Errorf("engine: count the cluster's run index: %w", err)
 	}
 	return response.GetCount(), nil
 }
@@ -373,7 +375,7 @@ func (r *TemporalRunReader) walkLiveRuns(
 	var token []byte
 	for page := 0; ; page++ {
 		if page >= maxRunScanPages {
-			return 0, fmt.Errorf("engine: count live runs (%s) did not reach the end after %d pages", query, maxRunScanPages)
+			return 0, fmt.Errorf("engine: counting live runs did not reach the end of the cluster's run index after %d pages", maxRunScanPages)
 		}
 		response, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
 			Query:         query,
@@ -381,7 +383,7 @@ func (r *TemporalRunReader) walkLiveRuns(
 			NextPageToken: token,
 		})
 		if err != nil {
-			return 0, fmt.Errorf("engine: read the execution index (%s): %w", query, err)
+			return 0, fmt.Errorf("engine: read the cluster's run index: %w", err)
 		}
 		for _, info := range response.GetExecutions() {
 			if keep != nil && !keep(info) {

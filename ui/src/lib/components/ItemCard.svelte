@@ -1,6 +1,6 @@
 <script lang="ts">
-	// The selected task or fan-out item: what it asked for, where it ran and
-	// what it is doing. It follows the selection and announces it.
+	// The selected task or fan-out item, in the panel under its row: what it asked
+	// for, where it ran and what it is doing. It follows the selection.
 	//
 	//   running     InspectRun and TaskRun data only: attempts, Orker, pool, the
 	//               request, the wait to start, and Now from the heartbeat.
@@ -8,7 +8,10 @@
 	//               the image digest.
 	//   not started the request only.
 	import type { Snippet } from 'svelte';
-	import type { Timestamp } from '@bufbuild/protobuf/wkt';
+	import ResolvedValues from './ResolvedValues.svelte';
+	import type { ArtifactRef, Payload } from '#lib/gen/orkstack/v1/common_pb.ts';
+	import { timestampDate, type Timestamp } from '@bufbuild/protobuf/wkt';
+	import { finishedWords } from '#lib/when.ts';
 	import type { ImageRef, ResourceRequest } from '#lib/gen/orkstack/v1/activity_pb.ts';
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { TaskAttempt } from '#lib/gen/orkstack/v1/run_pb.ts';
@@ -46,6 +49,12 @@
 		now: { seconds: bigint; nanos: number };
 		timing?: TaskTiming;
 		image?: ImageRef;
+		/** What the task's image is called: its catalog reference, else what it names. */
+		imageReference?: string;
+		/** The engine's whole sentence for how it ended, which its row only names. */
+		reason?: string;
+		/** What an awaited task was resolved with, shown where a reason would be. */
+		resolved?: { runId: string; namespace: string; taskId: string; output?: Payload; valuesRef?: ArtifactRef };
 		/** What the card says beyond the facts: its failure, cache, Inspect. */
 		children?: Snippet;
 		/** The head's words when nothing can be said yet (a fan-out with no item). */
@@ -73,6 +82,9 @@
 		now,
 		timing,
 		image,
+		imageReference = '',
+		reason = '',
+		resolved,
 		children,
 		note = '',
 		panelTestid = 'item-card'
@@ -105,74 +117,117 @@
 	const secs = (ms: number) => (ms >= 60_000 ? `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s` : `${(ms / 1000).toFixed(1)}s`);
 </script>
 
-<section class="card insp" id="item-card" aria-labelledby="item-card-heading" data-testid={panelTestid}>
-	<div class="card-head">
-		<h2 id="item-card-heading" data-testid="{prefix}-label">{title}</h2>
-		<div class="card-end">
-			{#if waiting}
-				<span class="stamp pill-wait" data-testid="{prefix}-card-status"><span class="mark-wait" aria-hidden="true"></span>{waitingFor}</span>
-			{:else}
-				<StatusPill {status} testid="{prefix}-card-status" />
-			{/if}
-		</div>
+<section class="insp" id="item-card" aria-labelledby="item-card-heading" data-testid={panelTestid}>
+	<div class="insp-head">
+		<h3 id="item-card-heading" data-testid="{prefix}-label">{title}</h3>
+		{#if waiting}
+			<span class="stamp pill-wait" data-testid="{prefix}-card-status"><span class="mark-wait" aria-hidden="true"></span>{waitingFor}</span>
+		{:else}
+			<StatusPill {status} testid="{prefix}-card-status" />
+		{/if}
 	</div>
 	{#if note}<p class="insp-note">{note}</p>{/if}
-	<dl class="kv">
-		<dt>Attempts</dt>
-		<dd data-testid="{prefix}-attempt">
-			{#if hasStarted || attempt > 0}<RetryMark attempts={Math.max(attempts.length, attempt, 1)} />{:else}not started{/if}
-		</dd>
+	<dl class="fstrip insp-strip">
+		<div>
+			<dt>Attempts</dt>
+			<dd data-testid="{prefix}-attempt">
+				{#if hasStarted || attempt > 0}<RetryMark attempts={Math.max(attempts.length, attempt, 1)} />{:else}not started{/if}
+			</dd>
+		</div>
 		{#if orker}
-			<dt>Orker</dt>
-			<dd class="font-mono text-xs" data-testid={live && !orkerId ? `${prefix}-live-orker` : `${prefix}-card-orker`}>{orker}</dd>
+			<div>
+				<dt>Orker</dt>
+				<dd class="font-mono text-xs" data-testid={live && !orkerId ? `${prefix}-live-orker` : `${prefix}-card-orker`}>{orker}</dd>
+			</div>
 		{/if}
 		{#if pool}
-			<dt>Pool</dt>
-			<dd>{pool}</dd>
+			<div>
+				<dt>Pool</dt>
+				<dd>{pool}</dd>
+			</div>
 		{/if}
 		{#if reserved}
-			<dt>Reserved</dt>
-			<dd data-testid="{prefix}-reserved">{reserved}</dd>
+			<div>
+				<dt>Reserved</dt>
+				<dd data-testid="{prefix}-reserved">{reserved}</dd>
+			</div>
 		{:else if requested && fmtRequest(requested)}
-			<dt>Requested</dt>
-			<dd data-testid="{prefix}-requested">{fmtRequest(requested)}</dd>
+			<div>
+				<dt>Requested</dt>
+				<dd data-testid="{prefix}-requested">{fmtRequest(requested)}</dd>
+			</div>
 		{/if}
 		{#if timing && timing.wait.kind !== 'na'}
-			<dt>Waited to start</dt>
-			<dd data-testid="{prefix}-wait" data-ms={timing.wait.kind === 'value' ? Math.round(timing.wait.ms) : undefined} data-reason={timing.wait.kind === 'unavailable' ? timing.wait.reason : undefined}>
-				{formatQuantity(timing.wait)}{#if timing.wait.kind === 'unavailable'} ({timing.wait.reason}){/if}
-			</dd>
+			<div>
+				<dt>Waited to start</dt>
+				<dd data-testid="{prefix}-wait" data-ms={timing.wait.kind === 'value' ? Math.round(timing.wait.ms) : undefined} data-reason={timing.wait.kind === 'unavailable' ? timing.wait.reason : undefined}>
+					{formatQuantity(timing.wait)}{#if timing.wait.kind === 'unavailable'} ({timing.wait.reason}){/if}
+				</dd>
+			</div>
 		{:else if scheduledAt && started}
-			<dt>Waited to start</dt>
-			<dd>{formatDuration(scheduledAt, started)}</dd>
+			<div>
+				<dt>Waited to start</dt>
+				<dd>{formatDuration(scheduledAt, started)}</dd>
+			</div>
 		{:else if !terminal && scheduledAt}
-			<dt>Waited to start</dt>
-			<dd>{formatDuration(scheduledAt, now)} so far</dd>
+			<div>
+				<dt>Waited to start</dt>
+				<dd>{formatDuration(scheduledAt, now)} so far</dd>
+			</div>
 		{/if}
 		{#if started}
-			<dt>Started</dt>
-			<dd>{clock(started)}</dd>
+			<div>
+				<dt>Started</dt>
+				<dd>{clock(started)}</dd>
+			</div>
+		{/if}
+		{#if terminal && finishedAt}
+			<div>
+				<dt>Finished</dt>
+				<dd data-testid="{prefix}-finished">{finishedWords(timestampDate(finishedAt), started ? timestampDate(started) : undefined)}</dd>
+			</div>
 		{/if}
 		{#if terminal && timing && timing.run.kind !== 'na'}
-			<dt>Took</dt>
-			<dd data-testid="{prefix}-run" data-ms={timing.run.kind === 'value' ? Math.round(timing.run.ms) : undefined} data-reason={timing.run.kind === 'unavailable' ? timing.run.reason : undefined}>
-				{formatQuantity(timing.run)}{#if timing.run.kind === 'unavailable'} ({timing.run.reason}){/if}
-			</dd>
+			<div>
+				<dt>Took</dt>
+				<dd data-testid="{prefix}-run" data-ms={timing.run.kind === 'value' ? Math.round(timing.run.ms) : undefined} data-reason={timing.run.kind === 'unavailable' ? timing.run.reason : undefined}>
+					{formatQuantity(timing.run)}{#if timing.run.kind === 'unavailable'} ({timing.run.reason}){/if}
+				</dd>
+			</div>
 		{:else if terminal && started && finishedAt}
-			<dt>Took</dt>
-			<dd>{formatDuration(started, finishedAt)}</dd>
+			<div>
+				<dt>Took</dt>
+				<dd>{formatDuration(started, finishedAt)}</dd>
+			</div>
 		{:else if !terminal && live?.attemptStartedAt}
-			<dt>Running for</dt>
-			<dd data-testid="{prefix}-running-for"><span class="sr">{'Running for '}</span>{formatDuration(live.attemptStartedAt, { seconds: BigInt(Math.floor(liveNowMs / 1000)), nanos: (liveNowMs % 1000) * 1e6 })}</dd>
+			<div>
+				<dt>Running for</dt>
+				<dd data-testid="{prefix}-running-for"><span class="sr">{'Running for '}</span>{formatDuration(live.attemptStartedAt, { seconds: BigInt(Math.floor(liveNowMs / 1000)), nanos: (liveNowMs % 1000) * 1e6 })}</dd>
+			</div>
 		{/if}
 		{#if timing?.preContract && timing.total.kind === 'value'}
-			<dt>Total</dt>
-			<dd data-testid="{prefix}-total" data-tip="this run was recorded before scheduled time existed; total is dispatch to finish">{formatQuantity(timing.total)} (dispatch to finish)</dd>
+			<div>
+				<dt>Total</dt>
+				<dd data-testid="{prefix}-total" data-tip="this run was recorded before scheduled time existed; total is dispatch to finish">{formatQuantity(timing.total)} (dispatch to finish)</dd>
+			</div>
 		{/if}
 	</dl>
+	{#if reason}
+		<section class="insp-sec" aria-labelledby="item-reason-heading">
+			<h4 id="item-reason-heading">Reason</h4>
+			<p class="insp-line insp-reason" data-testid="{prefix}-reason">{reason}</p>
+		</section>
+	{/if}
+	{#if resolved}
+		<section class="insp-sec" aria-labelledby="item-values-heading" data-testid="{prefix}-values">
+			<h4 id="item-values-heading">Values</h4>
+			<!-- The panel moves with the selection, so another task's values start closed. -->
+			{#key resolved.taskId}<ResolvedValues {prefix} {...resolved} />{/key}
+		</section>
+	{/if}
 	{#if heard}
 		<section class="insp-sec" aria-labelledby="item-now-heading">
-			<h3 id="item-now-heading">Now{#if live?.heartbeatAvailable}<span> from its Orker's heartbeat, {beat?.label}</span>{:else if live}<span> {unavailableReason(live.heartbeatUnavailableReason)}</span>{/if}</h3>
+			<h4 id="item-now-heading">Now{#if live?.heartbeatAvailable}<span> from its Orker's heartbeat, {beat?.label}</span>{:else if live}<span> {unavailableReason(live.heartbeatUnavailableReason)}</span>{/if}</h4>
 			<!-- The whole sentence, for a task that is not plainly running or whose beat is stale. -->
 			<p
 				data-testid="{prefix}-live"
@@ -182,18 +237,26 @@
 				class={line?.kind === 'started' && !line.stale ? 'sr' : 'insp-line'}
 			>{line?.text}</p>
 			{#if live?.heartbeatAvailable && live.state === LiveAttemptState.STARTED}
-				<dl class="kv">
-					<dt>Phase</dt>
-					<dd><code>{live.phase || '—'}</code></dd>
+				<dl class="fstrip insp-strip">
+					<div>
+						<dt>Phase</dt>
+						<dd><code>{live.phase || '—'}</code></dd>
+					</div>
 					{#if live.containerId}
-						<dt>Container</dt>
-						<dd class="font-mono text-xs">{live.containerId.slice(0, 12)}</dd>
+						<div>
+							<dt>Container</dt>
+							<dd class="font-mono text-xs">{live.containerId.slice(0, 12)}</dd>
+						</div>
 					{/if}
-					<dt>Logged</dt>
-					<dd>{formatBytes(live.bytesLogged)}, stdout and stderr</dd>
+					<div>
+						<dt>Logged</dt>
+						<dd>{formatBytes(live.bytesLogged)}, stdout and stderr</dd>
+					</div>
 					{#if timeoutAt}
-						<dt>Timeout</dt>
-						<dd>not before {timeoutAt}</dd>
+						<div>
+							<dt>Timeout</dt>
+							<dd>not before {timeoutAt}</dd>
+						</div>
 					{/if}
 				</dl>
 			{/if}
@@ -205,11 +268,11 @@
 	{/if}
 	{#if phases}
 		<section class="insp-sec" aria-labelledby="item-phases-heading" data-testid="{prefix}-phases">
-			<h3 id="item-phases-heading">Phases of attempt {last.attempt}</h3>
-			<div class="pbar insp-pad" role="img" aria-label={phases.groups.map((g) => `${g.label} ${secs(g.ms)}`).join(', ')}>
+			<h4 id="item-phases-heading">Phases of attempt {last.attempt}</h4>
+			<div class="pbar" role="img" aria-label={phases.groups.map((g) => `${g.label} ${secs(g.ms)}`).join(', ')}>
 				{#each phases.groups as group (group.key)}<i class="ph-{group.key}" style:width="{(100 * group.ms) / phases.total}%"></i>{/each}
 			</div>
-			<ul class="pkey insp-pad">
+			<ul class="pkey">
 				{#each phases.groups as group (group.key)}
 					<li>
 						<span><i class="ph-{group.key}"></i>{group.label}</span><b>{secs(group.ms)}</b>
@@ -219,60 +282,94 @@
 			</ul>
 		</section>
 	{/if}
-	{#if terminal && digest}
-		<section class="insp-sec" aria-labelledby="item-image-heading">
-			<h3 id="item-image-heading">Image</h3>
-			<div class="insp-pad"><Plate key="sha256" value={shortDigestWords(digest)} tip={digest} copy={digest} copyLabel="Copy digest" /></div>
+	{#if digest || imageReference}
+		<section class="insp-sec" aria-labelledby="item-image-heading" data-testid="run-image">
+			<h4 id="item-image-heading">Image</h4>
+			{#if imageReference}<span class="insp-ref">{imageReference}</span>{/if}
+			{#if digest}
+				<div class="insp-plate"><Plate key="sha256" value={shortDigestWords(digest)} tip={digest} copy={digest} copyLabel="Copy digest" /></div>
+				<span class="insp-ref">Resolved from its tag at dispatch; every attempt so far ran this digest.</span>
+			{/if}
 		</section>
 	{/if}
 	{#if children}{@render children()}{/if}
 </section>
 
 <style>
-	.insp-note {
+	.insp {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr);
+		gap: 10px;
+		min-width: 0;
+	}
+	.insp-head {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 12px;
+	}
+	.insp-head h3 {
 		margin: 0;
-		padding: 10px 16px;
-		border-bottom: 1px solid var(--line);
+		font-size: 13.5px;
+		font-weight: 650;
+	}
+	.insp-note,
+	.insp-line {
+		margin: 0;
 		font-size: 13.5px;
 		color: var(--ink-2);
 	}
+	.insp-reason {
+		overflow-wrap: anywhere;
+	}
+	.insp-strip > :global(div) {
+		padding: 0 14px;
+	}
+	.insp-strip > :global(div:first-child) {
+		padding-left: 0;
+	}
+	.insp-strip :global(dd) {
+		font-size: var(--text-sm);
+	}
 	.insp-sec {
 		display: grid;
-		gap: 8px;
-		padding: 0 0 10px;
-		border-top: 1px solid var(--line);
+		grid-template-columns: minmax(0, 1fr);
+		gap: 6px;
 	}
-	.insp-sec > h3 {
+	.insp-sec > h4 {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: baseline;
 		gap: 8px;
 		margin: 0;
-		padding: 10px 16px 4px;
 		font-size: 13px;
 		font-weight: 650;
 		color: var(--ink-2);
 	}
-	.insp-sec > h3 span {
+	.insp-sec > h4 span {
 		font-size: 12.5px;
 		font-weight: 400;
 		color: var(--ink-3);
 	}
-	.insp-sec :global(.kv) {
-		padding: 0;
+	@media (max-width: 640px) {
+		.insp-strip > :global(div) {
+			padding: 0;
+		}
 	}
-	.insp-line {
-		margin: 0;
-		padding: 0 16px;
-		font-size: 13.5px;
-		color: var(--ink-2);
+	.insp-ref {
+		font-size: 13px;
+		color: var(--ink-3);
+		overflow-wrap: anywhere;
 	}
-	.insp-pad {
-		margin: 0 16px;
+	.insp-plate {
+		display: flex;
+		min-width: 0;
 	}
 	.pkey {
 		display: grid;
-		gap: 4px;
+		grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+		gap: 4px 16px;
+		margin: 0;
 		padding: 0;
 		font-size: 13px;
 		list-style: none;
@@ -280,6 +377,7 @@
 	.pkey li {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
+		align-content: start;
 		gap: 0 12px;
 	}
 	.pkey li span {

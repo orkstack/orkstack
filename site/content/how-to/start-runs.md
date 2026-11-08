@@ -72,7 +72,7 @@ Run again starts a new execution, and that execution can repeat side effects out
 orkctl run cancel ork-… --reason "wrong input, rerunning"
 ```
 
-The reason is recorded on the run. The run records who asked, as the principal your gateway asserted. OrkStack does not verify that name. In the UI, open the run and choose **Cancel run…**.
+The reason is recorded on the run. The run records who asked, as the principal your gateway asserted. OrkStack does not verify that name. In the UI, open the run and choose **Cancel run**.
 
 ## See also
 

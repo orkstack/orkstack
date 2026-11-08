@@ -93,7 +93,7 @@
 	}
 </script>
 
-<div class="mt-3 border-t border-rule-faint pt-3" data-testid="task-{taskId}-attempts">
+<div class="mt-3 border-t border-rule-faint pt-3" data-testid="task-{taskId}-attempts" data-cli-own>
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<button
 			type="button"

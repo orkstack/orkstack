@@ -1550,7 +1550,7 @@
       "type": "array"
     },
     "version": {
-      "description": "Author-pinned version; defaults to the source's hash.",
+      "description": "Author-pinned version; absent, the first apply assigns one.",
       "type": "string"
     }
   },

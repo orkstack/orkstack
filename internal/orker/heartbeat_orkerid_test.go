@@ -26,7 +26,10 @@ var _ task.HeartbeatProgress = HeartbeatProgress{}
 func TestHeartbeater_StampsTheOrkerIDOnEveryBeat(t *testing.T) {
 	beats := make(chan HeartbeatProgress, 16)
 	h := &Heartbeater{
-		beat:     func(p HeartbeatProgress) { beats <- p },
+		send: func(_ context.Context, p HeartbeatProgress) error {
+			beats <- p
+			return nil
+		},
 		interval: 10 * time.Millisecond,
 		orkerID:  "orker-7",
 	}
@@ -90,6 +93,7 @@ func TestDispatcher_HeartbeatsCarryTheDispatcherOrkerID(t *testing.T) {
 
 	dispatcher := newPhaseDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, nil)
 	dispatcher.OrkerID = "orker-7"
+	dispatcher.heartbeaters = sdkRouteHeartbeater
 	in := baseExportInput("orker-id-beat")
 	activityFn := func(ctx context.Context) error {
 		_, err := dispatcher.Execute(ctx, in)

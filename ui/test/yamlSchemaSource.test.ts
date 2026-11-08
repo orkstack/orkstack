@@ -41,6 +41,8 @@ test('no other schema, and no hand-made key table, lives in ui/src', () => {
 	expect(files.length > 100).toBe(true);
 	for (const file of files) {
 		if (file.startsWith('lib/schemas/')) continue;
+		// The code those files compile to, which yamlValidators.test.ts holds to them byte for byte.
+		if (file === 'lib/yaml/validators.gen.ts' || file === 'lib/yaml/conditions.gen.ts') continue;
 		const text = readFileSync(`${ui}/src/${file}`, 'utf8');
 		if (/"\$schema"\s*:|json-schema\.org/.test(text)) found.push(file);
 		// The task keys spelled out as a list would be a second key table.

@@ -301,3 +301,19 @@ func (noopStarter) CancelRun(context.Context, string, engine.CancelRequest) erro
 func (noopStarter) SignalAwait(context.Context, string, *orkstackv1.AwaitSignal) error {
 	return nil
 }
+
+func (r *recordingStore) FindDerivedVersion(ctx context.Context, namespace, name, contentHash string) (string, error) {
+	return r.inner.FindDerivedVersion(ctx, namespace, name, contentHash)
+}
+
+func (r *recordingStore) ClaimDerivedVersion(ctx context.Context, namespace, name, contentHash, candidate string) (string, error) {
+	return r.inner.ClaimDerivedVersion(ctx, namespace, name, contentHash, candidate)
+}
+
+func (u unreachableStore) FindDerivedVersion(context.Context, string, string, string) (string, error) {
+	return "", u.err
+}
+
+func (u unreachableStore) ClaimDerivedVersion(context.Context, string, string, string, string) (string, error) {
+	return "", u.err
+}

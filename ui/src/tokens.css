@@ -119,7 +119,6 @@
 	--spacing-side: 15.5rem;
 	--spacing-titleblock: 1rem;
 	--spacing-aside: 21.25rem;
-	--spacing-content: 92.5rem;
 	--spacing-drawing: clamp(15rem, 42vh, 30rem);
 	/* A tall drawing: enough for a deep graph, never taller than the
 	   viewport needs to keep its own scroll. */

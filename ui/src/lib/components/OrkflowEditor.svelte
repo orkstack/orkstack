@@ -1,6 +1,7 @@
 <script lang="ts">
+	import { shortVersion } from '#lib/version.ts';
 	import type { Snippet } from 'svelte';
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import CliPopover from './CliPopover.svelte';
 	import EditorDocsRail from './EditorDocsRail.svelte';
 	import Icon from './Icon.svelte';
@@ -14,7 +15,7 @@
 	//    the engine — ValidateOrkflow, apply's own preparation — once typing
 	//    pauses; only that answer ever says the document has no problems, and
 	//    nothing the editor finds on its own ever disables Apply. Every message
-	//    in the error panel below is an ApplyOrkflow response.
+	//    in the notice slot under the card's header is an ApplyOrkflow response.
 	//
 	// 2. Every apply carries TWO versions, because it states two facts
 	//    (proto/orkstack/v1/service.proto, ApplyOrkflowRequest):
@@ -224,7 +225,7 @@
 			// way, and no navigation — nothing moved.
 			if (!res.created) {
 				noop =
-					`${name}@${res.orkflow?.version ?? base} is already stored with this exact ` +
+					`${name}@${shortVersion(res.orkflow?.version ?? base)} is already stored with this exact ` +
 					'source.';
 				return;
 			}
@@ -298,6 +299,9 @@
 		} finally {
 			conflictBusy = false;
 		}
+		// The answer is below the card: asking for it brings it into view.
+		await tick();
+		conflictBelow?.scrollIntoView({ block: 'start' });
 	}
 
 	// Retargeting is a decision the user makes, never one the page makes for
@@ -330,6 +334,21 @@
 		railOpen = matchMedia('(min-width: 1280px)').matches;
 	});
 	const atCaret = $derived(session.caretTask);
+
+	// ---- The notice slot: an apply's answer, under the card's header ----
+	const noticed = $derived(Boolean(applyError || noop || warnings.length || applied || conflict));
+	let notices = $state<HTMLElement>();
+	let noticesOverflow = $state(false);
+	let conflictBelow = $state<HTMLElement>();
+	$effect(() => {
+		if (!notices) return;
+		const el = notices;
+		const measure = () => (noticesOverflow = el.scrollHeight > el.clientHeight + 1);
+		measure();
+		const ro = new ResizeObserver(measure);
+		ro.observe(el);
+		return () => ro.disconnect();
+	});
 </script>
 
 {#snippet headerActions()}
@@ -346,7 +365,7 @@
 					}}
 					class="btn btn-primary"
 				>
-					<Icon name="apply" />{applying ? 'Applying…' : `Apply version ${draftVersion}`.trim()}
+					<Icon name="apply" />{applying ? 'Applying…' : `Apply version ${shortVersion(draftVersion)}`.trim()}
 				</button>
 				<CliPopover
 					testid="editor-cli"
@@ -367,8 +386,8 @@
 		testid="editor-error-load"
 		retryTestid="editor-retry-load"
 		subject={baseVersion
-			? `version ${baseVersion} of ${name} in namespace ${namespaceLabel(namespace)}`
-			: `the stored YAML of ${name} in namespace ${namespaceLabel(namespace)}`}
+			? `version ${shortVersion(baseVersion)} of ${name}`
+			: `the stored YAML of ${name}`}
 		message={error}
 		busy={reloading}
 		onretry={reload}
@@ -441,6 +460,102 @@
 						</span>
 					</div>
 				</div>
+				<!-- What an apply answered, beside the code and in the card that stays in view. A tab stop only while it scrolls (WCAG 2.1.1). -->
+				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+				<div
+					bind:this={notices}
+					class="ed-notices scroll-panel"
+					class:filled={noticed}
+					data-testid="editor-notices"
+					role={noticesOverflow ? 'region' : undefined}
+					aria-label={noticesOverflow ? 'What the apply answered' : undefined}
+					tabindex={noticesOverflow ? 0 : undefined}
+				>
+					{#if applyError}
+						<ErrorPanel testid="editor-error" message={applyError} />
+					{/if}
+					{#if noop}
+						<p
+							data-testid="editor-noop"
+							role="status"
+							class="note flex gap-3 px-4 py-2 text-sm"
+						>
+							<span class="caps text-ink-muted">Note</span>
+							<span>{noop} Nothing was applied, and no new version was created.</span>
+						</p>
+					{/if}
+					{#each warnings as warning, i (i)}
+						<div class="severity-warning border border-red px-4 py-2 text-sm">
+							{warning}
+						</div>
+					{/each}
+					<!-- A live region that is always there, so the apply's one confirmation is announced. -->
+					<div role="status">
+						{#if applied}
+							<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{shortVersion(applied.version)}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
+						{/if}
+					</div>
+					{#if conflict}
+						<div
+							data-testid="editor-conflict"
+							role="alert"
+							class="space-y-3 border border-red bg-red-tint px-4 py-3 text-sm text-ink"
+						>
+							<p class="severity-error font-semibold">
+								{name} changed while this edit was open. Nothing was overwritten.
+							</p>
+							<p>
+								This edit is derived from
+								<span class="font-medium" data-testid="editor-conflict-base">{conflict.base}</span>; the
+								newest applied version was
+								<span class="font-medium" data-testid="editor-conflict-expected"
+									>{conflict.expectedHead}</span
+								>
+								when this document was fetched
+								{#if conflictHead}
+									and is now
+									<span class="font-medium" data-testid="editor-conflict-head">{conflictHead}</span>.
+								{:else if conflictBusy}
+									— <span data-testid="editor-conflict-loading">reading the newest version…</span>
+								{/if}
+							</p>
+
+							{#if conflictHeadError}
+								<ErrorPanel
+									testid="editor-conflict-head-error"
+									retryTestid="editor-conflict-head-retry"
+									subject="the newest version of {name}"
+									message={conflictHeadError}
+									busy={conflictBusy}
+									onretry={readHead}
+								/>
+							{/if}
+
+							<div class="flex flex-wrap gap-3">
+								<button
+									type="button"
+									data-testid="editor-conflict-diff"
+									disabled={conflictBusy || !conflictHead}
+									onclick={showConflictDiff}
+									class="btn btn-sm"
+								>
+									{conflictBusy
+										? 'Working…'
+										: `Show what changed (${conflict.expectedHead} → ${conflictHead})`}
+								</button>
+								<button
+									type="button"
+									data-testid="editor-conflict-rebase"
+									disabled={conflictBusy || !conflictHead}
+									onclick={retarget}
+									class="btn btn-sm"
+								>
+									Keep my edit and retarget head {conflictHead || '…'}
+								</button>
+							</div>
+						</div>
+					{/if}
+				</div>
 				{#if base !== expectedHead}
 					<p class="ed-fork" data-testid="editor-fork-notice">Applying forks forward from {base} and becomes the new head; the version that runs is unchanged until somebody promotes.</p>
 				{/if}
@@ -467,94 +582,15 @@
 					</YamlField>
 				</div>
 			</section>
-			<EditorDocsRail task={atCaret} open={railOpen} ontoggle={() => (railOpen = !railOpen)} />
-		</div>
-
-		{#if applyError}
-			<ErrorPanel testid="editor-error" message={applyError} />
-		{/if}
-		{#if noop}
-			<p
-				data-testid="editor-noop"
-				role="status"
-				class="note flex gap-3 px-4 py-2 text-sm"
-			>
-				<span class="caps text-ink-muted">Note</span>
-				<span>{noop} Nothing was applied, and no new version was created.</span>
-			</p>
-		{/if}
-		{#each warnings as warning, i (i)}
-			<div class="severity-warning border border-red px-4 py-2 text-sm">
-				{warning}
+			<div class="rail-slot">
+				<EditorDocsRail task={atCaret} open={railOpen} ontoggle={() => (railOpen = !railOpen)} />
 			</div>
-		{/each}
-		<!-- A live region that is always there, so the apply's one confirmation is announced. -->
-		<div role="status">
-			{#if applied}
-				<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{applied.version}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
-			{/if}
 		</div>
 
+		<!-- The summary and its ways forward are in the card's notice slot; what would crowd the code is here. -->
 		{#if conflict}
-			<div
-				data-testid="editor-conflict"
-				role="alert"
-				class="space-y-3 border border-red bg-red-tint px-4 py-3 text-sm text-ink"
-			>
-				<p class="severity-error font-semibold">
-					{name} changed while this edit was open. Nothing was overwritten.
-				</p>
+			<div bind:this={conflictBelow} data-testid="editor-conflict-below" class="space-y-3 text-sm text-ink">
 				<p class="whitespace-pre-wrap text-ink-secondary">{conflict.message}</p>
-				<p>
-					This edit is derived from
-					<span class="font-medium" data-testid="editor-conflict-base">{conflict.base}</span>; the
-					newest applied version was
-					<span class="font-medium" data-testid="editor-conflict-expected"
-						>{conflict.expectedHead}</span
-					>
-					when this document was fetched
-					{#if conflictHead}
-						and is now
-						<span class="font-medium" data-testid="editor-conflict-head">{conflictHead}</span>.
-					{:else if conflictBusy}
-						— <span data-testid="editor-conflict-loading">reading the newest version…</span>
-					{/if}
-				</p>
-
-				{#if conflictHeadError}
-					<ErrorPanel
-						testid="editor-conflict-head-error"
-						retryTestid="editor-conflict-head-retry"
-						subject="the newest version of {name}"
-						message={conflictHeadError}
-						busy={conflictBusy}
-						onretry={readHead}
-					/>
-				{/if}
-
-				<div class="flex flex-wrap gap-3">
-					<button
-						type="button"
-						data-testid="editor-conflict-diff"
-						disabled={conflictBusy || !conflictHead}
-						onclick={showConflictDiff}
-						class="btn btn-sm"
-					>
-						{conflictBusy
-							? 'Working…'
-							: `Show what changed (${conflict.expectedHead} → ${conflictHead})`}
-					</button>
-					<button
-						type="button"
-						data-testid="editor-conflict-rebase"
-						disabled={conflictBusy || !conflictHead}
-						onclick={retarget}
-						class="btn btn-sm"
-					>
-						Keep my edit and retarget head {conflictHead || '…'}
-					</button>
-				</div>
-
 				{#if conflictDiffError}
 					<ErrorPanel
 						testid="conflict-diff-error"
@@ -563,22 +599,34 @@
 						busy={conflictBusy}
 						onretry={showConflictDiff}
 					/>
+				{:else if conflictDiff === ''}
+					<p data-testid="conflict-diff-identical" class="text-sm text-ink-secondary">
+						The two versions' source YAML is byte-identical.
+					</p>
 				{:else if conflictDiff !== null}
-					{#if conflictDiff === ''}
-						<p data-testid="conflict-diff-identical" class="text-sm text-ink-secondary">
-							The two versions' source YAML is byte-identical.
-						</p>
-					{:else}
-						<DiffView diff={conflictDiff} testid="conflict-diff" lang="yaml" />
-					{/if}
+					<DiffView diff={conflictDiff} testid="conflict-diff" lang="yaml" />
 				{/if}
 			</div>
 		{/if}
-
 	</form>
 {/if}
 
 <style>
+	/* Empty, it takes no room: only the always-present live region is inside. */
+	.ed-notices.filled {
+		flex: none;
+		max-height: min(30dvh, 216px);
+		padding: 8px 16px;
+		overflow-y: auto;
+		border-bottom: 1px solid var(--line);
+		background: var(--surface);
+	}
+	.ed-notices:focus-visible {
+		outline-offset: -2px;
+	}
+	.ed-notices > :global(* + *:not(:empty)) {
+		margin-top: 8px;
+	}
 	.ed-fork {
 		margin: 0;
 		padding: 8px 16px;
@@ -597,9 +645,24 @@
 	}
 	.ed-grid {
 		display: grid;
-		grid-template-columns: minmax(0, 1fr) 320px;
+		grid-template-columns: minmax(0, 1fr) var(--spacing-aside);
 		gap: 16px;
 		align-items: start;
+	}
+	/*
+	 * Beside the code the docs never make the row taller than the card: they
+	 * scroll inside it, with the code still beside them, instead of hanging
+	 * below the window's edge.
+	 */
+	.rail-slot {
+		position: relative;
+		align-self: stretch;
+		min-width: 0;
+	}
+	.rail-slot :global(.rail) {
+		position: absolute;
+		inset: 0 0 auto;
+		max-height: 100%;
 	}
 	.edcard {
 		position: sticky;
@@ -713,9 +776,6 @@
 		background: var(--hover);
 	}
 	@media (max-width: 1359px) {
-		.ed-grid {
-			grid-template-columns: minmax(0, 1fr) 296px;
-		}
 		.edcard :global(.k-long) {
 			display: none;
 		}
@@ -745,6 +805,13 @@
 	@media (max-width: 1180px) {
 		.ed-grid {
 			grid-template-columns: minmax(0, 1fr);
+		}
+		.rail-slot {
+			display: contents;
+		}
+		.rail-slot :global(.rail) {
+			position: static;
+			max-height: none;
 		}
 		.edcard {
 			position: static;

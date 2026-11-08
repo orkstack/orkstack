@@ -6,21 +6,24 @@
 	// pointer moved, because the store arbitrates two promotions with a
 	// compare-and-swap: a UI that moved the badge on click would show the loser
 	// of that race a result that never happened.
+	import VersionText from '#lib/components/VersionText.svelte';
+	import { shortVersion } from '#lib/version.ts';
 	import { untrack } from 'svelte';
-	import { goto, invalidateAll } from '$app/navigation';
+	import { invalidateAll } from '$app/navigation';
 	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import type { CliCommand } from '#lib/components/CliPopover.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import DiffView from '#lib/components/DiffView.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import InterfaceFindings from '#lib/components/InterfaceFindings.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { orkflowClient } from '#lib/clients/orkflows.ts';
-	import { runClient } from '#lib/clients/runs.ts';
 	import {
 		breakingCount,
 		callerLabel,
 		changeWord,
 		compatCommand,
+		diffCommand,
 		composers,
 		countNoun,
 		followers,
@@ -31,8 +34,6 @@
 		verdictChipClass,
 		verdictWord
 	} from '#lib/compat.ts';
-	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
-	import { runWindowFilters } from '#lib/browsing.ts';
 	import {
 		InterfaceVerdict,
 		OrkflowCallerKind,
@@ -50,9 +51,11 @@
 		currentVersion: string;
 		headVersion: string;
 		error: string | null;
+		/** The comparison's commands, read by the page for its one terminal icon. */
+		commands?: CliCommand[];
 	}
 
-	let { name, namespace, versions, currentVersion, headVersion, error }: Props = $props();
+	let { name, namespace, versions, currentVersion, headVersion, error, commands = $bindable([]) }: Props = $props();
 
 	// runsNow answers, for one row, "is this the version an unnamed run
 	// executes". It is the ENGINE's answer (is_current), read rather than
@@ -77,7 +80,7 @@
 	async function reload() {
 		reloading = true;
 		try {
-			await Promise.all([invalidateAll(), checkDeletionSafety()]);
+			await invalidateAll();
 		} finally {
 			// Whatever happened, the view stops waiting: either the data arrived
 			// or the loader's own error is rendered below with this button again.
@@ -167,100 +170,6 @@
 		}
 	}
 
-	// ── delete ────────────────────────────────────────────────────────────
-	const deletionRunWindowMs = 24 * 60 * 60 * 1000;
-	type DeleteSafety = 'checking' | 'safe' | 'blocked' | 'error';
-	let deleteSafety = $state<DeleteSafety>('checking');
-	let deleteSafetyReason = $state('Checking for runs that block deletion…');
-	let deleteCheckSequence = 0;
-	let pendingDelete = $state(false);
-	let deleting = $state(false);
-	let deleteError = $state('');
-
-	function terminal(status: Status): boolean {
-		return (
-			status === Status.SUCCEEDED ||
-			status === Status.FAILED ||
-			status === Status.CANCELED ||
-			status === Status.SKIPPED
-		);
-	}
-
-	function timestampMs(timestamp: { seconds: bigint; nanos: number }): number {
-		return Number(timestamp.seconds) * 1000 + Math.floor(timestamp.nanos / 1e6);
-	}
-
-	async function checkDeletionSafety() {
-		const sequence = ++deleteCheckSequence;
-		deleteSafety = 'checking';
-		deleteSafetyReason = 'Checking for runs that block deletion…';
-		try {
-			// Active runs are queried separately BY STATUS, which is the whole
-			// trick: the engine pushes the status into Temporal's visibility
-			// query, so these two reads are answered over live executions
-			// rather than over every run this orkflow ever had. An older live
-			// run therefore cannot hide behind a page of newer completed ones,
-			// and no read here costs a scan of the namespace.
-			//
-			// The ordinary page stays a BOUNDED sample, used only for the
-			// 24-hour explanation. This check exists to disable the control
-			// and say why; the server repeats the active-and-recent check
-			// exhaustively at deletion time and is the authority that refuses.
-			const [running, pending, recentPage] = await Promise.all([
-				runClient(fetch).listRuns({ namespace, filters: runWindowFilters(name, 'RUNNING', '', ''), pageSize: 1 }),
-				runClient(fetch).listRuns({ namespace, filters: runWindowFilters(name, 'PENDING', '', ''), pageSize: 1 }),
-				runClient(fetch).listRuns({ namespace, filters: runWindowFilters(name, '', '', ''), pageSize: 200 })
-			]);
-			if (sequence !== deleteCheckSequence) return;
-			const cutoff = Date.now() - deletionRunWindowMs;
-			const active = running.runs.length + pending.runs.length;
-			let recent = 0;
-			for (const run of recentPage.runs) {
-				if (terminal(run.status) && (!run.finishedAt || timestampMs(run.finishedAt) > cutoff)) {
-					recent++;
-				}
-			}
-			if (active + recent > 0) {
-				deleteSafety = 'blocked';
-				const lowerBound = active > 0 ? 'At least ' : '';
-				deleteSafetyReason = `${lowerBound}${active + recent} run(s) block deletion (${active} active status(es), ${recent} finished within 24h or missing a finish time).`;
-			} else {
-				deleteSafety = 'safe';
-				deleteSafetyReason = '';
-			}
-		} catch (err) {
-			if (sequence !== deleteCheckSequence) return;
-			deleteSafety = 'error';
-			deleteSafetyReason = `Deletion is disabled because runs could not be checked: ${errorMessage(err)}`;
-		}
-	}
-
-	$effect(() => {
-		name;
-		namespace;
-		void checkDeletionSafety();
-	});
-
-	function askToDelete() {
-		if (deleteSafety !== 'safe') return;
-		pendingDelete = true;
-		deleteError = '';
-	}
-
-	async function deleteOrkflow() {
-		deleting = true;
-		deleteError = '';
-		try {
-			await orkflowClient(fetch).deleteOrkflow({ name, namespace });
-			await goto(withNamespace('/orkflows', namespace), { invalidateAll: true });
-		} catch (err) {
-			// Keep the engine's refusal sentence intact in ConfirmDialog's error slot.
-			deleteError = errorMessage(err);
-		} finally {
-			deleting = false;
-		}
-	}
-
 	// ── diff ───────────────────────────────────────────────────────────────
 	let diffFrom = $state('');
 	let diffTo = $state('');
@@ -325,20 +234,35 @@
 				namespace
 			});
 			diffText = res.unifiedDiff;
-			diffPair = `${res.fromVersion} → ${res.toVersion}`;
+			diffPair = `${shortVersion(res.fromVersion)} → ${shortVersion(res.toVersion)}`;
 		} catch (err) {
 			diffError = errorMessage(err);
 		} finally {
 			diffing = false;
 		}
 	}
+
+	// The page's one terminal icon lists these, carrying the From and To above.
+	$effect(() => {
+		// With one version there is nothing to compare, and From stays empty.
+		commands =
+			diffFrom && diffTo
+				? [
+						{ label: 'Diff these versions', command: diffCommand(namespace, name, diffFrom, diffTo) },
+						{ label: 'Compare their interfaces', command: compatCommand(namespace, name, diffFrom, diffTo) }
+					]
+				: [];
+		return () => {
+			commands = [];
+		};
+	});
 </script>
 
 {#if error}
 	<ErrorPanel
 		testid="versions-error"
 		retryTestid="versions-retry"
-		subject="the versions of {name} in namespace {namespaceLabel(namespace)}"
+		subject="the versions of {name}"
 		message={error}
 		busy={reloading}
 		onretry={reload}
@@ -354,14 +278,12 @@
 		<p class="text-sm text-ink-secondary" data-testid="versions-summary">
 			{versions.length}
 			{versions.length === 1 ? 'version' : 'versions'}; runs execute
-			<span class="font-medium text-ink" data-testid="versions-resolved">{resolved}</span>
+			<VersionText version={resolved} class="font-medium text-ink" testid="versions-resolved" />
 			{#if !currentVersion}
 				<span class="text-ink-muted">(nobody has promoted this Orkflow, so the newest applies)</span>
 			{/if}
 		</p>
-		<div class="flex flex-col items-end gap-2">
-			<div class="flex gap-2">
-				<button
+		<button
 					type="button"
 					data-testid="versions-reload"
 					disabled={reloading}
@@ -370,23 +292,6 @@
 				>
 					{reloading ? 'Reloading…' : 'Reload'}
 				</button>
-				<button
-					type="button"
-					data-testid="versions-delete"
-					disabled={reloading || deleteSafety !== 'safe'}
-					data-tip={deleteSafetyReason || 'Permanently delete this Orkflow and every version'}
-					onclick={askToDelete}
-					class="btn"
-				>
-					Delete Orkflow
-				</button>
-			</div>
-			{#if deleteSafetyReason}
-				<p data-testid="versions-delete-status" class="max-w-md text-right text-xs text-ink-muted">
-					{deleteSafetyReason}
-				</p>
-			{/if}
-		</div>
 	</div>
 
 	<div class="overflow-x-auto border-t-2 border-ink">
@@ -408,7 +313,7 @@
 						data-testid="version-row-{version.version}"
 					>
 						<td>
-							<span class="figure font-semibold text-ink">{version.version}</span>
+							<VersionText version={version.version} class="figure font-semibold text-ink" />
 							{#if runsNow(version)}
 								<span
 									data-testid="version-current-{version.version}"
@@ -428,7 +333,7 @@
 								<span
 									data-testid="version-interface-{version.version}"
 									class="ml-2 {verdictChipClass(version.interfaceVerdict)}"
-									data-tip="declared interface against {resolved}, the version runs execute now"
+									data-tip="declared interface against {shortVersion(resolved)}, the version runs execute now"
 									>{verdictWord(version.interfaceVerdict)}</span
 								>
 							{/if}
@@ -443,7 +348,7 @@
 							<input
 								type="radio"
 								name="diff-from"
-								aria-label="diff from {version.version}"
+								aria-label="diff from {shortVersion(version.version)}"
 								data-testid="diff-from-{version.version}"
 								value={version.version}
 								bind:group={diffFrom}
@@ -453,7 +358,7 @@
 							<input
 								type="radio"
 								name="diff-to"
-								aria-label="diff to {version.version}"
+								aria-label="diff to {shortVersion(version.version)}"
 								data-testid="diff-to-{version.version}"
 								value={version.version}
 								bind:group={diffTo}
@@ -499,7 +404,7 @@
 				onclick={runDiff}
 				class="btn btn-sm"
 			>
-				{diffing ? 'Diffing…' : `Diff ${diffFrom || '…'} → ${diffTo || '…'}`}
+				{diffing ? 'Diffing…' : `Diff ${shortVersion(diffFrom) || '…'} → ${shortVersion(diffTo) || '…'}`}
 			</button>
 			<button
 				type="button"
@@ -508,13 +413,8 @@
 				onclick={runCompat}
 				class="btn btn-sm"
 			>
-				{comparing ? 'Comparing…' : `Compare interfaces ${diffFrom || '…'} → ${diffTo || '…'}`}
+				{comparing ? 'Comparing…' : `Compare interfaces ${shortVersion(diffFrom) || '…'} → ${shortVersion(diffTo) || '…'}`}
 			</button>
-			<CliEquivalent
-				command={compatCommand(namespace, name, diffFrom, diffTo)}
-				testid="compat-cli"
-				label="Compare the interfaces of {diffFrom} and {diffTo} from the CLI"
-			/>
 		</div>
 
 		{#if comparing}
@@ -557,8 +457,7 @@
 			{/if}
 		{:else}
 			<p data-testid="diff-idle" class="text-sm text-ink-muted">
-				Pick a From and a To above, then Diff. The comparison is the engine's own, the same text
-				<code>orkctl orkflow diff</code> prints.
+				Pick a From and a To above, then Diff. The comparison is the engine's own.
 			</p>
 		{/if}
 	</div>
@@ -589,9 +488,9 @@
 		{#snippet body()}
 			<p>
 				Runs that name no version currently execute
-				<span class="font-medium text-ink">{resolved || 'the newest applied version'}</span>.
+				<span class="font-medium text-ink">{shortVersion(resolved) || 'the newest applied version'}</span>.
 				After this they execute
-				<span class="font-medium text-blue">{pendingPromotion}</span>, in namespace
+				<span class="font-medium text-blue">{shortVersion(pendingPromotion ?? '')}</span>, in namespace
 				<span class="font-medium text-ink">{namespaceLabel(namespace)}</span>.
 			</p>
 			<p class="mt-2 text-ink-muted">
@@ -602,7 +501,7 @@
 			<div class="note mt-3 px-3 py-2">
 				{#if promoteComparing}
 					<p data-testid="promote-interface-loading" class="text-ink-muted">
-						Comparing the declared interface with {resolved || 'the version that runs now'}…
+						Comparing the declared interface with {shortVersion(resolved) || 'the version that runs now'}…
 					</p>
 				{:else if promoteCompareError}
 					<p data-testid="promote-interface-error" class="text-ink-secondary">
@@ -614,7 +513,7 @@
 						data-testid="promote-interface-verdict"
 						class={promoteIsBreaking ? 'severity-error font-semibold' : 'text-ink-secondary'}
 					>
-						Declared interface against {promoteCompare.fromVersion}:
+						Declared interface against {shortVersion(promoteCompare.fromVersion)}:
 						{#if promoteIsBreaking}
 							breaking — {countNoun(breakingCount(promoteCompare.findings), 'breaking change', 'breaking changes')}
 						{:else if promoteVerdict === InterfaceVerdict.UNKNOWN}
@@ -697,33 +596,3 @@
 	</ConfirmDialog>
 {/if}
 
-{#if pendingDelete}
-	<ConfirmDialog
-		testid="delete-confirm"
-		title="Delete {name}?"
-		acceptLabel="Delete"
-		acceptTestid="delete-accept"
-		cancelTestid="delete-cancel"
-		busy={deleting}
-		error={deleteError}
-		destructive
-		onaccept={deleteOrkflow}
-		oncancel={() => {
-			pendingDelete = false;
-			deleteError = '';
-		}}
-	>
-		{#snippet body()}
-			<p class="severity-error font-semibold">
-				This action will delete all versions and cannot be reversed.
-			</p>
-			<p class="mt-3">
-				Delete <span class="font-medium text-ink">{name}</span> in namespace
-				<span class="font-medium text-ink">{namespaceLabel(namespace)}</span>?
-			</p>
-			<p class="mt-3 text-sm text-ink-secondary">
-				The engine will refuse deletion if a run is active or finished within the last 24 hours.
-			</p>
-		{/snippet}
-	</ConfirmDialog>
-{/if}

@@ -218,12 +218,21 @@ func FuzzParseCatalog(f *testing.F) {
 		"activities:\n  shell: --cap-add=ALL.example/x:1\n", "activities:\n  a: ghcr.io/x/y@sha256:" + strings.Repeat("a", 64) + "\n",
 		"activities:\n  a: ghcr.io/x/y:1\n  a: ghcr.io/x/z:1\n", "activities: [", "activities:\n  1: ghcr.io/x/y:1\n", "activities:\n  a: {}\n",
 		"activities:\n  a: [x]\n", "activities:\n  a: ghcr.io/x/y:1\nextra: 1\n",
+		"activities: {}\n---\nactivities: {}\n", "activities: {}\n---\nactivities: [\n", "activities: {}\n---\n\tx: 1\n", "activities: {}\n---\n",
+		"---\nactivities: {}\n", "activities: {}\n...\n",
 	} {
 		f.Add([]byte(seed))
 	}
 	slug := regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	f.Fuzz(func(t *testing.T, document []byte) {
 		catalog, err := ParseCatalog(document)
+		if line, found := SecondDocumentLine(document); found {
+			want := fmt.Sprintf("ORK_ACTIVITY_CATALOG: line %d: a second YAML document begins here", line)
+			if err == nil || catalog != nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("ParseCatalog(%q) = %v, %v, want a refusal holding %q", document, catalog, err, want)
+			}
+			return
+		}
 		if err != nil {
 			if !strings.Contains(err.Error(), "ORK_ACTIVITY_CATALOG") || catalog != nil {
 				t.Fatalf("ParseCatalog(%q) refused as %q (%v)", document, err, catalog)
@@ -398,6 +407,22 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 			if key == first.key {
 				t.Fatalf("the allowed keys %q offer %q, the key refused as unknown", allowed, first.key)
 			}
+		}
+	})
+}
+
+// FuzzSafeBodyReason: the prefix safeBodyReason reads of a registry's error body
+// never changes the reason: it is SafeReason of the whole body, trimmed.
+func FuzzSafeBodyReason(f *testing.F) {
+	for _, seed := range []string{
+		"", " not found\n", "a\x1b]0;pwn\x07b", "\u009b31m\u202eevil", "\xff\xfe", strings.Repeat(" ", 600) + "x",
+		strings.Repeat("a", 512), strings.Repeat("a", 515) + "日", strings.Repeat("日", 300), strings.Repeat("\xff", 600),
+	} {
+		f.Add([]byte(seed))
+	}
+	f.Fuzz(func(t *testing.T, body []byte) {
+		if got, want := safeBodyReason(body), SafeReason(strings.TrimSpace(string(body))); got != want {
+			t.Fatalf("safeBodyReason(%q) = %q, want %q", body, got, want)
 		}
 	})
 }

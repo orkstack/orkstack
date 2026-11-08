@@ -107,6 +107,11 @@ export function artifactMetadata(artifact: ArtifactRef): Record<string, unknown>
 	};
 }
 
+/** artifactContentTypeLabel is an artifact's content type, or says that none was recorded. */
+export function artifactContentTypeLabel(artifact: Pick<ArtifactRef, 'contentType'>): string {
+	return artifact.contentType || 'no content type recorded';
+}
+
 export function formatDuration(start: { seconds: bigint; nanos: number } | undefined, end: { seconds: bigint; nanos: number } | undefined): string {
 	if (!start || !end) return '—';
 	const milliseconds = Number(end.seconds - start.seconds) * 1000 + Math.floor((end.nanos - start.nanos) / 1e6);

@@ -1,0 +1,38 @@
+Run:       run-values
+Orkflow:   values
+Version:   1.0.0
+Status:    SUCCEEDED
+Created:   -
+Started:   -
+Finished:  -
+Origin:    unrecorded (started before origins were recorded)
+Input:     -
+Output:    -
+
+TASK           STATUS     POOL  PIN  ORKER  ATTEMPT  EXIT  SCHEDULED  STARTED  FINISHED  ERROR
+short          SUCCEEDED  -     -    -      0        0     -          -        -         -
+url            SUCCEEDED  -     -    -      0        0     -          -        -         -
+at-limit       SUCCEEDED  -     -    -      0        0     -          -        -         -
+past-limit     SUCCEEDED  -     -    -      0        0     -          -        -         -
+no-ref         SUCCEEDED  -     -    -      0        0     -          -        -         -
+by-ref         SUCCEEDED  -     -    -      0        0     -          -        -         -
+hostile        SUCCEEDED  -     -    -      0        0     -          -        -         -
+cut-at-escape  SUCCEEDED  -     -    -      0        0     -          -        -         -
+approval       SUCCEEDED  -     -    -      0        0     -          -        -         -
+empty          SUCCEEDED  -     -    -      0        0     -          -        -         -
+failed         FAILED     -     -    -      0        0     -          -        -         -
+pending        PENDING    -     -    -      0        0     -          -        -         -
+
+AWAIT     STATUS     DEADLINE  REMAINING  RESOLVED VIA  BY     CALLBACK
+approval  SUCCEEDED  -         -          api           alice  no
+
+TASK           VALUES
+short          {"ok":true}
+url            {"u":"a?b=1&c=<2>"}
+at-limit       {"v":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}
+past-limit     {"v":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"… (65 bytes; orkctl -n team-a run artifact download run-values --task past-limit --kind values --name values.json --output past-limit-values.json saves them whole)
+no-ref         {"v":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx… (100 bytes; orkctl -n team-a run get run-values --json prints them whole)
+by-ref         not shown (8192 bytes; orkctl -n team-a run artifact download run-values --task by-ref --kind values --name values.json --output by-ref-values.json saves them)
+hostile        {"bi":"a\u202eb","c1":"\u009b31m","esc":"\u001b]0;owned\u0007"}
+cut-at-escape  {"v":"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx… (90 bytes; orkctl -n team-a run artifact download run-values --task cut-at-escape --kind values --name values.json --output cut-at-escape-values.json saves them whole)
+approval       {"approved":true}

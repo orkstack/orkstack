@@ -5,9 +5,9 @@ answer is a fix or a job run again.
 
 ## Find the workflow
 
-Only the `proof` job of the `proof` workflow gates a merge, once the GitHub rule is on (see [How OrkStack is proven](/docs/concepts/proven/)). `check` runs
-`make check` in a few minutes and is the first to report a lint, vet or unit
-failure. None of the others gates a merge: the nightly and the release run on
+The `proof` job of the `proof` workflow and the `pr-title` job gate a merge, once the GitHub rule is on (see [How OrkStack is proven](/docs/concepts/proven/)). `check` runs
+`make check` in a few minutes and is the first to report a lint, vet, unit or
+UI type failure. None of the others gates a merge: the nightly and the release run on
 `main`, and the Podman, Kubernetes and site workflows on the changes that
 touch their paths. Each one, and what its red means, is a row of
 [docs/CI.md](https://github.com/orkstack/orkstack/blob/main/docs/CI.md#ci).
@@ -26,6 +26,10 @@ jq '{result, merge_eligible, ineligible_reasons}' proof/ci-<run>/proof.json
 
 ## Fix it, or run one job again
 
+- **`pr-title`:** your pull request lands as one squash commit whose subject is
+  its title, and the title is not a Conventional Commit. Edit it to
+  `type(scope): description`, such as `fix(orker): keep the shared directory`;
+  the edit runs the check again, and nothing needs pushing.
 - **"update this branch":** your branch does not contain `main`'s tip, and
   the proof proves only the tree that lands. Merge `main` into it and push.
 - **A draft:** the `proof` job fails until the pull request is marked ready

@@ -376,27 +376,28 @@ jobs:
 
   # The release: one job, so one approval. The `release` environment asks
   # its required reviewers before the job starts; it holds the signing key
-  # and deploys from main only. Then: SHA256SUMS signed, the tag, the images
-  # to ghcr.io, each signed by digest, and the GitHub release with its
-  # assets. It runs no repository code and checks out nothing: it holds the
-  # only package write, the only contents write and the only signing key, so
-  # every step is a fixed command over the artifacts job's output and the
-  # gate's proof, which it checks first. Nothing leaves it, the tag
-  # included, before the key has signed and verified SHA256SUMS.
+  # and the tag App's private key, and deploys from main only. Then: SHA256SUMS
+  # signed, the tag, the images to ghcr.io, each signed by digest, and the
+  # GitHub release with its assets. It runs no repository code and checks out
+  # nothing: it holds the only package write, the only contents write, the
+  # only signing key and the only App key, so every step is a fixed command
+  # over the artifacts job's output and the gate's proof, which it checks
+  # first. Nothing leaves it, the tag included, before the key has signed and
+  # verified SHA256SUMS.
   publish:
     needs: [validate, gate, artifacts, verify, nightly]
     # Named results, not the implicit success(), which would also read the
     # gate's colour (above).
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.verify.result == 'success' && needs.nightly.result == 'success' }}
-    # The signing key's secrets live in this environment and reach no other
-    # job; it deploys from main only (docs/PROOFS.md §10, "Set up release
-    # signing").
+    # The signing key's secrets and the tag App's live in this environment and
+    # reach no other job; it deploys from main only (docs/PROOFS.md §10, "Set up
+    # release signing", "Set up the release's tag App").
     environment: release
     concurrency:
       group: release-publish-${{ needs.validate.outputs.version }}
       cancel-in-progress: false
     runs-on: ubuntu-24.04
-    timeout-minutes: 150
+    timeout-minutes: 155
     permissions:
       contents: write
       packages: write
@@ -482,10 +483,42 @@ jobs:
           jq -e '(.verificationMaterial.tlogEntries // []) | length == 0' SHA256SUMS.sigstore.json >/dev/null || { echo "SHA256SUMS.sigstore.json carries a transparency-log entry" >&2; exit 1; }
           jq -er .messageSignature.signature SHA256SUMS.sigstore.json >SHA256SUMS.sig
           openssl dgst -sha256 -verify meta/cosign.pub -signature <(base64 -d SHA256SUMS.sig) SHA256SUMS >/dev/null
-      # The annotated tag, made through the API: this job checks out nothing.
-      # A version tag never moves: creating its ref fails when it exists, and
-      # one that exists is accepted only when this run made it, on this
-      # commit (a re-run of this job), and refused otherwise.
+      # The tag App's two secrets, checked here because the action below would
+      # stop without them in words that name neither them nor what to do.
+      - name: check the tag App's secrets
+        timeout-minutes: 1
+        shell: bash
+        env:
+          RELEASE_TAG_APP_CLIENT_ID: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          RELEASE_TAG_APP_PRIVATE_KEY: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$RELEASE_TAG_APP_CLIENT_ID" ] && [ -n "$RELEASE_TAG_APP_PRIVATE_KEY" ] || { echo "the release environment does not hold both RELEASE_TAG_APP_CLIENT_ID and RELEASE_TAG_APP_PRIVATE_KEY: nothing is tagged, and the job's token never creates a version tag (docs/PROOFS.md §10, \"Set up the release's tag App\")" >&2; exit 1; }
+      # A token of the App, for this repository's contents and nothing more, made
+      # right before the one step that uses it; the action's post step revokes it
+      # when the job ends.
+      - name: mint the tag token
+        id: tag-token
+        timeout-minutes: 3
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ secrets.RELEASE_TAG_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_TAG_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+      # The annotated tag, pushed with git and the App's token, which only this
+      # step is handed: the App is the one actor the `release tags` ruleset lets
+      # create a v* tag, so no token means no tag, and nothing here falls back to
+      # the API or to the job's token (docs/PROOFS.md §10, "Set up the release's
+      # tag App"). The token becomes a header, masked, in git's environment alone
+      # and for this server alone; it is out of the environment before git starts,
+      # and nothing writes it to a file or a command line. This job checks out
+      # nothing: an empty repository holds what the tag needs, the commit fetched
+      # at depth 1, and no git config in it holds a credential. A version tag never
+      # moves: the push names no force, so it creates the ref or fails, and one
+      # that exists is accepted only when this run made it, on this commit (a
+      # re-run of this job), and refused otherwise. A read that fails stops the
+      # step, because only an answer says the tag is absent.
       - name: tag
         timeout-minutes: 5
         shell: bash
@@ -493,23 +526,45 @@ jobs:
           VERSION: ${{ needs.validate.outputs.version }}
           SHA: ${{ github.sha }}
           REPO: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          GH_TOKEN: ${{ github.token }}
+          TAG_TOKEN: ${{ steps.tag-token.outputs.token }}
         run: |
           set -euo pipefail
-          if ref="$(gh api "repos/$REPO/git/ref/tags/$VERSION" --jq '[.object.type, .object.sha] | @tsv' 2>/dev/null)"; then
-            IFS=$'\t' read -r type object <<<"$ref"
+          [ -n "$TAG_TOKEN" ] || { echo "this step was handed no token: nothing is tagged, and the job's token never creates a version tag (docs/PROOFS.md §10, \"Set up the release's tag App\")" >&2; exit 1; }
+          auth="$(printf 'x-access-token:%s' "$TAG_TOKEN" | base64 -w0)"
+          unset TAG_TOKEN
+          echo "::add-mask::$auth"
+          export GIT_TERMINAL_PROMPT=0 GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$SERVER_URL/.extraHeader" GIT_CONFIG_VALUE_0="Authorization: Basic $auth"
+          unset auth
+          remote="$SERVER_URL/$REPO.git"
+          git init --quiet --bare "$RUNNER_TEMP/tag.git"
+          export GIT_DIR="$RUNNER_TEMP/tag.git"
+          refs="$(git ls-remote --refs "$remote" "refs/tags/$VERSION")" || { echo "could not read $REPO with the App's token: nothing is tagged (docs/PROOFS.md §10, \"Set up the release's tag App\")" >&2; exit 1; }
+          object="$(awk -v ref="refs/tags/$VERSION" '$2 == ref { print $1 }' <<<"$refs")"
+          if [ -n "$object" ]; then
+            git fetch --quiet --no-tags --depth=1 "$remote" "refs/tags/$VERSION"
+            type="$(git cat-file -t "$object")"
             [ "$type" = tag ] || { echo "$VERSION already names $type $object, not an annotated tag this run made" >&2; exit 1; }
-            gh api "repos/$REPO/git/tags/$object" >"$RUNNER_TEMP/tag.json"
-            [ "$(jq -r .object.sha "$RUNNER_TEMP/tag.json")" = "$SHA" ] && grep -qxF "proof: $RUN_URL" <<<"$(jq -r .message "$RUNNER_TEMP/tag.json")" || { echo "$VERSION already exists and was not created by this run on $SHA: a version tag never moves" >&2; exit 1; }
+            git cat-file tag "$object" >"$RUNNER_TEMP/tag.txt"
+            [ "$(head -1 "$RUNNER_TEMP/tag.txt")" = "object $SHA" ] && grep -qxF "proof: $RUN_URL" "$RUNNER_TEMP/tag.txt" || { echo "$VERSION already exists and was not created by this run on $SHA: a version tag never moves" >&2; exit 1; }
             echo "$VERSION: this run's tag on $SHA, kept"
             exit 0
           fi
+          git fetch --quiet --no-tags --depth=1 "$remote" "$SHA"
           proof="$RUNNER_TEMP/proof/proof.json"
-          message="$(printf 'OrkStack %s\nproof: %s\ncommit: %s\ntree: %s\nresult: %s\n' "$VERSION" "$RUN_URL" "$(jq -r .commit "$proof")" "$(jq -r .tree "$proof")" "$(jq -r .result "$proof")")"
-          object="$(gh api "repos/$REPO/git/tags" -f tag="$VERSION" -f message="$message" -f object="$SHA" -f type=commit \
-            -f 'tagger[name]=github-actions[bot]' -f 'tagger[email]=41898282+github-actions[bot]@users.noreply.github.com' --jq .sha)"
-          gh api "repos/$REPO/git/refs" -f ref="refs/tags/$VERSION" -f sha="$object" >/dev/null
+          commit="$(jq -er .commit "$proof")"
+          tree="$(jq -er .tree "$proof")"
+          result="$(jq -er .result "$proof")"
+          message="$(printf 'OrkStack %s\nproof: %s\ncommit: %s\ntree: %s\nresult: %s\n' "$VERSION" "$RUN_URL" "$commit" "$tree" "$result")"
+          git -c 'user.name=github-actions[bot]' -c 'user.email=41898282+github-actions[bot]@users.noreply.github.com' tag -a "$VERSION" -m "$message" "$SHA"
+          if ! pushed="$(git push --quiet "$remote" "refs/tags/$VERSION:refs/tags/$VERSION" 2>&1)"; then
+            printf '%s\n' "$pushed" >&2
+            case "$pushed" in
+              *'without `workflows` permission'*) echo "GitHub refused $SHA's tag for want of a permission the App does not hold, as it is reported to when a commit's workflow files differ from the latest commit of every branch: nothing is tagged. Dispatch the release again from main's tip (docs/PROOFS.md §10, \"Set up the release's tag App\")" >&2 ;;
+            esac
+            exit 1
+          fi
           echo "$VERSION: tagged $SHA"
       - name: push the images to ghcr.io, byte for byte
         timeout-minutes: 60

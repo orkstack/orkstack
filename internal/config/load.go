@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -148,6 +149,10 @@ func Load(path string, binary Binary) (*Document, error) {
 		return nil, fmt.Errorf("config: read %s: %w", path, err)
 	}
 
+	if line, found := dsl.SecondDocumentLine(data); found {
+		return nil, fmt.Errorf("config: %s: line %d: a second YAML document begins here; a configuration file "+
+			"holds one: merge it into the first, or delete it and its ---", path, line)
+	}
 	var root yaml.Node
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("config: %s: parse yaml: %w", path, err)

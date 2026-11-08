@@ -1,0 +1,43 @@
+name: pr-title
+
+# A pull request lands as one squash commit whose subject is its title
+# (AGENTS.md §11.3), so the title is what keeps main's history in Conventional
+# Commits. `pr-title` is a required check beside `proof` (docs/PROOFS.md §6).
+#
+# It runs on every title edit and on every new head, because a required check
+# attaches to a head. A path filter would leave it unreported. A merge group's
+# title was checked on its pull request, and the queue still waits for every
+# required check, so there the job passes and reads nothing.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+  merge_group:
+    types: [checks_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: check
+        if: github.event_name == 'pull_request'
+        timeout-minutes: 10
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: go run ./test/tools/proofrun pr-title -title "$PR_TITLE"

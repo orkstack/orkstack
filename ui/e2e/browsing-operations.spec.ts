@@ -24,7 +24,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { OP, addListFilter, selectOption } from './uiHelpers';
+import { OP, addListFilter, selectOption, pageCli } from './uiHelpers';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('browsing-operations');
@@ -443,7 +443,7 @@ test('dashboard presets and custom since are visible, addressable, and export a 
 	await page.getByTestId('dashboard-window-custom').click();
 	await expect(page.getByTestId('dashboard-window-custom-since')).toHaveValue(since);
 	await page.keyboard.press('Escape');
-	await page.getByTestId('dashboard-cli-trigger').click();
-	await expect(page.getByTestId('dashboard-cli-command')).toContainText('orkctl --namespace');
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'The numbers on this page')).toContainText('orkctl --namespace');
 	await page.screenshot({ path: out('screenshot-dashboard-window.png'), fullPage: true });
 });

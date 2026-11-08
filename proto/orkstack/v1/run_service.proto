@@ -255,7 +255,9 @@ message GetRunResponse { Run run = 1; }
 // only equals, and a run recorded before origins existed matches no
 // origin.kind filter; origin.id is meaningful only within a kind, so it
 // needs an equals filter on origin.kind. An id is matched whole, never by
-// part.
+// part. origin.root_run_id takes only equals and keeps every run below that
+// root in its composed chain, however deep: the root run itself holds no root
+// and is not one of them.
 message ListRunsRequest {
   option (orkstack.v1.filterable) = {
     resource: "orkstack.v1.Run"
@@ -288,6 +290,11 @@ message ListRunsRequest {
         label: "Origin id"
         operators: [FILTER_OPERATOR_EQUALS]
         requires: "origin.kind"
+      },
+      {
+        path: "origin.root_run_id"
+        label: "Root run"
+        operators: [FILTER_OPERATOR_EQUALS]
       }
     ]
   };

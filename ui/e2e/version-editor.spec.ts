@@ -119,6 +119,24 @@ tasks:
 `;
 }
 
+// The smallest window the design is held to (ui/DESIGN.md).
+const DESIGN_FLOOR = { width: 1280, height: 800 };
+
+// An apply's answer stands inside the editor card, between its header and the
+// code, and on screen, so nobody scrolls away from the code to read it.
+async function expectBesideTheCode(page: Page, testid: string): Promise<void> {
+	const card = page.locator('section.edcard');
+	const notice = card.getByTestId('editor-notices').getByTestId(testid);
+	await expect(notice).toBeVisible();
+	await expect(notice).toBeInViewport();
+	const slot = await card.getByTestId('editor-notices').boundingBox();
+	const head = await card.locator('.card-head').boundingBox();
+	const code = await card.locator('.cm-editor').boundingBox();
+	if (!slot || !head || !code) throw new Error('the editor card has no box to measure');
+	expect(slot.y).toBeGreaterThanOrEqual(head.y + head.height - 1);
+	expect(slot.y + slot.height).toBeLessThanOrEqual(code.y + 1);
+}
+
 // settle waits for a tab to reach one of its two end states and FAILS NAMING
 // THE CAUSE when it reached the error one — a bare wait on the happy element
 // cannot tell "the read failed" from "not painted yet", and reports the second
@@ -297,6 +315,7 @@ test("editing the current version opens ITS source, and applying forks forward f
 // new version. Twice: the local compare that never leaves the browser, and the
 // engine's own created=false for a byte-identical re-apply.
 test('applying an unchanged document is a visible no-op, and stores nothing', async ({ page }) => {
+	await page.setViewportSize(DESIGN_FLOOR);
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${NS}&version=0.1.0&tab=edit`);
 	await openEditor(page);
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
@@ -306,6 +325,7 @@ test('applying an unchanged document is a visible no-op, and stores nothing', as
 	const noop = page.getByTestId('editor-noop');
 	await expect(noop).toBeVisible();
 	await expect(noop).toContainText('0.1.0');
+	await expectBesideTheCode(page, 'editor-noop');
 	await expect(page).toHaveURL(/tab=edit/);
 	await expect(page.getByTestId('editor-form')).toBeVisible();
 	await shot(page, 'screenshot-editor-noop.png');
@@ -335,6 +355,7 @@ test('applying an unchanged document is a visible no-op, and stores nothing', as
 test('a head that moved mid-edit is refused naming both versions, and the edit survives', async ({
 	page
 }) => {
+	await page.setViewportSize(DESIGN_FLOOR);
 	await page.goto(`${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${NS}&version=0.1.0&tab=edit`);
 	await openEditor(page);
 	await expect(page.getByTestId('editor-base-version')).toHaveText('0.1.0');
@@ -357,6 +378,13 @@ test('a head that moved mid-edit is refused naming both versions, and the edit s
 	await expect(page.getByTestId('editor-conflict-base')).toHaveText('0.1.0');
 	await expect(page.getByTestId('editor-conflict-expected')).toHaveText('0.3.0');
 	await expect(page.getByTestId('editor-conflict-head')).toHaveText('0.4.0');
+	// The summary and its two ways forward stand beside the code.
+	await expectBesideTheCode(page, 'editor-conflict');
+	await expect(page.getByTestId('editor-conflict-diff')).toBeInViewport({ ratio: 1 });
+	await expect(page.getByTestId('editor-conflict-rebase')).toBeInViewport({ ratio: 1 });
+	// The engine's own words stay on the page, below the card.
+	await expect(page.locator('section.edcard').getByTestId('editor-conflict-below')).toHaveCount(0);
+	await expect(page.getByTestId('editor-conflict-below')).toContainText('changed while this edit was open');
 	await shot(page, 'screenshot-editor-stale-head.png');
 
 	// Nothing was written, and the work is still in the box.
@@ -374,6 +402,10 @@ test('a head that moved mid-edit is refused naming both versions, and the edit s
 	await page.getByTestId('editor-conflict-diff').click();
 	await expect(page.getByTestId('conflict-diff')).toContainText(`--- a/${ORKFLOW}@0.3.0`);
 	await expect(page.getByTestId('conflict-diff')).toContainText(`+++ b/${ORKFLOW}@0.4.0`);
+	// The long diff is below the card, and asking for it brings it into view.
+	await expect(page.locator('section.edcard').getByTestId('conflict-diff')).toHaveCount(0);
+	await expect(page.getByTestId('conflict-diff')).toBeInViewport();
+	await shot(page, 'screenshot-editor-stale-head-diff.png');
 
 	// Retargeting moves the TOKEN and leaves the provenance and the text alone.
 	await page.getByTestId('editor-conflict-rebase').click();

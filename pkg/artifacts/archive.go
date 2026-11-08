@@ -48,6 +48,14 @@ import (
 // recorded, and read only by an origin-filtered list. It is a sibling family,
 // never a segment inserted into the run index, so the run index's key shape,
 // its time narrowing and the cleanup cursor over it are untouched.
+//
+// A third family, on the same terms, indexes a composed chain's runs by its
+// root, for a run with a root recorded:
+//
+//	metadata/index/roots/{namespace}/{root-run-id}/{parent-run-id}/{orkflow}/{status}/{stamp}/{run-id}
+//
+// The parent is in the key so that one row says all a list can filter on
+// without a body: every run with a root is a PARENT_RUN.
 const (
 	// RunArchiveNamespace prefixes every archived run body.
 	RunArchiveNamespace = "metadata/runs"
@@ -73,6 +81,9 @@ const (
 	// runIndexSegments is the fixed segment count of an index key:
 	// metadata, index, runs, namespace, orkflow, status, stamp, run-id.
 	runIndexSegments = 8
+	// RunRootIndexNamespace prefixes the root index: one zero-byte key per
+	// run with a chain root recorded.
+	RunRootIndexNamespace = "metadata/index/roots"
 	// RunOriginIndexNamespace prefixes the origin index: one zero-byte key
 	// per archived run, written beside its run-index row, so "which runs did
 	// this trigger start" is a prefix scan that reads no body.
@@ -81,6 +92,10 @@ const (
 	// id (SUBMIT). A real id that is literally "none" is stored encoded, so
 	// the two never collide.
 	OriginIndexNoID = "none"
+	// runRootIndexSegments is the fixed segment count of a root-index key:
+	// metadata, index, roots, namespace, root, parent, orkflow, status, stamp,
+	// run-id.
+	runRootIndexSegments = 10
 	// runOriginIndexSegments is the fixed segment count of an origin-index
 	// key: metadata, index, origins, namespace, kind, origin-id, orkflow,
 	// status, stamp, run-id — runIndexSegments plus kind and origin-id.
@@ -130,6 +145,10 @@ type RunRecord struct {
 	// origin is matched by no origin filter, and never masquerades as SUBMIT.
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// RootRunID is the root of the run's composed chain, as RunOrigin carries
+	// it. Empty writes no root row: a run with no root recorded is matched by
+	// no root filter.
+	RootRunID string
 	// JSONL is the archive body: one JSON record per line.
 	JSONL []byte
 }
@@ -160,6 +179,9 @@ type RunIndexEntry struct {
 	// run-index scan; a reader that needs them asks with an origin filter.
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// RootRunID is set by a root-index scan, with OriginKind PARENT_RUN and
+	// OriginID, which that row also holds, and zero from any other scan.
+	RootRunID string
 }
 
 // RunQuery narrows a prefix scan. Zero values mean "no filter".
@@ -184,6 +206,10 @@ type RunQuery struct {
 	// it is one prefix. An OriginID without OriginKind is ErrInvalidRunKey.
 	OriginKind orkstackv1.RunOriginKind
 	OriginID   string
+	// RootRunID selects the root index, ahead of the origin index. Its rows
+	// are all PARENT_RUN and hold the parent, so an OriginKind or OriginID
+	// beside it narrows the same rows.
+	RootRunID string
 	// BeforeKey is the exact recent-family key after which a newest-first
 	// page resumes. A caller that knows the last entry's key sets it so the
 	// store's StartAfter is a full key rather than an instant prefix, which
@@ -584,6 +610,90 @@ func ParseRunOriginIndexKey(key string) (RunIndexEntry, bool) {
 	}, true
 }
 
+// RunRootIndexKey renders the root-index key for a record, or ("", false) when
+// the record has no row: no root, or a root on anything but a PARENT_RUN origin
+// naming its parent, which the engine never records and which is no reason to
+// refuse a run its archive. Every other segment is rendered exactly as the run
+// index renders it.
+func RunRootIndexKey(rec RunRecord) (key string, ok bool, err error) {
+	if rec.RootRunID == "" || rec.OriginID == "" || rec.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN {
+		return "", false, nil
+	}
+	namespace, err := encodeArchiveSegment(ResolveNamespace(rec.Namespace))
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run root index key: namespace: %w", err)
+	}
+	root, err := encodeArchiveSegment(rec.RootRunID)
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run root index key: root run id: %w", err)
+	}
+	parent, err := encodeArchiveSegment(rec.OriginID)
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run root index key: parent run id: %w", err)
+	}
+	orkflow, err := encodeArchiveSegment(rec.Orkflow)
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run root index key: orkflow: %w", err)
+	}
+	status, err := encodeArchiveSegment(NormalizeRunStatus(rec.Status))
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run root index key: status: %w", err)
+	}
+	runID, err := encodeArchiveSegment(rec.RunID)
+	if err != nil {
+		return "", false, fmt.Errorf("artifacts: run root index key: run id: %w", err)
+	}
+	return path.Join(RunRootIndexNamespace, namespace, root, parent, orkflow, status,
+		RunStamp(rec.Time), runID), true, nil
+}
+
+// ParseRunRootIndexKey reverses RunRootIndexKey; a foreign key is ok=false, so
+// a scan can skip it.
+func ParseRunRootIndexKey(key string) (RunIndexEntry, bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) != runRootIndexSegments || !strings.HasPrefix(key, RunRootIndexNamespace+"/") {
+		return RunIndexEntry{}, false
+	}
+	namespace, ok := decodeArchiveSegment(parts[3])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	root, ok := decodeArchiveSegment(parts[4])
+	if !ok || root == "" {
+		return RunIndexEntry{}, false
+	}
+	parent, ok := decodeArchiveSegment(parts[5])
+	if !ok || parent == "" {
+		return RunIndexEntry{}, false
+	}
+	orkflow, ok := decodeArchiveSegment(parts[6])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	status, ok := decodeArchiveSegment(parts[7])
+	if !ok || !writtenRunStatus(status) {
+		return RunIndexEntry{}, false
+	}
+	stamp, ok := parseRunStamp(parts[8])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	runID, ok := decodeArchiveSegment(parts[9])
+	if !ok {
+		return RunIndexEntry{}, false
+	}
+	return RunIndexEntry{
+		RunID:      runID,
+		Namespace:  namespace,
+		Orkflow:    orkflow,
+		Status:     status,
+		Time:       stamp,
+		OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN,
+		OriginID:   parent,
+		RootRunID:  root,
+	}, true
+}
+
 // encodeOriginIDSegment renders an origin id as one key segment: the literal
 // OriginIndexNoID for an empty id, and otherwise the id through the ordinary
 // segment encoding — except an id that is itself spelled "none", which is
@@ -607,6 +717,9 @@ func decodeOriginIDSegment(segment string) (string, bool) {
 
 // parseKey parses one scanned key with the family the query selected.
 func (q RunQuery) parseKey(key string) (RunIndexEntry, bool) {
+	if q.RootRunID != "" {
+		return ParseRunRootIndexKey(key)
+	}
 	if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
 		return ParseRunOriginIndexKey(key)
 	}
@@ -618,6 +731,9 @@ func (q RunQuery) parseKey(key string) (RunIndexEntry, bool) {
 // bound can end a scan instead of filtering the rest of the subtree.
 func (q RunQuery) timeOrderedPrefix() bool {
 	pinned := q.Namespace != "" && q.Orkflow != "" && q.Status != ""
+	if q.RootRunID != "" {
+		return pinned && q.OriginID != ""
+	}
 	if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
 		return pinned && q.OriginID != ""
 	}
@@ -670,13 +786,19 @@ func writtenRunStatus(status string) bool {
 // that family's own order — namespace, kind, origin id, orkflow, status, then
 // the stamp once all five are pinned. An OriginID without an OriginKind is
 // ErrInvalidRunKey: an id is meaningful only within a kind.
+//
+// A query with a RootRunID scans the root family, narrowing in its order —
+// namespace, root, parent, orkflow, status, then the stamp once all five are
+// pinned. Its namespace, as everywhere, is what makes it one prefix.
 func (q RunQuery) ScanPrefix() (prefix, startAfter string, err error) {
-	if q.OriginKind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
-		if q.OriginID != "" {
-			return "", "", fmt.Errorf("%w: an origin id needs an origin kind", ErrInvalidRunKey)
-		}
+	switch {
+	case q.OriginKind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && q.OriginID != "":
+		return "", "", fmt.Errorf("%w: an origin id needs an origin kind", ErrInvalidRunKey)
+	case q.RootRunID != "":
+		prefix = RunRootIndexNamespace + "/"
+	case q.OriginKind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED:
 		prefix = RunIndexNamespace + "/"
-	} else {
+	default:
 		prefix = RunOriginIndexNamespace + "/"
 	}
 	if q.Namespace == "" {
@@ -687,7 +809,23 @@ func (q RunQuery) ScanPrefix() (prefix, startAfter string, err error) {
 		return "", "", fmt.Errorf("artifacts: run query: namespace: %w", err)
 	}
 	prefix += namespace + "/"
-	if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
+	if q.RootRunID != "" {
+		root, err := encodeArchiveSegment(q.RootRunID)
+		if err != nil {
+			return "", "", fmt.Errorf("artifacts: run query: root run id: %w", err)
+		}
+		prefix += root + "/"
+		if q.OriginID == "" {
+			return prefix, "", nil
+		}
+		// A parent names one prefix, and it is only a parent under its kind,
+		// which Matches holds the rows to.
+		parent, err := encodeArchiveSegment(q.OriginID)
+		if err != nil {
+			return "", "", fmt.Errorf("artifacts: run query: parent run id: %w", err)
+		}
+		prefix += parent + "/"
+	} else if q.OriginKind != orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
 		kind, ok := OriginKindSlug(q.OriginKind)
 		if !ok {
 			return "", "", fmt.Errorf("%w: origin kind %d is not declared", ErrInvalidRunKey, q.OriginKind)
@@ -741,6 +879,9 @@ func (q RunQuery) Matches(entry RunIndexEntry) bool {
 		return false
 	}
 	if q.OriginID != "" && entry.OriginID != q.OriginID {
+		return false
+	}
+	if q.RootRunID != "" && entry.RootRunID != q.RootRunID {
 		return false
 	}
 	if !q.Since.IsZero() && entry.Time.Before(q.Since) {

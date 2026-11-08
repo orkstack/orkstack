@@ -128,6 +128,35 @@ func TestEnsureRunSearchAttributes_ReportsAClusterThatRefuses(t *testing.T) {
 	}
 }
 
+// TestEnsureRunRootSearchAttribute_IsItsOwnAnswer: a cluster that refuses the
+// root attribute, as one at its limit of custom attributes does, keeps the
+// origin attributes it already has; the answer names what was refused, and an
+// attribute already there needs no registration.
+func TestEnsureRunRootSearchAttribute_IsItsOwnAnswer(t *testing.T) {
+	refused := &fakeOperator{
+		custom: map[string]enumspb.IndexedValueType{
+			SearchAttrOrkflowOriginKind: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+			SearchAttrOrkflowOriginId:   enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		},
+		addErr: errors.New("cannot have more than 10 search attribute of type Keyword"),
+	}
+	originIndexed, err := ensureRunOriginSearchAttributes(context.Background(), refused, DefaultNamespace)
+	if err != nil || !originIndexed {
+		t.Fatalf("origin index = %v, %v; want usable", originIndexed, err)
+	}
+	rootIndexed, err := ensureRunRootSearchAttribute(context.Background(), refused, DefaultNamespace)
+	if rootIndexed || err == nil || !strings.Contains(err.Error(), SearchAttrOrkflowOriginRootRunId) {
+		t.Fatalf("root index = %v, %v; want unusable with an error naming it", rootIndexed, err)
+	}
+
+	present := &fakeOperator{custom: map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowOriginRootRunId: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	}, addErr: errors.New("nothing should be registered")}
+	if rootIndexed, err := ensureRunRootSearchAttribute(context.Background(), present, DefaultNamespace); err != nil || !rootIndexed {
+		t.Fatalf("root index already present = %v, %v", rootIndexed, err)
+	}
+}
+
 // The origin attributes carry their own answer. A cluster that already has
 // OrkflowNamespace and now refuses the operator API keeps its namespace
 // predicate while the origin index reports unusable; one that has all three

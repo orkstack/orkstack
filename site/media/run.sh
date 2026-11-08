@@ -95,11 +95,14 @@ site_pw="$(node -p "require('$SITE/node_modules/@playwright/test/package.json').
 ! curl -s -o /dev/null "$UI/" || need "something already answers at $UI; set SITE_MEDIA_UI_PORT to a free port"
 [ "$ONLY" = ui ] || docker image inspect "$VHS_IMAGE" >/dev/null 2>&1 || need "the VHS image is not on this host: docker pull $VHS_IMAGE"
 # No frame may show a real host name, and an Orker's default id embeds this
-# host's (internal/orker defaultOrkerID). Start the stack with a neutral id:
-#   make down && ORK_ORKER_ID=orker-example make up
+# host's (internal/orker defaultOrkerID). Nor a development build, which is what
+# make up calls itself unless told otherwise. Start the stack as a release, with
+# a neutral id:
+#   make down && VERSION=vX.Y.Z ORK_ORKER_ID=orker-example make up
 if "$REPO/bin/orkctl" --server "$ENGINE" orker list --json 2>/dev/null | grep -qi -- "$(hostname)"; then
 	need "an Orker's id names this host ($(hostname)); restart the stack with ORK_ORKER_ID=orker-example make up"
 fi
+[ "$ONLY" = terminal ] || "$SITE/media/check-engine-version.sh" "$("$REPO/bin/orkctl" --server "$ENGINE" admin info --json 2>/dev/null | node -p 'JSON.parse(require("fs").readFileSync(0)).engineVersion' 2>/dev/null)" || exit $?
 
 # The terminal recordings to make: every tape, or the ones SITE_MEDIA_TAPES
 # names (SITE_MEDIA_TAPES=activity-test redoes that one, keeping the rest).

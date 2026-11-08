@@ -1865,7 +1865,7 @@ func TestRunWorkflow_ClassifiesALostPinHostAsPinHostLost(t *testing.T) {
 	}
 	// The run's own reason is the pin's, not the bare word "canceled".
 	if got := stored.GetError().GetMessage(); !strings.Contains(got, "PIN") &&
-		!strings.Contains(got, "lost the Orker") {
+		!strings.Contains(got, "lost contact with the Orker") {
 		t.Errorf("run error message = %q, want it to explain the lost pin", got)
 	}
 	// A member the run never reached is CANCELED, with started_at unset: it

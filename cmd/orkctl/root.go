@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -308,9 +309,7 @@ func (g *globalFlags) closeIdleConnections() {
 	if g.client == nil {
 		return
 	}
-	if transport, ok := g.client.Transport.(*http.Transport); ok {
-		transport.CloseIdleConnections()
-	}
+	g.client.CloseIdleConnections()
 }
 
 // validate rejects a server address the Connect clients could never use.
@@ -346,8 +345,67 @@ func (g *globalFlags) httpClient() *http.Client {
 	} else {
 		transport.Protocols.SetUnencryptedHTTP2(true)
 	}
-	g.client = &http.Client{Transport: transport}
+	g.client = &http.Client{Transport: connectionEndTransport{Transport: transport}}
 	return g.client
+}
+
+// connectionEndTransport marks a response body whose read failed because the
+// connection under it ended (connectionEndedError). It reads the HTTP layer
+// because connect-go cannot say: a connection that ends and an HTTP stream
+// that ends cleanly partway through a message both reach a caller as INTERNAL
+// or UNKNOWN wrapping io.ErrUnexpectedEOF, some with the same text, and only
+// the first is an engine going away.
+type connectionEndTransport struct {
+	*http.Transport
+}
+
+func (t connectionEndTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	response, err := t.Transport.RoundTrip(request)
+	if err != nil {
+		return nil, err
+	}
+	response.Body = connectionEndBody{ReadCloser: response.Body}
+	return response, nil
+}
+
+type connectionEndBody struct {
+	io.ReadCloser
+}
+
+func (b connectionEndBody) Read(data []byte) (int, error) {
+	n, err := b.ReadCloser.Read(data)
+	if err != nil && err != io.EOF && connectionEnded(err) {
+		err = &connectionEndedError{err: err}
+	}
+	return n, err
+}
+
+// connectionEndedError is a response body's read that failed because the
+// connection to the engine ended. Its text is the cause's, unchanged.
+type connectionEndedError struct {
+	err error
+}
+
+func (e *connectionEndedError) Error() string { return e.err.Error() }
+func (e *connectionEndedError) Unwrap() error { return e.err }
+
+// goAwayEnded opens the error Go's HTTP/2 client gives a stream whose
+// connection closed after a GOAWAY. Its type is internal to net/http, so its
+// text is all there is to read; TestRunWatch_ResumesAfterAGoAwayAndAClose
+// holds a real one to this.
+const goAwayEnded = "http2: server sent GOAWAY and closed the connection"
+
+// connectionEnded reports whether err, a response body's read error, is the
+// connection's end and not the stream's: the connection closed under the read
+// (the HTTP/2 client's io.ErrUnexpectedEOF for a FIN, HTTP/1.1's for a cut
+// body), closed after a GOAWAY, or failed a network read. A peer's RST_STREAM
+// is none of them, and neither is the clean end of an HTTP stream, io.EOF.
+func connectionEnded(err error) bool {
+	if errors.Is(err, io.ErrUnexpectedEOF) || strings.HasPrefix(err.Error(), goAwayEnded) {
+		return true
+	}
+	var network *net.OpError
+	return errors.As(err, &network) && network.Op == "read"
 }
 
 func (g *globalFlags) orkflowClient() orkstackv1connect.OrkflowServiceClient {
@@ -477,20 +535,23 @@ func rpcError(operation string, err error) error {
 
 // engineInterrupted reports whether err ended a call because the engine, or
 // the connection to it, went away under it — what a watch rides out and
-// resumes: an UNAVAILABLE answer, or a CANCELED that ctx, the watch's own
-// context, did not cause. From connect-go v1.21.1 a connection the engine
-// reset reaches a client as CANCELED when the client's read is the first to
-// meet the reset (error.go, wrapIfContextError's isClientDisconnected), where
-// before it was UNAVAILABLE before any response, INVALID_ARGUMENT when it cut
-// a stream between messages and UNKNOWN when it cut one inside a message.
-// When the client's own write meets the reset first — an HTTP/2
-// acknowledgement or flow-control update, whose error Go's HTTP/2 client
-// drops — its read sees the connection end, as when the engine closes it:
-// UNAVAILABLE before any response, which is resumed, and INTERNAL between
-// messages or UNKNOWN inside one (envelope.go, envelopeReader.Read), which are
-// not. A Ctrl-C ends ctx, so it still ends the watch, and so does a stream the
-// engine ends cleanly inside a message on a connection that stays up, also
-// INTERNAL.
+// resumes: an UNAVAILABLE answer, a CANCELED that ctx, the watch's own
+// context, did not cause, or a connection that ended under a response body.
+//
+// From connect-go v1.21.1 a connection the engine reset reaches a client as
+// CANCELED when the client's read is the first to meet the reset (error.go,
+// wrapIfContextError's isClientDisconnected). A connection the engine closes
+// (a FIN, what a replica that exits sends), or one whose reset the client's own
+// write met first — an HTTP/2 acknowledgement or flow-control update, whose
+// error Go's HTTP/2 client drops — is UNAVAILABLE before any response, and
+// INTERNAL between messages or UNKNOWN inside one (envelope.go,
+// envelopeReader.Read); connectionEndedError says which of those it was.
+//
+// Nothing the engine said is resumed: its own error arrives in the stream's
+// end message, with whatever code it chose, and never as a failed read. Nor is
+// an HTTP stream the engine ended cleanly partway through a message on a
+// connection that stays up, or a stream it reset (a handler's panic). A Ctrl-C
+// ends ctx, so it ends the watch whichever way the call failed.
 func engineInterrupted(ctx context.Context, err error) bool {
 	switch connect.CodeOf(err) {
 	case connect.CodeUnavailable:
@@ -498,6 +559,7 @@ func engineInterrupted(ctx context.Context, err error) bool {
 	case connect.CodeCanceled:
 		return ctx.Err() == nil
 	default:
-		return false
+		var ended *connectionEndedError
+		return errors.As(err, &ended) && ctx.Err() == nil
 	}
 }

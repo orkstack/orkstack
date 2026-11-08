@@ -68,7 +68,11 @@ A pin is a named group of tasks of one Orkflow that run on one Orker and share `
 | `0 (no live orkers)` | Measured: nobody serves the pool | Start an Orker with `ORK_ORKER_POOL` |
 | `unknown (unreachable)` | Not measured: the cluster did not answer | Ask again |
 
-`orkctl orker get ID` shows one Orker's state, load and open pins. In the web UI, the Pools page shows a card for each pool and an Orkers table with a **Cordon…** action.
+An Orker that stopped in the last 90 seconds still counts here, and shows as
+`unknown (unreachable)` in `orkctl orker list`. So an Orker restarted under
+another id reads as one too many until then. Set `ORK_ORKER_ID` to keep its id.
+
+`orkctl orker get ID` shows one Orker's state, load and open pins. In the web UI, the Pools page shows a card for each pool and an Orkers table with a **Cordon** action.
 
 Each Orker needs an `ORK_ORKER_ID` that no other Orker in the deployment uses, even on another host. The default is derived from the host and its work directory, which is unique on a host. In a container, set it explicitly.
 

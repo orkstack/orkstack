@@ -101,7 +101,7 @@ var nameValued = []string{
 // opaqueIDs are matched whole, never by part.
 var opaqueIDs = []string{
 	"Webhook.id", "Trigger.id", "Schedule.id", "Orkflow.definition_digest", "ActivityInfo.index_digest",
-	"Delivery.run_id", "Delivery.webhook_id", "Run.origin.id",
+	"Delivery.run_id", "Delivery.webhook_id", "Run.origin.id", "Run.origin.root_run_id",
 }
 
 func declaredSpecs(t *testing.T) map[string]*listfilter.Spec {

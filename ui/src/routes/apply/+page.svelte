@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { shortVersion } from '#lib/version.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
 	import { goto } from '$app/navigation';
 	import { guardUnsaved } from '#lib/dirtyGuard.ts';
 	import { exampleHref } from '#lib/examples.ts';
@@ -9,7 +11,6 @@
 	import YamlField from '#lib/yaml/YamlField.svelte';
 	import YamlProblems from '#lib/yaml/YamlProblems.svelte';
 	import { YamlSession } from '#lib/yaml/session.svelte.ts';
-	import { setTitleBlock } from '#lib/sheet.svelte.ts';
 	import { ValidationSeverity } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
 	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
 	import { API_VERSION, ORKFLOW_PLACEHOLDER } from '#lib/placeholders.ts';
@@ -106,11 +107,6 @@
 		yaml = await file.text();
 		input.value = '';
 	}
-	setTitleBlock(() => [
-		{ label: 'PAGE', value: 'Apply' },
-		{ label: 'NAMESPACE', value: namespaceLabel(data.namespace) },
-		{ label: 'DRAFT', value: applied ? `applied ${applied.name}@${applied.version}` : dirty ? 'unsaved' : 'empty' }
-	]);
 
 	function exportYaml() {
 		const link = document.createElement('a');
@@ -123,11 +119,17 @@
 
 <svelte:head><title>Apply Orkflow — OrkStack</title></svelte:head>
 
-<SheetHeader title="Apply an Orkflow">
+<SheetHeader
+	title="Apply an Orkflow"
+	commands={[
+		{ label: 'Check a file without storing it', command: `orkctl -n ${shellQuote(namespaceLabel(data.namespace))} orkflow validate my-orkflow.ork.yaml` },
+		{ label: 'Apply it', command: `orkctl -n ${shellQuote(namespaceLabel(data.namespace))} apply my-orkflow.ork.yaml` }
+	]}
+>
 	{#snippet meta()}
 		<p data-testid="apply-namespace">
-			Into namespace <span class="font-mono text-ink">{namespaceLabel(data.namespace)}</span>. A document
-			that names a different one is refused rather than moved.
+			Applied into the namespace in the breadcrumb. A document that names a different one is refused
+			rather than moved.
 		</p>
 	{/snippet}
 	{#snippet actions()}
@@ -192,7 +194,7 @@
 	<YamlProblems {session} listTestid="apply-validation-issues" issueTestid="apply-validation-issue" testid="apply-yaml" />
 	{#if applied}
 		<p data-testid="apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">
-			Applied {applied.name}@{applied.version}.
+			Applied {applied.name}@{shortVersion(applied.version)}.
 			<a class="link font-semibold" href={withNamespace(`/orkflows/${applied.name}`, data.namespace)}>Open Orkflow</a>
 		</p>
 	{/if}
@@ -217,7 +219,7 @@
 				class="grid grid-cols-1 items-baseline gap-x-6 gap-y-1 border-b border-rule px-3 py-2.5 transition-colors hover:bg-hover sm:grid-cols-[minmax(10rem,14rem)_1fr_auto]"
 			>
 				<h3 class="font-semibold text-ink">{example.name}</h3>
-				<p class="text-sm text-ink-secondary">{example.description}</p>
+				<p class="max-w-prose text-sm text-ink-secondary">{example.description}</p>
 				<button
 					type="button"
 					data-testid="apply-example-use-{example.slug}"

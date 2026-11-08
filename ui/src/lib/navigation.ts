@@ -75,22 +75,3 @@ export function operatePageOf(pathname: string): NavPage | undefined {
 export function pageOf(pathname: string): NavPage | undefined {
 	return buildPageOf(pathname) ?? operatePageOf(pathname);
 }
-
-/**
- * What an Operate page's figures cover: the deployment as a whole, the
- * namespace in the picker, or every namespace (Audit shows all by default and
- * filters to one only on request). The admin layout's own caption says the
- * same thing in prose.
- */
-export function operateScope(pageId: string): string {
-	switch (pageId) {
-		case 'pools':
-		case 'automation':
-		case 'cache':
-			return 'This namespace';
-		case 'audit':
-			return 'All namespaces';
-		default:
-			return 'Deployment-wide';
-	}
-}

@@ -524,6 +524,7 @@ func TestCapacity_ARequestAboveThisOrkersCapReservesNothingWhateverItsOutcome(t 
 			env := activityEnv(a)
 			env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 				ran, during = true, c.reading()
+				a.Dispatcher().heartbeaters = sdkRouteHeartbeater
 				result, execErr = a.ExecuteTask(ctx, in)
 				return result, execErr
 			}, activity.RegisterOptions{Name: task.ActivityExecuteTask})

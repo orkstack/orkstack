@@ -85,12 +85,16 @@ func (t Target) BuildEnv() []string {
 // `orkctl version` and the engine's admin surface report. -trimpath keeps the
 // build directory out of the binary, and -buildvcs=false keeps the checkout's
 // state out of it, so a tree with an untracked file, or a source archive with
-// no .git, builds the same bytes as the tagged checkout. Symbols are not
-// stripped.
-func (t Target) BuildArgs(version, out string) []string {
+// no .git, builds the same bytes as the tagged checkout given the same commit.
+// That flag also leaves the binary no revision of its own to read, so commit,
+// the one fact of the checkout a release does record, is stamped too, and
+// `orkctl version`, `ork --version` and `orker --version` report it. One commit
+// builds one binary: the stamp is a function of it, as the archives' times
+// already are. Symbols are not stripped.
+func (t Target) BuildArgs(version, commit, out string) []string {
 	return []string{
 		"build", "-trimpath", "-buildvcs=false", "-tags", BuildTags,
-		"-ldflags", "-X main.version=" + version,
+		"-ldflags", "-X main.version=" + version + " -X main.commit=" + commit,
 		"-o", out, t.Package(),
 	}
 }

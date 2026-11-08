@@ -111,24 +111,17 @@ func joinField(parent, child string) string {
 // input, secret_env. Any ERROR in the result means doc must not be planned.
 func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) {
 	p := &parser{}
-	decoder := yaml.NewDecoder(bytes.NewReader(source))
+	if line, found := dsl.SecondDocumentLine(source); found {
+		p.errorAt("", &yaml.Node{Line: line}, "%s", dsl.SecondDocumentMessage("automation document"))
+		return nil, p.issues
+	}
 	var root yaml.Node
-	if err := decoder.Decode(&root); err != nil {
+	if err := yaml.NewDecoder(bytes.NewReader(source)).Decode(&root); err != nil {
 		if errors.Is(err, io.EOF) {
 			p.errorAt("", nil, "the document is empty: want apiVersion: %s, kind: %s and a namespace", dsl.APIVersion, dsl.KindAutomation)
 		} else {
 			p.errorAt("", nil, "the document is not valid YAML: %v", err)
 		}
-		return nil, p.issues
-	}
-	var second yaml.Node
-	switch err := decoder.Decode(&second); {
-	case errors.Is(err, io.EOF):
-	case err != nil:
-		p.errorAt("", nil, "the document is not valid YAML: %v", err)
-		return nil, p.issues
-	default:
-		p.errorAt("", &second, "one automation document per file: a second YAML document (---) is not allowed")
 		return nil, p.issues
 	}
 	if len(root.Content) == 0 {

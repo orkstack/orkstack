@@ -800,7 +800,7 @@ func TestLocalTaskInput_FanOutItemRules(t *testing.T) {
 
 // needsAComposedTask reports whether some task of wf names a composed task in
 // its needs:. Only then is anything downstream of a composed task to compare:
-// order-saga and approval-gate compose notify-block from leaf tasks.
+// order-saga and approval-gate compose notify-block from end tasks.
 func needsAComposedTask(wf *orkstackv1.Orkflow) bool {
 	for _, t := range wf.GetTasks() {
 		for _, need := range t.GetNeeds() {

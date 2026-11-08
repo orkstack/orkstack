@@ -800,6 +800,8 @@ The list comes from the cluster (who is polling) and from each Orker's own
 answer, so any replica answers the same. An Orker that could not be asked is
 listed as `unknown (unreachable)` with the reason under the table: its load
 is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.
+An Orker that stopped reads this way for up to 90 seconds, because the cluster
+still remembers it polling.
 PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker
 declaring one admits tasks within, and RESERVED what stands reserved against
 it, pinned members included and each outstanding poll counted at the per-task
@@ -1100,6 +1102,12 @@ is still listed, with `unknown (unreachable)` where its count would be and the
 reason printed under the table — one unreachable pool must not hide the
 healthy ones. `unknown` and `0` are different answers: 0 means start an Orker,
 unknown means ask again.
+
+The count includes an Orker that stopped in the last 90 seconds, which the
+cluster still remembers polling and `orkctl orker list` shows as
+`unknown (unreachable)`. An Orker restarted under the same id is one Orker
+throughout; one restarted under another id, as a new host gives it by
+default, is two until then. Set ORK_ORKER_ID to keep it one.
 
 Which activities a pool can run is engine configuration, not something an
 Orker reports: use `orkctl activity list` for the catalog; this command
@@ -1545,6 +1553,14 @@ adds the per-attempt timeline underneath, the same table
 `orkctl run attempts` prints. --timing adds the wait/run/total table and
 each attempt's phases, the same output `orkctl run timing` prints.
 
+The VALUES table shows what each task returned, for at most 50 tasks: up to
+64 characters of its JSON, with anything a terminal could obey as an
+escape. A longer value is cut, and one the run holds only by reference is not
+fetched; each names the command that saves it. --tree adds the table under
+each child run's tasks. --expand adds one for that fan-out's items, reading up to
+50 of them from the store, because a run holds only a reference to an
+item's values; that is one request per row. --json never reads them.
+
 Flags:
 
 - `--attempts` — also print every attempt of every task, including the ones that were retried away
@@ -1616,13 +1632,17 @@ narrows that to one originating object (a trigger or schedule id, a source
 or parent run id). A run started before origins were recorded matches no
 origin.kind filter.
 
+--filter origin.root_run_id=ID keeps every run below that root of a composed
+chain, however deep. The root itself holds no root, so it is not listed.
+
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
-  FIELD          OPERATORS       VALUES
-  orkflow_name   = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
-  status         = != =a,b       PENDING RUNNING SUCCEEDED FAILED CANCELED SKIPPED
-  created_at     >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
-  origin.kind    =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
-  origin.id      =               text; needs origin.kind=
+  FIELD                OPERATORS       VALUES
+  orkflow_name         = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  status               = != =a,b       PENDING RUNNING SUCCEEDED FAILED CANCELED SKIPPED
+  created_at           >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  origin.kind          =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
+  origin.id            =               text; needs origin.kind=
+  origin.root_run_id   =               text
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
@@ -1662,6 +1682,14 @@ again at 1 on a retry, so a cursor has to say which attempt it counted:
 pin the try with --attempt, or name it with --from-attempt. A cursor with
 no attempt is refused rather than applied to whichever try happens to be
 latest, which would silently skip that try's first chunks.
+
+With -f, a stream that ends as unavailable, as canceled when logs did not
+cancel it, because its connection to the engine ended, or with no end of
+the log, is opened again after the last chunk printed, so no line is printed
+twice or skipped, and a try that ended meanwhile is printed whole before the
+next; each resume is said on stderr. Any error the engine itself reports
+ends it, as do 6 resumes in a row that deliver nothing. Without -f a read
+is one read, and its failure ends it.
 
 The exit code reports whether the log could be read, not how the run
 ended; `orkctl run watch` is the command whose exit code is the outcome.
@@ -1832,11 +1860,12 @@ watch consumes RunService.StreamEvents and prints each event as it arrives,
 exiting when the run reaches a terminal state. The exit code reflects the
 final status: 0 succeeded, 2 failed, 3 canceled.
 
-A stream that ends as unavailable, or as canceled when watch did not
-cancel it (a reset connection to the engine), is opened again after the
-last event printed, so no event is printed twice or skipped; each resume
-is said on stderr. A connection that ends partway through the stream
-ends the watch with that error. After
+A stream that ends as unavailable, as canceled when watch did not cancel
+it (a reset connection to the engine), because its connection to the
+engine ended, or cleanly while the run is still going (an engine replica
+shutting down), is opened again after the last event printed, so no event
+is printed twice or skipped; each resume is said on stderr. Any error the
+engine itself reports ends the watch with that error. After
 6 resumes in a row that deliver no event, watch gives up with the
 engine's error.
 

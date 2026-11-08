@@ -1,4 +1,5 @@
-import { timestampDate, type Duration, type Timestamp } from '@bufbuild/protobuf/wkt';
+import type { Duration, Timestamp } from '@bufbuild/protobuf/wkt';
+import { instantDate } from './instant';
 import type { Delivery } from './gen/orkstack/v1/webhook_service_pb';
 import { listHref, pageStackKey } from './browsing';
 import { FilterOperator, equalityOf, filterFlags, filterOf, type FieldFilter } from './listFilter';
@@ -99,12 +100,12 @@ export function deliveriesNamespaceScope(filters: FieldFilter[]): string {
 
 /** An instant to the millisecond, UTC: what an attempt timeline reads in. */
 export function instantMs(ts: Timestamp | undefined): string {
-	return ts ? timestampDate(ts).toISOString() : '-';
+	return ts ? instantDate(ts).toISOString() : '-';
 }
 
 /** An instant to the second, UTC, as the window caption and inputs show it. */
 export function instantSeconds(ts: Timestamp | undefined): string {
-	return ts ? timestampDate(ts).toISOString().replace(/\.\d{3}Z$/, 'Z') : '';
+	return ts ? instantDate(ts).toISOString().replace(/\.\d{3}Z$/, 'Z') : '';
 }
 
 export function millis(d: Duration | undefined): string {

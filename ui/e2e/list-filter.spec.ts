@@ -23,7 +23,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { OP, addListFilter } from './uiHelpers';
+import { OP, addListFilter, pageCli } from './uiHelpers';
 
 // The one list filter component (ListFilter; docs/UI_CLI_PARITY.md
 // "Filtering lists") on real lists, against a real engine on real Temporal
@@ -141,9 +141,9 @@ function urlFilters(page: Page): string[] {
 	return new URL(page.url()).searchParams.getAll('filter');
 }
 
-async function cliCommand(page: Page, testid: string): Promise<string> {
-	await page.getByTestId(`${testid}-filters-cli-trigger`).click();
-	const text = await page.getByTestId(`${testid}-filters-cli-command`).innerText();
+async function cliCommand(page: Page, label: string): Promise<string> {
+	await page.getByTestId('page-cli-trigger').click();
+	const text = await pageCli(page, label).innerText();
 	await page.keyboard.press('Escape');
 	return text;
 }
@@ -208,7 +208,7 @@ test('L2: a created_at row through datetime-local sends the UTC instant', async 
 	await page.getByTestId('orkflow-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['created_at>=2000-01-01T07:00:00Z']);
 	await expect.poll(() => orkflowRows(page)).toEqual([...PAY, ...SEARCH]);
-	const cli = await cliCommand(page, 'orkflow');
+	const cli = await cliCommand(page, 'The Orkflows');
 	expect(cli).toBe(`orkctl -n ${NS} orkflow list --filter 'created_at>=2000-01-01T07:00:00Z'`);
 	note(`L2 CLI equivalent: ${cli}`);
 	await page.screenshot({ path: out('screenshot-orkflows-created-at.png'), fullPage: true });

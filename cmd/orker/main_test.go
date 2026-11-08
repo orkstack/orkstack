@@ -198,59 +198,23 @@ func TestLoadConfig_JoinsThePoolItWasToldToServe(t *testing.T) {
 	})
 }
 
-// TestWorkerOptions_CapTheHeartbeatThrottleToTheTick is the half of the
-// heartbeat contract that is invisible until somebody cancels.
-//
-// The Go SDK does not send every RecordHeartbeat: it batches them into windows
-// of min(0.8 × HeartbeatTimeout, MaxHeartbeatThrottleInterval), and Temporal
-// delivers cancellation ONLY in a heartbeat RPC's response. With the cap unset
-// that window is 24 s however fast the Orker's own loop ticks — measured on a
-// real cluster, a failing task's still-running sibling was asked to stop 52 ms
-// after the failure and learned of it 23.86 s later. So the assertion is not
-// "the option is set" but "it is set to the SAME number the loop ticks at".
-func TestWorkerOptions_CapTheHeartbeatThrottleToTheTick(t *testing.T) {
-	t.Run("an operator's interval reaches the SDK", func(t *testing.T) {
-		t.Setenv(orker.HeartbeatIntervalVar, "3s")
-		cfg := loadConfig()
-		if cfg.heartbeatErr != nil {
-			t.Fatalf("3s refused: %v", cfg.heartbeatErr)
-		}
-		if got := workerOptions(cfg).MaxHeartbeatThrottleInterval; got != 3*time.Second {
-			t.Errorf("MaxHeartbeatThrottleInterval = %v, want 3s; anything else means the SDK "+
-				"batches the Orker's ticks and cancellation waits for the batch", got)
-		}
-	})
-
-	t.Run("unset is the documented default, not the SDK's", func(t *testing.T) {
-		t.Setenv(orker.HeartbeatIntervalVar, "")
-		cfg := loadConfig()
-		if got := workerOptions(cfg).MaxHeartbeatThrottleInterval; got != orker.DefaultHeartbeatInterval {
-			t.Errorf("MaxHeartbeatThrottleInterval = %v, want %v; zero here is the SDK's 60 s "+
-				"option default, which leaves the 0.8 × timeout window in place",
-				got, orker.DefaultHeartbeatInterval)
-		}
-	})
-
-	t.Run("versioning does not drop it", func(t *testing.T) {
-		t.Setenv(task.EnvDeploymentName, "orkstack-prod")
-		t.Setenv(task.EnvBuildID, "v2")
-		t.Setenv(orker.HeartbeatIntervalVar, "2s")
-		options := workerOptions(loadConfig())
-		if !options.DeploymentOptions.UseVersioning {
-			t.Fatal("versioning did not apply; this subtest asserts nothing")
-		}
-		if options.MaxHeartbeatThrottleInterval != 2*time.Second {
-			t.Errorf("Deployment.Apply dropped MaxHeartbeatThrottleInterval (%v)",
-				options.MaxHeartbeatThrottleInterval)
-		}
-	})
+// TestWorkerOptions_LeaveTheHeartbeatThrottleToTheSDK: a pin's session is the one
+// heartbeat that still takes the SDK's route, whose window is its RPC's deadline,
+// and a deadline outlasted ends the pin for good. A cap at the tick would have a
+// pin survive 5 s of silence from the frontend rather than 24 s.
+func TestWorkerOptions_LeaveTheHeartbeatThrottleToTheSDK(t *testing.T) {
+	t.Setenv(orker.HeartbeatIntervalVar, "3s")
+	cfg := loadConfig()
+	if cfg.heartbeatErr != nil {
+		t.Fatalf("3s refused: %v", cfg.heartbeatErr)
+	}
+	if got := workerOptions(cfg).MaxHeartbeatThrottleInterval; got != 0 {
+		t.Errorf("MaxHeartbeatThrottleInterval = %v, want it unset", got)
+	}
 }
 
-// TestOrkerOptions_TickTheSameNumberTheWorkerThrottlesAt is the pairing itself.
-// Either half alone is useless: a fast loop whose beats the SDK batches
-// changes nothing, and a small throttle window with no beat inside it has
-// nothing to carry. One config value must reach both.
-func TestOrkerOptions_TickTheSameNumberTheWorkerThrottlesAt(t *testing.T) {
+// TestOrkerOptions_CarryTheOperatorsTick: the setting reaches the loop.
+func TestOrkerOptions_CarryTheOperatorsTick(t *testing.T) {
 	clearTelemetryEnv(t)
 	t.Setenv(orker.HeartbeatIntervalVar, "4s")
 	cfg := loadConfig()
@@ -264,11 +228,6 @@ func TestOrkerOptions_TickTheSameNumberTheWorkerThrottlesAt(t *testing.T) {
 
 	if opts.HeartbeatInterval != 4*time.Second {
 		t.Errorf("orker.Options.HeartbeatInterval = %v, want the configured 4s", opts.HeartbeatInterval)
-	}
-	if throttle := workerOptions(cfg).MaxHeartbeatThrottleInterval; opts.HeartbeatInterval != throttle {
-		t.Errorf("the dispatcher ticks every %v while the SDK batches every %v; the two must be "+
-			"one number or the tick is not the cancellation latency",
-			opts.HeartbeatInterval, throttle)
 	}
 }
 

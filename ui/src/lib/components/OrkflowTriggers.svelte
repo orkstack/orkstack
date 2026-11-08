@@ -14,9 +14,14 @@
 	// way: the loader reads the list, this component writes and then asks the
 	// loader to read it again. Nothing here is optimistic — a row appears
 	// because the store answered with it, not because a create returned.
-	import { invalidateAll } from '$app/navigation';
+	import { shortVersion } from '#lib/version.ts';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
+	import { untrack } from 'svelte';
+	import { EDIT_PARAM, closedHref, editHref } from '#lib/editParam.ts';
 	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import Icon from '#lib/components/Icon.svelte';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import Select from '#lib/components/Select.svelte';
@@ -80,7 +85,7 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 	// tab names it: the engine's own is_current answer, with the loader's
 	// current pointer preferred because that is the field the tab is about.
 	const currentLabel = $derived(
-		currentVersion || versions.find((entry) => entry.isCurrent)?.version || ''
+		shortVersion(currentVersion || versions.find((entry) => entry.isCurrent)?.version || '')
 	);
 	const versionOptions = $derived([
 		{
@@ -91,16 +96,16 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 		},
 		...versions.map((entry) => ({
 			value: entry.version,
-			label: `${entry.version}${entry.isCurrent ? ' — current' : ''}${entry.description ? ` — ${entry.description}` : ''}`
+			label: `${shortVersion(entry.version)}${entry.isCurrent ? ' — current' : ''}${entry.description ? ` — ${entry.description}` : ''}`
 		}))
 	]);
 	const chosenVersion = $derived(selectedVersion === CURRENT ? '' : selectedVersion);
 
 	// An empty pin is the current pointer at invoke time, not "no version": a
 	// cell reading "—" would suggest the trigger starts nothing.
-	const versionLabel = (version: string) => version || 'current';
+	const versionLabel = (version: string) => shortVersion(version) || 'current';
 	const scopeOf = (trigger: Trigger) =>
-		`Runs ${trigger.orkflowName}@${versionLabel(trigger.orkflowVersion)} in ${namespaceLabel(trigger.namespace)}`;
+		`Runs ${trigger.orkflowName}@${versionLabel(trigger.orkflowVersion)}`;
 
 	// The invoke route is plain HTTP on the engine's API port, not a Connect
 	// method, so it is written out here rather than derived from a generated
@@ -189,6 +194,26 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 
 	const editPin = $derived(editVersion === CURRENT ? '' : editVersion);
 
+	// A trigger's id links to its edit, and the address opens it.
+	function closeEdit() {
+		void goto(closedHref(page.url), { reset: false });
+	}
+	$effect(() => {
+		const id = page.url.searchParams.get(EDIT_PARAM);
+		const open = untrack(() => editing);
+		if (!id) {
+			if (open) editing = null;
+			return;
+		}
+		if (open?.id === id) return;
+		const listed = triggers.find((trigger) => trigger.id === id);
+		if (listed) untrack(() => startEdit(listed));
+	});
+	const editMissing = $derived.by(() => {
+		const id = page.url.searchParams.get(EDIT_PARAM);
+		return id && !error && !triggers.some((trigger) => trigger.id === id) ? `Trigger ${id} is not one of ${name}'s.` : '';
+	});
+
 	async function saveEdit() {
 		if (!editing) return;
 		saving = true;
@@ -201,8 +226,7 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 				orkflowVersion: editPin,
 				description: editDescription
 			});
-			editing = null;
-			await invalidateAll();
+			await goto(closedHref(page.url), { invalidateAll: true, reset: false });
 		} catch (err) {
 			editError = errorMessage(err);
 		} finally {
@@ -234,8 +258,7 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 <p class="mb-2 max-w-prose text-sm text-ink-secondary" data-testid="triggers-scope">
 	A trigger lets an outside caller start one run of
 	<span class="font-medium text-ink">{name}</span>
-	in namespace <span class="font-medium text-ink">{namespaceLabel(namespace)}</span> over plain
-	HTTP, by posting to
+	over plain HTTP, by posting to
 	<code class="font-mono text-xs">/v1/triggers/&lt;id&gt;</code> with its bearer token. The Orkflow,
 	the namespace and the version come from the trigger itself and never from the request, so a token
 	cannot be redirected at anything else. Each trigger pins its own version when it is created — or
@@ -246,10 +269,76 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 	was opened at. If the engine's API is published somewhere else, invoke that address instead.
 </p>
 
-<section class="region mb-8 pt-3">
+{#if editMissing}<div class="mb-3"><ErrorPanel testid="trigger-edit-missing" message={editMissing} /></div>{/if}
+
+{#if error}
+	<ErrorPanel
+		testid="triggers-error"
+		retryTestid="triggers-retry"
+		subject="the triggers of {name}"
+		message={error}
+		busy={reloading}
+		onretry={reload}
+	/>
+{:else if triggers.length === 0}
+	<p data-testid="triggers-empty" class="text-sm text-ink-muted">
+		No triggers start {name}. Create one below to give an external caller a way in.
+	</p>
+{:else}
+	<!--
+		Cards rather than a table: each row carries a CliEquivalent, whose panel
+		is absolutely positioned, and the horizontally scrollable table wrapper
+		this page's other lists use would clip it.
+	-->
+	<ul class="border-t-2 border-ink" data-testid="trigger-list">
+		{#each triggers as trigger (trigger.id)}
+			<li
+				data-testid="trigger-{trigger.id}"
+				class="border-b border-rule py-3"
+			>
+				<div class="flex items-start justify-between gap-4">
+					<div class="min-w-0">
+						<a class="link font-mono text-sm font-medium break-all" data-testid="edit-trigger-{trigger.id}" data-sveltekit-reset="false" href={editHref(page.url, trigger.id)}>{trigger.id}</a>
+						<p class="mt-1 text-sm" data-testid="trigger-name-{trigger.id}">
+							{#if trigger.name}<span class="font-mono font-medium text-ink">{trigger.name}</span
+								>{:else}<span class="text-ink-muted">unnamed</span>{/if}
+						</p>
+						<p class="mt-1 text-sm text-ink-secondary" data-testid="trigger-scope-{trigger.id}">
+							{scopeOf(trigger)}
+						</p>
+						{#if trigger.description}
+							<p class="mt-1 text-sm text-ink-secondary">{trigger.description}</p>
+						{/if}
+						<p class="mt-1 text-xs text-ink-muted">Created {fmtTimestamp(trigger.createdAt)}</p>
+					</div>
+					<div class="flex shrink-0 items-center gap-2">
+						<CliEquivalent
+							command={curlWithPlaceholder(trigger.id)}
+							testid="trigger-cli-{trigger.id}"
+							label="Invocation of {trigger.id}"
+						/>
+						<button
+							type="button"
+							data-testid="delete-trigger-{trigger.id}"
+							onclick={() => {
+								deleting = trigger.id;
+								deleteError = '';
+							}}
+							class="btn btn-sm"
+						>
+							<Icon name="trash" />Delete
+						</button>
+					</div>
+				</div>
+			</li>
+		{/each}
+	</ul>
+{/if}
+
+<section class="region mt-8 pt-3">
 	<h2 class="text-md font-semibold text-ink">Create trigger</h2>
 	<form
-		class="mt-3 space-y-4"
+		class="mt-3 max-w-3xl space-y-4"
 		data-testid="trigger-create-form"
 		onsubmit={(event) => {
 			event.preventDefault();
@@ -319,7 +408,8 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 	{#if shownSecret}
 		<div
 			data-testid="trigger-secret-once"
-			class="note mt-4 border-ink p-3 text-sm"
+			data-cli-own
+			class="note mt-4 max-w-3xl border-ink p-3 text-sm"
 		>
 			<p class="font-semibold">Copy this bearer token now. It will not be shown again.</p>
 			<p class="mt-1 text-xs text-ink-secondary">
@@ -346,84 +436,12 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 	{/if}
 </section>
 
-{#if error}
-	<ErrorPanel
-		testid="triggers-error"
-		retryTestid="triggers-retry"
-		subject="the triggers of {name} in namespace {namespaceLabel(namespace)}"
-		message={error}
-		busy={reloading}
-		onretry={reload}
-	/>
-{:else if triggers.length === 0}
-	<p data-testid="triggers-empty" class="text-sm text-ink-muted">
-		No triggers start {name} in namespace {namespaceLabel(namespace)}. Create one above to give an
-		external caller a way in.
-	</p>
-{:else}
-	<!--
-		Cards rather than a table: each row carries a CliEquivalent, whose panel
-		is absolutely positioned, and the horizontally scrollable table wrapper
-		this page's other lists use would clip it.
-	-->
-	<ul class="border-t-2 border-ink" data-testid="trigger-list">
-		{#each triggers as trigger (trigger.id)}
-			<li
-				data-testid="trigger-{trigger.id}"
-				class="border-b border-rule py-3"
-			>
-				<div class="flex items-start justify-between gap-4">
-					<div class="min-w-0">
-						<p class="font-mono text-sm font-medium break-all text-ink">{trigger.id}</p>
-						<p class="mt-1 text-sm" data-testid="trigger-name-{trigger.id}">
-							{#if trigger.name}<span class="font-mono font-medium text-ink">{trigger.name}</span
-								>{:else}<span class="text-ink-muted">unnamed</span>{/if}
-						</p>
-						<p class="mt-1 text-sm text-ink-secondary" data-testid="trigger-scope-{trigger.id}">
-							{scopeOf(trigger)}
-						</p>
-						{#if trigger.description}
-							<p class="mt-1 text-sm text-ink-secondary">{trigger.description}</p>
-						{/if}
-						<p class="mt-1 text-xs text-ink-muted">Created {fmtTimestamp(trigger.createdAt)}</p>
-					</div>
-					<div class="flex shrink-0 items-center gap-2">
-						<CliEquivalent
-							command={curlWithPlaceholder(trigger.id)}
-							testid="trigger-cli-{trigger.id}"
-							label="Invocation of {trigger.id}"
-						/>
-						<button
-							type="button"
-							data-testid="edit-trigger-{trigger.id}"
-							onclick={() => startEdit(trigger)}
-							class="btn btn-sm"
-						>
-							Edit
-						</button>
-						<button
-							type="button"
-							data-testid="delete-trigger-{trigger.id}"
-							onclick={() => {
-								deleting = trigger.id;
-								deleteError = '';
-							}}
-							class="btn btn-sm"
-						>
-							Delete
-						</button>
-					</div>
-				</div>
-			</li>
-		{/each}
-	</ul>
-{/if}
-
 {#if deleting}
 	<ConfirmDialog
 		testid="delete-trigger-confirm"
 		title="Delete trigger {deleting}?"
 		acceptLabel="Delete"
+		glyph="trash"
 		acceptTestid="delete-trigger-accept"
 		cancelTestid="delete-trigger-cancel"
 		busy={removing}
@@ -449,7 +467,7 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 {/if}
 
 {#if editing}
-	<Dialog title="Edit trigger {editing.id}" testid="trigger-edit-dialog" onclose={() => (editing = null)} widthClass="max-w-xl">
+	<Dialog title="Edit trigger {editing.id}" testid="trigger-edit-dialog" onclose={closeEdit} widthClass="max-w-xl">
 		{#snippet body()}
 			<p class="mb-3 text-sm text-ink-secondary">
 				Editing keeps this trigger's URL and token. Its Orkflow cannot change.

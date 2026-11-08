@@ -264,7 +264,7 @@ func TestCompareInterfaces_ClassificationTable(t *testing.T) {
 		t.Fatalf("O2 message = %q", got[0].GetMessage())
 	}
 	got, _ = dsl.CompareInterfaces(iface(t, nil, "a"), iface(t, nil))
-	if !strings.HasSuffix(got[0].GetMessage(), "(this version declares no outputs, so a run's output reverts to every leaf task's values)") {
+	if !strings.HasSuffix(got[0].GetMessage(), "(this version declares no outputs, so a run's output reverts to the values of the tasks no other task needs)") {
 		t.Fatalf("O3 message = %q", got[0].GetMessage())
 	}
 }

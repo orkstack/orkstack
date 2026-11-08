@@ -373,7 +373,7 @@ func TestRunWorkflow_AnyFailedIsSkippedInARunThatDoesNotFail(t *testing.T) {
 	if n := dispatched(h, "rollback"); n != 0 {
 		t.Errorf("rollback dispatched %d times, want never", n)
 	}
-	// deploy is still a leaf: a handler's needs edge does not remove it.
+	// deploy is still an end task: a handler's needs edge does not remove it.
 	if _, ok := run.GetOutput().GetData().GetFields()["deploy"]; !ok {
 		t.Errorf("run output %v lacks deploy's values", run.GetOutput())
 	}
@@ -1606,10 +1606,10 @@ func TestRunWorkflow_HandlerEdgesDoNotRemoveLeavesFromTheRunOutput(t *testing.T)
 	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, map[string]any{"by": in.TaskId}), nil
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-handler-leaves", compile(t, `
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-handler-end-tasks", compile(t, `
 apiVersion: orkstack/v1
 kind: Orkflow
-name: handler-leaves
+name: handler-end-tasks
 tasks:
   - id: deploy
     uses: shell
@@ -1625,10 +1625,10 @@ tasks:
     join: all_done
     with: {op: exec}
 `), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-	run := mustFinalRun(t, h.store, "run-handler-leaves")
+	run := mustFinalRun(t, h.store, "run-handler-end-tasks")
 	fields := run.GetOutput().GetData().GetFields()
 	if _, ok := fields["deploy"]; !ok {
-		t.Errorf("output %v lacks deploy: a handler's needs edge removed it from the leaves", fields)
+		t.Errorf("output %v lacks deploy: a handler's needs edge removed it from the end tasks", fields)
 	}
 	if _, ok := fields["notify"]; !ok {
 		t.Errorf("output %v lacks notify, an all_done handler nothing needs", fields)

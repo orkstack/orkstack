@@ -4,12 +4,10 @@ Clone OrkStack and start it with Docker, then apply an Orkflow, run it, and read
 
 ## What you need
 
-- Docker, with Compose v2. Docker Engine or Docker Desktop.
+- Docker, with Compose v2.
 - git, to clone the repository.
 
 Nothing else is needed: no toolchain and no database. The compose file builds the whole stack in containers and starts Temporal, an S3-compatible object store, the engine, which serves the UI, and an Orker.
-
-This path is checked on Linux with Docker Engine, on amd64. Docker Desktop on macOS and Windows, and arm64, are not checked yet.
 
 If you did [Run it locally](/docs/get-started/run-locally/) and this is the same terminal, skip to step 4. In a new terminal, repeat step 3, then go to step 4. If you did not, start at step 1. The alias from step 3 lasts only for one terminal window.
 

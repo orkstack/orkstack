@@ -160,6 +160,11 @@ export function callerHref(c: OrkflowCaller, target: string, ns: string): string
 	}
 }
 
+/** `orkctl --namespace NS orkflow diff NAME FROM TO`. */
+export function diffCommand(ns: string, name: string, from: string, to: string): string {
+	return runCommand(ns, ['orkflow', 'diff', name, from, to]);
+}
+
 /** `orkctl --namespace NS orkflow compat NAME FROM TO`. */
 export function compatCommand(ns: string, name: string, from: string, to: string): string {
 	return runCommand(ns, ['orkflow', 'compat', name, from, to]);

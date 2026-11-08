@@ -13,7 +13,6 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/orker"
-	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -188,10 +187,10 @@ func TestIntegration_AReplacementOrkerReapsAPinItsPredecessorLeft(t *testing.T) 
 		t.Fatalf("the pinned task left no pin directory to reap: %v", err)
 	}
 
-	// The replacement Orker: a new process, same host, same work root. Its boot
-	// reap must remove what its predecessor left, whether or not it hosts pins
-	// itself — so this one deliberately does NOT (MaxPins is unset), which is
-	// the case a max_pins-gated reap would get wrong.
+	// The replacement Orker: a new process, same host, same work root, same
+	// identity. Its boot reap must remove what its predecessor left, whether or
+	// not it hosts pins itself — so this one deliberately does NOT (MaxPins is
+	// unset), which is the case a max_pins-gated reap would get wrong.
 	store, err := artifacts.NewLocalStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -200,7 +199,7 @@ func TestIntegration_AReplacementOrkerReapsAPinItsPredecessorLeft(t *testing.T) 
 	replacement := orker.NewActivitiesWithOptions(store, orker.Options{
 		Runtime:  orker.NewDockerRuntime(),
 		WorkRoot: workRoot,
-		OrkerID:  proof.OrkerID("orker-pin-reap-replacement"),
+		OrkerID:  dispatcher.OrkerID,
 	})
 	if err := replacement.Boot(ctx); err != nil {
 		t.Fatalf("replacement Boot: %v", err)

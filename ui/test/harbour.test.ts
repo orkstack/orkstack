@@ -371,3 +371,12 @@ test('an exit in the words of a page, and a grid line of counts', () => {
 	] as never;
 	expect(eachCounts(items, (i) => i === 2)).toBe('1 succeeded · 1 running · 1 waiting for capacity · 1 pending');
 });
+
+test('the axis holds no more marks than its width has room for', () => {
+	expect(timelineAxis(60_000).length).toBeLessThanOrEqual(7);
+	for (const room of [2, 3, 4]) {
+		const marks = timelineAxis(60_000, room);
+		expect(marks.length).toBeLessThanOrEqual(room);
+		expect(marks[0].label).toBe('0s');
+	}
+});

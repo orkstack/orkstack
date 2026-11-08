@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { ArtifactRefSchema, PayloadSchema } from '../src/lib/gen/orkstack/v1/common_pb';
-import { artifactMetadata, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shellQuote, shortRunId, taskRunCommand, timestampJson } from '../src/lib/runDetail';
+import { artifactContentTypeLabel, artifactMetadata, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shellQuote, shortRunId, taskRunCommand, timestampJson } from '../src/lib/runDetail';
 
 test('copyable run commands quote every page-derived coordinate and name the namespace', () => {
 	expect(shellQuote("a' b")).toBe("'a'\"'\"' b'");
@@ -98,4 +98,9 @@ test('a command splits into the words a shell sees, and joins back into itself',
 	expect(commandWords(cmd)).toEqual(['orkctl', '--namespace', "'prod west'", 'run', 'get', 'ork-1', '--json']);
 	expect(commandWords(cmd).join(' ')).toBe(cmd);
 	expect(commandWords(`orkctl x --reason 'it'"'"'s ok'`)).toEqual(['orkctl', 'x', '--reason', `'it'"'"'s ok'`]);
+});
+
+test('artifactContentTypeLabel says when no content type was recorded', () => {
+	expect(artifactContentTypeLabel(create(ArtifactRefSchema, { contentType: 'text/plain' }))).toBe('text/plain');
+	expect(artifactContentTypeLabel(create(ArtifactRefSchema, { contentType: '' }))).toBe('no content type recorded');
 });

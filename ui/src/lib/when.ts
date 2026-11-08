@@ -25,6 +25,16 @@ export function shortInstant(at: { seconds: bigint; nanos: number } | undefined)
 	return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false })}`;
 }
 
+/**
+ * When something finished, on the 24-hour clock, with its date when that is not
+ * the day it started: a clock reading alone would hide a run crossing midnight.
+ */
+export function finishedWords(finished: Date, started: Date | undefined): string {
+	const time = finished.toLocaleTimeString('en-GB', { hour12: false });
+	if (!started || started.toDateString() === finished.toDateString()) return time;
+	return `${finished.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`;
+}
+
 export function exactTime(at: Date): string {
 	return at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'medium' });
 }

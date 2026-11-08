@@ -41,15 +41,15 @@ func CheckUI(root string) error {
 }
 
 // Builder compiles one target from the module at root into the file out,
-// stamping it with version. GoBuilder is the real one; tests substitute a fake
+// stamping it with version and commit. GoBuilder is the real one; tests substitute a fake
 // so that the layout of a release can be checked without a ten-binary compile.
-type Builder func(ctx context.Context, root string, target Target, version, out string) error
+type Builder func(ctx context.Context, root string, target Target, version, commit, out string) error
 
 // GoBuilder builds target with `go build`, from root, with the flags and
 // environment Target.BuildArgs and Target.BuildEnv give: static, trimmed,
-// the time zone database linked in, and the version stamped.
-func GoBuilder(ctx context.Context, root string, target Target, version, out string) error {
-	cmd := exec.CommandContext(ctx, "go", target.BuildArgs(version, out)...)
+// the time zone database linked in, and the version and commit stamped.
+func GoBuilder(ctx context.Context, root string, target Target, version, commit, out string) error {
+	cmd := exec.CommandContext(ctx, "go", target.BuildArgs(version, commit, out)...)
 	cmd.Dir = root
 	// Later entries win, so the target's platform overrides the caller's.
 	cmd.Env = append(os.Environ(), target.BuildEnv()...)
@@ -69,6 +69,9 @@ type BuildOptions struct {
 	Out string
 	// Version is stamped into every binary.
 	Version Version
+	// Commit is the full revision the tree was checked out at, stamped into
+	// every binary (ParseCommit).
+	Commit string
 	// CommitTime stamps every archive entry. It is the commit's time, never
 	// the clock, so the same commit gives the same archives.
 	CommitTime time.Time
@@ -83,6 +86,10 @@ type BuildOptions struct {
 // nothing from a root without the web UI build (CheckUI), and a build that
 // fails stops at the first failing target and names it.
 func Build(ctx context.Context, opts BuildOptions) ([]string, error) {
+	if _, err := ParseCommit(opts.Commit); err != nil {
+		return nil, fmt.Errorf("%w: a release says which commit it came from "+
+			"(pass -commit, which `make dist` takes from the checkout or SOURCE_COMMIT)", err)
+	}
 	if opts.CommitTime.IsZero() {
 		return nil, errors.New("no commit time: archives are stamped with the commit's time, never the clock " +
 			"(pass -commit-time, or set SOURCE_DATE_EPOCH)")
@@ -116,7 +123,7 @@ func Build(ctx context.Context, opts BuildOptions) ([]string, error) {
 		if err := os.MkdirAll(filepath.Dir(built), 0o755); err != nil {
 			return nil, err
 		}
-		if err := build(ctx, opts.Root, target, opts.Version.String(), built); err != nil {
+		if err := build(ctx, opts.Root, target, opts.Version.String(), opts.Commit, built); err != nil {
 			return nil, fmt.Errorf("build %s: %w", target, err)
 		}
 		binary, err := os.ReadFile(built)

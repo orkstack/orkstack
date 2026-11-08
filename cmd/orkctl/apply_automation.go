@@ -53,10 +53,14 @@ type applyInput struct {
 // classifyDocument peeks a file's top-level keys with a non-strict decode
 // and reads its kind: explicitly: kind: Orkflow is an orkflow document,
 // kind: Automation an automation document, and a file with no kind, or any
-// other, is refused here, before anything is sent. The engine checks each
-// kind's apiVersion; YAML that does not parse is the engine's to explain,
-// with a line, through ValidateOrkflow.
+// other, is refused here, before anything is sent, as is a file with a second
+// YAML document, which the peek would not see. The engine checks each kind's
+// apiVersion; YAML that does not parse is the engine's to explain, with a line,
+// through ValidateOrkflow.
 func classifyDocument(path string, source []byte) (applyInput, error) {
+	if err := refuseSecondDocument(path, source); err != nil {
+		return applyInput{}, err
+	}
 	var peek struct {
 		APIVersion string `yaml:"apiVersion"`
 		Kind       string `yaml:"kind"`
@@ -334,6 +338,13 @@ func (r *applyRun) validateOrkflows(inputs []applyInput) error {
 			continue
 		}
 		wf := validated.Msg.GetOrkflow()
+		// A document with no version names none because its content was never
+		// applied. An empty version would read as "the current one" below, and
+		// report this document as conflicting with it.
+		if wf.GetVersion() == "" {
+			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_NEW
+			continue
+		}
 		ctx, cancel = r.g.unaryContext(r.cmd)
 		stored, err := r.g.orkflowClient().GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{
 			Name: wf.GetName(), Version: wf.GetVersion(), Namespace: orkflowNamespace(wf, r.g.namespace),
@@ -585,6 +596,16 @@ func (r *applyRun) executeSteps() ([]*orkstackv1.DisclosedSecret, bool) {
 	return disclosed, failed
 }
 
+// refuseSecondDocument refuses a file with a second YAML document before it is
+// sent, naming the file and the line, which the engine reading its bytes
+// cannot do for the file.
+func refuseSecondDocument(path string, source []byte) error {
+	if line, found := dsl.SecondDocumentLine(source); found {
+		return fmt.Errorf("%s: line %d: %s", path, line, dsl.SecondDocumentMessage("document"))
+	}
+	return nil
+}
+
 // stepError is "<connect code>: <message>".
 func stepError(err error) string {
 	var connectErr *connect.Error
@@ -737,7 +758,7 @@ func (r *applyRun) renderPlan(out io.Writer) {
 			state = "not validated"
 		}
 		if wf != nil {
-			fmt.Fprintf(out, "%s %-10s %-18s %s  %s\n", symbol, "orkflow", wf.GetName(), wf.GetVersion(), state)
+			fmt.Fprintf(out, "%s %-10s %-18s %s  %s\n", symbol, "orkflow", wf.GetName(), orDash(wf.GetVersion()), state)
 		}
 	}
 	for i, doc := range r.report.GetAutomation() {

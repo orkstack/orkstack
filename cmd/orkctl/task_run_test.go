@@ -932,6 +932,73 @@ func TestTaskRun_UpstreamSourcesAreExplicit(t *testing.T) {
 		requireStderrContains(t, `upstream task "produce" is RUNNING in run ork-1790000000000000001-1; its output does not exist yet — wait for it, or supply it with --output/--artifact`)
 }
 
+// TestTaskRun_AFileNeverAppliedKeepsTheContextTheContractRequires: validation of a
+// file that pins no version and was never applied names none, yet task.json
+// requires a version string and a `sha256:<64 hex>` digest. A local run stores
+// nothing, so it runs under the document's content hash; once the file has been
+// applied, it runs under the version that landed.
+func TestTaskRun_AFileNeverAppliedKeepsTheContextTheContractRequires(t *testing.T) {
+	fx := newTaskRunFixture(t)
+	source := strings.Replace(taskRunFixtureYAML, "version: \"1\"\n", "", 1)
+	if source == taskRunFixtureYAML {
+		t.Fatal("the fixture no longer pins version \"1\"")
+	}
+	unpinned := fx.writeDoc(t, "unpinned.ork.yaml", source)
+
+	type taskJSON struct {
+		Run struct {
+			Orkflow struct {
+				Name             string `json:"name"`
+				Version          string `json:"version"`
+				DefinitionDigest string `json:"definitionDigest"`
+			} `json:"orkflow"`
+		} `json:"run"`
+	}
+	runOnce := func() (taskJSON, string) {
+		t.Helper()
+		var seen taskJSON
+		runtime := &fakeTaskRuntime{script: func(spec orker.ContainerSpec, stdout, stderr io.Writer) int32 {
+			raw, err := os.ReadFile(filepath.Join(mountSource(spec, orker.ContainerInput), "task.json"))
+			if err != nil {
+				t.Errorf("read task.json: %v", err)
+			} else if err := json.Unmarshal(raw, &seen); err != nil {
+				t.Errorf("decode task.json: %v", err)
+			}
+			return succeedWith(`{"ok":true}`, "")(spec, stdout, stderr)
+		}}
+		got := fx.runTaskRun(runtime, "--file", unpinned, "--from-run", taskRunSourceRun, "--task", "consume").requireExit(t, exitOK)
+		return seen, got.stdout
+	}
+
+	hash, stdout := runOnce()
+	orkflow := hash.Run.Orkflow
+	if !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(orkflow.Version) {
+		t.Fatalf("task.json version = %q, want the document's content hash", orkflow.Version)
+	}
+	if !regexp.MustCompile(`^sha256:[0-9a-f]{64}$`).MatchString(orkflow.DefinitionDigest) {
+		t.Fatalf("task.json definitionDigest = %q, want sha256:<64 hex>", orkflow.DefinitionDigest)
+	}
+	if want := "TASK RUN  consume  task-run-fixture@" + orkflow.Version; !strings.Contains(stdout, want) {
+		t.Fatalf("header does not say what the container saw (%q):\n%s", want, stdout)
+	}
+	if again, _ := runOnce(); again.Run.Orkflow != orkflow {
+		t.Fatalf("a second local run of one file saw %+v, the first %+v", again.Run.Orkflow, orkflow)
+	}
+	if versions, err := fx.orkflows.Versions(context.Background(), "default", "task-run-fixture"); err != nil || len(versions.All) != 1 {
+		t.Fatalf("a local run stored something: %d versions, %v", len(versions.All), err)
+	}
+
+	fx.run("apply", unpinned).requireExit(t, exitOK)
+	stored, err := fx.orkflows.Get(context.Background(), "default", "task-run-fixture", "")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	after, _ := runOnce()
+	if after.Run.Orkflow.Version != stored.GetVersion() || after.Run.Orkflow.DefinitionDigest != stored.GetDefinitionDigest() {
+		t.Fatalf("after the apply task.json = %+v, want the stored %s, %s", after.Run.Orkflow, stored.GetVersion(), stored.GetDefinitionDigest())
+	}
+}
+
 func TestTaskRun_DefinitionMustBeTheRunsOrkflow(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	other := fx.writeDoc(t, "other.ork.yaml", strings.Replace(taskRunFixtureYAML, "name: task-run-fixture", "name: other-fixture", 1))

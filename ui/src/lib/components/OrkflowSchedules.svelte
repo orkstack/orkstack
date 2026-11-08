@@ -7,37 +7,41 @@
 	// answered with it, and every field of a row (paused, note, next fire
 	// times, recent fires) is the cluster's own answer for this read. OrkStack
 	// stores nothing else about a schedule.
-	import { invalidateAll } from '$app/navigation';
-	import { create } from '@bufbuild/protobuf';
-	import { timestampFromDate } from '@bufbuild/protobuf/wkt';
+	import { shortVersion } from '#lib/version.ts';
+	import { goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
+	import { untrack } from 'svelte';
+	import { EDIT_PARAM, closedHref, editHref } from '#lib/editParam.ts';
 	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import Icon from '#lib/components/Icon.svelte';
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
-	import Select from '#lib/components/Select.svelte';
-	import { parseInputObject } from '#lib/authoring.ts';
+	import ScheduleFields from '#lib/components/ScheduleFields.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { scheduleClient } from '#lib/clients/schedules.ts';
-	import { PayloadSchema } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { OrkflowVersion } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
-	import { ScheduleSpecSchema, type Schedule } from '#lib/gen/orkstack/v1/schedule_pb.ts';
-	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import type { Schedule } from '#lib/gen/orkstack/v1/schedule_pb.ts';
+	import { withNamespace } from '#lib/namespace.ts';
 	import {
-		OVERLAP_POLICY_SLUGS,
+		CURRENT_VERSION,
+		EMPTY_SCHEDULE_FORM,
 		fireOutcome,
 		firesLabel,
 		isoUTC,
 		lastFire,
 		overlapLabel,
-		overlapPolicyFromSlug,
-		parseDuration,
 		scheduleCreateCli,
 		scheduleDeleteCli,
 		scheduleFireCli,
+		scheduleFormOf,
 		schedulePauseCli,
 		scheduleResumeCli,
 		scheduleState,
-		whenLabel
+		scheduleUpdateCli,
+		scheduleWrite,
+		whenLabel,
+		type ScheduleForm
 	} from '#lib/schedules.ts';
 
 	interface Props {
@@ -51,29 +55,72 @@
 
 	let { name, namespace, versions, currentVersion, schedules, error }: Props = $props();
 
-	// CURRENT is the "pin nothing" sentinel, spelled as OrkflowTriggers spells
-	// it; it becomes the empty wire value, which is what an unpinned schedule
-	// stores and resolves at each fire.
-	const CURRENT = '__current__';
-
 	let scheduleName = $state('');
-	let selectedVersion = $state(CURRENT);
-	let cronText = $state('');
-	let intervalText = $state('');
-	let timezone = $state('');
-	let overlap = $state('skip');
-	let jitterText = $state('');
-	let catchupText = $state('');
-	let pauseOnFailure = $state(false);
-	let startAtText = $state('');
-	let endAtText = $state('');
-	let description = $state('');
-	let inputText = $state('');
+	let createForm = $state<ScheduleForm>({ ...EMPTY_SCHEDULE_FORM });
 	let createPaused = $state(false);
 	let creating = $state(false);
 	let createError = $state('');
 
 	let expanded = $state<Record<string, boolean>>({});
+
+	// The edit dialog. An update replaces every mutable field, so the form opens
+	// with all of them as stored; the row's name links to it, and the address
+	// opens it, as a trigger's and a webhook's do.
+	let editing = $state<Schedule | null>(null);
+	let editForm = $state<ScheduleForm>({ ...EMPTY_SCHEDULE_FORM });
+	let editAdvanced = $state(false);
+	let editError = $state('');
+	let saving = $state(false);
+
+	function startEdit(schedule: Schedule) {
+		editing = schedule;
+		editForm = scheduleFormOf(schedule);
+		// What is set is on show: a value out of sight is still saved.
+		const { jitter, catchupWindow, startAt, endAt, description, input, pauseOnFailure } = editForm;
+		editAdvanced = pauseOnFailure || [jitter, catchupWindow, startAt, endAt, description, input].some((text) => text !== '');
+		editError = '';
+	}
+	function closeEdit() {
+		void goto(closedHref(page.url), { reset: false });
+	}
+	$effect(() => {
+		const editName = page.url.searchParams.get(EDIT_PARAM);
+		const open = untrack(() => editing);
+		if (!editName) {
+			if (open) editing = null;
+			return;
+		}
+		if (open?.name === editName) return;
+		const listed = schedules.find((schedule) => schedule.name === editName);
+		if (listed && scheduleState(listed) !== 'unavailable') untrack(() => startEdit(listed));
+	});
+	const editMissing = $derived.by(() => {
+		const editName = page.url.searchParams.get(EDIT_PARAM);
+		if (!editName || error) return '';
+		const listed = schedules.find((schedule) => schedule.name === editName);
+		if (!listed) return `Schedule ${editName} is not one of ${name}'s.`;
+		return listed.unavailableReason ? `Schedule ${editName} cannot be read back to edit: ${listed.unavailableReason}` : '';
+	});
+	async function saveEdit() {
+		if (!editing) return;
+		editError = '';
+		const written = scheduleWrite(editForm, editing);
+		if ('error' in written) {
+			editError = written.error;
+			return;
+		}
+		saving = true;
+		try {
+			await scheduleClient(fetch).updateSchedule({ namespace, name: editing.name, ...written.value });
+			await goto(closedHref(page.url), { invalidateAll: true, reset: false });
+		} catch (err) {
+			// The draft stays, and the server's refusal is shown verbatim.
+			editError = errorMessage(err);
+		} finally {
+			saving = false;
+		}
+	}
+
 	let pausing = $state('');
 	let pauseReason = $state('');
 	let firing = $state('');
@@ -83,19 +130,25 @@
 	let reloading = $state(false);
 
 	const currentLabel = $derived(
-		currentVersion || versions.find((entry) => entry.isCurrent)?.version || ''
+		shortVersion(currentVersion || versions.find((entry) => entry.isCurrent)?.version || '')
 	);
 	const versionOptions = $derived([
 		{
-			value: CURRENT,
+			value: CURRENT_VERSION,
 			label: currentLabel ? `Current (${currentLabel}) — resolved at each fire` : 'Current — resolved at each fire'
 		},
 		...versions.map((entry) => ({
 			value: entry.version,
-			label: `${entry.version}${entry.isCurrent ? ' — current' : ''}`
+			label: `${shortVersion(entry.version)}${entry.isCurrent ? ' — current' : ''}`
 		}))
 	]);
-	const overlapOptions = OVERLAP_POLICY_SLUGS.map((slug) => ({ value: slug, label: slug }));
+	// A pin the versions listed here do not name stays a choice, so opening an
+	// edit never reads as moving it.
+	const editVersionOptions = $derived(
+		editing?.orkflowVersion && !versions.some((entry) => entry.version === editing?.orkflowVersion)
+			? [...versionOptions, { value: editing.orkflowVersion, label: shortVersion(editing.orkflowVersion) }]
+			: versionOptions
+	);
 
 	// The list is the cluster's visibility index, which lags a create or a
 	// delete by a moment. After either, the loader is asked again until the
@@ -109,40 +162,13 @@
 		}
 	}
 
-	function parseTime(field: string, text: string): { value: Date | undefined } | { error: string } {
-		const trimmed = text.trim();
-		if (!trimmed) return { value: undefined };
-		const date = new Date(trimmed);
-		if (Number.isNaN(date.getTime())) return { error: `${field}: "${trimmed}" is not an RFC 3339 time.` };
-		return { value: date };
-	}
-
 	async function createSchedule() {
 		createError = '';
-		const interval = parseDuration('Interval', intervalText);
-		const jitter = parseDuration('Jitter', jitterText);
-		const catchup = parseDuration('Catch-up window', catchupText);
-		const startAt = parseTime('Start at', startAtText);
-		const endAt = parseTime('End at', endAtText);
-		for (const parsed of [interval, jitter, catchup, startAt, endAt]) {
-			if ('error' in parsed) {
-				createError = parsed.error;
-				return;
-			}
+		const written = scheduleWrite(createForm);
+		if ('error' in written) {
+			createError = written.error;
+			return;
 		}
-		let input = undefined;
-		if (inputText.trim()) {
-			const parsed = parseInputObject(inputText);
-			if ('error' in parsed) {
-				createError = parsed.error;
-				return;
-			}
-			input = create(PayloadSchema, { data: parsed.value });
-		}
-		const cron = cronText
-			.split('\n')
-			.map((line) => line.trim())
-			.filter((line) => line !== '');
 		const created = scheduleName.trim();
 		creating = true;
 		try {
@@ -150,27 +176,11 @@
 				namespace,
 				name: created,
 				orkflowName: name,
-				orkflowVersion: selectedVersion === CURRENT ? '' : selectedVersion,
-				input,
-				description,
 				paused: createPaused,
-				spec: create(ScheduleSpecSchema, {
-					cron,
-					interval: 'value' in interval ? interval.value : undefined,
-					timezone: timezone.trim(),
-					jitter: 'value' in jitter ? jitter.value : undefined,
-					catchupWindow: 'value' in catchup ? catchup.value : undefined,
-					startAt: 'value' in startAt && startAt.value ? timestampFromDate(startAt.value) : undefined,
-					endAt: 'value' in endAt && endAt.value ? timestampFromDate(endAt.value) : undefined,
-					overlap: overlapPolicyFromSlug(overlap),
-					pauseOnFailure
-				})
+				...written.value
 			});
 			scheduleName = '';
-			cronText = '';
-			intervalText = '';
-			description = '';
-			inputText = '';
+			createForm = { ...createForm, cron: '', interval: '', description: '', input: '' };
 			await refreshUntil(() => schedules.some((row) => row.name === created));
 		} catch (err) {
 			// The draft stays in the form, and the server's refusal — the
@@ -242,169 +252,11 @@
 </script>
 
 <p class="mb-5 max-w-prose text-sm text-ink-secondary" data-testid="schedules-scope">
-	Each schedule starts <span class="font-medium text-ink">{name}</span> in
-	<span class="font-medium text-ink">{namespaceLabel(namespace)}</span> at the times it names. Temporal keeps
+	Each schedule starts <span class="font-medium text-ink">{name}</span> at the times it names. Temporal keeps
 	the schedule; OrkStack stores nothing else about it.
 </p>
 
-<section class="region mb-8 pt-3">
-	<h2 class="text-md font-semibold text-ink">Create schedule</h2>
-	<form
-		class="mt-3 space-y-4"
-		data-testid="schedule-create-form"
-		onsubmit={(event) => {
-			event.preventDefault();
-			void createSchedule();
-		}}
-	>
-		<div class="grid gap-4 sm:grid-cols-2">
-			<div class="flex flex-col gap-1.5">
-				<label for="schedule-name" class="text-sm font-medium text-ink">Name</label>
-				<input
-					id="schedule-name"
-					data-testid="schedule-name"
-					bind:value={scheduleName}
-					placeholder="nightly-reconcile"
-					class={inputClass}
-				/>
-			</div>
-			<div class="flex flex-col gap-1.5">
-				<label for="schedule-version" class="text-sm font-medium text-ink">Version</label>
-				<Select
-					id="schedule-version"
-					testid="schedule-version"
-					value={selectedVersion}
-					options={versionOptions}
-					disabled={creating}
-					onchange={(next) => (selectedVersion = next)}
-				/>
-			</div>
-			<div class="flex flex-col gap-1.5">
-				<label for="schedule-cron" class="text-sm font-medium text-ink">
-					Cron <span class="font-normal text-ink-muted">(one expression per line)</span>
-				</label>
-				<textarea
-					id="schedule-cron"
-					data-testid="schedule-cron"
-					bind:value={cronText}
-					rows="2"
-					placeholder="0 2 * * *"
-					class="field w-full px-3 py-2 font-mono text-sm"
-				></textarea>
-			</div>
-			<div class="flex flex-col gap-1.5">
-				<label for="schedule-interval" class="text-sm font-medium text-ink">
-					Interval <span class="font-normal text-ink-muted">(optional, e.g. 15m)</span>
-				</label>
-				<input id="schedule-interval" data-testid="schedule-interval" bind:value={intervalText} class={inputClass} />
-			</div>
-			<div class="flex flex-col gap-1.5">
-				<label for="schedule-timezone" class="text-sm font-medium text-ink">
-					Time zone <span class="font-normal text-ink-muted">(IANA; empty is UTC)</span>
-				</label>
-				<input
-					id="schedule-timezone"
-					data-testid="schedule-timezone"
-					bind:value={timezone}
-					placeholder="Europe/Lisbon"
-					class={inputClass}
-				/>
-			</div>
-			<div class="flex flex-col gap-1.5">
-				<label for="schedule-overlap" class="text-sm font-medium text-ink">
-					When the previous run is still going
-				</label>
-				<Select
-					id="schedule-overlap"
-					testid="schedule-overlap"
-					value={overlap}
-					options={overlapOptions}
-					disabled={creating}
-					onchange={(next) => (overlap = next)}
-				/>
-			</div>
-		</div>
-
-		<details class="border-y border-rule py-2">
-			<summary class="cursor-pointer text-sm font-semibold text-ink marker:text-ink-muted hover:text-blue">Advanced</summary>
-			<div class="mt-3 grid gap-4 sm:grid-cols-2">
-				<div class="flex flex-col gap-1.5">
-					<label for="schedule-jitter" class="text-sm font-medium text-ink">Jitter</label>
-					<input id="schedule-jitter" data-testid="schedule-jitter" bind:value={jitterText} placeholder="30s" class={inputClass} />
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<label for="schedule-catchup-window" class="text-sm font-medium text-ink">Catch-up window</label>
-					<input
-						id="schedule-catchup-window"
-						data-testid="schedule-catchup-window"
-						bind:value={catchupText}
-						placeholder="1h (at least 10s)"
-						class={inputClass}
-					/>
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<label for="schedule-start-at" class="text-sm font-medium text-ink">Start at (RFC 3339)</label>
-					<input
-						id="schedule-start-at"
-						data-testid="schedule-start-at"
-						bind:value={startAtText}
-						placeholder="2026-10-01T00:00:00Z"
-						class={inputClass}
-					/>
-				</div>
-				<div class="flex flex-col gap-1.5">
-					<label for="schedule-end-at" class="text-sm font-medium text-ink">End at (RFC 3339)</label>
-					<input
-						id="schedule-end-at"
-						data-testid="schedule-end-at"
-						bind:value={endAtText}
-						placeholder="2026-12-31T23:59:59Z"
-						class={inputClass}
-					/>
-				</div>
-				<div class="flex flex-col gap-1.5 sm:col-span-2">
-					<label for="schedule-description" class="text-sm font-medium text-ink">Description</label>
-					<input id="schedule-description" data-testid="schedule-description" bind:value={description} class={inputClass} />
-				</div>
-				<div class="flex flex-col gap-1.5 sm:col-span-2">
-					<label for="schedule-input" class="text-sm font-medium text-ink">
-						Input <span class="font-normal text-ink-muted">(a JSON object, submitted as given at every fire)</span>
-					</label>
-					<textarea
-						id="schedule-input"
-						data-testid="schedule-input"
-						bind:value={inputText}
-						rows="3"
-						placeholder={'{"mode": "full"}'}
-						class="field w-full px-3 py-2 font-mono text-sm"
-					></textarea>
-				</div>
-				<label class="flex items-center gap-2 text-sm text-ink">
-					<input type="checkbox" data-testid="schedule-pause-on-failure" bind:checked={pauseOnFailure} />
-					Pause the schedule when a fire fails or is refused
-				</label>
-			</div>
-		</details>
-
-		<label class="flex items-center gap-2 text-sm text-ink">
-			<input type="checkbox" data-testid="schedule-create-paused" bind:checked={createPaused} />
-			Create paused so I can review the next fire times first
-		</label>
-
-		{#if createError}
-			<ErrorPanel testid="schedule-error" message={createError} />
-		{/if}
-
-		<button
-			type="submit"
-			data-testid="schedule-create"
-			disabled={creating}
-			class="btn border-ink"
-		>
-			{creating ? 'Creating…' : 'Create schedule'}
-		</button>
-	</form>
-</section>
+{#if editMissing}<div class="mb-4"><ErrorPanel testid="schedule-edit-missing" message={editMissing} /></div>{/if}
 
 {#if actionError && !pausing && !firing && !deleting}
 	<div class="mb-4"><ErrorPanel testid="schedule-action-error" message={actionError} /></div>
@@ -414,15 +266,14 @@
 	<ErrorPanel
 		testid="schedules-error"
 		retryTestid="schedules-retry"
-		subject="the schedules of {name} in namespace {namespaceLabel(namespace)}"
+		subject="the schedules of {name}"
 		message={error}
 		busy={reloading}
 		onretry={reload}
 	/>
 {:else if schedules.length === 0}
 	<p data-testid="schedules-empty" class="text-sm text-ink-muted">
-		No schedules exist for {name} in namespace {namespaceLabel(namespace)}. Create one above to start it at
-		the times it names.
+		No schedules exist for {name}. Create one below to start it at the times it names.
 	</p>
 {:else}
 	<ul class="border-t-2 border-ink" data-testid="schedule-list">
@@ -434,7 +285,11 @@
 				<div class="flex flex-wrap items-start justify-between gap-4">
 					<div class="min-w-0 space-y-1">
 						<p class="flex items-center gap-2">
-							<span class="font-mono text-sm font-semibold text-ink">{schedule.name}</span>
+							{#if state === 'unavailable'}
+								<span class="font-mono text-sm font-semibold">{schedule.name}</span>
+							{:else}
+								<a class="link font-mono text-sm font-semibold" data-testid="edit-schedule-{schedule.name}" data-sveltekit-reset="false" href={editHref(page.url, schedule.name)}>{schedule.name}</a>
+							{/if}
 							<span
 								data-testid="schedule-row-state-{schedule.name}"
 								data-tip={state === 'paused' ? schedule.note : state === 'unavailable' ? schedule.unavailableReason : ''}
@@ -451,7 +306,7 @@
 							<p class="severity-error text-xs">{schedule.unavailableReason}</p>
 						{:else}
 							<p class="text-sm text-ink-secondary">
-								Runs {schedule.orkflowName}@{schedule.orkflowVersion || 'current'} · {whenLabel(schedule.spec)} ·
+								Runs {schedule.orkflowName}@{shortVersion(schedule.orkflowVersion) || 'current'} · {whenLabel(schedule.spec)} ·
 								overlap {overlapLabel(schedule.spec?.overlap ?? 0)}
 							</p>
 							{#if schedule.description}
@@ -538,7 +393,7 @@
 							}}
 							class="btn btn-sm"
 						>
-							Delete
+							<Icon name="trash" />Delete
 						</button>
 						{#if state !== 'unavailable'}
 							<button
@@ -606,6 +461,90 @@
 			</li>
 		{/each}
 	</ul>
+{/if}
+
+<section class="region mt-8 pt-3">
+	<h2 class="text-md font-semibold text-ink">Create schedule</h2>
+	<form
+		class="mt-3 max-w-3xl space-y-4"
+		data-testid="schedule-create-form"
+		onsubmit={(event) => {
+			event.preventDefault();
+			void createSchedule();
+		}}
+	>
+		<ScheduleFields bind:form={createForm} prefix="schedule" {versionOptions} disabled={creating}>
+			{#snippet leading()}
+				<label for="schedule-name" class="text-sm font-medium text-ink">Name</label>
+				<input
+					id="schedule-name"
+					data-testid="schedule-name"
+					bind:value={scheduleName}
+					placeholder="nightly-reconcile"
+					class={inputClass}
+				/>
+			{/snippet}
+		</ScheduleFields>
+
+		<label class="flex items-center gap-2 text-sm text-ink">
+			<input type="checkbox" data-testid="schedule-create-paused" bind:checked={createPaused} />
+			Create paused so I can review the next fire times first
+		</label>
+
+		{#if createError}
+			<ErrorPanel testid="schedule-error" message={createError} />
+		{/if}
+
+		<button
+			type="submit"
+			data-testid="schedule-create"
+			disabled={creating}
+			class="btn border-ink"
+		>
+			{creating ? 'Creating…' : 'Create schedule'}
+		</button>
+	</form>
+</section>
+
+{#if editing}
+	<Dialog title="Edit schedule {editing.name}" testid="schedule-edit-dialog" onclose={closeEdit} widthClass="max-w-2xl">
+		{#snippet body()}
+			{@const command = editing ? scheduleUpdateCli(editing, editForm) : ''}
+			<p class="mb-3 text-sm text-ink-secondary">
+				Editing keeps this schedule's id, its fires and whether it is paused. Its name and Orkflow cannot change. If
+				someone else saves while this is open, the last save wins.
+			</p>
+			<form
+				class="space-y-4"
+				onsubmit={(event) => {
+					event.preventDefault();
+					void saveEdit();
+				}}
+			>
+				<ScheduleFields
+					bind:form={editForm}
+					prefix="schedule-edit"
+					versionOptions={editVersionOptions}
+					disabled={saving}
+					advancedOpen={editAdvanced}
+				>
+					{#snippet leading()}
+						<span class="text-sm font-medium text-ink">Orkflow</span>
+						<span class="flex h-9 items-center font-mono text-sm text-ink-2" data-testid="schedule-edit-orkflow">{name}</span>
+					{/snippet}
+				</ScheduleFields>
+				{#if editError}
+					<ErrorPanel testid="schedule-edit-error" message={editError} />
+				{/if}
+				<div class="flex items-center justify-between gap-3">
+					<button type="submit" data-testid="schedule-edit-submit" disabled={saving} class="btn btn-primary">
+						{saving ? 'Saving…' : 'Save'}
+					</button>
+					{#if command}<CliEquivalent {command} testid="schedule-edit-cli" />{/if}
+				</div>
+			</form>
+		{/snippet}
+	</Dialog>
 {/if}
 
 {#if pausing}
@@ -681,6 +620,7 @@
 		testid="schedule-delete-confirm"
 		title="Delete schedule {deleting}?"
 		acceptLabel="Delete"
+		glyph="trash"
 		acceptTestid="schedule-delete-accept"
 		cancelTestid="schedule-delete-cancel"
 		busy={actionBusy}

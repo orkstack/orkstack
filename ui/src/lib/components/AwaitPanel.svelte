@@ -190,6 +190,7 @@
 <div
 	class="mt-3 rounded-sm bg-awaiting-bg/40 px-3 py-2 text-sm"
 	data-testid="task-{task.id}-await"
+	data-cli-own
 >
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<p class="font-medium text-ink" data-testid="task-{task.id}-await-state">{stateLabel}</p>

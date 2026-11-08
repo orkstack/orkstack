@@ -325,7 +325,7 @@ func Simulate(
 	if len(decided) != len(order) {
 		// Unreachable for a compiled document (checkAcyclic), refused rather
 		// than answered with undecided tasks.
-		return nil, fmt.Errorf("orkflow %s@%s has tasks that can never become ready", wf.GetName(), wf.GetVersion())
+		return nil, fmt.Errorf("orkflow %s has tasks that can never become ready", OrkflowRefText(wf))
 	}
 
 	resp := &orkstackv1.PlanRunResponse{Input: proto.Clone(effective).(*orkstackv1.Payload)}

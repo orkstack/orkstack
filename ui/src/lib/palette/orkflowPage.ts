@@ -1,4 +1,4 @@
-// What the Orkflow page adds to the palette while it is open: Submit a run…
+// What the Orkflow page adds to the palette while it is open: Submit a run
 // (which only opens the page's own dialog — the palette never writes), the
 // page's other tabs, and a jump to any task's row in the task register.
 //
@@ -38,7 +38,7 @@ export interface OrkflowPageOptions {
 function ownCommands(o: OrkflowPageOptions): Command[] {
 	const out: Command[] = [];
 	if (o.canSubmit)
-		out.push({ id: 'orkflow-submit', group: 'Actions', label: 'Submit a run…', context: o.name, action: { kind: 'page', run: o.openSubmit } });
+		out.push({ id: 'orkflow-submit', group: 'Actions', label: 'Submit a run', context: o.name, action: { kind: 'page', run: o.openSubmit } });
 	for (const tab of ORKFLOW_TABS) {
 		if (tab === o.tab) continue;
 		const href = o.hrefOf(tab);

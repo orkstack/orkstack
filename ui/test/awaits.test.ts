@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { timestampFromMs } from '@bufbuild/protobuf/wkt';
-import { Status } from '../src/lib/gen/orkstack/v1/common_pb';
+import { PayloadSchema, Status } from '../src/lib/gen/orkstack/v1/common_pb';
 import { AwaitResolvedVia, TaskAwaitSchema } from '../src/lib/gen/orkstack/v1/run_pb';
 import {
 	awaitCallbackUrl,
@@ -9,6 +9,10 @@ import {
 	awaitDeadline,
 	awaitRemaining,
 	awaitStateLabel,
+	printable,
+	readableValues,
+	resolvedValuesView,
+	VALUES_SHOW_MAX,
 	resolveCli
 } from '../src/lib/awaits';
 
@@ -82,4 +86,47 @@ test('awaitStateLabel names every state', () => {
 	expect(awaitStateLabel({ status: Status.PENDING, timeoutSeconds: 21600 })).toBe(
 		'Will wait up to 6h once its needs are complete'
 	);
+});
+
+test('a resolution draws in the flow when short, closed when long, and by reference when the run has no copy', () => {
+	const payload = (data: unknown) => create(PayloadSchema, { data: data as never });
+	expect(resolvedValuesView(undefined, undefined)).toEqual({ kind: 'none' });
+	expect(resolvedValuesView(payload({ approved: true }), undefined)).toEqual({ kind: 'inline', text: '{"approved": true}' });
+	const long = resolvedValuesView(payload({ note: 'x'.repeat(500) }), undefined);
+	expect(long.kind).toBe('long');
+	expect(resolvedValuesView(undefined, { sizeBytes: 9000n })).toEqual({ kind: 'reference', bytes: 9000 });
+	// The engine sets an empty payload beside the reference of a value it does not carry inline.
+	expect(resolvedValuesView(payload({}), { sizeBytes: 9000n })).toEqual({ kind: 'reference', bytes: 9000 });
+	expect(resolvedValuesView(payload({}), { sizeBytes: 2n })).toEqual({ kind: 'inline', text: '{}' });
+	// Values of 4096 bytes or fewer always travel inline, so an empty payload beside a
+	// reference that small is what they were: `{}` written with a newline or spaces.
+	expect(resolvedValuesView(payload({}), { sizeBytes: 3n })).toEqual({ kind: 'inline', text: '{}' });
+	expect(resolvedValuesView(payload({}), { sizeBytes: 4096n })).toEqual({ kind: 'inline', text: '{}' });
+	expect(resolvedValuesView(payload({}), { sizeBytes: 4097n })).toEqual({ kind: 'reference', bytes: 4097 });
+	let deep: unknown = 'bottom';
+	for (let i = 0; i < 500; i++) deep = { d: deep };
+	expect(resolvedValuesView(payload(deep), undefined).kind).toBe('long');
+});
+
+test('control characters and reordering marks show as escapes, and lines and tabs stay', () => {
+	expect(printable('a\u0007b\u001b[31m‮\u0085')).toBe('a\\u0007b\\u001b[31m\\u202e\\u0085');
+	expect(printable('line\n\ttab')).toBe('line\n\ttab');
+	expect(printable('<img src=x>')).toBe('<img src=x>');
+});
+
+test('stored values read indented when whole, and as they are when cut or not JSON', () => {
+	expect(readableValues('{"a":1}', false)).toEqual({ text: '{\n  "a": 1\n}', cut: false });
+	expect(readableValues('{"a":1', true)).toEqual({ text: '{"a":1', cut: true });
+	expect(readableValues('not json\u0007', false)).toEqual({ text: 'not json\\u0007', cut: false });
+});
+
+test('deep JSON stays compact when indenting would outgrow what a box shows', () => {
+	const deep = `{"a":${'['.repeat(2000)}${']'.repeat(2000)}}`;
+	const view = resolvedValuesView(create(PayloadSchema, { data: JSON.parse(deep) as never }), undefined);
+	expect(view.kind).toBe('long');
+	if (view.kind === 'long') {
+		expect(view.text.length <= VALUES_SHOW_MAX).toBe(true);
+		expect(view.bytes).toBe(deep.length);
+	}
+	expect(readableValues(deep, false).text).toBe(deep);
 });

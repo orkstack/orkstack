@@ -19,6 +19,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/typeid"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -750,8 +751,8 @@ func (s *Service) Triggers() triggers.Store { return s.triggers }
 // nothing and answers with what is stored (created=false); a DIFFERENT
 // document under a stored version is AlreadyExists, because a run pinned to
 // that version reads its bytes long after the apply. An edit therefore always
-// arrives as a new version — the DSL derives one from the content when the
-// document pins none.
+// arrives as a new version — one is minted here when the document pins none and
+// its content has none yet (assignVersion).
 func (s *Service) ApplyOrkflow(
 	ctx context.Context,
 	req *connect.Request[orkstackv1.ApplyOrkflowRequest],
@@ -763,16 +764,24 @@ func (s *Service) ApplyOrkflow(
 	if err != nil {
 		return nil, err
 	}
-	// The interface comparison must see the store as it was BEFORE this
-	// version lands, or an unpromoted orkflow's new head would be compared
-	// with itself. WARNINGs only: applying is never refused for a consumer's
-	// sake (docs/UI_CLI_PARITY.md "Interface compatibility").
-	issues = append(issues, s.interfaceChangeIssues(ctx, ns.GetName(), wf)...)
 	expected, err := s.checkEditTokens(ctx, ns.GetName(), wf.GetName(),
 		req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion())
 	if err != nil {
 		return nil, err
 	}
+	// The one write an apply makes before its version lands, and it comes after
+	// every refusal a read can make. A claim left by a Put that then fails is
+	// inert: the next apply of this content stores the version it names.
+	if wf.GetVersion() == "" {
+		if err := s.assignVersion(ctx, source, ns.GetName(), wf); err != nil {
+			return nil, err
+		}
+	}
+	// The interface comparison must see the store as it was BEFORE this
+	// version lands, or an unpromoted orkflow's new head would be compared
+	// with itself. WARNINGs only: applying is never refused for a consumer's
+	// sake (docs/UI_CLI_PARITY.md "Interface compatibility").
+	issues = append(issues, s.interfaceChangeIssues(ctx, ns.GetName(), wf)...)
 	// The stamp is applied here, but it does NOT decide whether this apply is a
 	// repeat: the store compares everything except created_at and hands back
 	// the stored document untouched when they match, so a re-apply cannot
@@ -812,9 +821,39 @@ func (s *Service) ApplyOrkflow(
 	return connect.NewResponse(resp), nil
 }
 
+// assignVersion gives a document that pins none and whose content has no version
+// yet the version it lands under, and the digest that covers it.
+//
+// The candidate is minted here because this is the one path that stores anything:
+// `orkctl orkflow validate` and a plan report no version for such a document
+// rather than one that would not be the one applied. The store decides whether
+// the candidate is used, and a concurrent apply of the same content, on any
+// replica, gets the same answer (artifacts.S3OrkflowStore.ClaimDerivedVersion).
+func (s *Service) assignVersion(ctx context.Context, source []byte, namespace string, wf *orkstackv1.Orkflow) error {
+	contentHash, err := dsl.ContentHash(source, wf)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	version, err := s.orkflows.ClaimDerivedVersion(ctx, namespace, wf.GetName(), contentHash, typeid.New())
+	if err != nil {
+		return orkflowStoreError(err, "assign a version to orkflow %q in namespace %q", wf.GetName(), namespace)
+	}
+	wf.Version = version
+	digest, err := dsl.DefinitionDigest(wf)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, err)
+	}
+	wf.DefinitionDigest = digest
+	return nil
+}
+
 // ValidateOrkflow performs exactly ApplyOrkflow's preparation without reading
 // edit tokens or writing a definition. A document error is a returned issue;
 // unavailable registries and namespace stores remain RPC failures.
+//
+// The orkflow it returns names the version the document would land on when its
+// content already has one. When it has none, version and definition_digest are
+// empty: the version is minted by the apply that stores it.
 func (s *Service) ValidateOrkflow(ctx context.Context, req *connect.Request[orkstackv1.ValidateOrkflowRequest]) (*connect.Response[orkstackv1.ValidateOrkflowResponse], error) {
 	wf, ns, issues, err := s.prepareOrkflow(ctx, []byte(req.Msg.GetYaml()), req.Msg.GetNamespace())
 	if err == nil {
@@ -969,6 +1008,12 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	if err != nil {
 		return nil, nil, nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
+	// Compile's provisional hash ends here: no version is ever stored under it,
+	// so no refusal below may name it. The document's version is decided after
+	// the images are resolved.
+	if !pinsVersion {
+		wf.Version = ""
+	}
 	// The deployment's task ceiling (ORK_ORKFLOW_MAX_TASKS), before anything
 	// is looked up or resolved: a document over it is refused without one
 	// registry request per task.
@@ -1026,7 +1071,7 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// written; WARNINGs travel with the prepared document.
 	issues := dsl.CheckOrkflowInterfaces(wf, resolutions)
 	// Rules 31 and 32: every composed task resolved in this namespace, its
-	// definition digest stamped (before DerivedVersion and DefinitionDigest,
+	// definition digest stamped (before ContentHash and DefinitionDigest,
 	// which both hash it), its tree loaded and checked, and its interface
 	// honoured. One refusal carries the interface and composition issues
 	// together, in that order.
@@ -1045,12 +1090,27 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	if hasError(issues) {
 		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
+	// A document that pins no version names the one its content was given, if it
+	// was given one. Otherwise it has none yet, and only ApplyOrkflow mints: this
+	// function is validation's too, and validation writes nothing.
 	if !pinsVersion {
-		derived, err := dsl.DerivedVersion(source, wf)
+		contentHash, err := dsl.ContentHash(source, wf)
 		if err != nil {
 			return nil, nil, nil, connect.NewError(connect.CodeInternal, err)
 		}
-		wf.Version = derived
+		known, err := s.orkflows.FindDerivedVersion(ctx, ns.GetName(), wf.GetName(), contentHash)
+		if err != nil {
+			return nil, nil, nil, orkflowStoreError(err, "find the version of orkflow %q in namespace %q",
+				wf.GetName(), ns.GetName())
+		}
+		wf.Version = known
+	}
+	// The size a run would carry is measured with a version and a digest in
+	// place even when the document has neither yet, so validation refuses what
+	// apply would.
+	unassigned := wf.GetVersion() == ""
+	if unassigned {
+		wf.Version = typeid.New()
 	}
 	digest, err := dsl.DefinitionDigest(wf)
 	if err != nil {
@@ -1061,6 +1121,9 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// carry by reference, when the deployment enables it.
 	if err := s.checkDefinitionCarriable(wf); err != nil {
 		return nil, nil, nil, err
+	}
+	if unassigned {
+		wf.Version, wf.DefinitionDigest = "", ""
 	}
 	return wf, ns, issues, nil
 }
@@ -1564,6 +1627,7 @@ func (s *Service) prepare(
 	// selection and boot answers. It refuses
 	// and mints nothing.
 	nsIdx, orIdx := indexAnswers(binding.Starter)
+	plan.RootRunIndexed = rootIndexAnswer(binding.Starter)
 	if err := s.planChildren(ctx, composeRequest{
 		ns: ns, resolver: s.resolverFor(binding), allowEmpty: msg.GetAllowEmptyPool(),
 		sel: sel, namespaceIndexed: nsIdx, originIndexed: orIdx, noCache: msg.GetNoCache(),
@@ -1755,6 +1819,7 @@ func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
 	plan.InFlight = &limit
 	plan.PinCreationTimeoutSeconds = s.pinCreationSeconds
 	plan.RetryMaxIntervalSeconds = int32(engine.DefaultRetryMaxInterval / time.Second)
+	plan.RecordRootRun = true
 }
 
 // pinCreationTimeoutSecondsOf is the pin creation timeout a plan carries, in
@@ -2654,6 +2719,7 @@ func (s *Service) ListRuns(
 			Status:        plan.Status,
 			OriginKind:    plan.OriginKind,
 			OriginID:      plan.OriginID,
+			RootRunID:     plan.RootRunID,
 			Since:         plan.Since,
 			Until:         plan.Until,
 			Keep:          plan.Keep,
@@ -2661,6 +2727,14 @@ func (s *Service) ListRuns(
 			BeforeID:      beforeID,
 			Limit:         size + 1,
 		})
+		// Every archive key segment a query builds comes from the caller's
+		// filter: the namespace and Orkflow names are validated before this,
+		// so one no key can hold is an origin.id, the caller's to change.
+		if errors.Is(err, artifacts.ErrInvalidRunKey) {
+			return nil, connect.NewError(connect.CodeInvalidArgument,
+				fmt.Errorf("list runs in namespace %q: filter origin.id is %d bytes, longer than any origin's id can be: %w",
+					ns.GetName(), len(plan.OriginID), err))
+		}
 		if err != nil {
 			return nil, connect.NewError(connect.CodeInternal,
 				fmt.Errorf("list runs in namespace %q from archive: %w", ns.GetName(), err))
@@ -2865,6 +2939,28 @@ func (s *Service) StreamEvents(
 	return s.StreamRunEvents(ctx, runID, req.Msg.GetNamespace(), req.Msg.GetFromSequence(), stream.Send)
 }
 
+// ErrEngineStopping is the cause an engine cancels its handlers' context with
+// when it starts to shut down, which tells a stream cut short by the replica
+// from one whose caller went away.
+var ErrEngineStopping = errors.New("this engine replica is shutting down")
+
+// engineStopping reports whether ctx ended because the replica is stopping.
+func engineStopping(ctx context.Context) bool {
+	return errors.Is(context.Cause(ctx), ErrEngineStopping)
+}
+
+// stoppedShort is a stream's answer when the replica stopped under it before
+// its end: Unavailable, the one answer every client resumes on, instead of the
+// clean end a run or a log would be taken to have reached. err is what the
+// stream itself returned. Any other failure stands, as does a clean end once
+// the stream's end was delivered, which the caller decides by not asking.
+func stoppedShort(ctx context.Context, what string, err error) error {
+	if engineStopping(ctx) && (err == nil || errors.Is(err, context.Canceled)) {
+		return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s: %w", what, ErrEngineStopping))
+	}
+	return err
+}
+
 // StreamRunEvents delivers a run's events after fromSequence to send, and
 // returns when the run reaches its terminal event. It is the one streaming
 // path: the Connect handler and the WebSocket bridge both go through it, so
@@ -2883,6 +2979,9 @@ func (s *Service) StreamEvents(
 // same reason the streaming is: a scope one caller enforces and the other
 // forgets is not a scope. A run of another namespace is NotFound before a
 // single event is sent.
+//
+// A replica that stops before the run's terminal event answers Unavailable, so
+// the caller reads the rest from another (stoppedShort).
 //
 // The check reads the run's start event (runNamespaceIn), never its whole
 // history: the stream that follows reads the history once, and that is the
@@ -2905,6 +3004,26 @@ func (s *Service) StreamRunEvents(
 // bridge, which must answer a run of another namespace with an HTTP 404
 // BEFORE the upgrade, and would otherwise pay the check twice per socket.
 func (s *Service) streamCheckedRunEvents(
+	ctx context.Context,
+	runID string,
+	fromSequence int64,
+	send func(*orkstackv1.Event) error,
+) error {
+	finished := false
+	err := s.streamRunEventsFrom(ctx, runID, fromSequence, func(event *orkstackv1.Event) error {
+		if err := send(event); err != nil {
+			return err
+		}
+		finished = finished || IsTerminalEvent(event)
+		return nil
+	})
+	if finished {
+		return err
+	}
+	return stoppedShort(ctx, fmt.Sprintf("stream run %q", runID), err)
+}
+
+func (s *Service) streamRunEventsFrom(
 	ctx context.Context,
 	runID string,
 	fromSequence int64,

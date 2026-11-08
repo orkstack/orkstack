@@ -18,6 +18,8 @@ export interface ItemView {
 	attempt: number;
 	message: string;
 	run?: TaskRun;
+	/** When its event said it ended, until a snapshot brings the record's own. */
+	finishedAt?: Event['timestamp'];
 }
 
 /** itemLabel renders one item as convert[97]. */
@@ -188,7 +190,8 @@ export function applyItemEvents(items: ItemView[], events: Event[]): ItemView[] 
 			next.push({ index: i, status: Status.PENDING, attempt: 0, message: '' });
 		}
 		const status = event.status === Status.UNSPECIFIED ? next[index].status : event.status;
-		next[index] = { ...next[index], status, message: event.message };
+		const finished = isTerminal(status) && !next[index].finishedAt ? { finishedAt: event.timestamp } : {};
+		next[index] = { ...next[index], status, message: event.message, ...finished };
 	}
 	return next ?? items;
 }

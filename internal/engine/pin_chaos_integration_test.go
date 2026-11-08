@@ -312,7 +312,7 @@ func newPinChaosClusterWithCreationTimeout(t *testing.T, ctx context.Context, ma
 	// Whatever the run did, this suite's pin directories do not outlive it. The
 	// work root is this cluster's own, so the reap can be unconditional.
 	t.Cleanup(func() {
-		if _, err := orker.ReapPinDirectories(c.workRoot); err != nil {
+		if _, err := orker.ReapPinDirectories(c.workRoot, c.orkerID); err != nil {
 			t.Logf("cleanup: reap pin directories under %s: %v", c.workRoot, err)
 		}
 	})
@@ -1295,9 +1295,6 @@ func pinChaosWorkRoot(t *testing.T, token string) string {
 		t.Fatalf("create the work root under %s: %v", base, err)
 	}
 	t.Cleanup(func() {
-		if _, err := orker.ReapPinDirectories(root); err != nil {
-			t.Logf("cleanup: reap %s: %v", root, err)
-		}
 		removeSealedTree(t, root)
 	})
 	return root

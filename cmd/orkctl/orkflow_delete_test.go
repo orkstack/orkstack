@@ -252,3 +252,11 @@ func TestOrkflowDelete_YesHelpSaysItCannotBypassServerRunSafety(t *testing.T) {
 		t.Fatalf("help does not contain %q:\n%s", help, got.stdout)
 	}
 }
+
+func (s *recordingOrkflowStore) FindDerivedVersion(ctx context.Context, namespace, name, contentHash string) (string, error) {
+	return s.inner.FindDerivedVersion(ctx, namespace, name, contentHash)
+}
+
+func (s *recordingOrkflowStore) ClaimDerivedVersion(ctx context.Context, namespace, name, contentHash, candidate string) (string, error) {
+	return s.inner.ClaimDerivedVersion(ctx, namespace, name, contentHash, candidate)
+}

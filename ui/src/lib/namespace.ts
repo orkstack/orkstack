@@ -50,6 +50,11 @@ export function hasNamespaceParam(url: { readonly searchParams: Pick<URLSearchPa
   return url.searchParams.has(NAMESPACE_PARAM);
 }
 
+/** The command that releases a namespace's hold (a page's HoldBanner). */
+export function releaseHoldCli(namespace: string): string {
+	return `orkctl namespace update ${namespace} --release-hold`;
+}
+
 // namespaceLabel is the name to show a person. The wire value for the default
 // namespace is empty; its name is not.
 export function namespaceLabel(namespace: string): string {

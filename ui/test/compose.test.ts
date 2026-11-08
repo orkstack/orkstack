@@ -5,6 +5,7 @@ import { EventSchema, EventType, RunSchema, TaskChildSchema, TaskRunSchema } fro
 import {
 	applyChildEvent,
 	childLabel,
+	chainListHref,
 	childrenListHref,
 	childRollup,
 	childRunHref,
@@ -16,6 +17,12 @@ test('childLabel is name@version', () => {
 		'release-block@2.1.0'
 	);
 	expect(childLabel(undefined)).toBe('');
+});
+
+test('chainListHref filters the runs list to one root and keeps the namespace', () => {
+	const params = new URL(`http://x${chainListHref('team-a', 'ork 1')}`).searchParams;
+	expect(params.get('ns')).toBe('team-a');
+	expect(params.getAll('filter')).toEqual(['origin.root_run_id=ork 1']);
 });
 
 test('childRunHref and childrenListHref keep the namespace and escape the id', () => {

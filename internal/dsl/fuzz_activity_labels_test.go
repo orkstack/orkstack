@@ -2,6 +2,7 @@ package dsl_test
 
 import (
 	"errors"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -328,7 +329,8 @@ func FuzzParseDocsLabel(f *testing.F) {
 // FuzzParseActivityDocument: an authored document is refused with a reason,
 // or every label it packs into — interface, icon and docs — is deterministic,
 // holds no single quote, is within its bound, and is read back by the engine
-// as what the document declared: what pack accepts, the engine reads.
+// as what the document declared: what pack accepts, the engine reads. A file
+// with a second YAML document is refused on the line it begins.
 func FuzzParseActivityDocument(f *testing.F) {
 	const header = "apiVersion: orkstack/v1\nkind: ActivityInterface\n"
 	for _, seed := range []string{
@@ -344,11 +346,19 @@ func FuzzParseActivityDocument(f *testing.F) {
 		header + "description: |\n  one\n  two\n",
 		header + "fields:\n  a:\n    type: string\n",
 		header, "", "- a\n",
+		header + "---\n" + header, header + "---\nfields: [unclosed\n", header + "---\n\tname: a\n", header + "---\n", header + "...\nname: b\n",
 	} {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, source string) {
 		decl, err := dsl.ParseActivityDocument([]byte(source))
+		if line, found := dsl.SecondDocumentLine([]byte(source)); found && len(source) <= dsl.MaxInterfaceDocumentBytes {
+			want := fmt.Sprintf("line %d: %s", line, dsl.SecondDocumentMessage("activity interface"))
+			if err == nil || err.Error() != want {
+				t.Fatalf("ParseActivityDocument(%q) with a second document on line %d = %v, want %q", source, line, err, want)
+			}
+			return
+		}
 		if err != nil {
 			if decl != nil || err.Error() == "" {
 				t.Fatalf("ParseActivityDocument refused %q as %v with %+v", source, err, decl)

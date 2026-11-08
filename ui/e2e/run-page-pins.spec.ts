@@ -26,6 +26,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
+import { selectTask } from './uiHelpers';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('run-page-pins');
@@ -264,11 +265,12 @@ test('a pinned task states its pin and its orker, and one pin means one orker', 
 	expect(readOrker?.trim()).toBe(writeOrker?.trim());
 	note(`pin build held on ${writeOrker?.trim()}`);
 
-	// 3. The unpinned task shows NO pin and STILL shows its Orker: orker_id is
-	//    populated for every task that reached one, so its presence is not
-	//    evidence of a pin and its absence would mean the task never arrived.
+	// 3. The unpinned task shows NO pin, and its row stays minimal: orker_id is
+	//    populated for every task that reached one, and its panel says it.
 	await expect(page.getByTestId('task-checksum-pin')).toHaveCount(0);
-	await expect(page.getByTestId('task-checksum-orker')).toHaveText(/Orker \S+/);
+	await expect(page.getByTestId('task-checksum-orker')).toHaveCount(0);
+	await selectTask(page, 'checksum');
+	await expect(page.getByTestId('task-checksum-card-orker')).not.toBeEmpty();
 	await expect(page.getByTestId('task-checksum')).not.toContainText('Pin ');
 
 	// 4. GROUPING. The members of one pin carry one accent; the task in the

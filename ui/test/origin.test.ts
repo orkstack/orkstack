@@ -5,7 +5,8 @@ import {
 	originKindSlug,
 	originLabel,
 	originLinkPath,
-	originReferenceURL
+	originReferenceURL,
+	originRootRunPath
 } from '../src/lib/origin';
 import { FilterOperator, specFor } from '../src/lib/listFilter';
 import { ListRunsRequestSchema } from '../src/lib/gen/orkstack/v1/run_service_pb';
@@ -53,6 +54,18 @@ test('an origin links to the Triggers or Schedules tab or to the source run', ()
 		'/orkflows/deploy?tab=schedules'
 	);
 	expect(originLinkPath(create(RunOriginSchema, { kind: RunOriginKind.SUBMIT }), 'deploy')).toBeNull();
+});
+
+test('the root run links only when it is not the parent the row already links', () => {
+	const child = (id: string, rootRunId: string) =>
+		create(RunOriginSchema, { kind: RunOriginKind.PARENT_RUN, id, rootRunId });
+	expect(originRootRunPath(child('ork-mid', 'ork-root'))).toBe('/runs/ork-root');
+	expect(originRootRunPath(child('ork-root', 'ork-root'))).toBeNull();
+	// A child recorded before the field, a top-level run, and no origin at all.
+	expect(originRootRunPath(child('ork-mid', ''))).toBeNull();
+	expect(originRootRunPath(create(RunOriginSchema, { kind: RunOriginKind.SUBMIT }))).toBeNull();
+	expect(originRootRunPath(undefined)).toBeNull();
+	expect(originRootRunPath(child('ork-mid', 'ork/a b'))).toBe('/runs/ork%2Fa%20b');
 });
 
 test('the runs list filters by origin kind, and by origin id only within a kind', () => {

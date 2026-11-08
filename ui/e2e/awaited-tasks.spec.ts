@@ -1,6 +1,6 @@
 import { inspectTask, selectTask } from './uiHelpers';
 import { expect, test, type Page } from './test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	bin,
@@ -217,6 +217,8 @@ test('an awaiting task shows its deadline and resolves from the run page', async
 	// applied outcome once the stream says so.
 	await expect(page.getByTestId('task-approval-status')).toHaveText('Succeeded', { timeout: 60_000 });
 	await expect(page.getByTestId('task-approval-await-state')).toHaveText(/^Completed via api/);
+	// What it was resolved with is on the panel, as a rejection's reason is.
+	await expect(page.getByTestId('task-approval-values')).toContainText('"approver": "e2e-operator"', { timeout: 30_000 });
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await inspectTask(page, 'apply');
 	await expect(page.getByTestId('task-values-apply')).toContainText('e2e-operator', { timeout: 60_000 });
@@ -252,8 +254,142 @@ test('a callback posted over HTTP resolves the await', async ({ page, request })
 	await expect(page.getByTestId('task-approval-await-state')).toHaveText('Completed via callback by ci-bot', {
 		timeout: 30_000
 	});
+	await expect(page.getByTestId('task-approval-values')).toContainText('"approver": "ci-bot"', { timeout: 30_000 });
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
 	await shot(page, 'screenshot-callback-resolved.png');
+});
+
+// The maintainer's case: the approval-gate example, resolved with these values.
+test('resolved values: the approval-gate example shows what it was resolved with', async ({ page }) => {
+	for (const name of ['notify-block', 'approval-gate']) {
+		await rpc('OrkflowService/ApplyOrkflow', { yaml: readFileSync(path.join(uiDir, '..', 'examples', `${name}.ork.yaml`), 'utf8'), namespace: NS });
+	}
+	const started = await rpc<{ run: { id: string } }>('RunService/SubmitRun', {
+		namespace: NS,
+		orkflowName: 'approval-gate',
+		input: { data: { changes: [{ service: 'payments', setting: 'limit', value: '10' }], notify_url: 'http://127.0.0.1:9/post' } }
+	});
+	await page.goto(`${UI}/runs/${started.run.id}?ns=${NS}`);
+	await waitAwaiting(page);
+	await page.getByTestId('task-approval-resolve').click();
+	await page.getByTestId('declared-input-approved').check();
+	await page.getByTestId('declared-input-approver').fill('me');
+	await page.getByTestId('await-resolve-submit').click();
+	await expect(page.getByTestId('task-approval-status')).toHaveText('Succeeded', { timeout: 60_000 });
+	await expect(page.getByTestId('task-approval-values')).toContainText('"approved": true', { timeout: 30_000 });
+	await expect(page.getByTestId('task-approval-values')).toContainText('"approver": "me"');
+	await shot(page, 'screenshot-approval-gate-values.png');
+	await rpc('RunService/CancelRun', { namespace: NS, runId: started.run.id, reason: 'seen' }).catch(() => undefined);
+});
+
+// One await for each shape of value, between two rows that must not move.
+const SHAPES = 'value-shapes';
+function shapesWorkflow(): string {
+	const gate = (id: string) => [`  - id: ${id}`, '    await:', '      timeout_seconds: 3600'].join('\n');
+	return [
+		'apiVersion: orkstack/v1',
+		'kind: Orkflow',
+		`name: ${SHAPES}`,
+		'version: "0.1.0"',
+		'tasks:',
+		gate('short'),
+		gate('long'),
+		gate('deep'),
+		gate('deepest'),
+		gate('big'),
+		gate('after'),
+		''
+	].join('\n');
+}
+const deepValue = (): unknown => {
+	let value: unknown = 'bottom';
+	for (let i = 0; i < 300; i++) value = { d: value };
+	return value;
+};
+const HOSTILE = '<img src=x onerror="window.__hit=1">\u0007\u001b[31mred';
+
+test('resolved values: a long one stays closed until opened, reads as plain text, and moves nothing around it', async ({ page }) => {
+	test.setTimeout(5 * 60_000);
+	await rpc('OrkflowService/ApplyOrkflow', { yaml: shapesWorkflow(), namespace: NS });
+	const { run } = await rpc<{ run: { id: string } }>('RunService/SubmitRun', { namespace: NS, orkflowName: SHAPES });
+	const resolve = async (taskId: string, values: unknown) =>
+		await expect(async () => {
+			await rpc('RunService/ResolveAwait', { namespace: NS, runId: run.id, taskId, valuesJson: JSON.stringify(values) });
+		}).toPass({ timeout: 60_000 });
+	await resolve('short', { approver: 'me', approved: true });
+	await resolve('long', { note: 'x'.repeat(500), hostile: HOSTILE });
+	await resolve('deep', deepValue());
+	// As deep as 4 KiB of inline JSON can be: arrays, the shortest level there is.
+	await resolve('deepest', JSON.parse(`{"a":${'['.repeat(2000)}${']'.repeat(2000)}}`));
+	// Past the 4 KiB a run carries inline, so read by reference, on request; then past what a panel shows.
+	await resolve('big', { blob: 'y'.repeat(200 * 1024) });
+
+	for (const [width, height] of [[1280, 800], [2560, 1440]] as const) {
+		await page.setViewportSize({ width, height });
+		await page.goto(`${UI}/runs/${run.id}?ns=${NS}`);
+		await expect(page.getByTestId('task-big-status')).toHaveText('Succeeded', { timeout: 60_000 });
+
+		// A short one sits in the flow, whole, with nothing to open.
+		await selectTask(page, 'short');
+		const short = page.getByTestId('task-short-values');
+		await expect(short).toContainText('{"approved": true, "approver": "me"}');
+		await expect(short.locator('summary')).toHaveCount(0);
+		const shortHeight = (await short.boundingBox())!.height;
+
+		// A long one is closed: its text is not on the page, and the section is the same height.
+		await selectTask(page, 'long');
+		const long = page.getByTestId('task-long-values');
+		const toggle = page.getByTestId('task-long-values-more');
+		await expect(toggle).toBeVisible();
+		await expect(page.getByTestId('task-long-values-full')).toBeHidden();
+		expect(Math.abs((await long.boundingBox())!.height - shortHeight)).toBeLessThanOrEqual(1);
+
+		// Opening moves only what is below it, and closing puts that back.
+		const above = page.getByTestId('task-short');
+		const below = page.getByTestId('task-after');
+		// On the page, not the window: taking a picture scrolls it.
+		const y = async (l: typeof above) => l.evaluate((el) => el.getBoundingClientRect().top + globalThis.scrollY);
+		const [aboveAt, belowAt] = [await y(above), await y(below)];
+		await toggle.click();
+		const full = page.getByTestId('task-long-values-full');
+		await expect(full).toBeVisible();
+		expect(await y(above)).toBe(aboveAt);
+		expect((await full.boundingBox())!.height).toBeLessThanOrEqual(241);
+		await expect(full).toContainText('<img src=x');
+		await expect(long.locator('img')).toHaveCount(0);
+		expect(await page.evaluate(() => (window as unknown as { __hit?: number }).__hit)).toBeUndefined();
+		for (const theme of ['light', 'dark'] as const) {
+			await page.emulateMedia({ colorScheme: theme });
+			await page.getByTestId('task-panel').screenshot({ path: out(`screenshot-values-long-${width}-${theme}.png`) });
+		}
+		await page.emulateMedia({ colorScheme: 'light' });
+		await toggle.click();
+		await expect(full).toBeHidden();
+		expect(await y(below)).toBe(belowAt);
+
+		// Deep JSON opens without trouble.
+		await selectTask(page, 'deep');
+		await page.getByTestId('task-deep-values-more').click();
+		await expect(page.getByTestId('task-deep-values-full')).toContainText('"bottom"');
+		await selectTask(page, 'deepest');
+		await page.getByTestId('task-deepest-values-more').click();
+		await expect(page.getByTestId('task-deepest-values-full')).toContainText('[');
+
+		// A very large one asks for its bytes only when opened, and shows a bounded part of them.
+		await selectTask(page, 'big');
+		const read = page.waitForRequest((r) => r.url().includes('RunService/ReadArtifact'));
+		await expect(page.getByTestId('task-big-values-more')).toContainText('KiB');
+		await page.getByTestId('task-big-values-more').click();
+		await read;
+		const bigFull = page.getByTestId('task-big-values-full');
+		await expect(bigFull).toContainText('yyyy');
+		expect(((await bigFull.textContent()) ?? '').length).toBeLessThanOrEqual(64 * 1024 + 1);
+		await expect(page.getByTestId('task-big-values-cut')).toContainText('first 64 KiB');
+		expect((await bigFull.boundingBox())!.height).toBeLessThanOrEqual(241);
+		await page.getByTestId('task-panel').screenshot({ path: out(`screenshot-values-big-${width}.png`) });
+	}
+	await page.emulateMedia({ colorScheme: 'light' });
+	await rpc('RunService/ResolveAwait', { namespace: NS, runId: run.id, taskId: 'after', valuesJson: '{}' });
 });
 
 // A link clicked in the instant the run's await resolves still navigates. The

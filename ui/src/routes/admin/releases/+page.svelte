@@ -9,6 +9,7 @@
 	// read's blockers, so a decision is made on what is true now, and the
 	// write carries that read's revision: a routing that changed in between
 	// is refused by the engine, and the refusal is shown in the dialog.
+	import VersionText from '#lib/components/VersionText.svelte';
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
@@ -20,7 +21,7 @@
 	import { listHref } from '#lib/browsing.ts';
 	import { errorMessage } from '#lib/client.ts';
 	import { systemClient } from '#lib/clients/system.ts';
-	import { FilterOperator, filterOf, type FieldFilter } from '#lib/listFilter.ts';
+	import { FilterOperator, filterFlags, filterOf, type FieldFilter } from '#lib/listFilter.ts';
 	import { ListReleasesRequestSchema, ReleaseRole, type ListReleasesResponse, type Release } from '#lib/gen/orkstack/v1/system_service_pb.ts';
 	import { withNamespace } from '#lib/namespace.ts';
 	import {
@@ -199,11 +200,19 @@
 	function drainCommand(orker: string): string {
 		return `orkctl orker drain ${shellQuote(orker)}`;
 	}
+
+	// The page's commands; a previous release's wait is how its processes may stop.
+	const cli = $derived([
+		{ label: 'The releases', command: ['orkctl', 'release', 'status', ...filterFlags(data.applied)].join(' ') },
+		...(resp?.releases ?? [])
+			.filter((release) => release.role === ReleaseRole.PREVIOUS)
+			.map((release) => ({ label: `Wait for ${release.buildId} to drain`, command: `orkctl release wait ${shellQuote(release.buildId)}` }))
+	]);
 </script>
 
 <svelte:head><title>Admin — Releases — OrkStack</title></svelte:head>
 
-<SheetHeader title="Releases">
+<SheetHeader title="Releases" commands={cli}>
 	{#snippet meta()}
 		<span class="figure text-xs text-ink-muted" data-testid="releases-observed-at"
 			>observed at {fmtTimestamp(resp?.observedAt)}</span
@@ -213,7 +222,6 @@
 		<button type="button" data-testid="releases-refresh" disabled={busy} onclick={() => void refresh()} class="btn">
 			{busy ? 'Refreshing…' : 'Refresh'}
 		</button>
-		<CliEquivalent command="orkctl release status" testid="releases-cli-status" />
 	{/snippet}
 </SheetHeader>
 
@@ -233,7 +241,7 @@
 	</p>
 {/if}
 
-<ListFilter request={ListReleasesRequestSchema} applied={data.applied} testid="releases" command={['orkctl', 'release', 'status']} onapply={applyFilters} {clearHref} />
+<div class="mb-3"><ListFilter request={ListReleasesRequestSchema} applied={data.applied} testid="releases" onapply={applyFilters} {clearHref} /></div>
 
 {#if data.releasesError}
 	<ErrorPanel
@@ -327,7 +335,7 @@
 									<CliEquivalent command={releaseCommand('rollback', build)} testid="release-cli-rollback-{build}" />
 								{/if}
 								{#if canRamp(release)}
-									<button type="button" class={actionClass} data-testid="release-ramp-{build}" onclick={() => void openDialog('ramp', build)}>Ramp…</button>
+									<button type="button" class={actionClass} data-testid="release-ramp-{build}" onclick={() => void openDialog('ramp', build)}>Ramp</button>
 									<CliEquivalent command={releaseCommand('ramp', build, 10)} testid="release-cli-ramp-{build}" />
 								{/if}
 								{#if release.role === ReleaseRole.RAMPING}
@@ -384,7 +392,7 @@
 																data-testid="release-run-{build}-{run.id}">{run.id}</a
 															>
 															<span class="text-ink-secondary"
-																>{run.namespace || 'default'}/{run.orkflowName}@{run.orkflowVersion}</span
+																>{run.namespace || 'default'}/{run.orkflowName}@<VersionText version={run.orkflowVersion} /></span
 															>
 														</li>
 													{/each}

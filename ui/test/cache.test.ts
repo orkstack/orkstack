@@ -59,6 +59,7 @@ test('missReasonSentence covers every token and a token it has never heard of', 
 	expect(missReasonSentence('MEMO_ABSENT')).toContain('No memo exists');
 	expect(missReasonSentence('FROM_THE_FUTURE', 'the orker said so')).toBe('the orker said so');
 	expect(missReasonSentence('FROM_THE_FUTURE')).toContain('FROM_THE_FUTURE');
+	expect(missReasonSentence('')).toBe('The task ran: no usable memo (the engine recorded no reason).');
 });
 
 test('cacheSourceHref keeps the namespace and escapes the id', () => {
@@ -178,6 +179,9 @@ test('attemptCacheLine and keyComponentRows', () => {
 	).toBe('cache hit from ork-1');
 	expect(attemptCacheLine(create(CacheResultSchema, { outcome: CacheOutcome.MISS, missReason: 'MEMO_EXPIRED' }))).toBe(
 		'cache miss: MEMO_EXPIRED'
+	);
+	expect(attemptCacheLine(create(CacheResultSchema, { outcome: CacheOutcome.MISS }))).toBe(
+		'cache miss: the engine recorded no reason'
 	);
 	expect(attemptCacheLine(create(CacheResultSchema, { outcome: CacheOutcome.BYPASSED }))).toBe('cache bypassed');
 	expect(attemptCacheLine(undefined)).toBe('');

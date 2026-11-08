@@ -300,8 +300,9 @@ func (d *OCIDispatcher) probeContainerSpec(ws *Workspace, taskID string, command
 
 // removeProbeContainer removes one of the boot probe's containers, on a
 // context of its own, as a task's container is removed. A removal that fails
-// is reported, not fatal: what the probe found stands, and the container is
-// labelled for the next boot under this Orker's identity to reap.
+// is reported, not fatal: what the probe found stands, the Orker tries again
+// while it runs, and the container is labelled for the next boot under this
+// Orker's identity to reap.
 func (d *OCIDispatcher) removeProbeContainer(ctx context.Context, id ContainerID) {
 	if err := d.Runtime.Remove(context.WithoutCancel(ctx), id); err != nil {
 		d.warnProbeLeftovers([]ProbeLeftover{{Container: id, Err: err}})
@@ -309,12 +310,14 @@ func (d *OCIDispatcher) removeProbeContainer(ctx context.Context, id ContainerID
 }
 
 // warnProbeLeftovers logs each of the probe's containers that could not be
-// removed, by name: the container an operator looks for.
+// removed, by name, which is the container an operator looks for, and owes its
+// removal.
 func (d *OCIDispatcher) warnProbeLeftovers(leftovers []ProbeLeftover) {
 	for _, left := range leftovers {
-		d.logger().Warn("boot probe: a container of the probe could not be removed and may remain "+
-			"until the next boot under this Orker's identity reaps it",
+		d.logger().Warn("boot probe: a container of the probe could not be removed; it is tried again "+
+			"while this Orker runs, and the next boot under its identity reaps it",
 			"container", left.Container, "error", left.Err)
+		d.unremoved.owe(left.Container, time.Time{})
 	}
 }
 

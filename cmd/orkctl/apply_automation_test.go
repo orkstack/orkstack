@@ -370,6 +370,29 @@ func TestApply_DryRunWritesNothing(t *testing.T) {
 	}
 }
 
+// TestApply_AnUnpinnedDocumentIsNewUntilItsContentIsApplied: validation names no
+// version for content never applied, which must plan as new rather than read the
+// empty version as "the current one" and report a conflict with it; applying it
+// makes the same file unchanged, and an edit is new again.
+func TestApply_AnUnpinnedDocumentIsNewUntilItsContentIsApplied(t *testing.T) {
+	a := newAutomationFixture(t)
+	source := "apiVersion: orkstack/v1\nkind: Orkflow\nname: unpinned-doc\ntasks:\n  - id: one\n    uses: shell\n"
+	dir := filepath.Join(a.dir, "unpinned")
+	path := a.write(t, "unpinned/doc.ork.yaml", source)
+
+	a.run("apply", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "new version")
+	a.run("apply", path).requireExit(t, exitOK)
+	mark := len(a.requests())
+	a.run("apply", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "unchanged")
+	a.run("apply", dir).requireExit(t, exitOK)
+	if writes := a.writes(mark); len(writes) != 0 {
+		t.Fatalf("re-applying an unchanged directory wrote: %v", writes)
+	}
+
+	a.write(t, "unpinned/doc.ork.yaml", source+"# an edit\n")
+	a.run("apply", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "new version")
+}
+
 func TestApply_RefusesBeforeAnyWrite(t *testing.T) {
 	cases := map[string]func(t *testing.T, a *automationFixture) []string{
 		"conflicting orkflow": func(t *testing.T, a *automationFixture) []string {

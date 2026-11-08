@@ -9,7 +9,7 @@ These settings choose where artifacts, the run archive and task logs are kept, a
 | [`storage.backend`](/docs/configuration/#storage-backend) | Set `s3` for any replicated deployment. The default `local` is one directory per process. |
 | [`storage.s3.endpoint`](/docs/configuration/#storage-s3-endpoint) | The S3-compatible endpoint. `ork` needs it whatever the backend is, because it reads definitions from the bucket. |
 | [`storage.s3.bucket`](/docs/configuration/#storage-s3-bucket) | The one bucket that holds definitions, artifacts, archived runs and task logs. |
-| [`storage.s3.secret_key`](/docs/configuration/#storage-s3-secret-key) | Replace the development credentials with your own. A `file:` mapping keeps it out of the document. |
+| [`storage.s3.secret_key`](/docs/configuration/#storage-s3-secret-key) | Set with `access_key`, or leave both unset to use an instance or pod role. A `file:` mapping keeps it out of the document. |
 | [`storage.s3.path_style`](/docs/configuration/#storage-s3-path-style) | Keep `true` for the development store. Set `false` for AWS S3. |
 
 ## Every storage setting

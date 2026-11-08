@@ -74,7 +74,7 @@ Running the published images is set out in [DEPLOY.md](./DEPLOY.md),
 
 ## Orkflow versions
 
-An Orkflow version is immutable. Applying an edit creates a new version, and applying an unchanged file writes nothing ([DSL.md](./DSL.md), "`version`"). A run pins the version it started with and the definition digest that version carries ([AGENTS.md](../AGENTS.md) §2.2), so it finishes on the definition it began with.
+An Orkflow version is immutable. Applying an edit creates a new version, and applying an unchanged file writes nothing ([DSL.md](./DSL.md), "`version`"). That holds across this release's change to assigned versions: a document stored under its sha256 hash stays that version, and its next edit lands a UUIDv7 beside it. During a rolling upgrade, while a replica of the older release runs beside a new one, one unpinned document applied to both can be stored twice: under its hash by the old replica and under a UUIDv7 by the new one, with the head on whichever landed last. Both are valid, and nothing needs repairing. Rolled back to a release that derives hashes, a document first applied under a UUIDv7 is given a hash version the next time it is applied; the versions it has remain, and nothing is rewritten. A run pins the version it started with and the definition digest that version carries ([AGENTS.md](../AGENTS.md) §2.2), so it finishes on the definition it began with.
 
 The current pointer is the only thing that moves what starts. Until someone promotes an Orkflow, it runs its most recently applied version. Promoting moves the pointer for new runs only, and applying a new version does not move it ([DSL.md](./DSL.md), "Which version runs").
 
@@ -176,7 +176,7 @@ What an older release does with each construct, from the same reference:
 | `await:` | Treats the await as a container task and fails it. The failure is explicit |
 | `each:` | Runs the node once as a plain task, staging no items for its dependants. Silent unless `with:` reads `.each`, which fails the task |
 | `uses: orkflow:` | Cannot decode the start, so the run waits for a newer worker, which under a pinned run may never come. A composed task that reaches an older Orker fails `IMAGE_NOT_PINNED` |
-| `outputs:` | Returns the leaf aggregation instead of the declared outputs. Silent |
+| `outputs:` | Returns the values of the tasks no other task needs instead of the declared outputs. Silent |
 | `join:` | Runs every task as `all_succeeded`. A failure handler that uses `any_failed` then runs after its needs succeeded. Silent and destructive |
 | `cache:` | Runs every task uncached. Memos left behind are inert |
 | schedules | Cannot fire. Pause or delete every schedule first with `orkctl schedule pause` or `orkctl schedule delete` |
@@ -332,7 +332,7 @@ Connect 1.21 codes four failures differently:
 | A stream that ends cleanly partway through a message | `internal` | `invalid_argument` |
 | An engine's write to a client that has gone away | `canceled` | `unknown` |
 
-Such an end is still `unavailable` before any response and `unknown` inside a message. `orkctl run watch` and `orkctl run inspect --watch` resume on a `canceled` they did not cause as on `unavailable`, so a watch whose stream is reset partway through now resumes where it used to stop. A Ctrl-C still ends them, and so does a connection that ends partway through a stream (`internal` or `unknown`). Other `orkctl` commands print the new code for the same failure, with the same exit status. None of the four reaches an audit record, and no OrkStack metric carries a Connect code.
+Such an end is still `unavailable` before any response and `unknown` inside a message. `orkctl run watch` and `orkctl run inspect --watch` resume on a `canceled` they did not cause as on `unavailable`, so a watch whose stream is reset partway through now resumes where it used to stop. A Ctrl-C still ends them. A connection that ends partway through a stream (`internal` or `unknown`) ended them too before v0.3.0, which resumes it. Other `orkctl` commands print the new code for the same failure, with the same exit status. None of the four reaches an audit record, and no OrkStack metric carries a Connect code.
 
 ### The examples
 

@@ -143,22 +143,22 @@ func TestCanonicalOrkflow_OutputsAndOrkflowEmittedOnlyWhenSet(t *testing.T) {
 	}
 }
 
-func TestDerivedVersion_CoversTheChildDigest(t *testing.T) {
+func TestContentHash_CoversTheChildDigest(t *testing.T) {
 	source := []byte("name: x\n")
 	composed := composedGolden(t)
-	a, err := DerivedVersion(source, composed)
+	a, err := ContentHash(source, composed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	moved := proto.Clone(composed).(*orkstackv1.Orkflow)
 	moved.Tasks[len(moved.Tasks)-1].Orkflow.DefinitionDigest = "sha256:bbb"
-	b, _ := DerivedVersion(source, moved)
+	b, _ := ContentHash(source, moved)
 	if a == b {
 		t.Fatal("the derived version did not cover the child digest")
 	}
 }
 
-func TestDerivedVersion_UnchangedWithoutComposedTasks(t *testing.T) {
+func TestContentHash_UnchangedWithoutComposedTasks(t *testing.T) {
 	wf := goldenOrkflow(t)
 	images, err := canonicalImages(wf)
 	if err != nil {

@@ -157,6 +157,7 @@ func TestAttemptRecords_OneRecordPerAttemptOfARetriedTask(t *testing.T) {
 	env.SetTestTimeout(60 * time.Second)
 	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
 	env.RegisterWorkflow(attemptProbeWorkflow)
+	dispatcher.heartbeaters = sdkRouteHeartbeater
 	env.RegisterActivityWithOptions(dispatcher.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
 
 	env.ExecuteWorkflow(attemptProbeWorkflow, in)

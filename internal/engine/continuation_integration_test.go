@@ -39,6 +39,7 @@ type canStack struct {
 	t          *testing.T
 	ctx        context.Context
 	client     client.Client
+	namespace  string
 	runQueue   string
 	orkerQueue string
 	deployment task.Deployment
@@ -62,11 +63,14 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	var c client.Client
+	var namespace string
 	if versioned {
-		c = dialVersioningCluster(t, ctx, versioningNamespace())
+		namespace = versioningNamespace()
+		c = dialVersioningCluster(t, ctx, namespace)
 	} else {
 		address := temporalAddress()
-		c = dialRoutingCluster(t, ctx, address, routingNamespace())
+		namespace = routingNamespace()
+		c = dialRoutingCluster(t, ctx, address, namespace)
 	}
 	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
 	if err != nil {
@@ -74,7 +78,7 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 	}
 	suffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	s := &canStack{
-		t: t, ctx: ctx, client: c,
+		t: t, ctx: ctx, client: c, namespace: namespace,
 		runQueue:   "ork-" + label + "-run-" + suffix,
 		orkerQueue: "ork-" + label + "-tasks-" + suffix,
 		snapshots:  snapshots,

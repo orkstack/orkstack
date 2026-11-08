@@ -31,8 +31,8 @@ import {
 //
 //   sheets   each of the twelve pages under /admin is one sheet: its link
 //            in the sidebar's Operate group current, one h1 in the page's
-//            head, the breadcrumb naming it, the scope said once as a NOTE,
-//            and the overview's index naming how far the page reaches;
+//            head, the breadcrumb naming it, the scope said once as a NOTE;
+//            the overview is this deployment's facts and no list of pages;
 //   drawer   at 390 px the Operate group scrolls inside the sidebar drawer's
 //            own frame — never the page — and the page you are on is the
 //            current link in it;
@@ -81,25 +81,25 @@ const flow = () =>
 	].join('\n');
 
 /**
- * Each Operate page: its sidebar id, path, h1, the testid that says it has rendered, the
- * breadcrumb's last crumb, and its scope (the overview index's Scope column).
+ * Each Operate page: its sidebar id, path, h1, the testid that says it has rendered, and the
+ * breadcrumb's last crumb.
  */
-const SHEETS: { id: string; path: string; h1: string; ready: string; crumb: string; scope: string }[] = [
-	{ id: 'overview', path: '/admin', h1: 'Operate', ready: 'system-info', crumb: 'Overview', scope: 'Deployment-wide' },
-	{ id: 'namespaces', path: '/admin/namespaces', h1: 'Namespaces', ready: 'namespace-list', crumb: 'Namespaces', scope: 'Deployment-wide' },
-	{ id: 'pools', path: '/admin/pools', h1: 'Pools', ready: 'pool-list', crumb: 'Pools', scope: 'This namespace' },
-	{ id: 'releases', path: '/admin/releases', h1: 'Releases', ready: 'releases-scope', crumb: 'Releases', scope: 'Deployment-wide' },
-	{ id: 'activities', path: '/admin/activities', h1: 'Activities', ready: 'activity-list', crumb: 'Activities', scope: 'Deployment-wide' },
-	{ id: 'webhooks', path: '/admin/webhooks', h1: 'Webhooks', ready: 'webhook-list', crumb: 'Webhooks', scope: 'Deployment-wide' },
-	{ id: 'automation', path: '/admin/automation', h1: 'Automation', ready: 'automation-yaml', crumb: 'Automation', scope: 'This namespace' },
-	{ id: 'retention', path: '/admin/retention', h1: 'Maximum run retention', ready: 'retention-info', crumb: 'Retention', scope: 'Deployment-wide' },
-	{ id: 'usage', path: '/admin/usage', h1: 'Usage', ready: 'usage-table', crumb: 'Usage', scope: 'Deployment-wide' },
-	{ id: 'cache', path: '/admin/cache', h1: 'Cache', ready: 'cache-window', crumb: 'Cache', scope: 'This namespace' },
-	{ id: 'image-policy', path: '/admin/image-policy', h1: 'Image policy', ready: 'image-policy-info', crumb: 'Image policy', scope: 'Deployment-wide' },
-	{ id: 'audit', path: '/admin/audit', h1: 'Audit', ready: 'audit-table', crumb: 'Audit', scope: 'All namespaces' }
+const SHEETS: { id: string; path: string; h1: string; ready: string; crumb: string }[] = [
+	{ id: 'overview', path: '/admin', h1: 'Operate', ready: 'system-info', crumb: 'Overview' },
+	{ id: 'namespaces', path: '/admin/namespaces', h1: 'Namespaces', ready: 'namespace-list', crumb: 'Namespaces' },
+	{ id: 'pools', path: '/admin/pools', h1: 'Pools', ready: 'pool-list', crumb: 'Pools' },
+	{ id: 'releases', path: '/admin/releases', h1: 'Releases', ready: 'releases-scope', crumb: 'Releases' },
+	{ id: 'activities', path: '/admin/activities', h1: 'Activities', ready: 'activity-list', crumb: 'Activities' },
+	{ id: 'webhooks', path: '/admin/webhooks', h1: 'Webhooks', ready: 'webhook-list', crumb: 'Webhooks' },
+	{ id: 'automation', path: '/admin/automation', h1: 'Automation', ready: 'automation-yaml', crumb: 'Automation' },
+	{ id: 'retention', path: '/admin/retention', h1: 'Maximum run retention', ready: 'retention-info', crumb: 'Retention' },
+	{ id: 'usage', path: '/admin/usage', h1: 'Usage', ready: 'usage-table', crumb: 'Usage' },
+	{ id: 'cache', path: '/admin/cache', h1: 'Cache', ready: 'cache-window', crumb: 'Cache' },
+	{ id: 'image-policy', path: '/admin/image-policy', h1: 'Image policy', ready: 'image-policy-info', crumb: 'Image policy' },
+	{ id: 'audit', path: '/admin/audit', h1: 'Audit', ready: 'audit-table', crumb: 'Audit' }
 ];
 
-/** The scope NOTE each page says its reach in (the overview has none: it is an index). */
+/** The scope NOTE each page says its reach in (the overview has none: it is one strip of facts). */
 const SCOPE_NOTES: Record<string, string> = {
 	namespaces: 'namespaces-scope-caption',
 	pools: 'pools-scope-caption',
@@ -180,7 +180,7 @@ async function tokenColor(page: Page, token: string): Promise<string> {
 }
 
 async function axe(page: Page, label: string): Promise<void> {
-	const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa', 'wcag22aa']).analyze();
+	const result = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']).analyze();
 	const found = result.violations.map((v) => `${v.id} (${v.nodes.length}: ${v.nodes.slice(0, 3).map((n) => n.target.join(' ')).join(', ')})`);
 	note(`axe ${label}: ${found.length} violation(s)${found.length ? ' — ' + found.join('; ') : ''}`);
 	expect(found).toEqual([]);
@@ -212,7 +212,7 @@ async function pastRightEdge(page: Page): Promise<string[]> {
 	});
 }
 
-test('sheets: every Operate page is one sheet — its link current, one h1, its crumb, its scope said once and in the overview index', async ({ page }) => {
+test('sheets: every Operate page is one sheet — its link current, one h1, its crumb, its scope said once; the overview is the facts of this deployment', async ({ page }) => {
 	for (const sheet of SHEETS) {
 		await page.goto(url(sheet.path));
 		await expect(page.getByTestId(sheet.ready)).toBeVisible();
@@ -242,16 +242,21 @@ test('sheets: every Operate page is one sheet — its link current, one h1, its 
 		if (sheet.id !== 'overview') await expect(page.getByTestId('breadcrumb').getByRole('link', { name: 'Operate', exact: true })).toBeVisible();
 		note(`sheet ${sheet.path}: h1 "${sheet.h1}", link ${sheet.id === 'overview' ? 'nav-admin' : `admin-tab-${sheet.id}`} current, crumb ${sheet.crumb}${scopeNote ? `, NOTE ${scopeNote}` : ''}`);
 	}
-	// The overview indexes the other eleven, one link each, with what each governs and its reach
-	// (the title block's SCOPE cell is gone: the Scope column is where a page's reach is stated).
+	// The overview is this deployment's facts, one strip, and repeats none of the sidebar's links.
 	await page.goto(url('/admin'));
-	const rows = page.getByTestId('operate-index').locator('tbody tr');
-	await expect(rows).toHaveCount(11);
-	for (const row of await rows.all()) await expect(row.getByRole('link')).toHaveCount(1);
-	for (const sheet of SHEETS.filter((s) => s.id !== 'overview')) {
-		await expect(rows.filter({ has: page.getByTestId(`admin-card-${sheet.id}`) })).toContainText(sheet.scope);
-	}
-	await expect(page.getByTestId('admin-card-cache')).toHaveAttribute('href', '/admin/cache?ns=default');
+	await expect(page.getByTestId('operate-index')).toHaveCount(0);
+	await expect(page.getByTestId('system-info').locator('dl.fstrip dt')).toHaveText([
+		'Engine version',
+		'Go version',
+		'Deployment',
+		'Versioning',
+		'Artifacts',
+		'Temporal address',
+		'Server time'
+	]);
+	await expect(page.locator('main#content').getByRole('link')).toHaveCount(0);
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await page.getByTestId('system-info').screenshot({ path: out('screenshot-overview-1280.png') });
 });
 
 test('drawer: at 390 px the Operate group scrolls inside the sidebar drawer, never the page, and the current page is its current link', async ({ page }) => {
@@ -289,14 +294,16 @@ test('namespaces: a held namespace is red attention in the register, and its bud
 	const redTint = await tokenColor(page, '--color-red-tint');
 	const ground = await row.evaluate((el) => getComputedStyle(el).backgroundColor);
 	expect(ground).toBe(redTint);
+	const holdText = await hold.textContent();
+	const accepting = page.getByTestId('namespace-row-default');
+	await expect(accepting).toHaveAttribute('data-held', 'false');
+	expect(await accepting.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(redTint);
+	await page.goto(url(`/admin/namespaces/${HELD}`));
 	const budget = page.getByTestId(`namespace-budget-${HELD}`);
 	const face = await budget.evaluate((el) => ({ family: getComputedStyle(el).fontFamily, numeric: getComputedStyle(el).fontVariantNumeric }));
 	expect(face.family).toContain('JetBrains Mono');
 	expect(face.numeric).toContain('tabular-nums');
-	const accepting = page.getByTestId('namespace-row-default');
-	await expect(accepting).toHaveAttribute('data-held', 'false');
-	expect(await accepting.evaluate((el) => getComputedStyle(el).backgroundColor)).not.toBe(redTint);
-	note(`namespaces: ${HELD} held on ${ground} (the red tint), hold "${await hold.textContent()}", budget "${(await budget.textContent())?.trim()}" in ${face.family.split(',')[0]}`);
+	note(`namespaces: ${HELD} held on ${ground} (the red tint), hold "${holdText}", budget "${(await budget.textContent())?.trim()}" in ${face.family.split(',')[0]}`);
 });
 
 test('screens: every Operate page in both themes, at 1440 and 390 px, with axe', async ({ page }) => {

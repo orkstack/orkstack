@@ -13,7 +13,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
-	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // The bucket sweep.
@@ -275,7 +274,7 @@ func (r *runner) sweepBuckets(ctx context.Context, remove func(context.Context, 
 var bucketRemover = s3Remover
 
 // s3Remover removes buckets from the object store the environment names
-// (artifacts.ConfigFromEnv, the one the test processes used). The client is
+// (s3bucket.DevConfig, the one the test processes used). The client is
 // made on the first removal, so a run with nothing to sweep never reaches for
 // the store.
 func s3Remover() func(context.Context, string) error {
@@ -285,7 +284,7 @@ func s3Remover() func(context.Context, string) error {
 		err    error
 	)
 	return func(ctx context.Context, bucket string) error {
-		once.Do(func() { client, err = s3bucket.Client(ctx, artifacts.ConfigFromEnv()) })
+		once.Do(func() { client, err = s3bucket.Client(ctx, s3bucket.DevConfig()) })
 		if err != nil {
 			return fmt.Errorf("object store client: %w", err)
 		}

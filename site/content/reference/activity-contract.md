@@ -55,6 +55,7 @@ The Orker reads the output only from inside `/orkstack/output` and follows no li
 | Exits `0`, with `values.json` that is not an object, is a link, or is over 256 KiB | The task fails with `VALUES_MALFORMED` or `VALUES_TOO_LARGE`. It is not retried. |
 | Exits with any non-zero status | The task fails with `CONTAINER_EXIT_NONZERO`. It is retried under the task's `retry:`. |
 | Runs past `timeout_seconds` | The task fails with `CONTAINER_TIMEOUT`. It is not retried. |
+| Is stopped by its daemon shutting down, or through the runtime by someone else, whatever it exits with | The task fails with `CONTAINER_STOPPED_BY_RUNTIME`. It is retried under the task's `retry:`, and nothing it wrote is committed. |
 
 There is no table of special exit codes: every non-zero status fails the attempt the same way, and the task's `retry:` decides whether it runs again.
 

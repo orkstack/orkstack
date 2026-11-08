@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode"
 
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -166,6 +167,56 @@ func TestRunGet_OriginUnrecorded_Golden(t *testing.T) {
 	}
 }
 
+// TestWriteOriginLines_RootRun: the root is written beside the parent, and a
+// run with none (a top-level run, or a child recorded before the field) has
+// no line at all rather than a blank that reads as a value.
+func TestWriteOriginLines_RootRun(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		origin *orkstackv1.RunOrigin
+		want   string
+	}{
+		{"a grandchild names both", &orkstackv1.RunOrigin{
+			Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid", RootRunId: "ork-root",
+		}, "Origin:\tparent-run ork-mid\nRoot run:\tork-root\n"},
+		{"a child recorded before the field", &orkstackv1.RunOrigin{
+			Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid",
+		}, "Origin:\tparent-run ork-mid\n"},
+		{"a top-level run", &orkstackv1.RunOrigin{
+			Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT,
+		}, "Origin:\tsubmit\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			writeOriginLines(&out, tc.origin)
+			if out.String() != tc.want {
+				t.Fatalf("lines = %q, want %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
+// TestRunGet_JSONCarriesTheRootRun: --json is the wire message, so the root
+// reaches a script under the proto's own name.
+func TestRunGet_JSONCarriesTheRootRun(t *testing.T) {
+	f := newFixture(t)
+	f.runs.Save(&orkstackv1.Run{Id: "run-leaf", Namespace: "default", OrkflowName: "leaf", Origin: &orkstackv1.RunOrigin{
+		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid", RootRunId: "ork-root",
+	}})
+	got := f.run("--json", "run", "get", "run-leaf").requireExit(t, exitOK)
+	var response struct {
+		Run struct {
+			Origin map[string]string `json:"origin"`
+		} `json:"run"`
+	}
+	if err := json.Unmarshal([]byte(got.stdout), &response); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if response.Run.Origin["rootRunId"] != "ork-root" || response.Run.Origin["id"] != "ork-mid" {
+		t.Fatalf("origin = %v", response.Run.Origin)
+	}
+}
+
 func TestRunGet_JSONCarriesOrigin(t *testing.T) {
 	f := newFixture(t)
 	seedOriginRuns(f)
@@ -191,5 +242,33 @@ func TestRunGet_JSONCarriesOrigin(t *testing.T) {
 	legacy := f.run("--json", "run", "get", "run-legacy").requireExit(t, exitOK)
 	if strings.Contains(legacy.stdout, `"origin"`) {
 		t.Fatalf("a run with no origin carries an origin object:\n%s", legacy.stdout)
+	}
+}
+
+// TestOriginLines_EscapeWhatATerminalObeys: a run's origin carries text its
+// caller chose (a reference, a description) beside ids, and run get and run
+// list print each on one line of a table. None may reach the terminal as a
+// control: no escape sequence, no bidirectional override, no line of its own.
+func TestOriginLines_EscapeWhatATerminalObeys(t *testing.T) {
+	hostile := "a\x1b]0;x\x07\u009b31m\u202e\x7f\nb"
+	origin := &orkstackv1.RunOrigin{
+		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid" + hostile,
+		RootRunId: "ork-root" + hostile, Reference: hostile, Description: hostile,
+	}
+	var out strings.Builder
+	writeOriginLines(&out, origin)
+	cases := map[string]string{"run get": out.String(), "run list": originColumn(origin)}
+	for name, got := range cases {
+		for _, r := range got {
+			if r != '\t' && r != '\n' && (unicode.IsControl(r) || unicode.Is(unicode.Cf, r)) {
+				t.Fatalf("%s: %q holds %U raw", name, got, r)
+			}
+		}
+	}
+	if lines := strings.Count(out.String(), "\n"); lines != 3 {
+		t.Fatalf("run get wrote %d lines, want Origin, Root run and Reference only:\n%s", lines, out.String())
+	}
+	if strings.ContainsRune(originColumn(origin), '\n') {
+		t.Fatalf("run list's origin cell %q spans lines", originColumn(origin))
 	}
 }

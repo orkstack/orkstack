@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
-import { durationFromMs, timestampFromDate } from '@bufbuild/protobuf/wkt';
+import { TimestampSchema, durationFromMs, timestampFromDate } from '@bufbuild/protobuf/wkt';
 import {
 	DEFAULT_DELIVERY_LIMIT,
 	deliveriesCliCommand,
@@ -8,6 +8,8 @@ import {
 	deliveriesNamespaceScope,
 	deliveriesStackKey,
 	deliveryLimit,
+	instantMs,
+	instantSeconds,
 	lastAttemptLabel,
 	redeliveryOutcome,
 	redeliveryResult,
@@ -116,4 +118,17 @@ test('the confirmation states one POST, now, signed, today’s run, no queue', (
 	const sentence = redeliverySentence('https://payments.example/hooks');
 	for (const fragment of ['https://payments.example/hooks once, now', "current secret", 'as it reads today', 'Nothing is queued', 'you are the retry policy'])
 		expect(sentence).toContain(fragment);
+});
+
+// An instant shows the second (or millisecond) it falls in, never the next
+// one: a run created at 20:13:23.9996 started in second 23, and the window
+// that starts at it says so, as the API and orkctl do.
+test('instantSeconds and instantMs truncate, never round up to the next unit', () => {
+	const justBefore = create(TimestampSchema, { seconds: 1794168803n, nanos: 999_600_000 });
+	expect(instantSeconds(justBefore)).toBe('2026-11-08T20:13:23Z');
+	expect(instantMs(justBefore)).toBe('2026-11-08T20:13:23.999Z');
+	const onTheSecond = create(TimestampSchema, { seconds: 1794168803n, nanos: 0 });
+	expect(instantSeconds(onTheSecond)).toBe('2026-11-08T20:13:23Z');
+	expect(instantSeconds(undefined)).toBe('');
+	expect(instantMs(undefined)).toBe('-');
 });

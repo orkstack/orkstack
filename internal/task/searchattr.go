@@ -116,6 +116,15 @@ var (
 	SearchKeyOrkflowOriginID   = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowOriginId)
 )
 
+// SearchAttrOrkflowOriginRootRunId indexes the root of a run's composed chain,
+// so "everything below this root" is a predicate the cluster applies, on the
+// terms SearchAttrOrkflowNamespace states.
+const SearchAttrOrkflowOriginRootRunId = "OrkflowOriginRootRunId"
+
+// SearchKeyOrkflowOriginRootRunID is the typed key a child start stamps the
+// root under. Only a run with a root recorded carries it.
+var SearchKeyOrkflowOriginRootRunID = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowOriginRootRunId)
+
 // SearchAttrTemporalScheduledStartTime is the Temporal-owned, server-
 // provided datetime attribute a Temporal Schedule stamps on each workflow
 // it starts: that fire's nominal time, jitter included. OrkStack reads it
@@ -153,6 +162,34 @@ func ensureRunOriginSearchAttributes(
 	return ensureSearchAttributes(ctx, svc, namespace, map[string]enumspb.IndexedValueType{
 		SearchAttrOrkflowOriginKind: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
 		SearchAttrOrkflowOriginId:   enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	})
+}
+
+// EnsureRunRootSearchAttribute registers the root attribute and reports
+// whether it is usable, on EnsureRunOriginSearchAttributes' terms and as its
+// own call for the same reason: a cluster that accepted the origin attributes
+// in an earlier release and refuses this one now, at its limit of custom
+// attributes or behind an authorizer, keeps its origin predicate. Off, a child
+// start carries no attribute, and a list by root walks the index and refuses
+// rather than answer short.
+func EnsureRunRootSearchAttribute(
+	ctx context.Context,
+	temporalClient client.Client,
+	namespace string,
+) (bool, error) {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
+	return ensureRunRootSearchAttribute(ctx, temporalClient.OperatorService(), namespace)
+}
+
+func ensureRunRootSearchAttribute(
+	ctx context.Context,
+	svc searchAttributeRegistrar,
+	namespace string,
+) (bool, error) {
+	return ensureSearchAttributes(ctx, svc, namespace, map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowOriginRootRunId: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
 	})
 }
 

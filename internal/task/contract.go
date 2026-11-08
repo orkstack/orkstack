@@ -174,15 +174,9 @@ const HeartbeatTimeout = 30 * time.Second
 // the timeout leaves room for two missed ticks before Temporal declares the
 // activity dead.
 //
-// The tick is ALSO the cancellation latency, and that is the non-obvious half.
-// The Go SDK does not send every RecordHeartbeat: it batches them into windows
-// of min(0.8 × HeartbeatTimeout, worker.Options.MaxHeartbeatThrottleInterval),
-// overwriting the pending detail inside a window and issuing one RPC when it
-// closes. Cancellation is delivered only in a heartbeat RPC's RESPONSE, so the
-// interval an activity actually observes cancellation at is that batch window,
-// not this ceiling and not the loop's own ticker. An Orker MUST therefore cap
-// MaxHeartbeatThrottleInterval to its own tick, or a 10 s tick still means a
-// 24 s wait before a running container learns it was cancelled.
+// The tick is ALSO the cancellation latency: Temporal delivers a cancel only in
+// a heartbeat RPC's response, and the Orker sends one per tick (internal/orker,
+// heartbeat.go).
 const MaxHeartbeatInterval = HeartbeatTimeout / 3
 
 // HeartbeatStaleAfter is how old a live attempt's last heartbeat may be

@@ -284,6 +284,85 @@ func (x dialect) gone(message string) bool {
 	return containsFold(message, goneSubstring)
 }
 
+// eventArgs is the command that follows one container's events, one a line: the
+// word, and the docker CLI's signal number after a kill. since is an instant on
+// the engine's own clock (createdAnchor), which covers a container that ran before
+// the stream connected and keeps the engine from scanning its whole event log. A
+// relative time would not do: each CLI works it out on the Orker's clock, and an
+// engine whose clock is behind by more answers a time in its future with nothing.
+func (x dialect) eventArgs(id, since string) []string {
+	format := `{{.Action}} {{index .Actor.Attributes "signal"}}`
+	if x.cli == CLIPodman {
+		format = "{{.Status}}"
+	}
+	return []string{"events", "--since", since, "--filter", "container=" + id, "--format", format}
+}
+
+// stoppedByUserQuery is the inspect template that reads the engine's own record
+// of a stop or kill asked of it, where the CLI has one, and empty where it has
+// none. libpod sets State.StoppedByUser in every stop and every kill before the
+// container ends, and the podman CLI's inspect answers it. Its event stream
+// cannot stand in: libpod writes a stop's `stop` only if the container is still
+// stopping once its process is gone, which it almost never is (conmon has
+// reaped it and written its exit file by then, Podman 5.7.0 to 5.8.9), so a stop
+// says just what a container that exits by itself says. The docker CLI's
+// inspect, against Docker or Podman's socket, reads Docker's state, which has
+// no such field.
+func (x dialect) stoppedByUserQuery() string {
+	if x.cli == CLIPodman {
+		return "{{.State.StoppedByUser}}"
+	}
+	return ""
+}
+
+// endTellsNothing reports that an end with no stop or kill heard says nothing
+// about why the container ended: the docker CLI against Podman's
+// Docker-compatible socket. There the stream may or may not say `stop` (Podman
+// 5.8.9 was measured to say it nearly every time; see stoppedByUserQuery for
+// why libpod may not), and the CLI's inspect has no StoppedByUser to ask, so a
+// stop that was not said reads word for word as an exit. Its `kill` comes
+// before the end and is heard. Against Docker the stream says `stop` before
+// `die`, and the podman CLI asks StoppedByUser.
+func (x dialect) endTellsNothing() bool {
+	return x.cli == CLIDocker && x.engine == CLIPodman
+}
+
+// stopSeen is what one container's event stream has said (stopWatch).
+type stopSeen struct {
+	// stopped: the engine was asked to stop it, or sent it a signal that ends a
+	// process, before it ended.
+	stopped bool
+	// ended: the engine said it ended.
+	ended bool
+}
+
+// see takes one line of the stream and reports whether the question is settled.
+// The docker CLI says kill, stop, die, against Docker and against Podman's
+// Docker-compatible socket alike; the podman CLI says kill, stop, died. A `stop`
+// is what a daemon's shutdown and an operator's stop say, whichever stop signal
+// the image chose. A `kill` that names a signal counts only for TERM and KILL,
+// because an operator's USR1 to a workload that handles it stops nothing. Podman
+// names none, so there every kill counts. Every other word is not about how it
+// ended (exec_die is an exec's), and nothing after the end is why it ended.
+func (s *stopSeen) see(line string) (settled bool) {
+	if s.ended || s.stopped {
+		return true
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return false
+	}
+	switch fields[0] {
+	case "stop":
+		s.stopped = true
+	case "kill":
+		s.stopped = len(fields) == 1 || fields[1] == "15" || fields[1] == "9"
+	case "die", "died":
+		s.ended = true
+	}
+	return s.ended || s.stopped
+}
+
 // Container states, named rather than inferred. `docker wait` and `podman
 // wait` on a container that has not started return at once, so a state the
 // gate does not know must never be read as started: it keeps the gate

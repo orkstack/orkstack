@@ -2,6 +2,7 @@ package automation
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -189,8 +190,31 @@ func TestParse_SectionPresenceIsDistinct(t *testing.T) {
 	}
 	_, issues := Parse([]byte(header + "triggers:\n"))
 	requireIssue(t, issues, "triggers", "write `triggers: {}` to manage no triggers", "remove the key to leave triggers unmanaged")
-	_, issues = Parse([]byte(header + "---\n" + header))
-	requireIssue(t, issues, "", "one automation document per file")
+}
+
+// TestParse_RefusesASecondDocument: whatever follows the first document, on
+// the line it begins, in the words every authored document's refusal uses.
+func TestParse_RefusesASecondDocument(t *testing.T) {
+	line := strings.Count(header, "\n") + 1
+	for name, rest := range map[string]string{
+		"a second document":                     "---\n" + header,
+		"a second document that does not parse": "---\nname: [unclosed\n",
+		"a tab the first read trips on":         "---\n\tname: a\n",
+		"an empty second document":              "---\n",
+		"no start marker after an end marker":   "...\nname: b\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			doc, issues := Parse([]byte(header + rest))
+			if doc != nil {
+				t.Fatal("the file parsed")
+			}
+			if !strings.Contains(rest, "...") {
+				requireIssue(t, issues, "", fmt.Sprintf("line %d: one automation document per file: a second YAML document begins here", line))
+				return
+			}
+			requireIssue(t, issues, "", fmt.Sprintf("line %d: one automation document per file: a second YAML document begins here", line+1))
+		})
+	}
 }
 
 func TestParse_SettingsRecordOnlyPresentKeys(t *testing.T) {

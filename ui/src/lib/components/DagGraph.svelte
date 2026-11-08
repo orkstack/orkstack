@@ -24,6 +24,7 @@
 		DAG_NODE_W,
 		edgePath,
 		fitDagLine,
+		dagNodeName,
 		fitDagRef,
 		layoutDag,
 		type DagDirection,
@@ -36,6 +37,7 @@
 	import { activityKind } from '#lib/activityIcon.ts';
 	import { isFailureHandler, joinTitle, joinWord } from '#lib/join.ts';
 	import { statusLabel } from '#lib/status.ts';
+	import { shortVersion } from '#lib/version.ts';
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import { statusClassWord, svgMark } from '#lib/statusMarks.ts';
 	import { MediaQuery } from 'svelte/reactivity';
@@ -133,8 +135,17 @@
 	});
 
 	function nodeName(task: Task, state: NodeState | undefined): string {
-		if (!state) return `Task ${task.id}`;
-		return `Task ${task.id}, ${statusLabel(state.status)}${state.line ? `, ${state.line}` : ''}`;
+		const room = DAG_LINE_CHARS - (task.cache ? CACHED_TAG.length + 1 : 0);
+		const line = state ? state.line : task.orkflow ? `orkflow ${task.orkflow.name}@${shortVersion(task.orkflow.version)}` : activityLabel(task) || '—';
+		const shownLine = !state && task.orkflow ? fitDagRef(task.orkflow.name, task.orkflow.version, room) : fitDagLine(line, room);
+		return dagNodeName({
+			id: task.id,
+			shownId: fitDagLine(task.id, DAG_ID_CHARS + (state ? 0 : 2)),
+			line,
+			shownLine,
+			tags: [...(!state && task.each ? [`≤ ${task.each.maxItems}`] : []), ...(task.cache ? [CACHED_TAG] : [])],
+			status: state ? statusLabel(state.status) : undefined
+		});
 	}
 
 	function select(event: MouseEvent, id: string): void {
@@ -205,7 +216,7 @@
 	{/if}
 	<text x={textX} y={node.y + 24} class="dag-id"
 		>{#if id !== node.task.id}<title>{node.task.id}</title>{/if}{id}</text
-	>
+	>{' '}
 	{#if state}
 		{@render line(node, state.line)}
 	{:else if node.task.orkflow}

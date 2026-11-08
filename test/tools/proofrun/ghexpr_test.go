@@ -11,23 +11,45 @@ import (
 // `if:` is written in, so that a test can ask what a guard admits instead of
 // reading its text: dotted context paths (looked up in ctx, an absent one is
 // the empty string, as GitHub's null), string and number literals, true and
-// false, `==`, `!=`, `<`, `&&`, `||`, `!`, parentheses and startsWith.
+// false, `==`, `!=`, `<`, `&&`, `||`, `!`, parentheses, startsWith, always()
+// and contains over a list context (`x.*.name`, comma-joined in ctx).
 // Strings compare without regard to case, as GitHub's do; two numbers compare
 // as numbers. Truthiness is GitHub's: false, 0, the empty string and null are
 // falsy, so the string "0" is truthy; `&&` and `||` yield an operand, as
 // GitHub's do. Anything else is an error, so a guard that grows a construct
 // the evaluator does not know fails its test rather than passing it.
 func evalGHExpr(expr string, ctx map[string]string) (bool, error) {
-	p := &ghParser{src: expr, ctx: ctx}
-	v, err := p.or()
+	v, err := evalGHValue(expr, ctx)
 	if err != nil {
 		return false, err
 	}
+	return v.truthy(), nil
+}
+
+// evalGHString is the string an expression yields: what GitHub would render a
+// job's `name:` as.
+func evalGHString(expr string, ctx map[string]string) (string, error) {
+	v, err := evalGHValue(expr, ctx)
+	if err != nil {
+		return "", err
+	}
+	if v.isBool {
+		return strconv.FormatBool(v.b), nil
+	}
+	return v.s, nil
+}
+
+func evalGHValue(expr string, ctx map[string]string) (ghValue, error) {
+	p := &ghParser{src: expr, ctx: ctx}
+	v, err := p.or()
+	if err != nil {
+		return ghValue{}, err
+	}
 	p.skip()
 	if p.pos != len(p.src) {
-		return false, fmt.Errorf("unexpected %q at %d", p.src[p.pos:], p.pos)
+		return ghValue{}, fmt.Errorf("unexpected %q at %d", p.src[p.pos:], p.pos)
 	}
-	return v.truthy(), nil
+	return v, nil
 }
 
 type ghValue struct {
@@ -184,7 +206,7 @@ func (p *ghParser) primary() (ghValue, error) {
 		return ghValue{s: p.src[start:p.pos], isNum: true}, nil
 	case c == '_' || c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z':
 		start := p.pos
-		for p.pos < len(p.src) && (p.src[p.pos] == '_' || p.src[p.pos] == '.' || p.src[p.pos] == '-' ||
+		for p.pos < len(p.src) && (p.src[p.pos] == '_' || p.src[p.pos] == '.' || p.src[p.pos] == '-' || p.src[p.pos] == '*' ||
 			p.src[p.pos] >= 'a' && p.src[p.pos] <= 'z' || p.src[p.pos] >= 'A' && p.src[p.pos] <= 'Z' || p.src[p.pos] >= '0' && p.src[p.pos] <= '9') {
 			p.pos++
 		}
@@ -193,6 +215,36 @@ func (p *ghParser) primary() (ghValue, error) {
 		case name == "true" || name == "false":
 			return ghValue{b: name == "true", isBool: true}, nil
 		case p.eat("("):
+			if strings.EqualFold(name, "always") {
+				if !p.eat(")") {
+					return ghValue{}, fmt.Errorf("always takes no argument")
+				}
+				return ghValue{b: true, isBool: true}, nil
+			}
+			if strings.EqualFold(name, "contains") {
+				p.skip()
+				start := p.pos
+				for p.pos < len(p.src) && !strings.ContainsRune(", \t", rune(p.src[p.pos])) {
+					p.pos++
+				}
+				list := p.src[start:p.pos]
+				if !strings.Contains(list, ".*.") {
+					return ghValue{}, fmt.Errorf("contains over %q, which is not a list context", list)
+				}
+				if !p.eat(",") {
+					return ghValue{}, fmt.Errorf("contains takes two arguments")
+				}
+				want, err := p.or()
+				if err != nil || !p.eat(")") {
+					return want, fmt.Errorf("contains is not closed (%v)", err)
+				}
+				for _, item := range strings.Split(p.ctx[list], ",") {
+					if item != "" && strings.EqualFold(item, want.s) {
+						return ghValue{b: true, isBool: true}, nil
+					}
+				}
+				return ghValue{b: false, isBool: true}, nil
+			}
 			if !strings.EqualFold(name, "startsWith") {
 				return ghValue{}, fmt.Errorf("the function %s is not one the evaluator knows", name)
 			}
@@ -212,7 +264,7 @@ func (p *ghParser) primary() (ghValue, error) {
 }
 
 func TestEvalGHExpr_EvaluatesTheGuardsConstructs(t *testing.T) {
-	ctx := map[string]string{"a.b": "Foo", "n": "2", "branch": "validate/full/x", "empty": "", "zero": "0"}
+	ctx := map[string]string{"a.b": "Foo", "n": "2", "branch": "validate/full/x", "empty": "", "zero": "0", "l.*.name": "bug,ci:proof"}
 	for _, c := range []struct {
 		expr string
 		want bool
@@ -240,7 +292,14 @@ func TestEvalGHExpr_EvaluatesTheGuardsConstructs(t *testing.T) {
 		{"n == '2.0'", false, false},        // two strings compare as strings
 		{"n == 2.0", true, false},           // a number literal makes it numeric
 		{"n < '3'", false, true},            // < between two strings is not one the guards use
-		{"contains(a.b, 'F')", false, true}, // a function the evaluator does not know
+		{"contains(a.b, 'F')", false, true}, // contains over anything but a list context
+		{"contains(l.*.name, 'ci:proof')", true, false},
+		{"contains(l.*.name, 'CI:Proof')", true, false}, // case-insensitive
+		{"contains(l.*.name, 'ci:pro')", false, false},  // an item, never a substring
+		{"contains(none.*.name, 'x')", false, false},    // an absent list holds nothing
+		{"always()", true, false},
+		{"always() && missing", false, false},
+		{"format('x')", false, true}, // a function the evaluator does not know
 		{"a.b == ", false, true},
 		{"(a.b == 'foo'", false, true},
 		{"a.b == 'foo' extra", false, true},

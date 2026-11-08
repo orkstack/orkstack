@@ -380,7 +380,7 @@ func TestSubmitRun_DefaultRunIDUsesOrkPrefix(t *testing.T) {
 		t.Fatalf("ApplyOrkflow: %v", err)
 	}
 
-	pattern := regexp.MustCompile(`^ork-\d+-\d+$`)
+	pattern := regexp.MustCompile(`^ork-[0-7][0-9a-hjkmnp-tv-z]{25}$`)
 	seen := map[string]bool{}
 	for range 3 {
 		submitted, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
@@ -391,7 +391,7 @@ func TestSubmitRun_DefaultRunIDUsesOrkPrefix(t *testing.T) {
 		}
 		id := submitted.Msg.GetRun().GetId()
 		if !pattern.MatchString(id) {
-			t.Fatalf("run id = %q, want ork-{timestamp}-{sequence}", id)
+			t.Fatalf("run id = %q, want a match for %s", id, pattern)
 		}
 		if seen[id] {
 			t.Fatalf("run id %q was issued twice", id)

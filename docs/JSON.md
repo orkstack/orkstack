@@ -85,7 +85,7 @@ and accepts it on the way in.
 // orkctl run get <id> --json
 {
   "run": {
-    "id": "ork-1786837143070480000-1",
+    "id": "ork-01m6qt8vete0691h2jn074a2yk",
     "status": "SUCCEEDED",          // not STATUS_SUCCEEDED
     "taskRuns": [{ "taskId": "fetch", "status": "SUCCEEDED" }]
   }
@@ -110,18 +110,19 @@ and accepts it on the way in.
 The proto contract is untouched: `Status` and `EventType` keep their `STATUS_*`
 and `EVENT_TYPE_*` value names. This is a serialization dialect, not a rename.
 
-When `orkctl … --json` prints an API answer through its shared encoder —
-`run get`, `run list`, `activity inspect` and `activity list` among the
-commands that do — it writes no character a terminal could obey: the
-encoder escapes the C0 controls and U+2028 and U+2029, and `orkctl` writes
-DEL, the C1 controls and the format characters (bidirectional controls,
+Whatever `orkctl … --json` prints, it writes no character a terminal could
+obey: the encoder escapes the C0 controls and U+2028 and U+2029, and `orkctl`
+writes DEL, the C1 controls and the format characters (bidirectional controls,
 zero-width and tag characters) as `\u` escapes too, one past U+FFFF as its
 surrogate pair. They can only stand inside a string, where the escape means
 the same character, so the output decodes to the same values — a platform
-or media type a registry sent included. Other encoders write the `--json`
-of `run logs -f` and `run inspect --watch` (one object per line),
-`activity test`, `webhook`, `run timing`, `config`, `version` and evidence
-output, and those are not rewritten.
+or media type a registry sent included. That holds of every `--json`: one
+object per line from `run logs -f` and `run inspect --watch`, and `activity
+test`, `task run`, `webhook`, `run timing`, `version` and `run evidence` alike,
+and of the config file `orkctl` writes. Output for a person holds it too: `run get`'s
+one-line payload summary is the same JSON, and `task run` prints `config.json`
+with such a character as an escape, while `--keep` and its `--json` report keep
+the file's bytes.
 
 ## Input tolerance
 

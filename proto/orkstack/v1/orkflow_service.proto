@@ -161,6 +161,10 @@ message ValidateOrkflowRequest {
 }
 
 message ValidateOrkflowResponse {
+  // orkflow is the document as apply would store it. For a document that pins
+  // no version, version and definition_digest are those of the version its
+  // content already has, and empty when that content was never applied: the
+  // version is assigned by the apply that stores it.
   Orkflow orkflow = 1;
   repeated ValidationIssue issues = 2;
 }
@@ -489,6 +493,8 @@ message PlanRunResponse {
   // exact document, so a plan of a pinned version and a plan of `current`
   // can be told apart after the pointer moves.
   string orkflow_name = 1;
+  // orkflow_version is the version planned, empty for a file that pins none and
+  // whose content was never applied. definition_digest is then empty too.
   string orkflow_version = 2;
   string namespace = 3;
   string definition_digest = 4;

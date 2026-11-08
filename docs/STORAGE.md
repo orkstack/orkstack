@@ -36,9 +36,10 @@ One bucket, one key family per kind of record. The builders in
 
 | Key | Holds | Written | Removed by |
 |---|---|---|---|
-| `metadata/orkflows/{ns}/{name}/{version}.json` | one immutable Orkflow version, source YAML included (`OrkflowKey`) | conditional create; a divergent rewrite is `ErrVersionExists` (the comparison, like a derived version, covers the whole source, header included; any difference is a rewrite) | `orkctl orkflow delete`, which removes every version and both pointers after checking for recent runs |
+| `metadata/orkflows/{ns}/{name}/{version}.json` | one immutable Orkflow version, source YAML included (`OrkflowKey`) | conditional create; a divergent rewrite is `ErrVersionExists` (the comparison covers the whole source, header included; any difference is a rewrite) | `orkctl orkflow delete`, which removes every version, both pointers and every derived claim after checking for recent runs |
 | `metadata/orkflows/{ns}/{name}/@current.json` | `{version, updated_at}`: the version new runs execute; absent means the head (`OrkflowCurrentKey`) | compare-and-swap; a promotion swaps it only while it still names the version the promotion compared the target's declared interface against (`CurrentExpectation`), so a promotion that raced another is refused, never landed over it | the same delete |
 | `metadata/orkflows/{ns}/{name}/@head.json` | `{version, applied_at}`: the newest applied version; moving it is the apply's commit point (`OrkflowHeadKey`) | compare-and-swap | the same delete |
+| `metadata/orkflows/{ns}/{name}/@derived-{contentHash}.json` | `{version}`: the version a document that pins none was given, keyed by `sha256(source ‖ 0x1F ‖ canonicalImages)` (`OrkflowDerivedKey`). A record, never a lock: an apply reads it to stay a no-op, and a claim whose version never landed is stored under by the next apply of that content. A version stored under the hash itself by an earlier release needs none | conditional create, so concurrent applies of one new document on any replica get one version; a claim that does not decode is replaced by compare-and-swap | the same delete |
 | `metadata/namespaces/{name}.json` | the namespace registry entry, every field of `Namespace` (`NamespaceKey`); `default` is synthesized when absent; a listing reads the names from the keys alone (`ListNames`, sorted by name, not key order) and then only the documents it needs: the page's, when every filter is on the name | conditional PUT with an etag | `orkctl namespace delete`, refused while the namespace holds anything |
 | `metadata/settings/retention-policy.json` | the deployment's maximum run retention (`RetentionPolicyKey`) | create-if-absent at first boot, then plain put by `UpdateRetentionPolicy` | nothing |
 | `metadata/settings/image-policy.json` | the deployment image supply-chain floor, signing keys as public PEM (`ImagePolicyKey`) | plain put by `UpdateImagePolicy`; absent until an operator writes one | nothing |
@@ -46,6 +47,7 @@ One bucket, one key family per kind of record. The builders in
 | `metadata/webhooks/{id}.json` | one subscription: URL, events, scope, optional `name`, and the signing secret, which no read but delivery returns (`webhookKey`) | conditional create; rewritten only by `UpdateWebhook`, through a conditional put on the ETag it read (name, URL, events and scope change; the id and the secret never do) | `orkctl webhook delete` |
 | `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`); a run whose stream has a gap — events lost from object storage before it was archived (an earlier history's event segment missing or altered), or numbers it used without publishing an event, because object storage refused that event's record (`docs/DEPLOY.md` §6) — has one `{"kind":"gap","gap":{"first":…,"last":…,"reason":…}}` line per range, in sequence order among the events — reads over that range fail `DataLoss` naming it and its cause, and its evidence bundle is `schema_version` 2 (`docs/RUN_EVIDENCE.md`) | once, at the run's terminal event; read verbatim as `run.jsonl` by `ExportRunEvidence` (`docs/RUN_EVIDENCE.md`) | nothing |
 | `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row, stamped by `created_at` (`RunIndexKey`) | with the archive body | nothing |
+| `metadata/index/roots/{ns}/{root-run-id}/{parent-run-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the root index row (`RunRootIndexKey`), one for each run with a root of a composed chain recorded; read keys-only by a `ListRuns` filtered on `origin.root_run_id`. The parent is in the key because every run with a root is a `PARENT_RUN`, so the row answers `origin.kind` and `origin.id` too. | with the archive body, only for a run with a root recorded, before its run-index row | nothing |
 | `metadata/index/origins/{ns}/{kind}/{origin-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the origin index row (`RunOriginIndexKey`): `kind` is `submit`, `trigger`, `schedule`, `parent-run` or `run-again`, `origin-id` the originating object's id or `none`; read keys-only by an origin-filtered `ListRuns` | with the archive body, only for a run with a recorded origin, before its run-index row | nothing |
 | `metadata/index/recent/{ns}/{inverted-stamp}/{orkflow}/{status}/{run-id}` | zero bytes; the newest-first index row (`RunRecentIndexKey`): `inverted-stamp` is the `created_at` stamp with every digit `d` written `9-d`, so ascending key order is newest first; read keys-only by a `ListRuns` page, which walks it from the page cursor and stops once the page and its last instant's ties are read | with the archive body, before its run-index row | nothing |
 | `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`) | with the archive body | cleanup, when it releases the run's claims |
@@ -74,6 +76,15 @@ pointers, so a pointer can never be read as a version.
 
 ## Invariants the layout carries
 
+- **Re-applying an unchanged document writes nothing, with three stated
+  exceptions.** The derived claim is what finds a document's version, so each of
+  these leaves the same content under two versions, and a re-apply moves the head
+  onto the newer one. Nothing is lost or rewritten, and a run keeps the version it
+  pinned. A `Delete` that interleaves with an apply can remove the claim while
+  the apply's version lands after it. A claim that no longer decodes is replaced,
+  and the version it named cannot be known. While a replica of an earlier release
+  runs beside a new one, as in a rolling upgrade, the old one stores the hash and
+  the new one a minted version (`docs/UPGRADING.md`).
 - **Bytes never travel through Temporal.** Events and activity inputs carry
   references into this layout; the 256 KiB payload ceiling (AGENTS.md §2.2)
   is what forces snapshots, logs and artifacts out here.
@@ -160,7 +171,7 @@ pointers, so a pointer can never be read as a version.
   delivery record to decide what to do or send; expiring one only shortens
   how far back `orkctl admin audit` or `orkctl webhook deliveries` can look.
 - **The archive is append-only.** Bodies and index rows — the run index, the
-  origin index and the newest-first index alike — are never deleted; what cleanup reclaims is the
+  origin index, the root index and the newest-first index alike — are never deleted; what cleanup reclaims is the
   run's logs, attempt records, snapshots, commit records and object markers,
   and it records that in the cleanup sidecar.
 
@@ -218,7 +229,9 @@ run has been read whole (ties are ordered by run id, which is not key order
 within an instant). A page therefore reads about its own size in keys and one
 run line per run, whatever the namespace holds. A query pinning both orkflow
 and status reads that run-index subtree, which is already time-ordered, and an
-origin filter reads the origin index. A run archived before the newest-first
+origin filter reads the origin index, and a root filter the root index. A
+root row that cannot be written fails the archive write as an origin row does:
+no body is written, and the retry or the archive sweep finishes it. A run archived before the newest-first
 index existed has no row in it: it stays readable by id but is absent from
 the default list (there is no backfill; reset a development stack with
 `make reset`).

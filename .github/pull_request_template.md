@@ -2,6 +2,10 @@
 Thanks for the change. CONTRIBUTING.md is the checklist. CI's `proof` check
 is the merge gate; docs/PROOFS.md says what each proof tier runs and how to
 read it. You never need the full proof locally.
+
+The title must be a Conventional Commit, such as
+`fix(orker): keep the shared directory on a retry`: this pull request lands as
+one squash commit whose subject is its title and whose body is this description.
 -->
 
 ## What changed

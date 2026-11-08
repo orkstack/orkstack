@@ -330,6 +330,29 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 			await page.evaluate(() => window.scrollTo(0, 0));
 		}
 
+		// Asking for Orkers on every row, and taking them away again: one press,
+		// timed in the page to the next paint, so it holds no Playwright work.
+		const pressOrkers = async () => {
+			await page.getByTestId('run-tasks-more').click();
+			return page.evaluate(
+				() =>
+					new Promise<number>((resolve) => {
+						const pressed = performance.now();
+						document.querySelector<HTMLElement>('[data-testid="run-orkers-toggle"]')!.click();
+						requestAnimationFrame(() => requestAnimationFrame(() => resolve(Math.round(performance.now() - pressed))));
+					})
+			);
+		};
+		const named = page.locator('[data-testid^="task-"][data-testid$="-orker"]');
+		const orkersOn = await pressOrkers();
+		const orkerRows = await named.count();
+		expect(orkerRows, 'rows naming their Orker once asked').toBeGreaterThan(0);
+		const orkersOff = await pressOrkers();
+		await expect(named).toHaveCount(0);
+		note(`Orkers on every row: ${orkersOn} ms to show ${orkerRows}, ${orkersOff} ms to hide (budget ${GATED_RENDER_BUDGET_MS} ms)`);
+		expect(orkersOn, 'showing Orkers').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
+		expect(orkersOff, 'hiding Orkers').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
+
 		// The output-maximal rows, quoted only.
 		const definition = await rpc<{ orkflow?: { definitionDigest?: string } }>('OrkflowService/GetOrkflow', {
 			name: GATED_ORKFLOW

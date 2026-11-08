@@ -2,6 +2,8 @@ package dist_test
 
 import (
 	"bytes"
+	"errors"
+	"io"
 	"maps"
 	"os"
 	"path"
@@ -18,6 +20,7 @@ import (
 	"github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dist"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -552,13 +555,23 @@ func TestStoreHealthcheck_PassesOnlyOnceTheBucketServes(t *testing.T) {
 		bucket, access, secret string
 	}{
 		{quickstart, engine["ORK_S3_BUCKET"], engine["ORK_S3_ACCESS_KEY"], engine["ORK_S3_SECRET_KEY"]},
-		// `make up` sets none of them: the services take the code's defaults.
-		{dev, artifacts.DefaultS3Bucket, artifacts.DefaultS3AccessKey, artifacts.DefaultS3SecretKey},
+		// `make up` starts the services itself: the code's default bucket, and the
+		// key it sets (TestDevStack_SetsTheStoresKey).
+		{dev, artifacts.DefaultS3Bucket, s3bucket.DevAccessKey, s3bucket.DevSecretKey},
 	}
 	for _, tt := range tests {
 		store := tt.doc.service(t, "seaweedfs")
 		if !slices.Contains(store.Command, "-bucket="+tt.bucket) {
 			t.Errorf("%s: the store runs %v, which does not create the bucket %q the services use", tt.doc.source, store.Command, tt.bucket)
+		}
+		// The store refuses what production refuses. With no keys it checks none,
+		// so a wrong key would pass only here; and with keys, auto-create would
+		// let an admin's first upload make a bucket that production never has.
+		if got := [2]string{store.Environment["AWS_ACCESS_KEY_ID"], store.Environment["AWS_SECRET_ACCESS_KEY"]}; got != [2]string{tt.access, tt.secret} {
+			t.Errorf("%s: the store's keys are %q, want the services' %q", tt.doc.source, got, [2]string{tt.access, tt.secret})
+		}
+		if !slices.Contains(store.Command, "-s3.autoCreateBucket=false") {
+			t.Errorf("%s: the store runs %v, which makes a missing bucket on an admin's first upload", tt.doc.source, store.Command)
 		}
 		want := []string{
 			"CMD", "curl", "-fsS", "-o", "/dev/null", "--head",
@@ -570,7 +583,8 @@ func TestStoreHealthcheck_PassesOnlyOnceTheBucketServes(t *testing.T) {
 			t.Errorf("%s: the store's health check is %+v, want %v: anything less passes before the bucket exists", tt.doc.source, store.Healthcheck, want)
 		}
 	}
-	wait := "curl -fs -o /dev/null --head http://localhost:9000/" + artifacts.DefaultS3Bucket
+	wait := "curl -fs -o /dev/null --head --aws-sigv4 aws:amz:" + artifacts.DefaultS3Region + ":s3 --user " +
+		s3bucket.DevAccessKey + ":" + s3bucket.DevSecretKey + " http://localhost:9000/" + artifacts.DefaultS3Bucket
 	if !strings.Contains(string(readRepoFile(t, "scripts/stack.sh")), wait) {
 		t.Errorf("scripts/stack.sh does not wait for the store with %q: it starts the engine and the Orker itself, so nothing else makes them wait for the bucket", wait)
 	}
@@ -581,6 +595,118 @@ func TestStoreHealthcheck_PassesOnlyOnceTheBucketServes(t *testing.T) {
 		if !strings.Contains(makefile, recipe) {
 			t.Errorf("the Makefile has no recipe %q: `make infra-up` would return before the store's bucket exists", recipe)
 		}
+	}
+}
+
+// TestKindStore_IsReadyOnlyOnceTheBucketServes: the kind base runs the same
+// store, so the same gap. Its readiness probe is the compose files' health
+// check, with the keys and the bucket that base's settings give its services,
+// because scripts/kind-orker.sh takes a finished rollout to mean the store can
+// be used, and without the probe a rollout finishes when the container starts.
+func TestKindStore_IsReadyOnlyOnceTheBucketServes(t *testing.T) {
+	t.Parallel()
+	const infra = "deploy/kubernetes/kind/infra/infra.yaml"
+	const settings = "deploy/kubernetes/kind/infra/kustomization.yaml"
+	var kustomization struct {
+		ConfigMapGenerator []struct {
+			Literals []string `yaml:"literals"`
+		} `yaml:"configMapGenerator"`
+		SecretGenerator []struct {
+			Literals []string `yaml:"literals"`
+		} `yaml:"secretGenerator"`
+	}
+	if err := yaml.Unmarshal(readRepoFile(t, settings), &kustomization); err != nil {
+		t.Fatalf("%s: %v", settings, err)
+	}
+	env := map[string]string{}
+	for _, g := range kustomization.ConfigMapGenerator {
+		for _, literal := range g.Literals {
+			if k, v, ok := strings.Cut(literal, "="); ok {
+				env[k] = v
+			}
+		}
+	}
+	for _, g := range kustomization.SecretGenerator {
+		for _, literal := range g.Literals {
+			if k, v, ok := strings.Cut(literal, "="); ok {
+				env[k] = v
+			}
+		}
+	}
+	if env["ORK_S3_BUCKET"] == "" || env["ORK_S3_ACCESS_KEY"] == "" || env["ORK_S3_SECRET_KEY"] == "" {
+		t.Fatalf("%s does not set the bucket and the keys: %v", settings, sortedKeys(env))
+	}
+
+	type container struct {
+		Name string   `yaml:"name"`
+		Args []string `yaml:"args"`
+		Env  []struct {
+			Name  string `yaml:"name"`
+			Value string `yaml:"value"`
+		} `yaml:"env"`
+		ReadinessProbe *struct {
+			Exec struct {
+				Command []string `yaml:"command"`
+			} `yaml:"exec"`
+		} `yaml:"readinessProbe"`
+	}
+	var store *container
+	decoder := yaml.NewDecoder(bytes.NewReader(readRepoFile(t, infra)))
+	for {
+		var doc struct {
+			Kind string `yaml:"kind"`
+			Spec struct {
+				Template struct {
+					Spec struct {
+						Containers []container `yaml:"containers"`
+					} `yaml:"spec"`
+				} `yaml:"template"`
+			} `yaml:"spec"`
+		}
+		err := decoder.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", infra, err)
+		}
+		if doc.Kind != "Deployment" {
+			continue
+		}
+		for i, c := range doc.Spec.Template.Spec.Containers {
+			if c.Name == "seaweedfs" {
+				store = &doc.Spec.Template.Spec.Containers[i]
+			}
+		}
+	}
+	if store == nil {
+		t.Fatalf("%s runs no seaweedfs container", infra)
+	}
+	if !slices.Contains(store.Args, "-bucket="+env["ORK_S3_BUCKET"]) {
+		t.Errorf("%s: the store runs %v, which does not create the bucket %q the services use", infra, store.Args, env["ORK_S3_BUCKET"])
+	}
+	if !slices.Contains(store.Args, "-s3.autoCreateBucket=false") {
+		t.Errorf("%s: the store runs %v, which makes a missing bucket on an admin's first upload", infra, store.Args)
+	}
+	storeEnv := map[string]string{}
+	for _, e := range store.Env {
+		storeEnv[e.Name] = e.Value
+	}
+	if storeEnv["AWS_ACCESS_KEY_ID"] != env["ORK_S3_ACCESS_KEY"] || storeEnv["AWS_SECRET_ACCESS_KEY"] != env["ORK_S3_SECRET_KEY"] {
+		t.Errorf("%s: the store's keys are not the ones %s gives the services", infra, settings)
+	}
+	want := []string{
+		"curl", "-fsS", "-o", "/dev/null", "--head",
+		"--aws-sigv4", "aws:amz:" + artifacts.DefaultS3Region + ":s3",
+		"--user", env["ORK_S3_ACCESS_KEY"] + ":" + env["ORK_S3_SECRET_KEY"],
+		"http://localhost:8333/" + env["ORK_S3_BUCKET"],
+	}
+	if store.ReadinessProbe == nil || !slices.Equal(store.ReadinessProbe.Exec.Command, want) {
+		t.Errorf("%s: the store's readiness probe is %+v, want %v: anything less passes before the bucket exists", infra, store.ReadinessProbe, want)
+	}
+	// The probe only helps a script that waits for it.
+	if script := string(readRepoFile(t, "scripts/kind-orker.sh")); !strings.Contains(script, "rollout status deploy/temporal deploy/seaweedfs") {
+		t.Error("scripts/kind-orker.sh no longer waits for the store's rollout, so the probe holds nothing back")
 	}
 }
 
@@ -1030,5 +1156,43 @@ func TestReleaseSmokeOverride_RunsOnlyTheReleasesImages(t *testing.T) {
 	if command := mappingValue(mappingValue(services, "activities"), "command"); command == nil ||
 		len(command.Content) != 1 || command.Content[0].Value != "true" {
 		t.Errorf("%s leaves the activities step pushing what the checkout built", path)
+	}
+}
+
+// TestDevStack_SetsTheStoresKey: no binary falls back to the development key, so
+// each way the development stack starts one sets it, and the store refuses any
+// other. A place that missed it would fail at boot, which is loud, and this
+// names it first.
+func TestDevStack_SetsTheStoresKey(t *testing.T) {
+	stack := string(readRepoFile(t, "scripts/stack.sh"))
+	for _, want := range []string{
+		`echo "    access_key: ` + s3bucket.DevAccessKey + `"`,
+		`echo "    secret_key: ` + s3bucket.DevSecretKey + `"`,
+	} {
+		if !strings.Contains(stack, want) {
+			t.Errorf("scripts/stack.sh does not write %s into the file both binaries read", want)
+		}
+	}
+	makefile := string(readRepoFile(t, "Makefile"))
+	for _, want := range []string{
+		"run-ork run-orker: export ORK_S3_ACCESS_KEY ?= " + s3bucket.DevAccessKey,
+		"run-ork run-orker: export ORK_S3_SECRET_KEY ?= " + s3bucket.DevSecretKey,
+	} {
+		if !strings.Contains(makefile, want+"\n") {
+			t.Errorf("Makefile has no line %q", want)
+		}
+	}
+	// proof.sh gives its stack gates the key; the observability gate, which
+	// starts both binaries itself, can also be run directly.
+	for _, path := range []string{"scripts/proof.sh", "scripts/proof-observability.sh"} {
+		script := string(readRepoFile(t, path))
+		for _, want := range []string{
+			`ORK_S3_ACCESS_KEY="${ORK_S3_ACCESS_KEY:-` + s3bucket.DevAccessKey + `}"`,
+			`ORK_S3_SECRET_KEY="${ORK_S3_SECRET_KEY:-` + s3bucket.DevSecretKey + `}"`,
+		} {
+			if !strings.Contains(script, want) {
+				t.Errorf("%s does not set %s", path, want)
+			}
+		}
 	}
 }

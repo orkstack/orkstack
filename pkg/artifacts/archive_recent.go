@@ -139,12 +139,13 @@ func ParseRunRecentIndexKey(key string) (RunIndexEntry, bool) {
 // usesRecent reports whether a query is answered from the newest-first
 // family. It is when the caller asked (Recent), the answer is a bounded
 // newest-first page of one namespace, and no narrower family serves it
-// better: an origin filter keeps the origin family, a query pinning both
+// better: a root filter keeps the root family, an origin filter the origin
+// family, a query pinning both
 // orkflow and status keeps that run-index subtree (already time-ordered), and
 // an unbounded query reads its narrowest subtree whole either way.
 func (q RunQuery) usesRecent() bool {
 	return q.Recent && !q.KeyOrder && q.Limit > 0 && q.Namespace != "" &&
-		q.OriginKind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && q.OriginID == "" &&
+		q.OriginKind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED && q.OriginID == "" && q.RootRunID == "" &&
 		(q.Orkflow == "" || q.Status == "")
 }
 

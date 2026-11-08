@@ -487,7 +487,7 @@ func TestRunWorkflow_ChildWithoutOutputsGivesEmptyValues(t *testing.T) {
 	// announce reads digest, which a child with no outputs cannot give.
 	parent.Tasks[2].With, _ = structpb.NewStruct(map[string]any{"op": "exec", "command": []any{"true"}})
 	h.mockChild(func(workflow.Context, childStart) (*orkstackv1.Run, error) {
-		// The child's leaf aggregation is not the task's values.
+		// The child's end task values are not the task's values.
 		return childOutputs(t, map[string]any{"sign": map[string]any{"value": "x"}}), nil
 	})
 	h.run("ork-parent", parent, payload(t, nil), plan)
@@ -709,7 +709,7 @@ tasks:
   - id: sign
     uses: shell
     with: { op: eval, command: ["true"] }
-  - id: leaf
+  - id: end
     uses: shell
     needs: [sign]
     with: { op: eval, command: ["true"] }
@@ -744,7 +744,7 @@ func TestRunWorkflow_OutputsRenderFailureFailsTheRun(t *testing.T) {
 		!strings.HasPrefix(run.GetError().GetMessage(), "the run's tasks finished but its declared outputs could not be produced: ") {
 		t.Fatalf("run = %v / %v", run.GetStatus(), run.GetError())
 	}
-	for _, id := range []string{"sign", "leaf"} {
+	for _, id := range []string{"sign", "end"} {
 		if statusOf(run, id) != orkstackv1.Status_STATUS_SUCCEEDED {
 			t.Fatalf("%s = %v; every task keeps its status", id, statusOf(run, id))
 		}
@@ -772,18 +772,18 @@ func TestRunWorkflow_OutputsOverTheBoundFailTheRun(t *testing.T) {
 	}
 }
 
-func TestRunWorkflow_NoOutputsKeepsLeafAggregation(t *testing.T) {
+func TestRunWorkflow_NoOutputsKeepsEndTaskValues(t *testing.T) {
 	h := newComposeHarness(t, defaultBehavior)
 	doc := strings.Replace(outputsDocument,
 		"outputs:\n  digest: '{{ .tasks.sign.output.value }}'\n  image: '{{ .inputs.image }}'\n  const: fixed\n", "", 1)
-	h.run("ork-leaves", compile(t, doc), payload(t, nil), defaultPlan())
+	h.run("ork-end-tasks", compile(t, doc), payload(t, nil), defaultPlan())
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("workflow error: %v", err)
 	}
-	run := mustFinalRun(t, h.store, "ork-leaves")
+	run := mustFinalRun(t, h.store, "ork-end-tasks")
 	got := run.GetOutput().GetData().AsMap()
-	leaf, _ := got["leaf"].(map[string]any)
-	if len(got) != 1 || leaf["value"] != "img@leaf" {
+	end, _ := got["end"].(map[string]any)
+	if len(got) != 1 || end["value"] != "img@end" {
 		t.Fatalf("output = %v", got)
 	}
 	if len(h.renders) != 0 {
@@ -817,8 +817,8 @@ func TestRunWorkflow_ChildRunReturnsACompactResult(t *testing.T) {
 
 func TestRunWorkflow_ChildResultCarriesOnlyDeclaredOutputs(t *testing.T) {
 	// The parent reads a child's Output only for declared outputs
-	// (collectChild); an undeclared leaf aggregation is unbounded and read by
-	// nobody, so a child without `outputs:` returns none.
+	// (collectChild); an undeclared run's end task values are unbounded and
+	// read by nobody, so a child without `outputs:` returns none.
 	noOutputs := strings.Replace(outputsDocument,
 		"outputs:\n  digest: '{{ .tasks.sign.output.value }}'\n  image: '{{ .inputs.image }}'\n  const: fixed\n", "", 1)
 	for _, c := range []struct {
@@ -843,7 +843,7 @@ func TestRunWorkflow_ChildResultCarriesOnlyDeclaredOutputs(t *testing.T) {
 			if len(run.GetTaskRuns()) != 0 || run.GetInput() != nil {
 				t.Fatalf("a child result carried more than it should: %v", run)
 			}
-			// The snapshot is the whole run, its leaf aggregation included.
+			// The snapshot is the whole run, its end task values included.
 			snapshot := mustFinalRun(t, h.store, "ork-child")
 			if snapshot.GetOutput() == nil {
 				t.Fatal("the child's snapshot lost its output")

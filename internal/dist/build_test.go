@@ -18,6 +18,9 @@ import (
 	"github.com/orkstack/orkstack/internal/dist"
 )
 
+// fakeCommit is the revision the tests' builds are stamped with.
+const fakeCommit = "af4986a1c0ffee00c0ffee00c0ffee00c0ffee00"
+
 // fakeBuilder stands in for `go build`: it writes a binary whose bytes name
 // the target and the version it was asked for, and records every call.
 type fakeBuilder struct {
@@ -26,14 +29,14 @@ type fakeBuilder struct {
 	fail  string
 }
 
-func (f *fakeBuilder) build(_ context.Context, root string, target dist.Target, version, out string) error {
+func (f *fakeBuilder) build(_ context.Context, root string, target dist.Target, version, commit, out string) error {
 	f.mu.Lock()
-	f.calls = append(f.calls, target.String()+" "+version+" in "+root)
+	f.calls = append(f.calls, target.String()+" "+version+" at "+commit+" in "+root)
 	f.mu.Unlock()
 	if f.fail == target.String() {
 		return errors.New("compile error: boom")
 	}
-	return os.WriteFile(out, []byte("binary:"+target.String()+":"+version), 0o755)
+	return os.WriteFile(out, []byte("binary:"+target.String()+":"+version+":"+commit), 0o755)
 }
 
 // fakeRoot is a repository root as `make dist` finds it: a LICENSE, and the
@@ -57,7 +60,7 @@ func fakeRoot(t *testing.T) string {
 func buildInto(t *testing.T, root, out string, fake *fakeBuilder) []string {
 	t.Helper()
 	assets, err := dist.Build(context.Background(), dist.BuildOptions{
-		Root: root, Out: out, Version: mustVersion(t, "v0.1.0"), CommitTime: commitTime, Builder: fake.build,
+		Root: root, Out: out, Version: mustVersion(t, "v0.1.0"), Commit: fakeCommit, CommitTime: commitTime, Builder: fake.build,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -124,14 +127,14 @@ func TestBuild_WritesEveryAssetAndTheImageBinaries(t *testing.T) {
 		}
 	}
 	body, err := os.ReadFile(filepath.Join(out, "bin", "linux-arm64", "orker"))
-	if err != nil || string(body) != "binary:orker-linux-arm64:v0.1.0" {
+	if err != nil || string(body) != "binary:orker-linux-arm64:v0.1.0:"+fakeCommit {
 		t.Errorf("bin/linux-arm64/orker = %q (%v), want the arm64 orker built with the version", body, err)
 	}
 	if len(fake.calls) != len(dist.Targets()) {
 		t.Errorf("built %d times, want once per target (%d): %q", len(fake.calls), len(dist.Targets()), fake.calls)
 	}
 	for _, call := range fake.calls {
-		if !strings.Contains(call, " v0.1.0 in "+root) {
+		if !strings.Contains(call, " v0.1.0 at "+fakeCommit+" in "+root) {
 			t.Errorf("build %q was not stamped with the version from the root", call)
 		}
 	}
@@ -151,7 +154,7 @@ func TestBuild_ArchivesHoldTheBinaryAndTheLicense(t *testing.T) {
 	if len(headers) != 2 || headers[0].Name != "LICENSE" || headers[1].Name != "orker" {
 		t.Fatalf("orker archive holds %v, want LICENSE and orker", headers)
 	}
-	if string(contents["orker"]) != "binary:orker-linux-amd64:v0.1.0" || !bytes.Equal(contents["LICENSE"], fakeLicense) {
+	if string(contents["orker"]) != "binary:orker-linux-amd64:v0.1.0:"+fakeCommit || !bytes.Equal(contents["LICENSE"], fakeLicense) {
 		t.Errorf("orker archive contents: %q", contents)
 	}
 	for _, header := range headers {
@@ -178,7 +181,7 @@ func TestBuild_ArchivesHoldTheBinaryAndTheLicense(t *testing.T) {
 			}
 			body, _ := io.ReadAll(open)
 			_ = open.Close()
-			if string(body) != "binary:orkctl-windows-amd64:v0.1.0" {
+			if string(body) != "binary:orkctl-windows-amd64:v0.1.0:"+fakeCommit {
 				t.Errorf("orkctl.exe = %q", body)
 			}
 		}
@@ -201,6 +204,22 @@ func TestBuild_IsRepeatable(t *testing.T) {
 		b, errB := os.ReadFile(filepath.Join(second, name))
 		if errA != nil || errB != nil || !bytes.Equal(a, b) {
 			t.Errorf("%s differs between two builds (%v, %v)", name, errA, errB)
+		}
+	}
+}
+
+// TestBuild_StampsEveryTargetWithTheCommit: the commit given is the commit every
+// compile is asked to stamp.
+func TestBuild_StampsEveryTargetWithTheCommit(t *testing.T) {
+	t.Parallel()
+	fake := &fakeBuilder{}
+	buildInto(t, fakeRoot(t), filepath.Join(t.TempDir(), "dist"), fake)
+	if len(fake.calls) != len(dist.Targets()) {
+		t.Fatalf("built %d times, want %d", len(fake.calls), len(dist.Targets()))
+	}
+	for _, call := range fake.calls {
+		if !strings.Contains(call, " at "+fakeCommit+" ") {
+			t.Errorf("the compile %q was not asked to stamp %s", call, fakeCommit)
 		}
 	}
 }
@@ -235,7 +254,7 @@ func TestBuild_Refuses(t *testing.T) {
 			fake := &fakeBuilder{}
 			out := filepath.Join(t.TempDir(), "dist")
 			_, err := dist.Build(context.Background(), dist.BuildOptions{
-				Root: root, Out: out, Version: mustVersion(t, "v0.1.0"), CommitTime: commitTime, Builder: fake.build,
+				Root: root, Out: out, Version: mustVersion(t, "v0.1.0"), Commit: fakeCommit, CommitTime: commitTime, Builder: fake.build,
 			})
 			if err == nil || !strings.Contains(err.Error(), dist.UIIndex) || !strings.Contains(err.Error(), "make ui") {
 				t.Errorf("%s: error %v, want one naming %s and make ui", name, err, dist.UIIndex)
@@ -255,7 +274,7 @@ func TestBuild_Refuses(t *testing.T) {
 		t.Parallel()
 		fake := &fakeBuilder{}
 		_, err := dist.Build(context.Background(), dist.BuildOptions{
-			Root: t.TempDir(), Out: filepath.Join(t.TempDir(), "dist"), Version: mustVersion(t, "v0.1.0"),
+			Root: t.TempDir(), Out: filepath.Join(t.TempDir(), "dist"), Version: mustVersion(t, "v0.1.0"), Commit: fakeCommit,
 			CommitTime: commitTime, Builder: fake.build,
 		})
 		if err == nil || !strings.Contains(err.Error(), "LICENSE") {
@@ -268,18 +287,38 @@ func TestBuild_Refuses(t *testing.T) {
 	t.Run("no commit time", func(t *testing.T) {
 		t.Parallel()
 		_, err := dist.Build(context.Background(), dist.BuildOptions{
-			Root: fakeRoot(t), Out: filepath.Join(t.TempDir(), "dist"), Version: mustVersion(t, "v0.1.0"),
+			Root: fakeRoot(t), Out: filepath.Join(t.TempDir(), "dist"), Version: mustVersion(t, "v0.1.0"), Commit: fakeCommit,
 			Builder: (&fakeBuilder{}).build,
 		})
 		if err == nil || !strings.Contains(err.Error(), "commit time") {
 			t.Fatalf("error %v, want one naming the commit time", err)
 		}
 	})
+	t.Run("no commit, or not a whole one", func(t *testing.T) {
+		t.Parallel()
+		for _, commit := range []string{"", "unknown", "af4986a1"} {
+			fake := &fakeBuilder{}
+			out := filepath.Join(t.TempDir(), "dist")
+			_, err := dist.Build(context.Background(), dist.BuildOptions{
+				Root: fakeRoot(t), Out: out, Version: mustVersion(t, "v0.1.0"), Commit: commit, CommitTime: commitTime,
+				Builder: fake.build,
+			})
+			if err == nil || !strings.Contains(err.Error(), "commit") {
+				t.Errorf("commit %q: error %v, want one naming the commit", commit, err)
+			}
+			if len(fake.calls) != 0 {
+				t.Errorf("commit %q: built %q for a release that could not say what it is", commit, fake.calls)
+			}
+			if _, statErr := os.Stat(out); statErr == nil {
+				t.Errorf("commit %q: the release directory was created", commit)
+			}
+		}
+	})
 	t.Run("a target fails to compile", func(t *testing.T) {
 		t.Parallel()
 		out := filepath.Join(t.TempDir(), "dist")
 		_, err := dist.Build(context.Background(), dist.BuildOptions{
-			Root: fakeRoot(t), Out: out, Version: mustVersion(t, "v0.1.0"), CommitTime: commitTime,
+			Root: fakeRoot(t), Out: out, Version: mustVersion(t, "v0.1.0"), Commit: fakeCommit, CommitTime: commitTime,
 			Builder: (&fakeBuilder{fail: "orkctl-windows-arm64"}).build,
 		})
 		if err == nil || !strings.Contains(err.Error(), "orkctl-windows-arm64") || !strings.Contains(err.Error(), "boom") {
@@ -294,7 +333,7 @@ func TestBuild_Refuses(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		_, err := dist.Build(ctx, dist.BuildOptions{
-			Root: fakeRoot(t), Out: filepath.Join(t.TempDir(), "dist"), Version: mustVersion(t, "v0.1.0"),
+			Root: fakeRoot(t), Out: filepath.Join(t.TempDir(), "dist"), Version: mustVersion(t, "v0.1.0"), Commit: fakeCommit,
 			CommitTime: commitTime, Builder: (&fakeBuilder{}).build,
 		})
 		if !errors.Is(err, context.Canceled) {

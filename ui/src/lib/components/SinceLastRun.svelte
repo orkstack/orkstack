@@ -4,6 +4,7 @@
 	// fields and nothing else: one list of recent runs, one DiffRuns, after the
 	// page has drawn. A run with too many tasks to compare in passing offers the
 	// comparison instead of reading it.
+	import { shortVersion } from '#lib/version.ts';
 	import { errorMessage } from '#lib/client.ts';
 	import { runClient } from '#lib/clients/runs.ts';
 	import type { Run } from '#lib/gen/orkstack/v1/run_pb.ts';
@@ -100,7 +101,7 @@
 		const who = row.taskId + (row.item === undefined ? '' : `[${row.item}]`);
 		const key = `${who}/${row.field}`;
 		const [to, from] = [row.toValue, row.fromValue];
-		const versionOf = (value: string) => /@(\S+)/.exec(value)?.[1] ?? brief(value);
+		const versionOf = (value: string) => { const at = /@(\S+)/.exec(value)?.[1]; return at ? shortVersion(at) : brief(value); };
 		if (QUIET.has(row.field)) return [];
 		if (!row.toAvailable || !row.fromAvailable) return [];
 		if (live && (to === '' || to === '0' || HIDDEN_WHILE_LIVE.has(row.field))) return [];

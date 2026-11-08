@@ -2,7 +2,6 @@
 	import { pollWhileVisible } from '#lib/visibility.ts';
 	import { goto, invalidate } from '$app/navigation';
 	import { navigating } from '$app/state';
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import FailureFingerprints from '#lib/components/FailureFingerprints.svelte';
 	import FlakeIndex from '#lib/components/FlakeIndex.svelte';
@@ -13,7 +12,7 @@
 	import StatusPill from '#lib/components/StatusPill.svelte';
 	import UsageCard from '#lib/components/UsageCard.svelte';
 	import { listHref, runWindowFilters, sinceInputValue } from '#lib/browsing.ts';
-	import { namespaceLabel, withNamespace } from '#lib/namespace.ts';
+	import { namespaceLabel, releaseHoldCli, withNamespace } from '#lib/namespace.ts';
 	import {
 		UNAVAILABLE,
 		finishedRuns,
@@ -23,12 +22,17 @@
 		fmtInstant,
 		fmtInstantMs,
 		fmtPercent,
-		timestampMs
+		dayBars,
+		timestampMs,
+		weekStats
 	} from '#lib/stats.ts';
+	import { statsClient } from '#lib/clients/stats.ts';
+	import { errorMessage } from '#lib/client.ts';
+	import type { GetStatsResponse } from '#lib/gen/orkstack/v1/stats_pb.ts';
+	import Plate from '#lib/components/Plate.svelte';
 	import { fmtTimestamp } from '#lib/status.ts';
 	import { shellQuote } from '#lib/runDetail.ts';
 	import { afterNavigation } from '#lib/settle.ts';
-	import { setTitleBlock } from '#lib/sheet.svelte.ts';
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { PageProps } from './$types';
 	import { shortRunId } from '#lib/runDetail.ts';
@@ -37,12 +41,6 @@
 
 	const stats = $derived(data.stats);
 	const shown = $derived(namespaceLabel(data.namespace));
-
-	// Every number below is scoped to the namespace the switcher selected, and
-	// the answer says which namespace it is FOR: an empty request resolves to
-	// `default` server-side, and a page that could not name what it is showing
-	// would be showing an unlabelled number.
-	const answeredFor = $derived(namespaceLabel(stats?.namespace ?? data.namespace));
 
 	const counts = $derived(stats?.runsByStatus ?? {});
 	const running = $derived(stats?.running ?? []);
@@ -79,7 +77,7 @@
 		if (!stats || durationSamples === 0) return 'no run finished in this window';
 		const since = timestampMs(stats.durationCoverageSince);
 		const windowSince = timestampMs(stats.windowSince);
-		const base = `${durationSamples} of the window's ${finished} finished runs`;
+		const base = `${durationSamples} of the window's ${finished} finished ${finished === 1 ? 'run' : 'runs'}`;
 		if (since !== null && windowSince !== null && since > windowSince + 60_000) {
 			return `${base}, covering only since ${fmtInstant(stats.durationCoverageSince)}`;
 		}
@@ -145,13 +143,49 @@
 	const customLabel = $derived(data.window === 'custom' && data.sinceParam ? `Since ${fmtInstantMs(Date.parse(data.sinceParam))}` : 'Custom');
 	const customValid = $derived(!Number.isNaN(Date.parse(customSince)));
 	function applyCustom(event: SubmitEvent) { event.preventDefault(); if (!customValid) return; customOpen = false; void goto(windowHref('custom', new Date(customSince).toISOString())); }
-	const windowWord = $derived(data.window === 'custom' ? customLabel : `last ${data.window}`);
-	setTitleBlock(() => [
-		{ label: 'PAGE', value: 'Dashboard' },
-		{ label: 'NAMESPACE', value: answeredFor },
-		{ label: 'WINDOW', value: windowWord }
-	]);
+	// The charts' last 7 days are their own question, not this page's window, so
+	// they keep their own request and a slower clock than the figures above.
+	let week = $state.raw<GetStatsResponse | null>(null);
+	let weekError = $state<string | null>(null);
+	$effect(() => {
+		const namespace = data.namespace;
+		let live = true;
+		week = null;
+		weekError = null;
+		const stop = pollWhileVisible(
+			() => {
+				weekStats(statsClient(fetch), namespace).then(
+					(answer) => {
+						if (!live) return;
+						week = answer;
+						weekError = null;
+					},
+					(err) => {
+						if (live) weekError = errorMessage(err);
+					}
+				);
+			},
+			60_000,
+			{ immediate: true }
+		);
+		return () => {
+			live = false;
+			stop();
+		};
+	});
+
 	const statsCli = $derived(`orkctl --namespace ${shellQuote(namespaceLabel(data.namespace))} stats --since ${shellQuote(data.window === 'custom' && data.sinceParam ? data.sinceParam : data.window)}`);
+	// The sections below hand their own commands up, each carrying its own choices.
+	let fingerprintsCli = $state('');
+	let flakesCli = $state('');
+	let usageCli = $state('');
+	const cli = $derived([
+		{ label: 'The numbers on this page', command: statsCli },
+		...(fingerprintsCli ? [{ label: 'The same failures, grouped', command: fingerprintsCli }] : []),
+		...(flakesCli ? [{ label: 'Tasks that needed a retry', command: flakesCli }] : []),
+		...(usageCli ? [{ label: 'What this namespace reserved', command: usageCli }] : []),
+		...(data.namespaceHold ? [{ label: 'Release the hold', command: releaseHoldCli(namespaceLabel(data.namespace)) }] : [])
+	]);
 </script>
 
 <svelte:head><title>Dashboard — OrkStack</title></svelte:head>
@@ -162,7 +196,6 @@
 
 {#snippet facts()}
 	<p class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-		<span data-testid="dashboard-namespace">namespace <span class="font-mono text-ink">{answeredFor}</span></span>
 		{#if stats}
 			<span class="figure text-ink-secondary" data-testid="dashboard-window">
 				{fmtInstant(stats.windowSince)} → {fmtInstant(stats.windowUntil)}
@@ -227,30 +260,25 @@
 				{/snippet}
 			</Popover>
 		</div>
-		<CliEquivalent command={statsCli} testid="dashboard-cli" />
 	</section>
 {/snippet}
 
-<SheetHeader title="Dashboard" testid="dashboard-heading" meta={facts} actions={windowControls} />
+<SheetHeader title="Dashboard" testid="dashboard-heading" meta={facts} actions={windowControls} commands={cli} />
 
 {#if data.error}
 	<ErrorPanel
 		testid="dashboard-error"
 		retryTestid="dashboard-retry"
-		subject="the numbers for namespace {shown}"
+		subject="the numbers"
 		message={data.error}
 		busy={refreshing}
 		onretry={retry}
 	/>
 {:else if stats}
 	<!-- The count band: the summary line of the registers below it, never a
-		row of hero numbers. Figures are ink at the title block's value size;
-		a status count carries its drawn mark, not a coloured number. -->
-	<section
-		aria-label="Run counts"
-		data-testid="dashboard-counts"
-		class="mb-8 grid grid-cols-12 border-y border-rule lg:grid-cols-7"
-	>
+		row of hero numbers. Figures are ink at their own small size; a status
+		count carries its drawn mark, not a coloured number. -->
+	<section aria-label="Run counts" data-testid="dashboard-counts" class="card mb-5 grid grid-cols-12 px-4 py-2.5 lg:grid-cols-7">
 		<CountCell label="Running" value={fmtCount(counts['running'])} testid="stat-running" status={Status.RUNNING} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6" />
 		<CountCell label="Succeeded" value={fmtCount(counts['succeeded'])} testid="stat-succeeded" status={Status.SUCCEEDED} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6" />
 		<CountCell label="Failed" value={fmtCount(counts['failed'])} testid="stat-failed" status={Status.FAILED} class="col-span-3 lg:col-span-1 max-[400px]:col-span-6 max-[400px]:border-t max-[400px]:border-l-0 max-[400px]:pl-0" />
@@ -260,154 +288,189 @@
 		<CountCell label="p95 duration" value={p95} note={coverageNote} testid="stat-p95" class="col-span-4 lg:col-span-1 max-lg:border-t" />
 	</section>
 
-	<section class="region mb-10 pt-3" aria-labelledby="dashboard-running-heading">
-		<h2 id="dashboard-running-heading" class="mb-3 text-md font-semibold text-ink">Running now</h2>
-		{#if running.length === 0}
-			<p class="text-sm text-ink-muted" data-testid="running-empty">Nothing is running in {shown}.</p>
-		{:else}
-			<div class="overflow-x-auto">
-				<table class="register register-stacked sm:min-w-[560px]" data-testid="running-list">
-					<thead class="max-sm:sr-only">
-						<tr>
-							<th scope="col">Run</th>
-							<th scope="col">Orkflow</th>
-							<th scope="col">Started</th>
-							<th scope="col">Status</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each running as run (run.id)}
-							<tr class="transition-colors hover:bg-hover" data-testid="running-{run.id}">
-								<td><a class="link font-mono text-sm" data-tip={run.id} href={withNamespace(`/runs/${run.id}`, data.namespace)}
-										><span class="max-sm:sr-only">{run.id}</span><span aria-hidden="true" class="sm:hidden">{shortRunId(run.id)}</span></a
-									></td>
-								<td class="text-ink-secondary">{run.orkflowName}{#if run.orkflowVersion}<span class="font-mono">@{run.orkflowVersion}</span>{/if}</td>
-								<td class="figure text-xs text-ink-secondary">{fmtTimestamp(run.startedAt ?? run.createdAt)}</td>
-								<td><StatusPill status={run.status} testid="running-status-{run.id}" /></td>
+	<div class="grid gap-5">
+		<section class="card" aria-labelledby="dashboard-running-heading">
+			<div class="card-head"><h2 id="dashboard-running-heading">Running now</h2></div>
+			{#if running.length === 0}
+				<p class="px-4 py-3 text-sm text-ink-muted" data-testid="running-empty">Nothing is running.</p>
+			{:else}
+				<div class="overflow-x-auto">
+					<table class="register register-stacked sm:min-w-[560px]" data-testid="running-list">
+						<thead class="max-sm:sr-only">
+							<tr>
+								<th scope="col">Run</th>
+								<th scope="col">Orkflow</th>
+								<th scope="col">Started</th>
+								<th scope="col">Status</th>
 							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{/if}
-	</section>
+						</thead>
+						<tbody>
+							{#each running as run (run.id)}
+								<tr class="transition-colors hover:bg-hover" data-testid="running-{run.id}">
+									<td><a class="link font-mono text-sm" data-tip={run.id} href={withNamespace(`/runs/${run.id}`, data.namespace)}
+											><span class="max-sm:sr-only">{run.id}</span><span aria-hidden="true" class="sm:hidden">{shortRunId(run.id)}</span></a
+										></td>
+									<td class="text-ink-secondary">
+										<span class="block" class:mb-1={run.orkflowVersion}>{run.orkflowName}</span>
+										{#if run.orkflowVersion}<Plate key="version" value={run.orkflowVersion} small />{/if}
+									</td>
+									<td class="figure text-xs text-ink-secondary">{fmtTimestamp(run.startedAt ?? run.createdAt)}</td>
+									<td><StatusPill status={run.status} testid="running-status-{run.id}" /></td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				</div>
+			{/if}
+		</section>
 
-	<section class="region mb-10 pt-3" aria-labelledby="dashboard-failures-heading">
-		<h2 id="dashboard-failures-heading" class="text-md font-semibold text-ink">Recent failures</h2>
-		<p class="mt-1 mb-3 text-sm text-ink-muted">Orkflows whose runs failed in this window, worst first.</p>
-		{#if failures.length === 0}
-			<p class="text-sm text-ink-muted" data-testid="failures-empty">No run failed in this window.</p>
-		{:else}
-			<div class="overflow-x-auto">
-				<table class="register register-stacked sm:min-w-[420px]" data-testid="failure-table">
-					<thead class="max-sm:sr-only">
-						<tr>
-							<th scope="col">Orkflow</th>
-							<th scope="col" class="text-right">Failed</th>
-							<th scope="col" class="text-right">Finished</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each failures as failure (failure.orkflowName)}
-							<tr class="transition-colors hover:bg-hover" data-testid="failure-{failure.orkflowName}">
-								<td>
-									<a
-										class="link font-semibold"
-										href={listHref(
-											'/runs',
-											{ ns: namespaceLabel(data.namespace) },
-											{ filter: runWindowFilters(failure.orkflowName, '', '', '') }
-										)}>{failure.orkflowName}</a
-									>
-								</td>
-								<!-- Stacked below 640 px, the figures say what they count. -->
-								<td class="figure text-right font-semibold text-red" data-testid="failure-{failure.orkflowName}-failed">{failure.failed.toString()}<span class="font-sans font-normal sm:hidden">&nbsp;failed</span></td>
-								<td class="figure text-ink-secondary sm:text-right" data-testid="failure-{failure.orkflowName}-finished"><span class="font-sans sm:hidden">of&nbsp;</span>{failure.total.toString()}<span class="font-sans sm:hidden">&nbsp;finished</span></td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
+		<div class="dash-two">
+			<section class="card" aria-labelledby="dashboard-failures-heading">
+				<div class="card-head">
+					<h2 id="dashboard-failures-heading">Recent failures</h2>
+					<span class="card-sub">Orkflows whose runs failed, worst first</span>
+				</div>
+				{#if failures.length === 0}
+					<p class="px-4 py-3 text-sm text-ink-muted" data-testid="failures-empty">No run failed in this window.</p>
+				{:else}
+					<div class="overflow-x-auto">
+						<table class="register register-stacked sm:min-w-[360px]" data-testid="failure-table">
+							<thead class="max-sm:sr-only">
+								<tr>
+									<th scope="col">Orkflow</th>
+									<th scope="col" class="text-right">Failed</th>
+									<th scope="col" class="text-right">Finished</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each failures as failure (failure.orkflowName)}
+									<tr class="transition-colors hover:bg-hover" data-testid="failure-{failure.orkflowName}">
+										<td>
+											<a
+												class="link font-semibold"
+												href={listHref(
+													'/runs',
+													{ ns: namespaceLabel(data.namespace) },
+													{ filter: runWindowFilters(failure.orkflowName, '', '', '') }
+												)}>{failure.orkflowName}</a
+											>
+										</td>
+										<!-- Stacked below 640 px, the figures say what they count. -->
+										<td class="figure text-right font-semibold text-red" data-testid="failure-{failure.orkflowName}-failed">{failure.failed.toString()}<span class="font-sans font-normal sm:hidden">&nbsp;failed</span></td>
+										<td class="figure text-ink-secondary sm:text-right" data-testid="failure-{failure.orkflowName}-finished"><span class="font-sans sm:hidden">of&nbsp;</span>{failure.total.toString()}<span class="font-sans sm:hidden">&nbsp;finished</span></td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			</section>
+
+			<section class="card" aria-labelledby="dashboard-pools-heading">
+				<div class="card-head">
+					<h2 id="dashboard-pools-heading">Pool health</h2>
+					<span class="card-sub">Where a task can run, and who serves it</span>
+				</div>
+				{#if pools.length === 0}
+					<p class="px-4 py-3 text-sm text-ink-muted" data-testid="pools-empty">No pool could be read.</p>
+				{:else}
+					<div class="overflow-x-auto">
+						<table class="register register-stacked sm:min-w-[360px]" data-testid="pool-list">
+							<thead class="max-sm:sr-only">
+								<tr>
+									<th scope="col">Pool</th>
+									<th scope="col">Orkers</th>
+									<th scope="col">Serving</th>
+								</tr>
+							</thead>
+							<tbody>
+								{#each pools as pool (pool.name)}
+									<tr data-testid="pool-{pool.name}" class={pool.liveOrkerCount > 0 ? '' : 'bg-red-tint'}>
+										<td class="font-mono text-ink">
+											{pool.name}
+											{#if pool.isDefault}<span class="stamp ml-2 border-rule-strong text-ink-secondary" data-testid="pool-default-{pool.name}">default</span>{/if}
+										</td>
+										<td>
+											<span data-testid="pool-orkers-{pool.name}" class="figure {pool.liveOrkerCount > 0 ? 'text-ink' : 'font-semibold text-red-strong'}"
+												>{pool.liveOrkerCount}
+												{pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}</span
+											>
+										</td>
+										<!-- Driven by the live Orker COUNT: an activity is an image,
+											so a pool carries no inventory of what it can run. -->
+										<td class="text-sm {pool.liveOrkerCount > 0 ? 'text-ink-secondary' : 'severity-warning'}" data-testid="pool-serving-{pool.name}">
+											{#if pool.liveOrkerCount > 0}
+												serving now
+											{:else}
+												no Orker is serving this pool, so a task sent here would wait
+											{/if}
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					</div>
+				{/if}
+			</section>
+		</div>
+
+		<section class="grid gap-3" aria-labelledby="dashboard-week-heading" data-testid="dashboard-week">
+			<h2 id="dashboard-week-heading" class="text-md font-semibold text-ink">Last 7 days</h2>
+			{#await import('#lib/components/RunsInsights.svelte') then { default: RunsInsights }}
+				<RunsInsights overview {week} {weekError} failures={null} flakes={null} days={dayBars(week)} />
+			{:catch err}
+				<p class="text-dense text-ink-3" data-testid="dashboard-week-error">The charts could not load: {String(err)}</p>
+			{/await}
+		</section>
+
+		{#if failures.length > 0}
 			<!-- The same failed runs, grouped by what failed and why. Fetched
 				only when opened; absent when nothing failed, because there is
 				nothing to fingerprint. -->
 			<FailureFingerprints
+				bind:command={fingerprintsCli}
 				namespace={data.namespace}
 				window={data.window}
 				sinceParam={data.sinceParam}
 				computedAt={stats.computedAt}
 			/>
 		{/if}
-	</section>
 
-	<section class="region mb-10 pt-3" aria-labelledby="dashboard-pools-heading">
-		<h2 id="dashboard-pools-heading" class="text-md font-semibold text-ink">Pool health</h2>
-		<p class="mt-1 mb-3 text-sm text-ink-muted">
-			Where a task of this namespace can run, and how many Orkers are serving each pool right now.
-		</p>
-		{#if pools.length === 0}
-			<p class="text-sm text-ink-muted" data-testid="pools-empty">No pool could be read for {shown}.</p>
-		{:else}
-			<div class="overflow-x-auto">
-				<table class="register register-stacked sm:min-w-[480px]" data-testid="pool-list">
-					<thead class="max-sm:sr-only">
-						<tr>
-							<th scope="col">Pool</th>
-							<th scope="col">Orkers</th>
-							<th scope="col">Serving</th>
-						</tr>
-					</thead>
-					<tbody>
-						{#each pools as pool (pool.name)}
-							<tr data-testid="pool-{pool.name}" class={pool.liveOrkerCount > 0 ? '' : 'bg-red-tint'}>
-								<td class="font-mono text-ink">
-									{pool.name}
-									{#if pool.isDefault}<span class="stamp ml-2 border-rule-strong text-ink-secondary" data-testid="pool-default-{pool.name}">default</span>{/if}
-								</td>
-								<td>
-									<span data-testid="pool-orkers-{pool.name}" class="figure {pool.liveOrkerCount > 0 ? 'text-ink' : 'font-semibold text-red-strong'}"
-										>{pool.liveOrkerCount}
-										{pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}</span
-									>
-								</td>
-								<!-- Driven by the live Orker COUNT: an activity is an image,
-									so a pool carries no inventory of what it can run. -->
-								<td class="text-sm {pool.liveOrkerCount > 0 ? 'text-ink-secondary' : 'severity-warning'}" data-testid="pool-serving-{pool.name}">
-									{#if pool.liveOrkerCount > 0}
-										serving now
-									{:else}
-										no Orker is serving this pool, so a task sent here would wait
-									{/if}
-								</td>
-							</tr>
-						{/each}
-					</tbody>
-				</table>
-			</div>
-		{/if}
-	</section>
-
-	<!-- The retries the success rate hides: a SUCCEEDED run that needed a
-		second attempt counts as a success in every count above. Fetched only
-		when opened, and rendered whenever the page has numbers — a namespace
-		that dispatched nothing says so inside it. -->
-	<section class="mb-10">
+		<!-- The retries the success rate hides: a SUCCEEDED run that needed a
+			second attempt counts as a success in every count above. Fetched only
+			when opened, and rendered whenever the page has numbers — a namespace
+			that dispatched nothing says so inside it. -->
 		<FlakeIndex
+			bind:command={flakesCli}
 			namespace={data.namespace}
 			window={data.window}
 			sinceParam={data.sinceParam}
 			computedAt={stats.computedAt}
 		/>
-	</section>
 
 	<!-- What the namespace RESERVED — and, with a budget, against it. Its
 		own request on its own timer: the register asks the budget's period
 		when there is one, which is a different question from this page's
 		window. -->
 	<UsageCard
+		bind:command={usageCli}
 		namespace={data.namespace}
 		budget={data.namespaceBudget}
 		window={data.window}
 		sinceParam={data.sinceParam}
 	/>
+	</div>
 {/if}
+
+<style>
+	.dash-two {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: calc(var(--spacing) * 5);
+	}
+	@media (max-width: 1180px) {
+		.dash-two {
+			grid-template-columns: minmax(0, 1fr);
+		}
+	}
+</style>

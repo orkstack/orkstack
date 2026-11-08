@@ -93,6 +93,9 @@ func newRunPlanCommand(g *globalFlags) *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("read orkflow file: %w", err)
 				}
+				if err := refuseSecondDocument(file, source); err != nil {
+					return err
+				}
 				req.Yaml = string(source)
 			}
 
@@ -435,7 +438,7 @@ func planUnusedSentence(plan *orkstackv1.PlanRunResponse) string {
 // renderPlan prints the human plan (docs/UI_CLI_PARITY.md "Run plan").
 func renderPlan(out io.Writer, plan *orkstackv1.PlanRunResponse, file string, assumeFailed []string) error {
 	var buf bytes.Buffer
-	header := fmt.Sprintf("PLAN  %s@%s  namespace %s", plan.GetOrkflowName(), plan.GetOrkflowVersion(), plan.GetNamespace())
+	header := fmt.Sprintf("PLAN  %s  namespace %s", orkflowRef(plan.GetOrkflowName(), plan.GetOrkflowVersion()), plan.GetNamespace())
 	if plan.GetFromYaml() {
 		header += fmt.Sprintf("  (from %s, not applied)", file)
 	}

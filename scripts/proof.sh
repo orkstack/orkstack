@@ -908,6 +908,10 @@ fi
 STACK_ENV=(
 	ORK_PROOF_ID="$PROOF_ID"
 	ORK_PROOF_DIR="$DIR/artifacts"
+	# The development store's key: no binary falls back to one, and the store
+	# refuses any other (internal/testsupport/s3bucket).
+	ORK_S3_ACCESS_KEY="${ORK_S3_ACCESS_KEY:-orkstack}"
+	ORK_S3_SECRET_KEY="${ORK_S3_SECRET_KEY:-orkstack-secret}"
 	ORK_TEMPORAL_ADDRESS="$TEMPORAL_ADDRESS"
 	ORK_TEST_BIN_DIR="$DIR/bin"
 	ORK_TEST_IMAGE_TAG="$IMAGE_TAG"

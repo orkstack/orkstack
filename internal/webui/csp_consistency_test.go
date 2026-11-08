@@ -73,18 +73,21 @@ func policyDirectives(policy string) map[string][]string {
 
 // policyDrift lists every way policy differs from what the page policy in
 // config must become for a page that names none: the build's directives with
-// the same sources, opened with frame-ancestors 'none', but with no hash and
-// no 'unsafe-eval' whether or not the build allows it. It is empty when they
-// agree.
+// the same sources, opened with frame-ancestors 'none', but with no hash. No
+// page allows eval: a build that does is drift of its own. It is empty when
+// they agree.
 func policyDrift(config []byte, policy string) ([]string, error) {
 	want, err := buildDirectives(config)
 	if err != nil {
 		return nil, err
 	}
 	want["frame-ancestors"] = []string{"'none'"}
-	want["script-src"] = slices.DeleteFunc(slices.Clone(want["script-src"]), func(s string) bool { return s == "'unsafe-eval'" })
-	got := policyDirectives(policy)
 	var drift []string
+	if slices.Contains(want["script-src"], "'unsafe-eval'") {
+		drift = append(drift, "the build's script-src allows 'unsafe-eval'")
+		want["script-src"] = slices.DeleteFunc(want["script-src"], func(s string) bool { return s == "'unsafe-eval'" })
+	}
+	got := policyDirectives(policy)
 	for _, name := range slices.Sorted(maps.Keys(want)) {
 		if strings.Join(got[name], " ") != strings.Join(want[name], " ") {
 			drift = append(drift, fmt.Sprintf("%s: the policy has %q, the build %q", name, got[name], want[name]))
@@ -103,15 +106,14 @@ func policyDrift(config []byte, policy string) ([]string, error) {
 }
 
 // The default page policy is the build's own (ui/vite.config.ts, csp)
-// without its hashes and without 'unsafe-eval', opened with frame-ancestors
-// 'none': every directive the build writes, with the same sources but
-// those. A page the engine serves without a policy of its own runs under
-// the app's rule, but no inline script and no eval (it is never the app,
-// whose boot script needs a hash), and a change to either file that the
-// other does not follow fails here. Whether the build allows 'unsafe-eval'
-// is the build's own decision (the YAML editor's validators today), so this
-// does not require it, only that the default never does.
-func TestDefaultPagePolicy_IsTheBuildsPolicyWithoutItsHashesOrEval(t *testing.T) {
+// without its hashes, opened with frame-ancestors 'none': every directive
+// the build writes, with the same sources but those. A page the engine serves
+// without a policy of its own runs under the app's rule, but no inline script
+// (it is never the app, whose boot script needs a hash), and a change to
+// either file that the other does not follow fails here. Neither allows
+// 'unsafe-eval': the YAML editor's validators are compiled ahead of time
+// (ui/test/gen-validators.ts), and nothing else in the page evaluates code.
+func TestDefaultPagePolicy_IsTheBuildsPolicyWithoutItsHashes(t *testing.T) {
 	config, err := os.ReadFile(filepath.Join("..", "..", "ui", "vite.config.ts"))
 	if err != nil {
 		t.Fatal(err)
@@ -126,8 +128,8 @@ func TestDefaultPagePolicy_IsTheBuildsPolicyWithoutItsHashesOrEval(t *testing.T)
 }
 
 // What the comparison above accepts and refuses, on configs of its own: it
-// holds the default to the build's directives whether or not the build
-// allows eval, and a config it cannot read fails rather than passes.
+// holds the default to the build's directives, refuses eval in either, and a
+// config it cannot read fails rather than passes.
 func TestPolicyDrift(t *testing.T) {
 	config := func(scriptSources string) string {
 		return `sveltekit({
@@ -149,11 +151,12 @@ func TestPolicyDrift(t *testing.T) {
 		drift                []string // fragments, one per finding
 	}{
 		{name: "a build with eval, a default without it",
-			config: config(`'self', 'unsafe-eval', themeHash`), policy: matching},
+			config: config(`'self', 'unsafe-eval', themeHash`), policy: matching,
+			drift: []string{"the build's script-src allows 'unsafe-eval'"}},
 		{name: "a build without eval",
 			config: config(`'self', themeHash`), policy: matching},
 		{name: "a default that allows eval",
-			config: config(`'self', 'unsafe-eval', themeHash`),
+			config: config(`'self', themeHash`),
 			policy: strings.Replace(matching, "script-src 'self'", "script-src 'self' 'unsafe-eval'", 1),
 			drift:  []string{"script-src"}},
 		{name: "a default that allows a hash",

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create, toJson } from '@bufbuild/protobuf';
 import { TaskLogChunkSchema } from '../src/lib/gen/orkstack/v1/run_service_pb';
-import { followTaskLogs, type LogDelivery, type LogSocketState } from '../src/lib/taskLogs';
+import { describeClose, followTaskLogs, type LogDelivery, type LogSocketState } from '../src/lib/taskLogs';
 
 // The client half of "a task that retries is still followed".
 //
@@ -380,4 +380,11 @@ test('a retained-log replay requests follow=false and preserves the stored bytes
 	expect(new TextDecoder().decode(bytes[0])).toBe('[stdout] retained\n');
 	expect(states).toContain('ended');
 	stop();
+});
+
+test('describeClose names what the browser was told, and says when no close code came', () => {
+	expect(describeClose(undefined)).toBe('the connection dropped');
+	expect(describeClose({ code: 1011, reason: 'boom' })).toBe('close 1011: boom');
+	expect(describeClose({ code: 1006 })).toBe('close 1006');
+	expect(describeClose({ reason: 'server went away' })).toBe('closed with no close code: server went away');
 });

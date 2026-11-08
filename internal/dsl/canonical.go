@@ -331,10 +331,9 @@ func canonicalImages(wf *orkstackv1.Orkflow) ([]byte, error) {
 			"taskId": t.GetId(),
 			"image":  canonicalImageRef(t.GetImage()),
 		}
-		// Only for a composed task, so a document with none derives the
-		// version it always did, and one derived version still names one
-		// definition when a child version was deleted and re-applied with
-		// other content.
+		// Only for a composed task, so a document with none hashes as it always
+		// did, and one content hash still names one definition when a child
+		// version was deleted and re-applied with other content.
 		if o := canonicalOrkflowRef(t.GetOrkflow()); o != nil {
 			entry["orkflow"] = o
 		}
@@ -356,36 +355,41 @@ func canonicalOrkflowRef(o *orkstackv1.OrkflowRef) map[string]any {
 	}
 }
 
-// derivedVersionSeparator is the 0x1F unit separator of §4.4. It cannot occur
-// in canonical JSON (JSON escapes control characters) and is vanishingly
-// unlikely in YAML source, so the concatenation is unambiguous.
-const derivedVersionSeparator = 0x1F
+// contentHashSeparator is the 0x1F unit separator of §4.4. It cannot occur in
+// canonical JSON (JSON escapes control characters) and is vanishingly unlikely
+// in YAML source, so the concatenation is unambiguous.
+const contentHashSeparator = 0x1F
 
-// DerivedVersion is the version of a document that pins none (§4.4):
+// ContentHash is what decides that two applies of a document that pins no
+// version are one version (§4.4):
 //
 //	hex(sha256(sourceYAML ‖ 0x1F ‖ canonicalImages(wf)))
 //
-// It is assigned AFTER image resolution, and this is the whole point. Compile
-// stamps a provisional sourceHash, and the applier replaces it here once the
-// images are resolved: a version minted before resolution would name the SAME
-// string for a DIFFERENT definition whenever a tag moved, and
-// pkg/artifacts.orkflow_store would then refuse the apply as an attempt to
-// rewrite an immutable version. The author would get a refusal instead of a
-// new version.
+// The apply path takes it AFTER image resolution, and this is the whole point. A
+// hash taken before resolution would name the SAME content for a DIFFERENT
+// definition whenever a tag moved, and the document would land on the version
+// already stored, to be refused by pkg/artifacts.orkflow_store as an attempt to
+// rewrite an immutable version. The author would get a refusal instead of a new
+// version.
 //
-// This does NOT re-open the question hash.go settles — "two notions of 'the
-// same document' in one system is one too many". The source is hashed in FULL
-// here, header included, so a comment-only edit mints a new version, and
-// adding or moving the header changes it like any other edit. The resolution
-// is not a second notion of the document but a second input to what runs.
-func DerivedVersion(sourceYAML []byte, wf *orkstackv1.Orkflow) (string, error) {
+// This does NOT re-open the question hash.go settles — "two notions of 'the same
+// document' in one system is one too many". The source is hashed in FULL here,
+// header included, so a comment-only edit is a new version, and adding or moving
+// the header is one like any other edit. The resolution is not a second notion
+// of the document but a second input to what runs.
+//
+// The formula is frozen: every derived version an earlier release stored is
+// this hash, and FindDerivedVersion finds it under that name, so changing what
+// goes in would turn each re-apply of such a document into a new version.
+// TestContentHash_IsFrozen holds it.
+func ContentHash(sourceYAML []byte, wf *orkstackv1.Orkflow) (string, error) {
 	images, err := canonicalImages(wf)
 	if err != nil {
 		return "", err
 	}
 	h := sha256.New()
 	h.Write(sourceYAML)
-	h.Write([]byte{derivedVersionSeparator})
+	h.Write([]byte{contentHashSeparator})
 	h.Write(images)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }

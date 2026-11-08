@@ -25,6 +25,7 @@ import {
 	waitForEngine
 } from './harness';
 import { fillYaml } from './yaml';
+import { pageCli } from './uiHelpers';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('interface-compat');
@@ -265,8 +266,8 @@ test('compare interfaces shows the findings the CLI prints', async ({ page }) =>
 	await expect(page.getByTestId('compat-message-outputs.url-REMOVED')).toContainText(
 		'output "url" is removed'
 	);
-	await page.getByTestId('compat-cli-trigger').click();
-	await expect(page.getByTestId('compat-cli-command')).toHaveText(
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'Compare their interfaces')).toHaveText(
 		`orkctl --namespace ${NS} orkflow compat ${BLOCK} 2.1.0 3.0.0`
 	);
 	note('Compare interfaces 2.1.0 → 3.0.0: breaking — 2 breaking changes (inputs.region ADDED, outputs.url REMOVED)');
@@ -286,12 +287,13 @@ test('callers lists the composing orkflow, the trigger and the schedule', async 
 	await expect(page.getByTestId('callers-scanned')).toContainText(
 		'Moved by a promotion (they follow the current version): triggers 1, schedules 0.'
 	);
-	await page.getByTestId('callers-cli-trigger').click();
-	await expect(page.getByTestId('callers-cli-command')).toHaveText(
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'What calls it')).toHaveText(
 		`orkctl --namespace ${NS} orkflow callers ${BLOCK}`
 	);
 	note(`Callers: ${CHECKOUT}@4.2.0 (reads digest, url), trigger ${TRIGGER} (current), schedule ${SCHEDULE} (2.1.0)`);
 	await shot(page, 'screenshot-callers.png');
+	await page.keyboard.press('Escape');
 
 	// The promote dialog names the trigger that follows current.
 	await page.getByTestId('promote-3.0.0').click();

@@ -71,8 +71,42 @@ spec:
             - mini
             - -dir=/data
             - -bucket=orkstack-artifacts
+            - -s3.autoCreateBucket=false
+          # The keys kustomization.yaml gives the services. With none set this
+          # store checks none, and with auto-create on an admin's first upload
+          # makes the bucket, so a wrong key or bucket would pass only here.
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              value: orkstack
+            - name: AWS_SECRET_ACCESS_KEY
+              value: orkstack-secret
           ports:
             - containerPort: 8333
+          # Ready means ork and the Orker can use the store, not that the
+          # container started. On an empty volume `weed mini` serves S3 for
+          # seconds before it creates its -bucket; in that gap the Orker's boot
+          # probe is refused 403 and the engine's first read finds no bucket,
+          # and each exits. So the probe asks for that bucket, signed as their
+          # own requests are, as deploy/docker-compose.yml's health check does.
+          # scripts/kind-orker.sh waits on it, and the Service sends nothing
+          # here until it passes. ork, started beside it, still exits if it
+          # comes first, and the kubelet restarts it: Kubernetes has no
+          # depends_on.
+          readinessProbe:
+            exec:
+              command:
+                - curl
+                - -fsS
+                - -o
+                - /dev/null
+                - --head
+                - --aws-sigv4
+                - aws:amz:us-east-1:s3
+                - --user
+                - orkstack:orkstack-secret
+                - http://localhost:8333/orkstack-artifacts
+            periodSeconds: 5
+            timeoutSeconds: 5
           volumeMounts:
             - name: data
               mountPath: /data

@@ -22,7 +22,7 @@ tasks:
 | `apiVersion` | yes | Always `orkstack/v1`. |
 | `kind` | yes | Always `Orkflow`. |
 | `name` | yes | Unique within its namespace: lowercase letters, digits and `-`, starting with a letter. |
-| `version` | no | Your version label. Absent: derived from a hash of the document. |
+| `version` | no | Your version label. Absent: the first apply assigns one. |
 | `namespace` | no | Absent: `default`. |
 | `description` | no | Shown in the UI and by `orkctl`. |
 | `labels` | no | A map of strings, for filtering. |

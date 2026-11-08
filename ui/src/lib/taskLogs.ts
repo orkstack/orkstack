@@ -172,7 +172,7 @@ export function describeClose(event?: { code?: number; reason?: string }): strin
 	const code = event?.code;
 	const reason = event?.reason?.trim();
 	if (!code && !reason) return 'the connection dropped';
-	return `close ${code ?? 'unknown'}${reason ? `: ${reason}` : ''}`;
+	return `${code ? `close ${code}` : 'closed with no close code'}${reason ? `: ${reason}` : ''}`;
 }
 
 /**

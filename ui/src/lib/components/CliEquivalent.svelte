@@ -66,6 +66,7 @@
 			aria-label={label}
 			aria-expanded={open}
 			data-testid="{testid}-trigger"
+			data-cli-icon
 			onclick={toggle}
 			class="inline-flex items-center justify-center gap-1.5 rounded-sm border border-rule-strong bg-paper text-ink-secondary transition-colors hover:bg-hover hover:text-ink {text
 				? 'h-7 px-2'
@@ -76,10 +77,10 @@
 		</button>
 	{/snippet}
 	{#snippet content()}
-		<div class="flex items-start gap-2">
+		<div class="flex w-[min(35rem,calc(100vw-2rem))] items-start gap-2">
 			<pre
 				data-testid="{testid}-command"
-				class="max-w-md min-w-0 flex-1 overflow-x-auto border border-rule bg-paper-sunken p-2 font-mono text-xs text-ink"><code
+				class="min-w-0 flex-1 rounded-sm border border-line bg-surface-2 px-2.5 py-1.5 font-mono text-xs leading-normal break-words whitespace-pre-wrap text-ink"><code
 					>{command}</code
 				></pre>
 			<button

@@ -1,0 +1,73 @@
+name: proof-label
+
+# Starts the full proof of a Dependabot pull request when someone adds the
+# ci:proof label. Until then proof.yml's `proof` job fails on that pull request
+# (docs/PROOFS.md §5), so the required check is never passed by waiting.
+#
+# It is a workflow of its own because this event fires for every label of every
+# pull request. In proof.yml, any label would land in a pull request's
+# concurrency group, cancel its running proof and report the required check
+# again. Nothing here starts for any other label, and no other event's job here
+# is ever reported as `proof`:
+#
+# - GitHub treats a skipped job as passing a required check, so the job that
+#   reports the check is named `proof` only on the event that runs a proof. On
+#   any other it is named something else, so it never answers for the check, and
+#   skipped, so it costs no runner.
+# - A check from a workflow_dispatch or repository_dispatch run does not satisfy
+#   a required check on a pull request, so the proof is called here, on the
+#   pull_request event itself, rather than started from here.
+# - The check says what the proof's own last step said, not the called job's
+#   result, because an excused runner-size miss leaves a shard red while the proof
+#   passes. Nothing but `success` passes it, so a proof that failed, was cancelled
+#   or never got there fails it.
+# - The called workflow's own concurrency group is the pull request's, so a new
+#   push supersedes this run; proof.yml proves that new head, because the label
+#   is still on the pull request.
+#
+# Adding a label takes triage access or more, and a label a bot adds starts
+# nothing here. The run holds no secret, and only proof.yml's cancel job, which
+# runs nothing of the repository, holds a write permission.
+
+on:
+  pull_request:
+    types: [labeled]
+
+permissions:
+  contents: read
+
+jobs:
+  prove:
+    if: ${{ github.event.label.name == 'ci:proof' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.sender.type == 'User' && !github.event.pull_request.draft }}
+    # actions: write because proof.yml's cancel job may cancel the run, and a
+    # called workflow's job never gets more than its caller grants: GitHub
+    # refuses to start one that asks for more.
+    permissions:
+      contents: read
+      actions: write
+      checks: read
+    uses: ./.github/workflows/proof.yml
+    with:
+      tier: full
+      base: main
+
+  verdict:
+    # The required check. `always()` because a failed proof must fail this job,
+    # and skipping it would pass the check. Its name and its `if` are one test.
+    name: ${{ (github.event.label.name == 'ci:proof' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.sender.type == 'User' && !github.event.pull_request.draft) && 'proof' || 'no proof asked for' }}
+    needs: prove
+    if: ${{ always() && (github.event.label.name == 'ci:proof' && github.event.pull_request.user.login == 'dependabot[bot]' && github.event.sender.type == 'User' && !github.event.pull_request.draft) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 6
+    permissions: {}
+    steps:
+      - name: the proof's verdict
+        timeout-minutes: 1
+        shell: bash
+        env:
+          VERDICT: ${{ needs.prove.outputs.proof_verdict }}
+        run: |
+          if [ "$VERDICT" != success ]; then
+            echo "the proof's verdict step ended '${VERDICT:-not at all}': its run's proof.json says why" >&2
+            exit 1
+          fi

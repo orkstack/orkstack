@@ -18,6 +18,8 @@ export interface Parsed {
 	syntax: Diagnostic[];
 }
 
+const SECOND_DOCUMENT = 'a second YAML document begins here; put it in a file of its own';
+
 export function parseYaml(text: string): Parsed {
 	const doc = parseDocument(text, {
 		version: '1.2',
@@ -30,7 +32,9 @@ export function parseYaml(text: string): Parsed {
 		to: Math.max(error.pos[1], error.pos[0]),
 		severity: 'error',
 		source: 'syntax',
-		message: error.message.split('\n')[0],
+		// The parser's own sentence for a second document names its API; this is
+		// the engine's, which refuses the file the same way (internal/dsl).
+		message: error.code === 'MULTIPLE_DOCS' ? SECOND_DOCUMENT : error.message.split('\n')[0],
 		path: ''
 	}));
 	let value: unknown = null;

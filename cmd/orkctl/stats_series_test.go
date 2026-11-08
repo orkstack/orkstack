@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -182,6 +184,62 @@ func TestStats_SeriesIsDrawnInThisMachinesZone(t *testing.T) {
 		})
 	}
 }
+
+// TestLocalZoneName_SaysWhichSourceFailedAndHow: every way the machine's zone
+// is not found names what was read and why it was not used, never a generic
+// "could not tell". A link that fails is missing or not a link; a link that
+// reads is named by its target.
+func TestLocalZoneName_SaysWhichSourceFailedAndHow(t *testing.T) {
+	const drawn = ", so the series is drawn in UTC (set --timezone to choose)"
+	notALink := errors.New("readlink /etc/localtime: invalid argument")
+	missing := fmt.Errorf("readlink /etc/localtime: %w", os.ErrNotExist)
+	for _, tc := range []struct {
+		name      string
+		tz        *string
+		target    string
+		linkErr   error
+		wantZone  string
+		wantGuess string
+	}{
+		{name: "TZ unset, /etc/localtime missing", linkErr: missing, wantZone: "UTC",
+			wantGuess: "TZ is not set and /etc/localtime is not a link into the zone database" + drawn},
+		{name: "TZ unset, /etc/localtime not a link", linkErr: notALink, wantZone: "UTC",
+			wantGuess: "TZ is not set and /etc/localtime is not a link into the zone database" + drawn},
+		{name: "TZ unset, a link to no zone", target: "/usr/share/zoneinfo/Mars/Olympus", wantZone: "UTC",
+			wantGuess: `/etc/localtime points to "/usr/share/zoneinfo/Mars/Olympus", which is not a zone the zone database holds` + drawn},
+		{name: "TZ unset, a link outside the zone database", target: "/opt/zones/here", wantZone: "UTC",
+			wantGuess: `/etc/localtime points to "/opt/zones/here", which is not a zone the zone database holds` + drawn},
+		{name: "TZ a rule, /etc/localtime not a link", tz: zonePtr("EST5EDT,M3.2.0,M11.1.0"), linkErr: notALink, wantZone: "UTC",
+			wantGuess: `TZ="EST5EDT,M3.2.0,M11.1.0" is not a zone name the zone database holds; ` +
+				"/etc/localtime is not a link into the zone database" + drawn},
+		{name: "TZ a rule, a link to no zone", tz: zonePtr("EST5EDT,M3.2.0,M11.1.0"), target: "/usr/share/zoneinfo/Mars/Olympus", wantZone: "UTC",
+			wantGuess: `TZ="EST5EDT,M3.2.0,M11.1.0" is not a zone name the zone database holds; ` +
+				`/etc/localtime points to "/usr/share/zoneinfo/Mars/Olympus", which is not a zone the zone database holds` + drawn},
+		{name: "TZ a rule, a link to a zone", tz: zonePtr("EST5EDT,M3.2.0,M11.1.0"), target: "/usr/share/zoneinfo/Europe/Lisbon", wantZone: "Europe/Lisbon",
+			wantGuess: `TZ="EST5EDT,M3.2.0,M11.1.0" is not a zone name the zone database holds; ` +
+				"drawing the series in Europe/Lisbon, from /etc/localtime (set --timezone to choose)"},
+		{name: "TZ unset, a link to a zone", target: "/usr/share/zoneinfo/Europe/Lisbon", wantZone: "Europe/Lisbon"},
+		{name: "TZ a zone", tz: zonePtr("Asia/Tokyo"), linkErr: notALink, wantZone: "Asia/Tokyo"},
+		{name: "TZ empty", tz: zonePtr(""), linkErr: notALink, wantZone: "UTC"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			getenv := func(string) (string, bool) {
+				if tc.tz == nil {
+					return "", false
+				}
+				return *tc.tz, true
+			}
+			readlink := func(string) (string, error) { return tc.target, tc.linkErr }
+			loads := func(name string) bool { return name == "Europe/Lisbon" || name == "Asia/Tokyo" || name == "UTC" }
+			zone, guessed := localZoneName(getenv, readlink, loads)
+			if zone != tc.wantZone || guessed != tc.wantGuess {
+				t.Errorf("localZoneName = %q, %q\nwant           %q, %q", zone, guessed, tc.wantZone, tc.wantGuess)
+			}
+		})
+	}
+}
+
+func zonePtr(s string) *string { return &s }
 
 // standInEngine is a stats server whose answer the test writes, for the cases
 // the real engine never produces: an engine that predates series, and one

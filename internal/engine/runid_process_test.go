@@ -25,8 +25,8 @@ const (
 	runIDHelperProcesses = 8
 )
 
-// runIDShape is the documented id shape: ork-{timestamp}-{sequence}.
-var runIDShape = regexp.MustCompile(`^ork-\d+-\d+$`)
+// runIDShape is the documented id shape: `ork-` and a UUIDv7 in base32.
+var runIDShape = regexp.MustCompile(`^ork-[0-7][0-9a-hjkmnp-tv-z]{25}$`)
 
 // TestRunIDHelperProcess is the child half of
 // TestNewRunID_UniqueAcrossSeparateProcesses. Under `go test` it is skipped;
@@ -100,24 +100,6 @@ func TestNewRunID_UniqueAcrossSeparateProcesses(t *testing.T) {
 			"a run id is the Temporal workflow id, so a collision fails or hijacks a run",
 			duplicates, runIDHelperProcesses*runIDHelperIDs, runIDHelperProcesses, sample)
 	}
-
-	// Acceptance 3: the sequence component must not restart at the same value
-	// in every process, or an operator comparing two replicas' logs is misled.
-	// With a 32-bit per-process nonce in the high half, eight children
-	// colliding on a first sequence has probability ~2.6e-8.
-	firstSequences := map[string]int{}
-	for child, ids := range perChild {
-		seq := sequenceOf(t, ids[0])
-		firstSequences[seq]++
-		if seq == "1" {
-			t.Errorf("child %d issued its first id as %q: the sequence still restarts at 1 per process",
-				child, ids[0])
-		}
-	}
-	if len(firstSequences) != runIDHelperProcesses {
-		t.Errorf("%d processes produced only %d distinct first sequences %v, want %d distinct",
-			runIDHelperProcesses, len(firstSequences), firstSequences, runIDHelperProcesses)
-	}
 }
 
 // runRunIDHelper re-execs this binary in its child role and returns the ids it
@@ -141,19 +123,9 @@ func runRunIDHelper(binary string) ([]string, error) {
 			continue
 		}
 		if !runIDShape.MatchString(line) {
-			return nil, fmt.Errorf("printed %q, want the documented shape ork-{timestamp}-{sequence}", line)
+			return nil, fmt.Errorf("printed %q, want the documented shape %s", line, runIDShape)
 		}
 		ids = append(ids, line)
 	}
 	return ids, nil
-}
-
-// sequenceOf returns the sequence component of an id.
-func sequenceOf(t *testing.T, id string) string {
-	t.Helper()
-	parts := strings.Split(id, "-")
-	if len(parts) != 3 {
-		t.Fatalf("run id %q is not ork-{timestamp}-{sequence}", id)
-	}
-	return parts[2]
 }

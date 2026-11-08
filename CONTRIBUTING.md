@@ -122,7 +122,10 @@ Past that, `ork` and `orker` read one shared YAML file (`--config PATH`), with
 `make dist VERSION=vX.Y.Z` builds what a release publishes as files: `orkctl`
 for Linux, macOS and Windows, `ork` and `orker` for Linux, each archived, and
 `SHA256SUMS`, under `dist/`. It runs `make ui` first, because `ork` carries
-the UI, and refuses to build an `ork` without it.
+the UI, and refuses to build an `ork` without it. Each binary is stamped with
+the version and the commit the checkout is at, which `orkctl version`, `ork
+--version` and `orker --version` report; from a tree with no git, pass
+`SOURCE_COMMIT=<sha>` beside `SOURCE_DATE_EPOCH`.
 `make release-images VERSION=vX.Y.Z OUT=<dir>` builds the release images
 (`ork`, `orker`, `orkctl` and the six activities; there is no UI image) as
 OCI layouts from those binaries, for this machine unless `PLATFORMS` says
@@ -146,6 +149,23 @@ of the `release` environment before it tags and publishes; a dispatch from any
 other branch is a dry run that never asks (docs/PROOFS.md §10, "Tag a
 release").
 
+## The development object store
+
+The store `make infra-up` runs checks keys and refuses an upload to a bucket that
+does not exist, as production does, so a wrong `ORK_S3_ACCESS_KEY`,
+`ORK_S3_SECRET_KEY` or `ORK_S3_BUCKET` fails on your machine with a 403 or a 404.
+No binary falls back to its key: `make up`, `make run-ork`, `make run-orker`, the
+integration tests and the proofs each set it, so a binary you start yourself needs
+`ORK_S3_ACCESS_KEY=orkstack` and `ORK_S3_SECRET_KEY=orkstack-secret`.
+A request by hand signs with the development keys:
+
+```bash
+curl --head --aws-sigv4 aws:amz:us-east-1:s3 --user orkstack:orkstack-secret http://localhost:9000/orkstack-artifacts
+```
+
+A store started before it checked keys accepts any: run `make infra-up` to
+recreate it. Its data stays.
+
 ## Fast checks (no Docker, under two minutes warm)
 
 `make check` runs `make lint` (`go vet`, gofmt and staticcheck),
@@ -158,9 +178,11 @@ only the files the test process itself opens inside the module, never what git
 reads in a subprocess (HEAD, the index, `info/exclude`, a global ignore file),
 so a cached pass there could survive a change to what git tracks or ignores.
 Run those packages with `-count=1` by hand too.
-Every proof runs those, without `-short`. Run it before every push. For the UI:
-`cd ui && bun run check && bun run test:unit`. For the site (`site/`, which
-also renders every doc): `make site`.
+Every proof runs those, without `-short`. It ends with the UI's gates, the ones
+a full proof's `ui-check` and `ui-unit` run: `bun install --frozen-lockfile`,
+`bun run check` and `bun test test/` in `ui/`, about 20 s together. So it needs
+Bun, and a first install needs the network. Run it before every push. For the
+site (`site/`, which also renders every doc): `make site`.
 
 `make lint` runs staticcheck at the version `go.mod` pins as a `tool`
 directive, so `go tool staticcheck` needs no install step. It runs the default
@@ -212,8 +234,8 @@ Podman". Podman may write under `~/.config/containers` and
 `~/.local/share/containers`; restore them when done. CI runs them on Podman in
 `podman.yml`.
 
-Docker Desktop (macOS, Windows) provides `host.docker.internal` inside
-containers; plain Docker Engine on Linux does not. Several integration and
+Some Docker installs provide `host.docker.internal` inside containers; plain
+Docker Engine on Linux does not. Several integration and
 Playwright tests start a stub server on the host and have an activity
 container call it at that name, so on Linux run once:
 
@@ -290,8 +312,12 @@ run, with its own `ork` and `orker`, and stops them when it ends.
   These are the same values as `make proof-feature TESTS=… SPECS=…`. A change
   to a path only the full proof covers (`scripts/`, `.github/`, the Makefiles,
   `test/tools/proofrun/`, …) skips this job; the `proof` check proves it.
-- **`proof`** — the full proof, split across runners, the only required
-  check. Read the result from the `proof-<run>-a<attempt>` artifact's
+- **`pr-title`** — refuses a pull request title that is not a Conventional
+  Commit, because your pull request lands as one squash commit whose subject is
+  its title and whose body is its description. A required check, beside
+  `proof`. Edit the title and it runs again; nothing needs pushing.
+- **`proof`** — the full proof, split across runners, the required check that
+  proves the change. Read the result from the `proof-<run>-a<attempt>` artifact's
   `proof.json` (`result`, `merge_eligible`, `ineligible_reasons`); the job
   summary is written from it. It proves exactly the tree that lands, so a
   branch that does not contain `main`'s tip is asked to update. When a gate
@@ -319,7 +345,9 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
 2. New configuration setting? Add it to `internal/config`'s `Schema`, to
    `docs/DEPLOY.md`'s configuration table, and run `make config-defaults`
    (AGENTS.md §11.1). Changed a DSL or automation key, or a first-party
-   image's interface label? Run `go run ./internal/schemas/cmd/genschemas`.
+   image's interface label? Run `go run ./internal/schemas/cmd/genschemas`,
+   then, if an Orkflow or automation schema changed, `cd ui && bun run
+   gen:validators`. A bump of ajv or ajv-formats needs that second step too.
 3. Write a behavior test first (AGENTS.md §11.1).
 4. Implement until it passes.
 5. Run `make check`; for concurrent code, `make test-race` too (the proof's
@@ -336,7 +364,9 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    behaviour you change, and give a new doc under `docs/` a site page that
    cites it (the site's build refuses an uncited one). A change to the UI's look changes
    `ui/src/tokens.css`, never the site, and regenerates the site's
-   screenshots (`make site-media`) when they would show it.
+   screenshots (`make site-media`) when they would show it. It records a stack
+   started as a release, because the sidebar shows the engine's version on every
+   frame: `make down && VERSION=vX.Y.Z ORK_ORKER_ID=orker-example make up`.
 7. Optionally, check the change's evidence with a feature proof that names the
    tests and specs proving it:
    `make proof-feature TESTS='internal/engine:TestIntegration_X' SPECS='ui/e2e/x.spec.ts'`.
@@ -344,9 +374,17 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    change it cannot account for. It gates nothing; the full proof does.
 8. Commit with a Conventional Commit that names the tests and specs that
    prove the change (and quotes the feature proof, if you ran one); keep
-   `main` buildable.
-9. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate; a
-   local `make proof` is the equivalent path.
+   `main` buildable. A branch may hold several: what lands is one squash
+   commit.
+9. Open a pull request whose title is that Conventional Commit, such as
+   `fix(orker): keep the shared directory on a retry`, and whose description
+   names the tests and specs: the title becomes the subject of the squash
+   commit and the description its body. The types are `feat`, `fix`, `docs`,
+   `chore`, `test`, `ci`, `refactor`, `perf`, `build`, `style` and `revert`; the
+   scope and a breaking change's `!` are optional.
+10. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate, and
+    `pr-title` holds the title; a local `make proof` is the equivalent path for
+    a maintainer, who lands the squash commit by hand.
 
 ## The changelog
 

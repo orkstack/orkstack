@@ -4,12 +4,10 @@ Start the whole OrkStack stack on your machine with one command, then apply an e
 
 ## What you need
 
-- Docker, with Compose v2. Docker Engine or Docker Desktop.
+- Docker, with Compose v2.
 - git, to clone the repository.
 
 Nothing else. There is no toolchain to install and no database to set up. The compose file starts Temporal, an S3-compatible object store, an image registry, the engine (which serves the UI) and one Orker, each in its own container.
-
-This path is checked on Linux with Docker Engine, on amd64. Docker Desktop on macOS and Windows, and arm64, are not checked yet.
 
 ## 1. Start the stack
 

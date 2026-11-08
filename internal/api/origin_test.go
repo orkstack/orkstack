@@ -252,6 +252,24 @@ func TestSubmitRun_RunAgainRecordsSourceRunAndChecksIt(t *testing.T) {
 	}
 }
 
+// TestSubmitRun_RunAgainOfAChildIsANewTopLevelRun: a re-run names its source
+// and starts no chain of its source's: it holds no root.
+func TestSubmitRun_RunAgainOfAChildIsANewTopLevelRun(t *testing.T) {
+	h := newOriginHarness(t)
+	h.reader.setRun(&orkstackv1.Run{Id: "ork-leaf", Namespace: "default", OrkflowName: "hello-ork",
+		Status: orkstackv1.Status_STATUS_SUCCEEDED, Origin: &orkstackv1.RunOrigin{
+			Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid", RootRunId: "ork-root",
+		}})
+	run, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", SourceRunId: "ork-leaf"}, "")
+	if err != nil {
+		t.Fatalf("run again: %v", err)
+	}
+	want := &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN, Id: "ork-leaf"}
+	if !proto.Equal(run.GetOrigin(), want) {
+		t.Fatalf("origin = %v, want %v", run.GetOrigin(), want)
+	}
+}
+
 // TestSubmitRun_RequestCannotClaimAKind: SubmitRunRequest has no field that
 // could carry a kind, and every request the public door can receive becomes
 // SUBMIT or RUN_AGAIN.
@@ -479,6 +497,107 @@ func TestListRuns_OriginFilterMergesLiveAndArchive(t *testing.T) {
 		if q.OriginKind == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_UNSPECIFIED {
 			t.Fatalf("the reader was asked %+v without the origin filter", q)
 		}
+	}
+}
+
+// TestListRuns_RootFilterMergesLiveAndArchive: one query answers a chain from
+// both halves, with a run in both once, and without the root itself or a run
+// that holds no root, however it is related to the chain.
+func TestListRuns_RootFilterMergesLiveAndArchive(t *testing.T) {
+	at := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	run := func(id string, minute int, status orkstackv1.Status, parent, root string) *orkstackv1.Run {
+		origin := &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: parent, RootRunId: root}
+		if parent == "" {
+			origin = &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT}
+		}
+		return &orkstackv1.Run{Id: id, Namespace: "default", OrkflowName: "hello-ork", OrkflowVersion: "0.2.0",
+			Status: status, CreatedAt: timestamppb.New(at.Add(time.Duration(minute) * time.Minute)), Origin: origin}
+	}
+	archiver := newArchiver(t)
+	for _, archived := range []*orkstackv1.Run{
+		run("ork-root", 1, orkstackv1.Status_STATUS_SUCCEEDED, "", ""),
+		run("ork-mid", 2, orkstackv1.Status_STATUS_SUCCEEDED, "ork-root", "ork-root"),
+		run("ork-both", 3, orkstackv1.Status_STATUS_SUCCEEDED, "ork-mid", "ork-root"),
+		run("ork-older-child", 4, orkstackv1.Status_STATUS_SUCCEEDED, "ork-root", ""),
+		run("ork-stranger", 5, orkstackv1.Status_STATUS_SUCCEEDED, "ork-other", "ork-other"),
+	} {
+		if err := archiver.Archive(context.Background(), archived, nil); err != nil {
+			t.Fatalf("Archive(%s): %v", archived.GetId(), err)
+		}
+	}
+	reader := &fakeReader{runs: map[string]*orkstackv1.Run{}}
+	reader.setRun(run("ork-both", 3, orkstackv1.Status_STATUS_SUCCEEDED, "ork-mid", "ork-root"))
+	reader.setRun(run("ork-live", 6, orkstackv1.Status_STATUS_RUNNING, "ork-mid", "ork-root"))
+	reader.setRun(run("ork-live-stranger", 7, orkstackv1.Status_STATUS_RUNNING, "ork-other", "ork-other"))
+	svc := api.NewService(api.Config{Reader: reader, Runs: engine.NewRunStore(), Archive: archiver})
+
+	list := func(filterTexts ...string) []string {
+		t.Helper()
+		resp, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{Filters: filters(t, filterTexts...)}))
+		if err != nil {
+			t.Fatalf("ListRuns(%v): %v", filterTexts, err)
+		}
+		ids := []string{}
+		for _, r := range resp.Msg.GetRuns() {
+			ids = append(ids, r.GetId())
+			if r.GetOrigin().GetRootRunId() != "ork-root" {
+				t.Errorf("%s listed with root %q", r.GetId(), r.GetOrigin().GetRootRunId())
+			}
+		}
+		return ids
+	}
+	if got, want := list("origin.root_run_id=ork-root"), []string{"ork-live", "ork-both", "ork-mid"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("the chain = %v, want %v newest first with no duplicate", got, want)
+	}
+	// Narrowed by another field, each half still answers from its own index.
+	if got, want := list("origin.root_run_id=ork-root", "status=SUCCEEDED"), []string{"ork-both", "ork-mid"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("the chain's finished runs = %v, want %v", got, want)
+	}
+	if got, want := list("origin.root_run_id=ork-root", "origin.kind=PARENT_RUN", "origin.id=ork-mid"), []string{"ork-live", "ork-both"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("one parent in the chain = %v, want %v", got, want)
+	}
+	if got := list("origin.root_run_id=ork-root", "origin.kind=TRIGGER"); len(got) != 0 {
+		t.Fatalf("a chain's triggered runs = %v, want none", got)
+	}
+	for _, q := range reader.runQueries() {
+		if q.RootRunID != "ork-root" {
+			t.Fatalf("the reader was asked %+v without the root filter", q)
+		}
+	}
+	// A root no key could hold is no run's root: an empty answer, not a failure.
+	if got := list("origin.root_run_id=" + strings.Repeat("a.", 400)); len(got) != 0 {
+		t.Fatalf("a root no key could hold = %v, want none", got)
+	}
+	// An origin id no key could hold is the caller's argument, not the server's failure.
+	_, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{
+		Filters: filters(t, "origin.kind=TRIGGER", "origin.id="+strings.Repeat("a.", 400)),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "origin.id") {
+		t.Fatalf("ListRuns(an origin.id no key could hold) = %v (%v), want invalid_argument naming origin.id", err, connect.CodeOf(err))
+	}
+	// So it is beside a root filter too: the root's empty answer is the root's.
+	_, err = svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{
+		Filters: filters(t, "origin.root_run_id=ork-root", "origin.kind=PARENT_RUN", "origin.id="+strings.Repeat("a.", 400)),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "origin.id") {
+		t.Fatalf("ListRuns(a root and an origin.id no key could hold) = %v (%v), want invalid_argument naming origin.id", err, connect.CodeOf(err))
+	}
+
+	// A page token is bound to the root it was minted under.
+	first, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{
+		PageSize: 1, Filters: filters(t, "origin.root_run_id=ork-root"),
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Msg.GetNextPageToken() == "" {
+		t.Fatal("a one-run page of a three-run chain has no next page")
+	}
+	_, err = svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{
+		PageSize: 1, PageToken: first.Msg.GetNextPageToken(), Filters: filters(t, "origin.root_run_id=ork-other"),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Fatalf("a token replayed under another root = %v, want InvalidArgument", err)
 	}
 }
 

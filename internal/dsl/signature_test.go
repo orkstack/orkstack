@@ -153,8 +153,9 @@ func TestSignatureVerifier_ARegistrysOwnWordsReachNoTerminal(t *testing.T) {
 		requireNoTerminalControl(t, f.verify(), shown)
 	})
 	t.Run("a token realm's host", func(t *testing.T) {
-		// The realm's host is no DNS name, so the lookup fails at once and
-		// never leaves the process.
+		// The lookup of the realm's host is the test's own, so the failure
+		// quotes that host on every platform and resolver, and nothing leaves
+		// the process.
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Www-Authenticate", "Bearer realm=\"http://ev\u009bil\u202e.test/token\",service=\"x\"")
 			w.WriteHeader(http.StatusUnauthorized)
@@ -164,8 +165,23 @@ func TestSignatureVerifier_ARegistrysOwnWordsReachNoTerminal(t *testing.T) {
 		host := strings.TrimPrefix(server.URL, "http://")
 		f.image.Registry, f.image.Reference = host, host+"/"+sigRepo+":v3"
 		f.image.Pinned = host + "/" + sigRepo + "@" + f.image.GetIndexDigest()
+		f.v.Resolver.Client = &http.Client{Transport: failedLookup{registry: host}}
 		requireNoTerminalControl(t, f.verify(), `ev\u009bil\u202e.test`)
 	})
+}
+
+// failedLookup is a network on which only the registry's host resolves: any
+// other host fails as a lookup does, quoting the name it was asked.
+type failedLookup struct {
+	registry string
+}
+
+func (l failedLookup) RoundTrip(r *http.Request) (*http.Response, error) {
+	if r.URL.Host == l.registry {
+		return http.DefaultTransport.RoundTrip(r)
+	}
+	return nil, &net.OpError{Op: "dial", Net: "tcp",
+		Err: &net.DNSError{Err: "no such host", Name: r.URL.Hostname(), IsNotFound: true}}
 }
 
 // ---- cosign 3's bundle layout --------------------------------------------------

@@ -25,6 +25,7 @@
 		parseRetentionHours,
 		retentionHours
 	} from '#lib/retentionForm.ts';
+	import { shellQuote } from '#lib/runDetail.ts';
 	import { fmtDuration } from '#lib/stats.ts';
 	import { durationFromMs } from '@bufbuild/protobuf/wkt';
 	import type { PageProps } from './$types';
@@ -108,11 +109,19 @@
 			setBusy = false;
 		}
 	}
+
+	const cli = $derived.by(() => {
+		const typed = String(hours).trim();
+		return [
+			{ label: 'The maximum', command: 'orkctl admin retention get' },
+			{ label: 'Change it', command: `orkctl admin retention set ${typed ? `${shellQuote(typed)}h` : 'DURATION'}` }
+		];
+	});
 </script>
 
 <svelte:head><title>Admin — Maximum run retention — OrkStack</title></svelte:head>
 
-<SheetHeader title="Maximum run retention" />
+<SheetHeader title="Maximum run retention" commands={cli} />
 
 <ScopeNote testid="retention-scope-caption">
 	The maximum any namespace may keep a finished run, and what a namespace that sets none
@@ -160,8 +169,7 @@
 				</div>
 		</dl>
 		<p class="mt-2 text-xs text-ink-muted">
-			Stored with the deployment, so every replica answers the same — see
-			<code>orkctl admin retention get</code>.
+			Stored with the deployment, so every replica answers the same.
 		</p>
 	</section>
 

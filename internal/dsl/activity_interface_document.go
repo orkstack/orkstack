@@ -104,19 +104,14 @@ func ParseActivityDocument(source []byte) (*ActivityDeclaration, error) {
 	if len(source) > MaxInterfaceDocumentBytes {
 		return nil, fmt.Errorf("the document is %d bytes, limit is %d", len(source), MaxInterfaceDocumentBytes)
 	}
-	decoder := yaml.NewDecoder(bytes.NewReader(source))
+	if err := refuseSecondDocument(source, "activity interface"); err != nil {
+		return nil, err
+	}
 	var root yaml.Node
-	if err := decoder.Decode(&root); err != nil {
+	if err := yaml.NewDecoder(bytes.NewReader(source)).Decode(&root); err != nil {
 		if errors.Is(err, io.EOF) {
 			return nil, validationError("apiVersion", errors.New(interfaceHeaderMissing))
 		}
-		return nil, fmt.Errorf("parse yaml: %w", err)
-	}
-	var second yaml.Node
-	switch err := decoder.Decode(&second); {
-	case err == nil:
-		return nil, errors.New("one activity interface per file: a second YAML document (---) is not allowed")
-	case !errors.Is(err, io.EOF):
 		return nil, fmt.Errorf("parse yaml: %w", err)
 	}
 	if len(root.Content) == 0 {

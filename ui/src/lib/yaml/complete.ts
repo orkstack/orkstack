@@ -5,11 +5,12 @@
 // key is half typed the document does not parse, and that is exactly when
 // completion is asked for. schemasAt then walks the schema along that path the
 // way a validator would: $ref, allOf, anyOf, and each if/then/else decided by
-// ajv against the data written so far, so a task with `uses: http` is offered
+// its compiled condition against the data written so far, so a task with `uses: http` is offered
 // the http image's `with:` keys and an awaited task is never offered
 // `command:`. Every word offered and every hover sentence is the schema's.
-import Ajv, { type ValidateFunction } from 'ajv';
+import type { ValidateFunction } from 'ajv';
 import { parseDocument } from 'yaml';
+import { CONDITIONS } from './conditions.gen';
 import { schemaAt } from './schemas';
 import type { PathSegment } from './types';
 
@@ -143,19 +144,19 @@ export function contextAt(text: string, pos: number): CursorContext | null {
 
 // ---------------------------------------------------------------- schema
 
-// Conditions are evaluated by their own ajv: a bare `if` subschema has no
-// type of its own, which the strict validator (./lint.ts) would refuse to
-// compile out of its context.
-const conditions = new Ajv({ strict: false, allErrors: false });
+// Each `if` of the schemas, compiled ahead of time (ui/test/gen-validators.ts)
+// and keyed by its JSON. One the table does not hold means the generated code
+// is stale, which ui/test/yamlValidators.test.ts refuses, so it is never guessed.
+const table = CONDITIONS as unknown as Record<string, ValidateFunction>;
 const compiled = new WeakMap<object, ValidateFunction>();
 
-function holds(ifSchema: unknown, data: unknown, root: Schema): boolean {
+function holds(ifSchema: unknown, data: unknown): boolean {
 	if (typeof ifSchema === 'boolean') return ifSchema;
 	if (!ifSchema || typeof ifSchema !== 'object') return true;
 	let validate = compiled.get(ifSchema);
 	if (!validate) {
-		const needsRoot = JSON.stringify(ifSchema).includes('"$ref"');
-		validate = conditions.compile(needsRoot ? { definitions: root.definitions, ...(ifSchema as Schema) } : (ifSchema as Schema));
+		validate = table[JSON.stringify(ifSchema)];
+		if (!validate) throw new Error(`no compiled condition for ${JSON.stringify(ifSchema)}: run cd ui && bun run gen:validators`);
 		compiled.set(ifSchema, validate);
 	}
 	return validate(data) as boolean;
@@ -171,7 +172,7 @@ function expand(schemas: unknown[], data: unknown, root: Schema): Schema[] {
 		out.push(schema);
 		if (typeof schema.$ref === 'string') visit(schemaAt(root, schema.$ref));
 		for (const key of ['allOf', 'anyOf', 'oneOf']) for (const x of (schema[key] as unknown[]) ?? []) visit(x);
-		if ('if' in schema && data !== undefined) visit(holds(schema.if, data, root) ? schema.then : schema.else);
+		if ('if' in schema && data !== undefined) visit(holds(schema.if, data) ? schema.then : schema.else);
 	};
 	schemas.forEach(visit);
 	return out;

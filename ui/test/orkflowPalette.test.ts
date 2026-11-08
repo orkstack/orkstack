@@ -3,7 +3,7 @@ import { orkflowPageCommands, ORKFLOW_TABS } from '../src/lib/palette/orkflowPag
 import { PROVIDER_LIMIT } from '../src/lib/palette/context';
 
 // The Orkflow page's palette provider: what the page adds while the palette
-// is open. Submit a run… hands control to the page (its own dialog, with its
+// is open. Submit a run hands control to the page (its own dialog, with its
 // confirmation and CLI twin) and never submits; the tabs are navigations; a
 // task id jumps to its row in the task register. It builds nothing per task
 // up front and never offers more than the provider limit.
@@ -21,10 +21,10 @@ function setup(tasks: string[], tab = 'overview') {
 	return { options, opened };
 }
 
-test('with nothing typed: Submit a run… and the other tabs, never the tab you are on, within the limit', () => {
+test('with nothing typed: Submit a run and the other tabs, never the tab you are on, within the limit', () => {
 	const { options, opened } = setup(['a', 'b']);
 	const out = orkflowPageCommands(options, '');
-	expect(out.map((c) => c.label)).toEqual(['Submit a run…', 'Show versions', 'Show triggers', 'Show schedules', 'Edit source']);
+	expect(out.map((c) => c.label)).toEqual(['Submit a run', 'Show versions', 'Show triggers', 'Show schedules', 'Edit source']);
 	expect(out.length <= PROVIDER_LIMIT).toBe(true);
 	// Nothing ran while the commands were built.
 	expect(opened).toEqual([]);
@@ -43,9 +43,9 @@ test('with nothing typed: Submit a run… and the other tabs, never the tab you 
 	expect(ORKFLOW_TABS).toEqual(['overview', 'versions', 'triggers', 'schedules', 'edit']);
 });
 
-test('no Submit a run… when the page has no document to submit', () => {
+test('no Submit a run when the page has no document to submit', () => {
 	const { options } = setup(['a']);
-	expect(orkflowPageCommands({ ...options, canSubmit: false }, '').map((c) => c.label)).not.toContain('Submit a run…');
+	expect(orkflowPageCommands({ ...options, canSubmit: false }, '').map((c) => c.label)).not.toContain('Submit a run');
 });
 
 test('a task id jumps to its row in the register, on the overview', () => {

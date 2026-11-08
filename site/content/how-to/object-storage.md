@@ -60,11 +60,20 @@ Expiry rules for the prefixes that are safe to shorten are on the [Retention](/d
 
 ## Credentials
 
-The configuration's defaults are the development store's credentials, which the repository contains. Supply your own access key and secret key. Keep them in files, or in the environment, which overrides the file.
+No key has a default. Set both the access key and the secret key, keeping them in files or in the environment, which overrides the file. Or set neither, and the AWS SDK's default credential chain signs, such as an instance or pod role. One key alone stops the boot, and so does having nothing to sign with.
+
+To use a role:
+
+1. Leave both keys unset on every `ork` and `orker`.
+2. Give the role read, write, list and delete on the bucket.
+3. On AWS S3, set `endpoint` to `https://s3.<region>.amazonaws.com`, and `path_style` to `false`.
+4. On Kubernetes, create the `orkstack-s3` Secret with no keys, and bind the role to the pod's service account.
+5. Keep tasks away from the role. A task's container can reach the host's instance metadata service unless the host stops it. On EC2, require IMDSv2 with a hop limit of 1.
 
 ## See also
 
 - [DEPLOY.md, "The bucket stops being optional at the second replica"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-bucket-stops-being-optional-at-the-second-replica): the shared bucket, and the settings on both binaries
+- [DEPLOY.md, "The object store's credentials"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-object-stores-credentials): static keys, the default credential chain, and using a role
 - [DEPLOY.md, "Retention cleanup and bucket lifecycle rules"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules): lifecycle rules, and the prefixes not to expire
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack persists, and the key layout
 - [STORAGE.md, "Backends"](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#backends): the two backends

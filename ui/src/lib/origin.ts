@@ -67,6 +67,17 @@ export function originLinkPath(origin: RunOrigin | undefined, orkflowName: strin
 	}
 }
 
+/**
+ * originRootRunPath is where the root run of a composed chain leads, or null
+ * when there is nothing to add to the origin's own link: no root recorded (a
+ * top-level run, or a child recorded before the root was), or a root that is
+ * the parent the origin already links. The namespace is applied by the caller.
+ */
+export function originRootRunPath(origin: RunOrigin | undefined): string | null {
+	if (!origin?.rootRunId || origin.rootRunId === origin.id) return null;
+	return `/runs/${encodeURIComponent(origin.rootRunId)}`;
+}
+
 /** The caption every rendering of a principal carries. */
 export const PRINCIPAL_CAPTION =
 	"Ork-Principal as asserted by the deployment's gateway; OrkStack records it and does not authenticate it.";

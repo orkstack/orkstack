@@ -792,6 +792,16 @@ export async function scrollToCard(env: ScrollEnv): Promise<number> {
 	}
 }
 
+/**
+ * How far to scroll to bring a selected row and its open panel into view: the
+ * least that shows the whole box, and never so far that the row's top passes
+ * under the bar (a box taller than the band is cut to it before it gets here).
+ */
+export function revealBy(box: { top: number; bottom: number }, view: { top: number; bottom: number }): number {
+	if (box.top < view.top) return box.top - view.top;
+	return box.bottom > view.bottom ? Math.min(box.bottom - view.bottom, box.top - view.top) : 0;
+}
+
 /** Resolves after two animation frames (the DOM half of ScrollEnv.frames). */
 export function twoFrames(): Promise<void> {
 	return new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));

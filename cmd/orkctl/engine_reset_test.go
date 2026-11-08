@@ -1,14 +1,25 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"errors"
+	"fmt"
+	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -17,27 +28,50 @@ import (
 // A connection the engine resets under a call reaches orkctl as CANCELED from
 // connect-go v1.21.1 on when orkctl's read is the first to meet the reset, and
 // as the connection's end when its own write is (engineInterrupted). These
-// tests reset real TCP connections, over the h2c orkctl dials, and hold that
-// `run watch` and `run inspect --watch` ride the reset out — and that
-// orkctl's own cancel, a Ctrl-C, still ends them with no resume.
+// tests end real TCP connections, over the h2c orkctl dials, and hold that
+// `run watch` and `run inspect --watch` ride that out, that an HTTP stream the
+// engine ends itself on a connection that stays up is not taken for it — and
+// that orkctl's own cancel, a Ctrl-C, still ends them with no resume.
 
 // resetListener remembers every connection it accepted, so a test can reset
 // them all at once: SO_LINGER 0 and a close send the peer a TCP RST, what a
 // client sees when the engine replica serving it dies.
 type resetListener struct {
 	net.Listener
-	mu    sync.Mutex
-	conns []net.Conn
+	// goAwaySeen, when set, closes once a server has written a GOAWAY.
+	goAwaySeen chan struct{}
+	goAwayOnce sync.Once
+	mu         sync.Mutex
+	conns      []net.Conn
 }
 
 func (l *resetListener) Accept() (net.Conn, error) {
 	conn, err := l.Listener.Accept()
-	if err == nil {
-		l.mu.Lock()
-		l.conns = append(l.conns, conn)
-		l.mu.Unlock()
+	if err != nil {
+		return nil, err
 	}
-	return conn, err
+	l.mu.Lock()
+	l.conns = append(l.conns, conn)
+	l.mu.Unlock()
+	return &goAwayConn{Conn: conn, listener: l}, nil
+}
+
+// goAwayConn tells its listener when the server writes a GOAWAY: the frame's
+// header, with an 8-byte payload, on stream 0. A write that split it would
+// fail the test by its deadline, never pass it.
+type goAwayConn struct {
+	net.Conn
+	listener *resetListener
+}
+
+var goAwayFrameHeader = []byte{0, 0, 8, 7, 0, 0, 0, 0, 0}
+
+func (c *goAwayConn) Write(data []byte) (int, error) {
+	n, err := c.Conn.Write(data)
+	if c.listener.goAwaySeen != nil && bytes.Contains(data[:n], goAwayFrameHeader) {
+		c.listener.goAwayOnce.Do(func() { close(c.listener.goAwaySeen) })
+	}
+	return n, err
 }
 
 func (l *resetListener) reset() {
@@ -145,30 +179,195 @@ func (w resetWay) saidBy(line string) bool {
 	return ok && strings.HasSuffix(said, " (1 of "+strconv.Itoa(watchResumeLimit)+")")
 }
 
-// TestRunWatch_EndsWhenTheConnectionEndsMidStream holds what DEPLOY.md and the
-// changelog say of a connection that ends partway through a stream: an engine
-// that closes its side (a FIN, what a replica that exits sends, or what a
-// client whose write met a reset first then reads) is the connection's end,
-// INTERNAL between messages (connect-go's envelopeReader.Read), and the watch
-// reports it without a resume. CloseWrite sends the FIN whatever the server
-// left unread, where a Close could send an RST instead.
-func TestRunWatch_EndsWhenTheConnectionEndsMidStream(t *testing.T) {
-	handler := &resumingRuns{script: []scriptedStream{
-		{send: []int64{1, 2}, stall: true},
-		{send: []int64{3, 4, 5}},
-	}}
-	out := &liveWriter{triggers: map[string]func(){"event 2": func() { handler.closeWrite() }}}
+// streamEnvelope is one Connect streaming envelope holding event.
+func streamEnvelope(t *testing.T, event *orkstackv1.Event) []byte {
+	t.Helper()
+	body, err := proto.Marshal(event)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := []byte{0, 0, 0, 0, 0}
+	binary.BigEndian.PutUint32(prefix[1:], uint32(len(body)))
+	return append(prefix, body...)
+}
+
+// rawAnswer opens a StreamEvents response at the HTTP layer and writes wire to
+// it, flushed, so a test can end the stream where the Connect handler cannot.
+func rawAnswer(w http.ResponseWriter, r *http.Request, wire []byte) {
+	w.Header().Set("Content-Type", r.Header.Get("Content-Type"))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(wire)
+	w.(http.Flusher).Flush()
+}
+
+// oneEventThen is the first event's envelope followed by the bytes of a
+// stream cut at the place named.
+func oneEventThen(t *testing.T, rest ...byte) []byte {
+	t.Helper()
+	return append(streamEnvelope(t, resumeEvent(1)), rest...)
+}
+
+// A prefix promising 100 bytes, and 3 of them.
+var cutInsideAMessage = []byte{0, 0, 0, 0, 100, 1, 2, 3}
+
+// TestRunWatch_ResumesAConnectionThatEndsMidStream: an engine that closes its
+// side (a FIN, what a replica that exits sends) ends the stream as INTERNAL
+// between messages and inside the prefix, and as UNKNOWN inside a message
+// (connect-go's envelopeReader.Read). Wherever it cuts, the watch resumes after
+// the last whole event. CloseWrite sends the FIN whatever the server left
+// unread, where a Close could send an RST instead.
+func TestRunWatch_ResumesAConnectionThatEndsMidStream(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rest []byte
+		said string
+	}{
+		{name: "between messages", said: "internal: protocol error: incomplete envelope: unexpected EOF"},
+		{name: "inside the prefix", rest: []byte{0, 0}, said: "internal: protocol error: incomplete envelope: unexpected EOF"},
+		{name: "inside a message", rest: cutInsideAMessage, said: "unknown: read enveloped message: unexpected EOF"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// The FIN waits for the event to print: on an end that races the
+			// response's headers, Go's HTTP/2 client drops what it had read.
+			printed := make(chan struct{})
+			handler := &resumingRuns{script: []scriptedStream{
+				{raw: func(s *resumingRuns, w http.ResponseWriter, r *http.Request) {
+					rawAnswer(w, r, oneEventThen(t, tc.rest...))
+					<-printed
+					s.closeWrite()
+					<-r.Context().Done()
+				}},
+				{send: []int64{2, 3, 4, 5}},
+			}}
+			out := &liveWriter{triggers: map[string]func(){"event 1": func() { close(printed) }}}
+			outcome := watchAgainstTo(t, handler, out)
+			outcome.requireExit(t, exitOK)
+			requireSequences(t, printedSequences(t, out.buf.String()), 1, 2, 3, 4, 5)
+			if got := handler.calls(); len(got) != 2 || got[1] != 1 {
+				t.Fatalf("from_sequence per stream = %v, want [0 1]", got)
+			}
+			lines := resumeLines(outcome.stderr)
+			if len(lines) != 1 || !strings.Contains(lines[0], "interrupted ("+tc.said+")") {
+				t.Fatalf("resume lines = %v, want one saying %q", lines, tc.said)
+			}
+		})
+	}
+}
+
+// TestRunWatch_ResumesAfterAGoAwayAndAClose: a server that said GOAWAY and then
+// closed the connection with the stream open, as a replica past its shutdown
+// budget or a load balancer does. The server here has stopped listening, so
+// every resume after the first finds no engine, and the watch gives up on that.
+func TestRunWatch_ResumesAfterAGoAwayAndAClose(t *testing.T) {
+	handler := &resumingRuns{script: []scriptedStream{{send: []int64{1, 2}, stall: true}}}
+	out := &liveWriter{triggers: map[string]func(){"event 2": func() { handler.goAway() }}}
 	outcome := watchAgainstTo(t, handler, out)
 	outcome.requireExit(t, exitError)
-	if want := "Error: watch run: internal: "; !strings.Contains(outcome.stderr, want) {
-		t.Fatalf("stderr = %q, want the watch to end on %q", outcome.stderr, want)
-	}
 	requireSequences(t, printedSequences(t, out.buf.String()), 1, 2)
-	if got := handler.calls(); len(got) != 1 {
-		t.Fatalf("streams opened = %d, want 1: a connection that ends mid-stream is not resumed", len(got))
+	lines := resumeLines(outcome.stderr)
+	if len(lines) != watchResumeLimit {
+		t.Fatalf("resume lines = %v, want %d", lines, watchResumeLimit)
 	}
-	if lines := resumeLines(outcome.stderr); len(lines) != 0 {
-		t.Fatalf("resume lines = %v, want none", lines)
+	if !strings.Contains(lines[0], goAwayEnded) || !strings.Contains(lines[0], "resuming after event 2") {
+		t.Fatalf("first resume line = %q, want the GOAWAY's end, resuming after event 2", lines[0])
+	}
+}
+
+// TestRunWatch_DoesNotResumeAStreamEndedOnALiveConnection: what connect-go
+// reports for these has the code, and for the cut prefix the text, of a
+// connection's end, but the connection is up and the engine ended the stream
+// itself: cleanly with no end message, or by resetting it (a handler's panic).
+// Each ends the watch.
+func TestRunWatch_DoesNotResumeAStreamEndedOnALiveConnection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		rest []byte
+		// abort resets the stream instead of ending it cleanly.
+		abort bool
+		said  string
+	}{
+		{name: "clean end between messages", said: "watch run: internal: protocol error: unexpected EOF"},
+		{name: "clean end inside the prefix", rest: []byte{0, 0}, said: "watch run: internal: protocol error: incomplete envelope: unexpected EOF"},
+		{name: "clean end inside a message", rest: cutInsideAMessage, said: "watch run: internal: protocol error: promised 100 bytes in enveloped message, got 3 bytes: unexpected EOF"},
+		{name: "a handler's panic", abort: true, said: "watch run: internal: "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A reset waits for the event to print, as the FIN above does.
+			printed := make(chan struct{})
+			handler := &resumingRuns{script: []scriptedStream{
+				{raw: func(_ *resumingRuns, w http.ResponseWriter, r *http.Request) {
+					rawAnswer(w, r, oneEventThen(t, tc.rest...))
+					if tc.abort {
+						<-printed
+						panic(http.ErrAbortHandler)
+					}
+				}},
+				{send: []int64{2, 3, 4, 5}},
+			}}
+			out := &liveWriter{triggers: map[string]func(){"event 1": func() { close(printed) }}}
+			outcome := watchAgainstTo(t, handler, out)
+			outcome.requireExit(t, exitError)
+			if !strings.Contains(outcome.stderr, "Error: "+tc.said) {
+				t.Fatalf("stderr = %q, want %q", outcome.stderr, tc.said)
+			}
+			requireSequences(t, printedSequences(t, out.buf.String()), 1)
+			if got := handler.calls(); len(got) != 1 {
+				t.Fatalf("streams opened = %d, want 1", len(got))
+			}
+			if lines := resumeLines(outcome.stderr); len(lines) != 0 {
+				t.Fatalf("resume lines = %v, want none", lines)
+			}
+		})
+	}
+}
+
+// TestConnectionEnded: only the failures of the connection under a read count,
+// and the mark keeps the cause and its text.
+func TestConnectionEnded(t *testing.T) {
+	read := &net.OpError{Op: "read", Net: "tcp", Err: syscall.ETIMEDOUT}
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"the connection closed", io.ErrUnexpectedEOF, true},
+		{"a wrapped close", fmt.Errorf("body: %w", io.ErrUnexpectedEOF), true},
+		{"closed after a GOAWAY", errors.New(goAwayEnded + `; LastStreamID=1, ErrCode=NO_ERROR, debug=""`), true},
+		{"a failed network read", read, true},
+		{"a failed network write", &net.OpError{Op: "write", Net: "tcp", Err: syscall.EPIPE}, false},
+		{"a clean end", io.EOF, false},
+		{"a peer's stream reset", errors.New("stream error: stream ID 1; INTERNAL_ERROR; received from peer"), false},
+		{"a cancel", context.Canceled, false},
+		{"a closed body", http.ErrBodyReadAfterClose, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := connectionEnded(tc.err); got != tc.want {
+				t.Fatalf("connectionEnded(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+	marked := &connectionEndedError{err: read}
+	if marked.Error() != read.Error() || !errors.Is(marked, syscall.ETIMEDOUT) {
+		t.Fatalf("the mark changed its cause: %v", marked)
+	}
+}
+
+// TestEngineInterrupted_AConnectionsEndAfterACtrlC: connect-go codes a read
+// failing after its context ended as CANCELED around the same cause, and a
+// Ctrl-C ends the watch whichever came first.
+func TestEngineInterrupted_AConnectionsEndAfterACtrlC(t *testing.T) {
+	ended := connect.NewError(connect.CodeInternal, &connectionEndedError{err: io.ErrUnexpectedEOF})
+	if !engineInterrupted(context.Background(), ended) {
+		t.Fatal("a connection's end under a live context is an interrupted engine")
+	}
+	done, cancel := context.WithCancel(context.Background())
+	cancel()
+	if engineInterrupted(done, ended) {
+		t.Fatal("a Ctrl-C is never resumed")
+	}
+	genuine := connect.NewError(connect.CodeInternal, io.ErrUnexpectedEOF)
+	if engineInterrupted(context.Background(), genuine) {
+		t.Fatal("an error with no mark is not a connection's end")
 	}
 }
 
@@ -260,5 +459,37 @@ func TestRunInspect_InterruptEndsTheWatchWithoutAResume(t *testing.T) {
 	}
 	if strings.Contains(res.stderr, "inspect unavailable") {
 		t.Fatalf("stderr = %q, want no inspect unavailable line after a Ctrl-C", res.stderr)
+	}
+}
+
+// TestCloseIdleConnections_ReleasesTheEnginesConnection: orkctl lets its
+// sockets go when a command ends, through the mark connectionEndTransport puts
+// on a body as through a bare transport.
+func TestCloseIdleConnections_ReleasesTheEnginesConnection(t *testing.T) {
+	closed := make(chan struct{}, 1)
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	server.Config.Protocols = new(http.Protocols)
+	server.Config.Protocols.SetUnencryptedHTTP2(true)
+	server.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateClosed {
+			closed <- struct{}{}
+		}
+	}
+	server.Start()
+	t.Cleanup(server.Close)
+
+	g := &globalFlags{server: server.URL}
+	response, err := g.httpClient().Get(server.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = io.Copy(io.Discard, response.Body)
+	_ = response.Body.Close()
+
+	g.closeIdleConnections()
+	select {
+	case <-closed:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the engine's connection was still open 30 s after closeIdleConnections")
 	}
 }

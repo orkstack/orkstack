@@ -199,3 +199,20 @@ export async function inspectTask(page: Page, id: string): Promise<void> {
 	if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
 	await expect(toggle).toHaveAttribute('aria-expanded', 'true');
 }
+
+/**
+ * One command in the page's one terminal icon (SheetHeader's `commands`), by
+ * its label, once a click on page-cli-trigger has opened it.
+ */
+export function pageCli(page: Page, label: string) {
+	return page.getByTestId('page-cli-popover').locator(`[data-cli-label="${label}"]`);
+}
+
+/**
+ * Open a namespace's own page from its row: the fields the list leaves out
+ * (Signed by, Budget, Allowed secrets, Updated) are there, and its edit form.
+ */
+export async function openNamespacePage(page: Page, name: string): Promise<void> {
+	await page.getByTestId(`namespace-edit-${name}`).click();
+	await expect(page.getByTestId('namespace-facts')).toBeVisible();
+}

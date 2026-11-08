@@ -1,4 +1,4 @@
-import { selectTask } from './uiHelpers';
+import { selectTask, openNamespacePage } from './uiHelpers';
 import { expect, test, type Page } from './test';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
@@ -162,16 +162,20 @@ test('1: Admin → Namespaces shows the Allowed secrets column, set or unrestric
 	await page.getByTestId('ns-create-allowed-secrets').fill('env:SANDBOX_*');
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${NS}.`);
+	await openNamespacePage(page, NS);
 	await expect(page.getByTestId(`namespace-allowed-secrets-${NS}`)).toHaveText('env:SANDBOX_*');
-	note(`${NS} row: ${await page.getByTestId(`namespace-allowed-secrets-${NS}`).innerText()}`);
+	note(`${NS}: ${await page.getByTestId(`namespace-allowed-secrets-${NS}`).innerText()}`);
 	await page.screenshot({ path: out('screenshot-allowed-secrets-column.png'), fullPage: true });
 
 	// Each create filters the list to the name it created.
+	await openAdmin(page);
+	await page.getByTestId('ns-create-open').click();
 	await page.getByTestId('ns-create-name').fill(OPEN_NS);
 	await page.getByTestId('ns-create-submit').click();
 	await expect(page.getByTestId('ns-create-success')).toContainText(`Created ${OPEN_NS}.`);
+	await openNamespacePage(page, OPEN_NS);
 	await expect(page.getByTestId(`namespace-allowed-secrets-${OPEN_NS}`)).toHaveText('unrestricted');
-	note(`${OPEN_NS} row: ${await page.getByTestId(`namespace-allowed-secrets-${OPEN_NS}`).innerText()}`);
+	note(`${OPEN_NS}: ${await page.getByTestId(`namespace-allowed-secrets-${OPEN_NS}`).innerText()}`);
 });
 
 test('2: the form refuses a traversal locally, and a save of two entries shows both', async ({ page }) => {
@@ -195,6 +199,7 @@ test('2: the form refuses a traversal locally, and a save of two entries shows b
 
 	await field.fill('env:SANDBOX_*\nenv:E2E_*');
 	await page.getByTestId(`ns-edit-save-${NS}`).click();
+	await openNamespacePage(page, NS);
 	await expect(page.getByTestId(`namespace-allowed-secrets-${NS}`)).toHaveText('env:SANDBOX_*, env:E2E_*');
 	expect(updates).toBe(1);
 });
@@ -253,6 +258,7 @@ test('5: with the list narrowed, the Submit a run dialog shows the server’s se
 	await openNamespaceEdit(page, NS);
 	await page.getByTestId(`ns-edit-allowed-secrets-${NS}`).fill('env:SANDBOX_*');
 	await page.getByTestId(`ns-edit-save-${NS}`).click();
+	await openNamespacePage(page, NS);
 	await expect(page.getByTestId(`namespace-allowed-secrets-${NS}`)).toHaveText('env:SANDBOX_*');
 
 	await page.goto(`${UI_ORIGIN}/orkflows/fetch?ns=${NS}`);
@@ -282,6 +288,7 @@ test('6: a list changed from a second tab turns the first tab’s save into a st
 		await openNamespaceEdit(other, NS);
 		await other.getByTestId(`ns-edit-allowed-secrets-${NS}`).fill('env:SECOND_TAB_*');
 		await other.getByTestId(`ns-edit-save-${NS}`).click();
+		await openNamespacePage(other, NS);
 		await expect(other.getByTestId(`namespace-allowed-secrets-${NS}`)).toHaveText('env:SECOND_TAB_*');
 	} finally {
 		await second.close();

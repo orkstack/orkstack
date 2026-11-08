@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"io"
+	"strconv"
 	"time"
 
 	"connectrpc.com/connect"
@@ -168,7 +170,14 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 			"keeps: a try that failed and was retried away is not in it. --attempts\n" +
 			"adds the per-attempt timeline underneath, the same table\n" +
 			"`orkctl run attempts` prints. --timing adds the wait/run/total table and\n" +
-			"each attempt's phases, the same output `orkctl run timing` prints.",
+			"each attempt's phases, the same output `orkctl run timing` prints.\n\n" +
+			"The VALUES table shows what each task returned, for at most " + strconv.Itoa(taskValuesRowsMax) + " tasks: up to\n" +
+			strconv.Itoa(taskValuesInlineMax) + " characters of its JSON, with anything a terminal could obey as an\n" +
+			"escape. A longer value is cut, and one the run holds only by reference is not\n" +
+			"fetched; each names the command that saves it. --tree adds the table under\n" +
+			"each child run's tasks. --expand adds one for that fan-out's items, reading up to\n" +
+			strconv.Itoa(taskValuesRowsMax) + " of them from the store, because a run holds only a reference to an\n" +
+			"item's values; that is one request per row. --json never reads them.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if withAttempts && g.json {
@@ -238,7 +247,21 @@ func newRunGetCommand(g *globalFlags) *cobra.Command {
 				}
 			}
 			for _, taskID := range expand {
-				if err := renderFanOutItems(cmd.OutOrStdout(), fanOutRow(resp.Msg.GetRun(), taskID)); err != nil {
+				task := fanOutRow(resp.Msg.GetRun(), taskID)
+				if err := renderFanOutItems(cmd.OutOrStdout(), task); err != nil {
+					return err
+				}
+				read := func(item *orkstackv1.TaskRun) ([]byte, error) {
+					ctx, cancel := g.unaryContext(cmd)
+					defer cancel()
+					var raw bytes.Buffer
+					_, err := readRecordedArtifact(ctx, g.runClient(), &orkstackv1.ReadArtifactRequest{
+						RunId: args[0], Namespace: g.namespace, TaskId: item.GetTaskId(), Item: item.Item,
+						Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_VALUES, Name: item.GetValuesRef().GetName(),
+					}, &raw)
+					return raw.Bytes(), err
+				}
+				if err := renderFanOutItemValues(cmd.OutOrStdout(), resp.Msg.GetRun(), task, read); err != nil {
 					return err
 				}
 			}
@@ -301,7 +324,9 @@ func newRunListCommand(g *globalFlags) *cobra.Command {
 			"SCHEDULE, PARENT_RUN or RUN_AGAIN), and --filter origin.id=ID beside it\n" +
 			"narrows that to one originating object (a trigger or schedule id, a source\n" +
 			"or parent run id). A run started before origins were recorded matches no\n" +
-			"origin.kind filter.",
+			"origin.kind filter.\n\n" +
+			"--filter origin.root_run_id=ID keeps every run below that root of a composed\n" +
+			"chain, however deep. The root itself holds no root, so it is not listed.",
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			filters, err := parseFilterFlags(*filterTexts)
@@ -466,6 +491,10 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 		fmt.Fprintln(out, composedLine(run.GetNamespace(), taskRun))
 	}
 	if err := renderAwaitTable(out, run, nowFunc()); err != nil {
+		return err
+	}
+	// What each task returned. A run with no values prints nothing new.
+	if err := renderTaskValues(out, run); err != nil {
 		return err
 	}
 	// One line per cached task, after every other footer. A run with no

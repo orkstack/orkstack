@@ -62,7 +62,7 @@ export function missReasonSentence(reason: string, detail = ''): string {
 	const known = MISS_SENTENCES[reason];
 	if (known) return known;
 	if (detail) return detail;
-	return `The task ran: no usable memo (${reason || 'unknown reason'}).`;
+	return `The task ran: no usable memo (${reason || 'the engine recorded no reason'}).`;
 }
 
 /** cacheSourceHref is the producing run's page, in the namespace. */
@@ -206,7 +206,7 @@ export function attemptCacheLine(cache: Pick<CacheResult, 'outcome' | 'missReaso
 		case CacheOutcome.HIT:
 			return `cache hit from ${cache.source?.runId ?? 'an earlier run'}`;
 		case CacheOutcome.MISS:
-			return `cache miss: ${cache.missReason || 'unknown reason'}`;
+			return `cache miss: ${cache.missReason || 'the engine recorded no reason'}`;
 		case CacheOutcome.BYPASSED:
 			return 'cache bypassed';
 		default:

@@ -93,6 +93,10 @@ const (
 // worse than a clean failure (§3.2).
 const TaskJSONSchemaVersion = 1
 
+// attemptSecretsDirName is the child of an attempt's directory that holds the
+// values staged for it, bind-mounted at /orkstack/input/secrets.
+const attemptSecretsDirName = "secrets"
+
 // Workspace is one attempt's host-side directory tree.
 type Workspace struct {
 	// Root is the per-attempt directory, mode 0700.
@@ -130,7 +134,7 @@ func NewWorkspace(root string) (*Workspace, error) {
 	ws := &Workspace{
 		Root:      root,
 		Input:     filepath.Join(root, "input"),
-		Secrets:   filepath.Join(root, "secrets"),
+		Secrets:   filepath.Join(root, attemptSecretsDirName),
 		Output:    filepath.Join(root, "output"),
 		Artifacts: filepath.Join(root, "output", "artifacts"),
 		Tmp:       filepath.Join(root, "tmp"),
@@ -263,7 +267,9 @@ func (w *Workspace) Mounts() []Mount {
 // source is a sibling of this tree, not a child of it (§6.4).
 //
 // Called on EVERY exit path: success, failure, panic and cancellation alike
-// (docs/OCI_ACTIVITY_CONTRACT.md §7.1, step 15).
+// (docs/OCI_ACTIVITY_CONTRACT.md §7.1, step 15). A process that is killed takes
+// no exit path; the next boot under its identity removes the tree instead
+// (ReapAttemptDirectories).
 func (w *Workspace) Remove() error {
 	return removeSealedTree(w.Root)
 }
@@ -309,7 +315,9 @@ func removeSealedTree(root string) error {
 
 // RemoveSecrets deletes the per-attempt secrets directory. It is called on
 // EVERY exit path — success, failure, panic and cancellation — because secret
-// bytes must not outlive the attempt that needed them (§9.4).
+// bytes must not outlive the attempt that needed them (§9.4). A process that is
+// killed takes no exit path, and ReapAttemptDirectories removes them at the next
+// boot under its identity.
 func (w *Workspace) RemoveSecrets() error {
 	// The directory was sealed 0555, which on some systems prevents unlinking
 	// its children. Restore write permission before removing.
@@ -384,6 +392,10 @@ type pinLease struct {
 	ExpiresAt string `json:"expiresAt"`
 	RunID     string `json:"runId"`
 	Pin       string `json:"pin"`
+	// OrkerID is the identity that opened the pin, which the boot reap reads. A
+	// lease of a release before this field has none, and nothing else says whose
+	// the directory is.
+	OrkerID string `json:"orkerId,omitempty"`
 }
 
 // AcquirePin resolves or creates the shared directory of one opening of one pin
@@ -401,8 +413,11 @@ type pinLease struct {
 // The engine mints it as a uuid through workflow.SideEffect, so a rejection
 // here means the wire was not carrying what the engine sends, and rewriting it
 // would be the one way to turn that into a silently wrong directory.
-func AcquirePin(workRoot, runID, pinName, instanceID string, pinTimeoutSeconds int32) (*PinWorkspace, error) {
-	return acquirePinAt(workRoot, runID, pinName, instanceID, pinTimeoutSeconds, time.Now())
+//
+// orkerID is the identity opening it, recorded in the lease for the boot reap.
+// Empty (orkctl task run) leaves the directory to the lease sweep alone.
+func AcquirePin(workRoot, runID, pinName, instanceID string, pinTimeoutSeconds int32, orkerID string) (*PinWorkspace, error) {
+	return acquirePinAt(workRoot, runID, pinName, instanceID, pinTimeoutSeconds, orkerID, time.Now())
 }
 
 // acquirePinAt is AcquirePin with the clock injected, so a test can assert what
@@ -410,6 +425,7 @@ func AcquirePin(workRoot, runID, pinName, instanceID string, pinTimeoutSeconds i
 func acquirePinAt(
 	workRoot, runID, pinName, instanceID string,
 	pinTimeoutSeconds int32,
+	orkerID string,
 	now time.Time,
 ) (*PinWorkspace, error) {
 	root, err := pinDirectory(workRoot, runID, pinName, instanceID)
@@ -439,7 +455,7 @@ func acquirePinAt(
 	if err := os.Chmod(pin.Shared, ModeWritableDir); err != nil {
 		return nil, fmt.Errorf("set mode on %s: %w", pin.Shared, err)
 	}
-	if err := writePinLease(pin, runID, pinName, pinTimeoutSeconds, now); err != nil {
+	if err := writePinLease(pin, runID, pinName, pinTimeoutSeconds, orkerID, now); err != nil {
 		return nil, err
 	}
 	return pin, nil
@@ -454,7 +470,7 @@ func acquirePinAt(
 // AcquirePin call would let a directory outlive a session Temporal has already
 // declared dead — which is the exact leak the lease exists to close, so
 // extending it per call would quietly cost the feature its backstop.
-func writePinLease(pin *PinWorkspace, runID, pinName string, pinTimeoutSeconds int32, now time.Time) error {
+func writePinLease(pin *PinWorkspace, runID, pinName string, pinTimeoutSeconds int32, orkerID string, now time.Time) error {
 	if raw, err := os.ReadFile(pin.LeasePath); err == nil {
 		var existing pinLease
 		if json.Unmarshal(raw, &existing) == nil && existing.ExpiresAt != "" {
@@ -477,6 +493,7 @@ func writePinLease(pin *PinWorkspace, runID, pinName string, pinTimeoutSeconds i
 		ExpiresAt: expires.UTC().Format(time.RFC3339Nano),
 		RunID:     runID,
 		Pin:       pinName,
+		OrkerID:   orkerID,
 	}, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode pin lease: %w", err)
@@ -518,41 +535,76 @@ func ReleasePinDirectory(workRoot, runID, pinName, instanceID string) (string, e
 	return root, nil
 }
 
-// ReapPinDirectories removes EVERY pin directory under the work root, and is
-// the boot reap of §6.4.
+// PinReapReport is what ReapPinDirectories found under a work root.
+type PinReapReport struct {
+	// Removed lists the directories it removed.
+	Removed []string
+	// Others lists the pin directories it left because nothing says they are this
+	// identity's: another identity's, which may be a live Orker's, and those whose
+	// lease names nobody. The lease sweep collects each when its lease expires.
+	Others []string
+}
+
+// ReapPinDirectories removes the pin directories under the work root that
+// orkerID's previous life left, and is the boot reap of §6.4.
 //
 // It is not a heuristic. A pin lives inside a Temporal Worker Session whose
-// resource id is a fresh uuid minted per worker start, so no session — and
-// therefore no pin — can survive an Orker restart: every ork-pin-* found at
-// boot is dead by construction.
+// resource id is a fresh uuid minted per worker start, so no session, and so no
+// pin, survives an Orker restart: a directory whose lease names this identity is
+// dead by construction, once this process holds the identity's lock
+// (claimIdentity), as ReapAttemptDirectories says. That reasoning covers this
+// identity alone, so another identity's pin on a shared work root is never
+// touched. Nor is a directory whose owner cannot be told: its lease missing, torn,
+// or from a release that wrote none. A wrong delete takes a live pin's shared files
+// and fails its run; a leftover waits for its lease.
 //
 // It returns what it removed and joins whatever it could not, so the caller can
 // log both. A failure here must never fail a boot: cleanup is not orchestration
 // (§6.4), the lease sweep will try again, and refusing to start over a
 // directory nothing will ever read again is worse than starting.
-func ReapPinDirectories(workRoot string) ([]string, error) {
+func ReapPinDirectories(workRoot, orkerID string) (PinReapReport, error) {
+	var report PinReapReport
 	dirs, err := pinDirectories(workRoot)
 	if err != nil {
-		return nil, err
+		return report, err
 	}
-	var removed []string
 	var failures []error
 	for _, dir := range dirs {
+		if orkerID == "" || pinLeaseOwner(dir) != orkerID {
+			report.Others = append(report.Others, dir)
+			continue
+		}
 		if err := removeSealedTree(dir); err != nil {
 			failures = append(failures, fmt.Errorf("remove pin directory %s: %w", dir, err))
 			continue
 		}
-		removed = append(removed, dir)
+		report.Removed = append(report.Removed, dir)
 	}
-	return removed, errors.Join(failures...)
+	return report, errors.Join(failures...)
+}
+
+// pinLeaseOwner is the identity a pin directory's lease names, or "" when nothing
+// can be told from it.
+func pinLeaseOwner(dir string) string {
+	raw, err := os.ReadFile(filepath.Join(dir, pinLeaseFileName))
+	if err != nil {
+		return ""
+	}
+	var lease pinLease
+	if json.Unmarshal(raw, &lease) != nil {
+		return ""
+	}
+	return lease.OrkerID
 }
 
 // SweepExpiredPinLeases removes every pin directory whose lease has expired as
 // of now, and is the third way a pin ends (§6.4).
 //
-// It covers the one leak the other two cannot: an Orker that stays alive while
-// its run is terminated from outside, where Temporal frees the session but no
-// OrkStack code runs at all.
+// It covers the leaks the other two cannot: an Orker that stays alive while its
+// run is terminated from outside, where Temporal frees the session but no OrkStack
+// code runs at all, and a directory the boot reap will not take, because it is
+// another identity's or names nobody. It reads no owner: by the time a lease
+// expires, the session is over, whoever opened it.
 func SweepExpiredPinLeases(workRoot string, now time.Time) ([]string, error) {
 	dirs, err := pinDirectories(workRoot)
 	if err != nil {
@@ -640,8 +692,7 @@ func pinLeaseExpired(dir string, now time.Time) bool {
 	}
 	info, err := os.Stat(dir)
 	if err != nil {
-		// Unstattable is not evidence of anything. Leave it for the boot reap,
-		// which removes every pin directory unconditionally.
+		// Unstattable is not evidence of anything. Leave it for a later tick.
 		return false
 	}
 	return now.Sub(info.ModTime()) >= pinLeaseSlack

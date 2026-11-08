@@ -29,3 +29,21 @@ export function namespacesEmptyState(view: { filtered: boolean; page: number; co
 	if (!view.filtered && view.page === 1 && !view.hasNext && view.count <= 1) return 'only-default';
 	return null;
 }
+
+/**
+ * A namespace's own page, carrying the list's address (paging, filters) in
+ * `from`, so leaving it lands where the reader was.
+ */
+export function namespacePageHref(name: string, listSearch: string, namespace: string): string {
+	const params = new URLSearchParams({ ns: namespace || 'default' });
+	if (listSearch) params.set('from', listSearch);
+	return `/admin/namespaces/${encodeURIComponent(name)}?${params.toString()}`;
+}
+
+/** Where a namespace's page returns to: the list it came from, else this namespace's row. */
+export function namespaceReturnHref(url: { searchParams: { get(name: string): string | null } }, name: string, namespace: string): string {
+	const from = url.searchParams.get('from') ?? '';
+	// Only a query of the list itself: `from` is in an address anyone can write.
+	if (from.startsWith('?')) return `/admin/namespaces${from}`;
+	return createdNamespaceHref({ ns: namespace }, name);
+}

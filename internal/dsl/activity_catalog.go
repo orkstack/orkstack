@@ -68,6 +68,10 @@ func ParseCatalog(document []byte) (Catalog, error) {
 	if strings.TrimSpace(string(document)) == "" {
 		return BuiltinActivityCatalog(), nil
 	}
+	if line, found := SecondDocumentLine(document); found {
+		return nil, fmt.Errorf("ORK_ACTIVITY_CATALOG: line %d: a second YAML document begins here; the setting holds "+
+			"one: move every activity under one activities:, and delete the ---", line)
+	}
 	var doc catalogDocument
 	if err := yaml.Unmarshal(document, &doc); err != nil {
 		return nil, fmt.Errorf("ORK_ACTIVITY_CATALOG: parse yaml: %w", err)

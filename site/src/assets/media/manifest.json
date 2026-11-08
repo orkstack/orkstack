@@ -59,7 +59,7 @@
 			"alt": "A screen recording of the Orkflow editor on greet: a key is added with the suggestions, the engine flags a needs entry that names no task and the fix clears it, the panel beside the code lists the shell activity’s keys, a new version is applied, a plan shows which tasks would run, and the run is submitted and followed until it succeeds.",
 			"caption": "Edit, apply, plan and run, then watch the graph fill in.",
 			"title": "From YAML to a running Orkflow",
-			"duration": "0:58",
+			"duration": "1:22",
 			"width": 1280,
 			"height": 800,
 			"mp4": "video-yaml-to-run-light.mp4",

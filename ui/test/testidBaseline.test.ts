@@ -20,10 +20,53 @@ const fixture = `${import.meta.dir}/fixtures/testid-baseline.txt`;
 
 /** Shape → why it may be gone (and the spec change that goes with it). */
 const ALLOWED_REMOVALS: Record<string, string> = {
+	// The same ids, drawn by ScheduleFields under its prefix: the create form and
+	// the edit dialog share one markup (orkflow-schedules.spec.ts).
+	'id schedule-catchup-window': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-cron': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-description': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-end-at': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-input': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-interval': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-jitter': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-pause-on-failure': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-start-at': 'ScheduleFields draws it as {prefix}-….',
+	'id schedule-timezone': 'ScheduleFields draws it as {prefix}-….',
+	'prop schedule-overlap': 'ScheduleFields draws it as {prefix}-….',
+	'prop schedule-version': 'ScheduleFields draws it as {prefix}-….',
+	'id versions-delete': "Delete Orkflow moved to the Orkflow header's More menu (orkflow-delete.spec.ts).",
+	'id versions-delete-status': "Delete Orkflow moved to the Orkflow header's More menu (orkflow-delete.spec.ts).",
+	'id orkflow-taskcount-{}': 'The Orkflows list has no Tasks column (authoring-sheets.spec.ts).',
+	'prop ns-edit-cli-{}': "A namespace's page has one terminal icon, with its budget's command in it (budgets.spec.ts).",
+	// The Operate overview is this deployment's facts; the sidebar lists its pages (operate-sheets.spec.ts).
+	'prop admin-card-activities': 'The overview no longer lists the pages.',
+	'prop admin-card-namespaces': 'The overview no longer lists the pages.',
+	'prop admin-card-pools': 'The overview no longer lists the pages.',
+	'prop admin-card-retention': 'The overview no longer lists the pages.',
+	// The breadcrumb is where a page says its namespace (2026-11-06).
+	'id dashboard-namespace': 'The breadcrumb names it (logs-dashboard.spec.ts, laptop-floor.spec.ts).',
 	// A run's row draws its status itself, at thousands of rows: the same id, on its own span.
 	'prop task-{}-status': 'the row draws its status itself',
 	'id pool-orkers-refresh-{}': "The Pools page's one Refresh reads each pool's Orkers again (admin-orkers.spec.ts).",
 	'id task-{}-item-panel-cli': "A selected item's commands joined the run's one terminal icon, run-inspect-cli (each-fan-out.spec.ts).",
+	// Exactly one terminal icon a page (2026-11-06): a page's commands fold into
+	// its header's, page-cli, and a list's filters into the page's list command.
+	'prop audit-cli': 'Audit: in page-cli (admin-audit.spec.ts).',
+	'prop automation-apply-cli': 'Automation: in page-cli (admin-automation.spec.ts).',
+	'prop automation-export-cli': 'Automation: in page-cli.',
+	'prop automation-plan-cli': 'Automation: in page-cli.',
+	'prop cache-stats-cli': 'Cache: in page-cli.',
+	'prop callers-cli': "The Orkflow's Versions tab: in page-cli (interface-compat.spec.ts).",
+	'prop compat-cli': "The Orkflow's Versions tab: in page-cli (interface-compat.spec.ts).",
+	'prop dashboard-cli': 'Dashboard: in page-cli (browsing-operations.spec.ts).',
+	'prop deliveries-cli': 'Webhooks: in page-cli (admin-webhooks-deliveries.spec.ts).',
+	'prop fingerprint-cli': 'Dashboard: in page-cli (logs-dashboard.spec.ts).',
+	'prop releases-cli-status': 'Releases: in page-cli.',
+	'prop run-diff-cli': 'Compare runs: in page-cli (run-diff.spec.ts).',
+	'prop stability-cli': 'Dashboard: in page-cli (logs-dashboard.spec.ts).',
+	'prop usage-admin-cli': 'Usage: in page-cli (budgets.spec.ts).',
+	'prop usage-cli': 'Dashboard: in page-cli (budgets.spec.ts).',
+	'prop {}-filters-cli': "ListFilter draws no icon: the filtered command is in the page's (list-filter.spec.ts).",
 	'prop activity-inspect-cli':
 		"Inspect a reference's command joined the Activities header's popover, activities-cli: one per screen (admin.spec.ts).",
 	'id task-{}-item-panel':

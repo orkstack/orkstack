@@ -123,6 +123,7 @@
 	bind:this={panel}
 	class="mt-3 rounded-sm bg-paper-sunken px-3 py-2 text-sm"
 	data-testid="task-{taskId}-child"
+	data-cli-own
 	data-following={read ? 'read' : 'idle'}
 >
 	<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink-secondary">

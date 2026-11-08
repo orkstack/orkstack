@@ -32,9 +32,8 @@ import (
 // running container at all — the largest correctness gap in the system (§6.3).
 //
 // This number is the DEAD-ORKER detector and nothing else. How fast a live
-// Orker learns it was cancelled is set entirely Orker-side, by that tick and
-// the matching MaxHeartbeatThrottleInterval cap on its worker; raising or
-// lowering the timeout here would change replay-visible ActivityOptions
+// Orker learns it was cancelled is set entirely Orker-side, by that tick;
+// raising or lowering the timeout here would change replay-visible ActivityOptions
 // without making cancellation any quicker.
 const orkerHeartbeatTimeout = task.HeartbeatTimeout
 
@@ -581,7 +580,9 @@ type runState struct {
 	// closes. Every other closure is computed on demand (closureOf) and not
 	// kept, so newRunState and a run's retained memory stay O(T).
 	pinMemberClosures map[string][]string
-	leaves            map[string]struct{}
+	// endTasks is the tasks no other task needs, a failure handler's needs
+	// aside: a succeeded run with no outputs: reports their values.
+	endTasks map[string]struct{}
 
 	// pins is one entry per DECLARED pin, keyed by name, and pinOrder is their
 	// names sorted. Both are built once in newRunState from wf.Pins, so the
@@ -833,7 +834,7 @@ func buildRunState(
 		taskRuns: map[string]*orkstackv1.TaskRun{},
 		results:  map[string]*orkstackv1.ExecuteTaskResult{},
 		outputs:  map[string]map[string]any{},
-		leaves:   map[string]struct{}{},
+		endTasks: map[string]struct{}{},
 		status:   orkstackv1.Status_STATUS_PENDING,
 		pins:     map[string]*pinState{},
 		awaits:   map[string]*awaitState{},
@@ -849,7 +850,7 @@ func buildRunState(
 			TaskId: t.GetId(),
 			Status: orkstackv1.Status_STATUS_PENDING,
 		}
-		state.leaves[t.GetId()] = struct{}{}
+		state.endTasks[t.GetId()] = struct{}{}
 		// A task with a join other than all_succeeded carries it from the
 		// run's first snapshot, as await, each and child do; unset for every
 		// other task, so a run with no join snapshots exactly as before.
@@ -897,14 +898,14 @@ func buildRunState(
 	}
 	for _, t := range wf.GetTasks() {
 		// A failure handler's needs edges do not remove its needs from the
-		// leaves: adding a rollback to an Orkflow must not drop deploy's
+		// end tasks: adding a rollback to an Orkflow must not drop deploy's
 		// values from a succeeded run's output. A definition with no failure
 		// handler computes the same set as before.
 		if isFailureHandler(t) {
 			continue
 		}
 		for _, need := range t.GetNeeds() {
-			delete(state.leaves, need)
+			delete(state.endTasks, need)
 		}
 	}
 	// One entry per DECLARED pin, with its members in declaration order. The
@@ -1492,7 +1493,9 @@ func (s *runState) pinLossOf(id string) *orkstackv1.Error {
 // Both arrive at the workflow as the same event — the session's creation
 // activity stopped, so the SDK marked the session failed — and the elapsed
 // time is what separates them: a pin that has been open for at least its own
-// ExecutionTimeout hit its lifetime bound, and one that has not lost its host.
+// ExecutionTimeout hit its lifetime bound, and one that has not lost contact with
+// its host. The message says only that: the event is the same for a host that died
+// and one the cluster has merely stopped hearing from, so it cannot say which.
 // Deterministic on both counts: workflow.Now is the replayed clock and
 // openedAt was recorded from it.
 //
@@ -1503,7 +1506,7 @@ func pinFailureError(name string, elapsed, limit time.Duration) *orkstackv1.Erro
 		return &orkstackv1.Error{
 			Code: "PIN_TIMEOUT",
 			Message: fmt.Sprintf(
-				"pin %q reached its %s lifetime after %s, so its session ended and every task "+
+				"pin %q reached its %s lifetime after %s, so the pin closed and every task "+
 					"still running on that Orker was stopped with it",
 				name, limit, elapsed),
 			Category:  orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT,
@@ -1513,8 +1516,9 @@ func pinFailureError(name string, elapsed, limit time.Duration) *orkstackv1.Erro
 	return &orkstackv1.Error{
 		Code: "PIN_HOST_LOST",
 		Message: fmt.Sprintf(
-			"pin %q lost the Orker hosting it after %s. A pin never moves: its tasks share one "+
-				"host's /orkstack/shared, so they cannot be retried on another Orker",
+			"pin %q lost contact with the Orker hosting it after %s: that Orker may be gone, or the "+
+				"cluster may not be hearing from it. A pin never moves: its tasks share one host's "+
+				"/orkstack/shared, so they cannot be retried on another Orker",
 			name, elapsed),
 		Category:  orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
 		Retryable: false,
@@ -1927,8 +1931,7 @@ func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstac
 		// Temporal delivers cancellation to an activity ONLY through a
 		// heartbeat response, so an Orker that never heartbeats can never be
 		// cancelled. This timeout is the DEAD-ORKER detector; how quickly a
-		// live one hears about a cancellation is set Orker-side, by its tick
-		// and the matching MaxHeartbeatThrottleInterval cap on its worker.
+		// live one hears about a cancellation is set Orker-side, by its tick.
 		HeartbeatTimeout: orkerHeartbeatTimeout,
 		// Without this the workflow may mark the task terminal before the
 		// Orker has finished killing the container and cleaning up.
@@ -2598,7 +2601,7 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 	return failure
 }
 
-// succeed terminates the run successfully, aggregating leaf task outputs.
+// succeed terminates the run successfully, aggregating end task outputs.
 func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	// Every pin closed before the run reports success, so the terminal
 	// snapshot describes a run that is genuinely finished — nothing of it is
@@ -2609,7 +2612,7 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	// resolution still queued is recorded as ignored. No-op with no await.
 	s.drainResolutions(ctx)
 
-	// Declared outputs, rendered once, replace the leaf aggregation; a run
+	// Declared outputs, rendered once, replace the end tasks' values; a run
 	// whose outputs cannot be produced FAILS (docs/DSL.md "Composition").
 	// An Orkflow with no `outputs:` takes the path it always took.
 	var output *orkstackv1.Payload
@@ -2622,7 +2625,7 @@ func (s *runState) succeed(ctx workflow.Context) (*orkstackv1.Run, error) {
 	} else {
 		aggregated := map[string]any{}
 		for _, id := range s.order {
-			if _, leaf := s.leaves[id]; !leaf {
+			if _, end := s.endTasks[id]; !end {
 				continue
 			}
 			if values, ok := s.outputs[id]; ok {

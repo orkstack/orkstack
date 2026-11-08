@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -132,7 +133,7 @@ const testInstanceID = "3f9c1a2e-7b40-4d51-9a6f-2c8e5b71d0aa"
 // forge or extend a lease.
 func TestPinWorkspace_PermissionsMatchTheLayout(t *testing.T) {
 	workRoot := t.TempDir()
-	pin, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600)
+	pin, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600, "")
 	if err != nil {
 		t.Fatalf("AcquirePin: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestAcquirePin_IsIdempotentAcrossAttempts(t *testing.T) {
 	workRoot := t.TempDir()
 	first := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 
-	clone, err := acquirePinAt(workRoot, "ork-1", "build", testInstanceID, 3600, first)
+	clone, err := acquirePinAt(workRoot, "ork-1", "build", testInstanceID, 3600, "", first)
 	if err != nil {
 		t.Fatalf("first AcquirePin: %v", err)
 	}
@@ -186,7 +187,7 @@ func TestAcquirePin_IsIdempotentAcrossAttempts(t *testing.T) {
 
 	// Two more arrivals an hour apart: a concurrent sibling and a retry.
 	for i, at := range []time.Time{first.Add(time.Minute), first.Add(time.Hour)} {
-		again, err := acquirePinAt(workRoot, "ork-1", "build", testInstanceID, 3600, at)
+		again, err := acquirePinAt(workRoot, "ork-1", "build", testInstanceID, 3600, "", at)
 		if err != nil {
 			t.Fatalf("AcquirePin %d: %v", i+2, err)
 		}
@@ -247,7 +248,7 @@ func TestAcquirePin_RejectsAnInstanceIDItCannotTrust(t *testing.T) {
 	} {
 		t.Run(id, func(t *testing.T) {
 			workRoot := t.TempDir()
-			if pin, err := AcquirePin(workRoot, "ork-1", "build", id, 3600); err == nil {
+			if pin, err := AcquirePin(workRoot, "ork-1", "build", id, 3600, ""); err == nil {
 				t.Fatalf("AcquirePin accepted instance id %q and built %s", id, pin.Root)
 			}
 			entries, err := os.ReadDir(workRoot)
@@ -272,7 +273,7 @@ func TestAcquirePin_RejectsAnInstanceIDItCannotTrust(t *testing.T) {
 // the lease sweep, and cleanup is not orchestration.
 func TestReleasePinDirectory_RemovesOnceAndThenSaysNothingHappened(t *testing.T) {
 	workRoot := t.TempDir()
-	pin, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600)
+	pin, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600, "")
 	if err != nil {
 		t.Fatalf("AcquirePin: %v", err)
 	}
@@ -308,43 +309,76 @@ func TestReleasePinDirectory_RemovesOnceAndThenSaysNothingHappened(t *testing.T)
 	}
 }
 
-// TestReapPinDirectories_RemovesEveryPinDirectoryAndNothingElse is the boot
-// reap of §8.4. It is unconditional by construction: a fresh session-resource
-// id is minted per worker start, so every pin directory found at boot is dead,
-// and no lease has to be read to know it.
-//
-// The per-attempt tree beside it is the control. Nothing removes a crashed
-// predecessor's attempt directories today, and this sweep must not start.
-func TestReapPinDirectories_RemovesEveryPinDirectoryAndNothingElse(t *testing.T) {
+// TestReapPinDirectories_RemovesThisIdentitysAndNothingElse is the boot reap of
+// §6.4, entry by entry. A fresh session-resource id is minted per worker start, so
+// a directory this identity opened is dead at its boot. Nothing can be said of any
+// other: another identity's may be live on a shared work root, and one whose lease
+// names nobody may be anyone's, so both wait for their leases. The per-attempt tree
+// beside them has a reap of its own (ReapAttemptDirectories).
+func TestReapPinDirectories_RemovesThisIdentitysAndNothingElse(t *testing.T) {
+	const orkerID = "orker-a"
 	workRoot := t.TempDir()
-	live, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600)
-	if err != nil {
-		t.Fatalf("AcquirePin: %v", err)
+	instance := func(n int) string { return fmt.Sprintf("aaaaaaaa-bbbb-cccc-dddd-%012d", n) }
+	acquire := func(run, owner string, n int) *PinWorkspace {
+		t.Helper()
+		pin, err := AcquirePin(workRoot, run, "build", instance(n), 3600, owner)
+		if err != nil {
+			t.Fatalf("AcquirePin: %v", err)
+		}
+		return pin
 	}
-	other, err := AcquirePin(workRoot, "ork-2", "test", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 60)
-	if err != nil {
-		t.Fatalf("AcquirePin: %v", err)
+	own := []*PinWorkspace{acquire("ork-1", orkerID, 1), acquire("ork-2", orkerID, 2)}
+	peer := acquire("ork-3", "orker-b", 3)
+	noOwner := acquire("ork-4", "", 4)
+	torn := acquire("ork-5", orkerID, 5)
+	if err := os.WriteFile(torn.LeasePath, []byte(`{"expiresAt":`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	noLease := acquire("ork-6", orkerID, 6)
+	if err := os.Remove(noLease.LeasePath); err != nil {
+		t.Fatal(err)
 	}
 	attemptDir := filepath.Join(workRoot, "ork-run1-build-1-XXXX")
 	if err := os.Mkdir(attemptDir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 
-	removed, err := ReapPinDirectories(workRoot)
+	report, err := ReapPinDirectories(workRoot, orkerID)
 	if err != nil {
 		t.Fatalf("ReapPinDirectories: %v", err)
 	}
-	if len(removed) != 2 {
-		t.Errorf("reaped %v, want both pin directories", removed)
+	if len(report.Removed) != len(own) {
+		t.Errorf("reaped %v, want this identity's two", report.Removed)
 	}
-	for _, root := range []string{live.Root, other.Root} {
-		if _, err := os.Stat(root); !errors.Is(err, os.ErrNotExist) {
-			t.Errorf("%s survived the boot reap: %v", root, err)
+	for _, pin := range own {
+		if _, err := os.Stat(pin.Root); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s survived its identity's boot reap: %v", pin.Root, err)
 		}
 	}
+	stays := []*PinWorkspace{peer, noOwner, torn, noLease}
+	for _, pin := range stays {
+		if _, err := os.Stat(pin.Root); err != nil {
+			t.Errorf("%s did not survive the boot reap: %v", pin.Root, err)
+		}
+	}
+	if len(report.Others) != len(stays) {
+		t.Errorf("reported as left %v, want %d", report.Others, len(stays))
+	}
 	if _, err := os.Stat(attemptDir); err != nil {
-		t.Errorf("the boot reap removed a per-attempt directory (%v); its prefix is ork-, not "+
-			"ork-pin-, and nothing in this phase changes what happens to it", err)
+		t.Errorf("the boot reap removed a per-attempt directory: %v", err)
+	}
+	if report, err := ReapPinDirectories(workRoot, ""); err != nil || len(report.Removed) != 0 {
+		t.Errorf("no identity reaped %v, %v; it can name nothing as its own", report.Removed, err)
+	}
+
+	// The lease is what collects them, whoever opened them and whether or not
+	// anything says so: past its expiry the session is over.
+	swept, err := SweepExpiredPinLeases(workRoot, time.Now().Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("SweepExpiredPinLeases: %v", err)
+	}
+	if len(swept) != len(stays) {
+		t.Errorf("swept %v, want all %d of them", swept, len(stays))
 	}
 }
 
@@ -362,13 +396,13 @@ func TestSweepExpiredPinLeases_RemovesOnlyWhatIsDead(t *testing.T) {
 	now := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 
 	// Alive: opened a minute ago with an hour's budget.
-	alive, err := acquirePinAt(workRoot, "ork-1", "alive", testInstanceID, 3600, now.Add(-time.Minute))
+	alive, err := acquirePinAt(workRoot, "ork-1", "alive", testInstanceID, 3600, "", now.Add(-time.Minute))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Dead: opened two hours ago with a minute's budget.
 	dead, err := acquirePinAt(workRoot, "ork-2", "dead",
-		"bbbbbbbb-1111-2222-3333-444444444444", 60, now.Add(-2*time.Hour))
+		"bbbbbbbb-1111-2222-3333-444444444444", 60, "", now.Add(-2*time.Hour))
 	if err != nil {
 		t.Fatal(err)
 	}

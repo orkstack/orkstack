@@ -1,6 +1,7 @@
 import type { Duration, Timestamp } from '@bufbuild/protobuf/wkt';
 import { FailureCategory } from './gen/orkstack/v1/common_pb';
-import { FailureGroupBy, type FailureGroup, type GetFailureBreakdownResponse } from './gen/orkstack/v1/stats_pb';
+import { FailureGroupBy, StatsBucketWidth, type FailureGroup, type GetFailureBreakdownResponse, type GetStatsResponse } from './gen/orkstack/v1/stats_pb';
+import type { StatsClient } from './clients/stats';
 
 // UNAVAILABLE is what a number that cannot be answered renders as.
 //
@@ -206,4 +207,48 @@ export function fingerprintFooter(resp: GetFailureBreakdownResponse, category: F
 		);
 	}
 	return lines;
+}
+
+/** One bar of "Runs created each day": its label and what it holds. */
+export interface DayBar {
+	label: string;
+	/** The word under its bar: the weekday. */
+	day: string;
+	total: number;
+	failed: number;
+	/** The bucket that holds now: "today so far". */
+	partial: boolean;
+}
+
+/** The daily series of an answer, oldest first; empty when it holds none. */
+export function dayBars(week: GetStatsResponse | null): DayBar[] {
+	return (week?.buckets ?? []).map((bucket) => {
+		const counts = bucket.runsByStatus;
+		const total = Number(Object.values(counts).reduce((sum, n) => sum + n, 0n));
+		const since = bucket.since ? new Date(Number(bucket.since.seconds) * 1000) : null;
+		return {
+			label: since ? since.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '',
+			day: since ? since.toLocaleDateString(undefined, { weekday: 'short' }) : '',
+			total,
+			failed: Number(counts.failed ?? 0n),
+			partial: bucket.partial
+		};
+	});
+}
+
+/**
+ * The last 7 days: totals and "Runs created each day" are one read, on this
+ * browser's wall clock. A zone the engine does not know is no reason to lose
+ * the totals, so that one asks again without a series.
+ */
+export function weekStats(stats: Pick<StatsClient, 'getStats'>, namespace: string): Promise<GetStatsResponse> {
+	const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+	return stats
+		.getStats({ namespace, bucketWidth: StatsBucketWidth.DAY, timezone, bucketCount: 7 })
+		.catch(() => stats.getStats({ namespace, lookback: { seconds: BigInt(7 * 24 * 3600), nanos: 0 } }));
+}
+
+/** "1 run", "2 runs". */
+export function runCount(n: number | bigint): string {
+	return `${n} ${n === 1 || n === 1n ? 'run' : 'runs'}`;
 }

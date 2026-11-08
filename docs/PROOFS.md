@@ -617,7 +617,8 @@ the two invocations belongs to no file.
 `.github/workflows/proof.yml` is one graph behind the full, nightly and release
 tiers. It triggers on `pull_request` (opened, synchronize, reopened,
 ready_for_review — never `labeled`), `merge_group`, a push to
-`validate/full/**`, `workflow_dispatch` and `workflow_call`.
+`validate/full/**`, `workflow_dispatch` and `workflow_call`. The one caller a
+label starts is `proof-label.yml`, below.
 
 ```mermaid
 flowchart LR
@@ -628,6 +629,8 @@ flowchart LR
   base & plan & build & fast & cancel & race & race_repeat & fuzz & integration & ui_e2e & activity_fixture & observability --> proof
   nightly["nightly.yml › nightly"] -. calls .-> callee["proof.yml"]
   gate["release.yml › gate"] -. calls .-> callee
+  prove["proof-label.yml › prove"] -. calls .-> callee
+  prove --> label_verdict["proof-label.yml › verdict"]
   validate["release.yml › validate"] --> gate --> verify["release.yml › verify"]
   validate --> artifacts["release.yml › artifacts"] --> verify --> publish["release.yml › publish"]
   gate & artifacts --> release_nightly["release.yml › nightly"] --> publish
@@ -638,8 +641,9 @@ Every job checks out `github.sha` — the merge commit on a pull request, the
 group's head on a merge group, the pushed commit, or the chosen branch's tip
 on a dispatch or a call — so every part tests one commit, and the merger
 checks the tree anyway. Every job but `proof` carries the same guard: on a
-pull request it runs only when the pull request is not a draft and, while the
-repository is private, carries the `ci:proof` label.
+pull request it runs only when the pull request is not a draft and, when
+Dependabot opened it or while the repository is private, carries the `ci:proof`
+label. Merge groups, validate pushes, dispatches and calls are not held by it.
 
 **A failing `fast` gate cancels the run.** Every part starts as soon as what
 it needs is there, so a green run waits for nothing. When one of the `fast`
@@ -665,7 +669,8 @@ does not answer. Both callers grant `actions: write`, because a called
 workflow's job never gets more than its caller grants; the nightly tier has
 no `fast`. On a pull request from a fork or from Dependabot the token is
 read-only whatever the workflow asks, so `cancel` fails and the shards run to
-their end, as before. A green run's wall clock is unchanged; what a cancel
+their end, as before; a proof a label started runs as whoever added the label,
+so there it can. A green run's wall clock is unchanged; what a cancel
 saves is the runner time the shards had left when `fast` ended (§11.5).
 
 | Job | Runs | Uploads |
@@ -684,7 +689,8 @@ saves is the runner time the shards had left when `fast` ended (§11.5).
 | `proof.yml` › `observability` | when the plan says it is due, or always for release; its `observability stack` step starts the profile and waits up to 3 minutes until the Collector, Loki, Tempo and Prometheus answer ready, the readiness `proof.sh` requires | one part |
 | `proof.yml` › `proof` | `if: always()`; downloads every part and GitHub's job records; runs `proofrun merge`; writes the summary | the merged `proof.json` and ledgers |
 
-`proof` is the single required check. Its last step judges each tier by its
+`proof` is the required check of the proof; `pr-title.yml` › `pr-title`, below,
+is the one other required check. `proof`'s last step judges each tier by its
 own rule: a full proof must say `result: pass` and `merge_eligible: true`; a
 release proof must pass `proofrun verify -release -proof DIR` against the
 commit the job checked out, the rule `release.yml` › `verify` applies; a nightly proof
@@ -695,8 +701,47 @@ requires `merge_eligible`, and any other tier fails. No job or step of these
 workflows sets `continue-on-error`, and every `upload-artifact` step of
 `proof.yml` runs `if: always()`, so a stuck shard still leaves its part. A
 skipped required job reports success, which is why
-`proof` runs on `always()` and nothing else, and why on a draft, or without
-`ci:proof` while private, it fails with the reason instead of skipping.
+`proof` runs on `always()` and nothing else, and why on a draft, on a Dependabot
+pull request without `ci:proof`, or without it while private, it fails with the
+reason instead of skipping.
+
+**A Dependabot pull request's proof waits for the `ci:proof` label.** Until
+someone adds it, the guard skips every job and `proof` fails, naming the label,
+so the pull request cannot merge; that red check is the waiting state. Nothing
+else changes for any other pull request. Adding the label starts the proof on
+the current head, and every new head of a labelled pull request is proved by
+`proof.yml`, because the label is still there. A label added while the branch
+lacks `main`'s tip fails `base` with "update this branch", as any pull request
+does; `@dependabot rebase` pushes a head that is then proved. `proof.yml` itself
+never takes `labeled`: that event fires for any label of any pull request, would
+land in its concurrency group, cancel a running proof and report the required
+check again. `proof-label.yml` takes it instead:
+
+| Job | Runs |
+|---|---|
+| `proof-label.yml` › `prove` | only when the label just added is `ci:proof`, Dependabot opened the pull request, a person added the label and it is not a draft: calls `proof.yml`, tier full. A call and not a dispatch, because GitHub's required-checks documentation counts a workflow job's check only from `push`, `pull_request`, `pull_request_review`, `pull_request_target`, `deployment` and `deployment_status` runs. Its concurrency group is the pull request's, so a new push supersedes it |
+| `proof-label.yml` › `verdict` | on that same event, on `always()`, under the name `proof`: this is the required check, and it passes only when the called proof's `verdict` step succeeded (`proof_verdict`), not when the called job did, because an excused runner-size miss leaves a shard red while the proof passes. On any other label it is skipped under another name, so it never answers for the required check |
+
+Adding a label takes triage access or more, so anyone who can start this can
+also merely spend runner time on a real proof; a proof's result is still real
+whoever asked, and merging still takes write access and any review the ruleset
+requires. A bot's label starts nothing here, though `proof.yml` honours the label
+on the next new head whoever added it, and `TestDependabot_NeverAddsTheLabel`
+keeps it out of `.github/dependabot.yml`, whose entries would otherwise add it to
+every pull request. An unlabelled pull request has one other way to a green
+`proof`: a real proof of its exact head, by a push of that commit to
+`validate/full/**`, which takes write access. A "Re-run" of the failed run does
+not start it: a re-run keeps its event's old labels, so `proof` fails again, and
+because that newer red check replaces the one before it, doing so after the
+labelled proof passed can turn a green head red. Add the label again to prove it.
+
+`pr-title.yml` is not part of the proof. Its one job is a required check, because
+a pull request's title becomes the subject of the squash commit that lands it
+(§6):
+
+| Job | Runs |
+|---|---|
+| `pr-title.yml` › `pr-title` | `proofrun pr-title -title`, on every pull request's opening, title edit and new head; a required check attaches to a head, so no path filter narrows it. On a merge group it passes and reads nothing: the title was checked on its pull request, and the merge group still needs every required check to report. The title reaches it through `env:`, and a refusal quotes it, so it cannot begin a line of the log |
 
 `ci.yml` holds no required check:
 
@@ -785,10 +830,9 @@ pull request can act on it. A database Grype could not check for an update
 fails the scan too. The Go modules of OrkStack's own binaries are
 `vuln`'s, which judges them by reachability, so the scan sets them aside
 (`TestVulnImages_TheScannerAndItsPolicyArePinned` holds that list to the
-binaries `deploy/Dockerfile` copies). linux/arm64 is not scanned: its images
-come from the same multi-arch base digests and package pins, and building them
-needs QEMU. The fix is to move the base image's digest, the package's pin or
-the bundled binary's version the report names. Where a bundled binary's latest
+binaries `deploy/Dockerfile` copies). The fix is to move the base image's
+digest, the package's pin or the bundled binary's version the report names.
+Where a bundled binary's latest
 release still carries the vulnerability, the user may approve a waiver in
 `deploy/grype.yaml`: one vulnerability, by its GHSA or CVE id, in one package
 named by its exact name, version, type and location, with a reason that opens
@@ -893,9 +937,10 @@ cosign's bundle `SHA256SUMS.sigstore.json`, verifies that bundle with the
 committed `deploy/cosign.pub`, and writes its signature alone to
 `SHA256SUMS.sig`, which openssl verifies, so a missing key, a wrong password or
 a key that is not that file's pair stops it before the tag or any image is
-out. It then creates the annotated tag through the API (`gh api`, the
-ref created, never moved: a tag this run made on this commit is kept on a
-re-run, and any other is refused), pushes each layout to
+out. It then pushes the annotated tag with git and a token of the release's
+GitHub App (the ref created, never moved: a tag this run made on this commit is
+kept on a re-run, and any other is refused; a missing secret or an unusable token
+fails the job, with nothing out and no fallback to the API), pushes each layout to
 `ghcr.io/orkstack/<image>` byte for byte
 (`skopeo copy --all --preserve-digests`, from the image
 `deploy/skopeo-image.txt` pins) under `X.Y.Z`, checks each digest after the
@@ -923,11 +968,17 @@ so a re-run of either finds the first attempt's artifact; `artifacts` keeps
 its upload 7 days, so the approval must come within them.
 `publish` checks out nothing and runs no repository code; it holds the only
 `packages: write` and the only `contents: write`, and its environment alone
-holds the signing key. `verify`'s checkout keeps no credential, and no step
-that runs repository code holds a token; in `publish` only the steps that
-tag, push, sign images, move `X.Y` and release are given the token, and only
-the two signing steps the key, which cosign reads from the environment
-(`env://COSIGN_PRIVATE_KEY`), never from a file. Every one takes a
+holds the signing key and the tag App's private key. `verify`'s checkout keeps
+no credential, and no step that runs repository code holds a token; in `publish`
+only the steps that push images, sign them, move `X.Y` and release are given
+the job's token, only the two signing steps the signing key, which cosign reads
+from the environment (`env://COSIGN_PRIVATE_KEY`), never from a file, and only
+the step that checks the App's secrets and the action that mints its token those
+secrets (`actions/create-github-app-token`, pinned by commit). That token, for
+this repository's contents alone, reaches only the tag step, which holds no job
+token, drops it from its environment before git starts, and gives git a masked
+header in git's environment, never in a file or on a command line; the action's
+post step revokes it when the job ends. Every one takes a
 concurrency group named from the validated version, so two dispatches of one
 version run one after the other. A dispatch off `main` builds, smokes, proves
 and verifies, and publishes nothing; one on `main` whose approval is rejected
@@ -1059,7 +1110,7 @@ The required `proof` check has two modes:
 
 - **queue-less (the default):** `proof` runs the real proof on the pull
   request, whose branch must contain `main`'s tip, under the strict policy.
-  GitHub lands exactly the tree it tested.
+  GitHub squash-merges it and lands exactly the tree it tested.
 - **merge queue (optional, organization-owned repositories):** `proof` runs on
   the merge group, and the queue lands that tree. The repository variable
   `MERGE_GATE_MODE=queue`, which only the enablement script sets, lifts the
@@ -1067,16 +1118,34 @@ The required `proof` check has two modes:
   lands. It never makes `proof` trivial.
 
 A proof binds a **tree, not a commit**. GitHub does not document which commit
-a merge queue lands, and a merge commit made at merge time is not the commit a
+a merge queue lands, and a squash commit made at merge time is not the commit a
 pull request's proof tested; what both modes guarantee is that the landed
 commit's tree is the tree the proof measured. `proof.json` records the tree,
 and `scripts/github-merge-gate.sh --verify-landed SHA` checks the first merge
 through either mode by downloading that run's `proof-<run_id>-a<n>` and
 comparing its `tree` with `SHA^{tree}`. Pass the commit that landed on `main`.
-In the queue-less mode that is a merge commit GitHub made, and it carries no
-check run: the `proof` run is on the pull request's head, its second parent,
-which the script reads when the landed commit has none. The merge commit's tree
-equals the head's merged tree, because the branch contains `main`'s tip.
+In the queue-less mode that is a squash commit GitHub made, with one parent and
+no check run: the `proof` run is on the pull request's head, which the script
+asks GitHub for (the pull request whose `merge_commit_sha` the landed commit
+is) when the landed commit has none. The squash commit's tree equals the head's
+merged tree, because the branch contains `main`'s tip. (The proof of a pull
+request still checks out GitHub's own test merge of its head into its base,
+`refs/pull/<n>/merge`, whatever the method that lands it: §5's `base` reads its
+two parents.)
+
+**Every landing is one squash commit.** Both rulesets allow nothing else
+(`allowed_merge_methods`, the queue's `merge_method`), so `main`'s history is
+one commit per landing, each a Conventional Commit. The repository's defaults
+make the pull request's title the commit's subject
+(`squash_merge_commit_title: PR_TITLE`) and its description the body
+(`squash_merge_commit_message: PR_BODY`), and the required `pr-title` check
+holds the title to `proofrun pr-title`'s rule, so a title that fails it cannot
+land. A description names the tests and specs that prove the change, and quotes
+the evidence where it is not the `proof` check's own artifact. On the local
+path `make merge-check PROOF=` holds the candidate to the same rule: one commit
+whose parent is `main`'s tip, the same subject rule, the proven tree. A merge
+commit of that tree is refused, and `git reset --soft main` with one commit
+folds it without touching the tree, so a proof already taken still stands.
 
 A required check and the merge queue are GitHub settings, not repository
 files. `scripts/github-merge-gate.sh` (`make github-merge-gate`) is the
@@ -1133,10 +1202,11 @@ fix.
 
 The pre-release gate is the release tier. A tag pushed by hand is outside
 both paths; `make release-tag` and `release.yml` › `publish` are the only
-sanctioned paths, and no tag ruleset backs them: none has been applied. One would block
-`release.yml`'s own push unless it named a bypass actor for it, and which actor
-the Actions app's token can be on this organization-owned repository is not
-verified.
+sanctioned paths. A ruleset named `release tags`, made by hand and not by
+`scripts/github-merge-gate.sh`, covers `refs/tags/v*`. A ruleset cannot name
+GitHub Actions as a bypass actor, and this organization disables deploy keys, so
+`publish` pushes the tag with a GitHub App, which a ruleset can name (§10, "Set up
+the release's tag App"); what the ruleset holds is read from the API (§12).
 
 ## 7. Artifacts, `proof.json` and the ledgers
 
@@ -1621,6 +1691,13 @@ with evidence.
 **On a private repository, start the proof** after adding the `ci:proof`
 label: push again, or close and reopen.
 
+**Start a Dependabot pull request's proof** when it is next to merge: add the
+`ci:proof` label. If its branch lacks `main`'s tip, comment `@dependabot rebase`
+first, or after: a labelled pull request's new head is proved anyway. Never
+"Re-run" the failed `proof` run from before the label: it fails again, and can
+turn a head that has since passed red. To prove the same head again, remove and
+add the label.
+
 **Get a CI proof of a candidate before the gate is enforced.** Push it to
 `validate/full/<name>` with its base as the first parent; the proof compares
 by tree, never by commit. A feature proof uses `validate/feature/<name>`.
@@ -1631,8 +1708,24 @@ one host's time (§11.5). The `validate/full/<name>` run's base is the
 candidate's first parent, so build the candidate on `main`'s tip, push it,
 and download its passing run's artifact into `proof/` (gitignored, so the
 worktree stays clean). The artifact's `proof.json` is the evidence: download
-it, never retype it. Amending the merge commit's message to quote it leaves
+it, never retype it. Amending the squash commit so its body quotes it leaves
 the tree, which the proof is bound to, unchanged.
+
+A candidate is one commit on `main`'s tip, which `git merge --squash` builds
+from one branch. Several branches sharing one proof land as one commit: merge
+them with `--no-ff`, resolving any conflict there, then fold the merges. The
+fold keeps the tree, so a proof of the merged tree stands.
+
+```bash
+git checkout -b <candidate> main
+git merge --squash <branch> && git commit      # one Conventional Commit
+```
+
+```bash
+git checkout -b <candidate> main
+git merge --no-ff <branch-a> && git merge --no-ff <branch-b>
+git reset --soft main && git commit            # one Conventional Commit
+```
 
 ```bash
 git push origin HEAD:validate/full/<name>
@@ -1640,7 +1733,7 @@ gh run list --workflow proof.yml --branch validate/full/<name> -L 1   # <id>
 gh run watch <id> --exit-status
 gh run view <id> --json attempt -q .attempt                          # <attempt>
 gh run download <id> -n proof-<id>-a<attempt> -D proof/ci-<id>
-git commit --amend                    # quote proof/ci-<id>/proof.json
+git commit --amend                    # the body quotes proof/ci-<id>/proof.json
 make merge-check PROOF=proof/ci-<id>
 git checkout main && git merge --ff-only <candidate>
 git push origin main
@@ -1648,8 +1741,9 @@ git push origin main
 
 `merge-check PROOF=` applies the same rules as to a local proof: tier `full`,
 result `pass`, `merge_eligible`, `tree` equal to `HEAD`'s tree, `base_commit`
-equal to `main`'s tip, the candidate's first parent equal to `main`'s tip, a
-clean worktree, and a quarantine check date at most 30 days old. If `main`
+equal to `main`'s tip, the candidate one commit whose parent is `main`'s tip and
+whose subject is a Conventional Commit, a clean worktree, and a quarantine check
+date at most 30 days old. If `main`
 moved since the push, rebuild the candidate and push it again.
 
 **Read the nightly after a merge.** `main`'s nightly is `nightly.yml`'s latest
@@ -1812,8 +1906,8 @@ rejected, it publishes nothing. Locally, `make release-tag VERSION=vX.Y.Z
 PROOF=proof/<release>` applies the same proof check to `HEAD`, tags it and
 does not push; a tag made that way publishes nothing, because `release.yml`
 is the only path that publishes, and it does not check the nightly, which
-`release.yml` does. Neither path stops a
-person with write access from pushing a `v*` tag by hand (§12). Before
+`release.yml` does. What stops a person with write access from pushing a `v*`
+tag by hand is the `release tags` ruleset, not either path (§12). Before
 dispatching, write the version's section ("Write the release notes", above):
 it becomes the release notes, and `validate` refuses a version without one.
 
@@ -1855,6 +1949,74 @@ already published stays signed by the key its own tag carries, and each
 deployment that trusts OrkStack's releases registers the new key before it
 runs a release signed with it.
 
+**Set up the release's tag App.** `publish` pushes the tag with a token of a
+GitHub App, because the `release tags` ruleset can name an App as a bypass actor
+and cannot name GitHub Actions. Without the App's two secrets in the `release`
+environment, the job fails before anything is pushed and never falls back to the
+API or the job's token. Fix it and re-run the job (below). In this order, as an
+owner of the organization and an administrator of the repository:
+
+1. Create the App. Open
+   `https://github.com/organizations/orkstack/settings/apps/new?name=orkstack-release-tag&url=https://github.com/orkstack/orkstack&public=false&webhook_active=false&contents=write`
+   and check the form before creating it: the webhook is not active, Contents is
+   "Read and write" and is the only permission beyond the Metadata read GitHub
+   requires, and it can be installed "Only on this account".
+2. On the App's page, note the Client ID and the App ID, and generate a private
+   key, which downloads a `.pem` file.
+3. Install the App (Install App, then "Only select repositories") on
+   `orkstack/orkstack` alone.
+4. Add the Client ID and the private key to the environment. `publish` asks for
+   the Client ID because `actions/create-github-app-token` deprecates its App ID
+   input:
+
+   ```bash
+   gh secret set RELEASE_TAG_APP_CLIENT_ID --env release --repo orkstack/orkstack --body '<client id>'
+   gh secret set RELEASE_TAG_APP_PRIVATE_KEY --env release --repo orkstack/orkstack <'<file>.pem'
+   ```
+
+5. Delete the local `.pem` file. The secret is the only copy, and it reaches only
+   the secrets check and the action that mints the token, in the environment's
+   approved job on `main`.
+6. Only once `publish` on `main` pushes with the App, and no run of an older
+   `release.yml` is waiting to publish, add the `creation` rule and the App's
+   bypass to the ruleset. The job's token can then no longer create a `v*` tag, so
+   a run of a `release.yml` that still creates its tag through the API would fail
+   there. `<id>` is the ruleset's, from `gh api repos/orkstack/orkstack/rulesets`,
+   and `<app id>` is the App ID noted in step 2:
+
+   ```bash
+   gh api --method PUT repos/orkstack/orkstack/rulesets/<id> --input - <<'JSON'
+   {
+     "rules": [{"type": "creation"}, {"type": "update"}, {"type": "deletion"}],
+     "bypass_actors": [{"actor_id": <app id>, "actor_type": "Integration", "bypass_mode": "always"}]
+   }
+   JSON
+   gh api repos/orkstack/orkstack/rulesets/<id> --jq '{rules, bypass_actors}'
+   ```
+
+That body leaves the repository's admin role no bypass, so nobody but the App
+creates, moves or deletes a `v*` tag, and the tag step's push names no force. An
+administrator can still edit the ruleset. To rotate, generate a new private key on
+the App's page, replace the secret and delete the old key there. The App's Contents
+write also reaches any branch no ruleset covers; the `main` ruleset names only the
+admin role as a bypass actor, so it refuses the App, and a ruleset added for
+another branch must not name this App.
+
+The App holds no `workflows` permission, and GitHub does not document whether a
+new tag on an existing commit needs it. Reports say a push is refused, "without
+`workflows` permission", when the tagged commit's workflow files differ from the
+latest commit of every branch, and accepted otherwise
+(<https://github.com/orgs/community/discussions/151442>,
+<https://github.com/orgs/community/discussions/26164>,
+<https://github.com/actions/checkout/issues/1421>). On those reports a tag on
+`main`'s tip passes, and a tag on a commit `main` moved past with a workflow change
+is refused, which a change merged during the wait for the proof, the nightly or
+the approval can cause. The tag step then says so, and nothing is out. Dispatch the
+release again from `main`'s tip, which proves that commit from the start; on those
+reports, re-running the job would meet the same refusal while the commit's workflow
+files differ. Granting the permission would let the token change workflow files on
+any branch no ruleset covers, so it is not granted.
+
 **Recover a failed publish.** `publish` is safe to re-run: the tag step
 keeps the tag this run made on this commit and refuses any other, an image tag
 that already holds this release's digest is left alone, an image whose
@@ -1882,14 +2044,21 @@ it is public (on each package's settings page).
 `make github-merge-gate APPLY=1`. Check mode refuses unless: you are an
 administrator; the repository is public; for `QUEUE=1`, it is owned by an
 organization; `origin/main` is local `main`'s tree and holds `proof.yml`;
-`TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests` passes; the
+`TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests` and
+`TestWorkflows_ThePRTitleCheckRunsOnEveryTitleChange` pass; the
 GitHub Actions app has reported a successful `proof` check on `main`'s tip or
 on the head of the newest successful `proof.yml` run (a `validate/full/**`
-push does it); merge commits are allowed; Actions are enabled;
+push does it), and a successful `pr-title` check on the head of the newest
+successful `pr-title.yml` run (any pull request with a good title does it);
+squash merging is allowed (`allow_squash_merge`), with
+`squash_merge_commit_title` `PR_TITLE` and `squash_merge_commit_message`
+`PR_BODY`; Actions are enabled;
 `.github/CODEOWNERS` names an account with write access (a warning with
 `CODEOWNER_REVIEW=0`); and `MERGE_GATE_MODE` agrees with the applied
 `main-proof-gate` ruleset's `merge_queue` rule. A disabled `nightly.yml` is a
-warning. The apply creates or updates the rulesets by name; every body is
+warning, and so is `allow_merge_commit` or `allow_rebase_merge` left on: the
+ruleset refuses both anyway, and off they leave the merge box offering only
+squash. The apply creates or updates the rulesets by name; every body is
 unverified against the API until then, so read the API's answer before
 anything else. The script fails closed on an API error: only a 404 reads as
 "no such ruleset" or "variable unset", and a failed read or name lookup stops
@@ -1958,7 +2127,7 @@ listing with no bucket at all.
 
 | Target | Does |
 |---|---|
-| `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept, except for `GIT_STATE_PACKAGES` (the packages whose unit tests run git, whose reads the cache cannot see), run with `-count=1`; no Docker |
+| `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept, except for `GIT_STATE_PACKAGES` (the packages whose unit tests run git, whose reads the cache cannot see), run with `-count=1`; then `bun install --frozen-lockfile`, `bun run check` and `bun test test/` in `ui/`, the `ui-check` and `ui-unit` gates; no Docker |
 | `make vuln` | `go tool govulncheck ./...`: the known vulnerabilities whose vulnerable code the module reaches. It needs the network, so it is in no proof gate; `ci.yml` and `nightly.yml` run it (§5) |
 | `make proto-breaking` | `buf breaking` of `proto/` against the tree of the tag `PROTO_BASE` (default `v0.1.0`, which the clone must hold), under `buf.yaml`'s rules, by the buf image `deploy/buf-image.txt` pins, run with no network; `ci.yml` › `proto` runs it (§5) |
 | `make vuln-js` | `bun audit` over `ui/` and `site/`: every advisory listed, a high or critical one fails. It needs the network, so it is in no proof gate; `nightly.yml` runs it (§5) |
@@ -2029,6 +2198,7 @@ listing with no bucket at all.
 | `runner-health` | `-out FILE`, `-class NAME`, `-floors FILE`, `-dir DIR`, `-seconds N` |
 | `rerun-plan` | `-repo OWNER/NAME`, `-run ID`, `-attempt N`, `-max-attempts N` |
 | `job-log` | none: the job log on standard input, the bounded log on standard output (§7) |
+| `pr-title` | `-title` the pull request's title: exit 0 for a Conventional Commit, 1 for anything else, an empty title included, 2 with no `-title` (§5, §6) |
 
 ### 11.4 The scripts
 
@@ -2053,8 +2223,9 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   began in runs 40797687107 and 41001701958, while their shards ended 13 to 22
   minutes in: it saves the runner time the shards had left then, which no run
   with the cancel has measured yet.
-- `make check` (lint, `go vet -tags=integration ./...`, `go test -short ./...`),
-  measured 2026-10-21 on a quiet 16-core host: with a warm build and test
+- `make check` (lint, `go vet -tags=integration ./...`, `go test -short ./...`,
+  before it ran the UI's gates, which took 17 s and 4 s more when measured on
+  2026-11-06), measured 2026-10-21 on a quiet 16-core host: with a warm build and test
   cache, 11 s at 16 CPUs and 7 s at 2 CPUs (`taskset -c 0-1`), since unchanged
   packages come from the test cache; with a cold build cache, 120 s at 16 CPUs
   and 377 s at 4 CPUs (`taskset -c 0-3`). A cold cache recompiles the suites
@@ -2119,11 +2290,28 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
   mode is the default: `proof` runs the real proof on the pull request, and
   `strict_required_status_checks_policy` makes the tested tree the landed
   tree.
+- **A title is checked, not the subject that lands.** `pr-title` reads the pull
+  request's title, and the repository's defaults make it the squash commit's
+  subject, but whoever merges can edit the subject in GitHub's merge box and no
+  check reads the edit. `make merge-check PROOF=` reads the subject on the local
+  path, where nothing can change it afterwards. A squash through the gate, and
+  `pr-title` itself, have not yet run on GitHub.
 - **The full proof has passed on GitHub only on `validate/full/` pushes.**
   Runs 40388322907 and 40438152385 passed, but never as the required check of
   a pull request: the one `pull_request` run, a Dependabot pull request,
   failed, and no `merge_group` run exists. The pull-request and queue paths
   are structurally validated and unexercised until the gate is applied.
+- **The label gate has not run on GitHub.** The rules hold the workflows' shape
+  and evaluate their expressions (`test/tools/proofrun/workflow_labelgate_test.go`),
+  and these can only be seen there: that GitHub renders `verdict`'s `name:` so that
+  the required check matches it, and renders a skipped one as anything but `proof`;
+  that a later `proof` replaces the earlier red one of the same head on the merge
+  box, as a close and reopen's does; that a `labeled` event's payload already lists
+  the label; that the label's run gets the token its `permissions:` ask for, as an
+  event from a person rather than from Dependabot; and that
+  `scripts/github-merge-gate.sh --verify-landed SHA`, which reads the first `proof`
+  check GitHub lists, finds the passing one when the head also holds the red one. Each fails closed: the pull request stays unmergeable, and
+  pushing a new labelled head takes `proof.yml`'s own path.
 - **The planner reads the default branch's allowlist; the merger reads the
   candidate's.** `proof-rerun.yml` runs from the default branch, so
   `rerun-plan` classifies with the default branch's `setupStepNames`, while the
@@ -2366,9 +2554,20 @@ proof. `scripts/proof-clean.sh` lists and removes what test processes that are g
 - **Base-cache sizing is unmeasured at concurrency.** The 8-entry, 128 MiB
   cache is documented arithmetic, not a measured miss rate; a setting needs a
   measurement first, with the user's approval.
-- **A tag pushed by hand is outside both paths.** `make release-tag` and
-  `release.yml` › `publish` are the only paths that check a release proof;
-  GitHub itself does not refuse a hand-pushed tag.
+- **Only the `release tags` ruleset refuses a tag pushed by hand.** `make
+  release-tag` and `release.yml` › `publish` are the only paths that check a
+  release proof, and a hand-pushed tag checks none. Until the ruleset holds the
+  `creation` rule and the App's bypass (§10, "Set up the release's tag App"), it
+  refuses moving and deleting a `v*` tag but not creating one, and for
+  as long as it names another bypass actor that actor can push one. What it
+  holds is read from the API (`gh api repos/orkstack/orkstack/rulesets`), not
+  from the repository.
+- **The tag step's push has not run on GitHub.** Its tests run the step as
+  written with the real git against git's own http-backend behind a token check,
+  with the action that mints the token stubbed. So the token's minting, GitHub's
+  acceptance of the App's push under the ruleset, and whether GitHub asks that push
+  for the `workflows` permission (§10, "Set up the release's tag App") are first
+  seen when a release runs.
 - **§11 3j**: no run moves an image tag between two attempts. The digest is
   pinned at apply, so a moved tag never reaches a stored version; the claim is
   a known gap rather than a test.

@@ -77,6 +77,10 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err != nil {
 		return err
 	}
+	rootKey, hasRoot, err := RunRootIndexKey(rec)
+	if err != nil {
+		return err
+	}
 	recentKey, err := RunRecentIndexKey(rec)
 	if err != nil {
 		return err
@@ -122,6 +126,15 @@ func (a *S3RunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 			Bucket: aws.String(a.bucket), Key: aws.String(originKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
 		}); err != nil {
 			return fmt.Errorf("artifacts: s3 archive run %q: write origin index %q: %w", rec.RunID, originKey, err)
+		}
+	}
+	// The root row, on the origin row's terms: a failure here fails this write
+	// with no body written, and the retry or the archive sweep finishes it.
+	if hasRoot {
+		if _, err := a.client.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String(a.bucket), Key: aws.String(rootKey), Body: bytes.NewReader(nil), ContentLength: aws.Int64(0),
+		}); err != nil {
+			return fmt.Errorf("artifacts: s3 archive run %q: write root index %q: %w", rec.RunID, rootKey, err)
 		}
 	}
 	// The newest-first row, likewise zero bytes and likewise before the run

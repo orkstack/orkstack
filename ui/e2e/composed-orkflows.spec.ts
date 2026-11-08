@@ -58,6 +58,16 @@ const shot = (page: Page, name: string) => page.screenshot({ path: out(name), fu
 
 const example = (file: string) => readFileSync(path.join(repoRoot, 'internal', 'dsl', 'testdata', 'orkflows', file), 'utf8');
 
+// The top of a three-level chain: chain-top composes composed-release, which
+// composes release-block.
+const chainTop = `apiVersion: orkstack/v1
+kind: Orkflow
+name: chain-top
+version: "0.1.0"
+tasks:
+  - id: release
+    uses: orkflow:composed-release@0.1.0
+`;
 // A child whose one task fails, and a parent composing it.
 const failingBlock = `apiVersion: orkstack/v1
 kind: Orkflow
@@ -125,7 +135,7 @@ test.beforeAll(async () => {
 	});
 	await rpc('NamespaceService/CreateNamespace', { namespace: { name: NS, description: 'composed orkflows' } });
 	// The child first: a composed task resolves its child at apply.
-	for (const yaml of [example('release-block.ork.yaml'), example('composed-release.ork.yaml'), failingBlock, failingParent, slowBlock, slowParent]) {
+	for (const yaml of [example('release-block.ork.yaml'), example('composed-release.ork.yaml'), chainTop, failingBlock, failingParent, slowBlock, slowParent]) {
 		await rpc('OrkflowService/ApplyOrkflow', { yaml, namespace: NS });
 	}
 	note(`namespace ${NS}, orkflows release-block@0.1.0 and composed-release@0.1.0, engine ${ENGINE}, ui ${UI}`);
@@ -172,7 +182,7 @@ test('a composed task links to its child run and rolls up its tasks live', async
 	const link = page.getByTestId('task-release-child-link');
 	await expect(link).toBeAttached({ timeout: 120_000 });
 	const childId = ((await link.textContent()) ?? '').trim();
-	expect(childId).toMatch(/^ork-\d+-\d+$/);
+	expect(childId).toMatch(/^ork-[0-7][0-9a-hjkmnp-tv-z]{25}$/);
 	// The row names the same child, and links to it.
 	await expect(page.getByTestId('task-release-child-run')).toHaveAttribute('href', new RegExp(`/runs/${childId}\\?`));
 	await expect(page.getByTestId('task-release-child')).not.toBeInViewport();
@@ -227,11 +237,68 @@ test('the child run names its parent and the parent lists its children', async (
 	await shot(page, 'screenshot-children-list.png');
 });
 
+test('a grandchild links its root run beside its parent, and a child of the root only its parent', async ({ page }) => {
+	const short = (id: string) => `${id.slice(0, 4)}…${id.slice(-6)}`;
+	const rootId = await submit('chain-top');
+	await page.goto(`${UI}/runs/${rootId}?ns=${NS}`);
+	await expect(page.getByTestId('run-origin-kind')).toHaveText('Submit');
+	await expect(page.getByTestId('run-origin-root-link')).toHaveCount(0);
+
+	// The root's own child: its parent is its root, so one link says both.
+	const parentId = await childRunId(page, 'release');
+	await page.getByTestId('task-release-child-link').click();
+	await page.waitForURL(new RegExp(`/runs/${parentId}`));
+	await expect(page.getByTestId('run-origin-link')).toHaveText(short(rootId));
+	await expect(page.getByTestId('run-origin-root-kind')).toHaveCount(0);
+	await expect(page.getByTestId('run-origin-root-link')).toHaveCount(0);
+
+	// The grandchild, three levels down: its parent and, separately, its root.
+	const leafId = await childRunId(page, 'release');
+	await page.getByTestId('task-release-child-link').click();
+	await page.waitForURL(new RegExp(`/runs/${leafId}`));
+	await expect(page.getByTestId('run-origin-kind')).toHaveText('Parent run');
+	await expect(page.getByTestId('run-origin-link')).toHaveText(short(parentId));
+	await expect(page.getByTestId('run-origin-link')).toHaveAttribute('href', `/runs/${parentId}?ns=${NS}`);
+	await expect(page.getByTestId('run-origin-root-kind')).toHaveText('Root run');
+	await expect(page.getByTestId('run-origin-root-link')).toHaveText(short(rootId));
+	await expect(page.getByTestId('run-origin-root-link')).toHaveAttribute('href', `/runs/${rootId}?ns=${NS}`);
+	await shot(page, 'screenshot-root-run.png');
+	await page.setViewportSize({ width: 360, height: 800 });
+	await expect(page.getByTestId('run-origin-root-link')).toBeVisible();
+	expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll at 360 px').toBe(true);
+	await shot(page, 'screenshot-root-run-phone.png');
+	await page.setViewportSize({ width: 1280, height: 800 });
+
+	await page.getByTestId('run-origin-root-link').click();
+	await page.waitForURL(new RegExp(`/runs/${rootId}`));
+	await expect(page.getByTestId('run-origin-kind')).toHaveText('Submit');
+	note(`leaf ${leafId} names parent ${parentId} and root ${rootId}`);
+
+	// From the root, Chain runs is one list of every run below it.
+	await page.getByTestId('run-chain-link').click();
+	await page.waitForURL(/\/runs\?/);
+	expect(new URL(page.url()).searchParams.getAll('filter')).toEqual([`origin.root_run_id=${rootId}`]);
+	await expect(page.getByTestId(`run-row-${parentId}`)).toBeVisible({ timeout: 30_000 });
+	await expect(page.getByTestId(`run-row-${leafId}`)).toBeVisible({ timeout: 30_000 });
+	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(2);
+	await shot(page, 'screenshot-chain-list.png');
+});
+
 test('declared outputs are the run output and a downstream task read them', async ({ page }) => {
 	const runId = await submit('composed-release');
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
 	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
-	await expect(page.getByTestId('run-output-kind')).toHaveText('Declared outputs');
+	await expect(page.getByTestId('run-output-kind')).toHaveText('Outputs');
+	const mark = page.getByTestId('run-output-mark');
+	await expect(mark).toContainText('declared');
+	await expect(mark).not.toContainText('not declared');
+	await expect(mark).toContainText('This Orkflow declares its outputs, and these are their values.');
+	await page.setViewportSize({ width: 1280, height: 800 });
+	for (const theme of ['light', 'dark'] as const) {
+		await page.emulateMedia({ colorScheme: theme });
+		await page.getByTestId('run-outputs').screenshot({ path: out(`screenshot-outputs-declared-${theme}.png`) });
+	}
+	await page.emulateMedia({ colorScheme: 'light' });
 	await expect(page.getByTestId('run-output')).toContainText('"digest": "sha256:', { timeout: 60_000 });
 	const output = (await page.getByTestId('run-output').textContent()) ?? '';
 	const digest = /"digest": "(sha256:[0-9a-f]{64})"/.exec(output)?.[1] ?? '';

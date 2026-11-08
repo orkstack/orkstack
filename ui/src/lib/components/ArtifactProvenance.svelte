@@ -8,6 +8,7 @@
 	// wants a fresh answer, not the one from before it. The panel renders the
 	// same fields in the same words as `orkctl run artifact provenance`, and a
 	// failed read is an error, never an empty list.
+	import VersionText from '#lib/components/VersionText.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { runClient } from '#lib/clients/runs.ts';
 	import { ArtifactKind, type GetArtifactProvenanceResponse } from '#lib/gen/orkstack/v1/run_service_pb.ts';
@@ -89,6 +90,7 @@
 	<div
 		id={base}
 		data-testid={base}
+		data-cli-own
 		class="w-full min-w-0 rounded-sm border border-rule-faint bg-paper-sunken px-3 py-2 text-xs"
 	>
 		<div class="flex items-start justify-between gap-3">
@@ -147,7 +149,7 @@
 										class="stamp border-rule-strong text-ink-secondary">this run</span
 									>
 								{/if}
-								<span class="text-ink-secondary">{ref.orkflowName}@{ref.orkflowVersion}</span>
+								<span class="text-ink-secondary">{ref.orkflowName}@<VersionText version={ref.orkflowVersion} /></span>
 								<span class="font-mono text-ink-secondary">{ref.taskId}</span>
 								<span class="text-ink-muted">{refKind(ref.kind)}</span>
 								<StatusPill status={ref.runStatus} />

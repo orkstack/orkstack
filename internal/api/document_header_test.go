@@ -119,3 +119,16 @@ func TestApplyOrkflow_MovingTheHeaderOnAnUnpinnedDocumentIsANewVersion(t *testin
 			second.GetCreated(), second.GetOrkflow().GetVersion(), first.GetOrkflow().GetVersion())
 	}
 }
+
+// TestValidateOrkflow_ReportsASecondDocumentOnItsLine: the editor's Validate and
+// apply read this answer, which a client places by the line it opens with.
+func TestValidateOrkflow_ReportsASecondDocumentOnItsLine(t *testing.T) {
+	const source = "apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    await:\n      timeout_seconds: 60\n---\nname: [unclosed\n"
+	svc, _, _ := interfaceService(t, fileLabel(t))
+	issues := validate(t, svc, source).GetIssues()
+	want := "line 8: " + dsl.SecondDocumentMessage(dsl.KindOrkflow)
+	if len(issues) != 1 || issues[0].GetMessage() != want ||
+		issues[0].GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
+		t.Fatalf("issues = %v, want one ERROR %q", issues, want)
+	}
+}

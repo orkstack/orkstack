@@ -710,7 +710,7 @@ func (x *AwaitSpec) GetSchema() *structpb.Struct {
 type Orkflow struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	Name        string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`       // unique identifier (slug)
-	Version     string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"` // semantic or content hash
+	Version     string                 `protobuf:"bytes,2,opt,name=version,proto3" json:"version,omitempty"` // the author's own, or assigned at first apply (a UUIDv7 in lowercase base32, or a content hash on an older version)
 	Description string                 `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
 	Labels      map[string]string      `protobuf:"bytes,4,rep,name=labels,proto3" json:"labels,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// inputs declares the accepted input parameters (JSON schema fragment as struct).
@@ -753,8 +753,8 @@ type Orkflow struct {
 	// template over .inputs and .tasks.<id>.output, rendered ONCE, by the
 	// engine, when a run succeeds; every value renders to a string. When
 	// non-empty the rendered map IS Run.output, and is what a composing
-	// parent's task receives as its values. When empty, Run.output keeps the
-	// leaf aggregation it has always had, and a composing parent's task
+	// parent's task receives as its values. When empty, Run.output is the
+	// values of the tasks no other task needs, and a composing parent's task
 	// receives {}. Part of canonicalOrkflow only when non-empty (see pins).
 	Outputs       map[string]string `protobuf:"bytes,12,rep,name=outputs,proto3" json:"outputs,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields

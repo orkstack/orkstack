@@ -388,16 +388,17 @@ exits and never for one created and not started. The Orker removes each
 itself before the probe returns, however it ends: passed, refused, timed out,
 or stopped while a container's `run` was still in flight (one cut off between
 the daemon's create and its start is left created and never started). A
-removal that fails is named in the refusal or logged. One the Orker could not
-remove, because it was killed first or the daemon finished a create the CLI
-had given up on, is reaped by that label at the next boot under the same
+removal that fails is named in the refusal or logged, and tried again every
+30 s while the Orker runs. One the Orker could not remove, because it was
+killed first or the daemon finished a create the CLI had given up on, is reaped
+by that label at the next boot under the same
 `ORK_ORKER_ID` (or the same work root, for the default identity); until then
 `ps --all --filter label=ork.orker=<id>` lists it, and a test's is listed by
 `proofrun clean` by the work root its mounts lie in.
 
 **Secrets.** `/orkstack/input/secrets` is a separate bind of a per-attempt
 directory the Orker creates, populates, mounts read-only, and removes on every
-exit path. Secret bytes never enter a proto message, Temporal history, the
+exit path of a live process (§9.4). Secret bytes never enter a proto message, Temporal history, the
 archive, a log chunk or `task.json` (§9.4).
 
 ### 3.2 `input/task.json`
@@ -411,10 +412,10 @@ lowerCamelCase, matching every other JSON surface OrkStack emits
 ```jsonc
 {
   "schemaVersion": 1,
-  "idempotencyKey": "default/ork-1786837143070480000-1/migrate",
+  "idempotencyKey": "default/ork-01m6qt8vete0691h2jn074a2yk/migrate",
 
   "run": {
-    "id": "ork-1786837143070480000-1",
+    "id": "ork-01m6qt8vete0691h2jn074a2yk",
     "namespace": "default",
     "orkflow": {
       "name": "deploy",
@@ -548,7 +549,7 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `run.id` | string | required | — | Opaque run id. Never parsed by anything. |
 | `run.namespace` | string | required | `"default"` | Resolved, never empty |
 | `run.orkflow.name` | string | required | — | slug |
-| `run.orkflow.version` | string | required | — | pinned version string |
+| `run.orkflow.version` | string | required | — | pinned version string; for a document never applied, run locally by `orkctl task run --file`, its content hash (§4.4) |
 | `run.orkflow.definitionDigest` | string | required | — | `sha256:<64 hex>` (§4.4) |
 | `task.id` | string | required | — | slug |
 | `task.attempt` | integer | required | — | 1-based Temporal attempt |
@@ -904,20 +905,21 @@ the seven resolved fields — are emitted whether or not they are zero. Never
 each is in the digest — but emitting an empty one unconditionally would move
 the digest of every existing definition on its next apply, and the store
 decides "unchanged document" by comparing after clearing only `created_at`,
-so an unchanged, source-hash-versioned document stamped with a moved digest
-would be refused with `ALREADY_EXISTS`. Golden vectors beside the serializer
+so an unchanged document stamped with a moved digest would be refused with
+`ALREADY_EXISTS`. Golden vectors beside the serializer
 prove no unpinned digest moves; a digest change is a test failure, never a
 silent incompatibility.
 
-**The derived version covers the resolution.** For a document that pins no
-`version:`, the version is assigned after resolution:
+**The assigned version covers the resolution.** A document that pins no
+`version:` is given one after resolution, a UUIDv7 in lowercase base32, and the
+document's content decides whether it already has one:
 
-> `derivedVersion = hex(sha256(sourceYAML ‖ 0x1F ‖ canonicalImages(wf)))`,
+> `contentHash = hex(sha256(sourceYAML ‖ 0x1F ‖ canonicalImages(wf)))`,
 > `canonicalImages` the canonical JSON of `[{taskId, image}]` in declaration
 > order.
 
-The source bytes are hashed in full, so a comment-only edit still mints a new
-version. Do not hash normalized YAML instead: a comment-only edit would then
+A version an earlier release assigned is that hash itself. The source bytes are
+hashed in full, so a comment-only edit still mints a new version. Do not hash normalized YAML instead: a comment-only edit would then
 compile to the stored version with different source and could not be applied
 at all (`internal/dsl/hash.go`). The resolution is a second *input to what
 runs*, not a second notion of the document. Consequences:
@@ -1312,6 +1314,9 @@ containers run.
 | Object storage unavailable during upload | nothing committed | `InfrastructureError` → retried per policy. Storage failure can never look like success. | correct |
 | Object storage unavailable at step 0 | — | `COMMIT_READ_FAILED`, retried. Execution never proceeds on an unknown commit state. | correct |
 | Temporal temporarily unavailable | the commit, if written | Worker retries the completion; on adoption the result is returned again. | correct |
+| Temporal unavailable or slow, with a container running, for less than the heartbeat timeout | logs (`a heartbeat did not reach the cluster`) | nothing: the container runs on and the attempt reports as usual once Temporal answers (§6.3). A pin's session has a shorter bound, 24 s | correct, no retry |
+| Temporal unanswered for the heartbeat timeout, with a container running | logs, the attempt record (`ORKER_HEARTBEAT_LOST`), no commit | SIGTERM → grace → SIGKILL (§6.3), though nobody cancelled the task; the task reports `ORKER_HEARTBEAT_TIMEOUT` (or `ORKER_HEARTBEAT_LOST`, if Temporal answers before it gave the attempt up). `InfrastructureError` → retried per policy, so a task with no `retry:` fails | explicit failure, or correct after a retry (container ran twice) |
+| The same, after `commit.json` | the commit | The attempt reports its committed result. | correct, container ran once |
 | Container exits 1 | logs + declared artifacts, no commit | `ActivityFailed` → retried per policy. | explicit failure |
 | Exit 0, no / malformed / oversize `values.json` | logs, no commit | `VALUES_MISSING` / `VALUES_MALFORMED` / `VALUES_TOO_LARGE` → never retried. | explicit failure |
 | A link in the output: `values.json`, `output/artifacts` or an artifact | logs, no commit | `VALUES_MALFORMED` / `ARTIFACT_NOT_A_FILE`, naming the path → never retried. Nothing outside the output directory is read (§9.5). | explicit failure |
@@ -1341,7 +1346,10 @@ every container labelled with it — its own previous life's. Two live Orkers
 must never share an id, or they would reap each other's work; the Orker holds
 a process-lifetime lock on its identity before reaping. Duplicate *execution*
 is inside the at-least-once contract; duplicate *resource consumption* until
-the reap is a real operational cost, stated rather than hidden.
+the reap is a real operational cost, stated rather than hidden. A boot reaps
+only its own identity, so a host whose Orker never returns, or returns under
+another identity, keeps the container until an operator removes it
+(`docs/DEPLOY.md`, "What removes a task's container").
 
 ---
 
@@ -1371,7 +1379,9 @@ runtime files, `internal/orker/runtime_docker.go` and `runtime_dialect.go`.**
 `Start` return `error`; `Wait` returns `(ExitStatus, error)`. A container that
 never started never reaches `Wait`. So "the runtime refused" and "the workload
 failed" are distinguished by *which call failed*, never by inspecting a number
-— exit codes 125, 126 and 127 carry no runtime guarantee (§14.13).
+— exit codes 125, 126 and 127 carry no runtime guarantee (§14.13). A container
+that ran and was stopped from outside is told apart by what `Wait` observed
+beside the number (§8.2).
 
 ### 6.3 Heartbeats and cancellation
 
@@ -1383,23 +1393,28 @@ could never cancel it. Required, all four together:
    Without the timeout a dead worker is noticed only at `StartToCloseTimeout`;
    without `WaitForCancellation` the workflow may mark the task terminal
    before the Orker finishes killing and cleaning up.
-2. **Orker** runs a heartbeat loop for the **entire** attempt, ticking every
-   `ORK_ORKER_HEARTBEAT_INTERVAL` (default 5 s, bounded to 1 s–10 s: below
-   1 s the SDK clamps the RPC deadline anyway, above a third of the heartbeat
-   timeout two missed ticks would declare live activities dead). The detail is
-   `task.HeartbeatProgress` — the phase, the container id, bytes logged, and
-   the Orker's own `ORK_ORKER_ID` — and the engine reads it back for live
-   introspection (§6.6). The container sees none of it.
-3. **Orker** caps its worker's `MaxHeartbeatThrottleInterval` to that same
-   interval. The Go SDK batches heartbeats into windows of
-   `min(0.8 × HeartbeatTimeout, MaxHeartbeatThrottleInterval)`; inside a
-   window no RPC leaves the process, and cancellation rides the RPC's
-   *response* — so that window **is** the cancellation latency, 24 s with the
-   cap unset however fast the loop ticks. The same window is the RPC's
-   deadline, which makes the interval the longest Temporal frontend outage a
-   running container survives — the tradeoff that makes it an operator
-   setting. A harness that runs the real dispatcher against a real Temporal
-   must set both, or it measures the SDK's default.
+2. **Orker** runs one heartbeat loop for the **entire** attempt, ticking every
+   `ORK_ORKER_HEARTBEAT_INTERVAL` (default 5 s, bounded to 1 s–10 s: above a
+   third of the heartbeat timeout two missed ticks would declare live activities
+   dead). The detail is `task.HeartbeatProgress` — the phase, the container id,
+   bytes logged, and the Orker's own `ORK_ORKER_ID` — and the engine reads it
+   back for live introspection (§6.6). The container sees none of it.
+3. **Orker** sends those heartbeats itself, through the client
+   `activity.GetClient` returns, each RPC on a deadline of a third of the
+   heartbeat timeout or what is left of it. The SDK's `activity.RecordHeartbeat` is unusable for them:
+   it batches heartbeats into windows of
+   `min(0.8 × HeartbeatTimeout, MaxHeartbeatThrottleInterval)`, so a cancel waits
+   for the window, and it cancels the activity's context when one RPC outlasts its
+   window, though the server has decided nothing. It returns no error, and a later
+   real cancel can no longer be told from that one. What comes back from the
+   Orker's own RPC is one of three things:
+   - an answer, which restarts the heartbeat timeout;
+   - a decision of the server's (a cancel, a pause, a reset, an activity or
+     namespace it no longer knows), which goes on to one `activity.RecordHeartbeat`,
+     so that the SDK ends the attempt with that cause and a cancel stays a cancel
+     on the wire;
+   - anything else, which says only that this heartbeat was not answered. The
+     attempt and its container are left alone.
 4. **Orker** reacts to `ctx.Done()` with the AGENTS.md §3.3 sequence:
 
 ```
@@ -1416,6 +1431,33 @@ The Orker MUST return `ctx.Err()` only *after* the server delivered
 cancellation; returning `nil` after cancellation would report success and MUST
 NOT happen. Containers are also created with `--stop-timeout` equal to the
 grace period, so a daemon-side stop honours the same window.
+
+**An attempt nothing has acknowledged for the heartbeat timeout** is stopped the
+same way. By then the server has timed it out, or will the moment it can, and a
+retry may start elsewhere, so this is what bounds how long the two run side by
+side: at most a tick and the task's grace. Nobody cancelled the task,
+so the Orker tells this apart by the context's cause and does not return
+`ctx.Err()`: the attempt fails `ORKER_HEARTBEAT_LOST`, a retryable
+`InfrastructureError`, and any failure collected during the teardown gives way to
+it. An attempt whose commit is already written reports its result instead, and
+one whose container had already ended by itself reports how it ended
+(`CONTAINER_EXIT_NONZERO`, `CONTAINER_STOPPED_BY_RUNTIME`), since the loss
+stopped nothing of it. The
+server's timer starts before the Orker's, from the last heartbeat it recorded, so
+a task usually ends `ORKER_HEARTBEAT_TIMEOUT`, with the attempt's record naming
+`ORKER_HEARTBEAT_LOST`. Both are retried under the task's policy.
+
+A shorter silence costs nothing, whatever the tick: the container runs on, a cancel
+the server recorded meanwhile reaches it with the first heartbeat answered after,
+and a commit written meanwhile is reported then.
+
+**A pin's session** heartbeats through the SDK's own route, in code the Orker does
+not hold (§6.4). Its RPC's deadline is that window, which the Orker leaves at the
+SDK's 0.8 × 30 s, so a pin rides out 24 s of silence from the frontend. Past that
+the SDK ends the session for good, and the pin and its run fail `PIN_HOST_LOST`
+though the host may be well: the run is told only that the session ended, and
+cannot tell a dead host from a silent frontend. The pin is never re-opened
+elsewhere.
 
 **An Orker that is itself stopped** (`SIGTERM`, `SIGINT`) stops polling, and
 the worker's stop cancels every running attempt. Each runs the same sequence,
@@ -1460,7 +1502,9 @@ seconds directly.
 
 The Orker stays stateless and disposable. Its only persistent local state is
 the OCI image cache, per-attempt execution directories (removed on every exit
-path), and an optional transient download cache. If an Orker disappears,
+path of a live process; a killed Orker's stay until the next boot under its
+identity, `docs/DEPLOY.md`, "What removes a task's container"), and an optional
+transient download cache. If an Orker disappears,
 Temporal retries elsewhere and the commit protocol decides whether the
 container runs again.
 
@@ -1486,15 +1530,20 @@ directories). It ends by whichever of three paths comes first:
    a failure is logged and never fails the run, because cleanup is not
    orchestration.
 2. **Boot reap** — at every Orker start, unconditionally (also when
-   `ORK_ORKER_MAX_PINS` is now `0`), every `ork-pin-*` is removed. A pin can
-   never outlive the process that opened its session — a fresh session
-   resource id is minted per worker start — so every pin directory found at
-   boot is dead by construction, not by heuristic.
+   `ORK_ORKER_MAX_PINS` is now `0`), every `ork-pin-*` whose lease names this
+   Orker's identity is removed. A pin can never outlive the process that opened
+   its session — a fresh session resource id is minted per worker start — so such
+   a directory is dead by construction, not by heuristic, once the boot holds the
+   identity's lock. Nothing else is touched: another identity's pin may be live on
+   a shared work root, and a directory whose lease names nobody (missing, torn, or
+   written by a release before 0.3.0) may be anyone's. The lease sweep collects
+   those.
 3. **Lease sweep** — `lease.json`, `0600`, sits *beside* `shared/`, never
    inside it, so nothing a workload can reach can forge or extend it. It is
    written once, on first arrival, as first arrival + the pin's lifetime +
-   6 minutes of slack, and never re-armed. A sweep every minute removes any
-   pin directory whose lease expired — or, with the lease missing or
+   6 minutes of slack, and never re-armed, with the identity that opened the pin.
+   A sweep every minute removes any pin directory whose lease expired, whoever
+   opened it — or, with the lease missing or
    undecodable, whose directory is older than the slack. It is the only
    collector when the run is terminated from outside the workflow while the
    Orker stays up (no workflow code runs, so no `ReleasePin`). It can never
@@ -1572,7 +1621,7 @@ heard of.
 | 12 | `validate` | **Validate** `values.json` and `output/artifacts/`, including readability, then bound the projected commit (§5.4 steps 1–4) |
 | 13 | `commit` | **Upload and commit**: artifacts → `values.json` → streams → `commit.json` (§5.4) |
 | 14 | — | **Failure path**: scan `output/artifacts/` under the same §3.5 and readability rules; upload streams and the artifacts that passed; attach refs and any scan note to the error; write NO commit; return the workload's error |
-| 15 | — | **Cleanup**: remove the container (detached context), remove the workdir and secrets, stop the heartbeat, close the log sink |
+| 15 | — | **Cleanup**: remove the container (detached context; one that cannot be removed is tried again every 30 s while the Orker runs), remove the workdir and secrets, stop the heartbeat, close the log sink |
 | 16 | — | **Attempt record**: one `TaskAttempt`, best-effort (below) |
 
 **This Orker's own policy comes after the commit check and the memo step.** Two
@@ -1717,7 +1766,8 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 |---|---|---|---|
 | `CONTAINER_EXIT_NONZERO` | ActivityFailed | yes | **every** non-zero status returned by `Wait`, whatever the number; the message says when the kernel OOM-killed the container at its memory limit |
 | `CONTAINER_TIMEOUT` | TimedOut | **no** (§8.1) | Orker killed the container at `timeout_seconds` |
-| `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error — the container never ran |
+| `RUNTIME_REFUSED` | InfrastructureError | yes | `Create` or `Start` returned an error, so the container never ran; or `Wait` did, because the daemon went away under a running container |
+| `CONTAINER_STOPPED_BY_RUNTIME` | InfrastructureError | yes | the container ran, and before it ended its runtime reported it was being stopped from outside: its daemon shutting down, or someone stopping or killing it through the runtime. Its exit code, 0 included, says nothing about the workload, and its output is not committed. Told apart from what the runtime observed, never from the number (below) |
 | `WORKSPACE_NOT_BINDABLE` | InfrastructureError | **no** | the daemon cannot bind the workspace path — a host misconfiguration retrying will not fix |
 | `WORKDIR_NOT_BINDABLE` | InfrastructureError | **no** | `ORK_ORKER_WORKDIR`'s path holds a comma or control character, or the daemon refused the boot probe's bind within its budget in its own words, or the probe's container and the Orker did not read back each other's nonce (the daemon bound a directory of its own), or no probe directory could be made: `ORK_ORKER_WORKDIR` is not bind-mountable; the Orker refuses to start |
 | `RUNTIME_POSTURE_REFUSED` | InfrastructureError | — | the boot probe's container, built as a task's is, was refused for a reason that is neither a bind nor a deadline, exited non-zero, or saw a weaker posture than §9.2 from inside (privileges it could gain, no seccomp filter, a capability, a writable root, `/run`, `/var/tmp` or input, a `/tmp` without `noexec`, a proxy variable it was never given, cgroup v2 limits other than it asked for), or its SIGTERM container's workload, cancelled as a task is, never heard SIGTERM (§3.1); the Orker refuses to start, naming each |
@@ -1761,6 +1811,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `COMMIT_STORE_UNAVAILABLE` | InfrastructureError | **no** | the boot-time probe got no answer about conditional writes, because the store could not be used at all; the Orker refuses to start (§5.3) |
 | `VALUES_CORRUPT` | ContractViolation | no | on adoption, the refetched `values.json` does not match `commit.values.sha256` |
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
+| `ORKER_HEARTBEAT_LOST` | InfrastructureError | yes | nothing acknowledged the attempt's heartbeat for the heartbeat timeout, so the Orker stopped the attempt though nobody cancelled the task (§6.3) |
 
 One Orker code is recorded on an attempt and never reported:
 `ORKER_STOPPED` (InfrastructureError, retryable) is the record of an attempt
@@ -1828,6 +1879,49 @@ retry a routine `activity-shell` failure. AGENTS.md §3.2: any non-zero exit
 means the activity failed, and retry behaviour belongs to policy, not magic
 exit codes. The signal that genuinely distinguishes "the runtime refused" from
 "the workload failed" lives at the interface boundary (§6.1).
+
+**A container stopped from outside is not the workload's failure, and the number
+cannot say so.** A daemon that shuts down stops its containers, so the workload
+exits 143, or 137 past the grace, or whatever its handler chooses; a workload
+that runs `exit 143`, or signals itself, reports the same. So the Orker follows
+each container's event stream while it waits: the engine's `stop`, or a `kill`
+with SIGTERM or SIGKILL, before the container's end is `CONTAINER_STOPPED_BY_RUNTIME`,
+whatever the code, and an end with neither stays the workload's. A daemon that is
+gone before it can say so fails `Wait` itself (`RUNTIME_REFUSED`). The stream looks
+back to the instant the engine says it created the container, read with one
+`inspect` per attempt, so a stream that connects late still hears what was said and
+a difference between the Orker's clock and a remote engine's changes nothing. Where
+the stream could not be opened or ended without saying how the container ended, the
+status stands as the workload's, rather than guessing, and the
+`CONTAINER_EXIT_NONZERO` message says that its events ended before they said how
+the container ended, so whether the workload exited on its own or the runtime
+stopped it is unknown; so a container stopped then whose handler exits 0 is judged by what it left, like any clean exit: a valid result commits as a success. Podman's API service
+stops no container when it stops, and `Wait` fails instead. The stream says what
+the engine was asked, not what the workload did with it: a SIGTERM through the
+engine that a workload handles and carries on from still counts as a stop when it
+later ends, and since Podman's events name no signal, there any `kill` through
+the engine counts. The cost of that is one retried attempt.
+
+Podman's stream rarely says `stop`: libpod writes it only if the container is
+still stopping once its process is gone, and by then conmon has almost always
+reaped it, so a stop says what a container that exits by itself says. Its
+`kill` comes before the end and is heard. So behind the podman CLI, once the
+container has ended without a stop heard, the Orker asks the engine's own
+record of a stop or kill asked of it (`inspect`'s `State.StoppedByUser`), one
+`inspect` more per attempt; an engine that will not answer gives no record,
+and the message says so (below). The docker CLI against Podman's
+Docker-compatible socket reads Docker's state, which has no such record. There
+a `kill` through the engine is heard, and a `stop` may or may not be: Podman
+5.8.9 was measured to say it through its socket nearly every time, and an
+earlier Podman may not. A stop that is heard is `CONTAINER_STOPPED_BY_RUNTIME`.
+Every end with nothing heard, a workload's own exit included, stands as the
+workload's, and a stopped container whose handler exits 0 is then judged by
+what it left, like any clean exit: a valid result commits as a success, and
+none fails `VALUES_MISSING`. The same holds behind the docker CLI when the engine cannot be
+identified. There the `CONTAINER_EXIT_NONZERO` message says that this
+container runtime does not record whether it stopped a container, so whether the
+workload exited on its own or the runtime stopped it is unknown. Behind the
+podman CLI, or the docker CLI against Docker, nothing changes.
 
 ### 8.3 Engine side
 
@@ -1969,7 +2063,10 @@ files, its configuration and credential files — whatever the floor says
 (`docs/SECURITY_MODEL.md`, "The Orker's own sources"). Secret bytes never appear in a proto message, Temporal history, the
 run archive, a log chunk, or `task.json` — which carries names and paths only.
 The per-attempt secrets directory is removed on every exit path, including
-panic and cancellation. A cached task resolves no secret on a hit, which is why
+panic and cancellation. A process that is killed takes no exit path: its
+attempt's directory stays on the host, secrets included, until the next boot
+under its identity removes it, and until an operator does when no such boot comes
+(`docs/DEPLOY.md`, "What removes a task's container"). A cached task resolves no secret on a hit, which is why
 a task that mounts a secret should not be cached (`docs/ACTIVITY_IMAGES.md`).
 
 ### 9.5 Reading the output

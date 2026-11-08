@@ -9,17 +9,17 @@ orkctl run list --filter status=FAILED
 orkctl run list --filter orkflow_name=payments-release --filter status=FAILED
 ```
 
-The list is newest first. Filters can name `status` (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELED`, `SKIPPED`), `orkflow_name`, `created_at`, `origin.kind`, `origin.id` (with `origin.kind`, to name one trigger, schedule or source run) and `labels.KEY`, a run's label by its key. Add `-n NAMESPACE` when the run is not in `default`.
+The list is newest first. Filters can name `status` (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELED`, `SKIPPED`), `orkflow_name`, `created_at`, `origin.kind`, `origin.id` (with `origin.kind`, to name one trigger, schedule or source run), `origin.root_run_id` (every run below that root of a composed chain, not the root itself) and `labels.KEY`, a run's label by its key. Add `-n NAMESPACE` when the run is not in `default`.
 
 ## Follow it in the UI
 
-Open Runs, then the run. The run page draws the tasks as a graph, lists them with a row each, and shows a fan-out as a grid of items. Choose a task or an item to open its log in the log pane.
+Open Runs, then the run. The run page draws the tasks as a graph, lists them with a row each, and shows a fan-out as a grid of items. Choose a task to open its details and log under its row; a fan-out's items sit there too, and an item opens the same way. To see which Orker ran each task, choose **Show Orkers** in the Tasks card's More menu.
 
 <!-- site-media: ui-run-live -->
 
 The page updates live while the run is going. If the connection drops, it picks up where it left off. If it cannot reconnect, the badge reads `STOPPED`, and **Retry live updates** starts again.
 
-Side cards, such as the Task map, show more about the run. The run's actions are **Evidence**, **Compare**, **Events**, **Cancel run…** and **Run again**. The terminal icon on a screen opens a list of the `orkctl` commands for that screen.
+Side cards, such as the Task map, show more about the run. The run's actions are **Evidence**, **Compare**, **Events**, **Cancel run** and **Run again**. The terminal icon on a screen opens a list of the `orkctl` commands for that screen.
 
 ## Follow it in the terminal
 
@@ -35,7 +35,7 @@ orkctl run get <run-id> --tree              # the child runs a composed task sta
 
 `run watch` and `run inspect --watch` exit when the run ends. The exit code is `0` for a success, `2` for a failure and `3` for a cancel. Use it in scripts.
 
-If the engine drops the stream, `run watch` picks up after the last event it printed, and says so on stderr.
+If the engine drops the stream, `run watch` picks up after the last event it printed, and `run logs -f` after the last chunk, and each says so on stderr.
 
 A `STREAM_GAP` line names event numbers the run used without publishing an event, because object storage refused that event's record. The run goes on, and `run watch` still reaches its end. Once a run is retired, the same read stops at the gap with an error naming the numbers; `--from-sequence` past them reads on.
 

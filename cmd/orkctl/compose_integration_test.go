@@ -96,6 +96,114 @@ func TestIntegration_CLIComposedTreeAndChildren(t *testing.T) {
 		tree.stdout, runID, children.stdout, refused.stderr, childID, logs.stdout)))
 }
 
+// chainTopDocument composes the shipped composed-release, itself composing
+// release-block, so a submitted run is the top of a three-level chain.
+const chainTopDocument = `apiVersion: orkstack/v1
+kind: Orkflow
+name: chain-top
+version: "1.0.0"
+tasks:
+  - id: release
+    uses: orkflow:composed-release@0.1.0
+`
+
+// TestIntegration_CLIChainNamesItsRoot is the chain through the real API and
+// CLI, on a replica that did not start it: the grandchild names the top run as
+// well as its parent in `run get` and --json, a live or archived listing row
+// carries it, one filter lists everything below the top, a top-level run shows
+// no line, and a re-run of the grandchild is a new top-level run with no root.
+func TestIntegration_CLIChainNamesItsRoot(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	cluster := startPlanCluster(ctx, t, true)
+	isolateCLIEnv(t)
+	serverA := "http://" + cluster.a.addr
+	serverB := "http://" + cluster.b.addr
+	ns := composedNamespace(t, serverA)
+	document := filepath.Join(t.TempDir(), "chain-top.ork.yaml")
+	if err := os.WriteFile(document, []byte(chainTopDocument), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	planCLI(t, serverA, "-n", ns, "apply", document).requireExit(t, exitOK)
+
+	submitted := &orkstackv1.SubmitRunResponse{}
+	raw := planCLI(t, serverA, "-n", ns, "run", "submit", "chain-top", "--json").requireExit(t, exitOK).stdout
+	if err := api.UnmarshalJSON([]byte(raw), submitted); err != nil {
+		t.Fatalf("decode submit JSON: %v\n%s", err, raw)
+	}
+	topID := submitted.GetRun().GetId()
+	planCLI(t, serverA, "-n", ns, "run", "watch", topID).requireExit(t, exitOK)
+	midID := childRunOf(t, serverA, ns, topID)
+	leafID := childRunOf(t, serverA, ns, midID)
+
+	leaf := planCLI(t, serverB, "-n", ns, "run", "get", leafID).requireExit(t, exitOK)
+	leaf.requireContains(t, "parent-run "+midID, "Root run:", topID)
+	mid := planCLI(t, serverB, "-n", ns, "run", "get", midID).requireExit(t, exitOK)
+	mid.requireContains(t, "parent-run "+topID, "Root run:")
+	top := planCLI(t, serverB, "-n", ns, "run", "get", topID).requireExit(t, exitOK)
+	if strings.Contains(top.stdout, "Root run:") {
+		t.Fatalf("a top-level run shows a root:\n%s", top.stdout)
+	}
+
+	leafJSON := decodeRun(t, planCLI(t, serverB, "-n", ns, "run", "get", leafID, "--json").requireExit(t, exitOK).stdout)
+	if got := leafJSON.GetOrigin(); got.GetId() != midID || got.GetRootRunId() != topID {
+		t.Fatalf("--json origin = %v, want parent %s and root %s", got, midID, topID)
+	}
+	listed := &orkstackv1.ListRunsResponse{}
+	rawList := planCLI(t, serverB, "-n", ns, "run", "list", "--json",
+		"--filter", "origin.kind=PARENT_RUN", "--filter", "origin.id="+midID).requireExit(t, exitOK).stdout
+	if err := api.UnmarshalJSON([]byte(rawList), listed); err != nil {
+		t.Fatalf("decode list JSON: %v\n%s", err, rawList)
+	}
+	if len(listed.GetRuns()) != 1 || listed.GetRuns()[0].GetOrigin().GetRootRunId() != topID {
+		t.Fatalf("the children of %s list as %v, want the leaf with root %s", midID, listed.GetRuns(), topID)
+	}
+
+	// One query for everything below the top, on the replica that did not start
+	// it. The engine registered the attribute at boot and stamped each child, so
+	// this is the cluster's index answering, to a deadline for its visibility.
+	chain := &orkstackv1.ListRunsResponse{}
+	var rawChain string
+	for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(200 * time.Millisecond) {
+		rawChain = planCLI(t, serverB, "-n", ns, "run", "list", "--json", "--filter", "origin.root_run_id="+topID).requireExit(t, exitOK).stdout
+		chain.Reset()
+		if err := api.UnmarshalJSON([]byte(rawChain), chain); err != nil {
+			t.Fatalf("decode chain JSON: %v\n%s", err, rawChain)
+		}
+		if len(chain.GetRuns()) == 2 || time.Now().After(deadline) {
+			break
+		}
+	}
+	got := map[string]bool{}
+	for _, run := range chain.GetRuns() {
+		got[run.GetId()] = true
+	}
+	if len(chain.GetRuns()) != 2 || !got[midID] || !got[leafID] {
+		t.Fatalf("the chain below %s lists as %s, want %s and %s", topID, rawChain, midID, leafID)
+	}
+
+	again := &orkstackv1.SubmitRunResponse{}
+	rawAgain := planCLI(t, serverA, "-n", ns, "run", "again", leafID, "--json").requireExit(t, exitOK).stdout
+	if err := api.UnmarshalJSON([]byte(rawAgain), again); err != nil {
+		t.Fatalf("decode run again JSON: %v\n%s", err, rawAgain)
+	}
+	if got := again.GetRun().GetOrigin(); got.GetId() != leafID || got.GetRootRunId() != "" {
+		t.Fatalf("a re-run of the leaf has origin %v, want its source and no root", got)
+	}
+	// A re-run of the leaf is a new top-level run, so it never joins the chain.
+	stillTwo := &orkstackv1.ListRunsResponse{}
+	if err := api.UnmarshalJSON([]byte(planCLI(t, serverB, "-n", ns, "run", "list", "--json",
+		"--filter", "origin.root_run_id="+topID).requireExit(t, exitOK).stdout), stillTwo); err != nil {
+		t.Fatal(err)
+	}
+	if len(stillTwo.GetRuns()) != 2 {
+		t.Fatalf("after the re-run the chain lists %d runs, want 2", len(stillTwo.GetRuns()))
+	}
+	proof.Write(t, "orkctl", "root-run-chain.txt", []byte(fmt.Sprintf(
+		"# replica B: run get %s\n%s\n# replica B: run list --filter origin.kind=PARENT_RUN --filter origin.id=%s\n%s\n# replica B: run list --filter origin.root_run_id=%s\n%s\n",
+		leafID, leaf.stdout, midID, rawList, topID, rawChain)))
+}
+
 func TestIntegration_ComposedRunReadsOnASecondReplica(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()

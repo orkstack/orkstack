@@ -105,6 +105,7 @@ func TestApplyConfigFile_PerBinaryAdminAddr(t *testing.T) {
 
 func TestApplyConfigFile_Check(t *testing.T) {
 	t.Setenv("ORK_LOG_FORMAT", "json") // guarantees at least one origin=env line
+	unsetenvT(t, "ORK_S3_SECRET_KEY")  // so the file's value is the one reported
 	path := writeTempConfig(t, "cfg.yaml",
 		"storage:\n  s3:\n    secret_key: super-secret\n")
 

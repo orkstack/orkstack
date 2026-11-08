@@ -150,9 +150,8 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot},
 	)
 	taskWorker := worker.New(temporalClient, orkerQueue, worker.Options{
-		DisableRegistrationAliasing:  true,
-		DisableWorkflowWorker:        true,
-		MaxHeartbeatThrottleInterval: tick,
+		DisableRegistrationAliasing: true,
+		DisableWorkflowWorker:       true,
 	})
 	taskWorker.RegisterActivityWithOptions(activities.ExecuteTask,
 		activity.RegisterOptions{Name: task.ActivityExecuteTask})

@@ -371,8 +371,8 @@ export function ensureActivityImages(): void {
  * process.
  *
  * Every activity is a container now, so `127.0.0.1` inside one is the
- * container's own loopback and never the host's. Docker Desktop publishes the
- * host as `host.docker.internal`; on a Linux daemon the same name works when
+ * container's own loopback and never the host's. Some Docker installs publish
+ * the host as `host.docker.internal`; on a Linux daemon the same name works when
  * the container is started with `--add-host`, and ORK_TEST_CONTAINER_HOST is
  * the override for anything else.
  *

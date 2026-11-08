@@ -468,6 +468,28 @@ func (unreachableCluster) ObservePool(context.Context, string) (engine.PoolLiven
 // perfectly good and the only true instruction is to try again. Handed up as
 // one error the two are indistinguishable, and everything above has to guess —
 // so Plan says which it is, in the type.
+// TestPoolUnreachableError_SaysWhatHappenedAndWhatToDo: the message names what
+// failed, asking the cluster, with the cluster's own words, and the one thing
+// to do. Each cause Plan and Pools wrap reads true in it: a read that timed
+// out, a frontend that is down, an answer that was an error, and a failed read
+// of the Orker inventory.
+func TestPoolUnreachableError_SaysWhatHappenedAndWhatToDo(t *testing.T) {
+	for _, cause := range []error{
+		fmt.Errorf("describe pool channel %q: %w", "ork-pool-gpu", context.DeadlineExceeded),
+		errors.New(`describe pool channel "ork-pool-gpu": connection refused`),
+		errors.New(`describe pool channel "ork-pool-gpu": permission denied`),
+		errors.New("read the Orker inventory: context deadline exceeded"),
+	} {
+		t.Run(cause.Error(), func(t *testing.T) {
+			got := (&engine.PoolUnreachableError{Pool: "gpu", Err: cause}).Error()
+			want := `could not check pool "gpu" for live Orkers: asking the cluster failed (` + cause.Error() + `); retry the request`
+			if got != want {
+				t.Errorf("Error() = %q\nwant      %q", got, want)
+			}
+		})
+	}
+}
+
 func TestPoolResolver_SeparatesCannotAskFromNobodyIsThere(t *testing.T) {
 	resolver := &engine.PoolResolver{Probe: unreachableCluster{}}
 	ns := &orkstackv1.Namespace{Name: "payments"}

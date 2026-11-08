@@ -232,14 +232,14 @@ func CompareInterfaces(from, to *orkstackv1.Orkflow) ([]*orkstackv1.InterfaceFin
 	case !fromDeclares && !toDeclares: // O1
 		add("outputs", orkstackv1.InterfaceChange_INTERFACE_CHANGE_OUTPUTS_UNDECLARED, unknownVerdict(),
 			"none", "none",
-			"neither version declares outputs: a run's output is every leaf task's values, an "+
+			"neither version declares outputs: a run's output is the values of the tasks no other task needs, an "+
 				"accident of graph shape, so whether it changed cannot be stated")
 	case !fromDeclares && toDeclares: // O2
 		names := unionKeys(toOutputs, nil)
 		add("outputs", orkstackv1.InterfaceChange_INTERFACE_CHANGE_OUTPUTS_DECLARED, unknownVerdict(),
 			"none", CountNoun(len(toOutputs), "output", "outputs"), fmt.Sprintf(
-				"outputs are declared for the first time (%s): a run's output changes from every "+
-					"leaf task's values to the declared outputs, and an Orkflow composing this one "+
+				"outputs are declared for the first time (%s): a run's output changes from the values "+
+					"of the tasks no other task needs to the declared outputs, and an Orkflow composing this one "+
 					"receives them instead of no values", strings.Join(names, ", ")))
 	default:
 		for _, name := range unionKeys(fromOutputs, toOutputs) {
@@ -255,7 +255,7 @@ func CompareInterfaces(from, to *orkstackv1.Orkflow) ([]*orkstackv1.InterfaceFin
 						"and a reader of the run's output no longer finds it", q, name)
 				if !toDeclares {
 					msg += " (this version declares no outputs, so a run's output reverts to " +
-						"every leaf task's values)"
+						"the values of the tasks no other task needs)"
 				}
 				add(field, orkstackv1.InterfaceChange_INTERFACE_CHANGE_REMOVED, breakingVerdict(),
 					"declared", "", msg)

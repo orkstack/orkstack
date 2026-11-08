@@ -89,7 +89,7 @@ func saveConfig(cfg cliConfig) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return "", fmt.Errorf("create %s: %w", filepath.Dir(path), err)
 	}
-	encoded, err := json.MarshalIndent(cfg, "", "  ")
+	encoded, err := marshalGoJSON(cfg)
 	if err != nil {
 		return "", fmt.Errorf("encode config: %w", err)
 	}

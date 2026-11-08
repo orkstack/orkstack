@@ -2,6 +2,8 @@
 	export interface Crumb {
 		label: string;
 		href?: string;
+		/** The namespace crumb: the one place a page says which namespace it shows. */
+		namespace?: boolean;
 	}
 </script>
 
@@ -33,9 +35,11 @@
 	>
 	<nav class="crumbs" aria-label="Breadcrumb" data-testid="breadcrumb">
 		{#each crumbs as crumb, i (i)}
-			{#if i > 0}<span aria-hidden="true">/</span>{/if}
+			{#if i > 0}<Icon name="chev-right" class="crumb-sep" />{/if}
 			{#if i === crumbs.length - 1}
 				<b aria-current="page" data-testid="breadcrumb-current">{crumb.label}</b>
+			{:else if crumb.namespace && crumb.href}
+				<a class="tag crumb-ns" href={crumb.href} aria-label="Namespace {crumb.label}" data-tip="Namespace">{crumb.label}</a>
 			{:else if crumb.href}
 				<a href={crumb.href}>{crumb.label}</a>
 			{:else}
@@ -73,12 +77,21 @@
 	.crumbs {
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: 6px;
 		min-width: 0;
 		overflow: hidden;
 		white-space: nowrap;
-		font-size: 14px;
+		font-size: 13.5px;
 		color: var(--ink-3);
+	}
+	.crumbs :global(.crumb-sep) {
+		flex: none;
+		width: 14px;
+		height: 14px;
+	}
+	.crumbs a.crumb-ns {
+		flex: none;
+		color: var(--navy-text);
 	}
 	.crumbs a {
 		color: var(--ink-2);

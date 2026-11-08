@@ -1,6 +1,7 @@
 package automation_test
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -9,14 +10,18 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/automation"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
+
+const secondDocumentHeader = "apiVersion: orkstack/v1\nkind: Automation\nnamespace: x\n"
 
 // FuzzParseAndPlan reads arbitrary automation documents, the shipped example
 // among the seeds. A document is parsed into a document or into issues that
 // each say where and why, never a panic; a document without an error plans
 // against a deployment where nothing exists by creating what it declares and
-// deleting, updating or adopting nothing; and planning is pure: the same
-// inputs give the same steps and the same digest.
+// deleting, updating or adopting nothing; planning is pure: the same inputs
+// give the same steps and the same digest; and a file with a second YAML
+// document is refused, on the line it begins, whatever that document holds.
 func FuzzParseAndPlan(f *testing.F) {
 	example, err := os.ReadFile("../../examples/automation/examples.ork.yaml")
 	if err != nil {
@@ -31,11 +36,20 @@ func FuzzParseAndPlan(f *testing.F) {
 		"apiVersion: orkstack/v1\nkind: Automation\nnamespace: x\nwebhooks:\n  w:\n    url: https://example.test/h\n    events: [RUN_FAILED]\n    secret_env: HOOK\n",
 		"apiVersion: orkstack/v1\nkind: Automation\nnamespace: x\ntriggers:\n  t:\n    orkflow: o\n    version: '1.0'\n",
 		"apiVersion: orkstack/v1\nkind: Automation\nnamespace: x\nsettings: {run_retention: 1h, allowed_pools: [main]}\n", "a: &x [*x]", "{{", "\x00",
+		secondDocumentHeader + "---\n" + secondDocumentHeader, secondDocumentHeader + "---\nname: [unclosed\n", secondDocumentHeader + "---\n\tname: a\n",
+		secondDocumentHeader + "---\n", secondDocumentHeader + "...\nname: b\n",
 	} {
 		f.Add([]byte(seed), false)
 	}
 	f.Fuzz(func(t *testing.T, source []byte, prune bool) {
 		doc, issues := automation.Parse(source)
+		if line, found := dsl.SecondDocumentLine(source); found {
+			want := fmt.Sprintf("line %d: %s", line, dsl.SecondDocumentMessage("automation document"))
+			if doc != nil || len(issues) != 1 || issues[0].GetMessage() != want {
+				t.Fatalf("Parse(%q) with a second document on line %d = %v, %v, want one issue %q", source, line, doc, issues, want)
+			}
+			return
+		}
 		for _, issue := range issues {
 			if issue.GetMessage() == "" {
 				t.Fatalf("Parse(%q) raised an issue with no message: %v", source, issue)

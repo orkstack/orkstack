@@ -734,7 +734,8 @@ func renderScheduleList(out io.Writer, list []*orkstackv1.Schedule) error {
 	return nil
 }
 
-// inputLabel renders a schedule's input as one compact JSON object.
+// inputLabel renders a schedule's input as one compact JSON object, with
+// whatever a terminal could obey escaped inside its strings.
 func inputLabel(input *orkstackv1.Payload) string {
 	if input.GetData() == nil || len(input.GetData().GetFields()) == 0 {
 		return dash
@@ -743,7 +744,7 @@ func inputLabel(input *orkstackv1.Payload) string {
 	if err != nil {
 		return dash
 	}
-	return string(encoded)
+	return string(jsonTerminalSafe(encoded))
 }
 
 // localFireTime is a nominal fire time in the schedule's own zone.

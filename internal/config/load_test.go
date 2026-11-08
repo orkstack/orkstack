@@ -781,3 +781,45 @@ func TestLoad_FilesAreTheFilesItOpened(t *testing.T) {
 		}
 	}
 }
+
+// TestLoad_RefusesASecondDocument: everything after the first document would be
+// settings a daemon ignores in silence, so a file with one does not load, on the
+// line it begins, whatever it holds and for either binary.
+func TestLoad_RefusesASecondDocument(t *testing.T) {
+	const first = "temporal:\n  address: a:1\n"
+	for name, rest := range map[string]string{
+		"a second document":                     "---\ntemporal:\n  address: b:1\n",
+		"a second document that does not parse": "---\ntemporal: [unclosed\n",
+		"a tab the first read trips on":         "---\n\ttemporal: {}\n",
+		"an empty second document":              "---\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ork.yaml")
+			if err := os.WriteFile(path, []byte(first+rest), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			for _, binary := range []Binary{BinaryOrk, BinaryOrker} {
+				doc, err := Load(path, binary)
+				want := "config: " + path + ": line 3: a second YAML document begins here"
+				if err == nil || doc != nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("Load = %v, %v, want a refusal holding %q", doc, err, want)
+				}
+			}
+		})
+	}
+	// One document stays one document, with its markers.
+	for name, source := range map[string]string{
+		"a leading marker": "---\n" + first,
+		"an end marker":    first + "...\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "ork.yaml")
+			if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Load(path, BinaryOrk); err != nil {
+				t.Fatalf("Load refused one document: %v", err)
+			}
+		})
+	}
+}

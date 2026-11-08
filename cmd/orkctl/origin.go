@@ -69,12 +69,14 @@ func originSummary(origin *orkstackv1.RunOrigin) string {
 // run with no recorded origin — the house rendering of an absent value in a
 // table column; the full word is in `run get`.
 func originColumn(origin *orkstackv1.RunOrigin) string {
-	return orDash(originSummary(origin))
+	return orDash(terminalSafe(originSummary(origin)))
 }
 
-// writeOriginLines writes the Origin, Reference and Principal lines of a run
-// detail view into a tab-aligned table. Origin is always written; the other
-// two only when they carry a value.
+// writeOriginLines writes the Origin, Root run, Reference and Principal lines
+// of a run detail view into a tab-aligned table. Origin is always written; the
+// others only when they carry a value. Every value is written terminalSafe:
+// a reference and a description are the caller's text, and none of them may
+// reach the terminal as a control or end its line.
 func writeOriginLines(table io.Writer, origin *orkstackv1.RunOrigin) {
 	summary := originSummary(origin)
 	if summary == "" {
@@ -84,9 +86,12 @@ func writeOriginLines(table io.Writer, origin *orkstackv1.RunOrigin) {
 	if description := origin.GetDescription(); description != "" {
 		summary += " (" + description + ")"
 	}
-	fmt.Fprintf(table, "Origin:\t%s\n", summary)
+	fmt.Fprintf(table, "Origin:\t%s\n", terminalSafe(summary))
+	if root := origin.GetRootRunId(); root != "" {
+		fmt.Fprintf(table, "Root run:\t%s\n", terminalSafe(root))
+	}
 	if reference := origin.GetReference(); reference != "" {
-		fmt.Fprintf(table, "Reference:\t%s\n", reference)
+		fmt.Fprintf(table, "Reference:\t%s\n", terminalSafe(reference))
 	}
 	if principal := origin.GetPrincipal(); principal != "" {
 		fmt.Fprintf(table, "Principal:\t%s  %s\n", assertedName(principal), principalCaption)

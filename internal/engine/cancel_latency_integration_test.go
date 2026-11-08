@@ -31,21 +31,12 @@ import (
 // the one number a unit test cannot: how long a container keeps running after
 // the engine asked for it to stop.
 //
-// It has to be an integration test because the thing being fixed lives in the
-// Temporal Go SDK's client, not in this repository's logic. The SDK batches
-// RecordHeartbeat calls into windows of
-// min(0.8 × HeartbeatTimeout, worker.Options.MaxHeartbeatThrottleInterval) and
-// delivers cancellation ONLY in a heartbeat RPC's response, so with the cap
-// unset the answer is ~24 s however fast the Orker's loop ticks. The workflow
-// test environment has neither behavior: it delivers cancellation immediately,
-// which is why every existing cancellation test passed while a real run took
-// 23.9 s. In that real run, cancellation was requested 52 ms
-// after the sibling's failure, observed 23.86 s later, container dead 296 ms
-// after that.
-//
-// Both halves of the pairing are set below, deliberately and together — a
-// harness that sets only orker.Options.HeartbeatInterval measures the SDK's
-// default and proves nothing.
+// It has to be an integration test because the workflow test environment
+// delivers cancellation immediately: every cancellation test there passed while
+// a real run took 23.9 s, all of it the SDK's batching of heartbeats. In that run,
+// cancellation was requested 52 ms after the sibling's failure, observed 23.86 s
+// later, container dead 296 ms after that. The Orker now sends its own heartbeats
+// (internal/orker, heartbeat.go), one per tick, and this holds that to its number.
 func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testing.T) {
 	const tick = orker.DefaultHeartbeatInterval
 
@@ -96,13 +87,12 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 	}
 
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{
-		Logs:     logStore,
-		Commits:  commitStore,
-		Refs:     refs,
-		Pool:     task.DefaultPool,
-		OrkerID:  proof.OrkerID("cancel-latency-" + token),
-		WorkRoot: bindableWorkRootForCommitE2E(t),
-		// HALF ONE of the pairing: how often the loop beats.
+		Logs:              logStore,
+		Commits:           commitStore,
+		Refs:              refs,
+		Pool:              task.DefaultPool,
+		OrkerID:           proof.OrkerID("cancel-latency-" + token),
+		WorkRoot:          bindableWorkRootForCommitE2E(t),
 		HeartbeatInterval: tick,
 	})
 	if err := activities.Boot(ctx); err != nil {
@@ -140,11 +130,6 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 	taskWorker := worker.New(temporalClient, orkerQueue, worker.Options{
 		DisableRegistrationAliasing: true,
 		DisableWorkflowWorker:       true,
-		// HALF TWO of the pairing, and the one that was missing: without it
-		// the SDK batches the beats above into 24 s windows and this test
-		// measures Temporal's default rather than OrkStack's setting. This is
-		// exactly what cmd/orker's workerOptions does.
-		MaxHeartbeatThrottleInterval: tick,
 	})
 	taskWorker.RegisterActivityWithOptions(
 		activities.ExecuteTask,
@@ -282,14 +267,14 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 	latency := siblingEnded.Sub(doomedFailed)
 	// The budget: one whole heartbeat interval to deliver the cancellation,
 	// plus a generous allowance for SIGTERM, container exit, docker rm, log
-	// sink close and event publication (measured at ~0.45 s in total). Before
-	// the throttle cap this measured ~24 s and failed here, which is the whole
+	// sink close and event publication (measured at ~0.45 s in total). On the
+	// SDK's batched route this measured ~24 s and failed here, which is the whole
 	// point of the assertion.
 	budget := tick + 5*time.Second
 	if latency > budget {
 		t.Errorf("the sibling kept running for %s after the run's failure, want <= %s "+
-			"(one %s heartbeat interval plus teardown). A latency near 24s means the SDK's "+
-			"MaxHeartbeatThrottleInterval is not capped to the Orker's tick",
+			"(one %s heartbeat interval plus teardown). A latency near 24s means the task's "+
+			"heartbeats are taking the SDK's batched route rather than the Orker's own",
 			latency, budget, tick)
 	}
 

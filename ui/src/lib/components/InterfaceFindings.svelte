@@ -3,6 +3,7 @@
 	// prints it: a heading naming both versions, the verdict line, and one row
 	// per finding. Every word of a finding is the engine's; a row that is not
 	// compatible carries its message beneath it, verbatim.
+	import { shortVersion } from '#lib/version.ts';
 	import { changeWord, verdictChipClass, verdictLine, verdictWord } from '#lib/compat.ts';
 	import { InterfaceVerdict, type CompareInterfacesResponse } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
 
@@ -17,7 +18,7 @@
 <div data-testid="compat-result">
 	<h4 class="mb-1 text-sm font-semibold text-ink" data-testid="compat-heading">
 		{name}
-		{response.fromVersion} → {response.toVersion}
+		{shortVersion(response.fromVersion)} → {shortVersion(response.toVersion)}
 	</h4>
 	<p
 		class="mb-3 text-sm {response.verdict === InterfaceVerdict.BREAKING

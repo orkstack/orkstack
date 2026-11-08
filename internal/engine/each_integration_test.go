@@ -170,6 +170,9 @@ func (e *eachE2E) startOrker(id string) (worker.Worker, *orker.Activities) {
 	}
 	w := worker.New(e.temporal, e.orkerQueue, worker.Options{
 		DisableRegistrationAliasing: true, DisableWorkflowWorker: true,
+		// MaxHeartbeatThrottleInterval stays unset, as cmd/orker leaves it: the
+		// Orker sends a task's heartbeats itself, so a cancel reaches it within
+		// one tick, not the SDK's 24 s window (internal/orker/heartbeat.go).
 	})
 	w.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		e.mu.Lock()

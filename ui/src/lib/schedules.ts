@@ -1,8 +1,12 @@
 import { create } from '@bufbuild/protobuf';
-import { DurationSchema, timestampDate, type Duration, type Timestamp } from '@bufbuild/protobuf/wkt';
+import { DurationSchema, timestampFromDate, type Duration, type Timestamp } from '@bufbuild/protobuf/wkt';
+import { instantDate } from './instant';
+import { parseInputObject } from './authoring';
+import { PayloadSchema, type Payload } from './gen/orkstack/v1/common_pb';
 import {
 	OverlapPolicy,
 	OverlapPolicySchema,
+	ScheduleSpecSchema,
 	type Schedule,
 	type ScheduleFire,
 	type ScheduleSpec
@@ -54,7 +58,8 @@ export function durationLabel(duration: Duration | undefined): string {
 	let out = '';
 	if (hours) out += `${hours}h`;
 	if (minutes) out += `${minutes}m`;
-	if (seconds || !out) out += `${seconds}s`;
+	if (seconds || (!out && !ms)) out += `${seconds}s`;
+	if (ms) out += `${ms}ms`;
 	return out;
 }
 
@@ -97,7 +102,149 @@ export function whenLabel(spec: ScheduleSpec | undefined): string {
 
 /** isoUTC renders a timestamp as RFC 3339 UTC, second precision. */
 export function isoUTC(ts: Timestamp | undefined): string {
-	return ts ? timestampDate(ts).toISOString().replace(/\.\d{3}Z$/, 'Z') : '—';
+	return ts ? instantDate(ts).toISOString().replace(/\.\d{3}Z$/, 'Z') : '—';
+}
+
+/**
+ * A schedule's fields as a form holds them: text an operator types, one for
+ * each mutable field, shared by the create form and the edit dialog. An empty
+ * version means current, resolved at each fire.
+ */
+export interface ScheduleForm {
+	version: string;
+	cron: string;
+	interval: string;
+	timezone: string;
+	overlap: string;
+	jitter: string;
+	catchupWindow: string;
+	startAt: string;
+	endAt: string;
+	description: string;
+	input: string;
+	pauseOnFailure: boolean;
+}
+
+/** The version choice that pins nothing: it becomes the empty wire value. */
+export const CURRENT_VERSION = '__current__';
+
+export const EMPTY_SCHEDULE_FORM: Readonly<ScheduleForm> = {
+	version: '',
+	cron: '',
+	interval: '',
+	timezone: '',
+	overlap: 'skip',
+	jitter: '',
+	catchupWindow: '',
+	startAt: '',
+	endAt: '',
+	description: '',
+	input: '',
+	pauseOnFailure: false
+};
+
+function durationText(duration: Duration | undefined): string {
+	return duration && (duration.seconds > 0n || duration.nanos > 0) ? durationLabel(duration) : '';
+}
+
+/** scheduleFormOf is what the edit dialog opens with: every field as stored. */
+export function scheduleFormOf(schedule: Schedule): ScheduleForm {
+	const spec = schedule.spec;
+	const data = schedule.input?.data;
+	return {
+		version: schedule.orkflowVersion,
+		cron: (spec?.cron ?? []).join('\n'),
+		interval: durationText(spec?.interval),
+		timezone: spec?.timezone ?? '',
+		overlap: overlapLabel(spec?.overlap ?? OverlapPolicy.UNSPECIFIED),
+		jitter: durationText(spec?.jitter),
+		catchupWindow: durationText(spec?.catchupWindow),
+		startAt: spec?.startAt ? isoUTC(spec.startAt) : '',
+		endAt: spec?.endAt ? isoUTC(spec.endAt) : '',
+		description: schedule.description,
+		input: data && Object.keys(data).length > 0 ? JSON.stringify(data, null, 2) : '',
+		pauseOnFailure: spec?.pauseOnFailure ?? false
+	};
+}
+
+function cronLines(text: string): string[] {
+	return text
+		.split('\n')
+		.map((line) => line.trim())
+		.filter((line) => line !== '');
+}
+
+function parseTime(field: string, text: string): { value: Timestamp | undefined } | { error: string } {
+	const trimmed = text.trim();
+	if (!trimmed) return { value: undefined };
+	const date = new Date(trimmed);
+	if (Number.isNaN(date.getTime())) return { error: `${field}: "${trimmed}" is not an RFC 3339 time.` };
+	return { value: timestampFromDate(date) };
+}
+
+/** The mutable fields of a create or update request. */
+export interface ScheduleWrite {
+	orkflowVersion: string;
+	input: Payload | undefined;
+	description: string;
+	spec: ScheduleSpec;
+}
+
+/**
+ * scheduleWrite reads a form into a request's fields, or refuses naming the
+ * field. An update replaces every field, so a field the operator left alone
+ * sends the schedule's own value rather than its text: the form spells a
+ * duration or an instant more coarsely than the store can hold one, and saving
+ * must not round what nobody touched.
+ */
+export function scheduleWrite(form: ScheduleForm, original?: Schedule): { value: ScheduleWrite } | { error: string } {
+	const before = original ? scheduleFormOf(original) : undefined;
+	const stored = original?.spec;
+	const untouched = (field: 'interval' | 'jitter' | 'catchupWindow' | 'startAt' | 'endAt' | 'input') =>
+		before !== undefined && form[field].trim() === before[field].trim();
+	const duration = (field: 'interval' | 'jitter' | 'catchupWindow', label: string) =>
+		untouched(field) ? { value: stored?.[field] } : parseDuration(label, form[field]);
+	const time = (field: 'startAt' | 'endAt', label: string) =>
+		untouched(field) ? { value: stored?.[field] } : parseTime(label, form[field]);
+
+	const interval = duration('interval', 'Interval');
+	if ('error' in interval) return interval;
+	const jitter = duration('jitter', 'Jitter');
+	if ('error' in jitter) return jitter;
+	const catchupWindow = duration('catchupWindow', 'Catch-up window');
+	if ('error' in catchupWindow) return catchupWindow;
+	const startAt = time('startAt', 'Start at');
+	if ('error' in startAt) return startAt;
+	const endAt = time('endAt', 'End at');
+	if ('error' in endAt) return endAt;
+
+	let input: Payload | undefined;
+	if (untouched('input')) {
+		input = original?.input;
+	} else if (form.input.trim()) {
+		const parsed = parseInputObject(form.input);
+		if ('error' in parsed) return parsed;
+		input = create(PayloadSchema, { data: parsed.value });
+	}
+
+	return {
+		value: {
+			orkflowVersion: form.version,
+			input,
+			description: form.description,
+			spec: create(ScheduleSpecSchema, {
+				cron: cronLines(form.cron),
+				interval: interval.value,
+				timezone: form.timezone.trim(),
+				jitter: jitter.value,
+				catchupWindow: catchupWindow.value,
+				startAt: startAt.value,
+				endAt: endAt.value,
+				overlap: before?.overlap === form.overlap && stored ? stored.overlap : overlapPolicyFromSlug(form.overlap),
+				pauseOnFailure: form.pauseOnFailure
+			})
+		}
+	};
 }
 
 /** The state a row shows: active, paused, or unavailable. */
@@ -167,6 +314,48 @@ export function scheduleCreateCli(schedule: Schedule): string {
 	if (schedule.description) args.push('--description', shellArg(schedule.description));
 	if (schedule.input?.data && Object.keys(schedule.input.data).length > 0) {
 		args.push('--input-json', shellArg(JSON.stringify(schedule.input.data)));
+	}
+	args.push(nsFlag(schedule.namespace));
+	return args.join(' ');
+}
+
+/**
+ * scheduleUpdateCli is the `orkctl schedule update` that makes this edit: the
+ * CLI reads the schedule and replaces only the flags it is given, so it names
+ * only what changed. Empty when no command can: --cron adds expressions, and
+ * nothing on the CLI empties the list.
+ */
+export function scheduleUpdateCli(schedule: Schedule, form: ScheduleForm): string {
+	const before = scheduleFormOf(schedule);
+	const lines = cronLines(form.cron);
+	if (lines.length === 0 && before.cron !== '') return '';
+	const args = ['orkctl schedule update', shellArg(schedule.name)];
+	if (form.version !== before.version) {
+		if (form.version) args.push('--version', shellArg(form.version));
+		else args.push('--follow-current');
+	}
+	if (lines.join('\n') !== before.cron) for (const expr of lines) args.push('--cron', shellArg(expr));
+	const text = (flag: string, now: string, was: string) => {
+		if (now.trim() !== was.trim()) args.push(flag, shellArg(now.trim()));
+	};
+	text('--interval', form.interval, before.interval);
+	text('--timezone', form.timezone, before.timezone);
+	if (form.overlap !== before.overlap) args.push('--overlap', shellArg(form.overlap));
+	text('--jitter', form.jitter, before.jitter);
+	text('--catchup-window', form.catchupWindow, before.catchupWindow);
+	text('--start-at', form.startAt, before.startAt);
+	text('--end-at', form.endAt, before.endAt);
+	if (form.pauseOnFailure !== before.pauseOnFailure) {
+		args.push(form.pauseOnFailure ? '--pause-on-failure' : '--pause-on-failure=false');
+	}
+	if (form.description !== before.description) args.push('--description', shellArg(form.description));
+	if (form.input.trim() !== before.input.trim()) {
+		if (!form.input.trim()) {
+			args.push('--clear-input');
+		} else {
+			const parsed = parseInputObject(form.input);
+			args.push('--input-json', shellArg('error' in parsed ? form.input.trim() : JSON.stringify(parsed.value)));
+		}
 	}
 	args.push(nsFlag(schedule.namespace));
 	return args.join(' ');

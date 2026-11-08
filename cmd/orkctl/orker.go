@@ -99,6 +99,8 @@ func newOrkerListCommand(g *globalFlags) *cobra.Command {
 			"answer, so any replica answers the same. An Orker that could not be asked is\n" +
 			"listed as `unknown (unreachable)` with the reason under the table: its load\n" +
 			"is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.\n" +
+			"An Orker that stopped reads this way for up to 90 seconds, because the cluster\n" +
+			"still remembers it polling.\n" +
 			"PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker\n" +
 			"declaring one admits tasks within, and RESERVED what stands reserved against\n" +
 			"it, pinned members included and each outstanding poll counted at the per-task\n" +
@@ -638,9 +640,17 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 		for _, row := range unreachable {
 			fmt.Fprintf(out, "  %s: %s\n", row.GetOrkerId(), row.GetUnavailableReason())
 		}
+		fmt.Fprintln(out, stoppedOrkerNote)
 	}
 	return nil
 }
+
+// stoppedOrkerNote says the one reading of an unreachable row a reader cannot
+// work out from the table: the cluster remembers a stopped Orker's polls, so
+// for the freshness window (engine.DefaultPollerFreshness) it is a row here and
+// a count in `orkctl pool list`. An Orker that comes back under another id, as
+// one on a new host does by default, is therefore two Orkers until then.
+const stoppedOrkerNote = "A stopped Orker stays listed, and counted by `orkctl pool list`, for up to 90 seconds."
 
 func itselfThemselves(n int) string {
 	if n == 1 {

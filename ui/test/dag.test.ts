@@ -13,7 +13,8 @@ import {
 	fitDagLine,
 	layerOrder,
 	layoutDag,
-	neighbourhood
+	neighbourhood,
+	dagNodeName
 } from '../src/lib/dag';
 import { cpuMs } from './cpuTime';
 import { DAG_FIXTURES } from './dagFixtures';
@@ -200,4 +201,11 @@ test("a composed task's line keeps its version whole and lets the name give way"
 	expect(fitDagRef('release-block', '0.1.0', DAG_LINE_CHARS - 2)).toBe('orkflow rel…@0.1.0');
 	// A version too long for any of the name to show is cut like any line.
 	expect(fitDagRef('a', '2026.10.22-rc.1+build.7')).toHaveLength(DAG_LINE_CHARS);
+});
+
+test("a node's name holds what it shows, in order, then what it only draws or had to cut", () => {
+	expect(dagNodeName({ id: 'hello', shownId: 'hello', line: 'shell', shownLine: 'shell' })).toBe('Task hello shell');
+	expect(dagNodeName({ id: 'hello', shownId: 'hello', line: 'Succeeded 1.7s', shownLine: 'Succeeded 1.7s', status: 'Succeeded' })).toBe('Task hello Succeeded 1.7s');
+	expect(dagNodeName({ id: 'hello', shownId: 'hello', line: 'condition false', shownLine: 'condition false', status: 'Skipped' })).toBe('Task hello condition false, Skipped');
+	expect(dagNodeName({ id: 'a-very-long-task', shownId: 'a-very…', line: 'shell', shownLine: 'shell', tags: ['≤ 3', 'cached'] })).toBe('Task a-very… shell ≤ 3 cached, a-very-long-task');
 });

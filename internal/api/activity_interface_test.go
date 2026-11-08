@@ -219,12 +219,17 @@ tasks:
 		if digest != stored.GetDefinitionDigest() {
 			t.Fatalf("definition digest %q is not the stored document's own %q", stored.GetDefinitionDigest(), digest)
 		}
-		version, err := dsl.DerivedVersion([]byte(doc), stored)
-		if err != nil {
-			t.Fatalf("version: %v", err)
-		}
-		if version != stored.GetVersion() {
-			t.Fatalf("version %q is not derived from the stored document (%q)", stored.GetVersion(), version)
+	}
+	// Each service has its own store, so each minted its own version; each still
+	// lands on that version when it sees the document again.
+	for _, tc := range []struct {
+		svc     *api.Service
+		applied *orkstackv1.ApplyOrkflowResponse
+	}{{plainSvc, plain}, {labelledSvc, labelled}} {
+		again := applyOnce(t, tc.svc, doc)
+		if again.GetCreated() || again.GetOrkflow().GetVersion() != tc.applied.GetOrkflow().GetVersion() {
+			t.Fatalf("re-apply = created %v, version %q, want no write and version %q",
+				again.GetCreated(), again.GetOrkflow().GetVersion(), tc.applied.GetOrkflow().GetVersion())
 		}
 	}
 	a := proto.Clone(plain.GetOrkflow().GetTasks()[0].GetImage()).(*orkstackv1.ImageRef)

@@ -160,7 +160,7 @@ test.afterAll(async () => {
 test('the Schedules tab creates a schedule and shows its next fire times', async ({ page }) => {
 	await openTab(page);
 	await expect(page.getByTestId('schedules-scope')).toContainText(
-		`Each schedule starts ${NAME} in ${NS} at the times it names. Temporal keeps the schedule; OrkStack stores nothing else about it.`
+		`Each schedule starts ${NAME} at the times it names. Temporal keeps the schedule; OrkStack stores nothing else about it.`
 	);
 	await expect(page.getByTestId('schedules-empty')).toBeVisible();
 	await page.getByTestId('schedule-name').fill('nightly');
@@ -276,13 +276,104 @@ test('a refused fire reads refused with its reason', async ({ page }) => {
 	}
 });
 
+test('a schedule\'s name opens its edit: every field as stored, a save keeps the rest, and a refusal keeps the draft', async ({ page }) => {
+	const created = await rpc<{ schedule: { id: string } }>('ScheduleService/CreateSchedule', {
+		namespace: NS,
+		name: 'edited',
+		orkflowName: NAME,
+		description: 'before',
+		input: { data: { mode: 'full' } },
+		spec: { cron: ['0 2 * * *', '0 3 * * *'], timezone: 'Europe/Lisbon', jitter: '1.500000001s', overlap: 'OVERLAP_POLICY_BUFFER_ONE', pauseOnFailure: true },
+		paused: true
+	});
+	await waitFor('schedule edited to be listed', async () => {
+		const listed = await rpc<{ schedules?: { name: string }[] }>('ScheduleService/ListSchedules', {
+			namespace: NS,
+			filters: [{ field: 'orkflow_name', op: 'FILTER_OPERATOR_EQUALS', values: [NAME] }]
+		});
+		return (listed.schedules ?? []).some((row) => row.name === 'edited');
+	});
+	await openTab(page);
+	await page.getByTestId('edit-schedule-edited').click();
+	await expect(page).toHaveURL(/edit=edited/);
+	const dialog = page.getByTestId('schedule-edit-dialog');
+	await expect(dialog).toBeVisible();
+
+	// Every field as stored, the ones under Advanced on show because they are set.
+	await expect(page.getByTestId('schedule-edit-orkflow')).toHaveText(NAME);
+	await expect(page.getByTestId('schedule-edit-cron')).toHaveValue('0 2 * * *\n0 3 * * *');
+	await expect(page.getByTestId('schedule-edit-timezone')).toHaveValue('Europe/Lisbon');
+	await expect(page.getByTestId('schedule-edit-jitter')).toBeVisible();
+	await expect(page.getByTestId('schedule-edit-jitter')).toHaveValue('1s500ms');
+	await expect(page.getByTestId('schedule-edit-description')).toHaveValue('before');
+	await expect(page.getByTestId('schedule-edit-input')).toHaveValue('{\n  "mode": "full"\n}');
+	await expect(page.getByTestId('schedule-edit-pause-on-failure')).toBeChecked();
+	await shot(page, 'screenshot-schedule-edit.png');
+
+	// A refusal is the cluster's own, in the dialog, and the draft stays.
+	await page.getByTestId('schedule-edit-cron').fill('not a cron');
+	await page.getByTestId('schedule-edit-submit').click();
+	await expect(page.getByTestId('schedule-edit-error')).toBeVisible();
+	await expect(page.getByTestId('schedule-edit-cron')).toHaveValue('not a cron');
+	note(`refused edit: ${(await page.getByTestId('schedule-edit-error').textContent())?.replace(/\s+/g, ' ').trim()}`);
+
+	// A field the form cannot read is refused by name before anything is sent.
+	await page.getByTestId('schedule-edit-cron').fill('0 4 * * *');
+	await page.getByTestId('schedule-edit-interval').fill('soon');
+	await page.getByTestId('schedule-edit-submit').click();
+	await expect(page.getByTestId('schedule-edit-error')).toContainText('Interval');
+	await page.getByTestId('schedule-edit-interval').fill('');
+
+	await page.getByTestId('schedule-edit-description').fill('after');
+	await page.getByTestId('schedule-edit-submit').click();
+	await expect(dialog).toHaveCount(0);
+	await expect(page).not.toHaveURL(/edit=/);
+	await expect(page.getByTestId('schedule-row-edited')).toContainText('0 4 * * *');
+	await expect(page.getByTestId('schedule-row-edited')).toContainText('after');
+
+	// What was not touched is exactly as stored: its id, its Orkflow, its pause,
+	// the input, and a jitter finer than the form spells.
+	const got = await rpc<{
+		schedule: { id: string; orkflowName: string; paused: boolean; input?: { data?: unknown }; spec: { cron: string[]; jitter?: string; overlap?: string; pauseOnFailure?: boolean; timezone?: string } };
+	}>('ScheduleService/GetSchedule', { namespace: NS, name: 'edited' });
+	expect(got.schedule.id).toBe(created.schedule.id);
+	expect(got.schedule.orkflowName).toBe(NAME);
+	expect(got.schedule.paused).toBe(true);
+	expect(got.schedule.input?.data).toEqual({ mode: 'full' });
+	expect(got.schedule.spec.cron).toEqual(['0 4 * * *']);
+	expect(got.schedule.spec.jitter).toBe('1.500000001s');
+	expect(got.schedule.spec.overlap).toBe('OVERLAP_POLICY_BUFFER_ONE');
+	expect(got.schedule.spec.pauseOnFailure).toBe(true);
+	expect(got.schedule.spec.timezone).toBe('Europe/Lisbon');
+	note(`edited ${created.schedule.id}: cron and description changed, the rest as stored`);
+
+	// The address opens the edit, emptying a field clears it, and its command says so.
+	await page.goto(page.url() + '&edit=edited');
+	await expect(dialog).toBeVisible();
+	await page.getByTestId('schedule-edit-input').fill('');
+	await page.getByTestId('schedule-edit-description').fill('');
+	await page.getByTestId('schedule-edit-cli-trigger').click();
+	await expect(page.getByTestId('schedule-edit-cli-command')).toContainText('--clear-input');
+	await expect(page.getByTestId('schedule-edit-cli-command')).toContainText("--description ''");
+	await page.getByTestId('schedule-edit-submit').click();
+	await expect(dialog).toHaveCount(0);
+	const cleared = await rpc<{ schedule: { description?: string; input?: unknown } }>('ScheduleService/GetSchedule', { namespace: NS, name: 'edited' });
+	expect(cleared.schedule.description ?? '').toBe('');
+	expect(cleared.schedule.input).toBeUndefined();
+
+	// The fires are their button's, and the name no longer opens them.
+	await expect(page.getByTestId('schedule-expand-edited')).toHaveAttribute('aria-expanded', 'false');
+});
+
 test('delete removes the row', async ({ page }) => {
 	await openTab(page);
 	const names = await page.locator('[data-testid^="schedule-row-state-"]').evaluateAll((nodes) =>
 		nodes.map((node) => (node.getAttribute('data-testid') ?? '').replace('schedule-row-state-', ''))
 	);
 	for (const name of names) {
+		await expect(page.getByTestId(`schedule-delete-${name}`).locator('svg use')).toHaveAttribute('href', '#i-trash');
 		await page.getByTestId(`schedule-delete-${name}`).click();
+		await expect(page.getByTestId('schedule-delete-accept').locator('svg use')).toHaveAttribute('href', '#i-trash');
 		await page.getByTestId('schedule-delete-accept').click();
 		await expect(page.getByTestId(`schedule-row-${name}`)).toHaveCount(0);
 	}

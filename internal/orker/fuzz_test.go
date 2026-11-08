@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -751,6 +752,112 @@ func FuzzSignalCauses(f *testing.F) {
 	})
 }
 
+// FuzzParseOtherContainers reads a list the engine answers, whose labels anyone
+// with its socket can set, and whose result goes into a warning and nowhere else.
+// The claims: it never names this identity or an empty one, never returns a
+// container with no id, and keeps a label whole.
+func FuzzParseOtherContainers(f *testing.F) {
+	f.Add("c1\trunning\tother\nc2\texited\tme\n", "me")
+	f.Add("c1\trunning\to\tther\n", "other")
+	f.Add("c1\trunning\t\n", "")
+	f.Add("Emulate Docker CLI using podman.\n\t\t\n", "me")
+	f.Add("", "")
+	f.Fuzz(func(t *testing.T, answer, me string) {
+		for _, other := range parseOtherContainers(answer, me) {
+			if other.ID == "" || other.Orker == "" || other.Orker == me {
+				t.Fatalf("%q as %q listed %+v", answer, me, other)
+			}
+			if !strings.Contains(answer, other.Orker) {
+				t.Fatalf("%q listed the identity %q, which it does not hold", answer, other.Orker)
+			}
+		}
+	})
+}
+
+// FuzzStopSeen reads a container's event stream, which the engine decides. The
+// claims: the stream says the container was stopped only if, before any line
+// whose first word is its end's, a line's first word was stop, or kill with no
+// signal or one that ends a process; that it ended only if the end's word came
+// first; a word that merely holds one (exec_die, killed) says nothing; and the
+// answer does not change once settled.
+func FuzzStopSeen(f *testing.F) {
+	f.Add("create \nstart \nkill 15\nstop \ndie \n")
+	f.Add("create\ninit\nstart\nstop\ndied\ncleanup\n")
+	f.Add("start \nexec_die \ndie \nkill 9\n")
+	f.Add("start \nkill 10\nkill\n")
+	f.Add("start\n")
+	f.Add("")
+	f.Add("  kill  \n")
+	f.Add("killed\ndying\n\x00")
+	f.Fuzz(func(t *testing.T, stream string) {
+		var seen stopSeen
+		var wantStopped, wantEnded bool
+		for _, line := range strings.Split(stream, "\n") {
+			if fields := strings.Fields(line); len(fields) > 0 && !wantStopped && !wantEnded {
+				wantStopped = fields[0] == "stop" ||
+					fields[0] == "kill" && (len(fields) == 1 || fields[1] == "15" || fields[1] == "9")
+				wantEnded = fields[0] == "die" || fields[0] == "died"
+			}
+			if settled := seen.see(line); settled != (wantStopped || wantEnded) {
+				t.Fatalf("settled = %t after %q in %q", settled, line, stream)
+			}
+		}
+		if seen.stopped != wantStopped || seen.ended != wantEnded {
+			t.Fatalf("%q reads as %+v; want stopped %t, ended %t", stream, seen, wantStopped, wantEnded)
+		}
+	})
+}
+
+// FuzzAttemptDirOwner reads a work root entry's name, which decides whether a
+// boot deletes it. The claims: a name a pin's directory could have is never an
+// attempt's; a name read as owned ends in that owner's segment and a number, so
+// no run id or task id earlier in the name can claim it; what an identity's own
+// dispatcher writes reads back as that identity's, whatever the run and task.
+func FuzzAttemptDirOwner(f *testing.F) {
+	owner := attemptOwner("orker-a")
+	f.Add("ork-ork-one-build-1-"+owner+"-123", "ork-one", "build")
+	f.Add("ork-ork-one-build-i00097-1-"+owner+"-123", "ork-"+owner, owner)
+	f.Add("ork-ork-one-build-1-123", "a-b-c", "d-1-"+owner+"-2")
+	f.Add("ork-pin-ork-one-build-0000002a-0000-4000-8000-000000000000", "pin-x", "y")
+	f.Add("ork-pin-ork-one-"+owner+"-123", "ünï", "../..")
+	f.Add("ork-x-y-z-"+owner+"-123", "", "")
+	f.Add("ork-bindprobe-123", "x", "y")
+	f.Add("ork-spool", "x", "y")
+	f.Add("ork-1-2-3-99999999999", "x", "y")
+	f.Add("", "x", "y")
+	f.Fuzz(func(t *testing.T, name, run, task string) {
+		got, attempt := attemptDirOwner(name)
+		if strings.HasPrefix(name, pinDirPrefix) && attempt {
+			t.Fatalf("%q reads as an attempt's directory, and a pin's name may start so", name)
+		}
+		if !attempt && got != "" {
+			t.Fatalf("%q is no attempt's directory and names the owner %q", name, got)
+		}
+		if got != "" {
+			rest, ok := strings.CutSuffix(name[:strings.LastIndex(name, "-")], "-"+got)
+			if !ok || !isAttemptOwner(got) || !allDigits(name[strings.LastIndex(name, "-")+1:]) {
+				t.Fatalf("%q reads as owned by %q without ending in it and a number", name, got)
+			}
+			if !allDigits(rest[strings.LastIndex(rest, "-")+1:]) {
+				t.Fatalf("%q reads as owned by %q with no attempt number before it", name, got)
+			}
+		}
+		dir := t.TempDir()
+		d := &OCIDispatcher{WorkRoot: dir, OrkerID: "orker-a"}
+		made, err := d.makeAttemptDir(&orkstackv1.ExecuteTaskInput{RunId: run, TaskId: task}, 1)
+		if err != nil {
+			t.Fatalf("makeAttemptDir(%q, %q): %v", run, task, err)
+		}
+		// A run id "pin-..." would make a name a pin's reap and sweep already
+		// claim; the engine mints run ids starting ork-.
+		if base := filepath.Base(made); !strings.HasPrefix(base, pinDirPrefix) {
+			if read, ok := attemptDirOwner(base); !ok || read != owner {
+				t.Fatalf("%q, made by orker-a, reads as %q, %t", base, read, ok)
+			}
+		}
+	})
+}
+
 // FuzzEngineFromComponents reads `version --format {{json .Server.Components}}`,
 // which the engine behind the docker CLI decides. The claims: an answer that
 // is not a JSON array of components is an error, never an engine; one that
@@ -890,4 +997,29 @@ func clip(s string) string {
 		return s[:120] + "…"
 	}
 	return s
+}
+
+// FuzzParseCreatedAnchor holds what goes on a command line as --since: an answer
+// is an RFC 3339 instant that reads back as the same instant, so nothing an engine
+// prints can become a flag or anything else, and nothing makes it panic.
+func FuzzParseCreatedAnchor(f *testing.F) {
+	for _, seed := range []string{
+		`"2026-11-07T06:11:16.727408016Z"`, `"2026-11-07T06:11:16Z"` + "\n", `"2026-11-07T01:11:16-05:00"`,
+		`"0001-01-01T00:00:00Z"`, `"--help"`, `soon`, ``, `null`, `17`, `"2026-11-07 06:11:16 +0000 UTC"`,
+	} {
+		f.Add(seed)
+	}
+	f.Fuzz(func(t *testing.T, raw string) {
+		anchor, err := parseCreatedAnchor(raw)
+		if err != nil {
+			if anchor != "" {
+				t.Fatalf("an error came with the anchor %q", anchor)
+			}
+			return
+		}
+		at, parseErr := time.Parse(time.RFC3339Nano, anchor)
+		if parseErr != nil || at.IsZero() || strings.HasPrefix(anchor, "-") {
+			t.Fatalf("parseCreatedAnchor(%q) = %q, not an instant: %v", raw, anchor, parseErr)
+		}
+	})
 }

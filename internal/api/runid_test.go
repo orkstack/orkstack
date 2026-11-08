@@ -5,7 +5,6 @@ import (
 	"errors"
 	"regexp"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -19,8 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 )
 
-// runIDShape is the documented id shape, ork-{timestamp}-{sequence}.
-var runIDShape = regexp.MustCompile(`^ork-\d+-\d+$`)
+// runIDShape is the documented id shape, `ork-` and a UUIDv7 in base32.
+var runIDShape = regexp.MustCompile(`^ork-[0-7][0-9a-hjkmnp-tv-z]{25}$`)
 
 // takenIDStarter answers the first rejections StartRun calls the way a cluster
 // answers a workflow id another replica already owns, and records every id it
@@ -101,23 +100,17 @@ func (f *runIDFixture) submit(t *testing.T, key string) (*orkstackv1.Run, error)
 	return resp.Msg.GetRun(), nil
 }
 
-// TestSubmitRun_DefaultRunIDDoesNotRestartAtOnePerProcess pins, at the API
-// surface, that the first run of a replica is not ork-<nanos>-1: a per-process
-// counter starting at one makes two replicas' logs read as one series.
-func TestSubmitRun_DefaultRunIDDoesNotRestartAtOnePerProcess(t *testing.T) {
+// TestSubmitRun_DefaultRunIDHasTheDocumentedShape pins, at the API surface,
+// what the built-in generator issues.
+func TestSubmitRun_DefaultRunIDHasTheDocumentedShape(t *testing.T) {
 	f := newRunIDFixture(t, &fakeStarter{}, nil)
 
 	run, err := f.submit(t, "")
 	if err != nil {
 		t.Fatalf("SubmitRun: %v", err)
 	}
-	id := run.GetId()
-	if !runIDShape.MatchString(id) {
-		t.Fatalf("run id = %q, want ork-{timestamp}-{sequence}", id)
-	}
-	sequence := id[strings.LastIndex(id, "-")+1:]
-	if sequence == "1" {
-		t.Errorf("run id = %q: the sequence still restarts at 1 per process", id)
+	if id := run.GetId(); !runIDShape.MatchString(id) {
+		t.Fatalf("run id = %q, want a match for %s", id, runIDShape)
 	}
 }
 
@@ -177,7 +170,7 @@ func TestSubmitRun_ReissuesARunIDAnotherReplicaOwns(t *testing.T) {
 		t.Errorf("SubmitRun returned the rejected id %q", rejected[0])
 	}
 	if !runIDShape.MatchString(run.GetId()) {
-		t.Errorf("reissued run id = %q, want ork-{timestamp}-{sequence}", run.GetId())
+		t.Errorf("reissued run id = %q, want a match for %s", run.GetId(), runIDShape)
 	}
 
 	// The discarded candidate names a run that never existed anywhere. It must
@@ -356,5 +349,63 @@ func TestListRuns_OrdersRunsByTimeNotByRunID(t *testing.T) {
 	want := []string{ordered[0].id, ordered[1].id, ordered[2].id}
 	if !slices.Equal(got, want) {
 		t.Errorf("ListRuns order = %v, want newest first %v", got, want)
+	}
+}
+
+// TestRunIDs_OldAndNewShapesCoexist: a deployment's archive and cluster hold runs
+// of the older shape beside new ones. Every read treats both as opaque, so a list
+// is ordered by time whichever shape each run has, and each is found by its id.
+func TestRunIDs_OldAndNewShapesCoexist(t *testing.T) {
+	base := time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC)
+	runs := engine.NewRunStore()
+	svc := api.NewService(api.Config{
+		Orkflows: engine.NewMemoryOrkflowStore(),
+		Runs:     runs,
+		Bus:      engine.NewEventBus(),
+		Starter:  &fakeStarter{},
+		Archive:  newArchiver(t),
+	})
+
+	newer := engine.NewRunID()
+	if !runIDShape.MatchString(newer) {
+		t.Fatalf("NewRunID() = %q, want a match for %s", newer, runIDShape)
+	}
+	// Newest first, the two shapes interleaved, with the same timestamp on the
+	// outer pair so the id's documented tie-break has to compare across shapes.
+	ordered := []struct {
+		id  string
+		age time.Duration
+	}{
+		{newer, 0},
+		{"ork-1786928035776242000-4000000000000002", 0},
+		{engine.NewRunID(), time.Minute},
+		{"ork-1786928035776242000-1000000000000001", 2 * time.Minute},
+	}
+	for _, run := range ordered {
+		runs.Save(&orkstackv1.Run{
+			Id:          run.id,
+			OrkflowName: "hello-ork",
+			Status:      orkstackv1.Status_STATUS_RUNNING,
+			CreatedAt:   timestamppb.New(base.Add(-run.age)),
+		})
+	}
+
+	listed, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{}))
+	if err != nil {
+		t.Fatalf("ListRuns: %v", err)
+	}
+	if len(listed.Msg.GetRuns()) != len(ordered) {
+		t.Fatalf("ListRuns returned %d runs, want %d", len(listed.Msg.GetRuns()), len(ordered))
+	}
+	for i, run := range listed.Msg.GetRuns()[2:] {
+		if want := ordered[i+2].id; run.GetId() != want {
+			t.Errorf("ListRuns[%d] = %q, want %q", i+2, run.GetId(), want)
+		}
+	}
+	for _, run := range ordered {
+		got, err := svc.GetRun(context.Background(), connect.NewRequest(&orkstackv1.GetRunRequest{RunId: run.id}))
+		if err != nil || got.Msg.GetRun().GetId() != run.id {
+			t.Errorf("GetRun(%s) = %v, %v", run.id, got, err)
+		}
 	}
 }

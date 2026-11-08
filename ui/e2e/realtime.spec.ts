@@ -225,7 +225,6 @@ test('run page updates live from PENDING to SUCCEEDED over the WebSocket bridge'
 	const helloRow = page.getByTestId('orkflow-row-hello-ork');
 	await expect(page.getByTestId('orkflows-page-status')).toBeVisible();
 	await expect(helloRow).toBeVisible();
-	await expect(page.getByTestId('orkflow-taskcount-hello-ork')).toHaveText('3');
 	await page.screenshot({ path: logPath('screenshot-orkflows.png'), fullPage: true });
 
 	// 2. Orkflow detail renders the DAG with needs edges.

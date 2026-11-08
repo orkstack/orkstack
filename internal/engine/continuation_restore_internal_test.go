@@ -593,3 +593,27 @@ func TestContinuation_RestoreRefusalRecreatesNoAwaitTimer(t *testing.T) {
 		}
 	})
 }
+
+// errorText is the cause a RUN_STATE_* or RUN_DEFINITION_* message quotes. A
+// cause that was never recorded says so, never "unknown".
+func TestErrorText_SaysWhatWasRecorded(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		err  error
+		want string
+	}{
+		{"none recorded", nil, "no error was recorded"},
+		{"an application error's own message", temporal.NewApplicationError("part 2 does not match its digest", "x"), "part 2 does not match its digest"},
+		{"a plain error", errors.New("read timed out"), "read timed out"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := errorText(tt.err); got != tt.want {
+				t.Fatalf("errorText = %q, want %q", got, tt.want)
+			}
+		})
+	}
+	want := "its saved state failed verification (no error was recorded) and was not used; the run has stopped"
+	if got := corruptStateMessage(errorText(nil)); got != want {
+		t.Fatalf("RUN_STATE_CORRUPT message = %q, want %q", got, want)
+	}
+}

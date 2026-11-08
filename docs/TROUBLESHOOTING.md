@@ -31,9 +31,9 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 **Fix.** Start an Orker for that pool. The message says so: `ORK_ORKER_POOL=<pool>`. If the run should wait for an Orker to arrive, submit with `--allow-empty-pool`. The CLI flag is `--allow-empty-pool`; the message and the API spell the field `allow_empty_pool`. The run is then accepted, its tasks wait in the pool, and the engine logs `submit into empty pool` ([CLI.md](./CLI.md), "`orkctl run submit`"). A pool whose Orkers have all been cordoned reports their count for about 90 seconds, then zero ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 
-### "cannot tell whether pool … has live Orkers"
+### "could not check pool … for live Orkers"
 
-**Cause.** The cluster could not be asked: about the pool's channel, or, for a pool whose channel shows no poller, about the Orker inventory. Nothing was measured, so this is not an empty pool. The engine answers `unavailable`, and `--allow-empty-pool` does not change that answer when the pool's channel could not be asked (`internal/engine/pools.go`, `PoolUnreachableError`; `internal/api/service.go`, `poolPlanError`). When only the inventory could not, the override accepts the run, because it would accept the pool busy or empty, and the engine logs `whether a pool with no poller is busy is unknown`. The distinction is deliberate: an empty pool needs an Orker or the override, and an unreachable cluster needs a retry ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
+**Cause.** Asking the cluster failed: it did not answer in time, could not be reached, or answered with an error, which the message quotes in parentheses. It was asked about the pool's channel, or, for a pool whose channel shows no poller, about the Orker inventory. Nothing was measured, so this is not an empty pool. The engine answers `unavailable`, and `--allow-empty-pool` does not change that answer when the pool's channel could not be asked (`internal/engine/pools.go`, `PoolUnreachableError`; `internal/api/service.go`, `poolPlanError`). When only the inventory could not, the override accepts the run, because it would accept the pool busy or empty, and the engine logs `whether a pool with no poller is busy is unknown`. The distinction is deliberate: an empty pool needs an Orker or the override, and an unreachable cluster needs a retry ([DEPLOY.md](./DEPLOY.md), "Running M Orker pools").
 
 **Confirm.** `orkctl pool list` prints `unknown (unreachable)` for the pool, with the reason under the table ([CLI.md](./CLI.md), "`orkctl pool list`").
 
@@ -136,7 +136,7 @@ A task waiting for a free slot on a busy pool is not one of them: the engine has
 - No Orker serves the pool, or the ones that do are cordoned. A cordoned Orker takes no new task and opens no new pin, and a restart clears the cordon ([CLI.md](./CLI.md), "`orkctl orker cordon`").
 - The pool's Orkers cannot reach object storage, and have cordoned themselves. `orkctl run inspect` says `waiting for object storage`, and the task uses no attempt while it waits. See the next section.
 - An Orker died while it held an attempt. Its heartbeat stops, `orkctl run inspect` reports the heartbeat as `STALE`, and the attempt times out as `ORKER_HEARTBEAT_TIMEOUT` (`internal/engine/workflow.go`). A heartbeat timeout is retryable under the task's `retry:` policy ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.1 The five categories").
-- A pinned task's host was lost. See `PIN_HOST_LOST` below.
+- The run lost contact with a pinned task's host. See `PIN_HOST_LOST` below.
 
 **Confirm.**
 
@@ -148,6 +148,20 @@ orkctl run attempts <run-id>     # an attempt its Orker never filed shows as UNR
 
 **Fix.** If the pool is busy, the task starts when a slot frees. To shorten the wait, add Orkers to the pool, or raise `ORK_ORKER_MAX_CONCURRENT` on hosts that can take the load. If it waits for capacity, the task starts once a running task's container is removed: add Orkers, raise `orker.capacity` where the host has room, or lower the per-task cap (`orker.resources.max_cpu`, `max_memory`), which every poll reserves. Restart a dead Orker so it polls again. If it is cordoned and should take work, run `orkctl orker uncordon <orker-id>`. If the attempt was lost and the task has no `retry:` policy, the task fails. Start a new run with `orkctl run again <run-id>`, which submits a new run from the prior run's pinned definition and inputs ([CLI.md](./CLI.md), "`orkctl run again`").
 
+
+### `orkctl pool list` counts an Orker more than is running, after a restart
+
+**Symptom.** Just after an Orker restarted, `orkctl pool list` counts one Orker too many, and `orkctl orker list` shows an extra row as `unknown (unreachable)`. Within about 90 seconds both go back to the real number by themselves.
+
+**Cause.** The Orker came back under another id, so the old id's poller records are still inside the 90-second freshness window, and both lists read those records (`internal/engine/pool_probe.go`, `livePollers`; [DEPLOY.md](./DEPLOY.md), "Running M Orker pools"). The default id is derived from the host name and the work directory, so a new container or pod, or another work directory, is another id. `orkctl pool list` keeps counting the old id because a record it could not confirm is never taken for a stopped Orker: a slow answer would otherwise read as a pool with nothing serving it, while a submit, which reads the same records, accepts the run. The extra row and the extra count may end a little apart, because each channel's record has its own last poll. No task is sent to the old id, because it polls nothing.
+
+**Confirm.**
+
+```bash
+orkctl orker list   # the old id reads unknown (unreachable), and its LAST SEEN stops moving
+```
+
+**Fix.** Nothing is wrong, and nothing needs doing. Set `ORK_ORKER_ID` so that a restart keeps its id and the count never moves ([DEPLOY.md](./DEPLOY.md), `orker.id`). An Orker restarted under the same id is one row throughout.
 
 ### An Orker reads `cordoned (object storage unreachable)`
 
@@ -176,6 +190,14 @@ A waiting run has no deadline of its own, because a task's `timeout_seconds` sta
 **Confirm.** `orkctl run attempts <run-id>` shows each attempt the Orker stopped as `FAILED` with `ORKER_STOPPED`, and the task itself ends `ORKER_HEARTBEAT_TIMEOUT` unless its `retry:` policy ran it again elsewhere ([REASONS.md](./REASONS.md), "Task outcomes"). An attempt shown `UNREPORTED` instead means the Orker was killed before it finished stopping the attempt, for example by a process manager that waited less than the task's grace.
 
 **Fix.** Drain the Orker before stopping it. `orkctl orker drain <orker-id> --reason "…"` cordons it and waits until it runs no task and hosts no pin. Exit `0` means it is safe to stop. Exit `4` means the timeout passed first, and exit `1` means the Orker stopped answering, or was uncordoned or restarted ([CLI.md](./CLI.md), "`orkctl orker drain`").
+
+### Task containers pile up on an Orker host
+
+**Cause.** An Orker removes its own containers, and at boot its predecessor's under the same identity. A container stays when its Orker was killed and never returned, or returned under another `ORK_ORKER_ID` or, with the derived default, another work root or host name.
+
+**Confirm.** `docker ps --all --filter label=ork.orker --format '{{.ID}} {{.Status}} {{.Labels}}'` lists them. An identity `orkctl orker list` does not show has no live Orker to remove them. A live Orker that cannot remove one logs `a container could not be removed` every 30 seconds, with the daemon's answer.
+
+**Fix.** Remove a dead identity's containers and directories as [DEPLOY.md](./DEPLOY.md), "What removes a task's container", says, and set a stable `ORK_ORKER_ID` on an Orker that is replaced rather than restarted. Never remove a live Orker's containers: that kills its running tasks.
 
 ### A run shows `CANCELED`, not `FAILED`
 
@@ -216,7 +238,7 @@ Every failed task attempt has a category and a reason code. The category decides
 | Category | Retry by default | Examples |
 |---|---|---|
 | `ActivityFailed` | per the task's `retry:` | `CONTAINER_EXIT_NONZERO` |
-| `InfrastructureError` | per policy; a few host misconfigurations are never retried | `IMAGE_PULL_FAILED`, `WORKSPACE_NOT_BINDABLE` |
+| `InfrastructureError` | per policy; a few host misconfigurations are never retried | `IMAGE_PULL_FAILED`, `CONTAINER_STOPPED_BY_RUNTIME`, `WORKSPACE_NOT_BINDABLE` |
 | `ContractViolation` | never | `VALUES_MISSING`, `RENDER_FAILED` |
 | `TimedOut` | not retried by default | `CONTAINER_TIMEOUT`, `PIN_TIMEOUT` |
 | `Cancelled` | never automatically | `TASK_CANCELED` |
@@ -225,7 +247,7 @@ The categories are defined in ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRAC
 
 ### A task failed with `CONTAINER_EXIT_NONZERO` ("the container exited N")
 
-**Cause.** The container exited with a non-zero status. Every non-zero status is this reason, whatever the number. When the kernel killed the container for exceeding its memory limit, the message says so (`internal/orker/oci_dispatcher.go`, the exit-capture step). Category `ActivityFailed`, retried per the task's `retry:` ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+**Cause.** The container exited with a non-zero status. Every non-zero status of a container that ended on its own is this reason, whatever the number. When the kernel killed the container for exceeding its memory limit, the message says so (`internal/orker/oci_dispatcher.go`, the exit-capture step). Category `ActivityFailed`, retried per the task's `retry:` ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 
 **Confirm.**
 
@@ -236,6 +258,14 @@ orkctl run artifacts <run-id> --task <task>                # the recorded stdout
 ```
 
 **Fix.** Fix the workload. For a memory kill, raise `resources.memory` on the task, within the Orker's cap. A request above the cap fails `RESOURCE_REQUEST_REFUSED` ([DSL.md](./DSL.md), "Tasks"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+
+### A task failed with `CONTAINER_STOPPED_BY_RUNTIME` ("the container runtime stopped the container")
+
+**Cause.** The container's runtime was stopping it when it ended. Its daemon shut down or restarted, or someone stopped or signalled it through the runtime, and the Orker saw the engine say so before the container ended. So the code it exited with says nothing about the workload (`internal/orker/runtime_docker.go`, `stopWatch`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+
+**Confirm.** On the Orker's host, read the daemon's log around the attempt's end, for example `journalctl -u docker`, and look for who ran `stop`, `kill` or `rm --force` against that container.
+
+**Fix.** Nothing in the workload. It retries under the task's `retry:`, so give a task that should survive a daemon restart one. Drain an Orker before restarting its daemon (`orkctl orker drain`).
 
 ### A task failed with `CONTAINER_TIMEOUT` ("exceeded its timeout of N seconds")
 
@@ -328,7 +358,7 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 ### A task failed with `PIN_HOST_LOST` or `PIN_TIMEOUT`
 
-**Cause.** `PIN_HOST_LOST`: the host stopped heartbeating the pin, or its Orker process was stopped while the pin was open. Members still running at that moment fail with this code, and members not yet started are canceled. A member that already committed stays `SUCCEEDED`. `PIN_TIMEOUT`: the pin was open for its whole lifetime, `timeout_seconds` (`internal/engine/workflow.go`, `pinFailureError`; [DSL.md](./DSL.md), "Pins").
+**Cause.** `PIN_HOST_LOST`: the run lost contact with the pin's Orker. It stopped heartbeating the pin, its process was stopped while the pin was open, or the cluster stopped hearing from it. Members still running at that moment fail with this code, and members not yet started are canceled. A member that already committed stays `SUCCEEDED`. `PIN_TIMEOUT`: the pin was open for its whole lifetime, `timeout_seconds` (`internal/engine/workflow.go`, `pinFailureError`; [DSL.md](./DSL.md), "Pins").
 
 **Confirm.** `orkctl run attempts <run-id> --task <task>` shows the failed members. `orkctl orker list` shows the host.
 
@@ -341,6 +371,22 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 **Confirm.** `orkctl run inspect <run-id>` reports a `STALE` heartbeat for a lost Orker, and names the instant the attempt will time out ([CLI.md](./CLI.md), "`orkctl run inspect`").
 
 **Fix.** Restart the Orker. For `ACTIVITY_TIMEOUT`, compare the task's `timeout_seconds` with the work it does.
+
+### A task failed with `ORKER_HEARTBEAT_LOST`
+
+**Cause.** Nothing acknowledged the attempt's heartbeat for the 30 s heartbeat timeout, so the Orker stopped the attempt, though nobody cancelled the task: the cluster has given it up, and a retry may start elsewhere. A shorter silence changes nothing. It is an `InfrastructureError`, retried under the task's policy, so a task with no `retry:` has failed. The task itself usually reads `ORKER_HEARTBEAT_TIMEOUT`, with `ORKER_HEARTBEAT_LOST` on the attempt's record ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "6.3 Heartbeats and cancellation").
+
+**Confirm.** The message names the Orker and the error its heartbeat met. The Orker's log has `a heartbeat did not reach the cluster` when the silence began. Several tasks failing at once on one Orker point at the cluster or the network, not at the tasks.
+
+**Fix.** Check the cluster's health and the network to it, and give a task that should survive this a `retry:`.
+
+### A run failed with `PIN_HOST_LOST` and the Orker is still up
+
+**Cause.** 24 s of silence from the frontend ends a pin for good, so the run fails as it does for a host that died, and it cannot tell the two apart. The message says it lost contact. The pin is never re-opened elsewhere ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "6.3 Heartbeats and cancellation").
+
+**Confirm.** The Orker is up and its log has `session heartbeat failed` at that time.
+
+**Fix.** Check the cluster's health and the network to it, then run the Orkflow again.
 
 ### A run failed with `RUN_HISTORY_LIMIT`
 
@@ -384,6 +430,19 @@ Two commands run a task's pieces locally, through the same code the Orker uses:
 - `orkctl task run --from-run <run-id> --task <task> --render-only` renders the task with the run's recorded upstream bytes, and starts no container.
 - `orkctl task run --from-run <run-id> --task <task>` runs the task here. It writes nothing to the deployment, but any external side effect it performs is real ([CLI.md](./CLI.md), "`orkctl task run`").
 - `orkctl activity test <image>` checks an image against the activity contract, with no Orkflow and no Temporal server involved ([CLI.md](./CLI.md), "`orkctl activity test`").
+
+### `ork` or `orker` stops at boot with "object store credentials: …"
+
+**Cause.** No key has a default. The message says which of these it is: one of
+`ORK_S3_ACCESS_KEY` and `ORK_S3_SECRET_KEY` is set without the other, a session
+token is set with no key, or neither key is set and the AWS SDK's default
+credential chain found nothing to sign with. A binary started by hand against the
+development store needs its key too.
+
+**Fix.** Set both keys, or neither to use a role, as
+[DEPLOY.md](DEPLOY.md), "The object store's credentials", says. For the
+development store, set `ORK_S3_ACCESS_KEY=orkstack` and
+`ORK_S3_SECRET_KEY=orkstack-secret`.
 
 ## The quickstart
 
@@ -438,7 +497,7 @@ or older than `ork`.
 **Cause.** The Orker runs each task through this machine's Docker daemon,
 which mounts the task's workspace from `ORKSTACK_WORKDIR` (default
 `~/.cache/orkstack-quickstart`) as a path on the daemon's own machine. A daemon
-in a virtual machine (Docker Desktop, colima, Lima) sees only the directories
+in a virtual machine (colima, Lima) sees only the directories
 that machine shares. The Orker also refuses to start when that path holds a
 comma or a control character, which a container mount cannot carry; its message
 names `ORK_ORKER_WORKDIR`, which is `ORKSTACK_WORKDIR` here.
@@ -453,8 +512,8 @@ the published images").
 
 **Cause.** The compose file mounts `ORKSTACK_DOCKER_SOCKET` (default
 `/var/run/docker.sock`) into the Orker, and into the step that pushes the
-activities. Rootless Docker, colima and some Docker Desktop setups put the
-socket elsewhere; the push step then fails and the engine never starts.
+activities. Rootless Docker, colima and some setups with a Docker daemon in a
+virtual machine put the socket elsewhere; the push step then fails and the engine never starts.
 
 **Confirm.** `docker context inspect --format '{{.Endpoints.docker.Host}}'`
 prints the socket the `docker` command uses.

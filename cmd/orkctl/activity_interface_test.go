@@ -517,6 +517,24 @@ func TestOrkflowValidate_ExitStatusFollowsSeverity(t *testing.T) {
 	}
 }
 
+// TestOrkflowValidate_SaysAnUnappliedDocumentHasNoVersionYet: validation stores
+// nothing and a version is minted by the apply that stores it, so it reports none
+// until then, and the version that landed afterwards.
+func TestOrkflowValidate_SaysAnUnappliedDocumentHasNoVersionYet(t *testing.T) {
+	f := interfaceFixture(t, stubResolver{fileReference: fileResolution(t)})
+	path := writeDocument(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: unpinned-doc\ntasks:\n  - id: one\n    uses: file\n    with:\n      op: copy\n      src: a\n")
+
+	before := f.run("orkflow", "validate", path).requireExit(t, exitOK)
+	if want := "Valid orkflow unpinned-doc (new version, assigned when applied)\n"; before.stdout != want {
+		t.Fatalf("before apply: %q, want %q", before.stdout, want)
+	}
+	f.run("apply", path).requireExit(t, exitOK)
+	after := f.run("orkflow", "validate", path).requireExit(t, exitOK)
+	if !regexp.MustCompile(`^Valid orkflow unpinned-doc \(version [0-7][0-9a-hjkmnp-tv-z]{25}\)\n$`).MatchString(after.stdout) {
+		t.Fatalf("after apply: %q, want the minted version", after.stdout)
+	}
+}
+
 func TestApply_PrintsInterfaceWarnings(t *testing.T) {
 	f := interfaceFixture(t, stubResolver{fileReference: fileResolution(t)})
 	applied := f.run("apply", writeDocument(t, validateWarningsDocument)).requireExit(t, exitOK)

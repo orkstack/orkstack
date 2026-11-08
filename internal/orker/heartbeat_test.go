@@ -32,7 +32,7 @@ func TestHeartbeater_RecordsProgressThroughTemporalActivityLifecycle(t *testing.
 	})
 
 	activityFn := func(ctx context.Context) (HeartbeatProgress, error) {
-		heartbeat := NewHeartbeater(ctx)
+		heartbeat := sdkRouteHeartbeater(ctx)
 		heartbeat.Phase("container")
 		heartbeat.Container(ContainerID("container-proof"))
 		heartbeat.Logged(123)
@@ -124,7 +124,10 @@ func TestValidateHeartbeatInterval(t *testing.T) {
 func TestStart_TicksAtTheConfiguredInterval(t *testing.T) {
 	beats := make(chan time.Time, 8)
 	h := &Heartbeater{
-		beat:     func(HeartbeatProgress) { beats <- time.Now() },
+		send: func(context.Context, HeartbeatProgress) error {
+			beats <- time.Now()
+			return nil
+		},
 		interval: 20 * time.Millisecond,
 	}
 	ctx, cancel := context.WithCancel(context.Background())

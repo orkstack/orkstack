@@ -16,7 +16,6 @@
 	import { statsClient } from '#lib/clients/stats.ts';
 	import { systemClient } from '#lib/clients/system.ts';
 	import { OVERLAY_SELECTOR, currentPlatform, isApplePlatform, paletteKey, shortcutAria, shortcutHint } from '#lib/palette/keys.ts';
-	import { provideTitleBlock } from '#lib/sheet.svelte.ts';
 	import { appearance } from '#lib/theme.svelte.ts';
 	import {
 		DEFAULT_NAMESPACE,
@@ -68,8 +67,8 @@
 		void goto(withNamespace(page.url.pathname, name), { invalidateAll: true });
 	}
 
-	// Every page states the namespace it is showing, and a URL that names none
-	// is answered here.
+	// The breadcrumb states the namespace a page is showing, and a URL that
+	// names none is answered here.
 	//
 	// Two different answers, because they are two different situations:
 	//
@@ -163,13 +162,20 @@
 
 	// ---- The sidebar's live count and OrkStack's own build ----
 	// "N running" is every run of this namespace not finished now, the same
-	// population GetStats calls running; read once a page opens and every
-	// 30 s while the tab is visible. The build is read once.
+	// population GetStats calls running; read once a page opens and every 30 s
+	// while the tab is visible, or every 5 s (the stats cache's own TTL) while
+	// it counts a run, so a finished run does not linger in it. The build is
+	// read once.
 	let running = $state<number | null>(null);
 	let version = $state('');
 	$effect(() => {
-		const ns = data.namespace;
+		void data.namespace;
 		running = null;
+	});
+	const counting = $derived((running ?? 0) > 0);
+	$effect(() => {
+		const ns = data.namespace;
+		const every = counting ? 5_000 : 30_000;
 		let live = true;
 		const stop = pollWhileVisible(
 			() => {
@@ -182,7 +188,7 @@
 						if (live) running = null;
 					});
 			},
-			30_000,
+			every,
 			{ immediate: true }
 		);
 		return () => {
@@ -264,13 +270,11 @@
 
 	// ---- The breadcrumb ----
 	// The namespace, the page, then where on it: a run, an Orkflow, a
-	// comparison. Pages still register their facts with the title-block
-	// holder; the breadcrumb reads none of them.
-	provideTitleBlock();
+	// comparison.
 	const crumbs = $derived.by((): Crumb[] => {
 		const path = page.url.pathname;
 		const here = pageOf(path);
-		const out: Crumb[] = [{ label: namespaceLabel(data.namespace), href: link('/runs') }];
+		const out: Crumb[] = [{ label: namespaceLabel(data.namespace), href: link('/runs'), namespace: true }];
 		if (here && here.href !== '/' && here.href !== '/admin' && path.startsWith('/admin')) out.push({ label: 'Operate', href: link('/admin') });
 		out.push({ label: here?.label ?? 'OrkStack', href: here ? link(here.href) : undefined });
 		const rest = here && here.href !== '/' ? path.slice(here.href.length).split('/').filter(Boolean) : [];
@@ -400,7 +404,6 @@
 	}
 	.content-pad {
 		width: 100%;
-		max-width: var(--spacing-content);
 		padding: 24px 28px 48px;
 	}
 	.scrim {

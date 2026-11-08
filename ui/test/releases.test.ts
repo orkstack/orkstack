@@ -113,7 +113,7 @@ test('result sentences match the CLI, including an unconfirmed routing', () => {
 	});
 	expect(
 		promoteResult(read, 'v2', create(PromoteReleaseResponseSchema, { changed: true, previousBuildId: 'v1', routingConfirmed: true }), false)
-	).toBe('release v2 is current (was v1). New runs start on v2; the 14 runs executing on v1 finish there. Keep v1 running until "orkctl release wait v1" exits 0.');
+	).toBe('release v2 is current (was v1). New runs start on v2; the 14 runs executing on v1 finish there. Keep v1 running until it has drained.');
 	expect(promoteResult(read, 'v2', create(PromoteReleaseResponseSchema, { changed: true, routingConfirmed: false }), false)).toContain(
 		'The change is recorded, but the cluster had not applied it to new runs after 10s'
 	);

@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -66,7 +65,7 @@ func newRunEvidenceExportCommand(g *globalFlags) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				_, err = cmd.OutOrStdout().Write(document)
+				_, err = cmd.OutOrStdout().Write(jsonTerminalSafe(document))
 				return err
 			}
 			if output == "" {
@@ -363,12 +362,7 @@ func writeVerifyJSON(out io.Writer, report *evidence.Report, store *storeCompari
 		*evidence.Report
 		Store *storeComparison `json:"store,omitempty"`
 	}{Report: report, Store: store}
-	encoded, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encode report: %w", err)
-	}
-	_, err = out.Write(append(encoded, '\n'))
-	return err
+	return writeGoJSON(out, document)
 }
 
 // renderVerifyReport is the human verify report (docs/RUN_EVIDENCE.md,

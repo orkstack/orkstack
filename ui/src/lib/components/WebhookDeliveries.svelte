@@ -17,8 +17,8 @@
 	// The filters are the one filter component's (ListFilter, `deliveryFilter`
 	// parameters): what may be filtered is the ListDeliveriesRequest allowlist.
 	// Redeliver is one POST, now, behind a confirmation that says exactly that.
+	import { shortRunId } from '#lib/runDetail.ts';
 	import { goto, invalidateAll } from '$app/navigation';
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ListFilter from '#lib/components/ListFilter.svelte';
@@ -28,7 +28,6 @@
 	import { webhookClient } from '#lib/clients/webhooks.ts';
 	import {
 		DELIVERIES_CAPTION,
-		deliveriesCliCommand,
 		deliveriesHref,
 		deliveriesNamespaceScope,
 		deliveriesStackKey,
@@ -130,10 +129,7 @@
 </script>
 
 <section id="deliveries" class="region mt-10 pt-3" data-testid="deliveries">
-	<div class="mb-3 flex flex-wrap items-center justify-between gap-3">
-		<h2 class="text-md font-semibold text-ink">Deliveries</h2>
-		<CliEquivalent testid="deliveries-cli" command={deliveriesCliCommand(c)} label="orkctl webhook deliveries for this listing" />
-	</div>
+	<h2 class="mb-3 text-md font-semibold text-ink">Deliveries</h2>
 	<ScopeNote testid="deliveries-scope">
 		{DELIVERIES_CAPTION}
 		{deliveriesNamespaceScope(c.filters)}{#if response},
@@ -141,14 +137,13 @@
 		The page's namespace selector does not filter this panel.
 	</ScopeNote>
 
-	<ListFilter
+	<div class="mb-3"><ListFilter
 		request={ListDeliveriesRequestSchema}
 		applied={c.filters}
 		testid="deliveries"
-		command={['orkctl', 'webhook', 'deliveries']}
 		onapply={applyFilters}
 		{clearHref}
-	/>
+	/></div>
 
 	{#if error}
 		<ErrorPanel testid="deliveries-error" subject="the delivery records" message={error} busy={retrying} onretry={retry} />
@@ -180,17 +175,17 @@
 							id="delivery-{d.id}"
 							class="cursor-pointer align-top transition-colors hover:bg-hover {d.delivered ? '' : 'bg-red-tint'}"
 							data-testid="delivery-{d.id}"
-							aria-expanded={expanded.includes(d.id)}
 							onclick={() => toggle(d.id)}
 						>
-							<td class="figure text-xs whitespace-nowrap text-ink-secondary" data-tip={instantMs(d.createdAt)}>{fmtTimestamp(d.createdAt)}</td>
+							<td class="figure text-xs text-ink-secondary"><button type="button" class="link text-left" data-testid="delivery-toggle-{d.id}" aria-expanded={expanded.includes(d.id)} aria-label="Details of the delivery at {fmtTimestamp(d.createdAt)}" data-tip={instantMs(d.createdAt)} onclick={(event) => { event.stopPropagation(); toggle(d.id); }}>{fmtTimestamp(d.createdAt)}</button></td>
 							<td class="font-mono text-xs">{d.webhookId}</td>
 							<td class="font-mono text-xs" data-testid="delivery-event-{d.id}">{eventName(d.event)}</td>
 							<td class="font-mono text-xs">
 								<a
 									href="/runs/{encodeURIComponent(d.runId)}?ns={encodeURIComponent(d.namespace)}"
 									class="link"
-									onclick={(event) => event.stopPropagation()}>{d.runId}</a
+									data-tip={d.runId}
+									onclick={(event) => event.stopPropagation()}>{shortRunId(d.runId)}</a
 								>
 							</td>
 							<td class="font-mono text-xs">{d.taskId || '-'}</td>
@@ -203,7 +198,7 @@
 								{#if d.redeliveryOf}<span class="ml-1 text-2xs text-ink-muted" data-testid="delivery-is-redelivery-{d.id}">redelivery</span>{/if}
 							</td>
 							<td class="figure text-right text-xs" data-testid="delivery-attempt-count-{d.id}">{d.attempts.length}</td>
-							<td class="font-mono text-xs" data-testid="delivery-last-{d.id}">{lastAttemptLabel(d)}</td>
+							<td class="font-mono text-xs [overflow-wrap:anywhere]" data-testid="delivery-last-{d.id}">{lastAttemptLabel(d)}</td>
 						</tr>
 						{#if expanded.includes(d.id)}
 							<tr class="bg-paper-sunken" data-testid="delivery-detail-{d.id}">

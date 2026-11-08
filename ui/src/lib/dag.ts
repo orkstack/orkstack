@@ -1,3 +1,4 @@
+import { shortVersion } from './version';
 import type { Status } from './gen/orkstack/v1/common_pb';
 import type { Task } from './gen/orkstack/v1/orkflow_pb';
 import { isFailureHandler } from './join';
@@ -117,10 +118,11 @@ export function fitDagLine(line: string, room: number = DAG_LINE_CHARS): string 
 /**
  * fitDagRef fits a composed task's line, `orkflow <name>@<version>`, into
  * `room` characters: the name gives way (cut with an ellipsis) and the
- * version stays whole, because which version a run pins is the point. The
- * full reference stays in the node's title.
+ * version stays, in its short form, because which version a run pins is the
+ * point. The full reference stays in the node's title.
  */
-export function fitDagRef(name: string, version: string, room: number = DAG_LINE_CHARS): string {
+export function fitDagRef(name: string, fullVersion: string, room: number = DAG_LINE_CHARS): string {
+	const version = shortVersion(fullVersion);
 	const whole = `orkflow ${name}@${version}`;
 	if (whole.length <= room) return whole;
 	const keep = room - `orkflow …@${version}`.length;
@@ -705,4 +707,19 @@ export function chooseDagDirection(tasks: Task[], frame: { width: number; height
 export function dagDirectionParam(url: { readonly searchParams: Pick<URLSearchParams, 'get'> }): DagDirection | 'auto' {
 	const asked = url.searchParams.get('dag');
 	return asked === 'lr' ? 'LR' : asked === 'tb' ? 'TB' : 'auto';
+}
+
+/**
+ * A node's accessible name: what the node shows, in its order, so a speech
+ * command that says what it sees finds it (WCAG 2.5.3), then what the node only
+ * draws or had to cut.
+ */
+export function dagNodeName(node: { id: string; shownId: string; line: string; shownLine: string; tags?: string[]; status?: string }): string {
+	const shown = [node.shownId, node.shownLine, ...(node.tags ?? [])].filter(Boolean).join(' ');
+	const extra = [
+		...(node.status && !node.shownLine.includes(node.status) ? [node.status] : []),
+		...(node.shownId !== node.id ? [node.id] : []),
+		...(node.shownLine !== node.line ? [node.line] : [])
+	];
+	return [`Task ${shown}`, ...extra].join(', ');
 }

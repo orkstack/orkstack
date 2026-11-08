@@ -13,8 +13,8 @@ import (
 )
 
 // StageDirName is the directory under the work root that holds the staging
-// cache (F-orker-storage-perf-2). Boot empties it, like ork-spool: an entry
-// outlives the attempts using it only when the process died.
+// cache (F-orker-storage-perf-2). Boot empties this identity's part of it, like
+// ork-spool: an entry outlives the attempts using it only when the process died.
 const StageDirName = "ork-stage"
 
 // stagingCache shares one verified download of an input artifact between the
@@ -25,7 +25,7 @@ const StageDirName = "ork-stage"
 // carries the same upstream refs, so without it one Orker running 1000 items
 // downloads a shared 100 MiB input 1000 times. With it, the first attempt to
 // ask for a digest downloads and verifies it once into
-// <work root>/ork-stage/<sha256> (mode 0444), every attempt hard-links that
+// <work root>/ork-stage/<owner>/<sha256> (mode 0444), every attempt hard-links that
 // file into its own read-only input tree, and the entry is deleted when the
 // last attempt holding it ends. It is in-flight sharing only: nothing is kept
 // for a later attempt, so there is no eviction policy and no stale entry.

@@ -237,3 +237,78 @@ func TestReleaseSmoke_RefusesAnEmptyLayoutsArgument(t *testing.T) {
 		t.Errorf("an invalid invocation ran %v", calls)
 	}
 }
+
+// TestReleaseSmoke_AsksEachImageForItsCommit: a release that cannot say which
+// commit it came from is what v0.2.0 published. The smoke asks the three images
+// and the archive's orkctl, and fails on anything but this checkout's commit.
+func TestReleaseSmoke_AsksEachImageForItsCommit(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "quickstart-smoke.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+	for _, want := range []string{
+		`COMMIT="${SOURCE_COMMIT:-$(git -C "$REPO" rev-parse HEAD)}"`,
+		`got="$(dc run --rm -T orkctl version)"`,
+		`grep -q "^commit: *$COMMIT\$" <<<"$got" || fail "orkctl version does not name commit $COMMIT: $got"`,
+		`for daemon in ork orker; do`,
+		`got="$(dc run --rm -T --no-deps "$daemon" --version)"`,
+		`got="$("$ORKCTL" version)"`,
+		`grep -q "^commit: *$COMMIT\$" <<<"$got" || fail "the archive's orkctl does not name commit $COMMIT: $got"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("scripts/quickstart-smoke.sh does not say %s", want)
+		}
+	}
+}
+
+// TestQuickstartSmoke_ReadsTheRunIDWhateverItsShape: a run id is opaque (AGENTS.md
+// §7), and a pattern of its old shape stopped every mode of the smoke when new
+// ids took another: `grep` matched nothing, and under `set -euo pipefail` the
+// script ended with no message. The one reader runs here under those same
+// options, on what `orkctl run submit` prints.
+func TestQuickstartSmoke_ReadsTheRunIDWhateverItsShape(t *testing.T) {
+	bash := needBash(t)
+	b, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "quickstart-smoke.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(b)
+	reader := shellFunctions(t, script, "submitted_run")
+	for _, c := range []struct{ name, log, want string }{
+		{"a run id of today's shape", "Submitted run ork-01m6qt8vete0691h2jn074a2yk\nrun finished with status SUCCEEDED\n", "ork-01m6qt8vete0691h2jn074a2yk"},
+		{"a run id of the old shape", "Submitted run ork-1761298215-42\n", "ork-1761298215-42"},
+		{"a run id of no shape anyone has seen", "Submitted run run-001\n", "run-001"},
+		{"the first of several", "noise\nSubmitted run first\nSubmitted run second\n", "first"},
+		{"a refused submit", "Error: the namespace is on hold\n", ""},
+		{"only mentioned, not at the start of a line", "Not Submitted run ork-1\n", ""},
+		{"an empty log", "", ""},
+	} {
+		log := filepath.Join(t.TempDir(), "submit.log")
+		if err := os.WriteFile(log, []byte(c.log), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		// The caller's own check for an empty id must be reached, so the reader
+		// exits 0 when there is none.
+		out, err := exec.Command(bash, "-c", "set -euo pipefail\n"+reader+"\nrun=\"$(submitted_run \"$1\")\"\nprintf 'reached:%s' \"$run\"\n", "bash", log).CombinedOutput()
+		if err != nil || string(out) != "reached:"+c.want {
+			t.Errorf("%s: %v, printed %q; want it to reach its caller with %q", c.name, err, out, c.want)
+		}
+	}
+	// No mode reads an id any other way, and a caller checks what it read.
+	if got := strings.Count(script, "Submitted run"); got != 1 {
+		t.Errorf("the script says \"Submitted run\" %d times, want once, in submitted_run", got)
+	}
+	for _, want := range []string{
+		`run="$(submitted_run "$watch_log")"`,
+		`run="$(submitted_run "$log")"`,
+		`signed_run="$(submitted_run "$WORK/signed.log")"`,
+		`[ -n "$run" ] || fail "no run id in: $(tail -3 "$watch_log")"`,
+		`[ -n "$run" ] || { cat "$log" >&2; fail "$name: no run id"; }`,
+		`[ -n "$signed_run" ] || fail "no run id in: $(tail -3 "$WORK/signed.log")"`,
+	} {
+		if !strings.Contains(script, want) {
+			t.Errorf("scripts/quickstart-smoke.sh does not say %s", want)
+		}
+	}
+}

@@ -56,6 +56,15 @@ test('a YAML syntax error is placed where the parser stopped, and nothing else i
 	expect(lineCol(src, ds[0].from).line >= 7).toBe(true);
 });
 
+test('a second document is refused where it begins, in the engine’s words, naming no parser API', () => {
+	const src = HEADER + 'name: x\ntasks:\n  - id: a\n    uses: shell\n---\nname: y\n';
+	const ds = lintDocument(src, 'Orkflow');
+	expect(ds.length).toBe(1);
+	expect(ds[0].source).toBe('syntax');
+	expect(ds[0].message).toBe('a second YAML document begins here; put it in a file of its own');
+	expect(lineCol(src, ds[0].from).line).toBe(7);
+});
+
 test('a key written twice is a syntax error at its second spelling', () => {
 	const src = HEADER + 'name: x\nname: y\ntasks:\n  - id: a\n    uses: shell\n';
 	const ds = lintDocument(src, 'Orkflow');

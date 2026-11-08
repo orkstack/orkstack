@@ -1,6 +1,7 @@
 package schemas_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -37,6 +38,30 @@ func TestSchemas_AreGenerated(t *testing.T) {
 		got, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil || string(got) != string(want) {
 			t.Errorf("%s is stale (%v): run go run ./internal/schemas/cmd/genschemas", path, err)
+		}
+	}
+}
+
+// TestSchemas_ValidatorsAreCurrent: the UI editor's validators, compiled ahead
+// of time from the schemas so its page can refuse eval
+// (ui/test/gen-validators.ts), each name the bytes they were compiled from.
+// Only a UI test can recompile them (ui/test/yamlValidators.test.ts); this
+// reaches the Go contributor who changed a schema first, with no UI toolchain.
+func TestSchemas_ValidatorsAreCurrent(t *testing.T) {
+	for _, generated := range []string{"validators.gen.ts", "conditions.gen.ts"} {
+		code, err := os.ReadFile(filepath.Join(root, "ui", "src", "lib", "yaml", generated))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range schemas.UIFiles {
+			schema, err := os.ReadFile(filepath.Join(root, schemas.Dir, file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			line := fmt.Sprintf("// schema %s sha256:%x\n", file, sha256.Sum256(schema))
+			if !strings.Contains(string(code), line) {
+				t.Errorf("%s was not compiled from this %s: run cd ui && bun run gen:validators", generated, file)
+			}
 		}
 	}
 }

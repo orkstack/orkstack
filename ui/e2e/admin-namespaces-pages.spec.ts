@@ -22,7 +22,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { OP, addListFilter, selectOption } from './uiHelpers';
+import { OP, addListFilter, selectOption, pageCli } from './uiHelpers';
 
 // Admin → Namespaces, paged and filtered through the one structured list
 // filter (ListFilter; docs/UI_CLI_PARITY.md "Filtering lists"), against a
@@ -303,9 +303,9 @@ test('N7: an edit on page 2 saves and leaves the reader on page 2', async ({ pag
 test('N8: the CLI equivalent is the applied filter as orkctl spells it', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10&filter=${encodeURIComponent('labels.team=payments')}`);
 	await expectRows(page, PAYMENTS.slice(0, 10));
-	await page.getByTestId('namespaces-filters-cli-trigger').click();
-	await expect(page.getByTestId('namespaces-filters-cli-command')).toHaveText("orkctl namespace list --filter labels.team=payments");
-	note(`CLI equivalent: ${await page.getByTestId('namespaces-filters-cli-command').innerText()}`);
+	await page.getByTestId('page-cli-trigger').click();
+	await expect(pageCli(page, 'The namespaces')).toHaveText("orkctl namespace list --filter labels.team=payments");
+	note(`CLI equivalent: ${await pageCli(page, 'The namespaces').innerText()}`);
 });
 
 test('N9: page size is a field of the filter form and applies with Apply filters', async ({ page }) => {

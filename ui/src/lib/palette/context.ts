@@ -1,5 +1,5 @@
 // Page providers: what the page you are on adds to the palette (jump to a
-// task, Cancel run…, Submit a run…).
+// task, Cancel run, Submit a run).
 //
 // A page registers ONE provider when it mounts and removes it when it is
 // destroyed. Registering builds nothing: `commands(query)` runs only while

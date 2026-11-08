@@ -32,11 +32,17 @@
 # bind the default bridge's gateway address, and the Prometheus container is
 # attached to the default bridge for the gate's lifetime. Only an attachment
 # this gate made is undone. Nothing in deploy/ changes. On a host where the
-# gateway is not a local address (Docker Desktop), 127.0.0.1 is kept.
+# gateway is not a local address (a Docker daemon running in a virtual machine),
+# 127.0.0.1 is kept.
 set -uo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO="$PWD"
+
+# The development store's key: no binary falls back to one, and the store
+# refuses any other (internal/testsupport/s3bucket).
+export ORK_S3_ACCESS_KEY="${ORK_S3_ACCESS_KEY:-orkstack}"
+export ORK_S3_SECRET_KEY="${ORK_S3_SECRET_KEY:-orkstack-secret}"
 
 OUT="${ORK_PROOF_DIR:?ORK_PROOF_DIR must be set (run this through scripts/proof.sh)}/observability"
 mkdir -p "$OUT"

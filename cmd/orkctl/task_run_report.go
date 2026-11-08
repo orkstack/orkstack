@@ -248,7 +248,9 @@ func (t *transcript) printFile(label, path string) {
 	scanner := bufio.NewScanner(bytes.NewReader(shown))
 	scanner.Buffer(make([]byte, 0, 64*1024), taskRunConfigPrintLimit+1)
 	for scanner.Scan() {
-		t.println("  " + scanner.Text())
+		// The file holds whatever an input held, so a character a terminal
+		// could obey is printed as an escape. The report keeps the file's bytes.
+		t.println("  " + terminalSafe(scanner.Text()))
 	}
 	if len(shown) < len(raw) {
 		t.printf("  … (%d more bytes; --keep keeps input/%s)\n", len(raw)-len(shown), label)
@@ -268,21 +270,25 @@ func renderArtifactRows(rows [][3]string) []string {
 }
 
 // canonicalValues renders a values.json document on one line, truncated at
-// taskRunValuesPrintLimit bytes.
+// taskRunValuesPrintLimit bytes. The container wrote it, so whatever a
+// terminal could obey is an escape: inside a JSON string when it is JSON, and
+// in the text itself when it is not.
 func canonicalValues(raw []byte) string {
 	var decoded map[string]any
 	line := strings.TrimSpace(string(raw))
+	safe := terminalSafe
 	if json.Unmarshal(raw, &decoded) == nil {
 		if data, err := structFromMap(decoded); err == nil {
 			if canonical, err := dsl.CanonicalInputLine(data); err == nil {
 				line = canonical
+				safe = func(text string) string { return string(jsonTerminalSafe([]byte(text))) }
 			}
 		}
 	}
 	if len(line) > taskRunValuesPrintLimit {
-		return fmt.Sprintf("%s… (%d bytes; --json or --keep has every byte)", line[:runeCut([]byte(line), taskRunValuesPrintLimit)], len(line))
+		return fmt.Sprintf("%s… (%d bytes; --json or --keep has every byte)", safe(line[:runeCut([]byte(line), taskRunValuesPrintLimit)]), len(line))
 	}
-	return line
+	return safe(line)
 }
 
 // runeCut returns the largest length at most limit that does not split a

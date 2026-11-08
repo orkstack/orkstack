@@ -87,8 +87,8 @@ The full proof is built to run sharded in CI as the required `proof` check.
 Until that gate is enforced on GitHub ([PROOFS.md](./PROOFS.md) §12), `main`
 moves only by AGENTS.md §11.3's path (b): a full proof of the merge candidate
 — by default CI's, run by pushing the candidate to `validate/full/<name>` and
-downloading its artifact, or a local `make proof` — quoted in the merge
-commit and checked by `make merge-check PROOF=…`.
+downloading its artifact, or a local `make proof` — quoted in the body of the
+one squash commit that lands it and checked by `make merge-check PROOF=…`.
 
 ## Why the evidence can be believed
 

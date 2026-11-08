@@ -488,9 +488,9 @@ func TestRunWorkflow_AwaitOnlyOrkflowSucceeds(t *testing.T) {
 	if len(h.invocations()) != 0 {
 		t.Fatalf("%d activities dispatched", len(h.invocations()))
 	}
-	leaf := run.GetOutput().GetData().GetFields()["second"].GetStructValue().GetFields()["step"].GetNumberValue()
-	if leaf != 2 {
-		t.Fatalf("run output = %v, want the leaf await's values", run.GetOutput())
+	step := run.GetOutput().GetData().GetFields()["second"].GetStructValue().GetFields()["step"].GetNumberValue()
+	if step != 2 {
+		t.Fatalf("run output = %v, want the end await's values", run.GetOutput())
 	}
 }
 

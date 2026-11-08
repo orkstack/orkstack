@@ -24,7 +24,6 @@ import (
 	"github.com/aws/smithy-go"
 
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
-	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // proofrun clean: what test processes that are gone left behind.
@@ -694,11 +693,11 @@ func processStart(pid int) string {
 }
 
 // s3CleanStore is the object store the environment names
-// (artifacts.ConfigFromEnv, the one test processes use).
+// (s3bucket.DevConfig, the one test processes use).
 type s3CleanStore struct{ client *s3.Client }
 
 func newS3CleanStore(ctx context.Context) (*s3CleanStore, error) {
-	client, err := s3bucket.Client(ctx, artifacts.ConfigFromEnv())
+	client, err := s3bucket.Client(ctx, s3bucket.DevConfig())
 	if err != nil {
 		return nil, err
 	}

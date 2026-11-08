@@ -111,14 +111,14 @@ test('the UI runs under a strict content security policy, and only the scripts i
 
 	// 1. The page's policy: the build's own, sent as a header, with
 	//    frame-ancestors. Scripts come from the page's origin only, with no
-	//    inline script but the hashed ones; eval is the editor's (ajv).
+	//    inline script but the hashed ones, and no eval.
 	const response = await page.goto(`${UI}/?ns=default`);
 	const policy = response?.headers()['content-security-policy'] ?? '';
 	writeFileSync(proof('policy.txt'), `${policy}\n`);
 	expect(policy.startsWith("frame-ancestors 'none'; ")).toBe(true);
 	expect(directive(policy, 'default-src')).toEqual(["'self'"]);
 	const scripts = directive(policy, 'script-src');
-	expect(scripts.filter((s) => !s.startsWith("'sha256-"))).toEqual(["'self'", "'unsafe-eval'"]);
+	expect(scripts.filter((s) => !s.startsWith("'sha256-"))).toEqual(["'self'"]);
 	expect(directive(policy, 'object-src')).toEqual(["'none'"]);
 	expect(directive(policy, 'base-uri')).toEqual(["'none'"]);
 	expect(directive(policy, 'connect-src')).toEqual(["'self'"]);
@@ -152,11 +152,12 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	await shot(page, 'security-headers-home.png');
 
 	// 3. The app works under it. It draws a list from the API. The editor,
-	//    which styles itself inline and compiles its schema checks at run
-	//    time (the reason for 'unsafe-eval'), flags an unknown key as it is
-	//    typed (src/lib/yaml/lint.ts) and completes an http task's `with:`
-	//    keys, which needs the task's `if uses: http` condition compiled
-	//    (src/lib/yaml/complete.ts). And a validation round-trips.
+	//    which styles itself inline and whose schema checks are compiled ahead
+	//    of time, flags an unknown key as it is typed (src/lib/yaml/lint.ts)
+	//    and completes an http task's `with:` keys, which needs the task's
+	//    `if uses: http` condition decided (src/lib/yaml/complete.ts). The
+	//    fixture would fail this on the first refused eval; step 5 proves it
+	//    sees one. And a validation round-trips.
 	await page.goto(`${UI}/orkflows?ns=default`);
 	await expect(page.getByTestId('orkflows-empty').first()).toBeVisible();
 	await page.goto(`${UI}/apply?ns=default`);
@@ -196,6 +197,26 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	});
 	await expect.poll(() => cspViolations.expected.length).toBeGreaterThan(0);
 	expect(await page.evaluate(() => (window as unknown as { injected?: boolean }).injected)).toBeUndefined();
+
+	// 5. The same for eval, which is what the editor's checks would need if
+	//    they compiled in the browser: refused, reported to the fixture, and
+	//    thrown to the caller. From a timer, because the page's own code is what
+	//    the policy binds, and a script the test driver evaluates may be exempt.
+	cspViolations.expect(/^\/apply: script-src eval$/);
+	const evaluated = await page.evaluate(
+		() =>
+			new Promise<string>((resolve) =>
+				setTimeout(() => {
+					try {
+						resolve(String(new Function('return "ran"')()));
+					} catch (e) {
+						resolve((e as Error).name);
+					}
+				})
+			)
+	);
+	expect(evaluated).toBe('EvalError');
+	await expect.poll(() => cspViolations.expected.filter((v) => v.endsWith('eval')).length).toBeGreaterThan(0);
 });
 
 // The shared fixture fails a spec that leaves a refusal it did not declare:

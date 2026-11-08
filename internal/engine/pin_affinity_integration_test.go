@@ -1337,6 +1337,9 @@ type pinOrkerConfig struct {
 	policy         *orker.SecurityPolicy
 	capacityCPU    string
 	capacityMemory string
+	// temporalAddress is the frontend this Orker alone dials (empty: the
+	// cluster's), so a test can put a proxy between it and the cluster.
+	temporalAddress string
 }
 
 // newPinOrker builds and starts one real pin host, the way cmd/orker builds
@@ -1382,8 +1385,12 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 
 	// This Orker's OWN Temporal client. Three Orkers are three processes, so
 	// three connections; and Proof 2's kill closes exactly one of them.
+	frontend := cfg.temporalAddress
+	if frontend == "" {
+		frontend = temporalAddress()
+	}
 	orkerClient, err := client.DialContext(ctx, client.Options{
-		HostPort:  temporalAddress(),
+		HostPort:  frontend,
 		Namespace: cfg.temporalNamespace,
 		Identity:  cfg.id,
 	})
@@ -1454,7 +1461,6 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		// The heartbeat pairing cmd/orker's workerOptions describes: the SDK's
 		// batch window capped to the same tick the dispatcher runs at, or a
 		// cancellation waits out the SDK's 24s default.
-		MaxHeartbeatThrottleInterval: tick,
 		// cmd/orker's explicit poller count (orker.TaskPollers).
 		MaxConcurrentActivityTaskPollers: orker.TaskPollers,
 		// The pin host's two extra pollers: the session creation worker on

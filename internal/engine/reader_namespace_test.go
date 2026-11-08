@@ -246,10 +246,148 @@ func TestTemporalRunReader_ReportsAnUnscopedListItCouldNotFinish(t *testing.T) {
 		t.Fatalf("ListRuns = %v, want a failure: the walk ran out of pages before it had "+
 			"read the whole index, so the empty list is not an answer", runs)
 	}
-	for _, want := range []string{"alpha", task.SearchAttrOrkflowNamespace} {
+	for _, want := range []string{"alpha", "does not index a run's namespace"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not name %q; a caller cannot act on it", err, want)
 		}
+	}
+}
+
+// TestTemporalRunReader_ListRefusalsNameNoInternalMechanism: a list the reader
+// could not finish reaches the caller as its error, through the API, orkctl and
+// the UI, so it says what was asked and that the cluster's index could not
+// answer it, and never names a search attribute, visibility or Temporal
+// (AGENTS.md §7).
+func TestTemporalRunReader_ListRefusalsNameNoInternalMechanism(t *testing.T) {
+	endless := func() runReadClient {
+		return &endlessReadClient{page: []*workflowpb.WorkflowExecutionInfo{
+			visibilityRecord(t, "ork-a", "hello-ork", "1.0.0", enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, readerEpoch)}}
+	}
+	unscoped := func() runReadClient {
+		return &visibilityIndex{records: namespacedRuns(t, "bravo", maxRunScanPages+1)}
+	}
+	cases := map[string]struct {
+		client runReadClient
+		query  RunQuery
+		want   string
+	}{
+		"namespace": {unscoped(), RunQuery{Namespace: "alpha", Limit: 1}, `namespace "alpha"`},
+		"origin": {unscoped(), RunQuery{Limit: 1,
+			OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_TRIGGER, OriginID: "trg-1"}, "by origin"},
+		"complete page": {endless(), RunQuery{Limit: 1, Complete: true}, "complete run page"},
+		"exhaustive":    {endless(), RunQuery{OrkflowName: "hello-ork", Exhaustive: true}, "exhaustive run list"},
+	}
+	forbidden := []string{"visibility", "Visibility", "search attribute", "Temporal", "temporal",
+		task.SearchAttrOrkflowNamespace, task.SearchAttrOrkflowOriginKind, task.SearchAttrOrkflowOriginId,
+		task.SearchAttrOrkflowOriginRootRunId}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			_, err := newRunReader(tc.client, converter.GetDefaultDataConverter()).ListRuns(context.Background(), tc.query)
+			if err == nil {
+				t.Fatal("ListRuns returned no error: the walk was built to run out of pages")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("error %q does not say %q", err, tc.want)
+			}
+			for _, word := range forbidden {
+				if strings.Contains(err.Error(), word) {
+					t.Errorf("error %q names %q", err, word)
+				}
+			}
+		})
+	}
+}
+
+// countedReadClient answers every count with count and fails every listing
+// with listErr when set; otherwise it lists endlessly, as endlessReadClient.
+type countedReadClient struct {
+	*endlessReadClient
+	count   int64
+	listErr error
+}
+
+func (c *countedReadClient) CountWorkflow(
+	context.Context, *workflowservice.CountWorkflowExecutionsRequest,
+) (*workflowservice.CountWorkflowExecutionsResponse, error) {
+	return &workflowservice.CountWorkflowExecutionsResponse{Count: c.count}, nil
+}
+
+func (c *countedReadClient) ListWorkflow(
+	ctx context.Context, req *workflowservice.ListWorkflowExecutionsRequest,
+) (*workflowservice.ListWorkflowExecutionsResponse, error) {
+	if c.listErr != nil {
+		return nil, c.listErr
+	}
+	return c.endlessReadClient.ListWorkflow(ctx, req)
+}
+
+// TestTemporalRunReader_CountAndStatsErrorsNameNoInternalMechanism: a running
+// count (admission's max_running, a release's drain) and the stats walk reach a
+// client as SubmitRun's and GetStats' errors, so none of them may name the
+// cluster, its index's attributes or the query it was asked (AGENTS.md §7).
+func TestTemporalRunReader_CountAndStatsErrorsNameNoInternalMechanism(t *testing.T) {
+	endless := func() *endlessReadClient {
+		return &endlessReadClient{page: []*workflowpb.WorkflowExecutionInfo{
+			visibilityRecord(t, "ork-a", "hello-ork", "1.0.0", enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, readerEpoch)}}
+	}
+	refused := serviceerror.NewUnavailable("the cluster is unavailable")
+	indexed := func(c runReadClient) *TemporalRunReader {
+		return newRunReader(c, converter.GetDefaultDataConverter()).WithNamespaceIndex(true)
+	}
+	unindexed := func(c runReadClient) *TemporalRunReader {
+		return newRunReader(c, converter.GetDefaultDataConverter())
+	}
+	window := StatsWindow{Namespace: "alpha", Since: readerEpoch.Add(-time.Hour), Until: readerEpoch.Add(time.Hour)}
+	cases := map[string]func() error{
+		"count refused": func() error {
+			_, err := indexed(endless()).RunningCount(context.Background(), "alpha", 0)
+			return err
+		},
+		"live walk without an end": func() error {
+			_, err := unindexed(endless()).RunningCount(context.Background(), "alpha", 5)
+			return err
+		},
+		"live walk refused": func() error {
+			_, err := unindexed(&countedReadClient{endlessReadClient: endless(), listErr: refused}).RunningCount(context.Background(), "alpha", 5)
+			return err
+		},
+		"chain listing without an end": func() error {
+			_, err := indexed(&countedReadClient{endlessReadClient: endless(), count: 1}).RunningCount(context.Background(), "alpha", 0)
+			return err
+		},
+		"chain listing refused": func() error {
+			_, err := indexed(&countedReadClient{endlessReadClient: endless(), count: 1, listErr: refused}).RunningCount(context.Background(), "alpha", 0)
+			return err
+		},
+		"run list refused": func() error {
+			_, err := indexed(&countedReadClient{endlessReadClient: endless(), listErr: refused}).ListRuns(context.Background(), RunQuery{Namespace: "alpha", Limit: 1})
+			return err
+		},
+		"stats walk refused": func() error {
+			_, err := indexed(&countedReadClient{endlessReadClient: endless(), listErr: refused}).Executions(context.Background(), window)
+			return err
+		},
+		"unindexed stats without an end": func() error {
+			_, err := unindexed(endless()).Executions(context.Background(), window)
+			return err
+		},
+	}
+	forbidden := []string{"visibility", "Visibility", "search attribute", "Temporal", "temporal",
+		"WorkflowType", "WorkflowId", "ExecutionStatus", "StartTime", RunWorkflowType,
+		task.SearchAttrOrkflowNamespace, task.SearchAttrOrkflowOriginKind, task.SearchAttrOrkflowOriginId,
+		task.SearchAttrOrkflowOriginRootRunId}
+	for name, call := range cases {
+		t.Run(name, func(t *testing.T) {
+			err := call()
+			if err == nil {
+				t.Fatal("no error: the double was built to refuse or never end")
+			}
+			for _, word := range forbidden {
+				if strings.Contains(err.Error(), word) {
+					t.Errorf("error %q names %q", err, word)
+				}
+			}
+		})
 	}
 }
 

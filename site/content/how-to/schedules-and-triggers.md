@@ -85,7 +85,7 @@ orkctl schedule backfill poll-exports --start 2026-10-01T00:00:00Z --end 2026-10
 - `fire` and `backfill` take `--overlap` to override the schedule's policy for one request.
 - `backfill` takes RFC 3339 `--start` and `--end`. The window can cover at most 366 days.
 - The run from a fire appears in `schedule get` once it is prepared.
-- Backfill is in the CLI only. The Schedules tab on an Orkflow's page does the other schedule actions.
+- Backfill is in the CLI only. The Schedules tab on an Orkflow's page does the other schedule actions. A schedule's name there opens its edit.
 
 ## Start runs over HTTP
 

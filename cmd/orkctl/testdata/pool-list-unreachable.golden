@@ -5,4 +5,4 @@ main  2                      yes      2026-01-02T03:04:05Z
 A task naming no pool runs on main.
 
 1 pool could not be reached, so its Orkers are unknown rather than zero:
-  gpu: cannot tell whether pool "gpu" has live Orkers: context deadline exceeded
+  gpu: could not check pool "gpu" for live Orkers: asking the cluster failed (context deadline exceeded); retry the request
